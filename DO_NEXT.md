@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-pages-branch-builds` continued after merged #790 and fixed BUG-2506 through BUG-2510. Legacy Pages builds used their configured git source, directly published `.nojekyll` trees or ran the pinned `github-pages` 232/Jekyll 3.10.0 toolchain, and persisted real publication state. Smart HTTP, Contents API, and Git Database branch writes shared one race-safe event path for activity, push webhooks, GitHub Actions workflows, pull-request synchronization, and automatic matching legacy Pages builds. Workflow-run actors used complete GitHub simple-user shapes, and committed-reference processing used canonical repository identity rather than optional expanded owner data.
+`feat/bleephub-pages-branch-builds` continued after merged #790 and fixed BUG-2506 through BUG-2511. Legacy Pages builds used their configured git source, directly published `.nojekyll` trees or ran the pinned `github-pages` 232/Jekyll 3.10.0 toolchain, and persisted real publication state. Smart HTTP, Contents API, and Git Database branch writes shared one race-safe event path for activity, push webhooks, GitHub Actions workflows, pull-request synchronization, and automatic matching legacy Pages builds. Workflow-run actors used complete GitHub simple-user shapes, committed-reference processing used canonical repository identity, and Bleephub used current `github.com/yuin/goldmark` 1.8.3.
 
 ## Continue Here
 
@@ -15,6 +15,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `bash scripts/check-latest-deps.sh` passed after Bleephub upgraded to `github.com/yuin/goldmark` 1.8.3.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 198 seconds after committed-reference fan-out, complete workflow-run actor shapes, and canonical repository identity handling were implemented.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(PagesBuildsCRUD|Dependabot_OrgAlerts|EnterpriseDependabotAlerts|SecretScanning_OrgAlerts|SecretScanning_PushProtectionBypasses|SecretScanning_PushProtectionBlocksGitDatabaseRefBeforeMutation)$' -count=1` passed after all fan-out consumers ran race-safely against real git storage.
 - `docker buildx build --load -f bleephub/Dockerfile.release -t sockerless-bleephub-pages-test .` passed with the pinned `github-pages` 232 gem and its complete native/runtime dependency graph.

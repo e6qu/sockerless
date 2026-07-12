@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2510 filed - 2466 fixed - 3 open - 16 false positives.**
+**2511 filed - 2467 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2511~~ | P2 | Bleephub dependency hygiene | stale Markdown parser module | Bleephub now uses current `github.com/yuin/goldmark` 1.8.3, so the required dependency-freshness gate passes. |
 | ~~2510~~ | P0 | Bleephub committed-ref eventing | event fan-out dereferenced optional nested repository owner data | Committed-reference fan-out and Pages source reads now resolve git storage by canonical repository ID and metadata coordinates from `full_name`, so valid repository records never depend on an optional expanded owner object. |
 | ~~2509~~ | P1 | Bleephub GitHub Actions workflow-run responses | actor objects used abbreviated user shapes | Workflow-run `actor` and `triggering_actor` objects now use the complete GitHub simple-user representation, including required identity and hypermedia fields. |
 | ~~2508~~ | P1 | Bleephub committed-ref eventing | branch-source Pages builds required manual requests and write surfaces diverged | Git smart-HTTP pushes, Contents API commits, and Git Database branch-reference creates, updates, and deletes now share one race-safe post-ref-update fan-out for activity, push webhooks, GitHub Actions workflows, pull-request synchronization, and automatic legacy Pages source builds. |

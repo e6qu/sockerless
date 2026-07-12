@@ -16,6 +16,8 @@ Closed BUG-2508 by routing smart HTTP pushes, Contents API commits, and Git Data
 
 Closed BUG-2509 by serializing workflow-run `actor` and `triggering_actor` fields through the complete GitHub simple-user representation rather than an abbreviated webhook-only shape. Closed BUG-2510 by resolving git storage through canonical repository IDs and metadata coordinates through `full_name`, so committed-reference processing and Pages source reads do not dereference optional expanded owner representations.
 
+Closed incidental BUG-2511 by upgrading Bleephub's Markdown parser from `github.com/yuin/goldmark` 1.8.2 to current 1.8.3 after the required pre-push dependency-freshness gate detected the drift.
+
 Validation in this branch included:
 
 ```bash
