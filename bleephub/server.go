@@ -83,7 +83,7 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 // content: GitHub Actions artifacts, dependency caches, runner logs, release
 // assets, GitHub Packages files, GitHub Container Registry blobs, GitHub
 // CodeQL database archives, CodeQL variant-analysis query packs, and artifact
-// attestation bundles. SQLite persists only Bleephub metadata; byte content
+// attestation bundles, and published GitHub Pages archives. SQLite persists only Bleephub metadata; byte content
 // must be backed by object storage so a restarted service does not advertise
 // durable records whose bytes lived only in memory or local development files.
 //
@@ -341,6 +341,7 @@ func (s *Server) registerRoutes() {
 	s.registerGHUserSurfaceRoutes()
 	// GitHub Pages deployments + health check (gh_pages_deployments.go)
 	s.registerGHPagesDeploymentRoutes()
+	s.registerGHPagesContentRoutes()
 
 	// Environment deployment branch policies + protection rules (gh_environment_policies.go)
 	s.registerGHEnvironmentPolicyRoutes()

@@ -4,6 +4,27 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-12 - Bleephub GitHub Pages Artifact Fidelity (`feat/bleephub-fidelity-sweep-next`)
+
+This branch continued from merged #788, which hardened persisted repository ownership, Git provider and user-interface behavior, GitHub Apps authorization, GitHub Actions execution and runner contracts, container packages, and Projects v2 ownership.
+
+Closed BUG-2502 by making GitHub Pages deployments consume real artifact bytes before reporting success. `POST /api/v3/repos/{owner}/{repo}/pages/deployments` now retrieves either the supplied artifact URL or the repository-owned GitHub Actions artifact, reads object-backed artifacts from S3-compatible object storage, rejects unreadable artifacts and metadata/byte-size mismatches without changing Pages state, and records the deployed byte count and SHA-256 digest. Coverage exercised both accepted inputs through Bleephub's real artifact-download data plane and object storage.
+
+Closed BUG-2503 by completing the publication operation behind deployment success. Bleephub now validates the official GitHub Actions ZIP containing `artifact.tar` plus direct ZIP, TAR, and gzip-compressed TAR inputs; rejects links, path traversal, empty archives, and content over GitHub's absolute size limit; stores immutable published archives in S3-compatible object storage; advertises a usable Bleephub Pages URL; serves index files, clean URLs, static assets, HEAD responses, and custom `404.html`; gates private sites on repository access; reclaims superseded publication objects; and removes published bytes before Pages or repository deletion.
+
+Closed BUG-2504 by validating GitHub Actions workflow identity before publication. The Pages deployment endpoint now verifies the Bleephub OpenID Connect token's RS256 signature, key identifier, issuer, audience, validity window, repository and repository identifier, environment, build SHA, and configured source branch. Malformed, altered, expired, cross-repository, cross-environment, wrong-ref, wrong-build, and wrong-audience tokens fail before artifact retrieval or state mutation.
+
+Closed BUG-2505 by adding GitHub's distinct `pages` fine-grained repository permission to the authorization model. Pages writes require `pages: write`; private Pages reads require `pages: read`; classic `repo` scope continues to cover Pages; and repository `administration` permission no longer grants Pages access.
+
+Validation in this branch included:
+
+```bash
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PagesDeployments_CreateStatusCancel|PersistenceReload_DeleteRepoLeavesNoResidue)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PagesDeployments_CreateStatusCancel|PagesArtifactValidationRejectsUnsafeAndEmptyArchives|PagesPermissionIsDistinctFromAdministration|PagesHealthCheck|RegisteredAPIv3RoutesExistInGitHubSpec|FuzzRoutePatternsMatchRegisteredRoutes|PersistenceReload_DeleteRepoLeavesNoResidue)' -count=1
+pre-commit run --all-files
+```
+
 ## 2026-07-11 - Bleephub Public State Fidelity (`feat/bleephub-public-state-fidelity`)
 
 This branch continued from merged #787, which moved CodeQL variant-analysis query-pack tarballs to object storage and made runner-log object-store failures preserve live process state.

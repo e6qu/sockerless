@@ -2,8 +2,13 @@ package bleephub
 
 import (
 	"context"
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -32,24 +37,43 @@ type PagesDeploymentRecord struct {
 	Status       string    `json:"status"`
 	Environment  string    `json:"environment"`
 	BuildVersion string    `json:"pages_build_version"`
+	ArtifactSize int64     `json:"artifact_size"`
+	ArtifactSHA  string    `json:"artifact_sha256"`
+	ArtifactKey  string    `json:"artifact_object_key"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func (s *Server) registerGHPagesDeploymentRoutes() {
 	s.route("POST /api/v3/repos/{owner}/{repo}/pages/deployments",
-		s.requirePerm(scopeAdministration, permWrite, s.handlePagesDeploymentCreate))
-	s.route("GET /api/v3/repos/{owner}/{repo}/pages/deployments/{pages_deployment_id}", s.handlePagesDeploymentStatus)
-	s.route("GET /api/v3/repos/{owner}/{repo}/pages/deployments/{pages_deployment_id}/status", s.handlePagesDeploymentStatus)
+		s.requirePerm(scopePages, permWrite, s.handlePagesDeploymentCreate))
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/deployments/{pages_deployment_id}", s.requirePagesRead(s.handlePagesDeploymentStatus))
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/deployments/{pages_deployment_id}/status", s.requirePagesRead(s.handlePagesDeploymentStatus))
 	s.route("POST /api/v3/repos/{owner}/{repo}/pages/deployments/{pages_deployment_id}/cancel",
-		s.requirePerm(scopeAdministration, permWrite, s.handlePagesDeploymentCancel))
-	s.route("GET /api/v3/repos/{owner}/{repo}/pages/health", s.handlePagesHealthCheck)
+		s.requirePerm(scopePages, permWrite, s.handlePagesDeploymentCancel))
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/health", s.requirePagesRead(s.handlePagesHealthCheck))
+}
+
+func (s *Server) requirePagesRead(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		repo := s.lookupRepoFromPath(r)
+		if repo != nil {
+			s.store.Misc.mu.RLock()
+			site := s.store.Misc.pagesByRepo[repo.ID]
+			s.store.Misc.mu.RUnlock()
+			if !repo.Private && (site == nil || site.Public) {
+				next(w, r)
+				return
+			}
+		}
+		s.requirePerm(scopePages, permRead, next)(w, r)
+	}
 }
 
 // --- Store ---
 
 // CreatePagesDeployment records a Pages deployment for a repository.
-func (st *Store) CreatePagesDeployment(repoID int, environment, buildVersion, status string) *PagesDeploymentRecord {
+func (st *Store) CreatePagesDeployment(repoID int, environment, buildVersion, status string, artifactSize int64, artifactSHA, artifactKey string) *PagesDeploymentRecord {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	now := time.Now().UTC()
@@ -59,6 +83,9 @@ func (st *Store) CreatePagesDeployment(repoID int, environment, buildVersion, st
 		Status:       status,
 		Environment:  environment,
 		BuildVersion: buildVersion,
+		ArtifactSize: artifactSize,
+		ArtifactSHA:  artifactSHA,
+		ArtifactKey:  artifactKey,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -165,6 +192,43 @@ func (s *Server) handlePagesDeploymentCreate(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	environment := coalesceStr(req.Environment, "github-pages")
+	if err := s.verifyPagesOIDCToken(r, req.OIDCToken, repo, environment, req.PagesBuildVersion, site); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid OIDC token: "+err.Error())
+		return
+	}
+
+	artifactBytes, err := s.readPagesDeploymentArtifact(r.Context(), repo.FullName, req.ArtifactID, req.ArtifactURL)
+	if err != nil {
+		writeGHError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	artifactHash := sha256.Sum256(artifactBytes)
+	artifactSHA := fmt.Sprintf("sha256:%x", artifactHash)
+	artifactKey := pagesArtifactDataKey(repo.ID, artifactHash)
+	if err := validatePagesArtifact(artifactBytes); err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "Invalid Pages artifact: "+err.Error())
+		return
+	}
+	if s.store.ObjectByteStore == nil {
+		writeGHError(w, http.StatusInternalServerError, "Pages deployment requires configured object storage")
+		return
+	}
+	if err := s.store.ObjectByteStore.Put(r.Context(), artifactKey, artifactBytes); err != nil {
+		writeGHError(w, http.StatusBadGateway, "Publish Pages artifact: "+err.Error())
+		return
+	}
+	previousDeployment := s.store.latestPublishedPagesDeployment(repo.ID)
+	if previousDeployment != nil && previousDeployment.ArtifactKey != "" && previousDeployment.ArtifactKey != artifactKey {
+		if err := s.store.ObjectByteStore.Delete(r.Context(), previousDeployment.ArtifactKey); err != nil {
+			rollbackErr := s.store.ObjectByteStore.Delete(r.Context(), artifactKey)
+			if rollbackErr != nil {
+				writeGHError(w, http.StatusBadGateway, fmt.Sprintf("Replace Pages artifact: delete previous object: %v; roll back new object: %v", err, rollbackErr))
+				return
+			}
+			writeGHError(w, http.StatusBadGateway, "Replace Pages artifact: delete previous object: "+err.Error())
+			return
+		}
+	}
 
 	// The publish happens here, synchronously: the site's content becomes
 	// the artifact and its status flips to built. The stored deployment is
@@ -176,7 +240,7 @@ func (s *Server) handlePagesDeploymentCreate(w http.ResponseWriter, r *http.Requ
 	}
 	s.store.Misc.mu.Unlock()
 
-	d := s.store.CreatePagesDeployment(repo.ID, environment, req.PagesBuildVersion, "succeed")
+	d := s.store.CreatePagesDeployment(repo.ID, environment, req.PagesBuildVersion, "succeed", int64(len(artifactBytes)), artifactSHA, artifactKey)
 
 	user := ghUserFromContext(r.Context())
 	if user != nil {
@@ -189,6 +253,135 @@ func (s *Server) handlePagesDeploymentCreate(w http.ResponseWriter, r *http.Requ
 		"status_url": base + "/api/v3/repos/" + repo.FullName + "/pages/deployments/" + d.BuildVersion + "/status",
 		"page_url":   site.HTMLURL,
 	})
+}
+
+type pagesOIDCClaims struct {
+	Issuer       string `json:"iss"`
+	Audience     string `json:"aud"`
+	ExpiresAt    int64  `json:"exp"`
+	IssuedAt     int64  `json:"iat"`
+	NotBefore    int64  `json:"nbf"`
+	Repository   string `json:"repository"`
+	RepositoryID string `json:"repository_id"`
+	Environment  string `json:"environment"`
+	Ref          string `json:"ref"`
+	SHA          string `json:"sha"`
+}
+
+func (s *Server) verifyPagesOIDCToken(r *http.Request, token string, repo *Repo, environment, buildVersion string, site *PagesSite) error {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return errors.New("token is not a three-part JWT")
+	}
+	var header struct {
+		Algorithm string `json:"alg"`
+		KeyID     string `json:"kid"`
+	}
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return fmt.Errorf("decode JWT header: %w", err)
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return fmt.Errorf("decode JWT header JSON: %w", err)
+	}
+	if header.Algorithm != "RS256" || header.KeyID != "bleephub-oidc" {
+		return errors.New("token must use Bleephub RS256 signing key")
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return fmt.Errorf("decode JWT payload: %w", err)
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return fmt.Errorf("decode JWT signature: %w", err)
+	}
+	key, err := s.oidcKeyE()
+	if err != nil {
+		return fmt.Errorf("load OpenID Connect signing key: %w", err)
+	}
+	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, digest[:], signature); err != nil {
+		return errors.New("token signature is invalid")
+	}
+	var claims pagesOIDCClaims
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return fmt.Errorf("decode JWT claims: %w", err)
+	}
+	now := time.Now().Unix()
+	if claims.ExpiresAt <= now || claims.NotBefore > now || claims.IssuedAt > now {
+		return errors.New("token is expired or not yet valid")
+	}
+	if claims.Issuer != s.baseURL(r) {
+		return fmt.Errorf("issuer %q does not match Bleephub", claims.Issuer)
+	}
+	wantAudience := "https://github.com/" + repo.FullName
+	if claims.Audience != wantAudience {
+		return fmt.Errorf("audience %q does not match %q", claims.Audience, wantAudience)
+	}
+	if claims.Repository != repo.FullName || claims.RepositoryID != strconv.Itoa(repo.ID) {
+		return errors.New("repository claims do not match the deployment repository")
+	}
+	if claims.Environment != environment {
+		return fmt.Errorf("environment %q does not match %q", claims.Environment, environment)
+	}
+	if claims.SHA != buildVersion {
+		return errors.New("build version does not match the workflow SHA")
+	}
+	buildType := "legacy"
+	if site.BuildType != nil {
+		buildType = *site.BuildType
+	}
+	if buildType != "workflow" {
+		branch, _ := site.Source["branch"].(string)
+		if branch != "" && claims.Ref != "refs/heads/"+branch {
+			return fmt.Errorf("workflow ref %q does not match Pages source branch %q", claims.Ref, branch)
+		}
+	}
+	return nil
+}
+
+func (s *Server) readPagesDeploymentArtifact(ctx context.Context, repoFullName string, artifactID *int64, artifactURL string) ([]byte, error) {
+	if artifactID != nil {
+		art, ok := s.artifactStore.artifactByID(*artifactID)
+		if !ok || !s.artifactBelongsToRepo(art, repoFullName) {
+			return nil, fmt.Errorf("pages deployment artifact %d was not found for repository %s", *artifactID, repoFullName)
+		}
+		data := append([]byte(nil), art.Data...)
+		if len(data) == 0 && art.Size > 0 {
+			if s.artifactStore.byteStore == nil {
+				return nil, fmt.Errorf("pages deployment artifact %d bytes require configured object storage", art.ID)
+			}
+			var err error
+			data, err = s.artifactStore.byteStore.Get(ctx, artifactDataKey(art.ID))
+			if err != nil {
+				return nil, fmt.Errorf("read Pages deployment artifact %d: %w", art.ID, err)
+			}
+		}
+		if int64(len(data)) != art.Size {
+			return nil, fmt.Errorf("pages deployment artifact %d size mismatch: metadata=%d bytes=%d", art.ID, art.Size, len(data))
+		}
+		return data, nil
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, artifactURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create Pages deployment artifact request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch Pages deployment artifact: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("fetch Pages deployment artifact: status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read Pages deployment artifact: %w", err)
+	}
+	return data, nil
 }
 
 func (s *Server) handlePagesDeploymentStatus(w http.ResponseWriter, r *http.Request) {
@@ -236,8 +429,8 @@ func pagesDeploymentTerminal(status string) bool {
 // repoOwnsFinalizedArtifact reports whether the repository owns a finalized
 // Actions artifact with the given ID.
 func (s *Server) repoOwnsFinalizedArtifact(repoFullName string, artifactID int64) bool {
-	s.artifactStore.mu.Lock()
-	defer s.artifactStore.mu.Unlock()
+	s.artifactStore.mu.RLock()
+	defer s.artifactStore.mu.RUnlock()
 	for _, art := range s.artifactStore.artifacts {
 		if art.ID == artifactID && art.RepoFullName == repoFullName && art.Finalized {
 			return true

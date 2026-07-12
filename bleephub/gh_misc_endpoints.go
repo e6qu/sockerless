@@ -94,18 +94,18 @@ func (s *Server) registerGHMiscEndpoints() {
 		s.requirePerm(scopeAdministration, permWrite, s.handleOIDCCustomSubPut))
 
 	// Pages
-	s.route("GET /api/v3/repos/{owner}/{repo}/pages", s.handlePagesGet)
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages", s.requirePagesRead(s.handlePagesGet))
 	s.route("POST /api/v3/repos/{owner}/{repo}/pages",
-		s.requirePerm(scopeAdministration, permWrite, s.handlePagesCreate))
+		s.requirePerm(scopePages, permWrite, s.handlePagesCreate))
 	s.route("PUT /api/v3/repos/{owner}/{repo}/pages",
-		s.requirePerm(scopeAdministration, permWrite, s.handlePagesUpdate))
+		s.requirePerm(scopePages, permWrite, s.handlePagesUpdate))
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/pages",
-		s.requirePerm(scopeAdministration, permWrite, s.handlePagesDelete))
-	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds", s.handlePagesListBuilds)
+		s.requirePerm(scopePages, permWrite, s.handlePagesDelete))
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds", s.requirePagesRead(s.handlePagesListBuilds))
 	s.route("POST /api/v3/repos/{owner}/{repo}/pages/builds",
-		s.requirePerm(scopeAdministration, permWrite, s.handlePagesTriggerBuild))
-	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds/latest", s.handlePagesLatestBuild)
-	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds/{build_id}", s.handlePagesGetBuild)
+		s.requirePerm(scopePages, permWrite, s.handlePagesTriggerBuild))
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds/latest", s.requirePagesRead(s.handlePagesLatestBuild))
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds/{build_id}", s.requirePagesRead(s.handlePagesGetBuild))
 
 	// Orgs depth (members listing + memberships CRUD already covered in
 	// gh_members_rest.go — implementation).
@@ -1001,7 +1001,7 @@ func (s *Server) handlePagesCreate(w http.ResponseWriter, r *http.Request) {
 	pages := &PagesSite{
 		CNAME:   req.CNAME,
 		URL:     s.baseURL(r) + "/" + repo.FullName + "/pages",
-		HTMLURL: "https://" + ownerLogin + ".github.io/" + repo.Name,
+		HTMLURL: s.baseURL(r) + "/pages/" + ownerLogin + "/" + repo.Name + "/",
 		Status:  "building",
 		Source: map[string]interface{}{
 			// branch is required+validated for legacy/branch builds above; for
@@ -1086,6 +1086,10 @@ func (s *Server) handlePagesDelete(w http.ResponseWriter, r *http.Request) {
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if err := s.store.deletePagesPublicationData(r.Context(), repo.ID); err != nil {
+		writeGHError(w, http.StatusInternalServerError, "Pages deletion failed: "+err.Error())
 		return
 	}
 	s.store.Misc.mu.Lock()

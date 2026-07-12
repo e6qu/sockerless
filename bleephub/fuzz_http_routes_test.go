@@ -818,6 +818,7 @@ var fuzzRoutePatterns = []string{
 	"GET /code-scanning/repos/{owner}/{repo}/codeql/variant-analyses/{codeql_variant_analysis_id}/query-pack",
 	"GET /health",
 	"GET /images/icons/emoji/{path...}",
+	"GET /pages/{owner}/{repo}/{path...}",
 	"GET /internal/exec/jobs/{jobId}",
 	"GET /internal/exec/workflows/{workflowId}",
 	"GET /internal/metrics",
