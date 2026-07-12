@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2526. In addition to the complete release-provider work, the branch reconciled the parity audit, rebuilt shared light/dark chrome around GitHub/Primer structure with saturated brand colors, made repository organization full-width and GitHub-shaped, added real Watch/Fork/Star actions, normalized viewer-state reads without browser `404` errors, and made social/theme browser coverage independent. BUG-2523 remained the verified operator-ingress gap.
+`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2530. In addition to the complete release-provider and repository UI work, the branch retained GitHub Classroom with authenticated organization-admin management, identifier-first rosters, real repository-backed individual/group assignment acceptance, Feedback pull requests, generated GitHub Actions autograding, derived grading, transition export/import, official client coverage, and saturated light/dark browser organization. BUG-2523 remained open for four other operator-ingress domains.
 
 ## Continue Here
 
-1. Close BUG-2523 one real producer/browser workflow at a time: fine-grained personal access token creation, CodeQL database upload/finalization, hosted-compute network onboarding, GitHub Marketplace purchase lifecycle, and GitHub Classroom creation/acceptance.
+1. Close BUG-2523 one real producer/browser workflow at a time: fine-grained personal access token creation, CodeQL database upload/finalization, hosted-compute network onboarding, and GitHub Marketplace purchase lifecycle. GitHub Classroom creation, acceptance, grading, and transition were completed.
 2. Add a vendored GitHub GraphQL schema/introspection ratchet; current resolver coverage remained consumer-driven rather than complete-schema proof.
 3. Continue page-level light/dark UI comparison with repository Settings/Security, issue and pull-request timelines/reviews/diffs, Actions job logs, organization administration, and account/App/token management.
 4. Continue REST semantic matrices for permissions, conditional requests, redirects, pagination, version headers, rate limits, webhooks, durable cascades, and storage-failure atomicity.

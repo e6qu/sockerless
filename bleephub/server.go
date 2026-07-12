@@ -33,8 +33,9 @@ type Server struct {
 	actionsEvents          actionsEventLoop  // checks/webhook fan-out for run+job transitions
 	registryUploadsMu      sync.Mutex
 	registryUploads        map[string]*containerRegistryUpload
-	routePatterns          []string // every pattern registered via route(), for fidelity enumeration
-	externalURL            string   // BLEEPHUB_EXTERNAL_URL; when set, overrides request-Host URL derivation (job messages, action URLs) — the GHES "external URL" knob
+	classroomMu            sync.Mutex // serializes multi-resource Classroom browser transactions
+	routePatterns          []string   // every pattern registered via route(), for fidelity enumeration
+	externalURL            string     // BLEEPHUB_EXTERNAL_URL; when set, overrides request-Host URL derivation (job messages, action URLs) — the GHES "external URL" knob
 	pagesJekyllExecutable  string
 	// responseObserver, when set before ListenAndServe, sees every
 	// request/response pair in the handler chain. The test harness
@@ -361,6 +362,7 @@ func (s *Server) registerRoutes() {
 	s.registerGHCodesOfConductRoutes()
 	s.registerGHGlobalAdvisoriesRoutes()
 	s.registerGHClassroomRoutes()
+	s.registerGHClassroomWebRoutes()
 	s.registerGHEventsFeedsRoutes()
 	s.registerGHUserIssuesRoutes()
 	// Repository read surfaces (gh_repos_reads.go)

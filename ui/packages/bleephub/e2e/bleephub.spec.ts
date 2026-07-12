@@ -134,6 +134,7 @@ test.describe("Global navigation", () => {
     await openDrawer(page);
     const drawer = page.getByRole("navigation", { name: "Global" });
     await expect(drawer.getByRole("link", { name: "Repositories" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Classroom" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "Runners" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "GitHub Apps" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "OAuth Apps" })).toBeVisible();
@@ -218,6 +219,34 @@ test.describe("Theme toggle", () => {
     });
     expect(dark).toEqual({ accent: "#58a6ff", cyan: "#39d0e8", pink: "#ff7bda" });
     await shot(page, "11b-theme-toggle-dark");
+  });
+});
+
+test.describe("GitHub Classroom transition product", () => {
+  test("creates and renders a classroom with saturated light and dark organization", async ({ page }) => {
+    await page.goto("/ui/");
+    const suffix = Date.now().toString(36);
+    const org = `classroom-e2e-${suffix}`;
+    await apiPost(page, "/api/v3/admin/organizations", { login: org, admin: "admin", profile_name: "Classroom E2E" });
+    const classroom = await apiPost(page, "/classroom-data/classrooms", { name: "Software Construction", organization: org }) as { id: number };
+
+    await page.goto(`/ui/classrooms/${classroom.id}`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { name: "Software Construction" })).toBeVisible();
+    await expect(page.getByText(`Owned by ${org}`)).toBeVisible();
+    await expect(page.getByRole("button", { name: "New assignment" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Roster/ })).toBeVisible();
+    const lightSurface = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim());
+    expect(lightSurface).toBeTruthy();
+    await shot(page, "11c-classroom-light");
+
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    await page.getByRole("menuitem", { name: /dark theme/i }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    const darkSurface = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim());
+    expect(darkSurface).not.toBe(lightSurface);
+    await expect(page.getByRole("heading", { name: "Software Construction" })).toBeVisible();
+    await shot(page, "11d-classroom-dark");
   });
 });
 

@@ -805,6 +805,97 @@ async function ghPostJSON<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface ClassroomOrganization {
+  id: number;
+  login: string;
+  name: string;
+  avatar_url: string;
+}
+
+export interface ClassroomRosterEntry {
+  id: number;
+  login: string;
+  avatar_url: string;
+  roster_identifier: string;
+}
+
+export interface ClassroomAutogradingTest {
+  name: string;
+  command: string;
+  points: number;
+}
+
+export interface ClassroomAssignment {
+  id: number;
+  title: string;
+  type: "individual" | "group";
+  slug: string;
+  invite_link: string;
+  invitations_enabled: boolean;
+  public_repo: boolean;
+  accepted: number;
+  submitted: number;
+  passing: number;
+  deadline: string | null;
+  autograding_tests?: ClassroomAutogradingTest[];
+  starter_code_repository?: { full_name: string };
+  roster_identifier_required?: boolean;
+}
+
+export interface Classroom {
+  id: number;
+  name: string;
+  archived: boolean;
+  url: string;
+  organization: ClassroomOrganization;
+  roster: ClassroomRosterEntry[];
+  assignments: ClassroomAssignment[];
+}
+
+export interface ClassroomDashboard {
+  classrooms: Classroom[];
+  organizations: ClassroomOrganization[];
+}
+
+export const fetchClassroomDashboard = () => ghFetch<ClassroomDashboard>("/classroom-data");
+export const createClassroom = (body: { name: string; organization: string }) =>
+  ghPostJSON<Classroom>("/classroom-data/classrooms", body);
+export const updateClassroom = (id: number, body: { name?: string; archived?: boolean }) =>
+  ghPatchJSON<Classroom>(`/classroom-data/classrooms/${id}`, body);
+export const replaceClassroomRoster = (
+  id: number,
+  students: Array<{ login: string; roster_identifier: string }>,
+) => ghPutJSON<Classroom>(`/classroom-data/classrooms/${id}/roster`, { students });
+export const createClassroomAssignment = (
+  classroomID: number,
+  body: {
+    title: string;
+    type: "individual" | "group";
+    starter_code_repository: string;
+    public_repo: boolean;
+    students_are_repo_admins: boolean;
+    feedback_pull_requests_enabled: boolean;
+    deadline?: string;
+    max_teams?: number;
+    max_members?: number;
+    autograding_tests: ClassroomAutogradingTest[];
+  },
+) => ghPostJSON<ClassroomAssignment>(`/classroom-data/classrooms/${classroomID}/assignments`, body);
+export const fetchClassroomInvitation = (code: string) =>
+  ghFetch<ClassroomAssignment>(`/classroom-data/invitations/${encodeURIComponent(code)}`);
+export const acceptClassroomInvitation = (code: string, groupName?: string, rosterIdentifier?: string) =>
+  ghPostJSON<{ id: number; repository: { full_name: string; html_url: string } }>(
+    `/classroom-data/invitations/${encodeURIComponent(code)}/accept`,
+    { ...(groupName ? { group_name: groupName } : {}), ...(rosterIdentifier ? { roster_identifier: rosterIdentifier } : {}) },
+  );
+export async function exportClassroomTransition(): Promise<Blob> {
+  const response = await fetch("/classroom-data/export", { headers: authHeaders() });
+  if (!response.ok) throw new ApiError(response.status, `${response.status} ${response.statusText}`);
+  return response.blob();
+}
+export const importClassroomTransition = (bundle: unknown) =>
+  ghPostJSON<{ classrooms: Classroom[] }>("/classroom-data/import", bundle);
+
 /** First page by (owner, repo, state); follow-up pages by the Link rel="next" URL. */
 export const fetchRepoIssuesPage = (
   owner: string,

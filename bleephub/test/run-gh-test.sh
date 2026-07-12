@@ -166,6 +166,22 @@ PERMS_ADMIN=$(echo "$REPO" | jq -r '.permissions.admin')
 assert_eq "repo permissions.admin" "true" "$PERMS_ADMIN"
 
 # ============================================================
+# Test: GitHub Classroom browser writes + official gh API reads
+# ============================================================
+log "Test: GitHub Classroom"
+api --method POST "$BASE/api/v3/admin/organizations" -f login=gh-classroom -f admin=admin >/dev/null
+api --method POST "$BASE/api/v3/orgs/gh-classroom/repos" -f name=starter -F auto_init=true >/dev/null
+CLASSROOM=$(api --method POST "$BASE/classroom-data/classrooms" -f name="GH CLI Classroom" -f organization=gh-classroom)
+CLASSROOM_ID=$(echo "$CLASSROOM" | jq -r '.id')
+ASSIGNMENT=$(api --method POST "$BASE/classroom-data/classrooms/$CLASSROOM_ID/assignments" \
+    --input <(printf '%s' '{"title":"Command line assignment","type":"individual","starter_code_repository":"gh-classroom/starter","invitations_enabled":true,"autograding_tests":[{"name":"README","command":"test -f README.md","points":10}]}'))
+ASSIGNMENT_ID=$(echo "$ASSIGNMENT" | jq -r '.id')
+CLASSROOMS=$(api "$BASE/api/v3/classrooms")
+assert_eq "gh api lists browser-created Classroom" "GH CLI Classroom" "$(echo "$CLASSROOMS" | jq -r --argjson id "$CLASSROOM_ID" '.[] | select(.id == $id) | .name')"
+ASSIGNMENT_GET=$(api "$BASE/api/v3/assignments/$ASSIGNMENT_ID")
+assert_eq "gh api reads Classroom starter repository" "gh-classroom/starter" "$(echo "$ASSIGNMENT_GET" | jq -r '.starter_code_repository.full_name')"
+
+# ============================================================
 # Test: List repos via real `gh repo list`
 # ============================================================
 log "Test: gh repo list"

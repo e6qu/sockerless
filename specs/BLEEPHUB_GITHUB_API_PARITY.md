@@ -48,6 +48,12 @@ The application shell used GitHub's global navigation model. Repository pages us
 
 The visual system retained GitHub/Primer light and dark surface/semantic tokens, then added a deliberately more saturated blue/cyan/purple/pink brand layer. Both themes were browser-asserted. Primer's token and color-mode model remained the reference for contrast and theme separation: <https://primer.style/product/primitives/>.
 
+### Retained GitHub Classroom product
+
+Bleephub retained GitHub Classroom as an authenticated browser product while preserving GitHub's six read-only Classroom REST endpoints for the official `go-github` client and GitHub Classroom extension. Organization administrators created, renamed, archived, and deleted classrooms; managed linked or identifier-only rosters; created individual or group assignments; configured deadlines, permissions, feedback pull requests, team limits, and command-based autograding; and exported or imported a lossless transition bundle.
+
+Assignment acceptance generated an organization-owned repository from the real starter git tree, granted the student or group access, created the configured Feedback pull request, installed a real GitHub Actions workflow, and recorded its baseline commit. Submission counts, subsequent commit counts, passing state, and exported points were derived from repository history and completed autograding jobs rather than accepted from management requests. The obsolete `/internal/classrooms...` seed routes no longer existed.
+
 ## What is truly left
 
 ### 1. External producer/browser workflows still enter through operator routes
@@ -56,7 +62,6 @@ These are real stored implementations after ingestion, but their creation/onboar
 
 | Domain | Current ingress | Required completion path |
 |---|---|---|
-| GitHub Classroom | `/internal/classrooms...` | Classroom browser workflow that creates classrooms, assignments, and accepted assignments |
 | GitHub Marketplace purchases | `/internal/marketplace/purchases` | Marketplace purchase/change/cancel workflow that drives account billing state and events |
 | CodeQL databases | `/internal/repos/.../code-scanning/codeql/databases` | CodeQL producer upload/finalization workflow that stores the real archive and metadata |
 | Hosted-compute network settings | `/internal/orgs/.../network-settings` | GitHub/Azure private-network onboarding workflow that provisions the settings resource before public configuration APIs reference it |
