@@ -6,7 +6,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +18,36 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
+
+const maxPagesJekyllOutput = 1 << 20
+
+type pagesJekyllOutput struct {
+	bytes.Buffer
+	truncated bool
+}
+
+func (output *pagesJekyllOutput) Write(data []byte) (int, error) {
+	originalLength := len(data)
+	remaining := maxPagesJekyllOutput - output.Len()
+	if remaining <= 0 {
+		output.truncated = true
+		return originalLength, nil
+	}
+	if len(data) > remaining {
+		data = data[:remaining]
+		output.truncated = true
+	}
+	_, _ = output.Buffer.Write(data)
+	return originalLength, nil
+}
+
+func (output *pagesJekyllOutput) message() string {
+	message := strings.TrimSpace(output.String())
+	if output.truncated {
+		message += "\n[GitHub Pages Jekyll output truncated at 1 MiB]"
+	}
+	return message
+}
 
 func (s *Server) buildPagesBranch(ctx context.Context, repo *Repo, branch, sourcePath string) (string, bool, error) {
 	stor := s.store.GetGitStorage(repo.Owner.Login, repo.Name)
@@ -37,7 +71,17 @@ func (s *Server) buildPagesBranch(ctx context.Context, repo *Repo, branch, sourc
 	if err != nil {
 		return commitSHA, false, fmt.Errorf("read Pages source files: %w", err)
 	}
-	artifact, custom404, err := buildStaticPagesArtifact(entries, sourcePath, commit.Committer.When.UTC())
+	selected, hasNoJekyll, err := selectPagesSourceEntries(entries, sourcePath)
+	if err != nil {
+		return commitSHA, false, err
+	}
+	var artifact []byte
+	var custom404 bool
+	if hasNoJekyll {
+		artifact, custom404, err = archivePagesEntries(selected, commit.Committer.When.UTC())
+	} else {
+		artifact, custom404, err = s.buildJekyllPagesArtifact(ctx, repo, selected, commit.Committer.When.UTC())
+	}
 	if err != nil {
 		return commitSHA, false, err
 	}
@@ -65,7 +109,7 @@ func pagesLegacySource(site *PagesSite) (string, string, error) {
 	return branch, sourcePath, nil
 }
 
-func buildStaticPagesArtifact(entries []archiveEntry, sourcePath string, when time.Time) ([]byte, bool, error) {
+func selectPagesSourceEntries(entries []archiveEntry, sourcePath string) ([]archiveEntry, bool, error) {
 	prefix := strings.TrimPrefix(sourcePath, "/")
 	if prefix != "" {
 		prefix += "/"
@@ -73,7 +117,6 @@ func buildStaticPagesArtifact(entries []archiveEntry, sourcePath string, when ti
 	selected := make([]archiveEntry, 0, len(entries))
 	var total int64
 	hasNoJekyll := false
-	custom404 := false
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.path, prefix) {
 			continue
@@ -89,7 +132,6 @@ func buildStaticPagesArtifact(entries []archiveEntry, sourcePath string, when ti
 			return nil, false, fmt.Errorf("Pages source contains unsafe path %q", entry.path)
 		}
 		hasNoJekyll = hasNoJekyll || name == ".nojekyll"
-		custom404 = custom404 || name == "404.html"
 		total += int64(len(entry.content))
 		if total > maxPagesArtifactSize {
 			return nil, false, fmt.Errorf("Pages source exceeds 10 GB")
@@ -99,12 +141,15 @@ func buildStaticPagesArtifact(entries []archiveEntry, sourcePath string, when ti
 	if len(selected) == 0 {
 		return nil, false, fmt.Errorf("Pages source path %s contains no files", sourcePath)
 	}
-	if !hasNoJekyll {
-		return nil, false, fmt.Errorf("Pages source requires the GitHub Pages Jekyll build runtime because .nojekyll is absent")
-	}
+	return selected, hasNoJekyll, nil
+}
+
+func archivePagesEntries(entries []archiveEntry, when time.Time) ([]byte, bool, error) {
 	var artifact bytes.Buffer
 	tw := tar.NewWriter(&artifact)
-	for _, entry := range selected {
+	custom404 := false
+	for _, entry := range entries {
+		custom404 = custom404 || entry.path == "404.html"
 		mode := int64(0o644)
 		if entry.mode == filemode.Executable {
 			mode = 0o755
@@ -120,6 +165,87 @@ func buildStaticPagesArtifact(entries []archiveEntry, sourcePath string, when ti
 		return nil, false, fmt.Errorf("close Pages artifact: %w", err)
 	}
 	return artifact.Bytes(), custom404, nil
+}
+
+func (s *Server) buildJekyllPagesArtifact(ctx context.Context, repo *Repo, entries []archiveEntry, when time.Time) ([]byte, bool, error) {
+	workspace, err := os.MkdirTemp("", "bleephub-pages-jekyll-*")
+	if err != nil {
+		return nil, false, fmt.Errorf("create GitHub Pages Jekyll workspace: %w", err)
+	}
+	defer os.RemoveAll(workspace)
+	sourceDir := filepath.Join(workspace, "source")
+	destinationDir := filepath.Join(workspace, "site")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		return nil, false, fmt.Errorf("create GitHub Pages Jekyll source: %w", err)
+	}
+	for _, entry := range entries {
+		target := filepath.Join(sourceDir, filepath.FromSlash(entry.path))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return nil, false, fmt.Errorf("create GitHub Pages source directory: %w", err)
+		}
+		mode := fs.FileMode(0o644)
+		if entry.mode == filemode.Executable {
+			mode = 0o755
+		}
+		if err := os.WriteFile(target, entry.content, mode); err != nil {
+			return nil, false, fmt.Errorf("write GitHub Pages source %q: %w", entry.path, err)
+		}
+	}
+	cmd := exec.CommandContext(ctx, s.pagesJekyllExecutable, "build", "--safe", "--source", sourceDir, "--destination", destinationDir, "--trace")
+	cmd.Env = append(os.Environ(), "JEKYLL_ENV=production", "PAGES_REPO_NWO="+repo.FullName)
+	output := &pagesJekyllOutput{}
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err = cmd.Run()
+	if err != nil {
+		return nil, false, fmt.Errorf("GitHub Pages Jekyll build failed: %w: %s", err, output.message())
+	}
+	generated, err := collectPagesOutput(destinationDir)
+	if err != nil {
+		return nil, false, err
+	}
+	return archivePagesEntries(generated, when)
+}
+
+func collectPagesOutput(root string) ([]archiveEntry, error) {
+	entries := []archiveEntry{}
+	var total int64
+	err := filepath.WalkDir(root, func(filePath string, dirEntry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if filePath == root || dirEntry.IsDir() {
+			return nil
+		}
+		info, err := dirEntry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("GitHub Pages Jekyll output %q is not a regular file", filePath)
+		}
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return err
+		}
+		total += int64(len(content))
+		if total > maxPagesArtifactSize {
+			return fmt.Errorf("GitHub Pages Jekyll output exceeds 10 GB")
+		}
+		relative, err := filepath.Rel(root, filePath)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, archiveEntry{path: filepath.ToSlash(relative), mode: filemode.Regular, content: content})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read GitHub Pages Jekyll output: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("GitHub Pages Jekyll build produced no files")
+	}
+	return entries, nil
 }
 
 func (s *Server) publishPagesArtifact(ctx context.Context, repoID int, environment, buildVersion string, artifact []byte) (*PagesDeploymentRecord, error) {

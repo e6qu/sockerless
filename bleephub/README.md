@@ -224,7 +224,7 @@ The script compiles the current source, starts the server and user interface, an
 
 **Meta.** `GET /meta` in GitHub Enterprise Server shape — Bleephub presents as GitHub Enterprise Server (`installed_version: "3.21.0"`). `gh` feature detection requires the member to resolve the host version; without it `gh issue list --label`, `gh pr status`, and `gh workflow run` fail.
 
-**Pages.** Site CRUD, build records, deployments, and DNS-health checks are persisted. Manual legacy build requests validate the configured branch plus `/` or `/docs` source, publish `.nojekyll` static trees from real git content to S3-compatible object storage, and persist the actual source commit and terminal build state. Sources that require Jekyll fail explicitly until the real GitHub Pages Jekyll runtime is available; Bleephub does not copy them as if they were already built.
+**Pages.** Site CRUD, build records, deployments, and DNS-health checks are persisted. Manual legacy build requests validate the configured branch plus `/` or `/docs` source, publish `.nojekyll` static trees directly, and run the pinned `github-pages` 232/Jekyll 3.10.0 toolchain in safe production mode for Markdown, Liquid, layouts, themes, and GitHub-supported plugins. Generated or direct output is archived into S3-compatible object storage; real build errors become terminal Pages build errors and never create deployments.
 
 **Branch protection.** PUT/GET/DELETE per-branch protection rules with typed required-status-checks, review, restriction, admin-enforcement, force-push, and deletion subresources.
 
@@ -258,6 +258,7 @@ Actions byte storage is selected separately from git storage:
 
 - default — in-memory bytes while metadata persistence is disabled;
 - `BLEEPHUB_OBJECT_S3_BUCKET` (+ optional `BLEEPHUB_OBJECT_S3_ENDPOINT`, `BLEEPHUB_OBJECT_S3_PREFIX`) — service byte content in S3-compatible object storage: GitHub Actions artifacts, dependency caches, runner-uploaded log files, release assets, package files, container-registry blobs, CodeQL database archives, CodeQL variant-analysis query packs, artifact attestation bundles, and published GitHub Pages archives. If `BLEEPHUB_OBJECT_S3_BUCKET` is set and the bucket cannot be reached with `HeadBucket`, startup fails loudly.
+- `BLEEPHUB_PAGES_JEKYLL_EXECUTABLE` — executable coordinate for the GitHub Pages Jekyll command contract; defaults to the `bleephub-pages-jekyll` wrapper shipped in the release image and is used directly without a static-copy fallback.
 
 Database persistence **requires** `BLEEPHUB_OBJECT_S3_BUCKET`: SQLite stores Bleephub metadata, while GitHub Actions artifact, dependency-cache, runner-log, release-asset, package-file, container-registry, CodeQL database archive, CodeQL variant-analysis query-pack, and artifact attestation bundle bytes must live in object storage. Persisted startup fails loudly when this bucket is absent instead of storing byte content in memory or local files.
 

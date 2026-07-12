@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-pages-branch-builds` continued after merged #790 and fixed BUG-2506. Manual legacy Pages builds now used their configured branch and `/` or `/docs` git subtree, required `.nojekyll` for truthful direct-static publication, rejected links and invalid/empty/oversized sources, published through the same transactional S3-compatible object-store path as workflow deployments, served the resulting bytes, and persisted real commit, terminal build/site, duration, custom-404, digest, size, and deployment state. Pages create/update also rejected unsupported build types, source paths, and nonexistent legacy branches.
+`feat/bleephub-pages-branch-builds` continued after merged #790 and fixed BUG-2506 and BUG-2507. Manual legacy Pages builds now used their configured git source, directly published `.nojekyll` trees or ran the pinned `github-pages` 232/Jekyll 3.10.0 toolchain in safe production mode, rejected invalid sources and links, published only real static/generated output through the shared S3-compatible transaction, served the resulting bytes, and persisted real commit, terminal build/site, duration, custom-404, digest, size, deployment, and Jekyll error state. The release image shipped the complete Ruby/Bundler/gem runtime, and tests built that actual image before driving public Pages APIs against real git and the Amazon Simple Storage Service simulator.
 
 ## Continue Here
 
-1. Fix BUG-2507 by integrating the real GitHub Pages Jekyll toolchain for legacy branch sources without `.nojekyll`; do not substitute a partial Markdown renderer or static-copy fallback.
+1. Fix BUG-2508 by creating one post-ref-update fan-out for smart-HTTP pushes, Contents API commits, and Git Database branch writes, then automatically rebuild configured legacy Pages sources from that real event path.
 2. Keep scanning for Bleephub behavior that is still internal-only, shape-only, fake, fallback-based, or not backed by real git/object/store state.
 3. Prefer high-value public GitHub surfaces: repository provider behavior, releases/assets, GitHub Actions and runner protocol, Pages, OAuth/GitHub Apps/Auth, packages/container registry, pull requests/reviews/checks/statuses, notifications, repository settings/security/advisories, and the UI paths that consume them.
 4. For every found defect, add a `BUGS.md` row first, fix the class of issue where practical, add focused tests, and update continuity in past tense.
@@ -16,6 +16,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `docker buildx build --load -f bleephub/Dockerfile.release -t sockerless-bleephub-pages-test .` passed with the pinned `github-pages` 232 gem and its complete native/runtime dependency graph.
+- A real release-image `bleephub-pages-jekyll build --safe` converted Markdown and Liquid into the expected generated HTML.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPagesJekyllBuildPublishesGeneratedSite' -count=1` passed for both successful generated publication and malformed-site terminal failure without deployment.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Pages|pages' -count=1` passed after real Jekyll execution was integrated.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 170 seconds after BUG-2507 was fixed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(StaticPagesBranchArtifactValidation|PagesBuildsCRUD|PagesCreateUpdateShape)' -count=1` passed against real git and the Amazon Simple Storage Service simulator after branch publication and configuration validation were implemented.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(StaticPagesBranchArtifactValidation|PagesBuildsCRUD|PagesCreateUpdateShape)' -count=1` passed after branch builds began snapshotting source configuration and applying shared build/site state only under the Pages mutex.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Pages|pages' -count=1` passed after workflow and branch publication were consolidated behind one object-store transaction.

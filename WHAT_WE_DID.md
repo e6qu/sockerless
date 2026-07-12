@@ -8,15 +8,17 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 
 This branch continued from merged #790, which made GitHub Actions artifact deployments publish real GitHub Pages sites from object storage.
 
-Closed BUG-2506 by replacing permanent shape-only Pages build queues with real branch publication. `POST /api/v3/repos/{owner}/{repo}/pages/builds` now resolves the configured legacy source branch and `/` or `/docs` subtree from git, requires `.nojekyll` before treating committed files as already-built static output, rejects symbolic links, submodules, unsafe paths, empty sources, and content over 10 GB, writes a deterministic TAR archive through the same transactional S3-compatible publication path as workflow deployments, serves the result, and persists the actual commit, duration, terminal build/site state, custom-404 state, digest, size, and deployment record. Object replacement writes and validates the new durable object before deleting the prior publication and rolls back the new object if replacement cleanup fails.
+Closed BUG-2506 by replacing permanent shape-only Pages build queues with real branch publication. `POST /api/v3/repos/{owner}/{repo}/pages/builds` now resolves the configured legacy source branch and `/` or `/docs` subtree from git, treats `.nojekyll` as already-built static output, rejects symbolic links, submodules, unsafe paths, empty sources, and content over 10 GB, writes a deterministic TAR archive through the same transactional S3-compatible publication path as workflow deployments, serves the result, and persists the actual commit, duration, terminal build/site state, custom-404 state, digest, size, and deployment record. Object replacement writes and validates the new durable object before deleting the prior publication and rolls back the new object if replacement cleanup fails.
 
-Pages create/update now validate GitHub's `legacy|workflow` build types, `/|/docs` source paths, required legacy source branches, and real branch existence before mutating site configuration. Sources without `.nojekyll` now reach an explicit terminal build error naming the required GitHub Pages Jekyll runtime rather than remaining queued forever or being copied as fabricated generated output; BUG-2507 tracked that real runtime as the next Pages increment.
+Closed BUG-2507 by shipping and executing the real GitHub Pages generation runtime. The release image now contains Ruby, Bundler, `github-pages` 232, Jekyll 3.10.0, and the complete GitHub-supported plugin/theme graph behind `bleephub-pages-jekyll`. Branch builds without `.nojekyll` materialize the real git source in an isolated workspace, invoke Jekyll in safe production mode with repository identity, bound captured build output to 1 MiB, archive only regular generated files, and publish through the same object transaction. Malformed sites persist real terminal Jekyll errors and create no deployment. Unconditional integration coverage built the actual release image and proved Markdown/Liquid generation plus object-backed serving against real git and the Amazon Simple Storage Service simulator.
 
 Validation in this branch included:
 
 ```bash
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(StaticPagesBranchArtifactValidation|PagesBuildsCRUD|PagesCreateUpdateShape)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(StaticPagesBranchArtifactValidation|PagesBuildsCRUD|PagesCreateUpdateShape)' -count=1
+docker buildx build --load -f bleephub/Dockerfile.release -t sockerless-bleephub-pages-test .
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPagesJekyllBuildPublishesGeneratedSite' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Pages|pages' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 ```

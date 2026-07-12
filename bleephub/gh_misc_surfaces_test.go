@@ -2,12 +2,48 @@ package bleephub
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+const pagesJekyllTestImage = "sockerless-bleephub-pages-test"
+
+var pagesJekyllImageOnce sync.Once
+var pagesJekyllImageErr error
+
+func realPagesJekyllExecutable(t *testing.T) string {
+	t.Helper()
+	pagesJekyllImageOnce.Do(func() {
+		root, err := filepath.Abs("..")
+		if err != nil {
+			pagesJekyllImageErr = err
+			return
+		}
+		cmd := exec.Command("docker", "buildx", "build", "--load", "-f", "bleephub/Dockerfile.release", "-t", pagesJekyllTestImage, ".")
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			pagesJekyllImageErr = fmt.Errorf("build Bleephub release image: %w: %s", err, output)
+		}
+	})
+	if pagesJekyllImageErr != nil {
+		t.Fatal(pagesJekyllImageErr)
+	}
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "bleephub-pages-jekyll")
+	script := "#!/bin/sh\nset -eu\nworkspace=$(dirname \"$4\")\nexec docker run --rm -v \"$workspace:$workspace\" --entrypoint bleephub-pages-jekyll " + pagesJekyllTestImage + " \"$@\"\n"
+	if err := os.WriteFile(executable, []byte(script), 0o755); err != nil {
+		t.Fatalf("write GitHub Pages Jekyll test executable: %v", err)
+	}
+	return executable
+}
 
 func TestGPGKeyCRUD(t *testing.T) {
 	s := newTestServer()
@@ -248,6 +284,84 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	}
 }
 
+func TestPagesJekyllBuildPublishesGeneratedSite(t *testing.T) {
+	s := newTestServer()
+	s.registerGHMiscEndpoints()
+	s.pagesJekyllExecutable = realPagesJekyllExecutable(t)
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "pages-jekyll-objects"}
+	s.store.ObjectByteStore = &s3ActionsByteStore{fs: objectFS}
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "pages-jekyll-test", "", false)
+	commitHash, err := initRepoWithFiles(s.store.GetGitStorage("admin", repo.Name), repo.DefaultBranch, "Jekyll source", map[string]string{
+		"_config.yml": "title: Bleephub Pages\n",
+		"index.md":    "---\ntitle: Real Pages\n---\n# {{ page.title }}\n",
+		"404.md":      "---\npermalink: /404.html\n---\n# Missing\n",
+	}, repoSignature(admin.Login, "bleephub@local"))
+	if err != nil {
+		t.Fatalf("init Jekyll Pages repository: %v", err)
+	}
+
+	w := doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages", `{"source":{"branch":"main","path":"/"}}`)
+	if w.Code != 201 {
+		t.Fatalf("create Jekyll Pages site = %d: %s", w.Code, w.Body.String())
+	}
+	w = doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages/builds", "")
+	if w.Code != 201 {
+		t.Fatalf("trigger Jekyll Pages build = %d: %s", w.Code, w.Body.String())
+	}
+	w = doMiscReq(s, "GET", "/api/v3/repos/"+repo.FullName+"/pages/builds/latest", "")
+	latest := map[string]interface{}{}
+	if err := json.Unmarshal(w.Body.Bytes(), &latest); err != nil {
+		t.Fatalf("decode latest Jekyll Pages build: %v", err)
+	}
+	if w.Code != 200 || latest["status"] != "built" || latest["commit"] != commitHash.String() {
+		t.Fatalf("latest Jekyll Pages build = %d %v", w.Code, latest)
+	}
+
+	contentReq := httptest.NewRequest("GET", "/pages/admin/"+repo.Name+"/", nil)
+	contentReq.SetPathValue("owner", "admin")
+	contentReq.SetPathValue("repo", repo.Name)
+	contentReq.SetPathValue("path", "")
+	contentW := httptest.NewRecorder()
+	s.handlePagesContent(contentW, contentReq)
+	if contentW.Code != 200 || !strings.Contains(contentW.Body.String(), `<h1 id="real-pages">Real Pages</h1>`) {
+		t.Fatalf("generated Jekyll Pages content = %d %q", contentW.Code, contentW.Body.String())
+	}
+	if !s.store.Misc.pagesByRepo[repo.ID].Custom404 {
+		t.Fatal("generated Jekyll Pages site did not detect custom 404.html")
+	}
+
+	broken := s.store.CreateRepo(admin, "pages-jekyll-broken", "", false)
+	if _, err := initRepoWithFiles(s.store.GetGitStorage("admin", broken.Name), broken.DefaultBranch, "Broken Jekyll source", map[string]string{
+		"_config.yml": "plugins: [\n",
+		"index.md":    "# Never published\n",
+	}, repoSignature(admin.Login, "bleephub@local")); err != nil {
+		t.Fatalf("init broken Jekyll Pages repository: %v", err)
+	}
+	w = doMiscReq(s, "POST", "/api/v3/repos/"+broken.FullName+"/pages", `{"source":{"branch":"main","path":"/"}}`)
+	if w.Code != 201 {
+		t.Fatalf("create broken Jekyll Pages site = %d: %s", w.Code, w.Body.String())
+	}
+	w = doMiscReq(s, "POST", "/api/v3/repos/"+broken.FullName+"/pages/builds", "")
+	if w.Code != 201 {
+		t.Fatalf("trigger broken Jekyll Pages build = %d: %s", w.Code, w.Body.String())
+	}
+	w = doMiscReq(s, "GET", "/api/v3/repos/"+broken.FullName+"/pages/builds/latest", "")
+	failed := map[string]interface{}{}
+	if err := json.Unmarshal(w.Body.Bytes(), &failed); err != nil {
+		t.Fatalf("decode failed Jekyll Pages build: %v", err)
+	}
+	errorObject, _ := failed["error"].(map[string]interface{})
+	errorMessage, _ := errorObject["message"].(string)
+	if w.Code != 200 || failed["status"] != "errored" || !strings.Contains(errorMessage, "Jekyll build failed") {
+		t.Fatalf("failed Jekyll Pages build = %d %v", w.Code, failed)
+	}
+	if deployment := s.store.latestPublishedPagesDeployment(broken.ID); deployment != nil {
+		t.Fatalf("broken Jekyll Pages build published deployment %+v", deployment)
+	}
+}
+
 func TestPagesCreateUpdateShape(t *testing.T) {
 	s := newTestServer()
 	s.registerGHMiscEndpoints()
@@ -314,23 +428,25 @@ func TestPagesCreateUpdateShape(t *testing.T) {
 }
 
 func TestStaticPagesBranchArtifactValidation(t *testing.T) {
-	when := time.Unix(1, 0).UTC()
 	for _, tc := range []struct {
 		name    string
 		entries []archiveEntry
 		path    string
 		wantErr string
 	}{
-		{name: "Jekyll required", entries: []archiveEntry{{path: "index.html", mode: 0o100644, content: []byte("site")}}, path: "/", wantErr: "Jekyll"},
 		{name: "missing docs", entries: []archiveEntry{{path: ".nojekyll", mode: 0o100644}}, path: "/docs", wantErr: "contains no files"},
 		{name: "symbolic link", entries: []archiveEntry{{path: ".nojekyll", mode: 0o100644}, {path: "linked", mode: 0o120000, content: []byte("index.html")}}, path: "/", wantErr: "unsupported link"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := buildStaticPagesArtifact(tc.entries, tc.path, when)
+			_, _, err := selectPagesSourceEntries(tc.entries, tc.path)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("buildStaticPagesArtifact error = %v, want containing %q", err, tc.wantErr)
+				t.Fatalf("selectPagesSourceEntries error = %v, want containing %q", err, tc.wantErr)
 			}
 		})
+	}
+	selected, hasNoJekyll, err := selectPagesSourceEntries([]archiveEntry{{path: "index.md", mode: 0o100644, content: []byte("# Jekyll")}}, "/")
+	if err != nil || hasNoJekyll || len(selected) != 1 {
+		t.Fatalf("Jekyll source selection = %d entries, nojekyll=%v, error=%v", len(selected), hasNoJekyll, err)
 	}
 }
 
