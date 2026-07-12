@@ -6,9 +6,10 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleephub-fidelity-sweep-next` |
-| Branch purpose | Follow-up Bleephub fidelity hardening after merged #788, continuing the conversion of shallow or shape-only behavior into a real GitHub-compatible service backed by git, SQLite metadata, and object storage. |
-| Current fixes | BUG-2502 through BUG-2505 were fixed on this branch. GitHub Pages deployments now retrieve real artifact bytes, validate GitHub's official Actions archive and direct ZIP/TAR formats, reject unsafe or empty content, verify signed OpenID Connect workflow claims, enforce `pages: read/write`, publish immutable archives to S3-compatible object storage, serve usable public/private static sites with clean URLs and custom 404 pages, replace prior publication objects before switching metadata, and delete published bytes fail-loud with Pages or repository deletion. |
+| Active branch | `feat/bleephub-pages-branch-builds` |
+| Branch purpose | Continued Bleephub GitHub Pages fidelity after merged #790 by converting manual branch builds from permanent queue records into real git-to-object-store publication. |
+| Current fixes | BUG-2506 was fixed on this branch. Manual legacy builds now validate real Pages configuration, resolve the configured git branch and `/` or `/docs` source, publish `.nojekyll` static trees through the same S3-compatible object-store transaction as workflow deployments, serve the built content, and persist real commit, terminal build, site, custom-404, duration, digest, and size state. BUG-2507 remained open for the real GitHub Pages Jekyll runtime required when `.nojekyll` is absent. |
+| Last merged (#790) | **Publish real Bleephub GitHub Pages sites**. It retrieved and validated real workflow artifact bytes, verified signed OpenID Connect identity and Pages permissions, stored published archives in object storage, served public/private sites, and reclaimed replaced or deleted publication objects. |
 | Last merged (#788) | **Harden Bleephub state, Git provider, UI, Apps, Actions, packages, Projects v2, and runner authentication**. It made repository ownership strict, removed execution-image and runner-label fallbacks, moved container-package coverage to the GitHub Container Registry-compatible data plane, tightened Projects v2 and runner wire contracts, made commit listing fail loudly, kept empty-repository UI behavior faithful, and fixed GitHub App organization repository creation authorization. |
 | Last merged (#787) | **Store Bleephub CodeQL query packs and preserve runner logs**. It moved CodeQL variant-analysis query-pack tarballs to object storage, made query-pack download and repository cleanup read/purge those objects fail-loud, and made runner-log object-store upload/deletion failures preserve live log, console, and timeline state. |
 | Last merged (#786) | **Store Bleephub service bytes in objects and harden public ingestion**. It moved release assets, GitHub Packages file bytes, GitHub Container Registry blobs, GitHub CodeQL database archives, and artifact attestation Sigstore bundles to object-backed storage; made relevant public byte routes read object storage; hardened repository deletion cleanup; moved public/official-client setup and security alert ingestion away from operator-only routes; and fixed incidental dependency and simulator test issues. |
@@ -18,7 +19,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Last merged (#782) | **Persist Bleephub repository metadata and permissions from real state**. It wired repository license metadata, feature flags, merge settings, Pages capability, pushed/archive timestamps, template provenance, and permissions to real persisted state, and rebalanced AWS Command Line Interface simulator shards without changing required check names. |
 | Older context | #781 moved Actions artifacts/caches/logs to object storage and advanced GitHub Apps, Actions, storage, and repository fidelity; #778 closed the actionable open GitHub issues other than upstream-blocked AzureAD; #774 redesigned the Bleephub UI into a functional GitHub clone; #773 added fuzz/load/concurrency coverage; and #665-#700 built the simulator conformance-gate and service-ratchet foundation. Older detail lives in PR descriptions and `git log`. |
 | Open GitHub issues | #394 azuread Terraform Graph override - upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header: 2505 filed, 2461 fixed, 3 open, 16 false positives. Open: BUG-2441, BUG-1345, and BUG-1075. |
+| Bugs | See [BUGS.md](BUGS.md) header: 2507 filed, 2462 fixed, 4 open, 16 false positives. Open: BUG-2507, BUG-2441, BUG-1345, and BUG-1075. |
 | Local Docker | Available through Docker CLI compatibility backed by Podman 6.0.1; `docker version`, `docker ps`, `docker run --rm alpine:3 true`, and `make bleephub-gh-docker-test` passed on this branch. |
 | Local cache cleanup | Old ignored Bleephub user-interface build outputs were removed, and Docker/Podman image, build, and volume caches were pruned; Docker/Podman reported no remaining reclaimable image, build-cache, or volume bytes. |
 | Live infra | None up. |
@@ -27,7 +28,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 - Continue the active branch by replacing Bleephub fake, shallow, internal-only, or compatibility-only behavior with real GitHub-compatible REST/GraphQL/UI/runner behavior backed by SQLite metadata plus git/object storage.
 - Prefer classes of fixes: public GitHub endpoints over `/internal/*`, real git/object-store state over fabricated IDs/SHAs/timestamps, fail-loud errors over fallbacks, and official client compatibility over hand-built harness behavior.
-- Keep the open gaps visible: BUG-2441 current `knip`/Node deprecation warning, BUG-1075 live-cloud validation, and BUG-1345 AzureAD Terraform provider upstream endpoint support.
+- Implement BUG-2507 with the real GitHub Pages Jekyll toolchain so legacy branch builds without `.nojekyll` produce GitHub-compatible generated sites rather than terminal build errors.
+- Keep the other open gaps visible: BUG-2441 current `knip`/Node deprecation warning, BUG-1075 live-cloud validation, and BUG-1345 AzureAD Terraform provider upstream endpoint support.
 
 ## Invariants
 

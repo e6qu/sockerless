@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2505 filed - 2461 fixed - 3 open - 16 false positives.**
+**2507 filed - 2462 fixed - 4 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2507 | P1 | Bleephub GitHub Pages legacy builds | branch sources had no Jekyll execution runtime | Legacy branch-source Pages sites without `.nojekyll` cannot produce GitHub-compatible output until Bleephub runs the real GitHub Pages Jekyll toolchain and publishes its generated site. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Google Cloud Run, Azure Container Apps, Azure Functions, Lambda service-mesh, and Azure identity-backed cells need authenticated real-cloud validation before they can be marked green. |
@@ -18,6 +19,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2506~~ | P0 | Bleephub GitHub Pages branch publication | requested builds stayed queued forever | Manual legacy Pages builds now resolve the configured source branch and `/` or `/docs` tree, publish `.nojekyll` static content through the shared object-store transaction, serve the resulting site, persist terminal build/site state and real commit identity, and report source, link, size, storage, and configuration failures explicitly. |
 | ~~2505~~ | P1 | Bleephub GitHub Pages authorization | Pages routes used repository administration permission | GitHub Pages routes now enforce the distinct `pages: read/write` fine-grained repository permission, preserve unauthenticated reads only for public Pages resources, and no longer treat `administration` as a Pages grant. |
 | ~~2504~~ | P0 | Bleephub GitHub Pages deployment identity | any non-empty OpenID Connect token was trusted | GitHub Pages deployments now verify Bleephub's RS256 OpenID Connect signature, issuer, audience, validity window, repository identity, environment, build SHA, and configured source ref before reading artifacts or changing Pages state. |
 | ~~2503~~ | P1 | Bleephub GitHub Pages publication | successful deployments discarded site content | GitHub Pages deployments now validate official Actions ZIP-with-`artifact.tar`, direct ZIP, TAR, and gzip-compressed TAR artifacts; reject links, traversal, empty archives, and oversized content; publish immutable archives to object storage; serve index, clean URL, asset, HEAD, and custom 404 requests; protect private sites; replace prior objects; and delete published bytes fail-loud with Pages or repository deletion. |

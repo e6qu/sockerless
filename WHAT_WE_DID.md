@@ -4,6 +4,23 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-12 - Bleephub GitHub Pages Branch Publication (`feat/bleephub-pages-branch-builds`)
+
+This branch continued from merged #790, which made GitHub Actions artifact deployments publish real GitHub Pages sites from object storage.
+
+Closed BUG-2506 by replacing permanent shape-only Pages build queues with real branch publication. `POST /api/v3/repos/{owner}/{repo}/pages/builds` now resolves the configured legacy source branch and `/` or `/docs` subtree from git, requires `.nojekyll` before treating committed files as already-built static output, rejects symbolic links, submodules, unsafe paths, empty sources, and content over 10 GB, writes a deterministic TAR archive through the same transactional S3-compatible publication path as workflow deployments, serves the result, and persists the actual commit, duration, terminal build/site state, custom-404 state, digest, size, and deployment record. Object replacement writes and validates the new durable object before deleting the prior publication and rolls back the new object if replacement cleanup fails.
+
+Pages create/update now validate GitHub's `legacy|workflow` build types, `/|/docs` source paths, required legacy source branches, and real branch existence before mutating site configuration. Sources without `.nojekyll` now reach an explicit terminal build error naming the required GitHub Pages Jekyll runtime rather than remaining queued forever or being copied as fabricated generated output; BUG-2507 tracked that real runtime as the next Pages increment.
+
+Validation in this branch included:
+
+```bash
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(StaticPagesBranchArtifactValidation|PagesBuildsCRUD|PagesCreateUpdateShape)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(StaticPagesBranchArtifactValidation|PagesBuildsCRUD|PagesCreateUpdateShape)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Pages|pages' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
+```
+
 ## 2026-07-12 - Bleephub GitHub Pages Artifact Fidelity (`feat/bleephub-fidelity-sweep-next`)
 
 This branch continued from merged #788, which hardened persisted repository ownership, Git provider and user-interface behavior, GitHub Apps authorization, GitHub Actions execution and runner contracts, container packages, and Projects v2 ownership.

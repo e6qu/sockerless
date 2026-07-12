@@ -4,18 +4,22 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-fidelity-sweep-next` continued the Bleephub GitHub-fidelity work after merged #788. It fixed BUG-2502 through BUG-2505 by turning GitHub Pages deployment into a real publication path. Both accepted artifact references now resolve to bytes; official Actions ZIP-with-`artifact.tar`, direct ZIP, TAR, and gzip-compressed TAR formats are validated; unsafe links, traversal, empty archives, oversized content, invalid OpenID Connect workflow claims, and wrong fine-grained permissions fail before publication; successful archives live in S3-compatible object storage and serve index, clean URL, asset, HEAD, and custom 404 requests; private sites require repository access; replacements reclaim old objects; and Pages/repository deletion removes published bytes fail-loud.
+`feat/bleephub-pages-branch-builds` continued after merged #790 and fixed BUG-2506. Manual legacy Pages builds now used their configured branch and `/` or `/docs` git subtree, required `.nojekyll` for truthful direct-static publication, rejected links and invalid/empty/oversized sources, published through the same transactional S3-compatible object-store path as workflow deployments, served the resulting bytes, and persisted real commit, terminal build/site, duration, custom-404, digest, size, and deployment state. Pages create/update also rejected unsupported build types, source paths, and nonexistent legacy branches.
 
 ## Continue Here
 
-1. Keep scanning for Bleephub behavior that is still internal-only, shape-only, fake, fallback-based, or not backed by real git/object/store state.
-2. Prefer high-value public GitHub surfaces: repository provider behavior, releases/assets, GitHub Actions and runner protocol, Pages, OAuth/GitHub Apps/Auth, packages/container registry, pull requests/reviews/checks/statuses, notifications, repository settings/security/advisories, and the UI paths that consume them.
-3. For every found defect, add a `BUGS.md` row first, fix the class of issue where practical, add focused tests, and update continuity in past tense.
-4. Use local Docker-backed Bleephub/Codespaces tests again while Docker compatibility remains available; do not restore the temporary non-Docker-only hook path.
-5. Keep BUG-2441 visible until the current `knip`/Node `DEP0205 module.register()` warning has an upstream or in-repo fix that does not suppress deprecations.
+1. Fix BUG-2507 by integrating the real GitHub Pages Jekyll toolchain for legacy branch sources without `.nojekyll`; do not substitute a partial Markdown renderer or static-copy fallback.
+2. Keep scanning for Bleephub behavior that is still internal-only, shape-only, fake, fallback-based, or not backed by real git/object/store state.
+3. Prefer high-value public GitHub surfaces: repository provider behavior, releases/assets, GitHub Actions and runner protocol, Pages, OAuth/GitHub Apps/Auth, packages/container registry, pull requests/reviews/checks/statuses, notifications, repository settings/security/advisories, and the UI paths that consume them.
+4. For every found defect, add a `BUGS.md` row first, fix the class of issue where practical, add focused tests, and update continuity in past tense.
+5. Use local Docker-backed Bleephub/Codespaces tests again while Docker compatibility remains available; do not restore the temporary non-Docker-only hook path.
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(StaticPagesBranchArtifactValidation|PagesBuildsCRUD|PagesCreateUpdateShape)' -count=1` passed against real git and the Amazon Simple Storage Service simulator after branch publication and configuration validation were implemented.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(StaticPagesBranchArtifactValidation|PagesBuildsCRUD|PagesCreateUpdateShape)' -count=1` passed after branch builds began snapshotting source configuration and applying shared build/site state only under the Pages mutex.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Pages|pages' -count=1` passed after workflow and branch publication were consolidated behind one object-store transaction.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 166 seconds after BUG-2506 was fixed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PagesDeployments_CreateStatusCancel|PagesArtifactValidationRejectsUnsafeAndEmptyArchives|PagesPermissionIsDistinctFromAdministration|PagesHealthCheck|RegisteredAPIv3RoutesExistInGitHubSpec|FuzzRoutePatternsMatchRegisteredRoutes|PersistenceReload_DeleteRepoLeavesNoResidue)' -count=1` passed after the complete GitHub Pages publication and authorization class fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 168 seconds after GitHub Pages became object-backed and directly servable.
 - `pre-commit run --all-files` passed after GitHub Pages publication, OpenID Connect validation, permission, archive-security, serving, replacement, and cleanup coverage was complete.

@@ -224,7 +224,7 @@ The script compiles the current source, starts the server and user interface, an
 
 **Meta.** `GET /meta` in GitHub Enterprise Server shape — Bleephub presents as GitHub Enterprise Server (`installed_version: "3.21.0"`). `gh` feature detection requires the member to resolve the host version; without it `gh issue list --label`, `gh pr status`, and `gh workflow run` fail.
 
-**Pages.** Site CRUD, build records, deployments, and DNS-health checks are persisted. Manual build requests require a configured Pages site and record the actual latest default-branch commit SHA.
+**Pages.** Site CRUD, build records, deployments, and DNS-health checks are persisted. Manual legacy build requests validate the configured branch plus `/` or `/docs` source, publish `.nojekyll` static trees from real git content to S3-compatible object storage, and persist the actual source commit and terminal build state. Sources that require Jekyll fail explicitly until the real GitHub Pages Jekyll runtime is available; Bleephub does not copy them as if they were already built.
 
 **Branch protection.** PUT/GET/DELETE per-branch protection rules with typed required-status-checks, review, restriction, admin-enforcement, force-push, and deletion subresources.
 

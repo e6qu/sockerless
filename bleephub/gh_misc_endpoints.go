@@ -988,16 +988,15 @@ func (s *Server) handlePagesCreate(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
 		return
 	}
-	// GitHub requires source.branch on create (only `workflow` build_type can
-	// omit it); a legacy/branch build with no branch is a 422.
-	if req.Source.Branch == "" && req.BuildType != "workflow" {
-		writeGHValidationError(w, "Pages", "source", "missing_field")
+	buildType := coalesceStr(req.BuildType, "legacy")
+	sourcePath := coalesceStr(req.Source.Path, "/")
+	if err := s.validatePagesConfiguration(repo, buildType, req.Source.Branch, sourcePath); err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	// repo.Owner is an invariant (set at create, relinked on load); use it
 	// directly rather than guessing an owner.
 	ownerLogin := repo.Owner.Login
-	buildType := coalesceStr(req.BuildType, "legacy")
 	pages := &PagesSite{
 		CNAME:   req.CNAME,
 		URL:     s.baseURL(r) + "/" + repo.FullName + "/pages",
@@ -1007,7 +1006,7 @@ func (s *Server) handlePagesCreate(w http.ResponseWriter, r *http.Request) {
 			// branch is required+validated for legacy/branch builds above; for
 			// a workflow build it is legitimately empty (not a fabricated "main").
 			"branch": req.Source.Branch,
-			"path":   coalesceStr(req.Source.Path, "/"),
+			"path":   sourcePath,
 		},
 		Public:    !repo.Private,
 		Custom404: false,
@@ -1051,6 +1050,31 @@ func (s *Server) handlePagesUpdate(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	buildType := "legacy"
+	if pages.BuildType != nil {
+		buildType = *pages.BuildType
+	}
+	if req.BuildType != nil {
+		buildType = *req.BuildType
+	}
+	branch, _ := pages.Source["branch"].(string)
+	sourcePath, _ := pages.Source["path"].(string)
+	if req.Source != nil {
+		branch = req.Source.Branch
+		sourcePath = req.Source.Path
+	}
+	s.store.Misc.mu.Unlock()
+	if err := s.validatePagesConfiguration(repo, buildType, branch, sourcePath); err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	s.store.Misc.mu.Lock()
+	pages = s.store.Misc.pagesByRepo[repo.ID]
+	if pages == nil {
+		s.store.Misc.mu.Unlock()
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	if req.CNAME != nil {
 		pages.CNAME = *req.CNAME
 	}
@@ -1080,6 +1104,27 @@ func (s *Server) handlePagesUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.Misc.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) validatePagesConfiguration(repo *Repo, buildType, branch, sourcePath string) error {
+	if buildType != "legacy" && buildType != "workflow" {
+		return fmt.Errorf("invalid request: build_type must be legacy or workflow")
+	}
+	if sourcePath == "" {
+		sourcePath = "/"
+	}
+	if sourcePath != "/" && sourcePath != "/docs" {
+		return fmt.Errorf("invalid request: source.path must be / or /docs")
+	}
+	if buildType == "legacy" {
+		if branch == "" {
+			return fmt.Errorf("invalid request: source.branch is required for legacy Pages builds")
+		}
+		if resolveBranchSha(s.store.GetGitStorage(repo.Owner.Login, repo.Name), branch) == "" {
+			return fmt.Errorf("invalid request: Pages source branch %q does not exist", branch)
+		}
+	}
+	return nil
 }
 
 func (s *Server) handlePagesDelete(w http.ResponseWriter, r *http.Request) {
@@ -1122,12 +1167,6 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	stor := s.store.GetGitStorage(r.PathValue("owner"), r.PathValue("repo"))
-	commitSHA := resolveBranchSha(stor, repo.DefaultBranch)
-	if commitSHA == "" {
-		writeGHError(w, http.StatusUnprocessableEntity, "Default branch has no commit for Pages build")
-		return
-	}
 	actor := "bleephub-system"
 	var pusher *PagesPusher
 	if user := ghUserFromContext(r.Context()); user != nil {
@@ -1136,7 +1175,8 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 	}
 	now := time.Now()
 	s.store.Misc.mu.Lock()
-	if s.store.Misc.pagesByRepo[repo.ID] == nil {
+	pages := s.store.Misc.pagesByRepo[repo.ID]
+	if pages == nil {
 		s.store.Misc.mu.Unlock()
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -1149,7 +1189,6 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 		URL:       buildURL,
 		Status:    "queued",
 		Pusher:    pusher,
-		Commit:    commitSHA,
 		CreatedAt: now,
 		UpdatedAt: now,
 		Error:     &PagesBuildErr{},
@@ -1158,10 +1197,38 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 	if s.store.Misc.persist != nil {
 		s.store.Misc.persist.MustPut("pages_builds", repo.FullName, s.store.Misc.pagesBuilds[repo.FullName])
 	}
+	branch, sourcePath, sourceErr := pagesLegacySource(pages)
+	s.store.Misc.mu.Unlock()
+	buildStarted := time.Now()
+	commitSHA := ""
+	custom404 := false
+	buildErr := sourceErr
+	if buildErr == nil {
+		commitSHA, custom404, buildErr = s.buildPagesBranch(r.Context(), repo, branch, sourcePath)
+	}
+	finishedAt := time.Now()
+	s.store.Misc.mu.Lock()
+	build.Commit = commitSHA
+	build.UpdatedAt = finishedAt
+	build.Duration = int(finishedAt.Sub(buildStarted).Milliseconds())
+	if buildErr != nil {
+		message := buildErr.Error()
+		build.Status = "errored"
+		build.Error.Message = &message
+		pages.Status = "errored"
+	} else {
+		build.Status = "built"
+		pages.Status = "built"
+		pages.Custom404 = custom404
+	}
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("pages_builds", repo.FullName, s.store.Misc.pagesBuilds[repo.FullName])
+		s.store.Misc.persist.MustPut("pages_sites", strconv.Itoa(repo.ID), pages)
+	}
 	s.store.Misc.mu.Unlock()
 	s.recordAuditEvent("pages.build", actor, "", map[string]interface{}{"repo": repo.FullName, "build_id": buildID})
 	// GitHub's request-a-build response is exactly {status, url}.
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"status": "queued", "url": buildURL})
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"status": "queued", "url": s.baseURL(r) + "/api/v3/repos/" + repo.FullName + "/pages/builds/latest"})
 }
 
 func (s *Server) handlePagesLatestBuild(w http.ResponseWriter, r *http.Request) {

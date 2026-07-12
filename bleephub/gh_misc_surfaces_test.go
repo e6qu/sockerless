@@ -118,10 +118,17 @@ func TestGPGKeyDeleteOwnership(t *testing.T) {
 func TestPagesBuildsCRUD(t *testing.T) {
 	s := newTestServer()
 	s.registerGHMiscEndpoints()
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "pages-build-objects"}
+	s.store.ObjectByteStore = &s3ActionsByteStore{fs: objectFS}
 	admin := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(admin, "pages-build-test", "", false)
 	commitHash, err := initRepoWithFiles(s.store.GetGitStorage("admin", "pages-build-test"), repo.DefaultBranch, "init", map[string]string{
-		"index.html": "hello",
+		"index.html":         "wrong root",
+		"docs/.nojekyll":     "",
+		"docs/index.html":    "hello from docs",
+		"docs/404.html":      "custom missing",
+		"docs/assets/app.js": "console.log('pages')",
 	}, repoSignature(admin.Login, "bleephub@local"))
 	if err != nil {
 		t.Fatalf("init repo: %v", err)
@@ -142,7 +149,7 @@ func TestPagesBuildsCRUD(t *testing.T) {
 		t.Fatalf("trigger build without Pages site status = %d, want 404", w.Code)
 	}
 
-	w = doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages", `{"source":{"branch":"main","path":"/"}}`)
+	w = doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages", `{"source":{"branch":"main","path":"/docs"}}`)
 	if w.Code != 201 {
 		t.Fatalf("create Pages site status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -161,14 +168,8 @@ func TestPagesBuildsCRUD(t *testing.T) {
 		t.Fatalf("trigger response must not carry top-level id; got %v", triggered)
 	}
 	buildURL, _ := triggered["url"].(string)
-	if buildURL == "" {
+	if !strings.HasSuffix(buildURL, "/pages/builds/latest") {
 		t.Fatalf("trigger response missing url; body = %s", w.Body.String())
-	}
-	// Builds are addressed by the trailing segment of their url.
-	buildIDStr := buildURL[strings.LastIndex(buildURL, "/")+1:]
-	buildID, err := strconv.ParseInt(buildIDStr, 10, 64)
-	if err != nil {
-		t.Fatalf("build url trailing segment %q not numeric: %v", buildIDStr, err)
 	}
 
 	w = doMiscReq(s, "GET", "/api/v3/repos/"+repo.FullName+"/pages/builds/latest", "")
@@ -181,8 +182,8 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	if _, hasID := latest["id"]; hasID {
 		t.Fatalf("build object must not carry top-level id; got %v", latest)
 	}
-	if latest["url"] != buildURL {
-		t.Fatalf("latest url = %v, want %s", latest["url"], buildURL)
+	if latest["status"] != "built" {
+		t.Fatalf("latest status = %v, want built; build = %v", latest["status"], latest)
 	}
 	// GitHub always emits error:{"message":null} and a pusher/commit field.
 	if _, ok := latest["error"]; !ok {
@@ -196,6 +197,24 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	}
 	if _, ok := latest["pusher"]; !ok {
 		t.Fatalf("build missing pusher field; got %v", latest)
+	}
+	latestURL, _ := latest["url"].(string)
+	buildIDStr := latestURL[strings.LastIndex(latestURL, "/")+1:]
+	buildID, err := strconv.ParseInt(buildIDStr, 10, 64)
+	if err != nil {
+		t.Fatalf("build url trailing segment %q not numeric: %v", buildIDStr, err)
+	}
+	contentReq := httptest.NewRequest("GET", "/pages/admin/pages-build-test/", nil)
+	contentReq.SetPathValue("owner", "admin")
+	contentReq.SetPathValue("repo", "pages-build-test")
+	contentReq.SetPathValue("path", "")
+	contentW := httptest.NewRecorder()
+	s.handlePagesContent(contentW, contentReq)
+	if contentW.Code != 200 || contentW.Body.String() != "hello from docs" {
+		t.Fatalf("published Pages content = %d %q", contentW.Code, contentW.Body.String())
+	}
+	if !s.store.Misc.pagesByRepo[repo.ID].Custom404 {
+		t.Fatal("Pages site did not detect custom 404.html")
 	}
 
 	w = doMiscReq(s, "GET", "/api/v3/repos/"+repo.FullName+"/pages/builds/"+strconv.FormatInt(buildID, 10), "")
@@ -219,8 +238,8 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	var second map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &second)
 	secondURL, _ := second["url"].(string)
-	if secondURL == "" || secondURL == buildURL {
-		t.Fatalf("second build url = %q, should be set and differ from first %q", secondURL, buildURL)
+	if secondURL != buildURL {
+		t.Fatalf("second build response url = %q, want stable latest URL %q", secondURL, buildURL)
 	}
 
 	w = doMiscReq(s, "GET", "/api/v3/repos/nonexist/pages/builds/latest", "")
@@ -234,6 +253,12 @@ func TestPagesCreateUpdateShape(t *testing.T) {
 	s.registerGHMiscEndpoints()
 	admin := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(admin, "pages-shape", "", false)
+	if _, err := initRepoWithFiles(s.store.GetGitStorage("admin", "pages-shape"), "gh-pages", "Pages source", map[string]string{
+		"docs/.nojekyll":  "",
+		"docs/index.html": "site",
+	}, repoSignature(admin.Login, "bleephub@local")); err != nil {
+		t.Fatalf("init Pages source branch: %v", err)
+	}
 
 	// Missing source.branch on a legacy build is a 422.
 	w := doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages", `{"source":{"path":"/"}}`)
@@ -285,6 +310,27 @@ func TestPagesCreateUpdateShape(t *testing.T) {
 	}
 	if updated["cname"] != "example.com" {
 		t.Errorf("cname = %v, want example.com", updated["cname"])
+	}
+}
+
+func TestStaticPagesBranchArtifactValidation(t *testing.T) {
+	when := time.Unix(1, 0).UTC()
+	for _, tc := range []struct {
+		name    string
+		entries []archiveEntry
+		path    string
+		wantErr string
+	}{
+		{name: "Jekyll required", entries: []archiveEntry{{path: "index.html", mode: 0o100644, content: []byte("site")}}, path: "/", wantErr: "Jekyll"},
+		{name: "missing docs", entries: []archiveEntry{{path: ".nojekyll", mode: 0o100644}}, path: "/docs", wantErr: "contains no files"},
+		{name: "symbolic link", entries: []archiveEntry{{path: ".nojekyll", mode: 0o100644}, {path: "linked", mode: 0o120000, content: []byte("index.html")}}, path: "/", wantErr: "unsupported link"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := buildStaticPagesArtifact(tc.entries, tc.path, when)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("buildStaticPagesArtifact error = %v, want containing %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 
