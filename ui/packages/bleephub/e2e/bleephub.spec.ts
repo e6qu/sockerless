@@ -222,6 +222,30 @@ test.describe("Theme toggle", () => {
   });
 });
 
+test.describe("Fine-grained personal access token settings", () => {
+  test("creates a one-time credential in polished light and dark settings", async ({ page }) => {
+    await page.goto("/ui/account");
+    await page.getByRole("button", { name: "Personal access tokens" }).click();
+    const heading = page.getByRole("heading", { name: "Fine-grained personal access tokens" });
+    await expect(heading).toBeVisible();
+    const hero = heading.locator("..");
+    expect(await hero.evaluate((node) => getComputedStyle(node).backgroundImage)).toContain("gradient");
+    await page.getByLabel("Token name").fill(`Playwright token ${Date.now().toString(36)}`);
+    await page.getByRole("button", { name: "Generate token" }).click();
+    await expect(page.getByText("Your new token")).toBeVisible();
+    await expect(page.getByText(/^github_pat_/)).toBeVisible();
+    await expect(page.getByText("active", { exact: true })).toBeVisible();
+    await shot(page, "11e-fine-grained-token-light");
+
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    await page.getByRole("menuitem", { name: /dark theme/i }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    expect(await hero.evaluate((node) => getComputedStyle(node).backgroundImage)).toContain("gradient");
+    await expect(page.getByText("Your new token")).toBeVisible();
+    await shot(page, "11f-fine-grained-token-dark");
+  });
+});
+
 test.describe("GitHub Classroom transition product", () => {
   test("creates and renders a classroom with saturated light and dark organization", async ({ page }) => {
     await page.goto("/ui/");

@@ -54,7 +54,7 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 	s.routePatterns = append(s.routePatterns, pattern)
 	// /api/v3 routes are instrumented so served requests feed the API
 	// insights stats (gh_api_insights.go); other patterns pass through.
-	s.mux.HandleFunc(pattern, s.instrumentAPIRoute(pattern, handler))
+	s.mux.HandleFunc(pattern, s.instrumentAPIRoute(pattern, s.enforceFineGrainedPATResource(pattern, handler)))
 }
 
 // NewServer creates a bleephub server with all routes registered.

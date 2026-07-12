@@ -86,10 +86,18 @@ type UserEmail struct {
 
 // Token represents a personal access token.
 type Token struct {
-	Value     string
-	UserID    int
-	Scopes    string
-	CreatedAt time.Time
+	Value               string
+	UserID              int
+	Scopes              string
+	CreatedAt           time.Time
+	FineGrained         bool              `json:"fine_grained,omitempty"`
+	FineGrainedID       int               `json:"fine_grained_id,omitempty"`
+	Name                string            `json:"name,omitempty"`
+	ResourceOwner       string            `json:"resource_owner,omitempty"`
+	RepositorySelection string            `json:"repository_selection,omitempty"`
+	RepositoryIDs       []int             `json:"repository_ids,omitempty"`
+	Permissions         OrgPATPermissions `json:"permissions,omitempty"`
+	ExpiresAt           *time.Time        `json:"expires_at,omitempty"`
 }
 
 // DeviceCode represents a pending device authorization flow.
@@ -3114,6 +3122,9 @@ func (st *Store) LookupToken(tokenStr string) (*Token, *User) {
 
 	t, ok := st.Tokens[tokenStr]
 	if !ok {
+		return nil, nil
+	}
+	if t.ExpiresAt != nil && !t.ExpiresAt.After(time.Now()) {
 		return nil, nil
 	}
 	return t, st.Users[t.UserID]

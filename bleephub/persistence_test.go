@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPersistence_RoundTripAppsInstallationsTokensRepos(t *testing.T) {
@@ -46,6 +47,14 @@ func persistRoundTrip(t *testing.T, open func() (*Persistence, error)) {
 	oapp := st1.CreateOAuthApp(user.ID, "Persist OAuth", "", "", "")
 	utsTok, _ := st1.CreateUserToServerToken(user.ID, 0, oapp.ClientID, "repo", 60_000_000_000, true)
 	repo := st1.CreateRepo(user, "persist-target", "", false)
+	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+	fineGrained, err := st1.CreateUserFineGrainedPAT(user.ID, createPersonalAccessTokenWebRequest{
+		Name: "persist fine-grained", ResourceOwner: user.Login, RepositorySelection: "subset",
+		RepositoryIDs: []int{repo.ID}, Permissions: OrgPATPermissions{Repository: map[string]string{"contents": "read"}}, ExpiresAt: &expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("create fine-grained personal access token: %v", err)
+	}
 	st1.UpdateRepo(user.Login, repo.Name, func(r *Repo) {
 		r.HasDiscussions = boolPointer(false)
 	})
@@ -65,6 +74,10 @@ func persistRoundTrip(t *testing.T, open func() (*Persistence, error)) {
 
 	if got := st2.UsersByLogin["admin"]; got == nil {
 		t.Fatal("admin user did not persist")
+	}
+	gotFineGrained, gotFineGrainedUser := st2.LookupToken(fineGrained.Value)
+	if gotFineGrained == nil || gotFineGrainedUser == nil || !gotFineGrained.FineGrained || gotFineGrained.Name != "persist fine-grained" || gotFineGrained.ResourceOwner != user.Login || gotFineGrained.RepositorySelection != "subset" || len(gotFineGrained.RepositoryIDs) != 1 || gotFineGrained.RepositoryIDs[0] != repo.ID || gotFineGrained.Permissions.Repository["contents"] != "read" || gotFineGrained.ExpiresAt == nil {
+		t.Fatalf("fine-grained personal access token did not round-trip: token=%+v user=%+v", gotFineGrained, gotFineGrainedUser)
 	}
 
 	got := st2.GetApp(app.ID)

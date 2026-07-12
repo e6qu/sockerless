@@ -4,17 +4,22 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2530. In addition to the complete release-provider and repository UI work, the branch retained GitHub Classroom with authenticated organization-admin management, identifier-first rosters, real repository-backed individual/group assignment acceptance, Feedback pull requests, generated GitHub Actions autograding, derived grading, transition export/import, official client coverage, and saturated light/dark browser organization. BUG-2523 remained open for four other operator-ingress domains.
+`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2534. In addition to the release-provider, repository UI, and retained GitHub Classroom work, the branch shipped durable fine-grained personal access token settings, one-time credentials, organization approval, GitHub App-only administration, runtime resource/permission enforcement, generated-credential secret scanning, official-client coverage, and saturated light/dark organization. BUG-2523 remained open for three operator-ingress domains.
 
 ## Continue Here
 
-1. Close BUG-2523 one real producer/browser workflow at a time: fine-grained personal access token creation, CodeQL database upload/finalization, hosted-compute network onboarding, and GitHub Marketplace purchase lifecycle. GitHub Classroom creation, acceptance, grading, and transition were completed.
+1. Close BUG-2523 one real producer/browser workflow at a time: CodeQL database upload/finalization, hosted-compute network onboarding, and GitHub Marketplace purchase lifecycle. GitHub Classroom and fine-grained personal access token producer workflows were completed.
 2. Add a vendored GitHub GraphQL schema/introspection ratchet; current resolver coverage remained consumer-driven rather than complete-schema proof.
 3. Continue page-level light/dark UI comparison with repository Settings/Security, issue and pull-request timelines/reviews/diffs, Actions job logs, organization administration, and account/App/token management.
 4. Continue REST semantic matrices for permissions, conditional requests, redirects, pagination, version headers, rate limits, webhooks, durable cascades, and storage-failure atomicity.
 5. For every found defect, add a `BUGS.md` row first, fix the class, add focused/official-client tests, and update continuity in past tense.
 
 ## Recent Validation
+
+- `GOCACHE=/tmp/sockerless-go-cache go test ./bleephub -count=1` passed in 211 seconds after fine-grained personal access token authorization, browser production, and durable state were implemented.
+- The complete official `go-github` software development kit suite passed, including App-only request approval and grant listing; the Dockerized official GitHub command-line interface harness passed 124/124 cases, including one-time token creation and authentication.
+- `bun run typecheck`, `bun run test`, and `bun run build` passed in `ui/packages/bleephub` with 45 files / 329 tests after account token settings and release-edit reconciliation were added.
+- Focused local Playwright execution remained blocked before browser startup because the Chromium headless-shell executable was absent; the compiled suite contained the new light/dark token scenario and the release regression had focused component coverage pending the next CI browser run.
 
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 231.6 seconds after the viewer-state adapter and parity/UI audit changes.
 - `bun run typecheck`, `npx knip`, `bun run test`, and `bun run build` passed in `ui/packages/bleephub`; the suite covered 43 files / 324 tests and the existing current-`knip` Node deprecation stayed tracked as BUG-2441.

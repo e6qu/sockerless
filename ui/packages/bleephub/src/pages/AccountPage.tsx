@@ -11,14 +11,19 @@ import {
   deleteUserGPGKey,
   deleteUserSSHKey,
   deleteUserSSHSigningKey,
+  createFineGrainedPAT,
+  deleteFineGrainedPAT,
+  fetchFineGrainedPATDashboard,
   fetchBlockedUsers,
   fetchUserEmails,
   fetchUserGPGKeys,
   fetchUserSSHKeys,
   fetchUserSSHSigningKeys,
   setUserEmailVisibility,
+  reviewFineGrainedPATRequest,
   unblockUser,
 } from "../api.js";
+import type { FineGrainedPATPermissions } from "../api.js";
 import type {
   GithubBlockedUser,
   GithubGPGKey,
@@ -30,13 +35,14 @@ import { PageTitle, Box, Button, ErrorBanner, FormLabel } from "../components/ui
 import { SettingsLayout, type SettingsNavSection } from "../components/SettingsLayout.js";
 import { KeyIcon } from "../components/octicons.js";
 
-type AccountTab = "ssh-keys" | "gpg-keys" | "signing-keys" | "emails" | "blocked";
+type AccountTab = "tokens" | "ssh-keys" | "gpg-keys" | "signing-keys" | "emails" | "blocked";
 
 const ACCOUNT_NAV: SettingsNavSection<AccountTab>[] = [
   { items: [{ key: "emails", label: "Emails" }] },
   {
     title: "Access",
     items: [
+      { key: "tokens", label: "Personal access tokens" },
       { key: "ssh-keys", label: "SSH keys" },
       { key: "gpg-keys", label: "GPG keys" },
       { key: "signing-keys", label: "Signing keys" },
@@ -52,6 +58,7 @@ export function AccountPage() {
       <PageTitle title="Account" meta="Keys, email addresses, and blocked users on the authenticated account" />
       <SettingsLayout sections={ACCOUNT_NAV} active={tab} onSelect={setTab}>
         {tab === "ssh-keys" && <SSHKeysTab />}
+        {tab === "tokens" && <FineGrainedTokensTab />}
         {tab === "gpg-keys" && <GPGKeysTab />}
         {tab === "signing-keys" && <SigningKeysTab />}
         {tab === "emails" && <EmailsTab />}
@@ -59,6 +66,77 @@ export function AccountPage() {
       </SettingsLayout>
     </div>
   );
+}
+
+const REPOSITORY_PERMISSIONS = [
+  ["contents", "Contents"], ["issues", "Issues"], ["pull_requests", "Pull requests"],
+  ["actions", "Actions"], ["checks", "Checks"], ["deployments", "Deployments"],
+] as const;
+
+function FineGrainedTokensTab() {
+  const client = useQueryClient();
+  const query = useQuery({ queryKey: ["fine-grained-pats"], queryFn: fetchFineGrainedPATDashboard });
+  const [name, setName] = useState("");
+  const [owner, setOwner] = useState("");
+  const [selection, setSelection] = useState<"all" | "subset" | "none">("all");
+  const [repositoryIDs, setRepositoryIDs] = useState<number[]>([]);
+  const [expires, setExpires] = useState("");
+  const [reason, setReason] = useState("");
+  const [permissions, setPermissions] = useState<Record<string, string>>({ contents: "read" });
+  const [credential, setCredential] = useState<string | null>(null);
+
+  const createMutation = useMutation({
+    mutationFn: () => createFineGrainedPAT({
+      name, resource_owner: owner || query.data!.resource_owners[0].login,
+      repository_selection: selection, repository_ids: selection === "subset" ? repositoryIDs : [],
+      permissions: { repository: permissions, organization: { members: "read" } },
+      ...(expires ? { expires_at: new Date(`${expires}T23:59:59Z`).toISOString() } : {}),
+      ...(reason.trim() ? { reason: reason.trim() } : {}),
+    }),
+    onSuccess: (created) => {
+      setCredential(created.token); setName(""); setReason(""); setRepositoryIDs([]);
+      client.invalidateQueries({ queryKey: ["fine-grained-pats"] });
+    },
+  });
+  const deleteMutation = useMutation({ mutationFn: deleteFineGrainedPAT, onSuccess: () => client.invalidateQueries({ queryKey: ["fine-grained-pats"] }) });
+  const reviewMutation = useMutation({
+    mutationFn: ({ org, id, action }: { org: string; id: number; action: "approve" | "deny" }) => reviewFineGrainedPATRequest(org, id, action),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["fine-grained-pats"] }),
+  });
+
+  if (query.isLoading) return <Spinner label="loading personal access tokens" />;
+  if (query.isError) return <InlineError title="Failed to load personal access tokens" detail={String(query.error)} />;
+  const data = query.data!;
+  const selectedOwner = owner || data.resource_owners[0]?.login || "";
+  const repositories = data.repositories[selectedOwner] ?? [];
+  const error = createMutation.error || deleteMutation.error || reviewMutation.error;
+
+  return <div className="flex flex-col gap-4">
+    <div style={{ padding: "1.15rem", border: "1px solid color-mix(in srgb, var(--color-brand-purple) 48%, var(--color-border))", borderRadius: 10, background: "linear-gradient(120deg, color-mix(in srgb, var(--color-brand-purple) 18%, var(--color-canvas-default)), color-mix(in srgb, var(--color-brand-cyan) 14%, var(--color-canvas-subtle)), color-mix(in srgb, var(--color-brand-pink) 12%, var(--color-canvas-default)))", boxShadow: "var(--shadow-medium)" }}>
+      <h2 style={{ fontSize: "1.15rem", fontWeight: 700 }}>Fine-grained personal access tokens</h2>
+      <p style={{ color: "var(--color-fg-muted)", marginTop: ".25rem" }}>Limit every credential to one resource owner, selected repositories, explicit permissions, and an expiration date.</p>
+    </div>
+    {credential && <div role="alert" style={{ padding: "1rem", borderRadius: 8, border: "1px solid var(--color-success-emphasis)", background: "color-mix(in srgb, var(--color-success-emphasis) 13%, var(--color-canvas-default))" }}>
+      <b>Your new token</b><p style={{ color: "var(--color-fg-muted)", margin: ".25rem 0 .65rem" }}>Copy it now. For your security, it will not be shown again.</p>
+      <code style={{ display: "block", overflowWrap: "anywhere", padding: ".7rem", borderRadius: 6, background: "var(--color-canvas-inset)", border: "1px solid var(--color-border)" }}>{credential}</code>
+      <Button size="sm" onClick={() => navigator.clipboard.writeText(credential)} style={{ marginTop: ".65rem" }}>Copy token</Button>
+    </div>}
+    {error && <ErrorBanner>{String(error)}</ErrorBanner>}
+    <Box header={<span style={{ fontWeight: 650 }}>Generate new token</span>}>
+      <div className="grid gap-4" style={{ padding: "1rem", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
+        <div><FormLabel id="pat-name">Token name</FormLabel><input id="pat-name" className="w-full" maxLength={40} value={name} onChange={(e) => setName(e.target.value)} placeholder="Deployment automation" /></div>
+        <div><FormLabel id="pat-owner">Resource owner</FormLabel><select id="pat-owner" className="w-full" value={selectedOwner} onChange={(e) => { setOwner(e.target.value); setRepositoryIDs([]); }}>{data.resource_owners.map((item) => <option key={item.login} value={item.login}>{item.login} · {item.type}</option>)}</select></div>
+        <div><FormLabel id="pat-expiry">Expiration</FormLabel><input id="pat-expiry" type="date" className="w-full" min={new Date().toISOString().slice(0, 10)} value={expires} onChange={(e) => setExpires(e.target.value)} /></div>
+        <div><FormLabel id="pat-reason">Reason for organization access</FormLabel><input id="pat-reason" className="w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Used by the release workflow" /></div>
+      </div>
+      <div style={{ padding: "0 1rem 1rem" }}><FormLabel id="pat-access">Repository access</FormLabel><div id="pat-access" className="flex flex-wrap gap-3">{([['all','All repositories'],['subset','Only selected repositories'],['none','No repositories']] as const).map(([value,label]) => <label key={value} className="flex items-center gap-2"><input type="radio" name="pat-access" checked={selection === value} onChange={() => setSelection(value)} />{label}</label>)}</div></div>
+      {selection === "subset" && <div style={{ padding: "0 1rem 1rem" }}><FormLabel id="pat-repositories">Selected repositories</FormLabel><div id="pat-repositories" className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>{repositories.map((repo) => <label key={repo.id} className="flex items-center gap-2"><input type="checkbox" checked={repositoryIDs.includes(repo.id)} onChange={(e) => setRepositoryIDs(e.target.checked ? [...repositoryIDs, repo.id] : repositoryIDs.filter((id) => id !== repo.id))} />{repo.name}{repo.private ? " · Private" : ""}</label>)}</div></div>}
+      <div style={{ padding: "0 1rem 1rem" }}><FormLabel id="pat-permissions">Repository permissions</FormLabel><div id="pat-permissions" className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>{REPOSITORY_PERMISSIONS.map(([key, label]) => <label key={key} className="flex items-center justify-between gap-3"><span>{label}</span><select aria-label={`${label} permission`} value={permissions[key] ?? "none"} onChange={(e) => { const next = { ...permissions }; if (e.target.value === "none") delete next[key]; else next[key] = e.target.value; setPermissions(next); }}><option value="none">No access</option><option value="read">Read</option><option value="write">Read and write</option></select></label>)}</div></div>
+      <div className="flex justify-end" style={{ padding: "0 1rem 1rem" }}><Button variant="primary" disabled={!name.trim() || (selection === "subset" && repositoryIDs.length === 0) || createMutation.isPending} onClick={() => createMutation.mutate()}>Generate token</Button></div>
+    </Box>
+    {data.pending_requests.length > 0 && <Box header={<span style={{ fontWeight: 650 }}>Organization approval requests</span>}><ul style={{ listStyle: "none", margin: 0, padding: 0 }}>{data.pending_requests.map((request) => <li key={`${request.organization}-${request.id}`} className="flex flex-wrap items-center justify-between gap-3" style={{ padding: ".9rem 1rem", borderBottom: "1px solid var(--color-border)" }}><div><b>{request.token_name}</b><div style={{ color: "var(--color-fg-muted)", fontSize: ".82rem" }}>{request.owner.login} requests {request.organization} · {request.repository_selection} repositories{request.reason ? ` · ${request.reason}` : ""}</div></div><div className="flex gap-2"><Button size="sm" onClick={() => reviewMutation.mutate({ org: request.organization, id: request.id, action: "deny" })}>Deny</Button><Button size="sm" variant="primary" onClick={() => reviewMutation.mutate({ org: request.organization, id: request.id, action: "approve" })}>Approve</Button></div></li>)}</ul></Box>}
+    <Box header={<span style={{ fontWeight: 650 }}>Your fine-grained tokens</span>}>{data.tokens.length === 0 ? <div style={{ padding: "1rem", color: "var(--color-fg-muted)" }}>You have not generated any fine-grained tokens.</div> : <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>{data.tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center justify-between gap-3" style={{ padding: ".9rem 1rem", borderBottom: "1px solid var(--color-border)" }}><div><div className="flex items-center gap-2"><b>{token.name}</b><span style={{ padding: ".12rem .45rem", borderRadius: 999, fontSize: ".72rem", fontWeight: 650, color: token.status === "active" ? "var(--color-success-fg)" : "var(--color-attention-fg)", background: token.status === "active" ? "color-mix(in srgb, var(--color-success-emphasis) 16%, transparent)" : "color-mix(in srgb, var(--color-attention-emphasis) 18%, transparent)" }}>{token.status}</span></div><div style={{ color: "var(--color-fg-muted)", fontSize: ".82rem" }}>{token.resource_owner} · {token.repository_selection} repositories · {token.expires_at ? `expires ${new Date(token.expires_at).toLocaleDateString()}` : "no expiration"}</div></div><Button size="sm" variant="danger" disabled={deleteMutation.isPending} onClick={() => confirm(`Delete ${token.name}?`) && deleteMutation.mutate(token.id)}>Delete</Button></li>)}</ul>}</Box>
+  </div>;
 }
 
 /** Shared add-key form + key list for the three key kinds. */

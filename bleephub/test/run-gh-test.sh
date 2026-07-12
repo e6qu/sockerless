@@ -182,6 +182,30 @@ ASSIGNMENT_GET=$(api "$BASE/api/v3/assignments/$ASSIGNMENT_ID")
 assert_eq "gh api reads Classroom starter repository" "gh-classroom/starter" "$(echo "$ASSIGNMENT_GET" | jq -r '.starter_code_repository.full_name')"
 
 # ============================================================
+# Test: Fine-grained personal access token browser producer
+# ============================================================
+log "Test: fine-grained personal access tokens"
+api --method POST "$BASE/api/v3/admin/organizations" -f login=gh-pat -f admin=admin >/dev/null
+PAT_CREATED=$(api --method POST "$BASE/settings/personal-access-tokens" \
+    --input <(printf '%s' '{"name":"Command line token","resource_owner":"gh-pat","repository_selection":"none","permissions":{"organization":{"members":"read"}},"reason":"gh CLI parity"}'))
+PAT_SECRET=$(echo "$PAT_CREATED" | jq -r '.token')
+assert_contains "gh api creates a fine-grained credential" "$PAT_SECRET" "github_pat_"
+PAT_SETTINGS=$(api "$BASE/settings/personal-access-tokens")
+assert_eq "gh api lists browser-created fine-grained token" "Command line token" "$(echo "$PAT_SETTINGS" | jq -r '.tokens[] | select(.name == "Command line token") | .name')"
+if echo "$PAT_SETTINGS" | grep -qF "$PAT_SECRET"; then
+    fail "fine-grained token settings list exposed the one-time credential"
+else
+    pass "fine-grained token credential is shown only once"
+fi
+PAT_VIEWER=$(gh api -H "Authorization: token $PAT_SECRET" "$BASE/api/v3/user")
+assert_eq "fine-grained token authenticates through gh api" "admin" "$(echo "$PAT_VIEWER" | jq -r '.login')"
+if api "$BASE/api/v3/orgs/gh-pat/personal-access-token-requests" >/dev/null 2>&1; then
+    fail "classic personal access token called GitHub App-only organization token administration"
+else
+    pass "organization token administration rejects classic personal access tokens"
+fi
+
+# ============================================================
 # Test: List repos via real `gh repo list`
 # ============================================================
 log "Test: gh repo list"

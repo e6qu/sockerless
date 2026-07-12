@@ -896,6 +896,58 @@ export async function exportClassroomTransition(): Promise<Blob> {
 export const importClassroomTransition = (bundle: unknown) =>
   ghPostJSON<{ classrooms: Classroom[] }>("/classroom-data/import", bundle);
 
+export interface FineGrainedPATPermissions {
+  organization?: Record<string, string>;
+  repository?: Record<string, string>;
+  other?: Record<string, string>;
+}
+
+export interface FineGrainedPAT {
+  id: number;
+  name: string;
+  resource_owner: string;
+  repository_selection: "all" | "subset" | "none";
+  repository_ids: number[];
+  permissions: FineGrainedPATPermissions;
+  created_at: string;
+  expires_at: string | null;
+  status: "active" | "pending" | "revoked" | "expired";
+}
+
+export interface FineGrainedPATRequest {
+  id: number;
+  organization: string;
+  owner: { login: string };
+  token_name: string;
+  reason: string | null;
+  repository_selection: "all" | "subset" | "none";
+  permissions: FineGrainedPATPermissions;
+  token_expires_at: string | null;
+}
+
+export interface FineGrainedPATDashboard {
+  tokens: FineGrainedPAT[];
+  resource_owners: Array<{ login: string; type: "User" | "Organization" }>;
+  repositories: Record<string, Array<{ id: number; name: string; private: boolean }>>;
+  pending_requests: FineGrainedPATRequest[];
+}
+
+export const fetchFineGrainedPATDashboard = () =>
+  ghFetch<FineGrainedPATDashboard>("/settings/personal-access-tokens");
+export const createFineGrainedPAT = (body: {
+  name: string;
+  resource_owner: string;
+  repository_selection: "all" | "subset" | "none";
+  repository_ids: number[];
+  permissions: FineGrainedPATPermissions;
+  expires_at?: string;
+  reason?: string;
+}) => ghPostJSON<FineGrainedPAT & { token: string }>("/settings/personal-access-tokens", body);
+export const deleteFineGrainedPAT = (id: number) =>
+  ghSend("DELETE", `/settings/personal-access-tokens/${id}`);
+export const reviewFineGrainedPATRequest = (org: string, id: number, action: "approve" | "deny") =>
+  ghSend("POST", `/settings/organizations/${encodeURIComponent(org)}/personal-access-token-requests/${id}`, { action });
+
 /** First page by (owner, repo, state); follow-up pages by the Link rel="next" URL. */
 export const fetchRepoIssuesPage = (
   owner: string,

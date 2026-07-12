@@ -18,6 +18,7 @@ const ctxApp contextKey = "gh-app"
 const ctxInstallation contextKey = "gh-installation"
 const ctxInstallationToken contextKey = "gh-installation-token"
 const ctxUserToServerToken contextKey = "gh-uts-token"
+const ctxPersonalAccessToken contextKey = "gh-personal-access-token"
 const ctxSuspendedInstallation contextKey = "gh-suspended-installation"
 const ctxSuspendedUser contextKey = "gh-suspended-user"
 
@@ -64,6 +65,11 @@ func ghInstallationTokenFromContext(ctx context.Context) *InstallationToken {
 // if any. Consumed by gh_apps_perms.go (permission decorator's user-to-server path).
 func ghUserToServerTokenFromContext(ctx context.Context) *UserToServerToken {
 	t, _ := ctx.Value(ctxUserToServerToken).(*UserToServerToken)
+	return t
+}
+
+func ghPersonalAccessTokenFromContext(ctx context.Context) *Token {
+	t, _ := ctx.Value(ctxPersonalAccessToken).(*Token)
 	return t
 }
 
@@ -188,14 +194,20 @@ func (s *Server) authenticateRequest(r *http.Request) context.Context {
 				}
 			case strings.HasPrefix(tokenStr, tokenPrefixRefresh):
 			default:
-				_, user = s.store.LookupToken(tokenStr)
+				if token, resolved := s.store.LookupToken(tokenStr); token != nil {
+					user = resolved
+					ctx = context.WithValue(ctx, ctxPersonalAccessToken, token)
+				}
 			}
 		} else if scheme == "basic" {
 			decoded, err := base64.StdEncoding.DecodeString(cred)
 			if err == nil {
 				parts := strings.SplitN(string(decoded), ":", 2)
 				if len(parts) == 2 && parts[1] != "" {
-					_, user = s.store.LookupToken(parts[1])
+					if token, resolved := s.store.LookupToken(parts[1]); token != nil {
+						user = resolved
+						ctx = context.WithValue(ctx, ctxPersonalAccessToken, token)
+					}
 				}
 			}
 		}

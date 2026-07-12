@@ -19,10 +19,9 @@ import (
 // A fine-grained PAT targeting an organization starts life as a pending
 // grant request; an org admin approves it (the request becomes an active
 // grant) or denies it (the request is removed). Approved grants can later
-// be revoked, individually or in bulk. Each request/grant is tied to a real
-// token identity: the internal seed endpoint mints a live `github_pat_`
-// token row in Store.Tokens for the owning user, so the credential the
-// grant describes actually authenticates against the API.
+// be revoked, individually or in bulk. The authenticated browser settings
+// flow mints the live `github_pat_` credential and displays it once; the
+// public organization REST surface remains GitHub App-only.
 
 // OrgPATPermissions groups the permissions a fine-grained PAT requested,
 // mirroring the organization-programmatic-access-grant permissions shape.
@@ -40,7 +39,7 @@ type OrgPATGrantRequest struct {
 	OwnerUserID         int               `json:"owner_user_id"`
 	TokenID             int               `json:"token_id"`
 	TokenName           string            `json:"token_name"`
-	TokenValue          string            `json:"token_value"`
+	TokenValue          string            `json:"token_value,omitempty"`
 	Reason              *string           `json:"reason"`
 	RepositorySelection string            `json:"repository_selection"` // none | all | subset
 	RepositoryIDs       []int             `json:"repository_ids,omitempty"`
@@ -56,7 +55,7 @@ type OrgPATGrant struct {
 	OwnerUserID         int               `json:"owner_user_id"`
 	TokenID             int               `json:"token_id"`
 	TokenName           string            `json:"token_name"`
-	TokenValue          string            `json:"token_value"`
+	TokenValue          string            `json:"token_value,omitempty"`
 	RepositorySelection string            `json:"repository_selection"`
 	RepositoryIDs       []int             `json:"repository_ids,omitempty"`
 	Permissions         OrgPATPermissions `json:"permissions"`
@@ -65,19 +64,68 @@ type OrgPATGrant struct {
 }
 
 func (s *Server) registerGHOrgPATAdminRoutes() {
-	s.route("GET /api/v3/orgs/{org}/personal-access-token-requests", s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleListOrgPATGrantRequests))
-	s.route("POST /api/v3/orgs/{org}/personal-access-token-requests", s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleReviewOrgPATGrantRequestsInBulk))
-	s.route("POST /api/v3/orgs/{org}/personal-access-token-requests/{pat_request_id}", s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleReviewOrgPATGrantRequest))
-	s.route("GET /api/v3/orgs/{org}/personal-access-token-requests/{pat_request_id}/repositories", s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleListOrgPATGrantRequestRepositories))
-	s.route("GET /api/v3/orgs/{org}/personal-access-tokens", s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleListOrgPATGrants))
-	s.route("POST /api/v3/orgs/{org}/personal-access-tokens", s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleUpdateOrgPATAccesses))
-	s.route("POST /api/v3/orgs/{org}/personal-access-tokens/{pat_id}", s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleUpdateOrgPATAccess))
-	s.route("GET /api/v3/orgs/{org}/personal-access-tokens/{pat_id}/repositories", s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleListOrgPATGrantRepositories))
+	s.route("GET /api/v3/orgs/{org}/personal-access-token-requests", s.requireOrgPATApp(scopePATRequests, permRead, s.handleListOrgPATGrantRequests))
+	s.route("POST /api/v3/orgs/{org}/personal-access-token-requests", s.requireOrgPATApp(scopePATRequests, permWrite, s.handleReviewOrgPATGrantRequestsInBulk))
+	s.route("POST /api/v3/orgs/{org}/personal-access-token-requests/{pat_request_id}", s.requireOrgPATApp(scopePATRequests, permWrite, s.handleReviewOrgPATGrantRequest))
+	s.route("GET /api/v3/orgs/{org}/personal-access-token-requests/{pat_request_id}/repositories", s.requireOrgPATApp(scopePATRequests, permRead, s.handleListOrgPATGrantRequestRepositories))
+	s.route("GET /api/v3/orgs/{org}/personal-access-tokens", s.requireOrgPATApp(scopePATs, permRead, s.handleListOrgPATGrants))
+	s.route("POST /api/v3/orgs/{org}/personal-access-tokens", s.requireOrgPATApp(scopePATs, permWrite, s.handleUpdateOrgPATAccesses))
+	s.route("POST /api/v3/orgs/{org}/personal-access-tokens/{pat_id}", s.requireOrgPATApp(scopePATs, permWrite, s.handleUpdateOrgPATAccess))
+	s.route("GET /api/v3/orgs/{org}/personal-access-tokens/{pat_id}/repositories", s.requireOrgPATApp(scopePATs, permRead, s.handleListOrgPATGrantRepositories))
 
-	// Seed endpoint: mints a real fine-grained token for a user and files
-	// the pending organization access request that the admin surface above
-	// reviews — the step a user performs in GitHub's token-creation UI.
-	s.route("POST /internal/orgs/{org}/personal-access-token-requests", s.handleSeedOrgPATGrantRequest)
+	s.route("GET /settings/personal-access-tokens", s.handleListPersonalAccessTokensWeb)
+	s.route("POST /settings/personal-access-tokens", s.handleCreatePersonalAccessTokenWeb)
+	s.route("DELETE /settings/personal-access-tokens/{token_id}", s.handleDeletePersonalAccessTokenWeb)
+	s.route("POST /settings/organizations/{org}/personal-access-token-requests/{pat_request_id}", s.handleReviewPersonalAccessTokenWeb)
+}
+
+// requireOrgPATApp matches GitHub's organization token-administration
+// contract: only GitHub App installation and user access tokens may call the
+// REST endpoints. An organization owner's personal access token is not an
+// alternate authentication shape for this API.
+func (s *Server) requireOrgPATApp(scope permScope, level permLevel, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		org := s.store.GetOrg(r.PathValue("org"))
+		if org == nil {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
+		if token := ghInstallationTokenFromContext(r.Context()); token != nil {
+			installation := ghInstallationFromContext(r.Context())
+			if installation == nil || installation.TargetType != "Organization" || !strings.EqualFold(installation.TargetLogin, org.Login) || !hasPerm(token.Permissions, scope, level) {
+				writeGHError(w, http.StatusForbidden, "Resource not accessible by integration")
+				return
+			}
+			next(w, r)
+			return
+		}
+		if token := ghUserToServerTokenFromContext(r.Context()); token != nil && token.AppID > 0 && s.userAccessTokenCanAdminPATs(token, org.Login, scope, level) {
+			next(w, r)
+			return
+		}
+		writeGHError(w, http.StatusForbidden, "Resource not accessible by integration")
+	}
+}
+
+func (s *Server) userAccessTokenCanAdminPATs(token *UserToServerToken, orgLogin string, scope permScope, level permLevel) bool {
+	allowed := map[int]bool{}
+	for _, id := range token.InstallationIDs {
+		allowed[id] = true
+	}
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	for id, installation := range s.store.Installations {
+		if installation.AppID != token.AppID || installation.TargetType != "Organization" || !strings.EqualFold(installation.TargetLogin, orgLogin) {
+			continue
+		}
+		if len(allowed) > 0 && !allowed[id] {
+			continue
+		}
+		if hasPerm(installation.Permissions, scope, level) {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── store methods ───────────────────────────────────────────────────────
@@ -118,7 +166,13 @@ func (st *Store) createOrgPATGrantRequestWithRandom(orgLogin string, ownerUserID
 	if err != nil {
 		return nil, fmt.Errorf("generate fine-grained token: %w", err)
 	}
-	tok := &Token{Value: value, UserID: ownerUserID, Scopes: "", CreatedAt: time.Now().UTC()}
+	now := time.Now().UTC()
+	tok := &Token{
+		Value: value, UserID: ownerUserID, CreatedAt: now, FineGrained: true,
+		FineGrainedID: st.NextPATTokenID, Name: tokenName, ResourceOwner: orgLogin,
+		RepositorySelection: repositorySelection, RepositoryIDs: append([]int(nil), repositoryIDs...),
+		Permissions: perms, ExpiresAt: expiresAt,
+	}
 	st.Tokens[value] = tok
 	if st.persist != nil {
 		st.persist.MustPut("tokens", tok.Value, tok)
@@ -136,7 +190,7 @@ func (st *Store) createOrgPATGrantRequestWithRandom(orgLogin string, ownerUserID
 		RepositoryIDs:       repositoryIDs,
 		Permissions:         perms,
 		TokenExpiresAt:      expiresAt,
-		CreatedAt:           time.Now().UTC(),
+		CreatedAt:           now,
 	}
 	st.NextPATRequestID++
 	st.NextPATTokenID++
@@ -572,65 +626,4 @@ func (s *Server) handleListOrgPATGrantRepositories(w http.ResponseWriter, r *htt
 		return
 	}
 	s.writePATRepositoriesResponse(w, r, org, g.RepositorySelection, g.RepositoryIDs)
-}
-
-// handleSeedOrgPATGrantRequest files a pending fine-grained PAT grant
-// request for a user targeting the org, minting the real token it
-// describes. Internal-token gated, mirroring the other seed endpoints.
-func (s *Server) handleSeedOrgPATGrantRequest(w http.ResponseWriter, r *http.Request) {
-	if s.internalTokenUser(r) == nil {
-		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
-		return
-	}
-	org := s.store.GetOrg(r.PathValue("org"))
-	if org == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	var req struct {
-		Owner               string            `json:"owner"`
-		TokenName           string            `json:"token_name"`
-		Reason              *string           `json:"reason"`
-		RepositorySelection string            `json:"repository_selection"`
-		RepositoryIDs       []int             `json:"repository_ids"`
-		Permissions         OrgPATPermissions `json:"permissions"`
-		TokenExpiresAt      *time.Time        `json:"token_expires_at"`
-	}
-	if !decodeJSONBody(w, r, &req) {
-		return
-	}
-	owner := s.store.LookupUserByLogin(req.Owner)
-	if owner == nil {
-		writeGHValidationError(w, "OrganizationProgrammaticAccessGrantRequest", "owner", "invalid")
-		return
-	}
-	if req.TokenName == "" {
-		writeGHValidationError(w, "OrganizationProgrammaticAccessGrantRequest", "token_name", "missing_field")
-		return
-	}
-	switch req.RepositorySelection {
-	case "none", "all", "subset":
-	case "":
-		req.RepositorySelection = "none"
-	default:
-		writeGHValidationError(w, "OrganizationProgrammaticAccessGrantRequest", "repository_selection", "invalid")
-		return
-	}
-	for _, id := range req.RepositoryIDs {
-		if s.store.GetRepoByID(id) == nil {
-			writeGHValidationError(w, "OrganizationProgrammaticAccessGrantRequest", "repository_ids", "invalid")
-			return
-		}
-	}
-	grantReq, err := s.store.CreateOrgPATGrantRequest(org.Login, owner.ID, req.TokenName, req.Reason, req.RepositorySelection, req.RepositoryIDs, req.Permissions, req.TokenExpiresAt)
-	if err != nil {
-		s.logger.Error().Err(err).Msg("seed fine-grained PAT grant request")
-		writeGHError(w, http.StatusInternalServerError, "Internal Server Error")
-		return
-	}
-	out := s.patGrantRequestJSON(grantReq, s.baseURL(r))
-	// The raw token value is returned once at creation, exactly like
-	// GitHub's token-creation flow.
-	out["token"] = grantReq.TokenValue
-	writeJSON(w, http.StatusCreated, out)
 }

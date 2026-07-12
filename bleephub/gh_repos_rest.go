@@ -898,7 +898,7 @@ func (s *Server) handleListAuthUserRepos(w http.ResponseWriter, r *http.Request)
 	}
 	opts.NoPaginate = true // REST handlers use paginateAndLink for Link headers
 
-	repos := s.store.ListReposForAuthUser(user, opts)
+	repos := s.filterReposForFineGrainedPAT(r, s.store.ListReposForAuthUser(user, opts))
 	result := make([]map[string]interface{}, 0, len(repos))
 	base := s.baseURL(r)
 	for _, repo := range repos {
@@ -940,7 +940,7 @@ func (s *Server) handleListOrgRepos(w http.ResponseWriter, r *http.Request) {
 	opts := repoListOptionsFromQuery(r)
 	opts.Affiliation = ""  // not applicable
 	opts.NoPaginate = true // REST handlers use paginateAndLink for Link headers
-	repos := s.store.ListReposForOrg(org.Login, opts)
+	repos := s.filterReposForFineGrainedPAT(r, s.store.ListReposForOrg(org.Login, opts))
 	result := make([]map[string]interface{}, 0, len(repos))
 	base := s.baseURL(r)
 	viewer := ghUserFromContext(r.Context())
@@ -1278,15 +1278,20 @@ func (s *Server) handleListStarredRepos(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	names := s.store.ListStarredRepos(user.ID)
-	out := make([]map[string]interface{}, 0, len(names))
+	repos := make([]*Repo, 0, len(names))
 	for _, fullName := range names {
 		parts := strings.SplitN(fullName, "/", 2)
 		if len(parts) != 2 {
 			continue
 		}
 		if repo := s.store.GetRepo(parts[0], parts[1]); repo != nil {
-			out = append(out, fullRepoJSONForViewer(repo, s.store, s.baseURL(r), user))
+			repos = append(repos, repo)
 		}
+	}
+	repos = s.filterReposForFineGrainedPAT(r, repos)
+	out := make([]map[string]interface{}, 0, len(repos))
+	for _, repo := range repos {
+		out = append(out, fullRepoJSONForViewer(repo, s.store, s.baseURL(r), user))
 	}
 	writeJSON(w, http.StatusOK, out)
 }

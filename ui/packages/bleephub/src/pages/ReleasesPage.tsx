@@ -119,7 +119,7 @@ function ReleaseRow({ owner, repo, release, last }: {
   );
 }
 
-function ReleaseEditor({ owner, repo, release }: { owner: string; repo: string; release?: GithubRelease }) {
+function ReleaseEditor({ owner, repo, release, onSaved }: { owner: string; repo: string; release?: GithubRelease; onSaved?: (saved: GithubRelease) => void }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [tagName, setTagName] = useState(release?.tag_name ?? "");
@@ -154,8 +154,10 @@ function ReleaseEditor({ owner, repo, release }: { owner: string; repo: string; 
         : createRelease(owner, repo, payload);
     },
     onSuccess: async (saved) => {
+	  queryClient.setQueryData(["release", owner, repo, saved.id], saved);
       await queryClient.invalidateQueries({ queryKey: ["releases", owner, repo] });
-      navigate(`/ui/repos/${owner}/${repo}/releases/${saved.id}`);
+      if (onSaved) onSaved(saved);
+      else navigate(`/ui/repos/${owner}/${repo}/releases/${saved.id}`);
     },
   });
 
@@ -202,7 +204,10 @@ function ReleaseDetail({ owner, repo, releaseId }: { owner: string; repo: string
   });
   if (release.isLoading) return <Spinner label="loading release" />;
   if (release.isError || !release.data) return <InlineError title="Failed to load release" detail={String(release.error)} />;
-  if (editing) return <ReleaseEditor owner={owner} repo={repo} release={release.data} />;
+  if (editing) return <ReleaseEditor owner={owner} repo={repo} release={release.data} onSaved={(saved) => {
+    queryClient.setQueryData(["release", owner, repo, releaseId], saved);
+    setEditing(false);
+  }} />;
 
   return (
     <>
