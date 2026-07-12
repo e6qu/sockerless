@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-fidelity-sweep-next` continued the Bleephub GitHub-fidelity work after merged #788. It fixed BUG-2502 by making GitHub Pages deployments consume real artifact bytes before success. Both `artifact_url` and repository-owned `artifact_id` inputs now resolve to retrievable bytes, object-backed GitHub Actions artifacts are read from S3-compatible object storage, metadata/byte-size mismatches fail loudly, failed reads leave Pages state unchanged, and successful deployments retain byte count plus SHA-256 identity.
+`feat/bleephub-fidelity-sweep-next` continued the Bleephub GitHub-fidelity work after merged #788. It fixed BUG-2502 through BUG-2505 by turning GitHub Pages deployment into a real publication path. Both accepted artifact references now resolve to bytes; official Actions ZIP-with-`artifact.tar`, direct ZIP, TAR, and gzip-compressed TAR formats are validated; unsafe links, traversal, empty archives, oversized content, invalid OpenID Connect workflow claims, and wrong fine-grained permissions fail before publication; successful archives live in S3-compatible object storage and serve index, clean URL, asset, HEAD, and custom 404 requests; private sites require repository access; replacements reclaim old objects; and Pages/repository deletion removes published bytes fail-loud.
 
 ## Continue Here
 
@@ -16,6 +16,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PagesDeployments_CreateStatusCancel|PagesArtifactValidationRejectsUnsafeAndEmptyArchives|PagesPermissionIsDistinctFromAdministration|PagesHealthCheck|RegisteredAPIv3RoutesExistInGitHubSpec|FuzzRoutePatternsMatchRegisteredRoutes|PersistenceReload_DeleteRepoLeavesNoResidue)' -count=1` passed after the complete GitHub Pages publication and authorization class fix.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 168 seconds after GitHub Pages became object-backed and directly servable.
+- `pre-commit run --all-files` passed after GitHub Pages publication, OpenID Connect validation, permission, archive-security, serving, replacement, and cleanup coverage was complete.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PagesDeployments_CreateStatusCancel|PersistenceReload_DeleteRepoLeavesNoResidue)' -count=1` passed after GitHub Pages deployment coverage used Bleephub's real artifact download route and S3-compatible object storage for both accepted artifact forms.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 164 seconds after the GitHub Pages artifact-consumption fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ListCommitsEmptyRepositoryFailsLoud|UIListCommitsEmptyRepositoryReturnsEmptyHistory|GetSingleCommit|CommitBranchesWhereHead|CommitPulls|CommitArchiveDownload)' -count=1` passed with sandbox escalation after the authenticated Bleephub UI commit-list adapter preserved the public GitHub REST empty-repository `409` while returning `200 []` for repository page rendering.

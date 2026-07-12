@@ -381,6 +381,9 @@ func (st *Store) DeleteRepo(owner, name string) (bool, error) {
 	if err := st.deleteAttestationsForRepoLocked(repo.ID); err != nil {
 		return true, fmt.Errorf("delete repo %s artifact attestations: %w", fullName, err)
 	}
+	if err := st.deletePagesPublicationDataLocked(context.Background(), repo.ID); err != nil {
+		return true, fmt.Errorf("delete repo %s Pages publication: %w", fullName, err)
+	}
 
 	delete(st.Repos, repo.ID)
 	delete(st.ReposByName, fullName)

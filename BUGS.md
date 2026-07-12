@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2502 filed - 2458 fixed - 3 open - 16 false positives.**
+**2505 filed - 2461 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2505~~ | P1 | Bleephub GitHub Pages authorization | Pages routes used repository administration permission | GitHub Pages routes now enforce the distinct `pages: read/write` fine-grained repository permission, preserve unauthenticated reads only for public Pages resources, and no longer treat `administration` as a Pages grant. |
+| ~~2504~~ | P0 | Bleephub GitHub Pages deployment identity | any non-empty OpenID Connect token was trusted | GitHub Pages deployments now verify Bleephub's RS256 OpenID Connect signature, issuer, audience, validity window, repository identity, environment, build SHA, and configured source ref before reading artifacts or changing Pages state. |
+| ~~2503~~ | P1 | Bleephub GitHub Pages publication | successful deployments discarded site content | GitHub Pages deployments now validate official Actions ZIP-with-`artifact.tar`, direct ZIP, TAR, and gzip-compressed TAR artifacts; reject links, traversal, empty archives, and oversized content; publish immutable archives to object storage; serve index, clean URL, asset, HEAD, and custom 404 requests; protect private sites; replace prior objects; and delete published bytes fail-loud with Pages or repository deletion. |
 | ~~2502~~ | P1 | Bleephub GitHub Pages deployments | deployment artifact URLs were not read before success | GitHub Pages deployments now read the supplied artifact URL or repository-owned GitHub Actions artifact from object storage before succeeding, reject unreadable or size-inconsistent bytes without changing Pages state, and record the deployed byte count and SHA-256 digest. |
 | ~~2501~~ | P1 | Bleephub user interface repository pages | handled empty-repository commit conflicts still emitted browser resource errors | Bleephub repository pages now load commit history through a user-interface route that maps only GitHub's empty-repository conflict to `200 []`, so the public REST API stays fail-loud while handled empty repository pages no longer emit strict browser-console errors. |
 | ~~2500~~ | P1 | Bleephub GitHub Apps organization repository creation | GitHub App installation tokens were authorized as organization members | `POST /api/v3/orgs/{org}/repos` now authorizes GitHub App installation tokens by target organization and `administration: write`, matching GitHub's fine-grained token contract, while human tokens still require organization membership. |

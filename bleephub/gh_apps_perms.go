@@ -58,6 +58,7 @@ const (
 	scopeCodespaces        permScope = "codespaces"
 	scopeReactions         permScope = "reactions"
 	scopeProjects          permScope = "projects"
+	scopePages             permScope = "pages"
 )
 
 func parsePermLevel(s string) permLevel {
@@ -213,7 +214,7 @@ func classicScopeCovers(scopes string, scope permScope, level permLevel) bool {
 	switch scope {
 	case scopeMetadata:
 		return level == permRead || has("repo") || has("public_repo")
-	case scopeContents, scopeIssues, scopePullRequests:
+	case scopeContents, scopeIssues, scopePullRequests, scopePages:
 		if has("repo") {
 			return level <= permWrite
 		}
