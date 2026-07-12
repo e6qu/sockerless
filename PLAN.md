@@ -40,7 +40,7 @@ The merged #783/#787 baselines pushed many shallow GitHub-compatible areas towar
 
 ## Verified Next Bleephub Gaps
 
-1. Finish BUG-2523 by replacing operator ingestion with GitHub-compatible browser/producer workflows for GitHub Marketplace, CodeQL databases, and hosted-compute network settings; GitHub Classroom and fine-grained personal access tokens were completed on the active branch.
+1. Finish BUG-2523 by replacing operator ingestion with GitHub-compatible browser/producer workflows for GitHub Marketplace and hosted-compute network settings; GitHub Classroom, fine-grained personal access tokens, and CodeQL database production were completed on the active branch.
 2. Add a complete GitHub GraphQL schema/introspection ratchet; current coverage proves selected consumer surfaces only.
 3. Extend page-level light/dark fidelity from the shared shell, repository Code view, Classroom, and account token settings through Settings/Security, issue/pull-request review workflows, Actions logs, organization administration, and remaining App settings.
 4. Extend REST proof beyond registered/observed shapes into exhaustive permission, status/header, pagination, redirect, conditional-request, webhook, cascade, and failure-atomicity matrices.

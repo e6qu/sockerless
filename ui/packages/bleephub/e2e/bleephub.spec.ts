@@ -613,6 +613,61 @@ test.describe("Release provider", () => {
   });
 });
 
+// ─── Code security ──────────────────────────────────────────────────────────
+
+test.describe("Code security", () => {
+  test("uses the real default-branch commit and renders saturated light/dark CodeQL organization", async ({ page }) => {
+    await page.goto("/ui/");
+    const user = await apiGet(page, "/api/v3/user");
+    const owner = (user as { login: string }).login;
+    const repo = `code-security-${Date.now()}`;
+    await apiPost(page, "/api/v3/user/repos", { name: repo, auto_init: true });
+    const branch = await apiGet(page, `/api/v3/repos/${owner}/${repo}/branches/main`) as { commit: { sha: string } };
+
+    await page.goto(`/ui/repos/${owner}/${repo}/security/code-scanning`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { level: 1, name: "Code scanning" })).toBeVisible();
+    await expect(page.getByText(branch.commit.sha.slice(0, 7), { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Databases" })).toBeVisible();
+    await expect(page.getByText("No CodeQL databases yet")).toBeVisible();
+
+    const sarif = Buffer.from(JSON.stringify({
+      version: "2.1.0",
+      runs: [{ tool: { driver: { name: "CodeQL" } }, results: [] }],
+    }), "utf8");
+    await page.getByLabel("SARIF file").setInputFiles({ name: "results.sarif", mimeType: "application/sarif+json", buffer: sarif });
+    const uploadResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith(`/repos/${owner}/${repo}/code-scanning/sarifs`));
+    await page.getByRole("button", { name: "Upload SARIF" }).click();
+    const uploadResponse = await uploadResponsePromise;
+    expect(uploadResponse.status()).toBe(202);
+    const payload = uploadResponse.request().postDataJSON() as { commit_sha: string; ref: string };
+    expect(payload).toEqual(expect.objectContaining({ commit_sha: branch.commit.sha, ref: "refs/heads/main" }));
+    expect(payload.commit_sha).not.toMatch(/^0+$/);
+    await expect(page.locator(".security-summary").getByText("1 analyses", { exact: true })).toBeVisible();
+
+    const light = await page.locator(".security-hero").evaluate((element) => {
+      const hero = getComputedStyle(element);
+      const icon = getComputedStyle(document.querySelector(".security-hero-icon")!);
+      return { surface: getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim(), hero: hero.backgroundImage, icon: icon.backgroundImage };
+    });
+    expect(light.hero).not.toBe("none");
+    expect(light.icon).toContain("linear-gradient");
+    await shot(page, "31-code-security-light");
+
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    await page.getByRole("menuitem", { name: /dark theme/i }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    const dark = await page.locator(".security-hero").evaluate((element) => ({
+      surface: getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim(),
+      hero: getComputedStyle(element).backgroundImage,
+    }));
+    expect(dark.surface).not.toBe(light.surface);
+    expect(dark.hero).not.toBe("none");
+    await expect(page.getByRole("heading", { name: "Databases" })).toBeVisible();
+    await shot(page, "32-code-security-dark");
+  });
+});
+
 // ─── Dark theme capture ──────────────────────────────────────────────────────
 
 test.describe("Dark theme", () => {

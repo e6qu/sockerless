@@ -63,9 +63,9 @@ These are real stored implementations after ingestion, but their creation/onboar
 | Domain | Current ingress | Required completion path |
 |---|---|---|
 | GitHub Marketplace purchases | `/internal/marketplace/purchases` | Marketplace purchase/change/cancel workflow that drives account billing state and events |
-| CodeQL databases | `/internal/repos/.../code-scanning/codeql/databases` | CodeQL producer upload/finalization workflow that stores the real archive and metadata |
 | Hosted-compute network settings | `/internal/orgs/.../network-settings` | GitHub/Azure private-network onboarding workflow that provisions the settings resource before public configuration APIs reference it |
-| Fine-grained personal access token requests | `/internal/orgs/.../personal-access-token-requests` | Authenticated token-creation browser workflow that returns the credential once and files any organization approval request |
+
+CodeQL databases no longer belonged in this table. The official CodeQL Action's uploads-host raw ZIP request produced the durable database, validated the database bundle and real commit, and replaced the prior language database atomically. Fine-grained personal access tokens likewise entered through authenticated account settings with one-time credential disclosure and organization approval.
 
 The runner execution controller (`/internal/exec/...`) and operator diagnostics (`/internal/{metrics,status,storage}`) were not classified as GitHub API gaps: they are Bleephub control-plane interfaces, and user-facing UI pages already read public GitHub/health routes instead of them.
 
@@ -90,7 +90,7 @@ GitHub explicitly recommends following redirects, consuming pagination links, us
 
 The shared chrome and repository Code experience are now close to GitHub and theme-complete, but the long-tail pages still need page-level comparison and workflow coverage. Highest-value next slices are:
 
-1. repository Settings/Security organization and side navigation;
+1. repository Settings organization and the remaining Secret scanning/Dependabot security subpages;
 2. issue and pull-request timelines, review controls, and file-diff interactions;
 3. Actions workflow/run/job log organization and live updates;
 4. organization profile, people, teams, rulesets, audit, and settings hierarchy;

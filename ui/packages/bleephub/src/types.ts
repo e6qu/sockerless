@@ -1002,6 +1002,19 @@ export interface GithubCodeScanningSARIFStatus {
   errors: string[] | null;
 }
 
+export interface GithubCodeQLDatabase {
+  id: number;
+  name: string;
+  language: string;
+  uploader: { login: string; type: string; avatar_url?: string } | null;
+  content_type: string;
+  size: number;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  commit_oid: string | null;
+}
+
 // ─── GitHub Dependabot shapes ───────────────────────────────────────────
 
 export type GithubDependabotAlertState = "open" | "dismissed" | "fixed" | "auto_dismissed";

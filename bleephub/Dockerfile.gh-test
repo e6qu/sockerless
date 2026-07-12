@@ -11,7 +11,7 @@ RUN cd bleephub && GOWORK=off go build -tags noui -o /out/bleephub ./cmd
 FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates jq git openssl && \
+    curl ca-certificates jq git openssl zip && \
     rm -rf /var/lib/apt/lists/*
 
 # Install gh CLI

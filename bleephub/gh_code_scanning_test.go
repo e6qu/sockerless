@@ -56,8 +56,9 @@ func seedCodeScanningAlert(t *testing.T, owner, repo, ruleID, severity, toolName
 		},
 	}
 	sarifBytes, _ := json.Marshal(sarif)
+	commitSHA := putRepoFile(t, owner+"/"+repo, "src/"+ruleID+".js", "const finding = true;\n", "add "+ruleID+" source")
 	body, _ := json.Marshal(map[string]any{
-		"commit_sha": "af5626b4a114abcb82d63db7c8082c3c4756e51b",
+		"commit_sha": commitSHA,
 		"ref":        "refs/heads/main",
 		"sarif":      base64.StdEncoding.EncodeToString(sarifBytes),
 	})
@@ -347,8 +348,9 @@ func TestCodeScanning_SARIFUploadCreatesAlerts(t *testing.T) {
 		},
 	}
 	sarifBytes, _ := json.Marshal(sarif)
+	commitSHA := putRepoFile(t, repo.FullName, "src/zip.js", "export const zip = true;\n", "add scanned source")
 	body, _ := json.Marshal(map[string]any{
-		"commit_sha": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		"commit_sha": commitSHA,
 		"ref":        "refs/heads/main",
 		"sarif":      base64.StdEncoding.EncodeToString(sarifBytes),
 	})
@@ -402,6 +404,150 @@ func TestCodeScanning_SARIFUploadCreatesAlerts(t *testing.T) {
 	resp.Body.Close()
 	if gotUpload["processing_status"] != "complete" {
 		t.Fatalf("expected upload processing_status complete, got %v", gotUpload["processing_status"])
+	}
+
+	for name, coordinate := range map[string]map[string]any{
+		"missing ref":    {"commit_sha": commitSHA, "ref": "", "sarif": base64.StdEncoding.EncodeToString(sarifBytes)},
+		"unknown commit": {"commit_sha": strings.Repeat("f", 40), "ref": "refs/heads/main", "sarif": base64.StdEncoding.EncodeToString(sarifBytes)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalidBody, _ := json.Marshal(coordinate)
+			invalid, err := authedPost("/api/v3/repos/admin/cs-sarif/code-scanning/sarifs", "application/json", bytes.NewReader(invalidBody))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer invalid.Body.Close()
+			if invalid.StatusCode != http.StatusUnprocessableEntity {
+				body, _ := io.ReadAll(invalid.Body)
+				t.Fatalf("invalid coordinate = %d body=%s, want 422", invalid.StatusCode, body)
+			}
+		})
+	}
+}
+
+func TestCodeScanning_SARIFUploadCreatesAnalysisWithoutFindings(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	repo := testServer.store.CreateRepo(admin, "cs-sarif-clean", "", false)
+	if repo == nil {
+		t.Fatal("create repo failed")
+	}
+	commitSHA := putRepoFile(t, repo.FullName, "src/clean.js", "export const clean = true;\n", "add clean source")
+	sarifBytes, err := json.Marshal(map[string]any{
+		"version": "2.1.0",
+		"runs": []map[string]any{{
+			"tool":    map[string]any{"driver": map[string]any{"name": "CodeQL"}},
+			"results": []map[string]any{},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal SARIF: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"commit_sha": commitSHA,
+		"ref":        "refs/heads/main",
+		"sarif":      base64.StdEncoding.EncodeToString(sarifBytes),
+	})
+	if err != nil {
+		t.Fatalf("marshal upload: %v", err)
+	}
+	resp, err := authedPost("/api/v3/repos/admin/cs-sarif-clean/code-scanning/sarifs", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("upload SARIF: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		responseBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload SARIF = %d body=%s, want 202", resp.StatusCode, responseBody)
+	}
+
+	resp = authedGet(t, "/api/v3/repos/admin/cs-sarif-clean/code-scanning/analyses")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		responseBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("list analyses = %d body=%s, want 200", resp.StatusCode, responseBody)
+	}
+	var analyses []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&analyses); err != nil {
+		t.Fatalf("decode analyses: %v", err)
+	}
+	if len(analyses) != 1 {
+		t.Fatalf("analyses = %d, want one clean analysis", len(analyses))
+	}
+	if analyses[0]["results_count"] != float64(0) || analyses[0]["commit_sha"] != commitSHA {
+		t.Fatalf("clean analysis = %+v, want zero findings at commit %s", analyses[0], commitSHA)
+	}
+}
+
+func TestCodeScanning_SARIFUploadCreatesEveryRun(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	repo := testServer.store.CreateRepo(admin, "cs-sarif-runs", "", false)
+	if repo == nil {
+		t.Fatal("create repo failed")
+	}
+	commitSHA := putRepoFile(t, repo.FullName, "src/multi.js", "export const multi = true;\n", "add multi-run source")
+	sarifBytes, err := json.Marshal(map[string]any{
+		"version": "2.1.0",
+		"runs": []map[string]any{
+			{
+				"tool":    map[string]any{"driver": map[string]any{"name": "CodeQL-JavaScript"}},
+				"results": []map[string]any{},
+			},
+			{
+				"tool": map[string]any{"driver": map[string]any{"name": "CodeQL-Go"}},
+				"results": []map[string]any{{
+					"ruleId":  "go/path-injection",
+					"message": map[string]any{"text": "Path injection"},
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal SARIF: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"commit_sha": commitSHA,
+		"ref":        "refs/heads/main",
+		"sarif":      base64.StdEncoding.EncodeToString(sarifBytes),
+	})
+	if err != nil {
+		t.Fatalf("marshal upload: %v", err)
+	}
+	resp, err := authedPost("/api/v3/repos/admin/cs-sarif-runs/code-scanning/sarifs", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("upload SARIF: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		responseBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload SARIF = %d body=%s, want 202", resp.StatusCode, responseBody)
+	}
+
+	resp = authedGet(t, "/api/v3/repos/admin/cs-sarif-runs/code-scanning/analyses")
+	defer resp.Body.Close()
+	var analyses []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&analyses); err != nil {
+		t.Fatalf("decode analyses: %v", err)
+	}
+	if len(analyses) != 2 {
+		t.Fatalf("analyses = %d, want one analysis for each SARIF run", len(analyses))
+	}
+	tools := map[string]bool{}
+	for _, analysis := range analyses {
+		tool, _ := analysis["tool"].(map[string]any)
+		tools[tool["name"].(string)] = true
+	}
+	if !tools["CodeQL-JavaScript"] || !tools["CodeQL-Go"] {
+		t.Fatalf("analysis tools = %+v, want both SARIF runs", tools)
+	}
+
+	resp = authedGet(t, "/api/v3/repos/admin/cs-sarif-runs/code-scanning/alerts")
+	defer resp.Body.Close()
+	var alerts []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&alerts); err != nil {
+		t.Fatalf("decode alerts: %v", err)
+	}
+	if len(alerts) != 1 || alerts[0]["rule"].(map[string]any)["id"] != "go/path-injection" {
+		t.Fatalf("alerts = %+v, want the finding from the second SARIF run", alerts)
 	}
 }
 

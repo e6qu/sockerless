@@ -79,8 +79,11 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		// Only activate for /api/ paths — runner protocol (/_apis/) is unaffected
-		if !strings.HasPrefix(path, "/api/") {
+		// Activate for the REST API plus the uploads-host and authenticated
+		// CodeQL storage paths. The official CodeQL Action posts database
+		// bundles to /repos/... on uploads.github.com rather than /api/v3/.
+		// Runner protocol (/_apis/) remains unaffected.
+		if !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/repos/") && !strings.HasPrefix(path, "/code-scanning/") {
 			next.ServeHTTP(w, r)
 			return
 		}

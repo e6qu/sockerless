@@ -2,41 +2,91 @@ package bleephub
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
 
-// seedCodeQLDatabase uploads a CodeQL database through the internal
-// seeding endpoint (real GitHub receives databases from CodeQL analysis
-// uploads) and returns the created entity.
-func seedCodeQLDatabase(t *testing.T, repoFullName, language, commitOID string, content []byte) map[string]any {
+// testCodeQLDatabaseBundle creates the same relocatable archive shape emitted
+// by `codeql database bundle`: a manifest and non-empty language dataset under
+// one database root.
+func testCodeQLDatabaseBundle(t *testing.T, language, marker string) []byte {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{
-		"language":   language,
-		"content":    base64.StdEncoding.EncodeToString(content),
-		"commit_oid": commitOID,
-	})
-	resp, err := authedPost("/internal/repos/"+repoFullName+"/code-scanning/codeql/databases", "application/json", bytes.NewReader(body))
+	return testCodeQLDatabaseBundleWithManifest(t, language, "primaryLanguage: "+language+"\n", marker)
+}
+
+func testCodeQLDatabaseBundleWithManifest(t *testing.T, language, manifestYAML, marker string) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	root := language + "-database"
+	manifest, err := zw.Create(root + "/codeql-database.yml")
 	if err != nil {
-		t.Fatalf("seed CodeQL database: %v", err)
+		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	if _, err := manifest.Write([]byte(manifestYAML)); err != nil {
+		t.Fatal(err)
+	}
+	dataset, err := zw.Create(root + "/db-" + language + "/default/cache/pages/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dataset.Write([]byte(marker)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+// uploadCodeQLDatabase sends the raw uploads.github.com request used by the
+// official github/codeql-action and returns the public REST representation.
+func uploadCodeQLDatabase(t *testing.T, repoFullName, language, commitOID string, content []byte) map[string]any {
+	t.Helper()
+	resp := postCodeQLDatabase(t, defaultToken, repoFullName, language, language+"-database", commitOID, "application/zip", content)
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("seed CodeQL database: %d body=%s", resp.StatusCode, b)
+		t.Fatalf("upload CodeQL database: %d", resp.StatusCode)
 	}
-	var created map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatalf("decode seeded database: %v", err)
+	get := ghGet(t, "/api/v3/repos/"+repoFullName+"/code-scanning/codeql/databases/"+language, defaultToken)
+	if get.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(get.Body)
+		get.Body.Close()
+		t.Fatalf("get uploaded CodeQL database: %d body=%s", get.StatusCode, b)
 	}
-	return created
+	return decodeJSON(t, get)
+}
+
+func postCodeQLDatabase(t *testing.T, token, repoFullName, language, name, commitOID, contentType string, content []byte) *http.Response {
+	t.Helper()
+	path := "/repos/" + repoFullName + "/code-scanning/codeql/databases/" + language +
+		"?name=" + name + "&commit_oid=" + commitOID
+	req, err := http.NewRequest(http.MethodPost, testBaseURL+path, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("create CodeQL database upload: %v", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "token "+token)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(content)))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("upload CodeQL database: %v", err)
+	}
+	return resp
 }
 
 func assertNoInternalURL(t *testing.T, value any) {
@@ -244,10 +294,10 @@ func TestCodeScanningAutofix_NotEligible(t *testing.T) {
 
 func TestCodeQLDatabases_RoundTrip(t *testing.T) {
 	repo := seedTestRepo(t, "codeql-dbs", false)
-	dbBytes := []byte("codeql-database-archive-bytes")
-	commitOID := "1927de39fefa25a9d0e64e3f540ff824a72f538c"
+	commitOID := putRepoFile(t, repo.FullName, "main.go", "package main\n", "add source")
+	dbBytes := testCodeQLDatabaseBundle(t, "go", "codeql-database-archive-bytes")
 
-	created := seedCodeQLDatabase(t, repo.FullName, "go", commitOID, dbBytes)
+	created := uploadCodeQLDatabase(t, repo.FullName, "go", commitOID, dbBytes)
 	if created["language"] != "go" {
 		t.Fatalf("seeded language = %v, want go", created["language"])
 	}
@@ -266,7 +316,7 @@ func TestCodeQLDatabases_RoundTrip(t *testing.T) {
 		t.Fatalf("databases = %d, want 1", len(list))
 	}
 	db := list[0]
-	if db["name"] != "database.zip" || db["language"] != "go" || db["content_type"] != "application/zip" {
+	if db["name"] != "go-database" || db["language"] != "go" || db["content_type"] != "application/zip" {
 		t.Fatalf("database = %v", db)
 	}
 	if db["size"] != float64(len(dbBytes)) {
@@ -327,6 +377,12 @@ func TestCodeQLDatabases_RoundTrip(t *testing.T) {
 	if dlResp.StatusCode != http.StatusOK {
 		t.Fatalf("download database: %d body=%s", dlResp.StatusCode, raw)
 	}
+	if got := dlResp.Header.Get("Content-Disposition"); got != `attachment; filename="go-database.zip"` {
+		t.Fatalf("database Content-Disposition = %q", got)
+	}
+	if got := dlResp.Header.Get("Content-Length"); got != fmt.Sprintf("%d", len(dbBytes)) {
+		t.Fatalf("database Content-Length = %q, want %d", got, len(dbBytes))
+	}
 	if !bytes.Equal(raw, dbBytes) {
 		t.Fatalf("downloaded bytes = %q, want %q", raw, dbBytes)
 	}
@@ -349,15 +405,15 @@ func TestCodeQLDatabases_BytesUseObjectStore(t *testing.T) {
 		testServer.store.ObjectByteStore = oldStore
 	})
 
-	dbBytes := []byte("object-backed-codeql-database")
-	created := seedCodeQLDatabase(t, repo.FullName, "go", "1927de39fefa25a9d0e64e3f540ff824a72f538c", dbBytes)
-	dbID := int(created["id"].(float64))
-	if got := string(readS3TestFile(t, objectFS, codeQLDatabaseDataKey(dbID))); got != string(dbBytes) {
-		t.Fatalf("CodeQL database object bytes = %q, want %q", got, dbBytes)
-	}
+	commitOID := putRepoFile(t, repo.FullName, "main.go", "package main\n", "add source")
+	dbBytes := testCodeQLDatabaseBundle(t, "go", "object-backed-codeql-database")
+	uploadCodeQLDatabase(t, repo.FullName, "go", commitOID, dbBytes)
 	db := testServer.store.GetCodeQLDatabase(repo.FullName, "go")
 	if db == nil {
 		t.Fatal("CodeQL database missing after seed")
+	}
+	if got := string(readS3TestFile(t, objectFS, db.StoragePath)); got != string(dbBytes) {
+		t.Fatalf("CodeQL database object bytes = %q, want %q", got, dbBytes)
 	}
 	if len(db.Content) != 0 {
 		t.Fatalf("CodeQL database metadata retained %d raw bytes; bytes must live in object storage", len(db.Content))
@@ -386,8 +442,313 @@ func TestCodeQLDatabases_BytesUseObjectStore(t *testing.T) {
 	}
 
 	mustStatus(t, ghDelete(t, "/api/v3/repos/"+repo.FullName+"/code-scanning/codeql/databases/go", defaultToken), http.StatusNoContent, "delete object-backed database")
-	if _, err := objectFS.Open(codeQLDatabaseDataKey(dbID)); err == nil {
-		t.Fatalf("CodeQL database object %s survived database deletion", codeQLDatabaseDataKey(dbID))
+	if _, err := objectFS.Open(db.StoragePath); err == nil {
+		t.Fatalf("CodeQL database object %s survived database deletion", db.StoragePath)
+	}
+}
+
+func TestCodeQLDatabaseUpload_ValidatesOfficialActionProtocol(t *testing.T) {
+	repo := seedTestRepo(t, "codeql-upload-contract", false)
+	commitOID := putRepoFile(t, repo.FullName, "main.go", "package main\n", "add source")
+	bundle := testCodeQLDatabaseBundle(t, "go", "dataset")
+
+	resp := postCodeQLDatabase(t, "", repo.FullName, "go", "go-database", commitOID, "application/zip", bundle)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated upload = %d, want 401", resp.StatusCode)
+	}
+
+	resp = postCodeQLDatabase(t, defaultToken, repo.FullName, "go", "go-database", commitOID, "application/octet-stream", bundle)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("wrong content type = %d, want 415", resp.StatusCode)
+	}
+
+	for name, tc := range map[string]struct {
+		language string
+		commit   string
+		bundle   []byte
+	}{
+		"non-zip":            {language: "go", commit: commitOID, bundle: []byte("not a database")},
+		"language mismatch":  {language: "python", commit: commitOID, bundle: bundle},
+		"unknown commit":     {language: "go", commit: strings.Repeat("f", 40), bundle: bundle},
+		"unfinalized":        {language: "go", commit: commitOID, bundle: testCodeQLDatabaseBundleWithManifest(t, "go", "primaryLanguage: go\ninProgress: false\n", "dataset")},
+		"manifest mismatch":  {language: "go", commit: commitOID, bundle: testCodeQLDatabaseBundleWithManifest(t, "go", "primaryLanguage: python\n", "dataset")},
+		"oversized manifest": {language: "go", commit: commitOID, bundle: testCodeQLDatabaseBundleWithManifest(t, "go", "primaryLanguage: go\n#"+strings.Repeat("x", 1<<20), "dataset")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := postCodeQLDatabase(t, defaultToken, repo.FullName, tc.language, tc.language+"-database", tc.commit, "application/zip", tc.bundle)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422", resp.StatusCode)
+			}
+		})
+	}
+
+	var unsafe bytes.Buffer
+	zw := zip.NewWriter(&unsafe)
+	w, err := zw.Create("../go-database/codeql-database.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.Write([]byte("primaryLanguage: go\n"))
+	w, err = zw.Create("go-database/db-go/default/cache/pages/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.Write([]byte("dataset"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resp = postCodeQLDatabase(t, defaultToken, repo.FullName, "go", "go-database", commitOID, "application/zip", unsafe.Bytes())
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("unsafe archive = %d, want 422", resp.StatusCode)
+	}
+
+	oldRoute, err := authedPost("/internal/repos/"+repo.FullName+"/code-scanning/codeql/databases", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRoute.Body.Close()
+	if oldRoute.StatusCode != http.StatusNotFound {
+		t.Fatalf("obsolete internal route = %d, want 404", oldRoute.StatusCode)
+	}
+	if got := testServer.store.GetCodeQLDatabase(repo.FullName, "go"); got != nil {
+		t.Fatalf("invalid uploads created database %+v", got)
+	}
+}
+
+func TestCodeQLDatabaseProductionHasNoOperatorSeedRoute(t *testing.T) {
+	obsoleteRoute := "/internal/repos/" + "{owner}/{repo}/code-scanning/codeql/databases"
+	for _, file := range []string{"gh_code_scanning.go", "../specs/BLEEPHUB_GITHUB_API_PARITY.md"} {
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		if strings.Contains(string(source), obsoleteRoute) {
+			t.Fatalf("%s reintroduced the obsolete operator CodeQL database seed route", file)
+		}
+	}
+}
+
+func TestCodeQLDatabaseUpload_ActionsInstallationTokenLifecycle(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	repo := seedTestRepo(t, "codeql-actions-token", true)
+	other := seedTestRepo(t, "codeql-actions-token-other", true)
+	commitOID := putRepoFile(t, repo.FullName, "main.go", "package main\n", "add source")
+	otherCommit := putRepoFile(t, other.FullName, "main.go", "package main\n", "add source")
+	bundle := testCodeQLDatabaseBundle(t, "go", "installation dataset")
+
+	permissions := map[string]string{"security_events": "write", "contents": "write"}
+	app := testServer.store.CreateApp(admin.ID, "CodeQL Database Producer", "", permissions, nil)
+	installation := testServer.store.CreateInstallation(app.ID, "User", admin.ID, admin.Login, permissions, nil)
+	token := testServer.store.CreateInstallationToken(installation.ID, app.ID, permissions, []int{repo.ID})
+
+	resp := postCodeQLDatabase(t, token.Token, repo.FullName, "go", "go-database", commitOID, "application/zip", bundle)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("installation upload = %d, want 201", resp.StatusCode)
+	}
+
+	get := ghGet(t, "/api/v3/repos/"+repo.FullName+"/code-scanning/codeql/databases/go", token.Token)
+	if get.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(get.Body)
+		get.Body.Close()
+		t.Fatalf("installation get = %d body=%s", get.StatusCode, body)
+	}
+	database := decodeJSON(t, get)
+	uploader := database["uploader"].(map[string]any)
+	if uploader["login"] != app.Slug+"[bot]" || uploader["type"] != "Bot" {
+		t.Fatalf("installation uploader = %v", uploader)
+	}
+
+	resp = postCodeQLDatabase(t, token.Token, other.FullName, "go", "go-database", otherCommit, "application/zip", bundle)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("token upload outside selected repository = %d, want 403", resp.StatusCode)
+	}
+
+	contentsOnly := testServer.store.CreateInstallationToken(installation.ID, app.ID, map[string]string{"contents": "write"}, []int{repo.ID})
+	resp = postCodeQLDatabase(t, contentsOnly.Token, repo.FullName, "go", "go-database", commitOID, "application/zip", bundle)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("upload without security_events:write = %d, want 403", resp.StatusCode)
+	}
+
+	sarif := map[string]any{
+		"version": "2.1.0",
+		"runs": []map[string]any{{
+			"tool": map[string]any{"driver": map[string]any{"name": "CodeQL"}},
+			"results": []map[string]any{{
+				"ruleId":  "go/installation-producer",
+				"message": map[string]any{"text": "installation-token result"},
+			}},
+		}},
+	}
+	sarifBytes, err := json.Marshal(sarif)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sarifResponse := ghPost(t, "/api/v3/repos/"+repo.FullName+"/code-scanning/sarifs", token.Token, map[string]any{
+		"commit_sha": commitOID,
+		"ref":        "refs/heads/main",
+		"sarif":      base64.StdEncoding.EncodeToString(sarifBytes),
+	})
+	if sarifResponse.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(sarifResponse.Body)
+		sarifResponse.Body.Close()
+		t.Fatalf("installation SARIF upload = %d body=%s", sarifResponse.StatusCode, body)
+	}
+	sarifUpload := decodeJSON(t, sarifResponse)
+	status := ghGet(t, "/api/v3/repos/"+repo.FullName+"/code-scanning/sarifs/"+sarifUpload["id"].(string), token.Token)
+	if status.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(status.Body)
+		status.Body.Close()
+		t.Fatalf("installation SARIF status = %d body=%s", status.StatusCode, body)
+	}
+	statusBody := decodeJSON(t, status)
+	if statusBody["processing_status"] != "complete" {
+		t.Fatalf("installation SARIF status = %v", statusBody)
+	}
+	deniedSARIF := ghPost(t, "/api/v3/repos/"+repo.FullName+"/code-scanning/sarifs", contentsOnly.Token, map[string]any{
+		"commit_sha": commitOID,
+		"ref":        "refs/heads/main",
+		"sarif":      base64.StdEncoding.EncodeToString(sarifBytes),
+	})
+	deniedSARIF.Body.Close()
+	if deniedSARIF.StatusCode != http.StatusForbidden {
+		t.Fatalf("SARIF upload without security_events:write = %d, want 403", deniedSARIF.StatusCode)
+	}
+
+	deleteResp := ghDelete(t, "/api/v3/repos/"+repo.FullName+"/code-scanning/codeql/databases/go", token.Token)
+	deleteResp.Body.Close()
+	if deleteResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("installation delete = %d, want 204", deleteResp.StatusCode)
+	}
+}
+
+func TestCodeQLDatabaseUpload_ObjectFailurePreservesPreviousDatabase(t *testing.T) {
+	repo := seedTestRepo(t, "codeql-object-atomic", false)
+	firstCommit := putRepoFile(t, repo.FullName, "main.go", "package main\n", "add source")
+	firstBundle := testCodeQLDatabaseBundle(t, "go", "first dataset")
+	objectFS, goodStore := newObjectByteStoreForTest(t)
+	oldStore := testServer.store.ObjectByteStore
+	testServer.store.ObjectByteStore = goodStore
+	t.Cleanup(func() { testServer.store.ObjectByteStore = oldStore })
+
+	created := uploadCodeQLDatabase(t, repo.FullName, "go", firstCommit, firstBundle)
+	databaseID := int(created["id"].(float64))
+	secondCommit := putRepoFile(t, repo.FullName, "second.go", "package main\n", "add second source")
+	secondBundle := testCodeQLDatabaseBundle(t, "go", "replacement dataset")
+	testServer.store.ObjectByteStore = &s3ActionsByteStore{fs: &s3FS{client: objectFS.client, bucket: "missing-bucket", prefix: objectFS.prefix}}
+
+	resp := postCodeQLDatabase(t, defaultToken, repo.FullName, "go", "replacement", secondCommit, "application/zip", secondBundle)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("failed replacement = %d body=%s, want 500", resp.StatusCode, body)
+	}
+
+	testServer.store.ObjectByteStore = goodStore
+	database := testServer.store.GetCodeQLDatabase(repo.FullName, "go")
+	if database == nil || database.CommitOID != firstCommit || database.Name != "go-database" {
+		t.Fatalf("database changed after object failure: %+v", database)
+	}
+	if database.ID != databaseID {
+		t.Fatalf("database ID changed after object failure: got %d want %d", database.ID, databaseID)
+	}
+	if got := readS3TestFile(t, objectFS, database.StoragePath); !bytes.Equal(got, firstBundle) {
+		t.Fatalf("database bytes changed after object failure")
+	}
+	previousPath := database.StoragePath
+	replaced := uploadCodeQLDatabase(t, repo.FullName, "go", secondCommit, secondBundle)
+	database = testServer.store.GetCodeQLDatabase(repo.FullName, "go")
+	if database == nil || database.CommitOID != secondCommit || database.StoragePath == previousPath || database.Name != "go-database" {
+		t.Fatalf("successful replacement database = %+v response=%v", database, replaced)
+	}
+	if _, err := objectFS.Open(previousPath); err == nil {
+		t.Fatalf("replaced CodeQL database archive %s survived successful replacement", previousPath)
+	}
+	if got := readS3TestFile(t, objectFS, database.StoragePath); !bytes.Equal(got, secondBundle) {
+		t.Fatalf("replacement database bytes differ")
+	}
+}
+
+func TestCodeQLDatabaseUpload_PersistenceFailurePreservesPreviousDatabase(t *testing.T) {
+	t.Setenv("BLEEPHUB_PERSIST", "true")
+	t.Setenv("BLEEPHUB_DATA_DIR", t.TempDir())
+	persistence, err := NewPersistence()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore()
+	if err := store.SetPersistence(persistence); err != nil {
+		t.Fatal(err)
+	}
+	_, objectStore := newObjectByteStoreForTest(t)
+	store.ObjectByteStore = objectStore
+	store.SeedDefaultUser()
+	user := store.UsersByLogin["admin"]
+	first := []byte("first durable CodeQL database")
+	database, err := store.UpsertCodeQLDatabase("admin/repo", "go", "go-database", "application/zip", strings.Repeat("1", 40), first, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousPath := database.StoragePath
+	if err := persistence.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	second := []byte("replacement durable CodeQL database")
+	if _, err := store.UpsertCodeQLDatabase("admin/repo", "go", "replacement", "application/zip", strings.Repeat("2", 40), second, user.ID); err == nil {
+		t.Fatal("replacement with closed SQLite persistence succeeded")
+	}
+	got := store.GetCodeQLDatabase("admin/repo", "go")
+	if got == nil || got.Name != "go-database" || got.CommitOID != strings.Repeat("1", 40) || got.StoragePath != previousPath {
+		t.Fatalf("database metadata changed after persistence failure: %+v", got)
+	}
+	bytesAfterFailure, err := store.ReadCodeQLDatabaseContent(context.Background(), got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(bytesAfterFailure, first) {
+		t.Fatalf("database bytes changed after persistence failure: %q", bytesAfterFailure)
+	}
+	newPath := codeQLDatabaseDataKey(database.ID, second)
+	if _, err := objectStore.Get(context.Background(), newPath); err == nil {
+		t.Fatalf("replacement object %s survived persistence rollback", newPath)
+	}
+}
+
+func TestCodeQLArtifacts_PrivateRepositoryDownloadsRequireAccess(t *testing.T) {
+	repo := seedTestRepo(t, "codeql-private-download", true)
+	commitOID := putRepoFile(t, repo.FullName, "main.go", "package main\n", "add source")
+	bundle := testCodeQLDatabaseBundle(t, "go", "private source dataset")
+	uploadCodeQLDatabase(t, repo.FullName, "go", commitOID, bundle)
+	databaseURL := testBaseURL + "/code-scanning/repos/" + repo.FullName + "/codeql/databases/go/download"
+
+	unauthenticated, err := http.Get(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthenticated.Body.Close()
+	if unauthenticated.StatusCode != http.StatusNotFound {
+		t.Fatalf("anonymous private database download = %d, want 404", unauthenticated.StatusCode)
+	}
+	authenticated, err := http.NewRequest(http.MethodGet, databaseURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated.Header.Set("Authorization", "token "+defaultToken)
+	download, err := http.DefaultClient.Do(authenticated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(download.Body)
+	download.Body.Close()
+	if download.StatusCode != http.StatusOK || !bytes.Equal(raw, bundle) {
+		t.Fatalf("authorized private database download = %d bytes=%d", download.StatusCode, len(raw))
 	}
 }
 
@@ -398,7 +759,8 @@ func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {
 	withDB := seedTestRepo(t, "codeql-va-with-db", false)
 	withoutDB := seedTestRepo(t, "codeql-va-no-db", false)
 
-	seedCodeQLDatabase(t, withDB.FullName, "go", "af5626b4a114abcb82d63db7c8082c3c4756e51b", []byte("db"))
+	databaseCommit := putRepoFile(t, withDB.FullName, "main.go", "package main\n", "add source")
+	uploadCodeQLDatabase(t, withDB.FullName, "go", databaseCommit, testCodeQLDatabaseBundle(t, "go", "db"))
 
 	queryPackBytes := testCodeQLQueryPack(t)
 	queryPack := base64.StdEncoding.EncodeToString(queryPackBytes)
@@ -496,7 +858,7 @@ func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {
 	if taskRepo["full_name"] != withDB.FullName {
 		t.Fatalf("repo task repository = %v, want %s", taskRepo["full_name"], withDB.FullName)
 	}
-	if task["database_commit_sha"] != "af5626b4a114abcb82d63db7c8082c3c4756e51b" {
+	if task["database_commit_sha"] != databaseCommit {
 		t.Fatalf("database_commit_sha = %v", task["database_commit_sha"])
 	}
 
@@ -508,9 +870,10 @@ func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {
 }
 
 func TestCodeQLVariantAnalyses_QueryPacksUseObjectStore(t *testing.T) {
-	controller := seedTestRepo(t, "codeql-va-object-controller", false)
+	controller := seedTestRepo(t, "codeql-va-object-controller", true)
 	withDB := seedTestRepo(t, "codeql-va-object-db", false)
-	seedCodeQLDatabase(t, withDB.FullName, "go", "23a401530b4b24149f5a03c44f1e622b773e5af7", []byte("db"))
+	databaseCommit := putRepoFile(t, withDB.FullName, "main.go", "package main\n", "add source")
+	uploadCodeQLDatabase(t, withDB.FullName, "go", databaseCommit, testCodeQLDatabaseBundle(t, "go", "db"))
 
 	objectFS, objectStore := newObjectByteStoreForTest(t)
 	oldStore := testServer.store.ObjectByteStore
@@ -532,6 +895,29 @@ func TestCodeQLVariantAnalyses_QueryPacksUseObjectStore(t *testing.T) {
 	}
 	created := decodeJSON(t, resp)
 	vaID := int(created["id"].(float64))
+	queryPackURL := created["query_pack_url"].(string)
+	anonymous, err := http.Get(queryPackURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anonymous.Body.Close()
+	if anonymous.StatusCode != http.StatusNotFound {
+		t.Fatalf("anonymous private query-pack download = %d, want 404", anonymous.StatusCode)
+	}
+	request, err := http.NewRequest(http.MethodGet, queryPackURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "token "+defaultToken)
+	authorized, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizedBytes, _ := io.ReadAll(authorized.Body)
+	authorized.Body.Close()
+	if authorized.StatusCode != http.StatusOK || !bytes.Equal(authorizedBytes, queryPackBytes) {
+		t.Fatalf("authorized private query-pack download = %d bytes=%d", authorized.StatusCode, len(authorizedBytes))
+	}
 	key := codeQLVariantAnalysisQueryPackDataKey(vaID)
 	if got := readS3TestFile(t, objectFS, key); !bytes.Equal(got, queryPackBytes) {
 		t.Fatalf("CodeQL variant-analysis query-pack object bytes = %q, want %q", got, queryPackBytes)

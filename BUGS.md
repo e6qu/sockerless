@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2534 filed - 2489 fixed - 4 open - 16 false positives.**
+**2547 filed - 2502 fixed - 4 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,7 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only operator seed routes | Marketplace purchases, CodeQL databases, and hosted-compute network settings still entered Bleephub only through `/internal/*` routes instead of GitHub-compatible browser or producer workflows. |
+| 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only operator seed routes | Marketplace purchases and hosted-compute network settings still entered Bleephub only through `/internal/*` routes instead of GitHub-compatible browser or producer workflows. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Google Cloud Run, Azure Container Apps, Azure Functions, Lambda service-mesh, and Azure identity-backed cells need authenticated real-cloud validation before they can be marked green. |
@@ -19,6 +19,19 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2547~~ | P0 | Bleephub code scanning ingestion | SARIF processing stopped after the first run | SARIF ingestion now created a distinct analysis and the corresponding alerts for every run in a valid document, preserving multi-language and multi-configuration scan results including clean runs. |
+| ~~2546~~ | P2 | Bleephub user interface API surface | an unused single-alert helper survived the Code Security reorganization | The Bleephub user-interface API module no longer exported the unused single-alert helper, so its public surface matched the routed Code Security consumers and the unused-export gate passed. |
+| ~~2545~~ | P0 | Bleephub code scanning ingestion | valid zero-result SARIF runs disappeared | Valid zero-result SARIF runs now created durable code-scanning analyses with zero alerts, so clean scans remained visible through REST and the browser Security workflow. |
+| ~~2544~~ | P1 | Bleephub Code Security browser coverage | producer proof stopped at the outbound SARIF request | The Code Security Playwright scenario now waited for the accepted SARIF response and the reconciled analysis count before capturing both themes, proving the complete producer-to-rendered-result workflow. |
+| ~~2543~~ | P2 | Bleephub Code Security browser coverage | theme selection opened the global navigation instead of the user menu | The Code Security Playwright scenario now selected dark mode through the user menu and proved the page's distinct dark surface and saturated hero treatment. |
+| ~~2542~~ | P2 | Bleephub Code Security browser coverage | a broad commit-prefix locator matched two truthful coordinates | The Code Security Playwright scenario now matched the exact standalone commit prefix while separately verifying the complete branch coordinate, so both truthful renderings remained strict-mode safe. |
+| ~~2541~~ | P1 | Bleephub fine-grained personal access token theme | undefined color and shadow tokens invalidated the hero styling | The account token hero now used the shared Bleephub background, status, and floating-shadow tokens, so its saturated gradient and elevation rendered in both light and dark themes. |
+| ~~2540~~ | P0 | Bleephub CodeQL database durability | replacements overwrote bytes before committing metadata | CodeQL database replacements now used immutable content-addressed object keys and rolled metadata and bytes back across persistence or cleanup failure, preserving the prior database atomically. |
+| ~~2539~~ | P1 | Bleephub CodeQL database authorization | generic code-scanning permissions replaced database-specific contents permissions | CodeQL database list/get used `contents: read` and deletion used `contents: write`, matching GitHub's fine-grained permission contract for user and installation credentials. |
+| ~~2538~~ | P0 | Bleephub code scanning producer authorization | repository administration replaced the security-events permission contract | SARIF creation and status reads now accepted repository-selected GitHub App installation tokens with the corresponding `security_events` permission, so the official GitHub Actions CodeQL producer no longer required a human administrator. |
+| ~~2537~~ | P0 | Bleephub CodeQL artifact confidentiality | deterministic archive paths bypassed repository visibility | CodeQL database bundles and variant-analysis query packs now enforced repository visibility before returning object-backed bytes, including private repository authentication. |
+| ~~2536~~ | P0 | Bleephub code scanning ingestion | SARIF uploads accepted and emitted fabricated commit coordinates | SARIF uploads now required a fully qualified ref and a real repository commit, while the Security page resolved and submitted the repository's actual default-branch head with UTF-8-safe encoding. |
+| ~~2535~~ | P0 | Bleephub CodeQL database production | arbitrary operator JSON stood in for the CodeQL Action upload protocol | Bleephub now accepted the official CodeQL Action's uploads-host raw ZIP protocol, validated finalized CodeQL database bundles and real commits, persisted object-backed archives, and removed the arbitrary internal base64 seed route. |
 | ~~2534~~ | P0 | Bleephub secret scanning | personal access token detector covered only the classic prefix | Repository secret scanning and push protection now detect generated `github_pat_` fine-grained credentials as GitHub personal access tokens, and the classic detector also covers Bleephub's generated credential length. |
 | ~~2533~~ | P1 | Bleephub release user interface | editing stayed on the same detail route without reconciling detail state | Routed release edits now reconcile the saved detail query and exit editor state with uploaded assets intact, with focused browser-component coverage for the complete transition. |
 | ~~2532~~ | P1 | Bleephub fine-grained personal access token administration | personal access tokens could call GitHub App-only organization review endpoints | Organization request and grant administration now requires a targeted GitHub App installation or user access token with GitHub's dedicated organization permissions, while organization owners approve or deny requests through authenticated browser settings. |

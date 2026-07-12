@@ -3,13 +3,17 @@ import { useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchCodeScanningAlerts,
-  fetchCodeScanningAlert,
   fetchCodeScanningAlertInstances,
   fetchCodeScanningAnalyses,
   updateCodeScanningAlert,
   deleteCodeScanningAnalysis,
   uploadSARIF,
   fetchSARIFStatus,
+  fetchCodeQLDatabases,
+  deleteCodeQLDatabase,
+  downloadCodeQLDatabase,
+  fetchRepoDetail,
+  fetchRepoBranch,
 } from "../api.js";
 import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import { RepoHeader } from "../components/Shell.js";
@@ -20,6 +24,7 @@ import type {
   GithubCodeScanningAlertInstance,
   GithubCodeScanningAnalysis,
   GithubCodeScanningDismissedReason,
+  GithubCodeQLDatabase,
 } from "../types.js";
 
 type FilterState = "all" | "open" | "dismissed" | "fixed";
@@ -41,6 +46,22 @@ export function CodeScanningPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const counts = useOpenCounts(owner, repo);
   const queryClient = useQueryClient();
+
+  const { data: repository } = useQuery({
+    queryKey: ["repo", owner, repo],
+    queryFn: () => fetchRepoDetail(owner, repo),
+    enabled: !!owner && !!repo,
+  });
+  const {
+    data: defaultBranch,
+    isLoading: isDefaultBranchLoading,
+    isError: isDefaultBranchError,
+  } = useQuery({
+    queryKey: ["repo-branch", owner, repo, repository?.default_branch],
+    queryFn: () => fetchRepoBranch(owner, repo, repository!.default_branch),
+    enabled: !!repository?.default_branch,
+    retry: false,
+  });
 
   const filters = {
     state: stateFilter === "all" ? undefined : stateFilter,
@@ -69,6 +90,12 @@ export function CodeScanningPage() {
     enabled: !!owner && !!repo,
   });
 
+  const { data: databases = [], isError: isDatabaseError } = useQuery({
+    queryKey: ["codeql-databases", owner, repo],
+    queryFn: () => fetchCodeQLDatabases(owner, repo),
+    enabled: !!owner && !!repo,
+  });
+
   const updateMutation = useMutation({
     mutationFn: (payload: {
       number: number;
@@ -87,12 +114,12 @@ export function CodeScanningPage() {
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
-      const text = await file.text();
-      const commitSha = "0000000000000000000000000000000000000000";
+	  if (!repository || !defaultBranch) throw new Error("The default branch has no commit to analyze.");
+      const text = await readFileText(file);
       const res = await uploadSARIF(owner, repo, {
-        commit_sha: commitSha,
-        ref: "refs/heads/main",
-        sarif: btoa(text),
+		commit_sha: defaultBranch.commit.sha,
+		ref: `refs/heads/${repository.default_branch}`,
+		sarif: utf8Base64(text),
       });
       return res;
     },
@@ -108,6 +135,29 @@ export function CodeScanningPage() {
     },
   });
 
+  const deleteDatabaseMutation = useMutation({
+    mutationFn: (language: string) => deleteCodeQLDatabase(owner, repo, language),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["codeql-databases", owner, repo] }),
+  });
+
+  const downloadDatabaseMutation = useMutation({
+    mutationFn: async (database: GithubCodeQLDatabase) => ({
+      database,
+      blob: await downloadCodeQLDatabase(owner, repo, database.language),
+    }),
+    onSuccess: ({ database, blob }) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const name = database.name || `${database.language}-database`;
+      link.download = name.toLowerCase().endsWith(".zip") ? name : `${name}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    },
+  });
+
   useEffect(() => {
     setSelected(null);
   }, [owner, repo]);
@@ -119,66 +169,62 @@ export function CodeScanningPage() {
     <div>
       <RepoHeader owner={owner} repo={repo} active="security" {...counts} />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <label style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>State:</label>
-        <select
-          value={stateFilter}
-          onChange={(e) => setStateFilter(e.target.value as FilterState)}
-          style={{ fontSize: "0.85rem", padding: "0.35rem 0.5rem" }}
-        >
-          <option value="all">All</option>
-          <option value="open">Open</option>
-          <option value="dismissed">Dismissed</option>
-          <option value="fixed">Fixed</option>
-        </select>
+      <section className="security-hero" aria-labelledby="code-scanning-title">
+        <div className="security-hero-icon" aria-hidden="true">◈</div>
+        <div>
+          <p className="security-eyebrow">Security · Code security</p>
+          <h1 id="code-scanning-title">Code scanning</h1>
+          <p>Find vulnerable patterns, inspect analyses, and manage the CodeQL databases produced from this repository.</p>
+        </div>
+        <div className="security-summary" aria-label="Code scanning summary">
+          <span><strong>{alerts.filter((alert) => alert.state === "open").length}</strong> open</span>
+          <span><strong>{analyses.length}</strong> analyses</span>
+          <span><strong>{databases.length}</strong> databases</span>
+        </div>
+      </section>
 
-        <label style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)", marginLeft: "0.5rem" }}>Severity:</label>
-        <select
-          value={severityFilter}
-          onChange={(e) => setSeverityFilter(e.target.value as SeverityFilter)}
-          style={{ fontSize: "0.85rem", padding: "0.35rem 0.5rem" }}
-        >
-          <option value="all">All</option>
-          <option value="error">Error</option>
-          <option value="warning">Warning</option>
-          <option value="note">Note</option>
-          <option value="none">None</option>
-        </select>
+      <div className="security-filter-bar">
+        <div className="security-filter-group">
+          <label htmlFor="code-state-filter">State</label>
+          <select id="code-state-filter" value={stateFilter} onChange={(e) => setStateFilter(e.target.value as FilterState)}>
+            <option value="all">All</option><option value="open">Open</option><option value="dismissed">Dismissed</option><option value="fixed">Fixed</option>
+          </select>
+        </div>
+        <div className="security-filter-group">
+          <label htmlFor="code-severity-filter">Severity</label>
+          <select id="code-severity-filter" value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value as SeverityFilter)}>
+            <option value="all">All</option><option value="error">Error</option><option value="warning">Warning</option><option value="note">Note</option><option value="none">None</option>
+          </select>
+        </div>
+        <span className="security-coordinate">
+          {defaultBranch ? <><code>{repository?.default_branch}</code><span>{defaultBranch.commit.sha.slice(0, 7)}</span></> : "No default-branch commit"}
+        </span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-        <Box>
-          <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Alerts ({alerts.length})</h3>
+      <div className="security-alert-grid">
+        <Box className="security-panel">
+          <div className="security-panel-heading"><div><span className="security-kicker pink">Findings</span><h2>Alerts</h2></div><span className="security-count">{alerts.length}</span></div>
           {alerts.length === 0 ? (
-            <p style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>No code scanning alerts.</p>
+            <div className="security-empty"><strong>No code scanning alerts</strong><span>New results from SARIF analyses appear here.</span></div>
           ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            <ul className="security-list">
               {alerts.map((alert) => (
-                <li
-                  key={alert.number}
-                  onClick={() => setSelected(alert)}
-                  style={{
-                    padding: "0.6rem 0.4rem",
-                    borderBottom: "1px solid var(--color-border)",
-                    cursor: "pointer",
-                    background: selected?.number === alert.number ? "var(--color-accent-subtle)" : "transparent",
-                  }}
-                >
-                  <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
-                    #{alert.number} {alert.rule.name}
-                  </div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--color-fg-muted)" }}>
+                <li key={alert.number}>
+                  <button type="button" className={selected?.number === alert.number ? "security-alert-row selected" : "security-alert-row"} onClick={() => setSelected(alert)}>
+                    <span className={`security-severity ${alert.rule.severity ?? "none"}`} aria-hidden="true" />
+                    <span><strong>#{alert.number} {alert.rule.name}</strong><small>
                     {alert.state}
                     {alert.dismissed_reason ? ` — ${alert.dismissed_reason}` : ""}
                     {alert.rule.severity ? ` · ${alert.rule.severity}` : ""}
-                  </div>
+                    </small></span>
+                  </button>
                 </li>
               ))}
             </ul>
           )}
         </Box>
 
-        <Box>
+        <Box className="security-panel security-detail-panel">
           {selected ? (
             <AlertDetail
               alert={selected}
@@ -190,44 +236,97 @@ export function CodeScanningPage() {
               onFix={() => updateMutation.mutate({ number: selected.number, state: "fixed" })}
             />
           ) : (
-            <p style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>Select an alert to view details.</p>
+            <div className="security-empty"><strong>Select an alert</strong><span>Review its rule, source location, and resolution controls.</span></div>
           )}
         </Box>
       </div>
 
-      <Box className="mt-4">
-        <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Analyses ({analyses.length})</h3>
-        {analyses.length === 0 ? (
-          <p style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>No analyses.</p>
+      <Box className="security-panel security-database-panel mt-4">
+        <div className="security-panel-heading"><div><span className="security-kicker purple">CodeQL</span><h2>Databases</h2><p>Relocatable databases uploaded by the CodeQL analysis workflow on the default branch.</p></div><span className="security-count">{databases.length}</span></div>
+        {isDatabaseError ? <InlineError title="Failed to load CodeQL databases" detail="The database API did not return a usable response." /> : databases.length === 0 ? (
+          <div className="security-empty database"><strong>No CodeQL databases yet</strong><span>Run <code>github/codeql-action/analyze</code> with database upload enabled on the default branch.</span></div>
         ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          <div className="security-database-list">
+            {databases.map((database) => (
+              <article className="security-database-row" key={database.id}>
+                <span className="security-language-orb" aria-hidden="true">{database.language.slice(0, 2).toUpperCase()}</span>
+                <div className="security-database-copy">
+                  <strong>{database.name}</strong>
+                  <span>{database.language} · {formatBytes(database.size)} · updated {formatDate(database.updated_at)}</span>
+                  {database.commit_oid && <code>{database.commit_oid.slice(0, 12)}</code>}
+                </div>
+                <div className="security-row-actions">
+                  <button type="button" className="security-button" onClick={() => downloadDatabaseMutation.mutate(database)} disabled={downloadDatabaseMutation.isPending}>Download</button>
+                  <button type="button" className="security-button danger" aria-label={`Delete ${database.language} CodeQL database`} onClick={() => deleteDatabaseMutation.mutate(database.language)} disabled={deleteDatabaseMutation.isPending}>Delete</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+        {(deleteDatabaseMutation.isError || downloadDatabaseMutation.isError) && <p className="security-inline-error">{String(deleteDatabaseMutation.error || downloadDatabaseMutation.error)}</p>}
+      </Box>
+
+      <Box className="security-panel mt-4">
+        <div className="security-panel-heading"><div><span className="security-kicker cyan">Results</span><h2>Analyses</h2></div><span className="security-count">{analyses.length}</span></div>
+        {analyses.length === 0 ? (
+          <div className="security-empty"><strong>No analyses</strong><span>Upload a SARIF result or run a CodeQL workflow.</span></div>
+        ) : (
+          <ul className="security-list">
             {analyses.map((analysis) => (
               <AnalysisItem key={analysis.id} analysis={analysis} owner={owner} repo={repo} />
             ))}
           </ul>
         )}
 
-        <div style={{ marginTop: "1rem" }}>
-          <label style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.5rem" }}>Upload SARIF</label>
+        <div className="security-upload">
+          <div><strong>Upload SARIF</strong><span>{defaultBranch ? <>Results attach to <code>{repository?.default_branch}@{defaultBranch.commit.sha.slice(0, 7)}</code>.</> : "Create a default-branch commit before uploading results."}</span></div>
           <input
+            aria-label="SARIF file"
             type="file"
             accept=".sarif,.json"
             onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-            style={{ fontSize: "0.85rem", marginBottom: "0.5rem" }}
           />
           <button
             type="button"
-            disabled={!uploadFile || uploadMutation.isPending}
+            className="security-primary-button"
+            disabled={!uploadFile || !defaultBranch || isDefaultBranchLoading || uploadMutation.isPending}
             onClick={() => uploadFile && uploadMutation.mutate(uploadFile)}
-            style={{ fontSize: "0.85rem", padding: "0.4rem 0.8rem" }}
           >
-            {uploadMutation.isPending ? "Uploading..." : "Upload"}
+            {uploadMutation.isPending ? "Uploading…" : "Upload SARIF"}
           </button>
-          {uploadError && <div style={{ color: "var(--color-danger-fg)", fontSize: "0.85rem", marginTop: "0.5rem" }}>{uploadError}</div>}
+          {(uploadError || isDefaultBranchError) && <div className="security-inline-error">{uploadError || "The default branch does not have a readable head commit."}</div>}
         </div>
       </Box>
     </div>
   );
+}
+
+function utf8Base64(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function readFileText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read the SARIF file."));
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
 }
 
 function AnalysisItem({

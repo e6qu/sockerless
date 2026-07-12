@@ -339,7 +339,7 @@ func (st *Store) CreateSARIFUpload(repoKey string, payload map[string]interface{
 		return nil, fmt.Errorf("commit_sha is required")
 	}
 	if ref == "" {
-		ref = "refs/heads/main"
+		return nil, fmt.Errorf("ref is required")
 	}
 
 	sarifRaw, _ := payload["sarif"].(string)
@@ -369,19 +369,16 @@ func (st *Store) CreateSARIFUpload(repoKey string, payload map[string]interface{
 		st.SARIFUploads = make(map[string]*SARIFUpload)
 	}
 
-	toolName := toolNameOverride
 	runs, _ := sarif["runs"].([]interface{})
-	if len(runs) > 0 {
-		run, _ := runs[0].(map[string]interface{})
-		toolName = extractSARIFToolName(run, toolName)
+	for _, rawRun := range runs {
+		run, _ := rawRun.(map[string]interface{})
+		toolName := extractSARIFToolName(run, toolNameOverride)
 		results, _ := run["results"].([]interface{})
-		if len(results) > 0 {
-			analysisKey := fmt.Sprintf("%s:%s", toolName, ref)
-			category := fmt.Sprintf("%s/%s", toolName, ref)
-			analysis := st.createAnalysisAndAlertsLocked(repoKey, ref, commitSHA, analysisKey, category, toolName, run, results)
-			analysis.SARIFUploadID = uploadID
-			st.persistCodeScanningAnalysis(analysis)
-		}
+		analysisKey := fmt.Sprintf("%s:%s", toolName, ref)
+		category := fmt.Sprintf("%s/%s", toolName, ref)
+		analysis := st.createAnalysisAndAlertsLocked(repoKey, ref, commitSHA, analysisKey, category, toolName, run, results)
+		analysis.SARIFUploadID = uploadID
+		st.persistCodeScanningAnalysis(analysis)
 	}
 
 	st.SARIFUploads[uploadID] = upload
@@ -882,45 +879,67 @@ func (st *Store) UpsertCodeQLDatabase(repoKey, language, name, contentType, comm
 	if st.CodeQLDatabasesByRepo[repoKey] == nil {
 		st.CodeQLDatabasesByRepo[repoKey] = make(map[string]*CodeQLDatabase)
 	}
-	db := st.CodeQLDatabasesByRepo[repoKey][language]
+	previous := st.CodeQLDatabasesByRepo[repoKey][language]
 	id := st.NextCodeQLDatabaseID
 	createdAt := now
-	if db != nil {
-		id = db.ID
-		createdAt = db.CreatedAt
+	if previous != nil {
+		id = previous.ID
+		createdAt = previous.CreatedAt
 	}
-	storagePath := codeQLDatabaseDataKey(id)
+	storagePath := codeQLDatabaseDataKey(id, content)
 	if st.ObjectByteStore != nil {
 		if err := st.ObjectByteStore.Put(context.Background(), storagePath, content); err != nil {
 			return nil, fmt.Errorf("write CodeQL database bytes: %w", err)
 		}
 	}
-	if db == nil {
-		db = &CodeQLDatabase{
-			ID:        id,
-			RepoKey:   repoKey,
-			Language:  language,
-			CreatedAt: createdAt,
-		}
-		st.NextCodeQLDatabaseID++
-		st.CodeQLDatabases[db.ID] = db
-		st.CodeQLDatabasesByRepo[repoKey][language] = db
+	db := &CodeQLDatabase{
+		ID:          id,
+		RepoKey:     repoKey,
+		Name:        name,
+		Language:    language,
+		UploaderID:  uploaderID,
+		ContentType: contentType,
+		Size:        int64(len(content)),
+		StoragePath: storagePath,
+		CommitOID:   commitOID,
+		CreatedAt:   createdAt,
+		UpdatedAt:   now,
 	}
-	db.Name = name
-	db.ContentType = contentType
-	db.Size = int64(len(content))
-	db.StoragePath = storagePath
 	if st.ObjectByteStore != nil {
 		db.Content = nil
 	} else {
 		db.Content = append([]byte(nil), content...)
 	}
-	db.CommitOID = commitOID
-	db.UploaderID = uploaderID
-	db.UpdatedAt = now
 	if st.persist != nil {
-		st.persist.MustPut("codeql_databases", strconv.Itoa(db.ID), db)
+		if err := st.persist.Put("codeql_databases", strconv.Itoa(db.ID), db); err != nil {
+			cleanupErr := st.deleteCodeQLDatabaseDataLocked(db)
+			if cleanupErr != nil {
+				return nil, fmt.Errorf("persist CodeQL database metadata: %w; cleanup new archive: %v", err, cleanupErr)
+			}
+			return nil, fmt.Errorf("persist CodeQL database metadata: %w", err)
+		}
 	}
+	if previous != nil && previous.StoragePath != "" && previous.StoragePath != storagePath && st.ObjectByteStore != nil {
+		if err := st.deleteCodeQLDatabaseDataLocked(previous); err != nil {
+			if st.persist != nil {
+				if rollbackErr := st.persist.Put("codeql_databases", strconv.Itoa(previous.ID), previous); rollbackErr != nil {
+					st.CodeQLDatabases[db.ID] = db
+					st.CodeQLDatabasesByRepo[repoKey][language] = db
+					return nil, fmt.Errorf("delete replaced CodeQL database archive: %w; rollback metadata: %v", err, rollbackErr)
+				}
+			}
+			cleanupErr := st.deleteCodeQLDatabaseDataLocked(db)
+			if cleanupErr != nil {
+				return nil, fmt.Errorf("delete replaced CodeQL database archive: %w; cleanup replacement archive: %v", err, cleanupErr)
+			}
+			return nil, fmt.Errorf("delete replaced CodeQL database archive: %w", err)
+		}
+	}
+	if previous == nil {
+		st.NextCodeQLDatabaseID++
+	}
+	st.CodeQLDatabases[db.ID] = db
+	st.CodeQLDatabasesByRepo[repoKey][language] = db
 	return db, nil
 }
 
@@ -972,14 +991,21 @@ func (st *Store) DeleteCodeQLDatabase(repoKey, language string) (bool, error) {
 	if db == nil {
 		return false, nil
 	}
+	if st.persist != nil {
+		if err := st.persist.Delete("codeql_databases", strconv.Itoa(db.ID)); err != nil {
+			return true, fmt.Errorf("delete CodeQL database metadata: %w", err)
+		}
+	}
 	if err := st.deleteCodeQLDatabaseDataLocked(db); err != nil {
+		if st.persist != nil {
+			if rollbackErr := st.persist.Put("codeql_databases", strconv.Itoa(db.ID), db); rollbackErr != nil {
+				return true, fmt.Errorf("delete CodeQL database bytes: %w; rollback metadata: %v", err, rollbackErr)
+			}
+		}
 		return true, err
 	}
 	delete(st.CodeQLDatabasesByRepo[repoKey], language)
 	delete(st.CodeQLDatabases, db.ID)
-	if st.persist != nil {
-		st.persist.MustDelete("codeql_databases", strconv.Itoa(db.ID))
-	}
 	return true, nil
 }
 

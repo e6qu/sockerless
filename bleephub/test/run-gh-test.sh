@@ -825,6 +825,39 @@ fi
 REL_COUNT=$(gh release list -R "$NV_REPO" --json tagName --jq 'length' 2>/dev/null || echo "-1")
 assert_eq "release gone after delete" "0" "$REL_COUNT"
 
+# --- CodeQL Action database upload protocol + gh API lifecycle ---
+# The producer sends a finalized relocatable ZIP to the uploads host without
+# an /api/v3 prefix; gh then consumes GitHub's public database REST resources.
+CODEQL_COMMIT=$(api "$BASE/api/v3/repos/$NV_REPO/commits/main" --jq .sha 2>/dev/null || echo "")
+assert_not_empty "CodeQL database source commit" "$CODEQL_COMMIT"
+rm -rf /tmp/codeql-go-database /tmp/codeql-go-database.zip
+mkdir -p /tmp/codeql-go-database/db-go/default/cache/pages
+cat > /tmp/codeql-go-database/codeql-database.yml <<'YAML'
+primaryLanguage: go
+YAML
+echo "real gh harness CodeQL dataset" > /tmp/codeql-go-database/db-go/default/cache/pages/0
+(cd /tmp && zip -qr codeql-go-database.zip codeql-go-database)
+if gh api --method POST \
+    -H "Authorization: token $TOKEN" \
+    -H "Content-Type: application/zip" \
+    --input /tmp/codeql-go-database.zip \
+    "$BASE/repos/$NV_REPO/code-scanning/codeql/databases/go?name=go-database&commit_oid=$CODEQL_COMMIT" >/dev/null 2>&1; then
+    pass "CodeQL Action database upload protocol"
+else
+    fail "CodeQL Action database upload protocol"
+fi
+CODEQL_DATABASES=$(api "$BASE/api/v3/repos/$NV_REPO/code-scanning/codeql/databases")
+assert_eq "gh api lists CodeQL database" "go-database" "$(echo "$CODEQL_DATABASES" | jq -r '.[0].name')"
+CODEQL_DATABASE=$(api "$BASE/api/v3/repos/$NV_REPO/code-scanning/codeql/databases/go")
+assert_eq "gh api gets CodeQL database language" "go" "$(echo "$CODEQL_DATABASE" | jq -r '.language')"
+if api --method DELETE "$BASE/api/v3/repos/$NV_REPO/code-scanning/codeql/databases/go" >/dev/null 2>&1; then
+    pass "gh api deletes CodeQL database"
+else
+    fail "gh api deletes CodeQL database"
+fi
+CODEQL_DATABASE_COUNT=$(api "$BASE/api/v3/repos/$NV_REPO/code-scanning/codeql/databases" --jq 'length' 2>/dev/null || echo "-1")
+assert_eq "CodeQL database absent after delete" "0" "$CODEQL_DATABASE_COUNT"
+
 # --- issue verbs: create with label, list --label, close, reopen ---
 gh label create bug --color d73a4a -R "$NV_REPO" >/dev/null 2>&1 || true
 if gh issue create -R "$NV_REPO" --title "native labeled issue" --body "native" --label bug >/dev/null 2>&1; then

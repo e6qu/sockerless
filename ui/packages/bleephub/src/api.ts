@@ -66,6 +66,7 @@ import type {
   GithubCodeScanningDismissedReason,
   GithubCodeScanningSARIFStatus,
   GithubCodeScanningSARIFUpload,
+  GithubCodeQLDatabase,
   GithubDependabotAlert,
   GithubDependabotAlertState,
   GithubDependabotDismissedReason,
@@ -984,6 +985,9 @@ export const fetchPRDetail = (owner: string, repo: string, number: number) =>
 export const fetchRepoBranches = (owner: string, repo: string) =>
   ghFetch<GithubBranch[]>(`/api/v3/repos/${owner}/${repo}/branches`);
 
+export const fetchRepoBranch = (owner: string, repo: string, branch: string) =>
+  ghFetch<GithubBranch>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`);
+
 export const fetchBranchProtection = (owner: string, repo: string, branch: string) =>
   ghFetch<GithubBranchProtection>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`);
 
@@ -1749,9 +1753,6 @@ export const fetchCodeScanningAlerts = (
   return ghFetch<GithubCodeScanningAlert[]>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts${qs ? `?${qs}` : ""}`);
 };
 
-export const fetchCodeScanningAlert = (owner: string, repo: string, number: number) =>
-  ghFetch<GithubCodeScanningAlert>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts/${number}`);
-
 export const fetchCodeScanningAlertInstances = (owner: string, repo: string, number: number) =>
   ghFetch<GithubCodeScanningAlertInstance[]>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts/${number}/instances`);
 
@@ -1777,6 +1778,24 @@ export const uploadSARIF = (
 
 export const fetchSARIFStatus = (owner: string, repo: string, id: string) =>
   ghFetch<GithubCodeScanningSARIFStatus>(`/api/v3/repos/${owner}/${repo}/code-scanning/sarifs/${id}`);
+
+export const fetchCodeQLDatabases = (owner: string, repo: string) =>
+  ghFetch<GithubCodeQLDatabase[]>(`/api/v3/repos/${owner}/${repo}/code-scanning/codeql/databases`);
+
+export const deleteCodeQLDatabase = (owner: string, repo: string, language: string) =>
+  ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/code-scanning/codeql/databases/${encodeURIComponent(language)}`);
+
+export async function downloadCodeQLDatabase(owner: string, repo: string, language: string): Promise<Blob> {
+  const response = await fetch(
+    `/api/v3/repos/${owner}/${repo}/code-scanning/codeql/databases/${encodeURIComponent(language)}`,
+    { headers: { Accept: "application/zip", ...authHeaders() } },
+  );
+  if (!response.ok) {
+    handleUnauthorized(response);
+    throw new ApiError(response.status, `${response.status} ${response.statusText}`);
+  }
+  return response.blob();
+}
 
 async function ghPatchJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
