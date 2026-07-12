@@ -341,7 +341,8 @@ func (s *Server) handleDeleteRef(w http.ResponseWriter, r *http.Request) {
 
 	// refPath is like "heads/branch-name" or "tags/v1.0"
 	fullRef := plumbing.ReferenceName("refs/" + refPath)
-	if _, err := stor.Reference(fullRef); err != nil {
+	oldRef, err := stor.Reference(fullRef)
+	if err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Reference does not exist")
 		return
 	}
@@ -349,6 +350,9 @@ func (s *Server) handleDeleteRef(w http.ResponseWriter, r *http.Request) {
 	if err := stor.RemoveReference(fullRef); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if fullRef.IsBranch() {
+		s.afterCommittedRefUpdate(repo, ghUserFromContext(r.Context()), fullRef.String(), oldRef.Hash().String(), plumbing.ZeroHash.String(), s.baseURL(r))
 	}
 
 	w.WriteHeader(http.StatusNoContent)

@@ -664,6 +664,9 @@ func (s *Server) handleCreateRef(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if fullRef.IsBranch() {
+		s.afterCommittedRefUpdate(repo, ghUserFromContext(r.Context()), fullRef.String(), plumbing.ZeroHash.String(), target.String(), s.baseURL(r))
+	}
 	ref, _ := stor.Reference(fullRef)
 	writeJSON(w, http.StatusCreated, refToJSON(s.baseURL(r), repo.FullName, ref))
 }
@@ -729,6 +732,9 @@ func (s *Server) handleUpdateRef(w http.ResponseWriter, r *http.Request) {
 	if err := s.scanRefForSecretScanning(repo, stor, fullRef, newTarget, s.baseURL(r)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if fullRef.IsBranch() {
+		s.afterCommittedRefUpdate(repo, ghUserFromContext(r.Context()), fullRef.String(), oldRef.Hash().String(), newTarget.String(), s.baseURL(r))
 	}
 	ref, _ := stor.Reference(fullRef)
 	writeJSON(w, http.StatusOK, refToJSON(s.baseURL(r), repo.FullName, ref))

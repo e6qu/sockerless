@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -1173,17 +1174,26 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 		actor = user.Login
 		pusher = &PagesPusher{Login: user.Login, ID: user.ID, Type: coalesceStr(user.Type, "User")}
 	}
+	_, ok := s.runPagesBuild(r.Context(), repo, pusher, actor, s.baseURL(r))
+	if !ok {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	// GitHub's request-a-build response is exactly {status, url}.
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"status": "queued", "url": s.baseURL(r) + "/api/v3/repos/" + repo.FullName + "/pages/builds/latest"})
+}
+
+func (s *Server) runPagesBuild(ctx context.Context, repo *Repo, pusher *PagesPusher, actor, baseURL string) (*PagesBuild, bool) {
 	now := time.Now()
 	s.store.Misc.mu.Lock()
 	pages := s.store.Misc.pagesByRepo[repo.ID]
 	if pages == nil {
 		s.store.Misc.mu.Unlock()
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
+		return nil, false
 	}
 	buildID := s.store.Misc.nextPagesBuildID
 	s.store.Misc.nextPagesBuildID++
-	buildURL := s.baseURL(r) + "/api/v3/repos/" + repo.FullName + "/pages/builds/" + strconv.FormatInt(buildID, 10)
+	buildURL := baseURL + "/api/v3/repos/" + repo.FullName + "/pages/builds/" + strconv.FormatInt(buildID, 10)
 	build := &PagesBuild{
 		ID:        buildID,
 		URL:       buildURL,
@@ -1204,7 +1214,7 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 	custom404 := false
 	buildErr := sourceErr
 	if buildErr == nil {
-		commitSHA, custom404, buildErr = s.buildPagesBranch(r.Context(), repo, branch, sourcePath)
+		commitSHA, custom404, buildErr = s.buildPagesBranch(ctx, repo, branch, sourcePath)
 	}
 	finishedAt := time.Now()
 	s.store.Misc.mu.Lock()
@@ -1227,8 +1237,7 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 	}
 	s.store.Misc.mu.Unlock()
 	s.recordAuditEvent("pages.build", actor, "", map[string]interface{}{"repo": repo.FullName, "build_id": buildID})
-	// GitHub's request-a-build response is exactly {status, url}.
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"status": "queued", "url": s.baseURL(r) + "/api/v3/repos/" + repo.FullName + "/pages/builds/latest"})
+	return build, true
 }
 
 func (s *Server) handlePagesLatestBuild(w http.ResponseWriter, r *http.Request) {

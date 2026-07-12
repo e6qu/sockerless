@@ -328,12 +328,15 @@ func (s *Server) handlePutContents(w http.ResponseWriter, r *http.Request) {
 	ref, refErr := stor.Reference(branchRef)
 	var commitHash plumbing.Hash
 	var isInitial bool
+	beforeHash := plumbing.ZeroHash.String()
 	if refErr != nil || ref == nil {
 		if repoHasAnyBranch(stor) {
 			writeGHError(w, http.StatusNotFound, "Branch not found")
 			return
 		}
 		isInitial = true
+	} else {
+		beforeHash = ref.Hash().String()
 	}
 
 	if isInitial {
@@ -385,6 +388,7 @@ func (s *Server) handlePutContents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.afterCommittedRefUpdate(repo, user, branchRef.String(), beforeHash, commitHash.String(), base)
 	contentOut := contentFileJSON(base, repo, branch, path, entry.Hash.String(), blob.Size)
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
@@ -515,6 +519,7 @@ func (s *Server) handleDeleteContents(w http.ResponseWriter, r *http.Request) {
 	s.store.UpdateRepo(owner, repoName, func(r *Repo) {
 		r.PushedAt = time.Now().UTC()
 	})
+	s.afterCommittedRefUpdate(repo, user, branchRef.String(), ref.Hash().String(), commitHash.String(), s.baseURL(r))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"content": nil,

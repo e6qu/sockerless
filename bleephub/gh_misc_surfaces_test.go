@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -12,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
 )
 
 const pagesJekyllTestImage = "sockerless-bleephub-pages-test"
@@ -154,6 +157,8 @@ func TestGPGKeyDeleteOwnership(t *testing.T) {
 func TestPagesBuildsCRUD(t *testing.T) {
 	s := newTestServer()
 	s.registerGHMiscEndpoints()
+	s.registerGHRepoObjectRoutes()
+	s.registerGHGitDataRoutes()
 	fs := newS3FSForTest(t)
 	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "pages-build-objects"}
 	s.store.ObjectByteStore = &s3ActionsByteStore{fs: objectFS}
@@ -276,6 +281,58 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	secondURL, _ := second["url"].(string)
 	if secondURL != buildURL {
 		t.Fatalf("second build response url = %q, want stable latest URL %q", secondURL, buildURL)
+	}
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("published automatically"))
+	w = doMiscReq(s, "PUT", "/api/v3/repos/"+repo.FullName+"/contents/docs/automatic.html", `{"message":"Update Pages source","content":"`+encoded+`","branch":"main"}`)
+	if w.Code != 201 {
+		t.Fatalf("commit Pages source through Contents API = %d: %s", w.Code, w.Body.String())
+	}
+	waitUntil(t, "automatic Pages build from Contents API", func() bool {
+		s.store.Misc.mu.RLock()
+		defer s.store.Misc.mu.RUnlock()
+		return len(s.store.Misc.pagesBuilds[repo.FullName]) == 3 && s.store.Misc.pagesBuilds[repo.FullName][0].Status == "built"
+	})
+	automaticReq := httptest.NewRequest("GET", "/pages/admin/pages-build-test/automatic.html", nil)
+	automaticReq.SetPathValue("owner", "admin")
+	automaticReq.SetPathValue("repo", repo.Name)
+	automaticReq.SetPathValue("path", "automatic.html")
+	automaticW := httptest.NewRecorder()
+	s.handlePagesContent(automaticW, automaticReq)
+	if automaticW.Code != 200 || automaticW.Body.String() != "published automatically" {
+		t.Fatalf("automatically published Pages content = %d %q", automaticW.Code, automaticW.Body.String())
+	}
+
+	stor := s.store.GetGitStorage("admin", repo.Name)
+	branchRef := plumbing.NewBranchReferenceName(repo.DefaultBranch)
+	oldRef, err := stor.Reference(branchRef)
+	if err != nil {
+		t.Fatalf("read branch before Git Database update: %v", err)
+	}
+	newCommit, err := createFileCommit(stor, repo.DefaultBranch, "docs/database.html", "published from Git Database", "Git Database Pages update", repoSignature(admin.Login, "bleephub@local"))
+	if err != nil {
+		t.Fatalf("create Git Database target commit: %v", err)
+	}
+	if err := stor.SetReference(plumbing.NewHashReference(branchRef, oldRef.Hash())); err != nil {
+		t.Fatalf("restore branch before Git Database API update: %v", err)
+	}
+	w = doMiscReq(s, "PATCH", "/api/v3/repos/"+repo.FullName+"/git/refs/heads/main", `{"sha":"`+newCommit.String()+`"}`)
+	if w.Code != 200 {
+		t.Fatalf("update Pages source through Git Database API = %d: %s", w.Code, w.Body.String())
+	}
+	waitUntil(t, "automatic Pages build from Git Database API", func() bool {
+		s.store.Misc.mu.RLock()
+		defer s.store.Misc.mu.RUnlock()
+		return len(s.store.Misc.pagesBuilds[repo.FullName]) == 4 && s.store.Misc.pagesBuilds[repo.FullName][0].Status == "built"
+	})
+	databaseReq := httptest.NewRequest("GET", "/pages/admin/pages-build-test/database.html", nil)
+	databaseReq.SetPathValue("owner", "admin")
+	databaseReq.SetPathValue("repo", repo.Name)
+	databaseReq.SetPathValue("path", "database.html")
+	databaseW := httptest.NewRecorder()
+	s.handlePagesContent(databaseW, databaseReq)
+	if databaseW.Code != 200 || databaseW.Body.String() != "published from Git Database" {
+		t.Fatalf("Git Database published Pages content = %d %q", databaseW.Code, databaseW.Body.String())
 	}
 
 	w = doMiscReq(s, "GET", "/api/v3/repos/nonexist/pages/builds/latest", "")

@@ -4,18 +4,19 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-pages-branch-builds` continued after merged #790 and fixed BUG-2506 and BUG-2507. Manual legacy Pages builds now used their configured git source, directly published `.nojekyll` trees or ran the pinned `github-pages` 232/Jekyll 3.10.0 toolchain in safe production mode, rejected invalid sources and links, published only real static/generated output through the shared S3-compatible transaction, served the resulting bytes, and persisted real commit, terminal build/site, duration, custom-404, digest, size, deployment, and Jekyll error state. The release image shipped the complete Ruby/Bundler/gem runtime, and tests built that actual image before driving public Pages APIs against real git and the Amazon Simple Storage Service simulator.
+`feat/bleephub-pages-branch-builds` continued after merged #790 and fixed BUG-2506 through BUG-2510. Legacy Pages builds used their configured git source, directly published `.nojekyll` trees or ran the pinned `github-pages` 232/Jekyll 3.10.0 toolchain, and persisted real publication state. Smart HTTP, Contents API, and Git Database branch writes shared one race-safe event path for activity, push webhooks, GitHub Actions workflows, pull-request synchronization, and automatic matching legacy Pages builds. Workflow-run actors used complete GitHub simple-user shapes, and committed-reference processing used canonical repository identity rather than optional expanded owner data.
 
 ## Continue Here
 
-1. Fix BUG-2508 by creating one post-ref-update fan-out for smart-HTTP pushes, Contents API commits, and Git Database branch writes, then automatically rebuild configured legacy Pages sources from that real event path.
-2. Keep scanning for Bleephub behavior that is still internal-only, shape-only, fake, fallback-based, or not backed by real git/object/store state.
-3. Prefer high-value public GitHub surfaces: repository provider behavior, releases/assets, GitHub Actions and runner protocol, Pages, OAuth/GitHub Apps/Auth, packages/container registry, pull requests/reviews/checks/statuses, notifications, repository settings/security/advisories, and the UI paths that consume them.
-4. For every found defect, add a `BUGS.md` row first, fix the class of issue where practical, add focused tests, and update continuity in past tense.
-5. Use local Docker-backed Bleephub/Codespaces tests again while Docker compatibility remains available; do not restore the temporary non-Docker-only hook path.
+1. Keep scanning for Bleephub behavior that is still internal-only, shape-only, fake, fallback-based, or not backed by real git/object/store state.
+2. Prefer high-value public GitHub surfaces: repository provider behavior, releases/assets, GitHub Actions and runner protocol, Pages, OAuth/GitHub Apps/Auth, packages/container registry, pull requests/reviews/checks/statuses, notifications, repository settings/security/advisories, and the UI paths that consume them.
+3. For every found defect, add a `BUGS.md` row first, fix the class of issue where practical, add focused tests, and update continuity in past tense.
+4. Use local Docker-backed Bleephub/Codespaces tests again while Docker compatibility remains available; do not restore the temporary non-Docker-only hook path.
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 198 seconds after committed-reference fan-out, complete workflow-run actor shapes, and canonical repository identity handling were implemented.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(PagesBuildsCRUD|Dependabot_OrgAlerts|EnterpriseDependabotAlerts|SecretScanning_OrgAlerts|SecretScanning_PushProtectionBypasses|SecretScanning_PushProtectionBlocksGitDatabaseRefBeforeMutation)$' -count=1` passed after all fan-out consumers ran race-safely against real git storage.
 - `docker buildx build --load -f bleephub/Dockerfile.release -t sockerless-bleephub-pages-test .` passed with the pinned `github-pages` 232 gem and its complete native/runtime dependency graph.
 - A real release-image `bleephub-pages-jekyll build --safe` converted Markdown and Liquid into the expected generated HTML.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPagesJekyllBuildPublishesGeneratedSite' -count=1` passed for both successful generated publication and malformed-site terminal failure without deployment.

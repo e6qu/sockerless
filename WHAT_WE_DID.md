@@ -12,6 +12,10 @@ Closed BUG-2506 by replacing permanent shape-only Pages build queues with real b
 
 Closed BUG-2507 by shipping and executing the real GitHub Pages generation runtime. The release image now contains Ruby, Bundler, `github-pages` 232, Jekyll 3.10.0, and the complete GitHub-supported plugin/theme graph behind `bleephub-pages-jekyll`. Branch builds without `.nojekyll` materialize the real git source in an isolated workspace, invoke Jekyll in safe production mode with repository identity, bound captured build output to 1 MiB, archive only regular generated files, and publish through the same object transaction. Malformed sites persist real terminal Jekyll errors and create no deployment. Unconditional integration coverage built the actual release image and proved Markdown/Liquid generation plus object-backed serving against real git and the Amazon Simple Storage Service simulator.
 
+Closed BUG-2508 by routing smart HTTP pushes, Contents API commits, and Git Database branch-reference creates, updates, and deletes through one committed-reference event path. Every branch mutation now records repository activity, emits the push webhook, triggers GitHub Actions workflows, synchronizes matching pull requests, and automatically builds a configured legacy Pages source branch. The event consumers run in a race-safe order against the shared git store, and coverage proved automatic publication through both Contents API and Git Database writes.
+
+Closed BUG-2509 by serializing workflow-run `actor` and `triggering_actor` fields through the complete GitHub simple-user representation rather than an abbreviated webhook-only shape. Closed BUG-2510 by resolving git storage through canonical repository IDs and metadata coordinates through `full_name`, so committed-reference processing and Pages source reads do not dereference optional expanded owner representations.
+
 Validation in this branch included:
 
 ```bash
@@ -21,6 +25,7 @@ docker buildx build --load -f bleephub/Dockerfile.release -t sockerless-bleephub
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPagesJekyllBuildPublishesGeneratedSite' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Pages|pages' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(PagesBuildsCRUD|Dependabot_OrgAlerts|EnterpriseDependabotAlerts|SecretScanning_OrgAlerts|SecretScanning_PushProtectionBypasses|SecretScanning_PushProtectionBlocksGitDatabaseRefBeforeMutation)$' -count=1
 ```
 
 ## 2026-07-12 - Bleephub GitHub Pages Artifact Fidelity (`feat/bleephub-fidelity-sweep-next`)

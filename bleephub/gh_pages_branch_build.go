@@ -50,7 +50,7 @@ func (output *pagesJekyllOutput) message() string {
 }
 
 func (s *Server) buildPagesBranch(ctx context.Context, repo *Repo, branch, sourcePath string) (string, bool, error) {
-	stor := s.store.GetGitStorage(repo.Owner.Login, repo.Name)
+	stor, _ := s.store.GitStorageForRepoID(repo.ID)
 	if stor == nil {
 		return "", false, fmt.Errorf("Pages source git storage is unavailable")
 	}
