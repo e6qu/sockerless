@@ -42,7 +42,7 @@ function Svg({
   );
 }
 
-/** Brand mark — a chat bubble (a "bleep"), filled with the accent. */
+/** Brand mark — a polished chat bubble (a "bleep") using the active theme. */
 export function Mark({ size = 22, style, className }: IconProps) {
   return (
     <svg
@@ -53,8 +53,16 @@ export function Mark({ size = 22, style, className }: IconProps) {
       style={{ flexShrink: 0, ...style }}
       className={className}
     >
-      <rect x="2" y="3" width="20" height="15" rx="4" fill="var(--color-accent)" />
-      <path d="M8 18l-2 3v-3" fill="var(--color-accent)" />
+      <defs>
+        <linearGradient id="bleephub-mark" x1="4" y1="3" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+          <stop stopColor="var(--color-brand-cyan)" />
+          <stop offset="0.48" stopColor="var(--color-brand-blue)" />
+          <stop offset="1" stopColor="var(--color-brand-pink)" />
+        </linearGradient>
+      </defs>
+      <rect x="2" y="3" width="20" height="15" rx="4" fill="url(#bleephub-mark)" />
+      <path d="M8 18l-2 3v-3" fill="var(--color-brand-purple)" />
+      <path d="M6 5.5h12" stroke="rgba(255,255,255,0.28)" strokeWidth="1" strokeLinecap="round" />
       <circle cx="8" cy="10.5" r="1.4" fill="var(--color-accent-fg)" />
       <circle cx="12" cy="10.5" r="1.4" fill="var(--color-accent-fg)" />
       <circle cx="16" cy="10.5" r="1.4" fill="var(--color-accent-fg)" />

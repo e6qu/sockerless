@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2519 filed - 2475 fixed - 3 open - 16 false positives.**
+**2526 filed - 2481 fixed - 4 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only operator seed routes | GitHub Classroom, Marketplace purchases, CodeQL databases, hosted-compute network settings, and fine-grained personal access token requests still entered Bleephub only through `/internal/*` routes instead of GitHub-compatible browser or producer workflows. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Google Cloud Run, Azure Container Apps, Azure Functions, Lambda service-mesh, and Azure identity-backed cells need authenticated real-cloud validation before they can be marked green. |
@@ -18,6 +19,12 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2526~~ | P2 | Bleephub repository social user interface tests | one canned response stood in for every API route | Repository social page coverage now routes shared chrome and stargazer, watcher, and fork requests to their matching response contracts, so the tests remain stable when shared repository reads change. |
+| ~~2525~~ | P1 | Bleephub repository user interface | expected public existence checks emitted browser resource errors | Repository chrome now reads viewer Star and Watch state through one authenticated `200` `/ui-data` adapter while all mutations stay on public GitHub APIs, so ordinary unselected state produces no browser resource errors. |
+| ~~2524~~ | P2 | Bleephub user interface browser coverage | dark-theme test depended on another test's repository | The dark-theme browser scenario now provisions its own real repository through the public GitHub REST API and passes independently under focused or reordered execution. |
+| ~~2522~~ | P1 | Bleephub parity audit | stale audit contradicted implemented service behavior | The Bleephub GitHub parity specification now records the verified REST, state, Apps, events, and user-interface proof boundary; removes already-fixed semantic gaps; and identifies current GraphQL, semantic, user-interface, and operator-ingress work. |
+| ~~2521~~ | P1 | Bleephub repository user interface | repository chrome omitted real social actions and GitHub hierarchy | Repository pages now use full-width context chrome, real Watch/Star toggles and owner-selecting Fork creation backed by GitHub REST APIs, primary GitHub-style tabs, separate content shortcuts, and an administrative overflow/settings group. |
+| ~~2520~~ | P2 | Bleephub user interface theme | intentionally non-GitHub teal and flat chrome | Bleephub now uses GitHub/Primer light and dark surfaces with saturated blue, cyan, purple, pink, gold, and green brand/state treatments, richer elevation, and browser-asserted theme-specific tokens. |
 | ~~2519~~ | P1 | Bleephub release-provider browser coverage | asset-size assertion diverged from uploaded bytes | The release-provider end-to-end test now derives the displayed size assertion from the exact uploaded byte buffer, so upload, download, and deletion exercise one truthful asset payload. |
 | ~~2518~~ | P1 | Bleephub GitHub software development kit coverage | release test omitted real git history | The official GitHub software development kit release lifecycle test now creates a real initial commit and `refs/heads/main` through GitHub's Git Database API before creating the release. |
 | ~~2517~~ | P2 | Bleephub dependency hygiene | stale Markdown parser module | Bleephub now uses current `github.com/yuin/goldmark` 1.8.4, so the required dependency-freshness gate passes. |

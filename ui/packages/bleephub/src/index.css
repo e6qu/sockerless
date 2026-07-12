@@ -2,14 +2,15 @@
 @import "@sockerless/ui-core/styles";
 
 /*
- * bleephub theme — GitHub-adjacent, NOT a verbatim copy.
+ * bleephub theme — GitHub-familiar Primer color and layout hierarchy.
  *
  * We reuse the shared design-system *token contract* (the --color-*,
  * --font-*, --radius-* names every ui-core component reads) but replace
  * every *value* with a GitHub-familiar palette: neutral canvas, system
- * sans body, mono only for code, soft rounded boxes, and a distinct
- * teal brand accent (deliberately not GitHub's blue). Light is the
- * default (as on github.com); the in-app toggle adds `.dark`.
+ * sans body, mono only for code, soft rounded boxes, GitHub blue links,
+ * green primary actions, and the full-width context chrome used by current
+ * repository and organization pages. Light is the default; the in-app
+ * toggle adds `.dark`.
  *
  * Because the values live on the same token names, the ui-core
  * primitives bleephub still uses (DataTable, Toast, Spinner, …) pick up
@@ -28,10 +29,22 @@
   --color-border: #d1d9e0;
   --color-border-strong: #afb8c1;
 
-  /* Brand accent — teal. Distinct from GitHub blue, green, purple. */
-  --color-accent: #137c8b;
+  /* GitHub/Primer interaction blue. */
+  --color-accent: #0969da;
   --color-accent-fg: #ffffff;
-  --color-accent-soft: #d8f0f3;
+  --color-accent-soft: #ddf4ff;
+
+  /* Chrome/elevation tokens keep the shared hierarchy consistent. */
+  --color-header: #f6f8fa;
+  --color-header-highlight: #ffffff;
+  --color-accent-emphasis: #0550ae;
+  --color-brand-blue: #006eff;
+  --color-brand-cyan: #00b8d9;
+  --color-brand-purple: #8250df;
+  --color-brand-pink: #d1248f;
+  --color-brand-gold: #bf8700;
+  --shadow-resting: 0 1px 0 rgba(31, 35, 40, 0.04);
+  --shadow-floating: 0 8px 24px rgba(140, 149, 159, 0.22);
 
   /* Semantic status — universal, GitHub-adjacent. */
   --color-status-ok: #1a7f37;
@@ -81,9 +94,19 @@
   --color-border: #30363d;
   --color-border-strong: #444c56;
 
-  --color-accent: #39b9c9;
+  --color-accent: #58a6ff;
   --color-accent-fg: #0d1117;
-  --color-accent-soft: #11363c;
+  --color-accent-soft: #0b2a52;
+  --color-header: #161b22;
+  --color-header-highlight: #1c2128;
+  --color-accent-emphasis: #79c0ff;
+  --color-brand-blue: #58a6ff;
+  --color-brand-cyan: #39d0e8;
+  --color-brand-purple: #d2a8ff;
+  --color-brand-pink: #ff7bda;
+  --color-brand-gold: #f2cc60;
+  --shadow-resting: 0 1px 0 rgba(1, 4, 9, 0.4);
+  --shadow-floating: 0 8px 24px rgba(1, 4, 9, 0.55);
 
   --color-status-ok: #3fb950;
   --color-status-ok-soft: #122e1d;
@@ -130,7 +153,7 @@ h3,
   letter-spacing: -0.01em;
 }
 
-/* GitHub-style focus ring + selection use the teal accent but soft. */
+/* GitHub-style focus ring + selection use the interaction blue. */
 ::selection {
   background: color-mix(in srgb, var(--color-accent) 28%, transparent);
   color: var(--color-fg);
@@ -158,6 +181,330 @@ select {
  * tic); keep it a calm neutral. */
 *::-webkit-scrollbar-thumb:hover {
   background: var(--color-border-strong);
+}
+
+/* Shared GitHub chrome. The soft highlight adds polish without changing the
+ * familiar neutral header and white content hierarchy. */
+.app-header {
+  background:
+    radial-gradient(circle at 8% -180%, color-mix(in srgb, var(--color-brand-blue) 24%, transparent) 0 42%, transparent 43%),
+    radial-gradient(circle at 92% -220%, color-mix(in srgb, var(--color-brand-pink) 18%, transparent) 0 45%, transparent 46%),
+    linear-gradient(180deg, var(--color-header-highlight) 0%, var(--color-header) 100%);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow-resting);
+}
+
+.app-header-search {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-fg) 3%, transparent);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.app-header-search:focus-within {
+  border-color: var(--color-accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+
+.app-header-control {
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+.app-header-control:hover {
+  color: var(--color-fg) !important;
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg)) !important;
+  border-color: var(--color-border-strong) !important;
+}
+
+/* Repository context chrome is full-bleed like github.com while its contents
+ * stay aligned with the 1280px application grid. */
+.repo-context {
+  width: 100vw;
+  margin-top: -1.5rem;
+  margin-left: calc(50% - 50vw);
+  background:
+    radial-gradient(circle at 15% -220%, color-mix(in srgb, var(--color-brand-cyan) 16%, transparent) 0 48%, transparent 49%),
+    radial-gradient(circle at 86% -250%, color-mix(in srgb, var(--color-brand-purple) 15%, transparent) 0 48%, transparent 49%),
+    linear-gradient(180deg, var(--color-header-highlight) 0%, var(--color-bg-subtle) 100%);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow-resting);
+}
+
+.repo-context-inner {
+  width: min(100%, 1280px);
+  margin: 0 auto;
+  padding: 1rem 1rem 0;
+}
+
+.repo-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 2rem;
+  margin-bottom: 0.75rem;
+}
+
+.repo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.repo-action-button {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: linear-gradient(180deg, var(--color-header-highlight), var(--color-bg-subtle));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-resting);
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.repo-action-button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-subtle));
+  transform: translateY(-1px);
+}
+
+.repo-action-button.is-active {
+  color: var(--color-accent-emphasis);
+  border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
+  background: var(--color-accent-soft);
+}
+
+.repo-action-button.tone-watch:hover:not(:disabled) {
+  color: var(--color-brand-cyan);
+  border-color: color-mix(in srgb, var(--color-brand-cyan) 58%, var(--color-border));
+}
+
+.repo-action-button.tone-fork:hover:not(:disabled) {
+  color: var(--color-brand-purple);
+  border-color: color-mix(in srgb, var(--color-brand-purple) 58%, var(--color-border));
+}
+
+.repo-action-button.tone-star:hover:not(:disabled),
+.repo-action-button.tone-star.is-active {
+  color: var(--color-brand-gold);
+  border-color: color-mix(in srgb, var(--color-brand-gold) 60%, var(--color-border));
+  background: color-mix(in srgb, var(--color-brand-gold) 13%, var(--color-bg));
+}
+
+.repo-action-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.repo-action-error {
+  margin: -0.25rem 0 0.5rem;
+  color: var(--color-status-error);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.repo-fork-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(1, 4, 9, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.repo-fork-dialog {
+  width: min(100%, 440px);
+  padding: 1.25rem;
+  color: var(--color-fg);
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--color-brand-purple) 16%, transparent), transparent 42%),
+    var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-floating);
+}
+
+.repo-fork-dialog h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1.2rem;
+}
+
+.repo-fork-dialog p,
+.repo-fork-dialog label,
+.repo-fork-warning {
+  font-size: 0.82rem;
+}
+
+.repo-fork-dialog p {
+  margin: 0 0 1rem;
+  color: var(--color-fg-muted);
+}
+
+.repo-fork-dialog label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+}
+
+.repo-fork-dialog select {
+  width: 100%;
+  padding: 0.48rem 0.6rem;
+  color: var(--color-fg);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+
+.repo-fork-warning {
+  margin-top: 0.6rem;
+  color: var(--color-status-warn);
+}
+
+.repo-fork-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+}
+
+.repo-fork-actions button {
+  padding: 0.4rem 0.8rem;
+  color: var(--color-fg);
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.repo-fork-actions button.primary {
+  color: #fff;
+  background: linear-gradient(180deg, #2da44e, var(--gh-open-solid));
+  border-color: color-mix(in srgb, #000 14%, var(--gh-open-solid));
+}
+
+.repo-fork-actions button:disabled {
+  opacity: 0.55;
+}
+
+.repo-tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.repo-utility-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.5rem;
+  padding: 0.35rem;
+  background: color-mix(in srgb, var(--color-bg-subtle) 74%, var(--color-bg));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-resting);
+}
+
+.repo-utility-tab {
+  padding: 0.35rem 0.65rem;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.repo-utility-tab:hover {
+  color: var(--color-fg) !important;
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg)) !important;
+}
+
+.repo-more-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.repo-more-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  color: var(--color-fg-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--color-header-highlight), var(--color-bg-subtle));
+}
+
+.repo-more-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.repo-more-popover {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  width: 230px;
+  flex-direction: column;
+  padding: 0.4rem;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-floating);
+}
+
+.repo-more-heading {
+  padding: 0.35rem 0.5rem;
+  color: var(--color-fg-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.repo-more-popover button,
+.repo-more-popover a {
+  padding: 0.42rem 0.5rem;
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  text-align: left;
+  text-decoration: none;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.repo-more-popover button:hover,
+.repo-more-popover a:hover {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+@media (max-width: 720px) {
+  .repo-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .repo-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 /*

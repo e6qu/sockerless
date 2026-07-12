@@ -7,6 +7,38 @@ import (
 
 func (s *Server) registerUIAPIRoutes() {
 	s.route("GET /ui-data/repos/{owner}/{repo}/commits", s.handleUIListCommits)
+	s.route("GET /ui-data/repos/{owner}/{repo}/viewer", s.handleUIRepoViewer)
+}
+
+// handleUIRepoViewer gives the browser one successful read for viewer-specific
+// repository chrome. GitHub's public Star and Subscription existence checks
+// correctly return 404 when absent; issuing those expected checks as page
+// resources would still produce browser console errors. Mutations continue to
+// use the public GitHub REST endpoints.
+func (s *Server) handleUIRepoViewer(w http.ResponseWriter, r *http.Request) {
+	ctx := s.authenticateRequest(r)
+	user := ghUserFromContext(ctx)
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	if suspended, _ := ctx.Value(ctxSuspendedUser).(bool); suspended {
+		writeGHError(w, http.StatusForbidden, "This account has been suspended")
+		return
+	}
+
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil || (repo.Private && !canReadRepo(s.store, user, repo)) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	subscription := s.store.GetRepoSubscription(user.ID, repo.ID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"starred":    s.store.IsRepoStarredBy(user.ID, owner, repoName),
+		"subscribed": subscription != nil && subscription.Subscribed,
+	})
 }
 
 func (s *Server) handleUIListCommits(w http.ResponseWriter, r *http.Request) {

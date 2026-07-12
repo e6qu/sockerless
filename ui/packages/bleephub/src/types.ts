@@ -1885,6 +1885,22 @@ export interface GithubRepoSocialCounts {
   forks_count: number;
 }
 
+/** Authenticated viewer's repository notification preference. */
+export interface GithubRepoSubscription {
+  subscribed: boolean;
+  ignored: boolean;
+  reason: string | null;
+  created_at: string;
+  url: string;
+  repository_url: string;
+}
+
+/** Viewer-specific state normalized for repository page rendering. */
+export interface GithubRepoViewerState {
+  starred: boolean;
+  subscribed: boolean;
+}
+
 /** Email address on the authenticated user's account. */
 export interface GithubUserEmail {
   email: string;

@@ -185,14 +185,39 @@ test.describe("Global navigation", () => {
 // ─── Dark / light mode toggle ────────────────────────────────────────────────
 
 test.describe("Theme toggle", () => {
-  test("theme toggle lives in the user menu", async ({ page }) => {
+  test("saturated GitHub chrome resolves in both light and dark themes", async ({ page }) => {
     await page.goto("/ui/");
     await page.waitForLoadState("networkidle");
+    const light = await page.evaluate(() => {
+      const css = getComputedStyle(document.documentElement);
+      const header = document.querySelector(".app-header");
+      return {
+        accent: css.getPropertyValue("--color-accent").trim(),
+        blue: css.getPropertyValue("--color-brand-blue").trim(),
+        purple: css.getPropertyValue("--color-brand-purple").trim(),
+        headerBackground: header ? getComputedStyle(header).backgroundImage : "",
+      };
+    });
+    expect(light).toMatchObject({ accent: "#0969da", blue: "#006eff", purple: "#8250df" });
+    expect(light.headerBackground).toContain("gradient");
+
     // The theme toggle is an item in the avatar dropdown menu.
     await page.getByRole("button", { name: "Open user menu" }).click();
     const toggle = page.getByRole("menuitem", { name: /(light|dark) theme/i });
     await expect(toggle).toBeVisible();
     await shot(page, "11-theme-toggle");
+    await toggle.click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    const dark = await page.evaluate(() => {
+      const css = getComputedStyle(document.documentElement);
+      return {
+        accent: css.getPropertyValue("--color-accent").trim(),
+        cyan: css.getPropertyValue("--color-brand-cyan").trim(),
+        pink: css.getPropertyValue("--color-brand-pink").trim(),
+      };
+    });
+    expect(dark).toEqual({ accent: "#58a6ff", cyan: "#39d0e8", pink: "#ff7bda" });
+    await shot(page, "11b-theme-toggle-dark");
   });
 });
 
@@ -228,6 +253,13 @@ test.describe("Repos page", () => {
     await expect(page.url()).toContain("/ui/repos/");
     await expect(page.url()).toContain("test-repo-playwright");
     await shot(page, "14-repo-detail");
+
+    await page.getByLabel("Repository actions").getByRole("button", { name: /Fork/ }).click();
+    const forkDialog = page.getByRole("dialog", { name: "Create a new fork" });
+    await expect(forkDialog).toBeVisible();
+    await expect(forkDialog.getByText(/choose a different owner/i)).toBeVisible();
+    await shot(page, "14b-repo-fork-owner");
+    await forkDialog.getByRole("button", { name: "Cancel" }).click();
   });
 
   test("creates a repo through the UI dialog", async ({ page }) => {
@@ -532,8 +564,7 @@ test.describe("Release provider", () => {
 
 test.describe("Dark theme", () => {
   // Seed the persisted theme to "dark" before any script runs so the app
-  // boots in dark mode, then capture the key surfaces. Runs after the repo
-  // /issue tests above, so their data is still in the in-memory store.
+  // boots in dark mode, then capture the key surfaces.
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem("sockerless:theme", "dark");
@@ -552,8 +583,17 @@ test.describe("Dark theme", () => {
 
     const user = await apiGet(page, "/api/v3/user");
     const owner = (user as { login: string }).login;
-    await page.goto(`/ui/repos/${owner}/issues-direct/issues`);
+    await apiPost(page, "/api/v3/user/repos", {
+      name: "dark-theme-repo",
+      description: "Dark theme repository chrome",
+      private: false,
+      auto_init: true,
+    });
+    await page.goto(`/ui/repos/${owner}/dark-theme-repo`);
     await page.waitForLoadState("networkidle");
+    await expect(page.getByLabel("Repository actions")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Watch/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Star/ })).toBeVisible();
     await shot(page, "28-dark-issues");
   });
 });

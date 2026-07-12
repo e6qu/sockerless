@@ -1,136 +1,113 @@
-# bleephub ↔ GitHub API signature parity
+# Bleephub ↔ GitHub parity audit
 
-Status: **active parity ratchet on branch `feat/bleephub-faithful-app-runner-flows`**. Original audit date: 2026-05-12; refreshed 2026-07-09.
+Status: **active parity ratchet on `feat/bleephub-ui-api-completeness-audit`**. Original audit: 2026-05-12. Last verified: 2026-07-12.
 
-> **Goal:** every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. A client built against GitHub or GitHub Enterprise Server (GHES) should round-trip against bleephub by swapping the base URL only.
+## Goal
 
-This doc is the audit artifact + acceptance criteria. The current `/api/v3` route-shape ratchet is `TestRegisteredAPIv3RoutesExistInGitHubSpec`, backed by `bleephub/testdata/github-openapi.json.gz`; it passes on this branch and rejects any served GitHub REST route that is not in the vendored GitHub OpenAPI description, an explicit GitHub Enterprise Server-only allowlist, or a documented dispatch ambiguity. Response-shape fidelity is guarded separately by the OpenAPI response observer.
+Every Bleephub client surface should behave like GitHub or GitHub Enterprise Server after changing coordinates only:
 
-## Base-URL convention
+- REST: `http(s)://<host>/api/v3/...`
+- GraphQL: `http(s)://<host>/api/graphql`
+- OAuth and GitHub App browser flows: GitHub-shaped `/login/...`, `/settings/...`, and installation paths
+- Git smart HTTP: `http(s)://<host>/<owner>/<repo>.git`
+- GitHub Actions runner protocol: `http(s)://<host>/_apis/...`
+- Web UI: GitHub-shaped information architecture backed by the same public APIs and durable state
 
-bleephub follows **GHES path shapes**, not `api.github.com` shapes:
+GitHub Enterprise Server coordinates are intentional. Official clients already swap their base URL this way.
 
-- REST: `http(s)://<bleephub-host>/api/v3/...` (matches GHES).
-- GraphQL: `http(s)://<bleephub-host>/api/graphql` (matches GHES; on api.github.com it's `/graphql`).
-- OAuth: `http(s)://<bleephub-host>/login/{device,oauth}/...` (matches both).
-- Runner protocol: `http(s)://<bleephub-host>/_apis/v1/...` (GHES Actions service).
-- Git smart HTTP: `http(s)://<bleephub-host>/<owner>/<repo>.git` (matches both).
+## What was verified
 
-Rationale: the official `actions/runner` is GHES-aware (`/_apis/` is a GHES path), and switching bleephub to `api.github.com` shapes would break the runner. Clients targeting `api.github.com` paths point their base URL at `http://localhost:5555/api/v3` (same swap GHES users do). The parity acceptance criterion is "GHES path shapes match GHES exactly", not "api.github.com path shapes match api.github.com exactly".
+### REST route and response contracts
 
-## Coverage summary
+The registered `/api/v3` surface covered the vendored GitHub REST description plus documented GitHub Enterprise Server-only operations. `TestRegisteredAPIv3RoutesExistInGitHubSpec` rejected invented GitHub-namespace routes, and the runtime OpenAPI observer rejected new response-member/type drift. The vendored description lived at `bleephub/testdata/github-openapi.json.gz` and was refreshed by `scripts/update-github-openapi.sh`.
 
-| Phase | Status | Surfaces | Ops added (approx) |
-|---|---|---|---|
-| 153 | shipped | GitHub Apps, OAuth apps, webhooks, checks, auth, repos, issues, pulls, gists, users, orgs, GraphQL compatibility | ~300 |
-| 154 | shipped | Reactions, releases, deployments, environments, PR review comments, PR threads, users extras, OIDC, Pages, branch protection, org audit log, marketplace | +~120 |
-| 155 | shipped | Teams, issue management, PR reviews, Git data writes, release assets, repo settings, org rulesets, Dependabot org/repo, secret scanning org/repo, security advisories, Actions permissions/runners, gist extras, users extras, notifications | +~122 net |
-| 156+ | shipped | Remaining vendored GitHub REST operations, Bleephub user-interface parity pages, GitHub Actions runner/service fidelity, object-storage-backed git/artifact/cache/log bytes, GitHub App Manifest and browser installation flows, OAuth login/consent flow, Projects v2 GraphQL field values and connections, issue types/fields/sub-issues, Pages build fidelity, CodeQL/package/registry byte paths, and public user-facing paths moved away from operator-only internals | full vendored REST surface registered |
+This proved route legitimacy and every response shape exercised by tests. It did **not** prove every status, validation branch, permission combination, pagination edge, webhook, or storage failure for every registered operation. GitHub's REST API is versioned, so the vendored description and compatibility tests remained a ratchet rather than a one-time completeness claim.
 
-## Phase 155 surfaces shipped
+### Real state and byte planes
 
-| Surface | Files |
-|---|---|
-| Teams (members, memberships, repo grants) | `bleephub/gh_teams_rest.go`, `bleephub/store_orgs.go` |
-| Issue management (comments, labels, assignees, lock, events, timeline) | `bleephub/gh_issues_rest.go`, `bleephub/store_issues.go`, `bleephub/gh_labels_rest.go`, `bleephub/gh_issue_moderation.go` |
-| Pull Request reviews (create/submit/dismiss/requested reviewers/update-branch) | `bleephub/gh_pulls_rest.go`, `bleephub/store_pulls.go` |
-| Git data REST writes (blobs, commits, refs, tags, trees) | `bleephub/gh_repos_git.go` |
-| Release assets and release reactions | `bleephub/gh_releases.go` |
-| Repository settings (deploy keys, transfer, rename, subscription, alerts, interaction limits) | `bleephub/gh_repos_rest.go`, `bleephub/store_repos.go` |
-| Organization rulesets | `bleephub/gh_rulesets.go`, `bleephub/store_rulesets.go` |
-| Dependabot org/repo alerts and secrets | `bleephub/gh_dependabot.go`, `bleephub/store_dependabot.go` |
-| Secret scanning org/repo alerts and pattern configurations | `bleephub/gh_secret_scanning.go`, `bleephub/store_secret_scanning.go` |
-| Repository security advisories | `bleephub/gh_security_advisories.go`, `bleephub/store_security_advisories.go` |
-| Actions permissions and runner labels | `bleephub/gh_actions_permissions.go` |
-| User/gist extras (events, blocks, social accounts, SSH signing keys, starred, gist forks/commits) | `bleephub/gh_misc_endpoints_users.go`, `bleephub/gh_gists_rest.go` |
-| Notification thread subscriptions | `bleephub/gh_notifications.go`, `bleephub/store_notifications.go` |
-| UI pages for teams, repo settings, security advisories, rulesets, notifications, gists | `ui/packages/bleephub/src/pages/*` |
+- Repository identity and metadata lived in persisted state; git refs, commits, trees, tags, contents, comparisons, archives, pushes, and Pages branch builds read real git storage.
+- Actions artifacts, caches, logs, Pages publications, releases, package files, GitHub Container Registry blobs, CodeQL databases/query packs, and attestation bundles used object storage in persisted mode.
+- Releases resolved or created real tag refs and emitted lifecycle webhooks and Actions events.
+- GitHub Pages consumed real artifacts or branch trees, ran the pinned Jekyll runtime when required, and served published objects.
+- Cloud-backed Codespaces and runner execution failed loudly when their required runtime or storage operation failed.
 
-## Removed from /api/v3
+### Authentication, Apps, and events
 
-The following were implemented during Phase 155 but removed before final validation because they are not documented public GitHub `/api/v3` paths:
+The earlier semantic-gap list had become stale. The current implementation and tests covered:
 
-- **Projects v2 REST endpoints** — GitHub Projects v2 is GraphQL-only in the public API. The GraphQL surface remains at `/api/graphql`.
-- **User-scoped Dependabot secrets** — Real GitHub has repo/org Dependabot secrets, not user-scoped.
-- **User-scoped secret-scanning alerts** — Real GitHub has repo/org alerts, not user-scoped.
+- GitHub App installations with `repository_selection: all|selected` and selected-repository token downscoping;
+- installation and installation-repositories lifecycle events;
+- webhook `installation` blocks plus `X-GitHub-Hook-ID`, target-type, target-ID, event, delivery, SHA-1, and SHA-256 headers;
+- App hook configuration, delivery listing/detail, and redelivery;
+- OAuth web/device flows and token-management prefixes;
+- GitHub App installation/user tokens, suspension, repository selection, and organization-repository authorization.
 
-The `allowedBleephubExtensions` escape hatch in `gh_api_definition_test.go` was also removed; the API-definition ratchet now enforces only real GitHub paths plus the documented GHES-only allowlist and dispatch routes.
+### UI organization and themes
 
-## Remaining gap inventory
+The application shell used GitHub's global navigation model. Repository pages used full-width repository context chrome, the familiar primary repository tab order, real Watch/Fork/Star actions, a separate content toolbar, and an administrative overflow/settings group. The browser mutations used GitHub's public repository APIs; a read-only `/ui-data` adapter normalized expected `404` viewer-state checks so ordinary page rendering did not emit console resource errors.
 
-The stale Phase 155 operation inventory was retired after the full vendored REST surface was registered. New gaps are tracked as concrete `BUGS.md` entries before implementation. Current known Bleephub-relevant gaps are not operation-registration gaps: live-cloud validation (BUG-1075) and any newly discovered semantic or data-plane drift found by the ratchets, SDK/CLI tests, user-interface tests, or real consumers.
+The visual system retained GitHub/Primer light and dark surface/semantic tokens, then added a deliberately more saturated blue/cyan/purple/pink brand layer. Both themes were browser-asserted. Primer's token and color-mode model remained the reference for contrast and theme separation: <https://primer.style/product/primitives/>.
 
-## Semantic gaps
+## What is truly left
 
-### G1 — Permission enforcement on installation tokens
+### 1. External producer/browser workflows still enter through operator routes
 
-**Status: partially fixed.** `requirePerm(scope, level)` is now used across many endpoints, but coverage is not yet universal.
+These are real stored implementations after ingestion, but their creation/onboarding path is not yet GitHub-user- or producer-shaped:
 
-### G2 — `repository_selection: "selected"` with allow-list
+| Domain | Current ingress | Required completion path |
+|---|---|---|
+| GitHub Classroom | `/internal/classrooms...` | Classroom browser workflow that creates classrooms, assignments, and accepted assignments |
+| GitHub Marketplace purchases | `/internal/marketplace/purchases` | Marketplace purchase/change/cancel workflow that drives account billing state and events |
+| CodeQL databases | `/internal/repos/.../code-scanning/codeql/databases` | CodeQL producer upload/finalization workflow that stores the real archive and metadata |
+| Hosted-compute network settings | `/internal/orgs/.../network-settings` | GitHub/Azure private-network onboarding workflow that provisions the settings resource before public configuration APIs reference it |
+| Fine-grained personal access token requests | `/internal/orgs/.../personal-access-token-requests` | Authenticated token-creation browser workflow that returns the credential once and files any organization approval request |
 
-**Status: not fixed.** `repository_selection` is still hard-coded to `"all"` for installations.
+The runner execution controller (`/internal/exec/...`) and operator diagnostics (`/internal/{metrics,status,storage}`) were not classified as GitHub API gaps: they are Bleephub control-plane interfaces, and user-facing UI pages already read public GitHub/health routes instead of them.
 
-### G3 — Webhook payload `installation` field + headers
+### 2. GraphQL has no full public-schema ratchet
 
-**Status: not fixed.** Webhook payloads still omit the `installation` block and the four `X-GitHub-Hook-*` headers.
+Bleephub supports the GraphQL queries and mutations required by its consumers, including repository, pull request, issue, discussion, Projects v2, organization, and status/check relationships. It does not yet validate its entire introspectable schema against GitHub's published schema. GitHub GraphQL is strongly typed and introspective; complete parity therefore needs a vendored schema/introspection diff plus official-client queries, not only hand-selected resolver tests.
 
-### G4 — App-targeted webhook events not fired
+### 3. REST semantic coverage is observed, not exhaustive
 
-**Status: not fixed.** Installation lifecycle events are still silent.
+The route and response observer cannot prove unexecuted branches. Remaining audit work should prioritize:
 
-### G5 — OAuth token prefixes + refresh tokens
+1. installation-token permission matrices on every write family;
+2. conditional requests, redirects, pagination/link headers, API-version headers, and rate-limit behavior;
+3. webhook/action emission for every mutating resource transition;
+4. delete/rename/transfer cascades for every newly persisted repository-owned record;
+5. object-store and git-store failure atomicity on every byte-owning operation;
+6. official `gh`, `go-github`, Git, package/registry, runner, and Terraform-adjacent consumers rather than hand-built request-only coverage.
 
-**Status: fixed.** bleephub mints `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` prefixes.
+GitHub explicitly recommends following redirects, consuming pagination links, using conditional requests, and treating repeated `4xx`/`5xx` responses as real errors; those behaviors remain part of parity even when the JSON body matches.
 
-### G6 — App-level webhook config
+### 4. UI page-by-page visual and workflow parity remains broader than the shared shell
 
-**Status: partially fixed.** `/app/hook` routes exist; config shape and delivery surface need audit.
+The shared chrome and repository Code experience are now close to GitHub and theme-complete, but the long-tail pages still need page-level comparison and workflow coverage. Highest-value next slices are:
 
-### G7 — JSON shape (HATEOAS + missing fields)
+1. repository Settings/Security organization and side navigation;
+2. issue and pull-request timelines, review controls, and file-diff interactions;
+3. Actions workflow/run/job log organization and live updates;
+4. organization profile, people, teams, rulesets, audit, and settings hierarchy;
+5. account settings, fine-grained token creation, Apps/OAuth management, and installation flows;
+6. responsive/mobile navigation, keyboard behavior, focus management, and color-contrast audits;
+7. visual regression baselines for both light and dark modes across all routed pages.
 
-**Status: partially fixed.** Some serializers emit full URLs; Apps/Installations and older surfaces still omit several HATEOAS fields.
+### 5. Live service validation remains separate
 
-## Acceptance criteria
+Bleephub local fidelity does not make the Sockerless cloud backends live-cloud validated. BUG-1075 and the upstream-blocked AzureAD Terraform issue remain tracked in the project roadmap, not as Bleephub API signature defects.
 
-1. Every `/api/v3` route added in Phase 155 is a real public GitHub path (or a documented GHES-only endpoint in `allowedGHESOnly`).
-2. Every new endpoint responds with documented status codes, headers, and JSON shapes; passes the vendored OpenAPI response-shape validator.
-3. New write-class endpoints carry `requirePerm` with the correct GitHub Apps permission scope.
-4. Tests cover every new route, including at least one positive path and one 404/403 path.
-5. UI pages exist for all new admin-facing surfaces.
-6. `go test ./bleephub -count=1` and `make bleephub/lint` remain green.
-7. OpenAPI violation allowlist grows only with documented, real-GHES-only divergences.
+## Acceptance criteria for future parity work
 
-## Implementation order — Phase 155
+1. A newly served `/api/v3` route matched the official GitHub REST description or a cited GitHub Enterprise Server contract.
+2. Positive, permission-denied/not-found, validation, pagination, and persistence-reload paths were tested where applicable.
+3. User-facing workflows used GitHub-shaped public/browser paths rather than `/internal/*` setup.
+4. Durable metadata stayed in SQLite; git and service bytes stayed in git/object storage.
+5. Mutations emitted the webhooks and GitHub Actions events produced by the equivalent GitHub transition.
+6. UI mutations used public GitHub APIs, rendered errors visibly, and produced no browser console errors.
+7. Light and dark themes were both asserted for shared visual changes.
+8. Official clients were preferred wherever an official client surface existed.
 
-1. Teams API completion.
-2. Issue comments, assignees, labels, lock, pin, timeline.
-3. PR reviews + requested reviewers + update-branch.
-4. Git data REST writes.
-5. Release assets + release reactions.
-6. Repository settings.
-7. Org rulesets.
-8. Dependabot org/repo surfaces.
-9. Secret scanning org/repo surfaces.
-10. Security advisories.
-11. Actions permissions + runner labels.
-12. User/gist extras.
-13. Notification thread subscriptions.
-14. UI pages for all new surfaces.
-15. Validation and continuity-file update.
+## Historical phase summary
 
-## Non-goals
-
-- Fine-grained PATs (`github_pat_`).
-- Multiple GitHub Apps per `client_id` (1:1 mapping in bleephub).
-- SAML / SSO enforcement on installation tokens (Enterprise-only behavior).
-- Copilot billing / usage / Marketplace transactions.
-- GitHub Classroom / Assignments (education domain).
-- GitHub AE / EMU enterprise-only endpoints.
-- Projects v2 REST (GraphQL-only in real GitHub).
-- User-scoped Dependabot secrets / secret-scanning alerts (not public GitHub endpoints).
-
-## Notes
-
-- The active branch is `feat/bleephub-full-api-ui-parity`.
-- Coverage numbers are measured against `bleephub/testdata/github-openapi.json.gz` via `TestRegisteredAPIv3RoutesExistInGitHubSpec`.
-- When a real consumer reports a 404 or shape mismatch, open an issue and update this doc.
+Phases 153-155 registered the broad Apps, OAuth, repositories, issues, pull requests, checks, webhooks, teams, releases, deployments, environments, security, Git data, Actions, notifications, and administration surfaces. Later branches completed the vendored REST registration set, GraphQL consumer surfaces, runner protocol, public ingestion, durable state/byte planes, Pages publication, release-provider workflows, and the routed React UI. Per-operation history belongs in `git log`, pull requests, and `WHAT_WE_DID.md`; this document keeps only the current proof boundary and remaining gaps.

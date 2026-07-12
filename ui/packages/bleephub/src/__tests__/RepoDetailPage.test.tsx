@@ -191,6 +191,78 @@ describe("RepoDetailPage code", () => {
     expect(field.value).toMatch(/\/admin\/test\.git$/);
     expect(screen.getByRole("button", { name: "Copy clone URL" })).toBeInTheDocument();
   });
+
+  it("drives Watch, Fork, and Star through the public GitHub repository APIs", async () => {
+    let starred = false;
+    let subscribed = false;
+    const calls: Array<{ method: string; url: string }> = [];
+    mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+      const u = url.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ method, url: u });
+      if (u === "/api/v3/user") {
+        return Promise.resolve(jsonResponse({ id: 9, login: "octocat", type: "User", site_admin: false }));
+      }
+      if (u.startsWith("/api/v3/user/orgs")) {
+        return Promise.resolve(jsonResponse([{ id: 10, login: "acme" }]));
+      }
+      if (u.endsWith("/ui-data/repos/admin/test/viewer")) {
+        return Promise.resolve(jsonResponse({ starred, subscribed }));
+      }
+      if (u.endsWith("/user/starred/admin/test")) {
+        if (method === "PUT") {
+          starred = true;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+        return Promise.resolve(new Response(null, { status: starred ? 204 : 404 }));
+      }
+      if (u.endsWith("/repos/admin/test/subscription")) {
+        if (method === "PUT") subscribed = true;
+        return Promise.resolve(jsonResponse({
+          subscribed,
+          ignored: false,
+          reason: null,
+          created_at: "2026-01-01T00:00:00Z",
+          url: u,
+          repository_url: "/api/v3/repos/admin/test",
+        }));
+      }
+      if (u.endsWith("/repos/admin/test/forks") && method === "POST") {
+        return Promise.resolve(jsonResponse({ ...repoData, id: 2, full_name: "octocat/test", owner: { login: "octocat" } }, 202));
+      }
+      return routedFetch(url);
+    });
+    renderPage();
+
+    const actions = await screen.findByLabelText("Repository actions");
+    fireEvent.click(within(actions).getByRole("button", { name: /Watch/ }));
+    await waitFor(() => expect(calls).toContainEqual({ method: "PUT", url: "/api/v3/repos/admin/test/subscription" }));
+
+    fireEvent.click(within(actions).getByRole("button", { name: /Star/ }));
+    await waitFor(() => expect(calls).toContainEqual({ method: "PUT", url: "/api/v3/user/starred/admin/test" }));
+    await waitFor(() => expect(within(actions).getByRole("button", { name: /Unstar/ })).toBeInTheDocument());
+
+    fireEvent.click(within(actions).getByRole("button", { name: /Fork/ }));
+    const forkDialog = await screen.findByRole("dialog", { name: "Create a new fork" });
+    await within(forkDialog).findByRole("option", { name: "acme" });
+    fireEvent.change(within(forkDialog).getByLabelText("Owner"), { target: { value: "acme" } });
+    fireEvent.click(within(forkDialog).getByRole("button", { name: "Create fork" }));
+    await waitFor(() => expect(calls).toContainEqual({ method: "POST", url: "/api/v3/repos/admin/test/forks" }));
+    expect(calls.some(({ url }) => url.startsWith("/internal/"))).toBe(false);
+  });
+
+  it("groups administrative resources under the repository More menu", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
+    renderPage();
+    await screen.findAllByText("README.md");
+
+    expect(screen.getByRole("navigation", { name: "Repository content" })).toBeInTheDocument();
+    expect(screen.getByText("Repository administration")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "All repository settings" })).toHaveAttribute(
+      "href",
+      "/ui/repos/admin/test/settings",
+    );
+  });
 });
 
 describe("RepoDetailPage About sidebar", () => {

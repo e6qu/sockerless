@@ -26,6 +26,8 @@ import type {
   GithubReleaseAsset,
   GithubMigration,
   GithubMigrationStartPayload,
+  GithubRepoSubscription,
+  GithubRepoViewerState,
   GithubWorkflow,
   GithubWorkflowRun,
   GithubJob,
@@ -3156,6 +3158,24 @@ export const fetchRepoTags = (owner: string, repo: string) =>
 /** Star/watch/fork counters from the full-repository shape. */
 export const fetchRepoSocialCounts = (owner: string, repo: string) =>
   ghFetch<GithubRepoSocialCounts>(`/api/v3/repos/${owner}/${repo}`);
+
+export const fetchRepoViewerState = (owner: string, repo: string) =>
+  ghFetch<GithubRepoViewerState>(`/ui-data/repos/${owner}/${repo}/viewer`);
+
+export const starRepo = (owner: string, repo: string) =>
+  ghSend("PUT", `/api/v3/user/starred/${owner}/${repo}`);
+
+export const unstarRepo = (owner: string, repo: string) =>
+  ghSend("DELETE", `/api/v3/user/starred/${owner}/${repo}`);
+
+export const setRepoSubscription = (owner: string, repo: string, subscribed: boolean) =>
+  ghPutJSON<GithubRepoSubscription>(`/api/v3/repos/${owner}/${repo}/subscription`, {
+    subscribed,
+    ignored: false,
+  });
+
+export const forkRepo = (owner: string, repo: string, organization?: string) =>
+  ghPostJSON<BleephubRepo>(`/api/v3/repos/${owner}/${repo}/forks`, organization ? { organization } : {});
 
 export const fetchUserSSHKeys = () => ghFetch<GithubSSHKey[]>("/api/v3/user/keys");
 

@@ -4,6 +4,10 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+The completeness audit also closed BUG-2520 through BUG-2522 and BUG-2524 through BUG-2526. Bleephub's shared light/dark visual system retained GitHub/Primer surface and semantic hierarchy while adding saturated blue, cyan, purple, pink, gold, and green brand/state treatments. Repository context chrome became full-width and organized around GitHub's primary tabs, content shortcuts, administrative overflow, real Watch/Star toggles, and an owner-selecting Fork workflow backed by the public REST API. An authenticated `/ui-data` viewer-state read prevented expected public existence-check `404` responses from becoming browser resource errors while mutations stayed public. Browser and repository-social tests became independently provisioned and route-aware.
+
+The parity specification was reconciled against the implementation. It removed already-fixed GitHub App selection, installation webhook, and App-hook gaps; documented the REST/state/event/UI proof boundary; and identified the remaining GraphQL-schema, REST-semantic, page-level UI, and external-ingress work. BUG-2523 remained open for GitHub Classroom, GitHub Marketplace purchase, CodeQL database, hosted-compute network settings, and fine-grained personal access token workflows that still entered through operator routes.
+
 The release-provider compatibility pass also closed BUG-2518 and BUG-2519 after CI exercised the new workflows. The official GitHub software development kit release lifecycle established a real initial commit and `refs/heads/main` through GitHub's Git Database API before creating a release. The routed browser release scenario reused the exact uploaded asset buffer when asserting its displayed size, so it continued through authenticated download and deletion without a divergent hardcoded byte count.
 
 ## 2026-07-12 - Bleephub Release Provider Completeness (`feat/bleephub-ui-api-completeness-audit`)

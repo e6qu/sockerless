@@ -4,16 +4,22 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2519. Routed repository release pages managed release metadata and object-backed assets through public GitHub APIs. Release creation and tag changes used real git refs, cross-repository updates failed before mutation, lifecycle transitions emitted complete webhooks and GitHub Actions events, pull-request plus repository-dispatch workflow discovery no longer raced mutable git storage, official-client release coverage created real Git history, browser asset assertions followed the uploaded bytes, and Bleephub used current `github.com/yuin/goldmark` 1.8.4.
+`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2526. In addition to the complete release-provider work, the branch reconciled the parity audit, rebuilt shared light/dark chrome around GitHub/Primer structure with saturated brand colors, made repository organization full-width and GitHub-shaped, added real Watch/Fork/Star actions, normalized viewer-state reads without browser `404` errors, and made social/theme browser coverage independent. BUG-2523 remained the verified operator-ingress gap.
 
 ## Continue Here
 
-1. Keep scanning for Bleephub behavior that is still internal-only, shape-only, fake, fallback-based, or not backed by real git/object/store state.
-2. Prefer high-value public GitHub surfaces: repository provider behavior, releases/assets, GitHub Actions and runner protocol, Pages, OAuth/GitHub Apps/Auth, packages/container registry, pull requests/reviews/checks/statuses, notifications, repository settings/security/advisories, and the UI paths that consume them.
-3. For every found defect, add a `BUGS.md` row first, fix the class of issue where practical, add focused tests, and update continuity in past tense.
-4. Use local Docker-backed Bleephub/Codespaces tests again while Docker compatibility remains available; do not restore the temporary non-Docker-only hook path.
+1. Close BUG-2523 one real producer/browser workflow at a time: fine-grained personal access token creation, CodeQL database upload/finalization, hosted-compute network onboarding, GitHub Marketplace purchase lifecycle, and GitHub Classroom creation/acceptance.
+2. Add a vendored GitHub GraphQL schema/introspection ratchet; current resolver coverage remained consumer-driven rather than complete-schema proof.
+3. Continue page-level light/dark UI comparison with repository Settings/Security, issue and pull-request timelines/reviews/diffs, Actions job logs, organization administration, and account/App/token management.
+4. Continue REST semantic matrices for permissions, conditional requests, redirects, pagination, version headers, rate limits, webhooks, durable cascades, and storage-failure atomicity.
+5. For every found defect, add a `BUGS.md` row first, fix the class, add focused/official-client tests, and update continuity in past tense.
 
 ## Recent Validation
+
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 231.6 seconds after the viewer-state adapter and parity/UI audit changes.
+- `bun run typecheck`, `npx knip`, `bun run test`, and `bun run build` passed in `ui/packages/bleephub`; the suite covered 43 files / 324 tests and the existing current-`knip` Node deprecation stayed tracked as BUG-2441.
+- The complete `e2e/bleephub.spec.ts` Chromium suite passed with 24 tests, including computed saturated light/dark token assertions, full-width repository chrome, and independent dark-theme repository setup without browser console errors.
+- Visual inspection of real browser captures confirmed the blue/cyan/purple/pink header treatment, GitHub-style neutral content hierarchy, and legible repository chrome/actions in both themes.
 
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off CGO_ENABLED=0 go test -v -timeout 8m ./...` passed in `bleephub/sdk-tests`, including release creation against a real Git Database API-created `main` branch.
 - `bun run typecheck` and `bun run test src/__tests__/api.test.ts` passed in `ui/packages/bleephub` after the release asset end-to-end assertion began deriving its expected size from the uploaded byte buffer.
