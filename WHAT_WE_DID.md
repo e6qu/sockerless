@@ -4,6 +4,19 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-12 - Bleephub GitHub Pages Artifact Fidelity (`feat/bleephub-fidelity-sweep-next`)
+
+This branch continued from merged #788, which hardened persisted repository ownership, Git provider and user-interface behavior, GitHub Apps authorization, GitHub Actions execution and runner contracts, container packages, and Projects v2 ownership.
+
+Closed BUG-2502 by making GitHub Pages deployments consume real artifact bytes before reporting success. `POST /api/v3/repos/{owner}/{repo}/pages/deployments` now retrieves either the supplied artifact URL or the repository-owned GitHub Actions artifact, reads object-backed artifacts from S3-compatible object storage, rejects unreadable artifacts and metadata/byte-size mismatches without changing Pages state, and records the deployed byte count and SHA-256 digest. Coverage exercised both accepted inputs through Bleephub's real artifact-download data plane and object storage.
+
+Validation in this branch included:
+
+```bash
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PagesDeployments_CreateStatusCancel|PersistenceReload_DeleteRepoLeavesNoResidue)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
+```
+
 ## 2026-07-11 - Bleephub Public State Fidelity (`feat/bleephub-public-state-fidelity`)
 
 This branch continued from merged #787, which moved CodeQL variant-analysis query-pack tarballs to object storage and made runner-log object-store failures preserve live process state.

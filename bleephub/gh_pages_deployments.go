@@ -2,8 +2,10 @@ package bleephub
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -32,6 +34,8 @@ type PagesDeploymentRecord struct {
 	Status       string    `json:"status"`
 	Environment  string    `json:"environment"`
 	BuildVersion string    `json:"pages_build_version"`
+	ArtifactSize int64     `json:"artifact_size"`
+	ArtifactSHA  string    `json:"artifact_sha256"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -49,7 +53,7 @@ func (s *Server) registerGHPagesDeploymentRoutes() {
 // --- Store ---
 
 // CreatePagesDeployment records a Pages deployment for a repository.
-func (st *Store) CreatePagesDeployment(repoID int, environment, buildVersion, status string) *PagesDeploymentRecord {
+func (st *Store) CreatePagesDeployment(repoID int, environment, buildVersion, status string, artifactSize int64, artifactSHA string) *PagesDeploymentRecord {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	now := time.Now().UTC()
@@ -59,6 +63,8 @@ func (st *Store) CreatePagesDeployment(repoID int, environment, buildVersion, st
 		Status:       status,
 		Environment:  environment,
 		BuildVersion: buildVersion,
+		ArtifactSize: artifactSize,
+		ArtifactSHA:  artifactSHA,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -166,6 +172,14 @@ func (s *Server) handlePagesDeploymentCreate(w http.ResponseWriter, r *http.Requ
 	}
 	environment := coalesceStr(req.Environment, "github-pages")
 
+	artifactBytes, err := s.readPagesDeploymentArtifact(r.Context(), repo.FullName, req.ArtifactID, req.ArtifactURL)
+	if err != nil {
+		writeGHError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	artifactHash := sha256.Sum256(artifactBytes)
+	artifactSHA := fmt.Sprintf("sha256:%x", artifactHash)
+
 	// The publish happens here, synchronously: the site's content becomes
 	// the artifact and its status flips to built. The stored deployment is
 	// therefore already terminal.
@@ -176,7 +190,7 @@ func (s *Server) handlePagesDeploymentCreate(w http.ResponseWriter, r *http.Requ
 	}
 	s.store.Misc.mu.Unlock()
 
-	d := s.store.CreatePagesDeployment(repo.ID, environment, req.PagesBuildVersion, "succeed")
+	d := s.store.CreatePagesDeployment(repo.ID, environment, req.PagesBuildVersion, "succeed", int64(len(artifactBytes)), artifactSHA)
 
 	user := ghUserFromContext(r.Context())
 	if user != nil {
@@ -189,6 +203,50 @@ func (s *Server) handlePagesDeploymentCreate(w http.ResponseWriter, r *http.Requ
 		"status_url": base + "/api/v3/repos/" + repo.FullName + "/pages/deployments/" + d.BuildVersion + "/status",
 		"page_url":   site.HTMLURL,
 	})
+}
+
+func (s *Server) readPagesDeploymentArtifact(ctx context.Context, repoFullName string, artifactID *int64, artifactURL string) ([]byte, error) {
+	if artifactID != nil {
+		art, ok := s.artifactStore.artifactByID(*artifactID)
+		if !ok || !s.artifactBelongsToRepo(art, repoFullName) {
+			return nil, fmt.Errorf("pages deployment artifact %d was not found for repository %s", *artifactID, repoFullName)
+		}
+		data := append([]byte(nil), art.Data...)
+		if len(data) == 0 && art.Size > 0 {
+			if s.artifactStore.byteStore == nil {
+				return nil, fmt.Errorf("pages deployment artifact %d bytes require configured object storage", art.ID)
+			}
+			var err error
+			data, err = s.artifactStore.byteStore.Get(ctx, artifactDataKey(art.ID))
+			if err != nil {
+				return nil, fmt.Errorf("read Pages deployment artifact %d: %w", art.ID, err)
+			}
+		}
+		if int64(len(data)) != art.Size {
+			return nil, fmt.Errorf("pages deployment artifact %d size mismatch: metadata=%d bytes=%d", art.ID, art.Size, len(data))
+		}
+		return data, nil
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, artifactURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create Pages deployment artifact request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch Pages deployment artifact: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("fetch Pages deployment artifact: status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read Pages deployment artifact: %w", err)
+	}
+	return data, nil
 }
 
 func (s *Server) handlePagesDeploymentStatus(w http.ResponseWriter, r *http.Request) {
@@ -236,8 +294,8 @@ func pagesDeploymentTerminal(status string) bool {
 // repoOwnsFinalizedArtifact reports whether the repository owns a finalized
 // Actions artifact with the given ID.
 func (s *Server) repoOwnsFinalizedArtifact(repoFullName string, artifactID int64) bool {
-	s.artifactStore.mu.Lock()
-	defer s.artifactStore.mu.Unlock()
+	s.artifactStore.mu.RLock()
+	defer s.artifactStore.mu.RUnlock()
 	for _, art := range s.artifactStore.artifacts {
 		if art.ID == artifactID && art.RepoFullName == repoFullName && art.Finalized {
 			return true

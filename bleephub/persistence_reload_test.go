@@ -1479,7 +1479,7 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		st.Deployments.SetEnvironmentBranchPolicyConfig(repo.ID, "production", &DeploymentBranchPolicy{CustomBranchPolicies: true})
 		st.CreateEnvBranchPolicy(env.ID, "main", "branch")
 		st.CreateEnvProtectionRule(env.ID, 1)
-		st.CreatePagesDeployment(repo.ID, "github-pages", "pages-build", "succeed")
+		st.CreatePagesDeployment(repo.ID, "github-pages", "pages-build", "succeed", int64(len("pages artifact")), "sha256:"+strings.Repeat("b", 64))
 		label := st.CreateLabel(repo.ID, "stale-label", "stale", "ededed")
 		if label == nil {
 			t.Fatal("CreateLabel returned nil")

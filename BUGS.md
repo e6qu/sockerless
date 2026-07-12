@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2501 filed - 2457 fixed - 3 open - 16 false positives.**
+**2502 filed - 2458 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2502~~ | P1 | Bleephub GitHub Pages deployments | deployment artifact URLs were not read before success | GitHub Pages deployments now read the supplied artifact URL or repository-owned GitHub Actions artifact from object storage before succeeding, reject unreadable or size-inconsistent bytes without changing Pages state, and record the deployed byte count and SHA-256 digest. |
 | ~~2501~~ | P1 | Bleephub user interface repository pages | handled empty-repository commit conflicts still emitted browser resource errors | Bleephub repository pages now load commit history through a user-interface route that maps only GitHub's empty-repository conflict to `200 []`, so the public REST API stays fail-loud while handled empty repository pages no longer emit strict browser-console errors. |
 | ~~2500~~ | P1 | Bleephub GitHub Apps organization repository creation | GitHub App installation tokens were authorized as organization members | `POST /api/v3/orgs/{org}/repos` now authorizes GitHub App installation tokens by target organization and `administration: write`, matching GitHub's fine-grained token contract, while human tokens still require organization membership. |
 | ~~2499~~ | P1 | Bleephub user interface repository pages | empty-repository commit conflicts surfaced as browser console errors | Bleephub user interface repository pages now normalize GitHub's empty-repository commit-listing conflict to an empty commit history for display while preserving fail-loud behavior for other repository commit-listing errors. |
