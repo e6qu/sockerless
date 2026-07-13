@@ -16,6 +16,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `bash -n ui/packages/bleephub/e2e/start-server.sh` and `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1 -timeout 8m` passed in 221 seconds after the real SSH E2E harness and port-aware clone URL fix.
+- A freshly embedded Bleephub binary served `/ui/favicon.svg` with `200 image/svg+xml`, started its real SSH listener, and advertised a valid `ssh://git@host:port/owner/repository.git` URL for the local non-default test port.
+- A real local Google Chrome session authenticated, created a repository through the public API, verified the empty-repository SSH clone selector, and verified the favicon link; the CI Linux Playwright job remained the authoritative full-browser gate.
 - The complete `pre-commit run --all-files` gate passed with writable temporary Go/npm/pre-commit caches after the Marketplace implementation, including full repository lint, core/API/Bleephub Go suites, admin/Bleephub UI suites, typecheck, policy checks, dead-code scans, and copy-paste scans.
 - Cleanup removed 22 GiB of disposable Go build cache, temporary hook/package caches, 21 stale Amazon Elastic Container Service simulator task containers, and unused container images without touching active services or volumes; local free space increased from 31 GiB to 54 GiB.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 216 seconds after the Marketplace publisher, buyer, webhook, billing, identity, and atomic persistence workflows were implemented.
