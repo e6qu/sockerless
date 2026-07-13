@@ -7,10 +7,10 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.29
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.36.0
-	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.52.3
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.63.0
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.88.0
-	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.54.0
-	github.com/aws/aws-sdk-go-v2/service/scheduler v1.16.3
+	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.56.0
+	github.com/aws/aws-sdk-go-v2/service/scheduler v1.19.0
 )
 
 require (

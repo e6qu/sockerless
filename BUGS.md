@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2571 filed - 2525 fixed - 9 open - 16 false positives.**
+**2572 filed - 2526 fixed - 9 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -20,6 +20,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2572~~ | P2 | dependency freshness | required pre-push gate found stale Google Cloud Storage and Amazon Web Services service clients | The affected Google Cloud Run, Google Cloud Run Functions, Google Cloud common, Google Cloud simulator SDK, and Bleephub wake-function modules now use their latest required Google Cloud Storage, Amazon CloudWatch, Elastic Load Balancing v2, and EventBridge Scheduler client versions. |
 | ~~2571~~ | P0 | Bleephub idle controller | an ALARM state survived completed shutdown | Idle shutdown now quiesces the Amazon CloudWatch alarm before scaling the application down, so a stale action cannot race a subsequent cold wake. |
 | ~~2570~~ | P0 | Bleephub idle controller | CloudWatch action enablement did not replay an existing alarm | The one-shot idle armer now queries the five-minute alarm and directly invokes idle shutdown when it is already ALARM, preserving the intended transition even though Amazon CloudWatch does not replay a pre-existing action. |
 | ~~2568~~ | P1 | Bleephub wake-listener artifact build | repeated build rejected the existing archive | The Bleephub Amazon Lambda wake artifact builder now replaces its output archive deterministically, so repeated production builds succeed. |
