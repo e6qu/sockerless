@@ -17,6 +17,7 @@ import (
 )
 
 func (s *Server) registerAuthRoutes() {
+	s.registerExternalIdentityRoutes()
 	// Runner registration (GHES-style)
 	s.route("POST /api/v3/actions/runner-registration", s.handleRunnerRegistration)
 

@@ -97,6 +97,15 @@ func TestLambda_ProvisionedConcurrency(t *testing.T) {
 // config CRUD plus the per-function attachment ops.
 func TestLambda_CodeSigningConfigs(t *testing.T) {
 	lc := lambdaClient()
+	unconfiguredFn := "csc-unconfigured-fn"
+	lambdaExtrasFunc(t, lc, unconfiguredFn)
+
+	unconfigured, err := lc.GetFunctionCodeSigningConfig(ctx, &lambda.GetFunctionCodeSigningConfigInput{
+		FunctionName: aws.String(unconfiguredFn),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, unconfiguredFn, aws.ToString(unconfigured.FunctionName))
+	assert.Empty(t, aws.ToString(unconfigured.CodeSigningConfigArn))
 
 	cre, err := lc.CreateCodeSigningConfig(ctx, &lambda.CreateCodeSigningConfigInput{
 		Description: aws.String("test csc"),

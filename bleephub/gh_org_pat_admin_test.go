@@ -1,9 +1,12 @@
 package bleephub
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -355,6 +358,40 @@ func TestFineGrainedPATBrowserCreationShowsCredentialOnceAndDeletesIt(t *testing
 		t.Fatalf("deleted credential status = %d, want 401", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+func TestFineGrainedPATBrowserSessionCreatesFirstCredential(t *testing.T) {
+	user := createTestUser(t, "pat-browser-session-owner")
+	loginRequest := httptest.NewRequest(http.MethodGet, testBaseURL+"/", nil)
+	loginResponse := httptest.NewRecorder()
+	testServer.createBrowserSession(loginResponse, loginRequest, user)
+	cookies := loginResponse.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("browser session cookies = %d, want 1", len(cookies))
+	}
+	body := bytes.NewBufferString(`{"name":"browser bootstrap","resource_owner":"` + user.Login + `","repository_selection":"none","permissions":{"repository":{"contents":"read"}}}`)
+	req, err := http.NewRequest(http.MethodPost, testBaseURL+"/settings/personal-access-tokens", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(cookies[0])
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("browser-session token creation status = %d body=%s", resp.StatusCode, raw)
+	}
+	created := map[string]interface{}{}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if credential, _ := created["token"].(string); !strings.HasPrefix(credential, "github_pat_") {
+		t.Fatalf("browser-session credential = %q", credential)
+	}
 }
 
 func TestFineGrainedPATExpirationStopsAuthentication(t *testing.T) {

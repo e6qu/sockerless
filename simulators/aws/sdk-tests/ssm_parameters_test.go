@@ -264,6 +264,16 @@ func TestSSMParameter_ListTagsForResource(t *testing.T) {
 	assert.Equal(t, "ci", tagMap["owner"])
 }
 
+func TestSSMParameter_ListTagsForResourceWithoutLeadingSlash(t *testing.T) {
+	c := ssmClient()
+	paramName := "terraform-compatible-parameter"
+	_, err := c.PutParameter(ctx, &ssm.PutParameterInput{Name: aws.String(paramName), Type: ssmtypes.ParameterTypeString, Value: aws.String("v")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = c.DeleteParameter(ctx, &ssm.DeleteParameterInput{Name: aws.String(paramName)}) })
+	_, err = c.ListTagsForResource(ctx, &ssm.ListTagsForResourceInput{ResourceType: ssmtypes.ResourceTypeForTaggingParameter, ResourceId: aws.String(paramName)})
+	require.NoError(t, err)
+}
+
 func TestSSM_DescribeParameters_Pagination(t *testing.T) {
 	client := ssmClient()
 	names := []string{"/pag/ssm/a", "/pag/ssm/b", "/pag/ssm/c"}

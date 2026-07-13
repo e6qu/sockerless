@@ -2218,7 +2218,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	var headRepository map[string]interface{}
 	headRepo := pullRequestHeadRepoLocked(st, pr)
 	if headRepo != nil {
-		headRepository = repoToGraphQL(headRepo)
+		headRepository = repoToGraphQLLocked(st, headRepo)
 	}
 	headRepositoryOwner := repoOwnerGraphQLLocked(headRepo, st)
 

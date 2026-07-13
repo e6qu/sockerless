@@ -22,14 +22,16 @@ import (
 )
 
 type s3FS struct {
-	client *s3.Client
-	bucket string
-	prefix string
+	client   *s3.Client
+	bucket   string
+	prefix   string
+	activeMu sync.Mutex
+	active   *s3ActiveFiles
 }
 
 func newS3FS(ctx context.Context, endpoint, bucket, prefix string) (*s3FS, error) {
 	var opts []func(*awsconfig.LoadOptions) error
-	opts = append(opts, awsconfig.WithRegion("us-east-1"))
+	opts = append(opts, awsconfig.WithRegion(bleephubS3Region()))
 	if endpoint != "" {
 		opts = append(opts, awsconfig.WithEndpointResolverWithOptions(
 			aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
@@ -51,7 +53,21 @@ func newS3FS(ctx context.Context, endpoint, bucket, prefix string) (*s3FS, error
 	}
 	client := s3.NewFromConfig(cfg, clientOpts...)
 
-	return &s3FS{client: client, bucket: bucket, prefix: prefix}, nil
+	return &s3FS{client: client, bucket: bucket, prefix: prefix, active: &s3ActiveFiles{files: map[string]*s3FileState{}}}, nil
+}
+
+// bleephubS3Region selects the real AWS region for durable Git and service
+// bytes. BLEEPHUB_S3_REGION is an explicit storage coordinate; ECS supplies
+// AWS_REGION automatically, and the final default preserves local simulator
+// compatibility.
+func bleephubS3Region() string {
+	if region := strings.TrimSpace(os.Getenv("BLEEPHUB_S3_REGION")); region != "" {
+		return region
+	}
+	if region := strings.TrimSpace(os.Getenv("AWS_REGION")); region != "" {
+		return region
+	}
+	return "us-east-1"
 }
 
 func (f *s3FS) key(p string) string {
@@ -59,16 +75,13 @@ func (f *s3FS) key(p string) string {
 }
 
 func (f *s3FS) Create(filename string) (billy.File, error) {
-	// A created (or truncated) file exists even if nothing is written,
-	// so it must be flushed on Close.
-	return &s3File{
-		fs:    f,
-		name:  filename,
-		dirty: true,
-	}, nil
+	return f.newActiveFile(filename, nil), nil
 }
 
 func (f *s3FS) Open(filename string) (billy.File, error) {
+	if state := f.activeFile(filename); state != nil {
+		return &s3File{fs: f, name: filename, state: state}, nil
+	}
 	key := f.key(filename)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -91,11 +104,7 @@ func (f *s3FS) Open(filename string) (billy.File, error) {
 		return nil, fmt.Errorf("s3 read %s: %w", key, err)
 	}
 
-	return &s3File{
-		fs:   f,
-		name: filename,
-		data: data,
-	}, nil
+	return &s3File{fs: f, name: filename, state: &s3FileState{data: data}}, nil
 }
 
 func (f *s3FS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
@@ -123,13 +132,50 @@ func (f *s3FS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File
 		return nil, fmt.Errorf("OpenFile %s: unexpected file type %T", filename, file)
 	}
 	if flag&os.O_TRUNC != 0 {
-		sf.data = nil
-		sf.dirty = true
+		sf = f.newActiveFile(filename, nil)
 	}
 	if flag&os.O_APPEND != 0 {
-		sf.pos = len(sf.data)
+		sf.state.mu.Lock()
+		sf.pos = len(sf.state.data)
+		sf.state.mu.Unlock()
 	}
+	sf.writer = flag&(os.O_WRONLY|os.O_RDWR) != 0
 	return sf, nil
+}
+
+func (f *s3FS) activeFile(filename string) *s3FileState {
+	active := f.activeFiles()
+	active.mu.Lock()
+	defer active.mu.Unlock()
+	return active.files[filename]
+}
+
+func (f *s3FS) newActiveFile(filename string, data []byte) *s3File {
+	state := &s3FileState{data: data, dirty: true}
+	active := f.activeFiles()
+	active.mu.Lock()
+	active.files[filename] = state
+	active.mu.Unlock()
+	return &s3File{fs: f, name: filename, state: state, writer: true}
+}
+
+func (f *s3FS) removeActiveFile(filename string, state *s3FileState) {
+	active := f.activeFiles()
+	active.mu.Lock()
+	if active.files[filename] == state {
+		delete(active.files, filename)
+	}
+	active.mu.Unlock()
+}
+
+func (f *s3FS) activeFiles() *s3ActiveFiles {
+	f.activeMu.Lock()
+	defer f.activeMu.Unlock()
+	if f.active != nil {
+		return f.active
+	}
+	f.active = &s3ActiveFiles{files: map[string]*s3FileState{}}
+	return f.active
 }
 
 func (f *s3FS) Stat(filename string) (os.FileInfo, error) {
@@ -312,6 +358,7 @@ func (f *s3FS) Chroot(path string) (billy.Filesystem, error) {
 		client: f.client,
 		bucket: f.bucket,
 		prefix: f.key(path),
+		active: f.activeFiles(),
 	}, nil
 }
 
@@ -395,11 +442,27 @@ func (f *s3FS) deleteRepoPrefix(fullName string) error {
 type s3File struct {
 	fs     *s3FS
 	name   string
-	data   []byte
+	state  *s3FileState
 	pos    int
 	closed bool
-	dirty  bool
+	writer bool
 	mu     sync.Mutex
+}
+
+// s3FileState is a request-lifetime staging buffer for one active object
+// write. go-git concurrently reads a packfile while it streams the pack into
+// it, which Amazon S3 cannot expose until a completed object exists. Readers
+// of a live writer share this buffer; after its writer closes, the completed
+// bytes are committed to S3 and all subsequent reads use S3 directly.
+type s3FileState struct {
+	data  []byte
+	dirty bool
+	mu    sync.Mutex
+}
+
+type s3ActiveFiles struct {
+	mu    sync.Mutex
+	files map[string]*s3FileState
 }
 
 func (sf *s3File) Name() string {
@@ -409,14 +472,19 @@ func (sf *s3File) Name() string {
 func (sf *s3File) Write(p []byte) (n int, err error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	sf.dirty = true
-	// Writing past the end zero-fills the gap, matching os.File semantics.
-	if sf.pos > len(sf.data) {
-		sf.data = append(sf.data, make([]byte, sf.pos-len(sf.data))...)
+	if !sf.writer {
+		return 0, &os.PathError{Op: "write", Path: sf.name, Err: os.ErrPermission}
 	}
-	n = copy(sf.data[sf.pos:], p)
+	sf.state.mu.Lock()
+	defer sf.state.mu.Unlock()
+	sf.state.dirty = true
+	// Writing past the end zero-fills the gap, matching os.File semantics.
+	if sf.pos > len(sf.state.data) {
+		sf.state.data = append(sf.state.data, make([]byte, sf.pos-len(sf.state.data))...)
+	}
+	n = copy(sf.state.data[sf.pos:], p)
 	if n < len(p) {
-		sf.data = append(sf.data, p[n:]...)
+		sf.state.data = append(sf.state.data, p[n:]...)
 	}
 	sf.pos += len(p)
 	return len(p), nil
@@ -425,10 +493,12 @@ func (sf *s3File) Write(p []byte) (n int, err error) {
 func (sf *s3File) Read(p []byte) (n int, err error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if sf.pos >= len(sf.data) {
+	sf.state.mu.Lock()
+	defer sf.state.mu.Unlock()
+	if sf.pos >= len(sf.state.data) {
 		return 0, io.EOF
 	}
-	n = copy(p, sf.data[sf.pos:])
+	n = copy(p, sf.state.data[sf.pos:])
 	sf.pos += n
 	return n, nil
 }
@@ -436,10 +506,12 @@ func (sf *s3File) Read(p []byte) (n int, err error) {
 func (sf *s3File) ReadAt(p []byte, off int64) (n int, err error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if off >= int64(len(sf.data)) {
+	sf.state.mu.Lock()
+	defer sf.state.mu.Unlock()
+	if off >= int64(len(sf.state.data)) {
 		return 0, io.EOF
 	}
-	n = copy(p, sf.data[off:])
+	n = copy(p, sf.state.data[off:])
 	if n < len(p) {
 		err = io.EOF
 	}
@@ -449,6 +521,8 @@ func (sf *s3File) ReadAt(p []byte, off int64) (n int, err error) {
 func (sf *s3File) Seek(offset int64, whence int) (int64, error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
+	sf.state.mu.Lock()
+	defer sf.state.mu.Unlock()
 	var pos int
 	switch whence {
 	case io.SeekStart:
@@ -456,7 +530,7 @@ func (sf *s3File) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		pos = sf.pos + int(offset)
 	case io.SeekEnd:
-		pos = len(sf.data) + int(offset)
+		pos = len(sf.state.data) + int(offset)
 	default:
 		return 0, errors.New("invalid whence")
 	}
@@ -474,10 +548,14 @@ func (sf *s3File) Close() error {
 		return nil
 	}
 	sf.closed = true
-	if !sf.dirty {
+	if !sf.writer {
 		return nil
 	}
-	return sf.flush()
+	err := sf.flush()
+	if err == nil {
+		sf.fs.removeActiveFile(sf.name, sf.state)
+	}
+	return err
 }
 
 func (sf *s3File) flush() error {
@@ -485,10 +563,17 @@ func (sf *s3File) flush() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	sf.state.mu.Lock()
+	data := append([]byte(nil), sf.state.data...)
+	dirty := sf.state.dirty
+	sf.state.mu.Unlock()
+	if !dirty {
+		return nil
+	}
 	_, err := sf.fs.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(sf.fs.bucket),
 		Key:    aws.String(key),
-		Body:   bytes.NewReader(sf.data),
+		Body:   bytes.NewReader(data),
 	})
 	if err != nil {
 		return fmt.Errorf("s3 put %s: %w", key, err)
@@ -507,12 +592,17 @@ func (sf *s3File) Unlock() error {
 func (sf *s3File) Truncate(size int64) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	sf.dirty = true
+	if !sf.writer {
+		return &os.PathError{Op: "truncate", Path: sf.name, Err: os.ErrPermission}
+	}
+	sf.state.mu.Lock()
+	defer sf.state.mu.Unlock()
+	sf.state.dirty = true
 	switch {
-	case size < int64(len(sf.data)):
-		sf.data = sf.data[:size]
-	case size > int64(len(sf.data)):
-		sf.data = append(sf.data, make([]byte, size-int64(len(sf.data)))...)
+	case size < int64(len(sf.state.data)):
+		sf.state.data = sf.state.data[:size]
+	case size > int64(len(sf.state.data)):
+		sf.state.data = append(sf.state.data, make([]byte, size-int64(len(sf.state.data)))...)
 	}
 	return nil
 }

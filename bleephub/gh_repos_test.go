@@ -325,6 +325,52 @@ func TestGraphQLCreateRepo(t *testing.T) {
 	}
 }
 
+func TestGraphQLCreateRepoAcceptsAuthenticatedOwnerID(t *testing.T) {
+	admin := testServer.store.LookupUserByLogin("admin")
+	if admin == nil {
+		t.Fatal("default admin was not seeded")
+	}
+	resp := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
+		"query":     `mutation($input:CreateRepositoryInput!){createRepository(input:$input){repository{name,owner{login}}}}`,
+		"variables": map[string]interface{}{"input": map[string]interface{}{"name": "gql-owner-id", "ownerId": admin.NodeID, "visibility": "PRIVATE"}},
+	})
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	payload := data["data"].(map[string]interface{})["createRepository"].(map[string]interface{})
+	repo := payload["repository"].(map[string]interface{})
+	if repo["name"] != "gql-owner-id" || repo["owner"].(map[string]interface{})["login"] != admin.Login {
+		t.Fatalf("ownerId repository = %#v", repo)
+	}
+}
+
+func TestGraphQLCreateRepoAcceptsActiveOrganizationOwnerID(t *testing.T) {
+	admin := testServer.store.LookupUserByLogin("admin")
+	if admin == nil {
+		t.Fatal("default admin was not seeded")
+	}
+	org := testServer.store.CreateOrg(admin, "gql-owner-org", "GraphQL owner organization", "")
+	if org == nil {
+		t.Fatal("create organization")
+	}
+	resp := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
+		"query":     `mutation($input:CreateRepositoryInput!){createRepository(input:$input){repository{name,owner{login}}}}`,
+		"variables": map[string]interface{}{"input": map[string]interface{}{"name": "gql-org-owner-id", "ownerId": org.NodeID, "visibility": "PRIVATE"}},
+	})
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	payload := data["data"].(map[string]interface{})["createRepository"].(map[string]interface{})
+	repo := payload["repository"].(map[string]interface{})
+	if repo["name"] != "gql-org-owner-id" || repo["owner"].(map[string]interface{})["login"] != org.Login {
+		t.Fatalf("organization ownerId repository = %#v", repo)
+	}
+}
+
 // TestGraphQLRepoNotFound verifies null result for nonexistent repo.
 func TestGraphQLRepoNotFound(t *testing.T) {
 	resp := ghPost(t, "/api/graphql", defaultToken, map[string]string{

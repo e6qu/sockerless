@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func (s *Server) registerMgmtRoutes() {
@@ -409,6 +411,16 @@ func (s *Server) handleCreateUserInternal(w http.ResponseWriter, r *http.Request
 		writeGHValidationError(w, "User", "login", "missing_field")
 		return
 	}
+	passwordHash := ""
+	if req.Password != "" {
+		var err error
+		encoded, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			writeGHError(w, http.StatusInternalServerError, "could not secure local user password")
+			return
+		}
+		passwordHash = string(encoded)
+	}
 
 	s.store.mu.Lock()
 	if _, exists := s.store.UsersByLogin[req.Login]; exists {
@@ -435,6 +447,7 @@ func (s *Server) handleCreateUserInternal(w http.ResponseWriter, r *http.Request
 		StarredRepos: map[string]bool{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
+		PasswordHash: passwordHash,
 	}
 	s.store.NextUser++
 	s.store.Users[u.ID] = u

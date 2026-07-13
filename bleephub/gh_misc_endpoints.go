@@ -390,7 +390,7 @@ func (s *Server) handleListUserKeys(w http.ResponseWriter, r *http.Request) {
 	defer s.store.Misc.mu.RUnlock()
 	out := make([]map[string]interface{}, 0, len(s.store.Misc.keysByUser[user.ID]))
 	for _, k := range s.store.Misc.keysByUser[user.ID] {
-		out = append(out, userKeyToJSON(k))
+		out = append(out, userKeyToJSON(k, s.baseURL(r)))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -420,7 +420,7 @@ func (s *Server) handleCreateUserKey(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.Misc.mu.Unlock()
 	s.recordAuditEvent("ssh_key.create", user.Login, "", map[string]interface{}{"key_id": k.ID})
-	writeJSON(w, http.StatusCreated, userKeyToJSON(k))
+	writeJSON(w, http.StatusCreated, userKeyToJSON(k, s.baseURL(r)))
 }
 
 func (s *Server) handleGetUserKey(w http.ResponseWriter, r *http.Request) {
@@ -432,7 +432,7 @@ func (s *Server) handleGetUserKey(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, userKeyToJSON(k))
+	writeJSON(w, http.StatusOK, userKeyToJSON(k, s.baseURL(r)))
 }
 
 func (s *Server) handleDeleteUserKey(w http.ResponseWriter, r *http.Request) {
@@ -1578,9 +1578,10 @@ func (s *Server) handleMarketplacePlanAccounts(w http.ResponseWriter, r *http.Re
 
 // --- Helpers ---
 
-func userKeyToJSON(k *UserKey) map[string]interface{} {
+func userKeyToJSON(k *UserKey, baseURL string) map[string]interface{} {
 	return map[string]interface{}{
 		"id":         k.ID,
+		"url":        baseURL + "/api/v3/user/keys/" + strconv.Itoa(k.ID),
 		"key":        k.Key,
 		"title":      k.Title,
 		"verified":   k.Verified,

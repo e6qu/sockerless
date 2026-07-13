@@ -215,6 +215,11 @@ func (s *Server) authenticateRequest(r *http.Request) context.Context {
 			}
 		}
 	}
+	if user == nil {
+		if session := s.sessionFromRequest(r); session != nil {
+			user = s.store.GetUserByID(session.UserID)
+		}
+	}
 	if user != nil {
 		if user.Suspended {
 			ctx = context.WithValue(ctx, ctxSuspendedUser, true)

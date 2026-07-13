@@ -47,6 +47,14 @@ func gqlData(t *testing.T, query string, variables map[string]interface{}) map[s
 	return d
 }
 
+func TestRepoGraphQLURLUsesConfiguredExternalURL(t *testing.T) {
+	t.Setenv("BLEEPHUB_EXTERNAL_URL", "https://bleephub.example.test/")
+	repo := &Repo{FullName: "octo/example", Name: "example"}
+	if got := repoToGraphQL(testServer.store, repo)["url"]; got != "https://bleephub.example.test/octo/example" {
+		t.Fatalf("repository GraphQL url = %v", got)
+	}
+}
+
 // sweepRepo creates a fresh repo via REST and returns (owner, name).
 func sweepRepo(t *testing.T, name string) (string, string) {
 	t.Helper()

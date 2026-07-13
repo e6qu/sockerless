@@ -92,6 +92,7 @@ export interface BleephubRepo {
   created_at: string;
   updated_at: string;
   pushed_at: string | null;
+  ssh_url?: string;
   size: number;
   owner: { login: string; type: string; avatar_url?: string };
   organization?: { login: string; type: string; avatar_url?: string };

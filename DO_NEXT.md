@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2560. In addition to the release-provider, repository UI, retained GitHub Classroom, fine-grained personal access tokens, and CodeQL production, the branch shipped a durable GitHub Marketplace for GitHub App and OAuth App publishers and buyers, with scoped official REST clients, signed listing webhooks, atomic subscriptions/installations, billing transitions, and saturated light/dark browser workflows. BUG-2523 remained open only for hosted-compute network onboarding.
+`feat/bleephub-hosted-compute-network-onboarding` deployed Bleephub as an independent Amazon Elastic Container Service on AWS Fargate stack in eu-west-1. It used Amazon API Gateway wake routing, private Network Load Balancer application routing, Amazon Simple Storage Service git/object persistence, native dqlite voters, fck-nat, an Amazon Simple Storage Service gateway endpoint, GitHub OAuth, local administrator credentials, and real HTTP/SSH Git transports. The five-minute idle controller safely quiesced Amazon CloudWatch before scale-down and a verified cold wake restored a healthy quorum and service.
 
 ## Continue Here
 
-1. Close BUG-2523 by replacing `/internal/orgs/.../network-settings` with the real GitHub/Azure hosted-compute private-network onboarding workflow. GitHub Classroom, fine-grained personal access tokens, CodeQL database production, and GitHub Marketplace were completed.
+1. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
 2. Add a vendored GitHub GraphQL schema/introspection ratchet; current resolver coverage remained consumer-driven rather than complete-schema proof.
 3. Continue page-level light/dark UI comparison with repository Settings/Security, issue and pull-request timelines/reviews/diffs, Actions job logs, organization administration, and account/App/token management.
 4. Continue REST semantic matrices for permissions, conditional requests, redirects, pagination, version headers, rate limits, webhooks, durable cascades, and storage-failure atomicity.

@@ -38,6 +38,9 @@ type Server struct {
 	routePatterns          []string   // every pattern registered via route(), for fidelity enumeration
 	externalURL            string     // BLEEPHUB_EXTERNAL_URL; when set, overrides request-Host URL derivation (job messages, action URLs) — the GHES "external URL" knob
 	pagesJekyllExecutable  string
+	identity               identityConfig
+	identityStatesMu       sync.Mutex
+	identityStates         map[string]identityState
 	// responseObserver, when set before ListenAndServe, sees every
 	// request/response pair in the handler chain. The test harness
 	// assigns it (same package) to validate /api/v3 response shapes
@@ -122,6 +125,8 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		registryUploads:        map[string]*containerRegistryUpload{},
 		externalURL:            strings.TrimRight(os.Getenv("BLEEPHUB_EXTERNAL_URL"), "/"),
 		pagesJekyllExecutable:  coalesceStr(os.Getenv("BLEEPHUB_PAGES_JEKYLL_EXECUTABLE"), "bleephub-pages-jekyll"),
+		identity:               identityConfigFromEnv(),
+		identityStates:         map[string]identityState{},
 	}
 	s.store.ObjectByteStore = byteStore
 	s.store.Releases.byteStore = byteStore
@@ -482,6 +487,9 @@ func (s *Server) handleInternalStorage(w http.ResponseWriter, r *http.Request) {
 
 // ListenAndServe starts the HTTP server (crash-only, no graceful shutdown).
 func (s *Server) ListenAndServe() error {
+	if err := s.startGitSSH(); err != nil {
+		return err
+	}
 	s.startScheduleDispatcher()
 	inner := s.prefixStripMiddleware(s.internalAuthMiddleware(s.mux))
 	ghWrapped := s.ghHeadersMiddleware(inner)
@@ -489,7 +497,7 @@ func (s *Server) ListenAndServe() error {
 	if s.responseObserver != nil {
 		observed = s.observeMiddleware(ghWrapped)
 	}
-	handler := otelhttp.NewHandler(s.loggingMiddleware(observed), "bleephub")
+	handler := otelhttp.NewHandler(s.loggingMiddleware(s.adminHostMiddleware(observed)), "bleephub")
 
 	srv := &http.Server{
 		Addr:    s.addr,
@@ -519,6 +527,20 @@ func (s *Server) ListenAndServe() error {
 	return srv.ListenAndServe()
 }
 
+func (s *Server) adminHostMiddleware(next http.Handler) http.Handler {
+	adminHost := strings.TrimSpace(os.Getenv("BLEEPHUB_ADMIN_HOST"))
+	if adminHost == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.EqualFold(strings.Split(r.Host, ":")[0], adminHost) && r.URL.Path == "/" {
+			http.Redirect(w, r, "/control", http.StatusTemporaryRedirect)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // prefixStripMiddleware removes any path segments before known API prefixes.
 // The runner prepends the tenant URL path to all API calls, e.g.
 // /owner/repo/_apis/... instead of /_apis/...
@@ -538,6 +560,11 @@ func (s *Server) internalAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		user := s.internalTokenUser(r)
+		if user == nil {
+			if session := s.sessionFromRequest(r); session != nil {
+				user = s.store.GetUserByID(session.UserID)
+			}
+		}
 		if user == nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
 			return

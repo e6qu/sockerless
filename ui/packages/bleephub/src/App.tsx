@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router";
 import { ErrorBoundary, ToastProvider } from "@sockerless/ui-core/components";
 import { isLoggedIn } from "./api.js";
@@ -65,7 +65,23 @@ function LoginRedirect() {
 }
 
 export function App() {
-  if (!isLoggedIn()) {
+  const [browserSession, setBrowserSession] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (isLoggedIn()) {
+      setBrowserSession(false);
+      return;
+    }
+    void fetch("/auth/session")
+      .then((response) => setBrowserSession(response.ok))
+      .catch(() => setBrowserSession(false));
+  }, []);
+
+  if (browserSession === null && !isLoggedIn()) {
+    return null;
+  }
+
+  if (!isLoggedIn() && !browserSession) {
     return (
       <ErrorBoundary>
         <BrowserRouter>
