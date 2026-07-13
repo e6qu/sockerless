@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2575 filed - 2529 fixed - 9 open - 16 false positives.**
+**2576 filed - 2530 fixed - 9 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -20,6 +20,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2576~~ | P2 | dependency freshness | the pre-push freshness gate found stale cloud and supporting Go modules across the repository | The affected Bleephub, cloud-backend, simulator, runner-dispatcher, agent, and command modules now use the latest versions required by the repository dependency-freshness gate. |
 | ~~2575~~ | P1 | Bleephub core continuous integration | the shared five-minute package deadline expired on a native ARM64 runner | The core workflow now gives the complete Bleephub package its explicit eight-minute timeout while retaining five-minute bounds for the other core packages, matching its verified full-suite runtime without weakening test coverage. |
 | ~~2574~~ | P2 | Bleephub browser user interface | the browser requested an absent favicon | The Bleephub user interface now declares and serves a saturated SVG favicon from the embedded `/ui/favicon.svg` asset instead of returning the application shell for an absent icon. |
 | ~~2573~~ | P1 | Bleephub SSH clone end-to-end coverage | the Playwright server omitted the real SSH Git listener and clone host | The Playwright harness now generates a disposable SSH host key, starts the real authenticated SSH Git listener, advertises a valid port-aware SSH clone URL, and verifies that URL form through focused transport coverage. |
