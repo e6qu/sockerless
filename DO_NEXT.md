@@ -16,6 +16,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- The native ARM64 core continuous-integration job reached the complete Bleephub package after all preceding core/API/agent packages passed, then exposed that its shared five-minute per-package timeout was too short; Bleephub now had its explicit eight-minute bound and retained full-suite coverage.
 - `bash -n ui/packages/bleephub/e2e/start-server.sh` and `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1 -timeout 8m` passed in 221 seconds after the real SSH E2E harness and port-aware clone URL fix.
 - A freshly embedded Bleephub binary served `/ui/favicon.svg` with `200 image/svg+xml`, started its real SSH listener, and advertised a valid `ssh://git@host:port/owner/repository.git` URL for the local non-default test port.
 - A real local Google Chrome session authenticated, created a repository through the public API, verified the empty-repository SSH clone selector, and verified the favicon link; the CI Linux Playwright job remained the authoritative full-browser gate.
