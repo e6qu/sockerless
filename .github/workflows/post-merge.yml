@@ -59,6 +59,11 @@ jobs:
           file: bleephub/Dockerfile.release
           platforms: ${{ matrix.arch.platform }}
           push: true
+          # Amazon Elastic Container Service on AWS Fargate resolves a native
+          # image manifest from its architecture tag. Buildx provenance would
+          # publish that tag as an OCI index whose child manifest is not
+          # anonymously retrievable from GitHub Container Registry.
+          provenance: false
           tags: ${{ env.IMAGE }}:${{ needs.metadata.outputs.tag }}-${{ matrix.arch.suffix }}
           build-args: |
             BLEEPHUB_VERSION=${{ needs.metadata.outputs.tag }}

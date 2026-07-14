@@ -14,6 +14,10 @@ The fully baked Bleephub release image retried each Ubuntu dependency installati
 
 CI kept the complete validation matrix on pull requests and moved post-merge `main` work into a dedicated Bleephub publication workflow. Every merge built native AMD64 and ARM64 images on their matching runners, published them as `ghcr.io/e6qu/sockerless-bleephub:<short-sha>-amd64` and `:<short-sha>-arm64`, and composed `:<short-sha>` as their multi-architecture manifest. It published no mutable `main` or `latest` tag, retained only the newest 20 short-SHA releases and their architecture variants, and did not restart simulator, browser, build, Terraform, or runner checks after merge.
 
+Each native architecture tag now published a direct OCI image manifest without a Buildx provenance index. This made its referenced architecture manifest anonymously retrievable from GitHub Container Registry, which Amazon ECS on AWS Fargate required before it could pull the ARM64 or AMD64 member of the public multi-architecture release.
+
+Closed BUG-2591 by upgrading stale Amazon Cloud Map, AWS Lambda, and Amazon Simple Systems Manager Go service clients in the Amazon Elastic Container Service backend, AWS Lambda backend, Bleephub wake function, and AWS simulator software development kit module. The affected backend, wake, and simulator software development kit suites passed against the updated clients, and repository dependency freshness passed.
+
 Retention resolved the repository owner's GitHub account type before calling the GitHub Packages API, so the user-owned `e6qu` namespace used `/users/` while organization namespaces used `/orgs/`.
 
 The Bleephub idle controller now switched the public route back to wake and set the application plus every dqlite voter to zero in one Amazon Elastic Container Service control-plane pass. Amazon Elastic Container Service completed the real connection drain asynchronously, so the Lambda did not time out and leave a partial quorum running.

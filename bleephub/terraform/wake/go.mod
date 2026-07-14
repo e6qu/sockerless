@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.63.1
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.88.1
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.56.1
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.98.0
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.99.0
 	github.com/aws/aws-sdk-go-v2/service/scheduler v1.19.1
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.43.1
 )
