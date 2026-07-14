@@ -111,11 +111,6 @@ cmd/sockerless-admin/dist/
 cmd/sockerless-admin/sockerless-admin
 cmd/sockerless-admin/admin
 /admin
-bleephub/dist/
-bleephub/bleephub-server
-bleephub/sdk-tests/bleephub-server
-bleeplab/dist/
-bleeplab/bleeplab
 
 # Playwright
 ui/packages/admin/test-results/
@@ -126,8 +121,6 @@ ui/packages/simulator-*/test-results/
 ui/packages/simulator-*/playwright-report/
 ui/packages/frontend-docker/test-results/
 ui/packages/frontend-docker/playwright-report/
-ui/packages/bleephub/test-results/
-ui/packages/bleephub/playwright-report/
 
 # Misc
 *.log

@@ -1,11 +1,11 @@
 ---
 name: adaptor-fidelity-check
-description: Verify a sockerless component change against its real reference adaptor (docker CLI / aws CLI / gcloud / az / Terraform / gh CLI / Docker SDK). Use whenever editing files under backends/, simulators/, bleephub/, or anything that other tools speak to over the wire. Catches drift between what we implement and what real adaptors send.
+description: Verify a sockerless component change against its real reference adaptor (docker CLI / aws CLI / gcloud / az / Terraform / gh CLI / Docker SDK). Use whenever editing files under backends/, simulators/, or anything that other tools speak to over the wire. Catches drift between what we implement and what real adaptors send.
 ---
 
 # Adaptor-fidelity check
 
-Every sockerless component is paired with an external **reference adaptor** (per `docs/RUNNERS.md`, `bleephub/README.md`, and the per-backend READMEs). The adaptor is the validation harness, the user-facing utility, and the source of truth for what "correct" means. This skill enforces that pairing.
+Every sockerless component is paired with an external **reference adaptor** (per `docs/RUNNERS.md` and the per-backend READMEs). The adaptor is the validation harness, the user-facing utility, and the source of truth for what "correct" means. This skill enforces that pairing.
 
 ## When this skill applies
 
@@ -101,7 +101,7 @@ If any of these differs from the adaptor's emission, that's a real bug. File it 
 
 A test that doesn't drive the real adaptor doesn't count. Examples that DO count:
 
-- `bleephub/test/run-gh-test.sh` — real `gh` binary against running bleephub in Docker.
+- [Bleephub](https://github.com/e6qu/bleephub)'s harness — real `gh` binary against Bleephub in Docker.
 - `tests/` — real Docker Go SDK against running backend.
 - `simulators/aws/sdk-tests/` — real AWS Go SDK against running simulator.
 - `simulators/<cloud>/terraform-tests/` — real Terraform provider against running simulator.

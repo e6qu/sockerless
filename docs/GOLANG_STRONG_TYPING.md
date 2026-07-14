@@ -6,7 +6,7 @@
 
 BUG-991 and BUG-992 are the canonical motivating cases. `handleContainerWait` and `handleImageList` in `backends/core/handle_*.go` each read directly from `s.Store.Containers` / `s.Store.Images` instead of dispatching through `s.self.<Method>()`. The compiler had no objection: `*Server` and `*BaseServer` share a struct, and "look at the store" vs. "ask the per-backend implementation" are both valid Go. The result was a passthrough backend (`backends/docker`) silently returning empty lists while the upstream daemon held the real state. The bug class is "two valid Go programs, only one of which is the truth — and the type system can't tell the difference." This is the territory where stronger typing pays off: encode the contract ("handlers must call `self`, never the store directly") so violating it is a build failure, not a manual-test surprise.
 
-Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`, and `bleephub/` re-implements the GitHub REST + GraphQL surfaces — both spec-driven domains where the gap between "the spec says X" and "the code happens to match X" is exactly the surface stronger types can close.
+Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`; [Bleephub](https://github.com/e6qu/bleephub) re-implements the GitHub REST + GraphQL surfaces. Both are spec-driven domains where the gap between "the spec says X" and "the code happens to match X" is exactly the surface stronger types can close.
 
 ## Surveyed sources
 
@@ -96,17 +96,17 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`, 
 
 ## Approach 5: spec-driven code generation (OpenAPI / OAS)
 
-**What it is.** Take `api/openapi.yaml` (3,300 lines) and `bleephub/`'s GitHub-API spec, generate typed handlers/clients/types. Failures of the implementation to match the spec become compile errors instead of integration-test surprises.
+**What it is.** Take `api/openapi.yaml` (3,300 lines) and Bleephub's GitHub-API spec, generate typed handlers/clients/types. Failures of the implementation to match the spec become compile errors instead of integration-test surprises.
 
 **Library / tool.** [`oapi-codegen`](https://github.com/oapi-codegen/oapi-codegen). Sockerless already uses `goverter` (separate role: in-memory mapping, not wire-format) and the `api/` package already has `types_gen.go` — so codegen is in the toolchain, just not driving handler dispatch.
 
-**Where it'd apply in sockerless.** `api/openapi.yaml` already exists. Currently it generates types only; oapi-codegen can also generate Echo / Chi / gorilla/mux / net/http server interfaces with typed request/response objects. `bleephub/` is the second target: GitHub publishes a maintained OpenAPI spec.
+**Where it'd apply in sockerless.** `api/openapi.yaml` already exists. Currently it generates types only; oapi-codegen can also generate Echo / Chi / gorilla/mux / net/http server interfaces with typed request/response objects. Bleephub is the second target: GitHub publishes a maintained OpenAPI spec.
 
 **Cost.** Adds a `go generate` step (sockerless already has these). Switching the docker REST handler layer in `backends/core/handle_*.go` from "free-form HTTP handlers reading `r.URL.Query()`" to "generated typed handler interface" is the work — every handler signature changes. CI adds the generator + `go build` round-trip; per nikita_rykhlov's DEV post, that's seconds, not minutes.
 
 **Risk.** oapi-codegen explicitly notes its scope limits: > "the package tries to be too simple rather than too generic, making some design decisions in favor of simplicity, knowing that strongly typed Go code cannot be generated for all possible OpenAPI Schemas." (<https://github.com/oapi-codegen/oapi-codegen>). Docker's API uses a few oddities (multi-content-type response shapes; the `/containers/{id}/attach` upgrade) that may need manual handler shims around the generated interface. Schemas with `oneOf`/`anyOf` map to `interface{}` and require manual discriminator work.
 
-**Verdict for sockerless.** Adopt for `bleephub/` (clean greenfield against a public spec). Defer for `backends/core/handle_*.go` until BUG-991/992-class issues are scoped — the win is large but the migration is the full handler tree.
+**Verdict for sockerless.** Adopt for Bleephub (clean greenfield against a public spec). Defer for `backends/core/handle_*.go` until BUG-991/992-class issues are scoped — the win is large but the migration is the full handler tree.
 
 **Source.** oapi-codegen README quote above; nikita_rykhlov's overview at <https://dev.to/nikita_rykhlov/go-tools-code-generation-from-openapi-specs-in-go-with-oapi-codegen-3jc1>.
 
@@ -212,7 +212,7 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`, 
 
 **Library / tool.** [`forbidigo`](https://github.com/ashanbrown/forbidigo) for the general-purpose rule, [`usestdlibvars`](https://github.com/sashamelentyev/usestdlibvars) for the HTTP/stdlib-constant cases.
 
-**Where it'd apply in sockerless.** `backends/core/handle_*.go` — the docker handler layer is awash in literal HTTP statuses. `bleephub/` similarly. The `types_gen.go` `Status map[string]any` field (existing) would be a forbidigo-exempt site, but new code outside that file should not import the pattern.
+**Where it'd apply in sockerless.** `backends/core/handle_*.go` — the Docker handler layer is awash in literal HTTP statuses. Bleephub similarly benefits from this discipline. The `types_gen.go` `Status map[string]any` field (existing) would be a forbidigo-exempt site, but new code outside that file should not import the pattern.
 
 **Cost.** golangci-lint config block. Per-rule allowlist for the few sites where `any` is genuinely correct (JSON pass-through, generated code).
 
@@ -260,7 +260,7 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`, 
 
 **Library / tool.** [`go-playground/validator/v10`](https://github.com/go-playground/validator).
 
-**Where it'd apply in sockerless.** API request types in `bleephub/` where the spec defines field constraints. CLI flag bundles. `compose.yaml` parsing in `backends/core/compose_*.go`.
+**Where it'd apply in sockerless.** API request types in Bleephub where the spec defines field constraints. CLI flag bundles. `compose.yaml` parsing in `backends/core/compose_*.go`.
 
 **Cost.** Library dependency. Validators run on every Decode-and-Validate path; allocation-light but reflection-based.
 
@@ -280,7 +280,7 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`, 
 
 **Generics-based sum types.** Go's union-element constraint forbids method sets. Sum types belong in sealed interfaces + `gochecksumtype` (Approach 10), not in generic constraints. > "A union element with more than one term may not contain an interface type with a non-empty method set" — Go 1.18 release notes.
 
-**oapi-codegen across the entire docker REST surface, in one pass.** The Docker API has too many edges (stream upgrades, multi-content-type responses, `/exec` long-poll) for a clean generated handler interface. The migration would touch every `handle_*.go` and the cost dwarfs the BUG-991/992 fix-shape. Use oapi-codegen for greenfield (`bleephub/`) and an "audit one handler at a time" plan for the docker REST surface.
+**oapi-codegen across the entire docker REST surface, in one pass.** The Docker API has too many edges (stream upgrades, multi-content-type responses, `/exec` long-poll) for a clean generated handler interface. The migration would touch every `handle_*.go` and the cost dwarfs the BUG-991/992 fix-shape. Use oapi-codegen for greenfield Bleephub and an "audit one handler at a time" plan for the docker REST surface.
 
 **Builder pattern on the `api.Backend` interface itself.** The interface has 65 methods (per `MEMORY.md`); a step-builder construction would replace a clear method-by-method satisfaction proof (`var _ api.Backend = (*Server)(nil)`) with a generated typestate graph that nobody reads. Keep the interface flat.
 
@@ -296,7 +296,7 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`, 
 4. **Sealed-interface sum types for `core.PodSpec` and the runner spec.** With `gochecksumtype` already in `golangci-lint` from step 2, this is the highest-leverage shape change. (Approach 10.)
 5. **NilAway on `backends/core/` + cloud-state files.** Scope-limited; revisit once false-positive rate is known. (Approach 4.)
 6. **Property tests on filter logic.** Direct BUG-992 follow-up. (Approach 7.)
-7. **oapi-codegen for `bleephub/`** as greenfield against the GitHub public OpenAPI spec. (Approach 5.)
+7. **oapi-codegen for Bleephub** as greenfield against the GitHub public OpenAPI spec. (Approach 5.)
 8. **Parse-don't-validate constructors for container names, image refs, ARNs.** Retrofit case-by-case. (Approach 13.)
 
 Steps 1, 2, and 3 are the cheap structural wins. Step 4 is the expensive correctness win. Everything else is supporting.

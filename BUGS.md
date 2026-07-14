@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2592 filed - 2545 fixed - 11 open - 16 false positives.**
+**2594 filed - 2548 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -11,7 +11,6 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
 | 2589 | P1 | Azure Container Registry Tasks SDK harness | the local Docker daemon did not trust the real HTTP simulator registry endpoint used by an ACR Tasks image push | Configure the test registry coordinate with a Docker-trusted transport or a real TLS endpoint so the complete SDK suite passes on macOS as it does in CI. |
-| 2582 | P2 | repository lint | full `golangci-lint` sweep attempted to analyze Go-module directories with no analyzable Go files | The lint module enumerator needs to exclude or correctly resolve empty `backends/azure-common` and `backends/core` directories so a full repository gate does not fail before source analysis. |
 | 2569 | P1 | Bleephub Amazon Elastic Container Service Terraform simulator harness | apply did not terminate within the bounded test window | The local Sockerless AWS Terraform apply/destroy harness left Terraform and simulator subprocesses running past its 90-second test deadline, so the blocking provider operation and subprocess lifecycle need a deterministic fix. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
@@ -22,6 +21,10 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2594~~ | P2 | dependency freshness | The Azure simulator software development kit module pinned Azure Cosmos Database below the current release | The Azure Cosmos Database software development kit dependency now uses v1.5.0, and the standalone simulator SDK suite plus freshness gate passed. |
+| ~~2582~~ | P2 | repository lint | Standalone lint resolution found stale core and Azure common module dependency metadata | Both modules now carry reconciled standalone module graphs, so `GOWORK=off` lint and tests resolve the same real packages as continuous integration. |
+| ~~2593~~ | P1 | Bleephub extraction | A rebase conflict left a site-administrator authorization test in Sockerless after its product implementation moved | The recovered test now lives in standalone Bleephub, and Sockerless contains no Bleephub product source or stale local product paths. |
+
 | ~~2592~~ | P0 | Bleephub Git SSH authorization | An external GitHub administrator authenticated with a registered SSH key but could not push to an organization repository because the repository authorization path ignored the administrator override | Site administrators now hold read, push, and administrative access to every repository, including through the real SSH Git transport. |
 | ~~2591~~ | P2 | dependency freshness | the pre-push gate found stale Amazon Web Services service clients in the Amazon Elastic Container Service, AWS Lambda, Bleephub wake, and AWS simulator modules | The affected modules now use the latest Amazon Cloud Map, AWS Lambda, and Amazon Simple Systems Manager Go service clients; their real backend, wake, and simulator SDK tests passed. |
 | ~~2590~~ | P0 | Bleephub GitHub Container Registry release | Buildx provenance made each architecture tag an OCI index whose anonymous child manifest could not be fetched by Amazon ECS on AWS Fargate | Native architecture tags now publish direct image manifests without provenance indexes, so Amazon ECS resolves and pulls the public ARM64 or AMD64 image before composing the retained multi-architecture manifest. |

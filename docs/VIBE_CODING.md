@@ -75,7 +75,7 @@ Each pattern maps to one of nine categories defined at the bottom; patterns are 
 **Description**: Generated unit tests mock the dependency, then assert that the mock returned what the mock was configured to return. The test is green but verifies only its own setup.
 **Example**: `def test_safe_sum(): assert safe_sum([1, 2, 3]) == 6; assert safe_sum([])  # Forgets to expect ValueError`.
 **Why it's bad**: Coverage looks fine while real bugs remain undetected. LLM-generated tests achieve only ~20% mutation scores on complex real-world functions.
-**Sockerless instance**: `MEMORY.md` § `feedback_no_stubs.md` + the standing rule "external test fixtures must use the real client" (see BUGS.md) exist specifically because of this pattern. The `bleephub/test/run-gh-test.sh` harness uses the real `gh` binary, not a stub.
+**Sockerless instance**: `MEMORY.md` § `feedback_no_stubs.md` + the standing rule "external test fixtures must use the real client" (see BUGS.md) exist specifically because of this pattern. The [Bleephub](https://github.com/e6qu/bleephub) harness uses the real `gh` binary, not a stub.
 **Source**: [HN id=47161831](https://news.ycombinator.com/item?id=47161831) — danielbln: *"Just make sure the LLM doesn't go crazy with the mocks. I had some fully mocked tests before that didn't do anything (apart from looking green)."* Also [shekhar14.medium.com](https://shekhar14.medium.com/unmasking-the-flaws-why-ai-generated-unit-tests-fall-short-in-real-codebases-71e394581a8e): *"Coverage? Maybe 40%, missing the error branches and type checks."*
 
 ### 3. Implementation-coupled tests (testing the code, not the spec)
@@ -173,7 +173,7 @@ Each pattern maps to one of nine categories defined at the bottom; patterns are 
 **Description**: AI agents implement authorization in JS that runs in the browser, leaving the backend wide open.
 **Example**: "All 'access control' logic lived in the JavaScript on the client side, meaning the data was literally one curl command away from anyone who looked."
 **Why it's bad**: Trivial to bypass with DevTools or `curl`.
-**Sockerless instance**: The bleephub UI today hardcodes the seeded admin PAT and has no login gate (documented in `bleephub/README.md`). This is on the disclosure list; reverse-proxy auth is the recommended pattern.
+**Sockerless instance**: The Bleephub UI's authentication behavior is documented in its [standalone README](https://github.com/e6qu/bleephub). This is on the disclosure list; reverse-proxy auth is the recommended pattern.
 **Source**: [tobru.ch](https://www.tobru.ch/an-ai-vibe-coding-horror-story/) — verbatim quote above.
 
 ### 17. Context amnesia — agent rewrites or deletes its own earlier work

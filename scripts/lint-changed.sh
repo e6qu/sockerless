@@ -39,6 +39,13 @@ cleanup() {
 trap cleanup EXIT
 
 for mod in $sorted; do
+  # A module may exist only to anchor shared metadata or generated assets.
+  # golangci-lint reports a context-loading failure when that module has no
+  # Go package at all, so only invoke it for modules containing Go source.
+  if ! find "$mod" -type f -name '*.go' -print -quit | grep -q .; then
+    echo "lint: $mod (no Go source; skipped)"
+    continue
+  fi
   # Modules with a `//go:embed all:dist` directive fail to compile when
   # dist/ doesn't exist, which masks every other lint finding. Stub a
   # placeholder so the lint covers the rest of the package. Real
