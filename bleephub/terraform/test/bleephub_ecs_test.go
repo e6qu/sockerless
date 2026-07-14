@@ -17,7 +17,7 @@ var simulatorURL string
 var simulator *exec.Cmd
 
 func TestMain(m *testing.M) {
-	simDir, err := filepath.Abs("../../../../simulators/aws")
+	simDir, err := filepath.Abs("../../../simulators/aws")
 	if err != nil {
 		panic(err)
 	}
@@ -123,7 +123,7 @@ module "bleephub" {
 
 func buildWake(t *testing.T, destination string) {
 	t.Helper()
-	repo, err := filepath.Abs("../../../..")
+	repo, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
 	}

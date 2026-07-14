@@ -10,6 +10,10 @@ CI kept the complete validation matrix on pull requests and moved post-merge `ma
 
 The Google Cloud dependency refresh also reconciled the Cloud Run and Cloud Run Functions module graphs under `GOWORK=off`. The release-matrix no-UI binaries now build with their standalone module metadata instead of requiring a workspace-mediated dependency selection.
 
+## 2026-07-14 - Bleephub Terraform Module Relocation (`feat/bleephub-terraform-module`)
+
+The reusable Bleephub Amazon Elastic Container Service on AWS Fargate module moved from the generic Terraform module tree to `bleephub/terraform`, together with its Amazon Web Services simulator apply/destroy coverage and pre-built wake-listener source. The wake build script and relocated test resolved repository paths from the new module location. The superseded checked-in Terraform root was removed so the private `e6qu/infra` Terragrunt repository became the single production environment owner. The module README documented its required inputs, hosted origins, output contract, and secret-safe GitHub OAuth configuration.
+
 ## 2026-07-13 - Bleephub Amazon Elastic Container Service on AWS Fargate Deployment (`feat/bleephub-hosted-compute-network-onboarding`)
 
 Bleephub deployed in a dedicated eu-west-1 Amazon Elastic Container Service on AWS Fargate stack rather than the separate EDD infrastructure. The reusable Terraform module provisioned private application networking with fck-nat, an Amazon Simple Storage Service gateway endpoint, encrypted Amazon Simple Storage Service git/object buckets, Amazon Elastic File System-backed native dqlite voters, an internal Network Load Balancer, Amazon API Gateway public wake routing, an administrator origin, and a hardened SSH Git gateway. The fully baked ARM64 release image performed no build work at task start.

@@ -7,7 +7,7 @@ mkdir -p "$out_dir"
 out_dir=$(cd "$out_dir" && pwd)
 go_cache=${GOCACHE:-/private/tmp/sockerless-go-cache}
 
-pushd "$repo_root/terraform/modules/bleephub-ecs/wake" >/dev/null
+pushd "$repo_root/bleephub/terraform/wake" >/dev/null
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 GOCACHE="$go_cache" GOWORK=off go build -trimpath -ldflags='-s -w' -o "$out_dir/bootstrap" .
 popd >/dev/null
 

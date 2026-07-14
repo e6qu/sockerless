@@ -32,7 +32,7 @@ variable "availability_zones" {
 }
 
 variable "container_image" {
-  description = "Immutable Bleephub release image URI, normally an Amazon Elastic Container Registry digest."
+  description = "Immutable Bleephub release image URI, including its registry and digest or immutable tag."
   type        = string
 }
 

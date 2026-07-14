@@ -25,6 +25,7 @@ terraform/
 | lambda     | AWS            | AWS Lambda function backend          |
 | gcf        | GCP            | Google Cloud Functions backend       |
 | azf        | Azure          | Azure Functions backend              |
+| Bleephub   | AWS            | [`bleephub/terraform`](../bleephub/terraform/) |
 
 ## Environments
 
