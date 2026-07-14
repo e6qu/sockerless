@@ -43,8 +43,7 @@ BACKEND_BUILD_DIR_azf      := backends/azure-functions
 define component-binary
 $(strip $(if $(filter sim,$(1)),simulators/$(2)/simulator-$(2), \
 $(if $(filter backend,$(1)),$(call backend-binary-path,$(3)), \
-$(if $(filter bleephub,$(1)),bleephub/bleephub-server, \
-$(error component-binary: unknown KIND $(1))))))
+$(error component-binary: unknown KIND $(1)))))
 endef
 
 define backend-binary-path
@@ -55,8 +54,7 @@ endef
 define component-build-dir
 $(strip $(if $(filter sim,$(1)),simulators/$(2), \
 $(if $(filter backend,$(1)),$(call backend-build-dir,$(3)), \
-$(if $(filter bleephub,$(1)),bleephub, \
-$(error component-build-dir: unknown KIND $(1))))))
+$(error component-build-dir: unknown KIND $(1)))))
 endef
 
 define backend-build-dir
@@ -64,18 +62,17 @@ $(strip $(if $(BACKEND_BUILD_DIR_$(1)),$(BACKEND_BUILD_DIR_$(1)),$(error backend
 endef
 
 # component-flag returns the addr/listen flag the binary expects.
-# sims use -addr; backends + admin use --addr; bleephub uses -addr.
+# Sims use -addr; backends use --addr.
 define component-flag
 $(strip $(if $(filter sim,$(1)),-addr, \
 $(if $(filter backend,$(1)),--addr, \
-$(if $(filter bleephub,$(1)),-addr, \
-$(error component-flag: unknown KIND $(1))))))
+$(error component-flag: unknown KIND $(1)))))
 endef
 
 # start-component starts ONE instance.
 #
 # Required:
-#   KIND=sim|backend|bleephub
+#   KIND=sim|backend
 #   NAME=<unique instance name>
 #   PORT=<int>
 # Required for KIND=sim:

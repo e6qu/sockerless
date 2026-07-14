@@ -10,8 +10,6 @@ Bun + Turborepo workspace. 14 packages share a single design system + API client
 | `backend-{ecs,lambda,cloudrun,gcf,aca,azf,docker}` | Per-backend Vite apps. Each is `<BackendApp title="..." />` plus an `index.html` that loads the design-system fonts + index.css. |
 | `simulator-{aws,gcp,azure}` | Per-cloud simulator dashboards (sim-only routes). |
 | `admin` | Cross-backend admin dashboard: component health, containers, contexts, process lifecycle, topology lifecycle, logs, resources, cleanup, and make-command recovery panels. |
-| `bleephub` | Standalone hub UI: a GitHub-faithful clone dashboarding the bleephub server. |
-| `bleeplab` | Standalone GitLab control-plane sim UI: dashboards the bleeplab server. |
 
 ## Design system
 
@@ -71,11 +69,10 @@ Default ports (overridable via env in `make/stack.mk`):
 - AWS sim `:4566`, GCP sim `:4567`, Azure sim `:4568`
 - Backend `:3375`
 - Admin UI `:9090`
-- bleephub `:5555` (separate target: `make stack-bleephub-up`)
 
 Open the admin UI at `http://localhost:9090/ui/` once `stack-status` reports it green. From there, the admin UI links each component's own `/ui/` route, starts/stops/restarts individual topology instances, rebuilds them, and can stop the whole stack.
 
-### Arbitrary topology (multiple sims / backends / bleephubs)
+### Arbitrary topology (multiple simulators and backends)
 
 For richer topologies, use the granular per-component targets — admin's REST surface drives these too:
 
@@ -83,7 +80,6 @@ For richer topologies, use the granular per-component targets — admin's REST s
 make start-component KIND=sim     CLOUD=aws  NAME=sim-1     PORT=4566
 make start-component KIND=sim     CLOUD=gcp  NAME=sim-2     PORT=4567
 make start-component KIND=backend CLOUD=aws  BACKEND=ecs    NAME=ecs-1 PORT=3375 SIM_PORT=4566
-make start-component KIND=bleephub             NAME=bleep-1   PORT=5555
 
 make logs-component  NAME=ecs-1 LINES=200
 make stop-component  NAME=ecs-1

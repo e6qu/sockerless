@@ -1,8 +1,0 @@
-# One-layer derivation of the harness image (already built on the host
-# by the make target) used as the dispatcher's spawn image in TEST 14:
-# same runner tree + deps, ephemeral-runner entrypoint, bleephub
-# reachable from the host engine via host.docker.internal on the
-# published port 80.
-FROM bleephub-runner-int:local
-ENV RUNNER_SERVER_URL=http://host.docker.internal
-ENTRYPOINT ["/test/spawn-runner-entrypoint.sh"]

@@ -97,7 +97,7 @@ func TestAPILifecycleNilLifecycle(t *testing.T) {
 	mgr, mux := setupTopologyServer(t)
 	_ = mgr.Replace(Topology{Projects: []ProjectConfig{
 		{Name: "p", Instances: []Instance{
-			{Name: "s", Kind: InstanceKindBleephub, Port: 5500},
+			{Name: "s", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4500},
 		}},
 	}})
 	for _, action := range []string{"start", "stop", "restart", "rebuild"} {
@@ -119,7 +119,7 @@ func TestAPILifecycleNilLifecycle(t *testing.T) {
 
 func TestAPIAllocatePort(t *testing.T) {
 	_, mux := setupTopologyServer(t)
-	req := httptest.NewRequest("POST", "/api/v1/topology/allocate-port?kind=bleephub", nil)
+	req := httptest.NewRequest("POST", "/api/v1/topology/allocate-port?kind=sim", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {

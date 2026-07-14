@@ -35,7 +35,7 @@ jobs:
           - group: azure
             modules: simulators/azure simulators/azure/shared
           - group: core-agent
-            modules: backends/core backends/docker agent bleephub
+            modules: backends/core backends/docker agent
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.5.0

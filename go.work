@@ -15,8 +15,6 @@ use (
 	./backends/gcp-common
 	./backends/lambda
 
-	./bleephub
-	./bleeplab
 	./cmd/sockerless
 	./cmd/sockerless-admin
 	./github-runner-dispatcher-aws

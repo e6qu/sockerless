@@ -74,8 +74,6 @@ sedi "s|Go_Modules-[0-9]*-|Go_Modules-${go_modules}-|g" "$readme"
 # Per-module Go badges
 for pair in \
   "core:backends/core" \
-  "bleephub:bleephub" \
-  "bleeplab:bleeplab" \
   "sim%2Faws:simulators/aws" \
   "sim%2Fazure:simulators/azure" \
   "sim%2Fgcp:simulators/gcp" \
@@ -103,8 +101,6 @@ done
 for pair in \
   "ui%2Fadmin:ui/packages/admin" \
   "ui%2Fcore:ui/packages/core" \
-  "ui%2Fbleephub:ui/packages/bleephub" \
-  "ui%2Fbleeplab:ui/packages/bleeplab" \
   "ui%2Fsim--aws:ui/packages/sim-aws" \
   "ui%2Fsim--gcp:ui/packages/sim-gcp" \
   "ui%2Fsim--azure:ui/packages/sim-azure" \

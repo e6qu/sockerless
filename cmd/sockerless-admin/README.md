@@ -1,6 +1,6 @@
 # sockerless-admin
 
-Local orchestration server for Sockerless topologies — backends + simulators + bleephub + projects. Exposes a REST API + embedded React UI on `:9090` by default. Reads `/v1/health` + `/v1/info` + env vars from each registered component; **never** requires admin-side env vars on the components themselves.
+Local orchestration server for Sockerless topologies — backends, simulators, and projects. Exposes a REST API + embedded React UI on `:9090` by default. Reads `/v1/health` + `/v1/info` + env vars from each registered component; **never** requires admin-side env vars on the components themselves.
 
 ## Reference adaptors
 
@@ -8,7 +8,7 @@ Local orchestration server for Sockerless topologies — backends + simulators +
 |---|---|
 | **Browser / embedded UI** (`ui/packages/admin`) | The HTTP API at `/api/v1/*` is consumed by the embedded React SPA. The UI is the canonical reference adaptor for the admin REST surface. |
 | **`curl` / `httpie` / `gh api`-style HTTP clients** | Every action the UI takes is also driveable as plain REST. The API is the contract; the UI is one consumer. |
-| **`sockerless-admin` itself reaching out to backends** | The admin polls each registered backend / simulator / bleephub via `/v1/health` + `/v1/info` per the components-decoupled-from-admin invariant. |
+| **`sockerless-admin` itself reaching out to components** | The admin polls each registered backend and simulator via `/v1/health` + `/v1/info` per the components-decoupled-from-admin invariant. |
 | **`*_test.go` files** | Every API handler has unit tests in the same package — see the file pairing (`api_topology.go` ↔ `api_topology_test.go`, etc.). |
 
 ## Validation
@@ -31,8 +31,7 @@ cd ../../../cmd/sockerless-admin && make build             # → ./sockerless-ad
 ./sockerless-admin --addr :9090 \
   --backend ecs-dev=http://localhost:3375 \
   --backend lambda-dev=http://localhost:3376 \
-  --simulator sim-aws=http://localhost:5111 \
-  --bleephub http://localhost:8443
+  --simulator sim-aws=http://localhost:5111
 
 # Or load a config file
 ./sockerless-admin --addr :9090 --config admin.json
@@ -46,7 +45,6 @@ cd ../../../cmd/sockerless-admin && make build             # → ./sockerless-ad
 | `--config` | unset | Path to `admin.json` topology file. |
 | `--backend name=addr` | repeatable | Register a backend by name + URL. |
 | `--simulator name=addr` | repeatable | Register a simulator by name + URL. |
-| `--bleephub addr` | unset | Register the bleephub coordinator URL. |
 | `--version` | | Print version and exit. |
 
 The admin loads components in this priority order: explicit flags → `--config` file → auto-discover from `~/.sockerless/contexts/` → persisted projects from `~/.sockerless/projects/`.
@@ -58,7 +56,7 @@ All routes live under `/api/v1/`. Selected paths (full set in `api_*.go`):
 | Path | Purpose |
 |---|---|
 | `GET /api/v1/overview` | Cluster-wide snapshot (component counts, registered components, aggregate container count). |
-| `GET /api/v1/components` | List registered backends + simulators + bleephub with their current health. |
+| `GET /api/v1/components` | List registered backends and simulators with their current health. |
 | `GET /api/v1/components/{name}/{health,status,metrics,provider}` | Proxy component inspection calls. |
 | `POST /api/v1/components/{name}/reload` | Ask a registered component to reload when it supports reload. |
 | `GET /api/v1/containers` | Aggregate `docker ps` across all backends. |
@@ -79,7 +77,7 @@ All routes live under `/api/v1/`. Selected paths (full set in `api_*.go`):
 | `GET /api/v1/topology/projects/{project}/instances/{instance}/status` | PID + health status for one instance. |
 | `POST /api/v1/topology/projects/{project}/instances/{instance}/{start,stop,restart,rebuild,reload}` | Drive real `make` lifecycle for one instance. |
 | `POST /api/v1/topology/stop-all` | Schedule the repo's real stack shutdown path. |
-| `POST /api/v1/topology/allocate-port?kind=<sim|backend|bleephub>` | Allocate the next free configured port. |
+| `POST /api/v1/topology/allocate-port?kind=<sim|backend>` | Allocate the next free configured port. |
 | `GET /api/v1/topology/projects/{project}/instances/{instance}/logs` | Tail one instance log. |
 | `GET /api/v1/topology/projects/{project}/instances/{instance}/diagnostics` | Instance drift diagnostics. |
 | `POST /api/v1/topology/projects/{project}/instances/{instance}/proxy` | Reverse-proxy raw HTTP into an instance for ad-hoc debugging. |
@@ -94,7 +92,7 @@ The full handler set is enumerated in the source: see the `api_*.go` files in th
 `http://localhost:9090/ui/` serves the embedded SPA. Routes:
 
 - **Overview** — cluster snapshot.
-- **Components** — registered backends / simulators / bleephub, per-component health, env vars, version, last poll, and direct component UI links.
+- **Components** — registered backends and simulators, per-component health, env vars, version, last poll, and direct component UI links.
 - **Component detail** — one component's health, provider data, metrics, reload action, and recovery commands.
 - **Containers** — aggregate `docker ps`.
 - **Contexts** — CLI contexts visible to this admin process.
@@ -191,4 +189,4 @@ cmd/sockerless-admin/
 └── *_test.go                     Per-handler unit tests
 ```
 
-See also: [`docs/ADMIN_ORCHESTRATION.md`](../../docs/ADMIN_ORCHESTRATION.md) for design background, [`cmd/sockerless/README.md`](../sockerless/README.md) for the single-backend CLI counterpart, [`bleephub/README.md`](../../bleephub/README.md) for the GitHub-compat coordinator the admin can wire in.
+See also: [`docs/ADMIN_ORCHESTRATION.md`](../../docs/ADMIN_ORCHESTRATION.md) for design background and [`cmd/sockerless/README.md`](../sockerless/README.md) for the single-backend CLI counterpart.

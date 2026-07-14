@@ -36,7 +36,7 @@ const (
 )
 
 // ProjectConfig defines a project configuration as a name + a list of
-// independently lifecyclable Instances (sim / backend / bleephub). Each
+// independently lifecyclable Instances (sim / backend). Each
 // instance carries its own cloud / backend / port / config.
 type ProjectConfig struct {
 	Name      string     `json:"name" yaml:"name"`

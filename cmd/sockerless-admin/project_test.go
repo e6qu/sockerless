@@ -170,8 +170,8 @@ func TestInstanceProcessName(t *testing.T) {
 	if got := instanceProcessName("myapp", "backend"); got != "proj-myapp-backend" {
 		t.Errorf("backend = %s, want proj-myapp-backend", got)
 	}
-	if got := instanceProcessName("myapp", "bleephub-eu"); got != "proj-myapp-bleephub-eu" {
-		t.Errorf("bleephub = %s, want proj-myapp-bleephub-eu", got)
+	if got := instanceProcessName("myapp", "sim-eu"); got != "proj-myapp-sim-eu" {
+		t.Errorf("sim = %s, want proj-myapp-sim-eu", got)
 	}
 }
 

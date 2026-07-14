@@ -62,7 +62,7 @@ func TestTopologyManagerInstancesFlat(t *testing.T) {
 			{Name: "be", Kind: InstanceKindBackend, Cloud: CloudAWS, Backend: BackendECS, Port: 3300, Sim: "s"},
 		}},
 		{Name: "p2", Instances: []Instance{
-			{Name: "bleep", Kind: InstanceKindBleephub, Port: 5500},
+			{Name: "sim-gcp", Kind: InstanceKindSim, Cloud: CloudGCP, Port: 4501},
 		}},
 	}}); err != nil {
 		t.Fatalf("seed: %v", err)

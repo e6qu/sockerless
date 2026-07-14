@@ -41,7 +41,6 @@ func main() {
 	var backends, simulators componentFlag
 	flag.Var(&backends, "backend", "backend component as name=addr (repeatable)")
 	flag.Var(&simulators, "simulator", "simulator component as name=addr (repeatable)")
-	bleephubAddr := flag.String("bleephub", "", "bleephub coordinator address")
 	showVersion := flag.Bool("version", false, "print version and exit")
 
 	flag.Parse()
@@ -86,9 +85,6 @@ func main() {
 	}
 	for _, s := range simulators.entries {
 		reg.Add(Component{Name: "sim-" + s.name, Type: "simulator", Addr: normalizeAddr(s.addr)})
-	}
-	if *bleephubAddr != "" {
-		reg.Add(Component{Name: "bleephub", Type: "coordinator", Addr: normalizeAddr(*bleephubAddr)})
 	}
 
 	// Start background health polling

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run jscpd (JavaScript/TypeScript copy-paste detector) on the simulator
 # dashboard UI sources (simulator-aws/gcp/azure). Threshold: 200 tokens; test
-# files excluded from the count (matches the bleephub threshold).
+# files excluded from the count.
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)

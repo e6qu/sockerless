@@ -34,8 +34,8 @@ function renderPage() {
 
 const overviewData = {
   components_up: 3,
-  components_down: 1,
-  components_total: 4,
+  components_down: 0,
+  components_total: 3,
   total_containers: 12,
   backends: 2,
   components: [
@@ -60,13 +60,6 @@ const overviewData = {
       health: "up",
       uptime: 600,
     },
-    {
-      name: "bleephub",
-      type: "coordinator",
-      addr: "http://localhost:5555",
-      health: "down",
-      uptime: 0,
-    },
   ],
 };
 
@@ -86,7 +79,6 @@ describe("DashboardPage", () => {
     renderPage();
     await waitFor(() => {
       expect(screen.getByText("3")).toBeInTheDocument(); // components up
-      expect(screen.getByText("1")).toBeInTheDocument(); // components down
       expect(screen.getByText("12")).toBeInTheDocument(); // total containers
     });
   });
@@ -98,18 +90,15 @@ describe("DashboardPage", () => {
       expect(screen.getByText("memory")).toBeInTheDocument();
       expect(screen.getByText("ecs")).toBeInTheDocument();
       expect(screen.getByText("sim-aws")).toBeInTheDocument();
-      expect(screen.getByText("bleephub")).toBeInTheDocument();
     });
   });
 
-  it("shows status badges for healthy and unhealthy components", async () => {
+  it("shows status badges for healthy components", async () => {
     mockFetch.mockResolvedValue(jsonResponse(overviewData));
     renderPage();
     await waitFor(() => {
       const okBadges = screen.getAllByText("ok");
-      const errorBadges = screen.getAllByText("error");
       expect(okBadges.length).toBe(3);
-      expect(errorBadges.length).toBe(1);
     });
   });
 });

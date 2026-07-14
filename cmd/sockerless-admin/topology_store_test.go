@@ -24,7 +24,7 @@ func TestTopologyRoundTrip(t *testing.T) {
 			{
 				Name: "proj-b",
 				Instances: []Instance{
-					{Name: "bleep-b", Kind: InstanceKindBleephub, Port: 5500},
+					{Name: "sim-b", Kind: InstanceKindSim, Cloud: CloudGCP, Port: 4501},
 				},
 			},
 		},
@@ -75,8 +75,8 @@ func TestTopologyValidate(t *testing.T) {
 		{
 			name: "duplicate project name",
 			t: Topology{Projects: []ProjectConfig{
-				{Name: "p", Instances: []Instance{{Name: "s", Kind: InstanceKindBleephub, Port: 5500}}},
-				{Name: "p", Instances: []Instance{{Name: "s2", Kind: InstanceKindBleephub, Port: 5501}}},
+				{Name: "p", Instances: []Instance{{Name: "s", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4500}}},
+				{Name: "p", Instances: []Instance{{Name: "s2", Kind: InstanceKindSim, Cloud: CloudGCP, Port: 4501}}},
 			}},
 			wantErr: true,
 		},
@@ -85,7 +85,7 @@ func TestTopologyValidate(t *testing.T) {
 			t: Topology{Projects: []ProjectConfig{
 				{Name: "p", Instances: []Instance{
 					{Name: "x", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4500},
-					{Name: "x", Kind: InstanceKindBleephub, Port: 5500},
+					{Name: "x", Kind: InstanceKindBackend, Cloud: CloudAWS, Backend: BackendECS, Port: 3300},
 				}},
 			}},
 			wantErr: true,
@@ -93,8 +93,8 @@ func TestTopologyValidate(t *testing.T) {
 		{
 			name: "duplicate port across projects",
 			t: Topology{Projects: []ProjectConfig{
-				{Name: "p1", Instances: []Instance{{Name: "a", Kind: InstanceKindBleephub, Port: 5500}}},
-				{Name: "p2", Instances: []Instance{{Name: "b", Kind: InstanceKindBleephub, Port: 5500}}},
+				{Name: "p1", Instances: []Instance{{Name: "a", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4500}}},
+				{Name: "p2", Instances: []Instance{{Name: "b", Kind: InstanceKindSim, Cloud: CloudGCP, Port: 4500}}},
 			}},
 			wantErr: true,
 		},

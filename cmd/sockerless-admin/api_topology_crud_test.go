@@ -53,7 +53,7 @@ func TestAPIInstanceCRUD(t *testing.T) {
 	}
 
 	// Add instance.
-	body, _ := json.Marshal(Instance{Name: "s", Kind: InstanceKindBleephub, Port: 5500})
+	body, _ := json.Marshal(Instance{Name: "s", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4500})
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/topology/projects/p/instances", bytes.NewReader(body)))
 	if w.Code != http.StatusCreated {
@@ -68,7 +68,7 @@ func TestAPIInstanceCRUD(t *testing.T) {
 	}
 
 	// Update with mismatched name → 400.
-	bodyMismatch, _ := json.Marshal(Instance{Name: "different", Kind: InstanceKindBleephub, Port: 5501})
+	bodyMismatch, _ := json.Marshal(Instance{Name: "different", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4501})
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("PUT", "/api/v1/topology/projects/p/instances/s", bytes.NewReader(bodyMismatch)))
 	if w.Code != http.StatusBadRequest {
@@ -76,7 +76,7 @@ func TestAPIInstanceCRUD(t *testing.T) {
 	}
 
 	// Update ok (change port).
-	bodyEdit, _ := json.Marshal(Instance{Name: "s", Kind: InstanceKindBleephub, Port: 5599})
+	bodyEdit, _ := json.Marshal(Instance{Name: "s", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4599})
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("PUT", "/api/v1/topology/projects/p/instances/s", bytes.NewReader(bodyEdit)))
 	if w.Code != http.StatusOK {
@@ -88,7 +88,7 @@ func TestAPIInstanceCRUD(t *testing.T) {
 	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/topology/projects/p/instances/s", nil))
 	var ref InstanceRef
 	_ = json.Unmarshal(w.Body.Bytes(), &ref)
-	if ref.Instance.Port != 5599 {
+	if ref.Instance.Port != 4599 {
 		t.Errorf("update didn't persist: port=%d", ref.Instance.Port)
 	}
 
@@ -110,7 +110,7 @@ func TestAPIInstanceCRUD(t *testing.T) {
 func TestAPIInstanceStatusUnknown(t *testing.T) {
 	mgr, mux := setupTopologyServer(t)
 	_ = mgr.AddProject(ProjectConfig{Name: "p"})
-	_ = mgr.AddInstance("p", Instance{Name: "absent", Kind: InstanceKindBleephub, Port: 56999})
+	_ = mgr.AddInstance("p", Instance{Name: "absent", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4699})
 
 	req := httptest.NewRequest("GET", "/api/v1/topology/projects/p/instances/absent/status", nil)
 	w := httptest.NewRecorder()

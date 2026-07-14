@@ -84,7 +84,7 @@ export interface ComponentMetrics {
 export type CloudType = "aws" | "gcp" | "azure";
 export type BackendType = "ecs" | "lambda" | "cloudrun" | "gcf" | "aca" | "azf";
 
-export type InstanceKind = "sim" | "backend" | "bleephub";
+export type InstanceKind = "sim" | "backend";
 
 export interface TopologyInstance {
   name: string;

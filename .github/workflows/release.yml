@@ -25,12 +25,6 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
-      - name: Bleephub unit tests
-        # -tags noui: the embedded UI (//go:embed all:dist) needs a built
-        # dist/, which is gitignored and not built in this job. The unit
-        # tests don't exercise the embed, so build them without it (matches
-        # the test-core job in ci.yml).
-        run: cd bleephub && go test -tags noui -v -timeout 3m ./...
       - name: Simulator integration tests
         run: |
           cd tests && go test -v -timeout 5m ./...

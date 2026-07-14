@@ -21,14 +21,12 @@ STACK_SIM_GRPC_PORT_gcp := 4568
 # Backend port is 3375 by convention (every backend defaults to that).
 STACK_BE_PORT  := 3375
 STACK_ADMIN_PORT := 9090
-STACK_BLEEPHUB_PORT := 5555
 
 .PHONY: stack-aws-ecs stack-aws-lambda \
         stack-gcp-cloudrun stack-gcp-gcf \
         stack-azure-aca stack-azure-azf \
         stack-up stack-down stack-status \
         stack-https-up stack-https-down stack-https-status stack-https-ca \
-        stack-bleephub-up \
         stack-observability-up stack-observability-down \
         stack-observability-status stack-observability-validate
 
@@ -167,20 +165,6 @@ stack-up:
 	  printf "  $(COLOR_BOLD)HTTPS gateway:$(COLOR_RESET) https://$(STACK_SIM).sockerless.localhost:$(STACK_HTTPS_PORT)\n"; \
 	fi
 	@printf "  Logs in $(STACK_PID_DIR)/*.log · stop with $(COLOR_BOLD)make stack-down$(COLOR_RESET)\n"
-
-stack-bleephub-up: ## also start bleephub on :5555 after a stack target is running
-	@if [ ! -d $(STACK_PID_DIR) ]; then \
-	  printf "$(COLOR_RED)No stack running — start one first with make stack-aws-ecs (etc).$(COLOR_RESET)\n"; \
-	  exit 1; \
-	fi
-	@printf "$(COLOR_CYAN)▸ Building bleephub$(COLOR_RESET)\n"
-	@$(MAKE) -s -C bleephub build
-	@printf "$(COLOR_CYAN)▸ Starting bleephub on :$(STACK_BLEEPHUB_PORT)$(COLOR_RESET)\n"
-	@( cd bleephub || exit 1; \
-	  nohup ./bleephub-server -addr :$(STACK_BLEEPHUB_PORT) \
-	    > $(STACK_PID_DIR)/bleephub.log 2>&1 < /dev/null & \
-	  echo $$! > $(STACK_PID_DIR)/bleephub.pid )
-	@printf "  $(COLOR_BOLD)bleephub UI:$(COLOR_RESET)    http://localhost:$(STACK_BLEEPHUB_PORT)/ui/\n"
 
 stack-status: ## show running stack components
 	@$(MAKE) -s status-components

@@ -149,21 +149,6 @@ func (m *ProjectManager) instanceToProcessConfig(projectName string, inst Instan
 			Addr:   fmt.Sprintf(":%d", inst.Port),
 			Type:   "backend",
 		}
-	case InstanceKindBleephub:
-		env := map[string]string{
-			"BLEEPHUB_PORT":      fmt.Sprintf("%d", inst.Port),
-			"BLEEPHUB_LOG_LEVEL": inst.Config["log_level"],
-		}
-		for k, v := range inst.Config {
-			env[k] = v
-		}
-		return ProcessConfig{
-			Name:   name,
-			Binary: "bleephub",
-			Env:    env,
-			Addr:   fmt.Sprintf(":%d", inst.Port),
-			Type:   "bleephub",
-		}
 	}
 	return ProcessConfig{Name: name, Addr: fmt.Sprintf(":%d", inst.Port)}
 }
@@ -184,8 +169,8 @@ func (m *ProjectManager) findSiblingInstance(projectName, instanceName string) *
 }
 
 // Start brings up every instance in dependency order: sims first, then
-// backends (which wait for their sim's health endpoint), then bleephub
-// instances. Returns the first error and rolls back partial state.
+// backends that wait for their simulator's health endpoint. It returns the
+// first error and rolls back partial state.
 func (m *ProjectManager) Start(name string) error {
 	m.mu.Lock()
 	cfg, ok := m.projects[name]
@@ -240,25 +225,21 @@ func (m *ProjectManager) rollback(projectName string, started []string) {
 }
 
 // orderInstancesForStart returns instances ordered so sims start before
-// backends that reference them, and bleephub instances start last.
+// backends that reference them.
 func orderInstancesForStart(instances []Instance) []Instance {
 	sims := []Instance{}
 	backends := []Instance{}
-	bleephubs := []Instance{}
 	for _, inst := range instances {
 		switch inst.Kind {
 		case InstanceKindSim:
 			sims = append(sims, inst)
 		case InstanceKindBackend:
 			backends = append(backends, inst)
-		case InstanceKindBleephub:
-			bleephubs = append(bleephubs, inst)
 		}
 	}
 	out := make([]Instance, 0, len(instances))
 	out = append(out, sims...)
 	out = append(out, backends...)
-	out = append(out, bleephubs...)
 	return out
 }
 
@@ -276,7 +257,7 @@ func findInstanceByName(instances []Instance, name string) *Instance {
 func (m *ProjectManager) waitForInstanceHealth(inst Instance) error {
 	addr := fmt.Sprintf("http://localhost:%d", inst.Port)
 	switch inst.Kind {
-	case InstanceKindSim, InstanceKindBleephub:
+	case InstanceKindSim:
 		return waitForHealth(m.client, addr, "/health", 10*time.Second)
 	case InstanceKindBackend:
 		return waitForHealth(m.client, addr, "/internal/v1/healthz", 15*time.Second)

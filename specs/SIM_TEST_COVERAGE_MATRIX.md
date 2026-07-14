@@ -92,15 +92,3 @@ Legend:
 | `gcp-sqladmin` | direct | direct | direct | `simulators/gcp/sdk-tests/cloudsql_test.go`; `simulators/gcp/cli-tests/redis_sql_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-spanner` | direct | direct | direct | `simulators/gcp/sdk-tests/spanner_dataflow_bigtable_test.go`; `simulators/gcp/cli-tests/spanner_dataflow_bigtable_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-vpcaccess` | direct | direct | direct | `simulators/gcp/sdk-tests/integration_test.go`; `simulators/gcp/cli-tests/vpcaccess_test.go`; `simulators/gcp/terraform-tests/main.tf` |
-| `bleephub-actions` | direct | direct | not applicable | `bleephub/gh_actions_test.go`; `bleephub/gh_workflows_test.go` |
-| `bleephub-apps` | direct | direct | not applicable | `bleephub/gh_apps_test.go`; `bleephub/gh_apps_more_test.go`; `bleephub/gh_apps_events_test.go`; `bleephub/gh_apps_oauth_mgmt_test.go`; `bleephub/gh_apps_perms_test.go`; `bleephub/gh_app_hooks_test.go`; `bleephub/gh_oauth_test.go`; `bleephub/gh_user_installations_test.go` |
-| `bleephub-checks` | direct | direct | not applicable | `bleephub/gh_checks_test.go` |
-| `bleephub-deployments` | direct | direct | not applicable | `bleephub/gh_deployments_test.go` |
-| `bleephub-hooks` | direct | direct | not applicable | `bleephub/gh_hooks_test.go` |
-| `bleephub-issues` | direct | direct | not applicable | `bleephub/gh_issues_test.go`; `bleephub/gh_reactions_test.go` |
-| `bleephub-orgs` | direct | direct | not applicable | `bleephub/gh_orgs_test.go` |
-| `bleephub-pulls` | direct | direct | not applicable | `bleephub/gh_pulls_test.go`; `bleephub/gh_pr_comments_test.go` |
-| `bleephub-releases` | direct | direct | not applicable | `bleephub/gh_releases_test.go` |
-| `bleephub-repos` | direct | direct | not applicable | `bleephub/gh_repos_test.go` |
-| `bleephub-teams` | direct | direct | not applicable | `bleephub/gh_orgs_test.go` |
-| `bleephub-users` | direct | direct | not applicable | `bleephub/gh_test.go`; `bleephub/gh_misc_endpoints_decode_test.go`; `bleephub/gh_actions_test.go` |

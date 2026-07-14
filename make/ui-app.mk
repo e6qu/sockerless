@@ -2,9 +2,8 @@
 #
 # Required:
 #   UI_PACKAGE   : workspace package basename, used in `bun --filter`
-#                  (e.g. "@sockerless/ui-bleephub" → UI_PACKAGE := bleephub
-#                  is too lossy; use the full @scope/name here)
-#                  e.g. UI_PACKAGE := @sockerless/ui-bleephub
+#                  e.g. @sockerless/ui-admin; use the full scoped package
+#                  name because the unscoped basename is ambiguous.
 #
 # Optional:
 #   DEV_PORT     : informational; printed in the run banner

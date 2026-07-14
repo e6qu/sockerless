@@ -32,17 +32,6 @@ func TestManagedEnvForBackend(t *testing.T) {
 	}
 }
 
-func TestManagedEnvForBleephub(t *testing.T) {
-	got := managedEnvFor("proj-a", Instance{
-		Name: "bh",
-		Kind: InstanceKindBleephub,
-	}, "/repo/.sockerless-state")
-
-	if got != nil {
-		t.Errorf("bleephub should get no managed env, got %+v", got)
-	}
-}
-
 func TestMergeConfigOperatorWins(t *testing.T) {
 	managed := map[string]string{
 		"SIM_DATA_DIR":  "/admin/path",

@@ -18,16 +18,12 @@ const (
 	// Cloud + Backend + Port + optional Sim link (an instance Name
 	// elsewhere in the same project).
 	InstanceKindBackend InstanceKind = "backend"
-	// InstanceKindBleephub is a bleephub (GitHub simulator) process.
-	// Multiple may run; each gets its own port + state. Doesn't carry
-	// Cloud / Backend.
-	InstanceKindBleephub InstanceKind = "bleephub"
 )
 
 // IsValidInstanceKind reports whether k is one of the supported kinds.
 func IsValidInstanceKind(k InstanceKind) bool {
 	switch k {
-	case InstanceKindSim, InstanceKindBackend, InstanceKindBleephub:
+	case InstanceKindSim, InstanceKindBackend:
 		return true
 	}
 	return false
@@ -37,7 +33,6 @@ func IsValidInstanceKind(k InstanceKind) bool {
 var AllInstanceKinds = []InstanceKind{
 	InstanceKindSim,
 	InstanceKindBackend,
-	InstanceKindBleephub,
 }
 
 // validInstanceNameRE constrains instance names to the same shape as
@@ -56,7 +51,6 @@ func IsValidInstanceName(name string) bool {
 // The Cloud + Backend fields are kind-specific:
 //   - InstanceKindSim:      Cloud required;     Backend ignored.
 //   - InstanceKindBackend:  Cloud + Backend required; Sim optional.
-//   - InstanceKindBleephub: Cloud + Backend ignored.
 //
 // Config holds the per-instance environment variables passed to the
 // process at start time (e.g. SOCKERLESS_GCR_NETWORK_DISCOVERY).
