@@ -52,7 +52,7 @@ import {
  */
 export function BleephubShell({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen" style={{ background: "var(--color-bg)", color: "var(--color-fg)" }}>
+    <div className="flex min-h-screen flex-col" style={{ background: "var(--color-bg)", color: "var(--color-fg)" }}>
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only"
@@ -71,11 +71,37 @@ export function BleephubShell({ children }: { children: ReactNode }) {
         Skip to main content
       </a>
       <AppHeader />
-      <main id="main-content" tabIndex={-1} className="mx-auto max-w-[1280px] px-4 py-6">
+      <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-6">
         {children}
       </main>
+      <BleephubBuildFooter />
     </div>
   );
+}
+
+const buildVersion = import.meta.env.VITE_BLEEPHUB_VERSION || "development";
+const publishedAt = import.meta.env.VITE_BLEEPHUB_PUBLISHED_AT || "not yet published";
+
+/** Release identity shown on every Bleephub surface, including the sign-in page. */
+export function BleephubBuildFooter() {
+  const publishedLabel = formatPublishedAt(publishedAt);
+  return (
+    <footer
+      data-testid="bleephub-build-footer"
+      className="mx-auto flex w-full max-w-[1280px] flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-5"
+      style={{ borderTop: "1px solid var(--color-border)", color: "var(--color-fg-muted)", fontSize: "0.75rem" }}
+    >
+      <span>Bleephub {buildVersion}</span>
+      <time dateTime={publishedAt === "not yet published" ? undefined : publishedAt}>Published {publishedLabel}</time>
+    </footer>
+  );
+}
+
+function formatPublishedAt(value: string) {
+  if (value === "not yet published") return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC";
 }
 
 // ─── Repo context header + tabs ────────────────────────────────────────

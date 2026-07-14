@@ -65,6 +65,8 @@ func TestBleephubECSApplyDestroy(t *testing.T) {
 	}
 	wakeZip := filepath.Join(t.TempDir(), "wake.zip")
 	buildWake(t, wakeZip)
+	startupPage := filepath.Join(t.TempDir(), "startup.html")
+	buildStartupPage(t, startupPage)
 	dir := t.TempDir()
 	root := fmt.Sprintf(`
 terraform {
@@ -110,15 +112,44 @@ module "bleephub" {
   container_image = "public.ecr.aws/docker/library/alpine:3.20"
   admin_token = "test-administrator-token"
   wake_listener_zip_path = %q
+  startup_page_path = %q
 }
-`, simulatorURL, moduleDir, wakeZip)
+`, simulatorURL, moduleDir, wakeZip, startupPage)
 	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(root), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runTerraform(t, dir, "init", "-backend=false")
 	runTerraform(t, dir, "apply", "-auto-approve")
+	idleShutdown := runTerraformOutput(t, dir, "state", "show", "module.bleephub.aws_lambda_function.idle_shutdown")
+	if !strings.Contains(idleShutdown, "timeout                         = 300") {
+		t.Fatalf("idle shutdown Lambda did not retain the 300-second control-plane timeout:\n%s", idleShutdown)
+	}
+	wake := runTerraformOutput(t, dir, "state", "show", "module.bleephub.aws_lambda_function.wake")
+	if !strings.Contains(wake, "ADMIN_TOKEN_SECRET_ARN") {
+		t.Fatalf("wake Lambda did not receive the administrator startup-dashboard credential coordinate:\n%s", wake)
+	}
+	startup := runTerraformOutput(t, dir, "state", "show", "module.bleephub.aws_s3_object.startup_page")
+	if !strings.Contains(startup, "startup/index.html") || !strings.Contains(startup, "text/html; charset=utf-8") {
+		t.Fatalf("S3 startup document was not uploaded with its explicit browser content type:\n%s", startup)
+	}
 	runTerraform(t, dir, "plan", "-detailed-exitcode")
 	runTerraform(t, dir, "destroy", "-auto-approve")
+}
+
+func buildStartupPage(t *testing.T, destination string) {
+	t.Helper()
+	repo, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(filepath.Join(repo, "scripts", "build-bleephub-startup.sh"), filepath.Dir(destination))
+	command.Env = append(os.Environ(), "BLEEPHUB_VERSION=test-build", "BLEEPHUB_PUBLISHED_AT=2026-07-14T00:00:00Z")
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build startup page: %v\n%s", err, out)
+	}
+	if err := os.Rename(filepath.Join(filepath.Dir(destination), "startup", "index.html"), destination); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func buildWake(t *testing.T, destination string) {
@@ -139,6 +170,11 @@ func buildWake(t *testing.T, destination string) {
 
 func runTerraform(t *testing.T, directory string, arguments ...string) {
 	t.Helper()
+	_ = runTerraformOutput(t, directory, arguments...)
+}
+
+func runTerraformOutput(t *testing.T, directory string, arguments ...string) string {
+	t.Helper()
 	command := exec.Command("terraform", arguments...)
 	command.Dir = directory
 	command.Env = append(os.Environ(), "AWS_ENDPOINT_URL="+simulatorURL, "AWS_ACCESS_KEY_ID=test", "AWS_SECRET_ACCESS_KEY=test", "AWS_DEFAULT_REGION=eu-west-1", "TF_LOG=")
@@ -146,4 +182,5 @@ func runTerraform(t *testing.T, directory string, arguments ...string) {
 	if err != nil {
 		t.Fatalf("terraform %s: %v\n%s", strings.Join(arguments, " "), err, output)
 	}
+	return string(output)
 }

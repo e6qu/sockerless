@@ -3,9 +3,9 @@
 This Terraform module provisions Bleephub in its own AWS network and account
 scope. It creates the private Amazon Elastic Container Service on AWS Fargate
 services, native dqlite storage, Amazon Simple Storage Service git/object
-storage, Amazon API Gateway wake routing, private administrator origin, SSH Git
-gateway, Route 53 records, certificate, fck-nat, and Amazon Simple Storage
-Service gateway endpoint.
+storage, an Amazon Simple Storage Service startup document, Amazon API Gateway
+wake routing, private administrator origin, SSH Git gateway, Route 53 records,
+certificate, fck-nat, and Amazon Simple Storage Service gateway endpoint.
 
 The module deliberately contains no backend or environment-specific values.
 Use it through Terragrunt from the private `e6qu/infra` repository. The
@@ -21,6 +21,7 @@ origin and `admin.bleephub.e6qu.dev` as the administrator origin.
 - `admin_token` — initial administrator secret; provide it through the
   Terragrunt environment rather than committing it.
 - `wake_listener_zip_path` — pre-built Linux Amazon Lambda wake-listener ZIP.
+- `startup_page_path` — extracted `index.html` from the versioned startup ZIP.
 
 `github_oauth_client_id` and `github_oauth_client_secret_arn` enable the
 registered GitHub OAuth App. The secret ARN references an existing AWS Secrets
@@ -39,4 +40,11 @@ Build the wake-listener artifact with:
 
 ```bash
 scripts/build-bleephub-wake.sh
+scripts/build-bleephub-startup.sh
 ```
+
+The post-merge release workflow publishes the startup ZIP as the immutable
+`ghcr.io/e6qu/sockerless-bleephub-startup:<short-sha>` GitHub Container
+Registry package and retains its newest 20 versions. Terragrunt consumes the
+extracted `index.html`, so the public and administrator origins can show a
+dehydrated startup view before any Amazon Elastic Container Service task runs.

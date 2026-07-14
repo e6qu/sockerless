@@ -62,6 +62,11 @@ variable "wake_listener_zip_path" {
   type        = string
 }
 
+variable "startup_page_path" {
+  description = "Path to the extracted startup index.html from the versioned Bleephub startup bundle. Build it with scripts/build-bleephub-startup.sh before apply."
+  type        = string
+}
+
 variable "github_oauth_client_id" {
   description = "GitHub OAuth App client ID used for Bleephub browser sign-in."
   type        = string

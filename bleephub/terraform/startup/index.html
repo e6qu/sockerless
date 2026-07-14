@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Bleephub is starting</title>
+    <style>
+      :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f8fa; color: #1f2328; }
+      @media (prefers-color-scheme: dark) { :root { background: #0d1117; color: #f0f6fc; } .card { background: #161b22 !important; border-color: #30363d !important; } p, footer { color: #8b949e !important; } th, td { border-color: #30363d !important; } }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: radial-gradient(circle at 95% 5%, #ff5ca8 0, transparent 28%), radial-gradient(circle at 4% 95%, #4cc9f0 0, transparent 32%), #f6f8fa; }
+      main { width: min(720px, calc(100% - 48px)); }
+      .card { padding: 32px; border: 1px solid #d0d7de; border-radius: 20px; background: #ffffffed; box-shadow: 0 24px 80px #0969da30; }
+      .mark { display: inline-grid; width: 44px; height: 44px; place-items: center; border-radius: 14px; background: linear-gradient(135deg, #0969da, #8250df 60%, #bf3989); color: white; font-size: 1.35rem; font-weight: 900; }
+      h1 { margin: 18px 0 8px; font-size: clamp(1.75rem, 5vw, 2.2rem); } p { color: #57606a; line-height: 1.55; } .pulse { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #f85149; box-shadow: 0 0 0 0 #f85149; animation: pulse 1.5s infinite; } @keyframes pulse { 70% { box-shadow: 0 0 0 12px #f8514900; } 100% { box-shadow: 0 0 0 0 #f8514900; } }
+      section { margin-top: 28px; padding-top: 18px; border-top: 1px solid #d0d7de; } table { width: 100%; border-collapse: collapse; } th, td { padding: 10px 6px; text-align: left; border-bottom: 1px solid #d8dee4; } th { color: #0969da; } .links { display: flex; flex-wrap: wrap; gap: 16px; } a { color: #0969da; font-weight: 700; } footer { display: flex; justify-content: space-between; gap: 1rem; padding: 16px 4px 0; color: #57606a; font-size: .75rem; }
+      #admin { display: none; } .admin-login { display: flex; gap: 8px; align-items: end; } input, button { font: inherit; padding: .55rem .7rem; border: 1px solid #d0d7de; border-radius: 6px; } button { background: #0969da; color: white; cursor: pointer; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <article class="card">
+        <span class="mark" aria-hidden="true">B</span>
+        <h1><span class="pulse" aria-hidden="true"></span> <span id="phase">Bleephub is starting</span></h1>
+        <p id="detail">Bleephub is restoring its durable services. This page will switch to the application automatically when it is healthy.</p>
+        <section id="admin">
+          <h2>Infrastructure startup</h2>
+          <p>Use the administrator token only to view the live Amazon Elastic Container Service service state.</p>
+          <form class="admin-login" id="admin-login"><label>Administrator token<input id="admin-token" type="password" autocomplete="current-password"></label><button>Show status</button></form>
+          <p id="admin-error" role="alert"></p>
+          <table><thead><tr><th>Service</th><th>Desired</th><th>Running</th><th>Pending</th></tr></thead><tbody id="services"></tbody></table>
+          <p class="links" id="console-links"></p>
+        </section>
+      </article>
+      <footer><span>Bleephub __BLEEPHUB_VERSION__</span><time>Published __BLEEPHUB_PUBLISHED_AT__</time></footer>
+    </main>
+    <script>
+      (() => {
+        const query = new URLSearchParams(location.search);
+        const next = query.get("next") || "/";
+        const phase = query.get("phase");
+        const isAdmin = location.hostname.toLowerCase().startsWith("admin.");
+        const status = document.querySelector("#admin");
+        const error = document.querySelector("#admin-error");
+        const services = document.querySelector("#services");
+        const links = document.querySelector("#console-links");
+        if (phase) document.querySelector("#phase").textContent = phase;
+        if (isAdmin) status.style.display = "block";
+        const text = (value) => document.createTextNode(String(value));
+        async function loadApplication() {
+          try {
+            const response = await fetch(next, { cache: "no-store", redirect: "follow" });
+            const type = response.headers.get("content-type") || "";
+            if (response.ok && type.includes("text/html")) {
+              document.open(); document.write(await response.text()); document.close(); return;
+            }
+          } catch (_) { }
+          setTimeout(loadApplication, 2000);
+        }
+        async function loadStatus(event) {
+          event?.preventDefault();
+          const token = document.querySelector("#admin-token").value;
+          if (!token) return;
+          error.textContent = "";
+          const response = await fetch("/__startup/status", { cache: "no-store", headers: { Authorization: "Basic " + btoa("admin:" + token) } });
+          if (!response.ok) { error.textContent = response.status === 401 ? "Administrator token was not accepted." : "Could not read the startup status."; return; }
+          const data = await response.json();
+          services.replaceChildren();
+          for (const service of data.services) {
+            const row = document.createElement("tr");
+            for (const value of [service.name, service.desired, service.running, service.pending]) { const cell = document.createElement("td"); cell.append(text(value)); row.append(cell); }
+            services.append(row);
+          }
+          const region = encodeURIComponent(data.region), cluster = encodeURIComponent(data.cluster);
+          links.replaceChildren();
+          for (const [label, href] of [["Amazon ECS services", `https://${data.region}.console.aws.amazon.com/ecs/v2/clusters/${cluster}/services?region=${region}`], ["CloudWatch logs", `https://${data.region}.console.aws.amazon.com/cloudwatch/home?region=${region}#logsV2:log-groups/log-group/%252Fbleephub%252F${cluster}`], ["Idle monitoring", `https://${data.region}.console.aws.amazon.com/cloudwatch/home?region=${region}#alarmsV2:alarm/${cluster}-five-minute-idle`]]) { const link = document.createElement("a"); link.href = href; link.textContent = label; links.append(link); }
+        }
+        document.querySelector("#admin-login").addEventListener("submit", loadStatus);
+        loadApplication();
+      })();
+    </script>
+  </body>
+</html>
