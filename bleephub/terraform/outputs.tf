@@ -5,6 +5,7 @@ output "ssh_host" { value = "ssh.${var.domain_name}" }
 output "load_balancer_dns_name" { value = aws_lb.this.dns_name }
 output "git_bucket_name" { value = aws_s3_bucket.git.bucket }
 output "object_bucket_name" { value = aws_s3_bucket.objects.bucket }
+output "startup_bucket_name" { value = aws_s3_bucket.startup.bucket }
 output "admin_token_secret_arn" { value = aws_secretsmanager_secret.admin_token.arn }
 output "efs_access_point_id" { value = aws_efs_access_point.sqlite.id }
 output "s3_gateway_endpoint_id" { value = aws_vpc_endpoint.s3.id }

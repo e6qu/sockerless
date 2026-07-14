@@ -1,4 +1,8 @@
 FROM oven/bun:1.2.19-alpine AS ui-builder
+ARG BLEEPHUB_VERSION=development
+ARG BLEEPHUB_PUBLISHED_AT=not-yet-published
+ENV VITE_BLEEPHUB_VERSION=$BLEEPHUB_VERSION \
+    VITE_BLEEPHUB_PUBLISHED_AT=$BLEEPHUB_PUBLISHED_AT
 WORKDIR /src/ui
 COPY ui/package.json ui/bun.lock ui/tsconfig.base.json ./
 COPY ui/packages ./packages

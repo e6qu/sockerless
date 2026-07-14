@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -23,6 +27,7 @@ import (
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/scheduler"
 	schedulertypes "github.com/aws/aws-sdk-go-v2/service/scheduler/types"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 )
 
 func main() { lambda.Start(wake) }
@@ -36,6 +41,28 @@ func wake(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return events.APIGatewayV2HTTPResponse{}, fmt.Errorf("load AWS configuration: %w", err)
+	}
+	if request.RawPath == "/__startup/status" {
+		if !isAdminHost(request.RequestContext.DomainName) {
+			return response(http.StatusNotFound, "Not found."), nil
+		}
+		allowed, err := authorizeAdmin(ctx, secretsmanager.NewFromConfig(cfg), request.Headers, os.Getenv("ADMIN_TOKEN_SECRET_ARN"))
+		if err != nil {
+			return events.APIGatewayV2HTTPResponse{}, err
+		}
+		if !allowed {
+			return events.APIGatewayV2HTTPResponse{StatusCode: http.StatusUnauthorized, Headers: map[string]string{"www-authenticate": `Basic realm="Bleephub startup administration"`}}, nil
+		}
+		return startupStatus(ctx, ecs.NewFromConfig(cfg), cluster, append([]string{service}, dqliteServices...))
+	}
+	if isAdminHost(request.RequestContext.DomainName) {
+		allowed, err := authorizeAdmin(ctx, secretsmanager.NewFromConfig(cfg), request.Headers, os.Getenv("ADMIN_TOKEN_SECRET_ARN"))
+		if err != nil {
+			return events.APIGatewayV2HTTPResponse{}, err
+		}
+		if !allowed {
+			return events.APIGatewayV2HTTPResponse{StatusCode: http.StatusUnauthorized, Headers: map[string]string{"www-authenticate": `Basic realm="Bleephub startup administration"`}}, nil
+		}
 	}
 	ecsClient := ecs.NewFromConfig(cfg)
 	apiClient := apigatewayv2.NewFromConfig(cfg)
@@ -75,13 +102,13 @@ func wake(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 		return events.APIGatewayV2HTTPResponse{}, err
 	}
 	if !ready {
-		return response(http.StatusServiceUnavailable, "Bleephub database quorum is starting; retry shortly."), nil
+		return startupResponse(request, "Database quorum is starting"), nil
 	}
 	if services.Services[0].DesiredCount == 0 {
 		if _, err := ecsClient.UpdateService(ctx, &ecs.UpdateServiceInput{Cluster: aws.String(cluster), Service: aws.String(service), DesiredCount: aws.Int32(1)}); err != nil {
 			return events.APIGatewayV2HTTPResponse{}, fmt.Errorf("wake ECS service: %w", err)
 		}
-		return response(http.StatusServiceUnavailable, "Bleephub is starting; retry shortly."), nil
+		return startupResponse(request, "Application is starting"), nil
 	}
 
 	health, err := loadBalancerClient.DescribeTargetHealth(ctx, &elasticloadbalancingv2.DescribeTargetHealthInput{TargetGroupArn: aws.String(targetGroupARN)})
@@ -100,7 +127,7 @@ func wake(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 			return events.APIGatewayV2HTTPResponse{StatusCode: http.StatusTemporaryRedirect, Headers: map[string]string{"location": location, "retry-after": "1"}, Body: "Bleephub is ready."}, nil
 		}
 	}
-	return response(http.StatusServiceUnavailable, "Bleephub is starting; retry shortly."), nil
+	return startupResponse(request, "Application health checks are running"), nil
 }
 
 func quiesceIdleAlarm(ctx context.Context, client *cloudwatch.Client, alarmName string) error {
@@ -284,4 +311,86 @@ func routeTo(ctx context.Context, client *apigatewayv2.Client, apiID, target str
 
 func response(status int, body string) events.APIGatewayV2HTTPResponse {
 	return events.APIGatewayV2HTTPResponse{StatusCode: status, Headers: map[string]string{"content-type": "text/plain; charset=utf-8", "retry-after": "2"}, Body: body}
+}
+
+func isAdminHost(host string) bool {
+	return strings.HasPrefix(strings.ToLower(host), "admin.")
+}
+
+func authorizeAdmin(ctx context.Context, client *secretsmanager.Client, headers map[string]string, secretARN string) (bool, error) {
+	if secretARN == "" {
+		return false, fmt.Errorf("ADMIN_TOKEN_SECRET_ARN is required for the administrator startup dashboard")
+	}
+	credentials := header(headers, "authorization")
+	if !strings.HasPrefix(credentials, "Basic ") {
+		return false, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(credentials, "Basic "))
+	if err != nil {
+		return false, nil
+	}
+	username, token, found := strings.Cut(string(decoded), ":")
+	if !found || username != "admin" {
+		return false, nil
+	}
+	secret, err := client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(secretARN)})
+	if err != nil {
+		return false, fmt.Errorf("read Bleephub administrator token: %w", err)
+	}
+	if secret.SecretString == nil {
+		return false, fmt.Errorf("bleephub administrator token secret had no string value")
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(*secret.SecretString)) == 1, nil
+}
+
+func startupResponse(request events.APIGatewayV2HTTPRequest, phase string) events.APIGatewayV2HTTPResponse {
+	next := request.RawPath
+	if request.RawQueryString != "" {
+		next += "?" + request.RawQueryString
+	}
+	location := "https://" + request.RequestContext.DomainName + "/__startup?next=" + url.QueryEscape(next) + "&phase=" + url.QueryEscape(phase)
+	return events.APIGatewayV2HTTPResponse{
+		StatusCode: http.StatusTemporaryRedirect,
+		Headers: map[string]string{
+			"cache-control": "no-store",
+			"location":      location,
+			"retry-after":   "2",
+		},
+		Body: "Bleephub is starting.",
+	}
+}
+
+func header(headers map[string]string, wanted string) string {
+	for name, value := range headers {
+		if strings.EqualFold(name, wanted) {
+			return value
+		}
+	}
+	return ""
+}
+
+func startupStatus(ctx context.Context, client *ecs.Client, cluster string, serviceNames []string) (events.APIGatewayV2HTTPResponse, error) {
+	services, err := client.DescribeServices(ctx, &ecs.DescribeServicesInput{Cluster: aws.String(cluster), Services: serviceNames})
+	if err != nil {
+		return events.APIGatewayV2HTTPResponse{}, fmt.Errorf("read Bleephub startup service state: %w", err)
+	}
+	type serviceStatus struct {
+		Name    string `json:"name"`
+		Desired int32  `json:"desired"`
+		Running int32  `json:"running"`
+		Pending int32  `json:"pending"`
+	}
+	status := make([]serviceStatus, 0, len(services.Services))
+	for _, service := range services.Services {
+		status = append(status, serviceStatus{Name: aws.ToString(service.ServiceName), Desired: service.DesiredCount, Running: service.RunningCount, Pending: service.PendingCount})
+	}
+	body, err := json.Marshal(struct {
+		Cluster  string          `json:"cluster"`
+		Region   string          `json:"region"`
+		Services []serviceStatus `json:"services"`
+	}{Cluster: cluster, Region: os.Getenv("AWS_REGION"), Services: status})
+	if err != nil {
+		return events.APIGatewayV2HTTPResponse{}, fmt.Errorf("encode Bleephub startup service state: %w", err)
+	}
+	return events.APIGatewayV2HTTPResponse{StatusCode: http.StatusOK, Headers: map[string]string{"cache-control": "no-store", "content-type": "application/json; charset=utf-8"}, Body: string(body)}, nil
 }

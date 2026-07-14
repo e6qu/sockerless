@@ -21,12 +21,16 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.value }}
+      published_at: ${{ steps.published_at.outputs.value }}
     steps:
       - id: tag
         name: Derive short commit SHA tag
         env:
           SHA: ${{ github.sha }}
         run: echo "value=${SHA::12}" >> "$GITHUB_OUTPUT"
+      - id: published_at
+        name: Record release publication time
+        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
   build:
     name: Bleephub (${{ matrix.arch.suffix }})
@@ -56,6 +60,9 @@ jobs:
           platforms: ${{ matrix.arch.platform }}
           push: true
           tags: ${{ env.IMAGE }}:${{ needs.metadata.outputs.tag }}-${{ matrix.arch.suffix }}
+          build-args: |
+            BLEEPHUB_VERSION=${{ needs.metadata.outputs.tag }}
+            BLEEPHUB_PUBLISHED_AT=${{ needs.metadata.outputs.published_at }}
           cache-from: type=gha,scope=bleephub-${{ matrix.arch.suffix }}
           cache-to: type=gha,scope=bleephub-${{ matrix.arch.suffix }},mode=max
 
@@ -82,9 +89,40 @@ jobs:
             "$IMAGE:$TAG-amd64" \
             "$IMAGE:$TAG-arm64"
 
+  startup-bundle:
+    name: Bleephub startup bundle
+    needs: metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: docker/setup-buildx-action@v4.2.0
+      - name: Build the versioned static startup bundle
+        env:
+          BLEEPHUB_VERSION: ${{ needs.metadata.outputs.tag }}
+          BLEEPHUB_PUBLISHED_AT: ${{ needs.metadata.outputs.published_at }}
+        run: scripts/build-bleephub-startup.sh .build/bleephub-ecs
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the startup ZIP as an OCI GitHub Package
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .build/bleephub-ecs
+          file: bleephub/terraform/startup/Dockerfile
+          push: true
+          tags: ghcr.io/e6qu/sockerless-bleephub-startup:${{ needs.metadata.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ needs.metadata.outputs.published_at }}
+
   prune:
     name: Retain 20 Bleephub releases
-    needs: [metadata, manifest]
+    needs: [metadata, manifest, startup-bundle]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -94,11 +132,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
-          PACKAGE: sockerless-bleephub
         run: |
           set -euo pipefail
 
-          versions_file="$(mktemp)"
           package_owner_type="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.owner.type')"
           case "$package_owner_type" in
             Organization) package_namespace="orgs" ;;
@@ -108,38 +144,25 @@ jobs:
               exit 1
               ;;
           esac
-          gh api --paginate \
-            "/$package_namespace/$OWNER/packages/container/$PACKAGE/versions?per_page=100" \
-            | jq -s 'add' > "$versions_file"
-
-          keep_tags="$({
-            jq -r '
-              [ .[]
-                | select(any(.metadata.container.tags[]?; test("^[0-9a-f]{12}$")))
-              ]
-              | sort_by(.created_at)
-              | reverse
-              | .[:20]
-              | .[]
-              | .metadata.container.tags[]
-              | select(test("^[0-9a-f]{12}$"))
-            ' "$versions_file" \
-              | while IFS= read -r tag; do
-                  printf '%s\n' "$tag" "$tag-amd64" "$tag-arm64"
+          retain_releases() {
+            local package="$1" include_architectures="$2" versions_file keep_tags
+            versions_file="$(mktemp)"
+            gh api --paginate \
+              "/$package_namespace/$OWNER/packages/container/$package/versions?per_page=100" \
+              | jq -s 'add' > "$versions_file"
+            keep_tags="$({
+              jq -r '[ .[] | select(any(.metadata.container.tags[]?; test("^[0-9a-f]{12}$"))) ] | sort_by(.created_at) | reverse | .[:20] | .[] | .metadata.container.tags[] | select(test("^[0-9a-f]{12}$"))' "$versions_file" \
+                | while IFS= read -r tag; do
+                    printf '%s\n' "$tag"
+                    if [ "$include_architectures" = true ]; then printf '%s\n' "$tag-amd64" "$tag-arm64"; fi
+                  done
+            } | jq -R . | jq -s 'unique')"
+            jq -r --argjson keep "$keep_tags" '.[] as $version | ($version.metadata.container.tags // []) as $tags | select(($tags | length == 0) or (($tags | any(. as $tag; $keep | index($tag) != null)) | not)) | $version.id' "$versions_file" \
+              | while IFS= read -r version_id; do
+                  echo "Deleting obsolete $package package version $version_id"
+                  gh api --method DELETE "/$package_namespace/$OWNER/packages/container/$package/versions/$version_id"
                 done
-          } | jq -R . | jq -s 'unique')"
+          }
 
-          jq -r --argjson keep "$keep_tags" '
-            .[] as $version
-            | ($version.metadata.container.tags // []) as $tags
-            | select(
-                ($tags | length == 0)
-                or (($tags | any(. as $tag; $keep | index($tag) != null)) | not)
-              )
-            | $version.id
-          ' "$versions_file" \
-            | while IFS= read -r version_id; do
-                echo "Deleting obsolete package version $version_id"
-                gh api --method DELETE \
-                  "/$package_namespace/$OWNER/packages/container/$PACKAGE/versions/$version_id"
-              done
+          retain_releases sockerless-bleephub true
+          retain_releases sockerless-bleephub-startup false

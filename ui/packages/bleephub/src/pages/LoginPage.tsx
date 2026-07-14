@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getToken, setToken, verifyToken } from "../api.js";
 import { Mark } from "../components/octicons.js";
 import { Button } from "../components/ui.js";
+import { BleephubBuildFooter } from "../components/Shell.js";
 
 export function LoginPage() {
   const [token, setTokenValue] = useState(getToken() ?? "");
@@ -64,21 +65,22 @@ export function LoginPage() {
       className="flex min-h-screen flex-col items-center justify-center px-4"
       style={{ background: "var(--color-bg-subtle)" }}
     >
-      <div className="mb-5 flex flex-col items-center gap-2">
-        <Mark size={42} />
-        <h1 style={{ fontSize: "1.4rem", fontWeight: 600, color: "var(--color-fg)" }}>
-          Sign in to Bleephub
-        </h1>
-      </div>
-      <div
-        className="w-full max-w-sm"
-        style={{
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-md)",
-          background: "var(--color-surface)",
-          padding: "1.25rem",
-        }}
-      >
+      <div className="flex w-full flex-1 flex-col items-center justify-center">
+        <div className="mb-5 flex flex-col items-center gap-2">
+          <Mark size={42} />
+          <h1 style={{ fontSize: "1.4rem", fontWeight: 600, color: "var(--color-fg)" }}>
+            Sign in to Bleephub
+          </h1>
+        </div>
+        <div
+          className="w-full max-w-sm"
+          style={{
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            background: "var(--color-surface)",
+            padding: "1.25rem",
+          }}
+        >
         {githubAvailable && (
           <a
             href={githubHref}
@@ -145,7 +147,9 @@ export function LoginPage() {
             {verifying ? "Verifying…" : "Sign in"}
           </Button>
         </form>
+        </div>
       </div>
+      <BleephubBuildFooter />
     </div>
   );
 }

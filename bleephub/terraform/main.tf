@@ -4,10 +4,11 @@ locals {
     managed-by = "terraform"
     service    = var.name
   })
-  git_bucket    = "${var.name}-git"
-  object_bucket = "${var.name}-objects"
-  azs           = { for index, az in var.availability_zones : tostring(index) => az }
-  dqlite_nodes  = { for index in range(3) : tostring(index) => 9000 + index }
+  git_bucket     = "${var.name}-git"
+  object_bucket  = "${var.name}-objects"
+  startup_bucket = "${var.name}-startup"
+  azs            = { for index, az in var.availability_zones : tostring(index) => az }
+  dqlite_nodes   = { for index in range(3) : tostring(index) => 9000 + index }
   dqlite_data_paths = {
     "0" = "/dqlite/0"
     "1" = "/dqlite/1"
@@ -134,6 +135,52 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "objects" {
       sse_algorithm = "AES256"
     }
   }
+}
+
+# This contains exactly one public, non-sensitive document. It makes the
+# scale-to-zero transition visible without starting an ECS task merely to
+# render a loading screen; no application, Git, object, or status data is
+# readable from this bucket.
+resource "aws_s3_bucket" "startup" {
+  bucket = local.startup_bucket
+  tags   = local.common_tags
+}
+
+resource "aws_s3_bucket_public_access_block" "startup" {
+  bucket                  = aws_s3_bucket.startup.id
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = false
+  restrict_public_buckets = false
+}
+
+data "aws_iam_policy_document" "startup_public_read" {
+  statement {
+    sid       = "ReadStartupDocumentOnly"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.startup.arn}/startup/index.html"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "startup_public_read" {
+  bucket     = aws_s3_bucket.startup.id
+  policy     = data.aws_iam_policy_document.startup_public_read.json
+  depends_on = [aws_s3_bucket_public_access_block.startup]
+}
+
+resource "aws_s3_object" "startup_page" {
+  bucket        = aws_s3_bucket.startup.id
+  key           = "startup/index.html"
+  source        = var.startup_page_path
+  etag          = filemd5(var.startup_page_path)
+  content_type  = "text/html; charset=utf-8"
+  cache_control = "no-store, max-age=0"
+  tags          = local.common_tags
 }
 
 resource "aws_secretsmanager_secret" "admin_token" {
@@ -420,6 +467,7 @@ resource "aws_iam_role_policy" "wake_service" {
       { Effect = "Allow", Action = ["ecs:DescribeServices", "ecs:UpdateService"], Resource = concat([aws_ecs_service.this.id], [for service in aws_ecs_service.dqlite : service.id]) },
       { Effect = "Allow", Action = ["ecs:ListTasks", "ecs:DescribeTasks", "ecs:StopTask"], Resource = "*" },
       { Effect = "Allow", Action = ["elasticloadbalancing:DescribeTargetHealth"], Resource = "*" },
+      { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_secretsmanager_secret.admin_token.arn },
       { Effect = "Allow", Action = ["apigateway:GET", "apigateway:PATCH"], Resource = "arn:aws:apigateway:${var.region}::/apis/${aws_apigatewayv2_api.this.id}/*" },
       { Effect = "Allow", Action = ["cloudwatch:SetAlarmState", "cloudwatch:DisableAlarmActions", "cloudwatch:EnableAlarmActions"], Resource = aws_cloudwatch_metric_alarm.idle_shutdown.arn },
       { Effect = "Allow", Action = ["cloudwatch:DescribeAlarms"], Resource = "*" },
@@ -618,6 +666,26 @@ resource "aws_apigatewayv2_integration" "wake" {
   integration_type       = "AWS_PROXY"
   integration_uri        = aws_lambda_function.wake.invoke_arn
   payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_integration" "startup_page" {
+  api_id                 = aws_apigatewayv2_api.this.id
+  integration_type       = "HTTP_PROXY"
+  integration_uri        = "https://${aws_s3_bucket.startup.bucket_regional_domain_name}/startup/index.html"
+  integration_method     = "GET"
+  payload_format_version = "1.0"
+}
+
+resource "aws_apigatewayv2_route" "startup_page" {
+  api_id    = aws_apigatewayv2_api.this.id
+  route_key = "GET /__startup"
+  target    = "integrations/${aws_apigatewayv2_integration.startup_page.id}"
+}
+
+resource "aws_apigatewayv2_route" "startup_status" {
+  api_id    = aws_apigatewayv2_api.this.id
+  route_key = "GET /__startup/status"
+  target    = "integrations/${aws_apigatewayv2_integration.wake.id}"
 }
 
 resource "aws_apigatewayv2_route" "default" {
@@ -915,6 +983,7 @@ resource "aws_lambda_function" "wake" {
       IDLE_ARM_FUNCTION_ARN       = aws_lambda_function.idle_arm.arn
       IDLE_ARM_SCHEDULER_ROLE_ARN = aws_iam_role.idle_arm_scheduler.arn
       IDLE_ARM_SCHEDULE_NAME      = "${var.name}-idle-arm"
+      ADMIN_TOKEN_SECRET_ARN      = aws_secretsmanager_secret.admin_token.arn
     }
   }
 
