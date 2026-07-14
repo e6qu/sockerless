@@ -7,8 +7,6 @@ env:
     **/go.sum
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   # Reusable from release.yml so tag pushes get full PR-level CI.
