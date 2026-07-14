@@ -22,11 +22,11 @@ FROM golang:1.25-bookworm AS go-toolchain
 FROM ubuntu:24.04 AS dqlite-builder
 COPY --from=go-toolchain /usr/local/go /usr/local/go
 ENV PATH=/usr/local/go/bin:$PATH
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates software-properties-common && \
+RUN apt_transaction() { rm -rf /var/lib/apt/lists/*; apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"; }; \
+    retry_apt_transaction() { apt_transaction "$@" || apt_transaction "$@"; }; \
+    retry_apt_transaction ca-certificates software-properties-common && \
     add-apt-repository -y ppa:dqlite/dev && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libdqlite-dev && \
+    retry_apt_transaction build-essential libdqlite-dev && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /src/bleephub
 COPY bleephub/go.mod bleephub/go.sum ./
@@ -35,11 +35,11 @@ COPY bleephub/dqlite-node ./dqlite-node
 RUN CGO_ENABLED=1 go build -tags 'nosqlite3,dqlite' -ldflags="-s -w" -o /bleephub-dqlite-node ./dqlite-node
 
 FROM ubuntu:24.04
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates ruby-full ruby-bundler software-properties-common && \
+RUN apt_transaction() { rm -rf /var/lib/apt/lists/*; apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"; }; \
+    retry_apt_transaction() { apt_transaction "$@" || apt_transaction "$@"; }; \
+    retry_apt_transaction ca-certificates ruby-full ruby-bundler software-properties-common && \
     add-apt-repository -y ppa:dqlite/dev && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential git libdqlite0 && \
+    retry_apt_transaction build-essential git libdqlite0 && \
     mkdir -p /opt/bleephub-pages && \
     printf '%s\n' 'source "https://rubygems.org"' 'gem "github-pages", "= 232"' > /opt/bleephub-pages/Gemfile && \
     BUNDLE_GEMFILE=/opt/bleephub-pages/Gemfile bundle install && \

@@ -6,6 +6,8 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 
 ## 2026-07-14 - Targeted Main Validation and Standalone Cloud Run Builds (`fix-main-ci-trigger`)
 
+The fully baked Bleephub release image retried each Ubuntu dependency installation transaction from a freshly downloaded package index. This made the native ARM64 build resilient to an Ubuntu archive publication race where a just-replaced package returned `404` after the prior index had selected it. A complete local ARM64 release-image build passed through both dqlite installation stages and final image export.
+
 CI kept the complete validation matrix on pull requests and moved post-merge `main` work into a dedicated Bleephub publication workflow. Every merge built native AMD64 and ARM64 images on their matching runners, published them as `ghcr.io/e6qu/sockerless-bleephub:<short-sha>-amd64` and `:<short-sha>-arm64`, and composed `:<short-sha>` as their multi-architecture manifest. It published no mutable `main` or `latest` tag, retained only the newest 20 short-SHA releases and their architecture variants, and did not restart simulator, browser, build, Terraform, or runner checks after merge.
 
 Retention resolved the repository owner's GitHub account type before calling the GitHub Packages API, so the user-owned `e6qu` namespace used `/users/` while organization namespaces used `/orgs/`.
