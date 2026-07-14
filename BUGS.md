@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2589 filed - 2541 fixed - 11 open - 16 false positives.**
+**2591 filed - 2544 fixed - 11 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -22,6 +22,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2591~~ | P2 | dependency freshness | the pre-push gate found stale Amazon Web Services service clients in the Amazon Elastic Container Service, AWS Lambda, Bleephub wake, and AWS simulator modules | The affected modules now use the latest Amazon Cloud Map, AWS Lambda, and Amazon Simple Systems Manager Go service clients; their real backend, wake, and simulator SDK tests passed. |
+| ~~2590~~ | P0 | Bleephub GitHub Container Registry release | Buildx provenance made each architecture tag an OCI index whose anonymous child manifest could not be fetched by Amazon ECS on AWS Fargate | Native architecture tags now publish direct image manifests without provenance indexes, so Amazon ECS resolves and pulls the public ARM64 or AMD64 image before composing the retained multi-architecture manifest. |
 | ~~2588~~ | P1 | Azure Key Vault simulator | purge returned JSON `200`, causing generated AzureRM clients to poll the already removed deleted-vault resource | Purge now returns Azure's documented `202` with a terminal Location-based operation endpoint, so the generated client completes the real long-running-operation lifecycle. |
 | ~~2587~~ | P1 | Azure Terraform simulator harness | macOS Docker's docker-container buildx driver retained the nested test image only in its build cache | The harness now uses `docker buildx build --load` when available, materializing its real test image before it starts the inner Terraform test. |
 | ~~2586~~ | P1 | Azure Container Registry simulator | registry reads omitted the default role-assignment mode required by the current AzureRM provider | Registry responses now preserve an explicit mode and return Azure's `LegacyRegistryPermissions` default when the request omits it, so Terraform apply is idempotent. |

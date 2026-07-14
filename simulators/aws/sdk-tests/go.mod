@@ -32,18 +32,18 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/iam v1.55.1
 	github.com/aws/aws-sdk-go-v2/service/kinesis v1.45.1
 	github.com/aws/aws-sdk-go-v2/service/kms v1.54.1
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.98.0
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.99.0
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.52.1
 	github.com/aws/aws-sdk-go-v2/service/rds v1.120.1
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.64.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.1
 	github.com/aws/aws-sdk-go-v2/service/scheduler v1.19.1
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.43.1
-	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.41.1
+	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.42.0
 	github.com/aws/aws-sdk-go-v2/service/sfn v1.44.1
 	github.com/aws/aws-sdk-go-v2/service/sns v1.41.1
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.45.1
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.71.1
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.72.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.44.1
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.75.1
 	github.com/aws/smithy-go v1.27.3
