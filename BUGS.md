@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2579 filed - 2533 fixed - 9 open - 16 false positives.**
+**2580 filed - 2534 fixed - 9 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -20,6 +20,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2580~~ | P1 | Bleephub GitHub Container Registry retention | package retention assumed an organization namespace for a user-owned repository | Retention now resolves the repository owner type and calls the matching GitHub Packages user or organization endpoint before preserving the newest 20 Bleephub releases. |
 | ~~2579~~ | P1 | standalone Google Cloud modules | dependency refresh left Cloud Run module graphs unreconciled outside the workspace | Cloud Run and Cloud Run Functions now carry the reconciled Cloud Build dependency metadata, so `GOWORK=off` no-UI binary builds succeed exactly as the release matrix runs them. |
 | ~~2578~~ | P2 | dependency freshness | the pre-push gate found newly published Google Cloud and supporting Go module releases | The affected Bleephub, cloud-backend, simulator, runner-dispatcher, agent, command, and test modules now use the latest versions required by the dependency-freshness gate. |
 | ~~2577~~ | P1 | continuous integration | the primary workflow did not subscribe to pushes to `main` | CI now keeps the complete workflow on pull requests and, after every merged or direct push to `main`, publishes only the Bleephub native architecture images and their multi-architecture manifest. |

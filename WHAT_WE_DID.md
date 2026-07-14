@@ -8,6 +8,8 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 
 CI kept the complete validation matrix on pull requests and moved post-merge `main` work into a dedicated Bleephub publication workflow. Every merge built native AMD64 and ARM64 images on their matching runners, published them as `ghcr.io/e6qu/sockerless-bleephub:<short-sha>-amd64` and `:<short-sha>-arm64`, and composed `:<short-sha>` as their multi-architecture manifest. It published no mutable `main` or `latest` tag, retained only the newest 20 short-SHA releases and their architecture variants, and did not restart simulator, browser, build, Terraform, or runner checks after merge.
 
+Retention resolved the repository owner's GitHub account type before calling the GitHub Packages API, so the user-owned `e6qu` namespace used `/users/` while organization namespaces used `/orgs/`.
+
 The Google Cloud dependency refresh also reconciled the Cloud Run and Cloud Run Functions module graphs under `GOWORK=off`. The release-matrix no-UI binaries now build with their standalone module metadata instead of requiring a workspace-mediated dependency selection.
 
 ## 2026-07-14 - Bleephub Terraform Module Relocation (`feat/bleephub-terraform-module`)

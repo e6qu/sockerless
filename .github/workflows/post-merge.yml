@@ -99,8 +99,17 @@ jobs:
           set -euo pipefail
 
           versions_file="$(mktemp)"
+          package_owner_type="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.owner.type')"
+          case "$package_owner_type" in
+            Organization) package_namespace="orgs" ;;
+            User) package_namespace="users" ;;
+            *)
+              echo "::error::Unsupported GitHub package owner type: $package_owner_type"
+              exit 1
+              ;;
+          esac
           gh api --paginate \
-            "/orgs/$OWNER/packages/container/$PACKAGE/versions?per_page=100" \
+            "/$package_namespace/$OWNER/packages/container/$PACKAGE/versions?per_page=100" \
             | jq -s 'add' > "$versions_file"
 
           keep_tags="$({
@@ -132,5 +141,5 @@ jobs:
             | while IFS= read -r version_id; do
                 echo "Deleting obsolete package version $version_id"
                 gh api --method DELETE \
-                  "/orgs/$OWNER/packages/container/$PACKAGE/versions/$version_id"
+                  "/$package_namespace/$OWNER/packages/container/$PACKAGE/versions/$version_id"
               done
