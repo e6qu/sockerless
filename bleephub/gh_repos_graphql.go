@@ -3,6 +3,7 @@ package bleephub
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -132,7 +133,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			if parent == nil {
 				return nil, fmt.Errorf("repository parent %d not found", parentID)
 			}
-			return repoToGraphQL(s.store.snapRepo(parent)), nil
+			return repoToGraphQL(s.store, s.store.snapRepo(parent)), nil
 		},
 	})
 	repoType.AddFieldConfig("templateRepository", &graphql.Field{
@@ -153,7 +154,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			if templateRepo == nil {
 				return nil, nil
 			}
-			return repoToGraphQL(s.store.snapRepo(templateRepo)), nil
+			return repoToGraphQL(s.store, s.store.snapRepo(templateRepo)), nil
 		},
 	})
 	repoType.AddFieldConfig("homepageUrl", &graphql.Field{
@@ -764,7 +765,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 					message: fmt.Sprintf("Could not resolve to a Repository with the name '%s/%s'.", owner, name),
 				}
 			}
-			return repoToGraphQL(s.store.snapRepo(repo)), nil
+			return repoToGraphQL(s.store, s.store.snapRepo(repo)), nil
 		},
 	})
 
@@ -800,6 +801,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		Name: "CreateRepositoryInput",
 		Fields: graphql.InputObjectConfigFieldMap{
 			"name":             &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"ownerId":          &graphql.InputObjectFieldConfig{Type: graphql.ID},
 			"visibility":       &graphql.InputObjectFieldConfig{Type: graphql.String},
 			"description":      &graphql.InputObjectFieldConfig{Type: graphql.String},
 			"hasIssuesEnabled": &graphql.InputObjectFieldConfig{Type: graphql.Boolean},
@@ -848,12 +850,30 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 					visibility, _ := input["visibility"].(string)
 
 					private := strings.ToUpper(visibility) == "PRIVATE"
-
-					repo := s.store.CreateRepo(user, name, description, private)
+					ownerLogin := user.Login
+					var repo *Repo
+					if ownerID, _ := input["ownerId"].(string); ownerID != "" && ownerID != user.NodeID {
+						var owner *Org
+						s.store.mu.RLock()
+						for _, candidate := range s.store.Orgs {
+							if candidate.NodeID == ownerID {
+								owner = candidate
+								break
+							}
+						}
+						s.store.mu.RUnlock()
+						if owner == nil || !isActiveOrgMember(s.store, user, owner.Login) {
+							return nil, fmt.Errorf("repository creation for another owner is not authorized")
+						}
+						ownerLogin = owner.Login
+						repo = s.store.CreateOrgRepo(owner, user, name, description, private)
+					} else {
+						repo = s.store.CreateRepo(user, name, description, private)
+					}
 					if repo == nil {
 						return nil, fmt.Errorf("repository creation failed")
 					}
-					if !s.store.UpdateRepo(user.Login, name, func(r *Repo) {
+					if !s.store.UpdateRepo(ownerLogin, name, func(r *Repo) {
 						if v, ok := graphQLInputBool(input, "hasIssuesEnabled"); ok {
 							r.HasIssues = v
 						}
@@ -861,15 +881,15 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 							r.HasWiki = v
 						}
 					}) {
-						return nil, fmt.Errorf("repository %s/%s not found after creation", user.Login, name)
+						return nil, fmt.Errorf("repository %s/%s not found after creation", ownerLogin, name)
 					}
-					repo = s.store.GetRepo(user.Login, name)
+					repo = s.store.GetRepo(ownerLogin, name)
 					if repo == nil {
-						return nil, fmt.Errorf("repository %s/%s not found after update", user.Login, name)
+						return nil, fmt.Errorf("repository %s/%s not found after update", ownerLogin, name)
 					}
 
 					return map[string]interface{}{
-						"repository": repoToGraphQL(s.store.snapRepo(repo)),
+						"repository": repoToGraphQL(s.store, s.store.snapRepo(repo)),
 					}, nil
 				},
 			},
@@ -923,10 +943,27 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 // the store lock over — never the live shared pointer off-lock, which would
 // race a concurrent UpdateRepo. Under-lock callers (the *Locked GraphQL paths)
 // pass the live pointer; off-lock resolvers pass a snapshot.
-func repoToGraphQL(repo *Repo) map[string]interface{} {
+func repoToGraphQL(st *Store, repo *Repo) map[string]interface{} {
+	return repoToGraphQLWithOrg(repo, st.GetOrgByID)
+}
+
+// repoToGraphQLLocked is repoToGraphQL for callers that already hold st.mu.
+func repoToGraphQLLocked(st *Store, repo *Repo) map[string]interface{} {
+	return repoToGraphQLWithOrg(repo, func(id int) *Org { return st.Orgs[id] })
+}
+
+func repoToGraphQLWithOrg(repo *Repo, getOrg func(int) *Org) map[string]interface{} {
 	var ownerMap map[string]interface{}
 	if repo.Owner != nil {
 		ownerMap = userToGraphQL(repo.Owner)
+	} else if repo.OwnerType == "Organization" {
+		if org := getOrg(repo.OwnerID); org != nil {
+			ownerMap = orgToGraphQL(org)
+		}
+	}
+	webURL := "/" + repo.FullName
+	if externalURL := strings.TrimRight(os.Getenv("BLEEPHUB_EXTERNAL_URL"), "/"); externalURL != "" {
+		webURL = externalURL + webURL
 	}
 
 	return map[string]interface{}{
@@ -935,8 +972,8 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 		"name":                repo.Name,
 		"nameWithOwner":       repo.FullName,
 		"description":         repo.Description,
-		"url":                 "/" + repo.FullName,
-		"sshUrl":              "git@bleephub.local:" + repo.FullName + ".git",
+		"url":                 webURL,
+		"sshUrl":              sshGitURL(repo.FullName),
 		"isPrivate":           repo.Private,
 		"isFork":              repo.Fork,
 		"isArchived":          repo.Archived,
@@ -1126,7 +1163,7 @@ func (s *Server) repoHasNoCommits(owner, name string) bool {
 // pointer off the store lock.
 func paginateRepos(st *Store, repos []*Repo, first int, after string) map[string]interface{} {
 	return paginateGQL(repos, first, after, func(r *Repo) map[string]interface{} {
-		return repoToGraphQL(st.snapRepo(r))
+		return repoToGraphQL(st, st.snapRepo(r))
 	})
 }
 

@@ -1,14 +1,23 @@
 package bleephub
 
 import (
+	"bufio"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/canonical/go-dqlite/v3/client"
+	"github.com/canonical/go-dqlite/v3/driver"
 	_ "modernc.org/sqlite" // SQLite driver — pure Go, no CGO
 )
 
@@ -124,6 +133,84 @@ func openSQLite(dataDir string) (*sql.DB, error) {
 	return db, nil
 }
 
+// openDqlite connects to the durable dqlite quorum using its stable private
+// addresses. The dqlite driver discovers the current leader from this seed
+// set and refreshes its membership knowledge from the quorum itself.
+func openDqlite(addresses string) (*sql.DB, error) {
+	store := client.NewInmemNodeStore()
+	servers := make([]client.NodeInfo, 0, 3)
+	for _, address := range strings.Split(addresses, ",") {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		servers = append(servers, client.NodeInfo{Address: address})
+	}
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("BLEEPHUB_DQLITE_SERVERS must contain at least one dqlite server address")
+	}
+	if err := store.Set(context.Background(), servers); err != nil {
+		return nil, fmt.Errorf("configure dqlite server set: %w", err)
+	}
+
+	dqliteDriver, err := driver.New(store,
+		driver.WithDialFunc(dqliteHTTPDial),
+		driver.WithAttemptTimeout(5*time.Second),
+		driver.WithConnectionBackoffFactor(100*time.Millisecond),
+		driver.WithConnectionBackoffCap(time.Second),
+		driver.WithRetryLimit(12),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create dqlite driver: %w", err)
+	}
+	connector, err := dqliteDriver.OpenConnector("bleephub")
+	if err != nil {
+		return nil, fmt.Errorf("open dqlite connector: %w", err)
+	}
+	db := sql.OpenDB(connector)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping dqlite: %w", err)
+	}
+	return db, nil
+}
+
+// dqliteHTTPDial opens the dqlite HTTP-upgrade transport exposed by each
+// stable network-load-balancer endpoint. The upgrade keeps the dqlite wire
+// protocol private while allowing Amazon ECS tasks to retain stable advertised
+// member addresses across replacement and scale-to-zero restarts.
+func dqliteHTTPDial(ctx context.Context, address string) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("dial dqlite %s: %w", address, err)
+	}
+
+	requestURL, err := url.Parse("http://" + address + "/dqlite")
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("build dqlite upgrade request: %w", err)
+	}
+	request := &http.Request{Method: http.MethodGet, URL: requestURL, Host: requestURL.Host, Header: make(http.Header)}
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "dqlite")
+	if err := request.Write(conn); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("write dqlite upgrade request: %w", err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(conn), request)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("read dqlite upgrade response: %w", err)
+	}
+	if response.StatusCode != http.StatusSwitchingProtocols || !strings.EqualFold(response.Header.Get("Upgrade"), "dqlite") {
+		_ = response.Body.Close()
+		_ = conn.Close()
+		return nil, fmt.Errorf("dqlite endpoint %s did not accept protocol upgrade: %s", address, response.Status)
+	}
+	return conn, nil
+}
+
 func NewPersistence() (*Persistence, error) {
 	if os.Getenv("BLEEPHUB_DATABASE_URL") != "" {
 		return nil, fmt.Errorf("BLEEPHUB_DATABASE_URL is no longer supported; bleephub stores its own state in SQLite via BLEEPHUB_PERSIST=true and BLEEPHUB_DATA_DIR")
@@ -137,15 +224,28 @@ func NewPersistence() (*Persistence, error) {
 	if dataDir == "" {
 		dataDir = "."
 	}
-	db, err := openSQLite(dataDir)
+
+	var (
+		db  *sql.DB
+		err error
+	)
+	if addresses := strings.TrimSpace(os.Getenv("BLEEPHUB_DQLITE_SERVERS")); addresses != "" {
+		db, err = openDqlite(addresses)
+	} else {
+		db, err = openSQLite(dataDir)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if _, err := db.Exec(sqliteDialect.schema); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("sqlite schema: %w", err)
+		return nil, fmt.Errorf("persistence schema: %w", err)
 	}
-	return &Persistence{db: db, dialect: sqliteDialect}, nil
+	dialect := sqliteDialect
+	if os.Getenv("BLEEPHUB_DQLITE_SERVERS") != "" {
+		dialect.name = "dqlite"
+	}
+	return &Persistence{db: db, dialect: dialect}, nil
 }
 
 func MustNewPersistence() *Persistence {

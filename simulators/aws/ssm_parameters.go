@@ -67,6 +67,14 @@ func ensureLeadingSlash(s string) string {
 	return s
 }
 
+func ssmParameterExists(resourceID string) bool {
+	if _, ok := ssmParams.Get(resourceID); ok {
+		return true
+	}
+	_, ok := ssmParams.Get(ensureLeadingSlash(resourceID))
+	return ok
+}
+
 func registerSSMParameterStore(r *sim.AWSRouter, srv *sim.Server) {
 	ssmParams = sim.MakeStore[SSMParameter](srv.DB(), "ssm_parameters")
 	ssmResourceTags = sim.MakeStore[[]SSMTag](srv.DB(), "ssm_resource_tags")
@@ -103,7 +111,7 @@ func handleSSMAddTagsToResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.ResourceType == "Parameter" {
-		if _, ok := ssmParams.Get(ensureLeadingSlash(req.ResourceId)); !ok {
+		if !ssmParameterExists(req.ResourceId) {
 			sim.AWSErrorf(w, "InvalidResourceId", http.StatusBadRequest,
 				"The Parameter %q does not exist", req.ResourceId)
 			return
@@ -178,7 +186,7 @@ func handleSSMListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate the underlying resource exists when we model it.
 	if req.ResourceType == "Parameter" {
-		if _, ok := ssmParams.Get(ensureLeadingSlash(req.ResourceId)); !ok {
+		if !ssmParameterExists(req.ResourceId) {
 			sim.AWSErrorf(w, "InvalidResourceId", http.StatusBadRequest,
 				"The Parameter %q does not exist", req.ResourceId)
 			return

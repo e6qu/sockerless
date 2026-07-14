@@ -1,17 +1,49 @@
+FROM oven/bun:1.2.19-alpine AS ui-builder
+WORKDIR /src/ui
+COPY ui/package.json ui/bun.lock ui/tsconfig.base.json ./
+COPY ui/packages ./packages
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile && bun run --cwd packages/bleephub build
+
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY bleephub/ ./bleephub/
+COPY --from=ui-builder /src/ui/packages/bleephub/dist/ ./bleephub/dist/
 WORKDIR /src/bleephub
-RUN CGO_ENABLED=0 go build -tags noui -ldflags="-s -w" -o /bleephub ./cmd
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bleephub ./cmd && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /bleephub-ssh-gateway ./ssh-gateway
 
-FROM ruby:3.3-alpine
-RUN apk add --no-cache build-base git && \
+FROM golang:1.25-bookworm AS go-toolchain
+
+FROM ubuntu:24.04 AS dqlite-builder
+COPY --from=go-toolchain /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:$PATH
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates software-properties-common && \
+    add-apt-repository -y ppa:dqlite/dev && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libdqlite-dev && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /src/bleephub
+COPY bleephub/go.mod bleephub/go.sum ./
+RUN go mod download
+COPY bleephub/dqlite-node ./dqlite-node
+RUN CGO_ENABLED=1 go build -tags 'nosqlite3,dqlite' -ldflags="-s -w" -o /bleephub-dqlite-node ./dqlite-node
+
+FROM ubuntu:24.04
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates ruby-full ruby-bundler software-properties-common && \
+    add-apt-repository -y ppa:dqlite/dev && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential git libdqlite0 && \
     mkdir -p /opt/bleephub-pages && \
     printf '%s\n' 'source "https://rubygems.org"' 'gem "github-pages", "= 232"' > /opt/bleephub-pages/Gemfile && \
     BUNDLE_GEMFILE=/opt/bleephub-pages/Gemfile bundle install && \
-    apk del build-base && \
-    rm -rf /root/.bundle/cache /usr/local/bundle/cache
+    apt-get purge -y --auto-remove build-essential software-properties-common && \
+    rm -rf /var/lib/apt/lists/* /root/.bundle/cache /usr/local/bundle/cache
 COPY --from=builder /bleephub /usr/local/bin/bleephub
+COPY --from=builder /bleephub-ssh-gateway /usr/local/bin/bleephub-ssh-gateway
+COPY --from=dqlite-builder /bleephub-dqlite-node /usr/local/bin/bleephub-dqlite-node
 COPY bleephub/pages-jekyll /usr/local/bin/bleephub-pages-jekyll
 RUN chmod 0755 /usr/local/bin/bleephub-pages-jekyll
 ENTRYPOINT ["bleephub"]

@@ -13,7 +13,7 @@ require (
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/run v1.21.0
 	cloud.google.com/go/secretmanager v1.20.0
-	cloud.google.com/go/storage v1.63.0
+	cloud.google.com/go/storage v1.63.1
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/api v0.288.0
@@ -35,9 +35,9 @@ require (
 	cloud.google.com/go/pubsub v1.50.4
 	cloud.google.com/go/pubsub/v2 v2.6.1 // indirect
 	cloud.google.com/go/spanner v1.92.0
-	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 // indirect
-	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.57.0 // indirect
-	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.57.0 // indirect
+	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.34.0 // indirect
+	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.58.0 // indirect
+	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.58.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect

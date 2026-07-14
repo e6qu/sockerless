@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // writeOAuthTokenResponse renders a POST /login/oauth/access_token response in
@@ -147,7 +148,11 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) browserLoginUser(login, credential string) *User {
 	_, user := s.store.LookupToken(credential)
-	if user == nil || user.Login != login || user.Suspended {
+	if user != nil && user.Login == login && !user.Suspended {
+		return user
+	}
+	user = s.store.LookupUserByLogin(login)
+	if user == nil || user.Suspended || user.PasswordHash == "" || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(credential)) != nil {
 		return nil
 	}
 	return user

@@ -124,7 +124,8 @@ jobs:
 
   # test-core: fast unit + library tests, no Docker integration.
   # Split out so flakes in per-backend integration don't restart the
-  # whole 12-minute monolith. Runs ~3 minutes.
+  # whole monolith. Each package keeps its own bounded deadline so the
+  # complete Bleephub package has enough time on native ARM64 runners.
   test-core:
     name: test (core)
     runs-on: ubuntu-24.04-arm
@@ -144,6 +145,7 @@ jobs:
           run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 5m ./...); }
           run_noflags() { echo "=== $1 ===" && (cd "$1" && go test -v -timeout 5m ./...); }
           run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 5m ./...); }
+          run_bleephub() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 8m ./...); }
           run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 2m ./...); }
           run_noflags api
           run backends/core
@@ -151,7 +153,7 @@ jobs:
           run backends/aws-common
           run backends/gcp-common
           run backends/azure-common
-          run bleephub
+          run_bleephub bleephub
           run cmd/sockerless-admin
           run_work simulators/aws/shared
           run_work simulators/gcp/shared

@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2560. In addition to the release-provider, repository UI, retained GitHub Classroom, fine-grained personal access tokens, and CodeQL production, the branch shipped a durable GitHub Marketplace for GitHub App and OAuth App publishers and buyers, with scoped official REST clients, signed listing webhooks, atomic subscriptions/installations, billing transitions, and saturated light/dark browser workflows. BUG-2523 remained open only for hosted-compute network onboarding.
+`feat/bleephub-hosted-compute-network-onboarding` deployed Bleephub as an independent Amazon Elastic Container Service on AWS Fargate stack in eu-west-1. It used Amazon API Gateway wake routing, private Network Load Balancer application routing, Amazon Simple Storage Service git/object persistence, native dqlite voters, fck-nat, an Amazon Simple Storage Service gateway endpoint, GitHub OAuth, local administrator credentials, and real HTTP/SSH Git transports. The five-minute idle controller safely quiesced Amazon CloudWatch before scale-down and a verified cold wake restored a healthy quorum and service.
 
 ## Continue Here
 
-1. Close BUG-2523 by replacing `/internal/orgs/.../network-settings` with the real GitHub/Azure hosted-compute private-network onboarding workflow. GitHub Classroom, fine-grained personal access tokens, CodeQL database production, and GitHub Marketplace were completed.
+1. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
 2. Add a vendored GitHub GraphQL schema/introspection ratchet; current resolver coverage remained consumer-driven rather than complete-schema proof.
 3. Continue page-level light/dark UI comparison with repository Settings/Security, issue and pull-request timelines/reviews/diffs, Actions job logs, organization administration, and account/App/token management.
 4. Continue REST semantic matrices for permissions, conditional requests, redirects, pagination, version headers, rate limits, webhooks, durable cascades, and storage-failure atomicity.
@@ -16,6 +16,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `bash scripts/check-latest-deps.sh` passed after updating all module pins that the pre-push dependency-freshness gate reported; `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1 -timeout 8m` passed in 218 seconds with that updated dependency graph.
+- The native ARM64 core continuous-integration job reached the complete Bleephub package after all preceding core/API/agent packages passed, then exposed that its shared five-minute per-package timeout was too short; Bleephub now had its explicit eight-minute bound and retained full-suite coverage.
+- `bash -n ui/packages/bleephub/e2e/start-server.sh` and `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1 -timeout 8m` passed in 221 seconds after the real SSH E2E harness and port-aware clone URL fix.
+- A freshly embedded Bleephub binary served `/ui/favicon.svg` with `200 image/svg+xml`, started its real SSH listener, and advertised a valid `ssh://git@host:port/owner/repository.git` URL for the local non-default test port.
+- A real local Google Chrome session authenticated, created a repository through the public API, verified the empty-repository SSH clone selector, and verified the favicon link; the CI Linux Playwright job remained the authoritative full-browser gate.
 - The complete `pre-commit run --all-files` gate passed with writable temporary Go/npm/pre-commit caches after the Marketplace implementation, including full repository lint, core/API/Bleephub Go suites, admin/Bleephub UI suites, typecheck, policy checks, dead-code scans, and copy-paste scans.
 - Cleanup removed 22 GiB of disposable Go build cache, temporary hook/package caches, 21 stale Amazon Elastic Container Service simulator task containers, and unused container images without touching active services or volumes; local free space increased from 31 GiB to 54 GiB.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 216 seconds after the Marketplace publisher, buyer, webhook, billing, identity, and atomic persistence workflows were implemented.

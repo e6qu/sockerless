@@ -109,3 +109,10 @@ func TestSSMParameterCLI_ListTagsForResource(t *testing.T) {
 	assert.Equal(t, "stage", tagged.TagList[0].Key)
 	assert.Equal(t, "prod", tagged.TagList[0].Value)
 }
+
+func TestSSMParameterCLI_ListTagsForResourceWithoutLeadingSlash(t *testing.T) {
+	name := "terraform-compatible-parameter"
+	runCLI(t, awsCLI("ssm", "put-parameter", "--name", name, "--type", "String", "--value", "v", "--output", "json"))
+	t.Cleanup(func() { _ = awsCLI("ssm", "delete-parameter", "--name", name).Run() })
+	runCLI(t, awsCLI("ssm", "list-tags-for-resource", "--resource-type", "Parameter", "--resource-id", name, "--output", "json"))
+}

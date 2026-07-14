@@ -42,6 +42,22 @@ func resetS3FSCacheForTest(t *testing.T) {
 	})
 }
 
+func TestBleephubS3Region(t *testing.T) {
+	t.Setenv("BLEEPHUB_S3_REGION", "eu-west-1")
+	t.Setenv("AWS_REGION", "us-east-1")
+	if got := bleephubS3Region(); got != "eu-west-1" {
+		t.Fatalf("explicit Bleephub S3 region = %q, want eu-west-1", got)
+	}
+	t.Setenv("BLEEPHUB_S3_REGION", "")
+	if got := bleephubS3Region(); got != "us-east-1" {
+		t.Fatalf("AWS S3 region = %q, want us-east-1", got)
+	}
+	t.Setenv("AWS_REGION", "")
+	if got := bleephubS3Region(); got != "us-east-1" {
+		t.Fatalf("default S3 region = %q, want us-east-1", got)
+	}
+}
+
 func newS3FSForTest(t *testing.T) *s3FS {
 	t.Helper()
 	endpoint := startS3SimulatorForTest(t)
@@ -282,6 +298,38 @@ func TestS3FileReadFullFileInChunks(t *testing.T) {
 	}
 	if !bytes.Equal(chunked, content) {
 		t.Fatalf("chunked read returned %d bytes, want %d (content mismatch)", len(chunked), len(content))
+	}
+}
+
+func TestS3FSTempFileReaderSeesActiveWriter(t *testing.T) {
+	fs := newS3FSForTest(t)
+
+	writer, err := fs.TempFile("objects/pack", "tmp_pack_")
+	if err != nil {
+		t.Fatalf("TempFile: %v", err)
+	}
+	reader, err := fs.Open(writer.Name())
+	if err != nil {
+		t.Fatalf("Open active temp file: %v", err)
+	}
+	if _, err := writer.Write([]byte("streamed pack bytes")); err != nil {
+		t.Fatalf("Write active temp file: %v", err)
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("Read active temp file: %v", err)
+	}
+	if string(got) != "streamed pack bytes" {
+		t.Fatalf("active temp file = %q, want streamed bytes", got)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("Close reader: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close writer: %v", err)
+	}
+	if got := string(readS3TestFile(t, fs, writer.Name())); got != "streamed pack bytes" {
+		t.Fatalf("persisted temp file = %q, want streamed bytes", got)
 	}
 }
 

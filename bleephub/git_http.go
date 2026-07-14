@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"net/http"
@@ -242,8 +243,22 @@ func (s *Server) handleGitUploadPack(w http.ResponseWriter, r *http.Request, own
 		return
 	}
 
+	requestReader := bufio.NewReader(r.Body)
+	empty, err := flushOnlyGitRequest(requestReader)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if empty {
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+		if err := pktline.NewEncoder(w).Flush(); err != nil {
+			s.logger.Error().Err(err).Msg("failed to encode empty upload-pack response")
+		}
+		return
+	}
+
 	upreq := packp.NewUploadPackRequest()
-	if err := upreq.Decode(r.Body); err != nil {
+	if err := upreq.Decode(requestReader); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -322,57 +337,49 @@ func (s *Server) handleGitReceivePack(w http.ResponseWriter, r *http.Request, ow
 	result, err := sess.ReceivePack(r.Context(), req)
 	if err != nil {
 		if !strings.Contains(err.Error(), "EOF") {
+			s.logger.Error().Err(err).Str("repo", owner+"/"+repoName).Msg("git HTTP receive-pack failed")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// Update pushed_at timestamp
-	s.store.UpdateRepo(owner, repoName, func(repo *Repo) {
-		repo.PushedAt = repo.UpdatedAt
-	})
-
-	// Update HEAD to point to a valid branch if the current target doesn't exist
-	headRepo := s.store.GetRepo(owner, repoName)
-	if headRepo != nil {
-		needsUpdate := false
-		headRef, headErr := stor.Reference(plumbing.HEAD)
-		if headErr != nil {
-			needsUpdate = true
-		} else if headRef.Type() == plumbing.SymbolicReference {
-			// HEAD exists but check if its target branch exists
-			if _, err := stor.Reference(headRef.Target()); err != nil {
-				needsUpdate = true
-			}
-		}
-
-		if needsUpdate {
-			for _, branch := range []string{"main", "master"} {
-				ref := plumbing.NewBranchReferenceName(branch)
-				if _, err := stor.Reference(ref); err == nil {
-					symRef := plumbing.NewSymbolicReference(plumbing.HEAD, ref)
-					_ = stor.SetReference(symRef)
-					s.store.UpdateRepo(owner, repoName, func(r *Repo) {
-						r.DefaultBranch = branch
-					})
-					break
-				}
-			}
-		}
-	}
-
-	// Emit the shared post-ref-update fan-out for each pushed ref.
-	for _, cmd := range req.Commands {
-		ref := cmd.Name.String()
-		before := cmd.Old.String()
-		after := cmd.New.String()
-		s.afterCommittedRefUpdate(repo, user, ref, before, after, s.baseURL(r))
-	}
+	s.afterGitReceivePack(repo, user, req, s.baseURL(r))
 
 	w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
 	if result != nil {
 		if err := result.Encode(w); err != nil {
 			s.logger.Error().Err(err).Msg("failed to encode receive-pack response")
 		}
+	}
+}
+
+func (s *Server) afterGitReceivePack(repo *Repo, user *User, request *packp.ReferenceUpdateRequest, baseURL string) {
+	owner, _ := splitRepoPath("/" + repo.FullName)
+	stor := s.resolveGitRepo(owner, repo.Name)
+	s.store.UpdateRepo(owner, repo.Name, func(updated *Repo) {
+		updated.PushedAt = updated.UpdatedAt
+	})
+	if stor != nil {
+		needsUpdate := false
+		headRef, headErr := stor.Reference(plumbing.HEAD)
+		if headErr != nil {
+			needsUpdate = true
+		} else if headRef.Type() == plumbing.SymbolicReference {
+			_, targetErr := stor.Reference(headRef.Target())
+			needsUpdate = targetErr != nil
+		}
+		if needsUpdate {
+			for _, branch := range []string{"main", "master"} {
+				ref := plumbing.NewBranchReferenceName(branch)
+				if _, err := stor.Reference(ref); err == nil {
+					_ = stor.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, ref))
+					s.store.UpdateRepo(owner, repo.Name, func(updated *Repo) { updated.DefaultBranch = branch })
+					break
+				}
+			}
+		}
+	}
+	for _, command := range request.Commands {
+		s.afterCommittedRefUpdate(repo, user, command.Name.String(), command.Old.String(), command.New.String(), baseURL)
 	}
 }

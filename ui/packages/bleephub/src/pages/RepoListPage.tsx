@@ -140,7 +140,6 @@ export function RepoListPage({
           open={createOpen}
           onClose={() => setCreateOpen(false)}
           onCreated={() => {
-            setCreateOpen(false);
             queryClient.invalidateQueries({ queryKey });
           }}
           createTarget={createTarget}

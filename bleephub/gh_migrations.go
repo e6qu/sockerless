@@ -573,7 +573,7 @@ func migrationRepoJSON(repo *Repo, st *Store, baseURL string) map[string]interfa
 		"hooks_url":         api + "/hooks",
 		"clone_url":         baseURL + "/" + repo.FullName + ".git",
 		"git_url":           "git://" + host + "/" + repo.FullName + ".git",
-		"ssh_url":           "git@bleephub.local:" + repo.FullName + ".git",
+		"ssh_url":           sshGitURL(repo.FullName),
 		"svn_url":           baseURL + "/" + repo.FullName,
 		"mirror_url":        nil,
 		"homepage":          nilOrString(repo.Homepage),

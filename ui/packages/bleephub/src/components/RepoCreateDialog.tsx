@@ -2,12 +2,13 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import { createRepo, createOrgRepo, fetchGitignoreTemplates, fetchLicenseTemplates } from "../api.js";
+import type { BleephubRepo } from "../types.js";
 import { Button, Modal } from "./ui.js";
 
 interface RepoCreateDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (repo: BleephubRepo) => void;
   createTarget?: "user" | { org: string };
 }
 
@@ -17,11 +18,12 @@ export function RepoCreateDialog({ open, onClose, onCreated, createTarget = "use
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("public");
-  const [autoInit, setAutoInit] = useState(true);
+  const [autoInit, setAutoInit] = useState(false);
   const [gitignore, setGitignore] = useState("");
   const [license, setLicense] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createdRepo, setCreatedRepo] = useState<BleephubRepo | null>(null);
 
   const gitignoresQ = useQuery({
     queryKey: ["gitignore-templates"],
@@ -38,9 +40,10 @@ export function RepoCreateDialog({ open, onClose, onCreated, createTarget = "use
     setName("");
     setDescription("");
     setVisibility("public");
-    setAutoInit(true);
+    setAutoInit(false);
     setGitignore("");
     setLicense("");
+    setCreatedRepo(null);
     setError(null);
   };
 
@@ -62,13 +65,11 @@ export function RepoCreateDialog({ open, onClose, onCreated, createTarget = "use
         gitignore_template: gitignore || undefined,
         license_template: license || undefined,
       };
-      if (org) {
-        await createOrgRepo(org, payload);
-      } else {
-        await createRepo(payload);
-      }
-      reset();
-      onCreated();
+      const repository = org
+        ? await createOrgRepo(org, payload)
+        : await createRepo(payload);
+      setCreatedRepo(repository);
+      onCreated(repository);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -77,6 +78,41 @@ export function RepoCreateDialog({ open, onClose, onCreated, createTarget = "use
   };
 
   if (!open) return null;
+
+  if (createdRepo) {
+    const origin = typeof window === "undefined" ? "" : window.location.origin;
+    const remote = `${origin}/${createdRepo.full_name}.git`;
+    return (
+      <Modal onClose={handleClose} title="Repository created">
+        <div className="grid gap-4">
+          <div>
+            <strong>{createdRepo.full_name}</strong>
+            <p style={{ color: "var(--color-fg-muted)", fontSize: "0.86rem", marginTop: "0.35rem" }}>
+              Your empty repository is ready. Run these commands inside the project you want to publish.
+            </p>
+          </div>
+          <pre
+            aria-label="Push existing repository commands"
+            style={{
+              margin: 0,
+              overflowX: "auto",
+              padding: "0.85rem",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-md)",
+              background: "var(--color-bg-subtle)",
+              color: "var(--color-fg)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.8rem",
+              lineHeight: 1.6,
+            }}
+          >{`git remote add origin ${remote}\ngit branch -M main\ngit push -u origin main`}</pre>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <Button onClick={handleClose}>Done</Button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal onClose={handleClose} title={isOrg ? `Create repository in ${org}` : "Create a new repository"}>

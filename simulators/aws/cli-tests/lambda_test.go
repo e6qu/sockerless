@@ -66,6 +66,34 @@ func TestLambda_CreateAndGetFunction(t *testing.T) {
 	runCLI(t, awsCLI("lambda", "delete-function", "--function-name", "cli-test-func"))
 }
 
+func TestLambda_GetFunctionCodeSigningConfigWithoutAttachment(t *testing.T) {
+	zipPath := createDummyZip(t)
+	fnName := "cli-csc-unconfigured-func"
+
+	runCLI(t, awsCLI("lambda", "create-function",
+		"--function-name", fnName,
+		"--runtime", "nodejs18.x",
+		"--role", "arn:aws:iam::123456789012:role/test-role",
+		"--handler", "index.handler",
+		"--zip-file", "fileb://"+zipPath,
+	))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("lambda", "delete-function", "--function-name", fnName))
+	})
+
+	out := runCLI(t, awsCLI("lambda", "get-function-code-signing-config",
+		"--function-name", fnName,
+		"--output", "json",
+	))
+	var result struct {
+		CodeSigningConfigArn string `json:"CodeSigningConfigArn"`
+		FunctionName         string `json:"FunctionName"`
+	}
+	parseJSON(t, out, &result)
+	assert.Equal(t, fnName, result.FunctionName)
+	assert.Empty(t, result.CodeSigningConfigArn)
+}
+
 func TestLambda_ListFunctions(t *testing.T) {
 	zipPath := createDummyZip(t)
 

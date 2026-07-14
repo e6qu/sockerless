@@ -204,6 +204,7 @@ export function RepoDetailPage() {
                 loading={commitsLoading}
                 branches={branches.map((b) => b.name)}
                 defaultBranch={repoData.default_branch}
+                sshUrl={repoData.ssh_url}
               />
             </div>
             <AboutSidebar
@@ -276,6 +277,7 @@ function CodeView({
   loading,
   branches,
   defaultBranch,
+  sshUrl,
 }: {
   owner: string;
   repo: string;
@@ -283,6 +285,7 @@ function CodeView({
   loading: boolean;
   branches: string[];
   defaultBranch: string;
+  sshUrl?: string;
 }) {
   const [branch, setBranch] = useState(defaultBranch);
   const [path, setPath] = useState("");
@@ -319,7 +322,7 @@ function CodeView({
 
   if (loading || itemsLoading || readmeLoading) return <Spinner label="loading code" />;
   if (commits.length === 0) {
-    return <EmptyRepoSetup owner={owner} repo={repo} defaultBranch={defaultBranch} />;
+    return <EmptyRepoSetup owner={owner} repo={repo} defaultBranch={defaultBranch} sshUrl={sshUrl} />;
   }
   if (itemsError) return <InlineError title="Failed to load files" detail={String(itemsErr)} />;
 
@@ -354,7 +357,7 @@ function CodeView({
           </button>
         )}
         <span style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)", flex: 1 }}>{path}</span>
-        <CloneButton owner={owner} repo={repo} />
+        <CloneButton owner={owner} repo={repo} sshUrl={sshUrl} />
       </div>
 
       {fileList.length > 0 && (
@@ -443,12 +446,14 @@ function LatestCommitBanner({
 }
 
 /** GitHub's green "Code" clone dropdown — HTTPS clone URL with a copy button. */
-function CloneButton({ owner, repo }: { owner: string; repo: string }) {
+function CloneButton({ owner, repo, sshUrl }: { owner: string; repo: string; sshUrl?: string }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const cloneUrl = `${origin}/${owner}/${repo}.git`;
+  const httpsUrl = `${origin}/${owner}/${repo}.git`;
+  const [transport, setTransport] = useState<"https" | "ssh">("https");
+  const cloneUrl = transport === "ssh" && sshUrl ? sshUrl : httpsUrl;
 
   useEffect(() => {
     if (!open) return;
@@ -509,15 +514,16 @@ function CloneButton({ owner, repo }: { owner: string; repo: string }) {
           }}
         >
           <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.4rem" }}>Clone</div>
-          <div style={{ fontSize: "0.72rem", color: "var(--color-fg-muted)", marginBottom: "0.5rem" }}>
-            HTTPS
+          <div className="flex gap-2" style={{ fontSize: "0.72rem", marginBottom: "0.5rem" }}>
+            <button type="button" onClick={() => setTransport("https")} style={{ border: 0, background: "transparent", color: transport === "https" ? "var(--color-accent)" : "var(--color-fg-muted)", fontWeight: 600 }}>HTTPS</button>
+            {sshUrl && <button type="button" onClick={() => setTransport("ssh")} style={{ border: 0, background: "transparent", color: transport === "ssh" ? "var(--color-accent)" : "var(--color-fg-muted)", fontWeight: 600 }}>SSH</button>}
           </div>
           <div className="flex items-center gap-1.5">
             <input
               type="text"
               readOnly
               value={cloneUrl}
-              aria-label="HTTPS clone URL"
+              aria-label={`${transport.toUpperCase()} clone URL`}
               onFocus={(e) => e.currentTarget.select()}
               style={{
                 flex: 1,
@@ -756,22 +762,24 @@ function EmptyRepoSetup({
   owner,
   repo,
   defaultBranch,
+  sshUrl,
 }: {
   owner: string;
   repo: string;
   defaultBranch: string;
+  sshUrl?: string;
 }) {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const [activeTab, setActiveTab] = useState<"https" | "ssh" | "gh">("https");
   const tabs: { key: "https" | "ssh" | "gh"; label: string }[] = [
     { key: "https", label: "HTTPS" },
-    { key: "ssh", label: "SSH" },
+    ...(sshUrl ? [{ key: "ssh" as const, label: "SSH" }] : []),
     { key: "gh", label: "GitHub CLI" },
   ];
 
   const snippets: Record<typeof activeTab, string> = {
     https: `git remote add origin ${origin}/${owner}/${repo}.git\ngit branch -M ${defaultBranch}\ngit push -u origin ${defaultBranch}`,
-    ssh: `git remote add origin git@bleephub.local:${owner}/${repo}.git\ngit branch -M ${defaultBranch}\ngit push -u origin ${defaultBranch}`,
+    ssh: `git remote add origin ${sshUrl ?? ""}\ngit branch -M ${defaultBranch}\ngit push -u origin ${defaultBranch}`,
     gh: `gh repo clone ${owner}/${repo}\ncd ${repo}`,
   };
 

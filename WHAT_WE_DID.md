@@ -4,6 +4,20 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-13 - Bleephub Amazon Elastic Container Service on AWS Fargate Deployment (`feat/bleephub-hosted-compute-network-onboarding`)
+
+Bleephub deployed in a dedicated eu-west-1 Amazon Elastic Container Service on AWS Fargate stack rather than the separate EDD infrastructure. The reusable Terraform module provisioned private application networking with fck-nat, an Amazon Simple Storage Service gateway endpoint, encrypted Amazon Simple Storage Service git/object buckets, Amazon Elastic File System-backed native dqlite voters, an internal Network Load Balancer, Amazon API Gateway public wake routing, an administrator origin, and a hardened SSH Git gateway. The fully baked ARM64 release image performed no build work at task start.
+
+GitHub OAuth, administrator-provisioned local users, the e6qu-org administrator/developer mapping, Git Smart HTTP, and SSH public-key Git were wired through production configuration. Live verification created a repository, registered an ephemeral SSH key, pushed and cloned over SSH, cloned over HTTPS, used the official GitHub command-line interface against the live server, and confirmed the healthy UI/API routes.
+
+The idle controller armed a five-minute API-request alarm after traffic, safely quiesced the Amazon CloudWatch alarm before shutting down, scaled application and dqlite services to zero, and restored the full quorum on a subsequent cold wake. A live cold wake restored all three dqlite voters and the application before returning successful health responses. The git bucket had versioning suspended and a noncurrent-version lifecycle rule to prevent retained historical object costs.
+
+The production browser harness now started the real SSH Git listener with a disposable host key and advertised a port-aware `ssh://` clone coordinate whenever the configured SSH host included a non-default port. This preserved GitHub-style SCP coordinates for production port 22 while giving Playwright a valid local transport. The empty-repository page therefore rendered its real SSH selector under test. The embedded user interface also served a saturated Bleephub SVG favicon instead of returning the single-page application shell for the browser icon request. Focused real Chrome verification created a repository through the public API and confirmed both the SSH selector and favicon link; the complete Bleephub Go suite passed in 221 seconds.
+
+The native ARM64 core continuous-integration job now applied an explicit eight-minute deadline to the complete Bleephub test package. The prior shared five-minute deadline expired while the final webhook timeout test was running after every preceding Bleephub test had passed; the package retained its complete coverage and the other core packages retained their five-minute deadlines.
+
+The repository dependency-freshness gate found stale cloud and supporting Go module pins before the timeout fix could be pushed. The affected Bleephub, cloud-backend, simulator, runner-dispatcher, agent, and command modules were updated to the current versions required by that gate. Dependency freshness then passed and the complete Bleephub suite passed in 218 seconds with the updated graph.
+
 ## 2026-07-12 - GitHub Marketplace Publisher and Buyer Product (`feat/bleephub-ui-api-completeness-audit`)
 
 Closed BUG-2548 through BUG-2560 and removed GitHub Marketplace from BUG-2523. GitHub App and OAuth App owners created durable draft/published listings, dedicated signed webhooks, delivery history, and free, flat-rate, or per-unit monthly/annual plans through authenticated settings. Publisher REST plan and account reads required the owning GitHub App's JSON Web Token or OAuth App's Basic client credentials, kept unrelated publishers isolated, preserved GitHub's production and `stubbed` shapes, returned empty collections rather than null, and excluded confidential webhook configuration from public buyer listings.

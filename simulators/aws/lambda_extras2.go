@@ -558,14 +558,8 @@ func handleLambdaGetFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Req
 		return
 	}
 	lambdaFnCSCMu.Lock()
-	arn, ok := lambdaFnCSC[name]
+	arn := lambdaFnCSC[name]
 	lambdaFnCSCMu.Unlock()
-	if !ok {
-		// No CSC attached: real Lambda returns 404.
-		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
-			"The function %s does not have a code signing configuration.", lambdaArn(name))
-		return
-	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"CodeSigningConfigArn": arn,
 		"FunctionName":         name,

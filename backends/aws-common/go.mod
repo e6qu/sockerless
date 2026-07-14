@@ -4,11 +4,11 @@ go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.42.1
-	github.com/aws/aws-sdk-go-v2/service/codebuild v1.71.0
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.59.0
-	github.com/aws/aws-sdk-go-v2/service/efs v1.43.0
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.0
-	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.41.0
+	github.com/aws/aws-sdk-go-v2/service/codebuild v1.71.1
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.59.1
+	github.com/aws/aws-sdk-go-v2/service/efs v1.43.1
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.1
+	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.41.1
 	github.com/rs/zerolog v1.35.1
 	github.com/sockerless/api v0.0.0
 	github.com/sockerless/backend-core v0.0.0
@@ -52,7 +52,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect

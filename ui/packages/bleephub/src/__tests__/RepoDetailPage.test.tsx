@@ -147,7 +147,7 @@ describe("RepoDetailPage code", () => {
     expect(screen.getAllByText("test").length).toBeGreaterThan(0);
   });
 
-  it("shows GitHub-standard empty-repo setup tabs for an empty repo", async () => {
+  it("shows only supported empty-repository transport setup", async () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => {
       const u = url.toString();
       if (u.endsWith("/repos/admin/test")) return Promise.resolve(jsonResponse(repoData));
@@ -162,7 +162,7 @@ describe("RepoDetailPage code", () => {
       expect(screen.getByText("This repository is empty")).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "HTTPS" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "SSH" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "SSH" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "GitHub CLI" })).toBeInTheDocument();
   });
 

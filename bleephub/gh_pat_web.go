@@ -12,7 +12,10 @@ import (
 func (s *Server) personalAccessTokenWebUser(w http.ResponseWriter, r *http.Request) (*User, *http.Request) {
 	ctx := s.authenticateRequest(r)
 	user := ghUserFromContext(ctx)
-	if user == nil || ghPersonalAccessTokenFromContext(ctx) == nil {
+	// The settings UI is a browser-authenticated surface. A signed-in browser
+	// must be able to create its first personal access token; requiring a
+	// pre-existing PAT here would make that flow circular.
+	if user == nil || (ghPersonalAccessTokenFromContext(ctx) == nil && s.sessionFromRequest(r) == nil) {
 		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
 		return nil, r
 	}

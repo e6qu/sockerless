@@ -18,7 +18,9 @@ Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker C
 
 ## Active Focus
 
-**Bleephub real-service hardening + live-cloud validation.**
+**Bleephub real-service hardening, production operation, and live-cloud validation.**
+
+The Bleephub Amazon Elastic Container Service on AWS Fargate module deployed an independent eu-west-1 service with private networking, fck-nat, an Amazon Simple Storage Service gateway endpoint, Amazon Simple Storage Service git/object persistence, native dqlite quorum storage, Amazon API Gateway scale-to-zero wake routing, and an internal Network Load Balancer. GitHub OAuth, local administrator identity, Git Smart HTTP, and SSH Git were verified against the live service. The remaining deployment-specific gap is BUG-2569: the same module's local Amazon Elastic Container Service Terraform simulator apply/destroy harness did not terminate deterministically.
 
 Merged #791 made GitHub Pages branch publication and committed-reference eventing real. The active branch then closed the release-provider class and continued through the shared parity/UI layer, retained GitHub Classroom product, and fine-grained personal access token workflow: routed release and asset management, real git-tag identity, strict repository isolation, complete lifecycle events, race-safe workflow discovery, saturated light/dark chrome, organization-admin Classroom management, real repository-backed coursework and grading, transition export/import, durable one-time token creation, organization approval, GitHub App-only administration, and resource/permission enforcement.
 
@@ -40,7 +42,7 @@ The merged #783/#787 baselines pushed many shallow GitHub-compatible areas towar
 
 ## Verified Next Bleephub Gaps
 
-1. Finish BUG-2523 by replacing operator ingestion with GitHub/Azure-compatible hosted-compute network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL database production, and GitHub Marketplace were completed on the active branch.
+1. Resolve BUG-2569 in the local Amazon Elastic Container Service Terraform simulator apply/destroy harness without changing real-provider coordinates or behavior.
 2. Add a complete GitHub GraphQL schema/introspection ratchet; current coverage proves selected consumer surfaces only.
 3. Extend page-level light/dark fidelity from the shared shell, repository Code view, Classroom, and account token settings through Settings/Security, issue/pull-request review workflows, Actions logs, organization administration, and remaining App settings.
 4. Extend REST proof beyond registered/observed shapes into exhaustive permission, status/header, pagination, redirect, conditional-request, webhook, cascade, and failure-atomicity matrices.

@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	gitStorage "github.com/go-git/go-git/v5/storage"
+	"golang.org/x/crypto/ssh"
 )
 
 // AdminToken returns the seeded admin token, which MUST be supplied via
@@ -73,6 +75,7 @@ type User struct {
 	Emails                 []UserEmail `json:"emails,omitempty"`
 	InteractionLimit       string      `json:"interaction_limit,omitempty"`
 	InteractionLimitExpiry *time.Time  `json:"interaction_limit_expiry,omitempty"`
+	PasswordHash           string      `json:"password_hash,omitempty"`
 }
 
 // UserEmail is one email address on a user account, matching GitHub's
@@ -3161,6 +3164,23 @@ func (st *Store) GetUserByID(id int) *User {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return st.Users[id]
+}
+
+// LookupUserBySSHKey resolves a registered account SSH authentication key.
+// It compares parsed SSH wire encodings so comments and spacing differences in
+// authorized-key text cannot create a different credential identity.
+func (st *Store) LookupUserBySSHKey(key ssh.PublicKey) *User {
+	st.Misc.mu.RLock()
+	defer st.Misc.mu.RUnlock()
+	for userID, keys := range st.Misc.keysByUser {
+		for _, registered := range keys {
+			parsed, _, _, _, err := ssh.ParseAuthorizedKey([]byte(registered.Key))
+			if err == nil && bytes.Equal(parsed.Marshal(), key.Marshal()) {
+				return st.GetUserByID(userID)
+			}
+		}
+	}
+	return nil
 }
 
 // CountFollowers returns how many users follow the given login.
