@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2576 filed - 2530 fixed - 9 open - 16 false positives.**
+**2579 filed - 2533 fixed - 9 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -20,6 +20,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2579~~ | P1 | standalone Google Cloud modules | dependency refresh left Cloud Run module graphs unreconciled outside the workspace | Cloud Run and Cloud Run Functions now carry the reconciled Cloud Build dependency metadata, so `GOWORK=off` no-UI binary builds succeed exactly as the release matrix runs them. |
+| ~~2578~~ | P2 | dependency freshness | the pre-push gate found newly published Google Cloud and supporting Go module releases | The affected Bleephub, cloud-backend, simulator, runner-dispatcher, agent, command, and test modules now use the latest versions required by the dependency-freshness gate. |
+| ~~2577~~ | P1 | continuous integration | the primary workflow did not subscribe to pushes to `main` | CI now keeps the complete workflow on pull requests and, after every merged or direct push to `main`, publishes only the Bleephub native architecture images and their multi-architecture manifest. |
 | ~~2576~~ | P2 | dependency freshness | the pre-push freshness gate found stale cloud and supporting Go modules across the repository | The affected Bleephub, cloud-backend, simulator, runner-dispatcher, agent, and command modules now use the latest versions required by the repository dependency-freshness gate. |
 | ~~2575~~ | P1 | Bleephub core continuous integration | the shared five-minute package deadline expired on a native ARM64 runner | The core workflow now gives the complete Bleephub package its explicit eight-minute timeout while retaining five-minute bounds for the other core packages, matching its verified full-suite runtime without weakening test coverage. |
 | ~~2574~~ | P2 | Bleephub browser user interface | the browser requested an absent favicon | The Bleephub user interface now declares and serves a saturated SVG favicon from the embedded `/ui/favicon.svg` asset instead of returning the application shell for an absent icon. |
@@ -30,7 +33,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~2568~~ | P1 | Bleephub wake-listener artifact build | repeated build rejected the existing archive | The Bleephub Amazon Lambda wake artifact builder now replaces its output archive deterministically, so repeated production builds succeed. |
 | ~~2567~~ | P0 | Bleephub Amazon Elastic Container Service task runtime | image architecture was implicit | The Bleephub Fargate task definitions now declare the ARM64 runtime platform that matches the fully baked release image. |
 | ~~2566~~ | P1 | Bleephub release container | opaque dependency install stalled the release image | The fully baked Bleephub release build now emits observable dependency-install progress and completed as a deployable image. |
-| ~~2565~~ | P0 | Bleephub external identity | browser sessions accepted only local personal access tokens | Bleephub now supports GitHub OAuth, Microsoft Entra ID OpenID Connect configuration, administrator-provisioned email identities, and the e6qu-org-admins-over-e6qu-org-members role mapping. |
+| ~~2565~~ | P0 | Bleephub external identity | browser sessions accepted only local personal access tokens | Bleephub now supports GitHub OAuth, administrator-provisioned email identities, and the e6qu-org-admins-over-e6qu-org-members role mapping. Microsoft Entra ID was explicitly excluded from the deployed setup iteration. |
 | ~~2562~~ | P1 | Bleephub Amazon Simple Storage Service configuration | fixed United States region | Bleephub now derives its Amazon Simple Storage Service region from `BLEEPHUB_S3_REGION` or `AWS_REGION` before retaining the local-development default, so a European production task no longer signs requests for `us-east-1`. |
 | ~~2562~~ | P0 | Bleephub Amazon Elastic Container Service release image | user interface omitted at build time | The release image now includes the embedded Bleephub user interface, so a healthy production task serves the browser application. |
 | ~~2560~~ | P0 | Bleephub GitHub Marketplace listing confidentiality | publisher webhook configuration reused as buyer listing metadata | Public Marketplace browse and detail responses now exclude listing webhook configuration, while the authenticated publisher settings adapter returns it only to the owning App administrator. |

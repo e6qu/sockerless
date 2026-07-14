@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-hosted-compute-network-onboarding` deployed Bleephub as an independent Amazon Elastic Container Service on AWS Fargate stack in eu-west-1. It used Amazon API Gateway wake routing, private Network Load Balancer application routing, Amazon Simple Storage Service git/object persistence, native dqlite voters, fck-nat, an Amazon Simple Storage Service gateway endpoint, GitHub OAuth, local administrator credentials, and real HTTP/SSH Git transports. The five-minute idle controller safely quiesced Amazon CloudWatch before scale-down and a verified cold wake restored a healthy quorum and service.
+`main` contained the independently deployed Bleephub Amazon Elastic Container Service on AWS Fargate stack in eu-west-1. It used Amazon API Gateway wake routing, private Network Load Balancer application routing, Amazon Simple Storage Service git/object persistence, native dqlite voters, fck-nat, an Amazon Simple Storage Service gateway endpoint, GitHub OAuth, local administrator credentials, and real HTTP/SSH Git transports. The five-minute idle controller safely quiesced Amazon CloudWatch before scale-down and a verified cold wake restored a healthy quorum and service. Complete CI ran for pull requests; post-merge `main` processing published only Bleephub's short-SHA multi-architecture GitHub Container Registry image.
 
 ## Continue Here
 
@@ -16,6 +16,8 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `bash scripts/check-latest-deps.sh` passed after the main-branch CI repair upgraded the newly published Google Cloud and supporting module pins; `go test ./...` passed in `backends/gcp-common` after its Cloud Build and Cloud Run update.
+- CI retained the full pull-request matrix and separated post-merge Bleephub container publication into its own `main` workflow, so merges no longer start every continuous-integration job.
 - `bash scripts/check-latest-deps.sh` passed after updating all module pins that the pre-push dependency-freshness gate reported; `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1 -timeout 8m` passed in 218 seconds with that updated dependency graph.
 - The native ARM64 core continuous-integration job reached the complete Bleephub package after all preceding core/API/agent packages passed, then exposed that its shared five-minute per-package timeout was too short; Bleephub now had its explicit eight-minute bound and retained full-suite coverage.
 - `bash -n ui/packages/bleephub/e2e/start-server.sh` and `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1 -timeout 8m` passed in 221 seconds after the real SSH E2E harness and port-aware clone URL fix.
