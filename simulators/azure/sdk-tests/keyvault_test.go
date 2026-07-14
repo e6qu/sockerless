@@ -150,7 +150,14 @@ func TestKeyVault_ARMPatchAccessPolicyAdvertisedEndpointAndDeletedVault(t *testi
 	purgeResp, err := http.DefaultClient.Do(purgeReq)
 	require.NoError(t, err)
 	purgeResp.Body.Close()
-	require.Equal(t, http.StatusOK, purgeResp.StatusCode)
+	require.Equal(t, http.StatusAccepted, purgeResp.StatusCode)
+	require.NotEmpty(t, purgeResp.Header.Get("Location"))
+	// GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}/purge/operation
+	// is the documented Location-based long-running-operation completion route.
+	purgePollResp, err := http.Get(purgeResp.Header.Get("Location"))
+	require.NoError(t, err)
+	purgePollResp.Body.Close()
+	require.Equal(t, http.StatusOK, purgePollResp.StatusCode)
 }
 
 // TestKeyVault_DataPlane_SetGetDelete pins the secret data plane:

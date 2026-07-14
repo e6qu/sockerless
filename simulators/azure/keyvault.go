@@ -591,18 +591,23 @@ func registerKeyVault(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, v)
 	})
 
-	// POST .../deletedVaults/{name}/purge — terraform-provider-azurerm
-	// calls this on destroy after a soft-delete-enabled vault is
-	// deleted, to permanently purge it (so the name can be reused).
-	// Sim hard-deletes vaults at DELETE time (no soft-delete state),
-	// so the purge has nothing to actually remove — respond 200 OK
-	// with an empty JSON body so the LRO poller parses cleanly. Real
-	// Azure returns 202 + an Azure-AsyncOperation header pointing at
-	// an operationStatus URL; the sim's clients use the body to
-	// confirm immediate completion.
+	// POST .../deletedVaults/{name}/purge accepts a purge operation. Azure
+	// permits either immediate 200 completion or 202 with a Location poll URI;
+	// use the latter so generated clients retain a truthful LRO lifecycle.
 	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}/purge", func(w http.ResponseWriter, r *http.Request) {
-		deletedVaults.Delete(deletedVaultID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "location"), sim.PathParam(r, "name")))
-		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		sub := sim.PathParam(r, "subscriptionId")
+		location := sim.PathParam(r, "location")
+		name := sim.PathParam(r, "name")
+		deletedVaults.Delete(deletedVaultID(sub, location, name))
+		operationPath := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.KeyVault/locations/%s/deletedVaults/%s/purge/operation", sub, location, name)
+		w.Header().Set("Location", azureRequestScheme(r)+"://"+r.Host+operationPath+"?api-version="+r.URL.Query().Get("api-version"))
+		w.WriteHeader(http.StatusAccepted)
+	})
+	// GET .../purge/operation is the terminal Location returned by a completed
+	// purge. A zero-length 200 is the Azure SDK's completion signal for this
+	// documented Location-based LRO form.
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}/purge/operation", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	})
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/deletedVaults", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")

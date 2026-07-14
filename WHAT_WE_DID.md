@@ -6,6 +6,8 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 
 ## 2026-07-14 - Targeted Main Validation and Standalone Cloud Run Builds (`fix-main-ci-trigger`)
 
+Azure Key Vault purge now modeled the documented accepted long-running-operation form. The simulator deleted the recoverable vault, returned `202 Accepted` with an absolute Location operation URI, and served a terminal zero-length `200 OK` at that URI. This let the current generated AzureRM client complete `VaultsPurgeDeletedThenPoll` without attempting to poll an already removed deleted-vault resource. Focused Azure Key Vault SDK coverage and a real Dockerized AzureRM apply, idempotency plan, and destroy run passed.
+
 The Azure Container Registry simulator now returned `properties.roleAssignmentMode` on registry reads and preserved an explicit requested setting. When the request omitted it, the simulator returned Azure's `LegacyRegistryPermissions` default, matching Microsoft.ContainerRegistry and preventing current AzureRM Terraform from proposing a perpetual in-place registry update. The command-line interface contract asserted that default. The macOS nested Azure Terraform harness also loaded its Buildx-built test image into Docker's image store before it started the inner test. A complete Dockerized AzureRM apply, idempotency plan, and destroy run passed.
 
 The fully baked Bleephub release image retried each Ubuntu dependency installation transaction from a freshly downloaded package index. This made the native ARM64 build resilient to an Ubuntu archive publication race where a just-replaced package returned `404` after the prior index had selected it. A complete local ARM64 release-image build passed through both dqlite installation stages and final image export.
