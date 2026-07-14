@@ -20,6 +20,8 @@ The repository dependency-freshness gate found stale cloud and supporting Go mod
 
 The primary continuous-integration workflow now ran for pull requests targeting `main` and for every push to `main`. A merged change therefore received the same independent post-merge validation as its pull request rather than leaving the protected branch without a run.
 
+The required freshness gate also surfaced newly published Google Cloud and supporting module releases before the CI repair could be pushed. The affected modules, including the Google Cloud common backend's Cloud Build and Cloud Run clients, were upgraded and validated by the same gate.
+
 ## 2026-07-12 - GitHub Marketplace Publisher and Buyer Product (`feat/bleephub-ui-api-completeness-audit`)
 
 Closed BUG-2548 through BUG-2560 and removed GitHub Marketplace from BUG-2523. GitHub App and OAuth App owners created durable draft/published listings, dedicated signed webhooks, delivery history, and free, flat-rate, or per-unit monthly/annual plans through authenticated settings. Publisher REST plan and account reads required the owning GitHub App's JSON Web Token or OAuth App's Basic client credentials, kept unrelated publishers isolated, preserved GitHub's production and `stubbed` shapes, returned empty collections rather than null, and excluded confidential webhook configuration from public buyer listings.

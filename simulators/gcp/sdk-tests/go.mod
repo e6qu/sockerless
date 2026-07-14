@@ -5,20 +5,20 @@ go 1.25.8
 require (
 	cloud.google.com/go/bigtable v1.50.0
 	cloud.google.com/go/compute/metadata v0.9.0
-	cloud.google.com/go/eventarc v1.24.0
+	cloud.google.com/go/eventarc v1.25.0
 	cloud.google.com/go/firestore v1.23.0
-	cloud.google.com/go/functions v1.24.0
-	cloud.google.com/go/iam v1.11.0
-	cloud.google.com/go/kms v1.31.0
-	cloud.google.com/go/logging v1.18.0
-	cloud.google.com/go/run v1.21.0
+	cloud.google.com/go/functions v1.25.0
+	cloud.google.com/go/iam v1.12.0
+	cloud.google.com/go/kms v1.32.0
+	cloud.google.com/go/logging v1.19.0
+	cloud.google.com/go/run v1.22.0
 	cloud.google.com/go/secretmanager v1.20.0
 	cloud.google.com/go/storage v1.63.1
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/api v0.288.0
-	google.golang.org/genproto v0.0.0-20260706201446-f0a921348800
-	google.golang.org/genproto/googleapis/api v0.0.0-20260706201446-f0a921348800
+	google.golang.org/genproto v0.0.0-20260713224248-f5fc221cf8c4
+	google.golang.org/genproto/googleapis/api v0.0.0-20260713224248-f5fc221cf8c4
 	google.golang.org/grpc v1.82.0
 	google.golang.org/protobuf v1.36.11
 )
@@ -28,10 +28,10 @@ require github.com/GoogleCloudPlatform/grpc-gcp-go/grpcgcp v1.6.0 // indirect
 require (
 	cel.dev/expr v0.25.2 // indirect
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/auth v0.21.0 // indirect
+	cloud.google.com/go/auth v0.22.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
-	cloud.google.com/go/monitoring v1.29.0 // indirect
+	cloud.google.com/go/monitoring v1.30.0 // indirect
 	cloud.google.com/go/pubsub v1.50.4
 	cloud.google.com/go/pubsub/v2 v2.6.1 // indirect
 	cloud.google.com/go/spanner v1.92.0
@@ -71,7 +71,7 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260713224248-f5fc221cf8c4 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

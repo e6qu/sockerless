@@ -16,6 +16,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `bash scripts/check-latest-deps.sh` passed after the main-branch CI repair upgraded the newly published Google Cloud and supporting module pins; `go test ./...` passed in `backends/gcp-common` after its Cloud Build and Cloud Run update.
 - CI subscribed to both `pull_request` and `push` on `main`, so merged changes started the full post-merge validation workflow instead of relying only on the pre-merge pull-request run.
 - `bash scripts/check-latest-deps.sh` passed after updating all module pins that the pre-push dependency-freshness gate reported; `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1 -timeout 8m` passed in 218 seconds with that updated dependency graph.
 - The native ARM64 core continuous-integration job reached the complete Bleephub package after all preceding core/API/agent packages passed, then exposed that its shared five-minute per-package timeout was too short; Bleephub now had its explicit eight-minute bound and retained full-suite coverage.

@@ -4,18 +4,18 @@ go 1.25.8
 
 require (
 	cloud.google.com/go/bigtable v1.50.0
-	cloud.google.com/go/iam v1.11.0
-	cloud.google.com/go/kms v1.31.0
-	cloud.google.com/go/logging v1.18.0
+	cloud.google.com/go/iam v1.12.0
+	cloud.google.com/go/kms v1.32.0
+	cloud.google.com/go/logging v1.19.0
 	cloud.google.com/go/longrunning v1.2.0
 	cloud.google.com/go/pubsub v1.50.4
 	cloud.google.com/go/secretmanager v1.20.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/sockerless/simulator v0.0.0
 	github.com/sockerless/simulator-realexec v0.0.0
-	google.golang.org/genproto v0.0.0-20260706201446-f0a921348800
-	google.golang.org/genproto/googleapis/api v0.0.0-20260706201446-f0a921348800
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800
+	google.golang.org/genproto v0.0.0-20260713224248-f5fc221cf8c4
+	google.golang.org/genproto/googleapis/api v0.0.0-20260713224248-f5fc221cf8c4
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260713224248-f5fc221cf8c4
 	google.golang.org/grpc v1.82.0
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.53.0

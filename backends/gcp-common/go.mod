@@ -3,8 +3,8 @@ module github.com/sockerless/gcp-common
 go 1.25.8
 
 require (
-	cloud.google.com/go/cloudbuild v1.31.0
-	cloud.google.com/go/run v1.21.0
+	cloud.google.com/go/cloudbuild v1.32.0
+	cloud.google.com/go/run v1.22.0
 	cloud.google.com/go/storage v1.63.1
 	github.com/rs/zerolog v1.35.1
 	github.com/sockerless/api v0.0.0
@@ -67,7 +67,7 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260526163538-3dc84a4a5aaa // indirect
