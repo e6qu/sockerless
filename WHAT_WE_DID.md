@@ -18,6 +18,8 @@ The native ARM64 core continuous-integration job now applied an explicit eight-m
 
 The repository dependency-freshness gate found stale cloud and supporting Go module pins before the timeout fix could be pushed. The affected Bleephub, cloud-backend, simulator, runner-dispatcher, agent, and command modules were updated to the current versions required by that gate. Dependency freshness then passed and the complete Bleephub suite passed in 218 seconds with the updated graph.
 
+The primary continuous-integration workflow now ran for pull requests targeting `main` and for every push to `main`. A merged change therefore received the same independent post-merge validation as its pull request rather than leaving the protected branch without a run.
+
 ## 2026-07-12 - GitHub Marketplace Publisher and Buyer Product (`feat/bleephub-ui-api-completeness-audit`)
 
 Closed BUG-2548 through BUG-2560 and removed GitHub Marketplace from BUG-2523. GitHub App and OAuth App owners created durable draft/published listings, dedicated signed webhooks, delivery history, and free, flat-rate, or per-unit monthly/annual plans through authenticated settings. Publisher REST plan and account reads required the owning GitHub App's JSON Web Token or OAuth App's Basic client credentials, kept unrelated publishers isolated, preserved GitHub's production and `stubbed` shapes, returned empty collections rather than null, and excluded confidential webhook configuration from public buyer listings.
