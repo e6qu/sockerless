@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2583 filed - 2536 fixed - 10 open - 16 false positives.**
+**2589 filed - 2541 fixed - 11 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2589 | P1 | Azure Container Registry Tasks SDK harness | the local Docker daemon did not trust the real HTTP simulator registry endpoint used by an ACR Tasks image push | Configure the test registry coordinate with a Docker-trusted transport or a real TLS endpoint so the complete SDK suite passes on macOS as it does in CI. |
 | 2582 | P2 | repository lint | full `golangci-lint` sweep attempted to analyze Go-module directories with no analyzable Go files | The lint module enumerator needs to exclude or correctly resolve empty `backends/azure-common` and `backends/core` directories so a full repository gate does not fail before source analysis. |
 | 2569 | P1 | Bleephub Amazon Elastic Container Service Terraform simulator harness | apply did not terminate within the bounded test window | The local Sockerless AWS Terraform apply/destroy harness left Terraform and simulator subprocesses running past its 90-second test deadline, so the blocking provider operation and subprocess lifecycle need a deterministic fix. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
@@ -21,6 +22,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2588~~ | P1 | Azure Key Vault simulator | purge returned JSON `200`, causing generated AzureRM clients to poll the already removed deleted-vault resource | Purge now returns Azure's documented `202` with a terminal Location-based operation endpoint, so the generated client completes the real long-running-operation lifecycle. |
+| ~~2587~~ | P1 | Azure Terraform simulator harness | macOS Docker's docker-container buildx driver retained the nested test image only in its build cache | The harness now uses `docker buildx build --load` when available, materializing its real test image before it starts the inner Terraform test. |
+| ~~2586~~ | P1 | Azure Container Registry simulator | registry reads omitted the default role-assignment mode required by the current AzureRM provider | Registry responses now preserve an explicit mode and return Azure's `LegacyRegistryPermissions` default when the request omits it, so Terraform apply is idempotent. |
+| ~~2585~~ | P1 | Bleephub ARM64 release image | an Ubuntu archive publication race returned a stale package URL during dqlite dependency installation | The release image now retries each apt package transaction from a newly fetched index when the upstream archive changes during the build. |
+| ~~2584~~ | P1 | Bleephub GitHub Container Registry retention | the startup-package retention predicate used invalid `jq` syntax | Retention now evaluates package tags through a valid explicit kept-tag filter before deleting obsolete GitHub Container Registry versions. |
 | ~~2583~~ | P1 | Bleephub wake release | the pre-push dependency-freshness gate found the Amazon Lambda SDK behind the current release | The Bleephub wake module now used the current Amazon Lambda SDK release required by the repository freshness gate. |
 | ~~2581~~ | P0 | Bleephub idle controller | idle shutdown synchronously waited past the Amazon Lambda timeout while Amazon Elastic Container Service drained tasks | Idle shutdown now sets every Bleephub runtime service to zero concurrently and lets Amazon Elastic Container Service complete its native drain asynchronously, while its timeout covers real control-plane work without abandoning a partial quorum. |
 | ~~2580~~ | P1 | Bleephub GitHub Container Registry retention | package retention assumed an organization namespace for a user-owned repository | Retention now resolves the repository owner type and calls the matching GitHub Packages user or organization endpoint before preserving the newest 20 Bleephub releases. |

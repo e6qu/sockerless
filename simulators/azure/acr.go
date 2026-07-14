@@ -39,6 +39,7 @@ type RegistryProperties struct {
 	ZoneRedundancy           string          `json:"zoneRedundancy,omitempty"`
 	AnonymousPullEnabled     *bool           `json:"anonymousPullEnabled,omitempty"`
 	DataEndpointEnabled      *bool           `json:"dataEndpointEnabled,omitempty"`
+	RoleAssignmentMode       string          `json:"roleAssignmentMode,omitempty"`
 	Policies                 json.RawMessage `json:"policies,omitempty"`
 	Encryption               json.RawMessage `json:"encryption,omitempty"`
 }
@@ -147,6 +148,12 @@ func registerACR(srv *sim.Server) {
 		if zoneRedundancy == "" {
 			zoneRedundancy = "Disabled"
 		}
+		// Microsoft.ContainerRegistry returns this default when a registry
+		// request does not opt into repository-level Azure ABAC permissions.
+		roleAssignmentMode := req.Properties.RoleAssignmentMode
+		if roleAssignmentMode == "" {
+			roleAssignmentMode = "LegacyRegistryPermissions"
+		}
 
 		reg := Registry{
 			ID:       resourceID,
@@ -164,6 +171,7 @@ func registerACR(srv *sim.Server) {
 				ZoneRedundancy:           zoneRedundancy,
 				AnonymousPullEnabled:     req.Properties.AnonymousPullEnabled,
 				DataEndpointEnabled:      req.Properties.DataEndpointEnabled,
+				RoleAssignmentMode:       roleAssignmentMode,
 				Policies:                 req.Properties.Policies,
 				Encryption:               req.Properties.Encryption,
 			},

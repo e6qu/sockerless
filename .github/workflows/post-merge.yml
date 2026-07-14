@@ -157,7 +157,16 @@ jobs:
                     if [ "$include_architectures" = true ]; then printf '%s\n' "$tag-amd64" "$tag-arm64"; fi
                   done
             } | jq -R . | jq -s 'unique')"
-            jq -r --argjson keep "$keep_tags" '.[] as $version | ($version.metadata.container.tags // []) as $tags | select(($tags | length == 0) or (($tags | any(. as $tag; $keep | index($tag) != null)) | not)) | $version.id' "$versions_file" \
+            jq -r --argjson keep "$keep_tags" '
+              .[]
+              | . as $version
+              | ($version.metadata.container.tags // []) as $tags
+              | select(
+                  ($tags | length == 0)
+                  or ([ $tags[] | select(. as $tag | $keep | index($tag) != null) ] | length == 0)
+                )
+              | $version.id
+            ' "$versions_file" \
               | while IFS= read -r version_id; do
                   echo "Deleting obsolete $package package version $version_id"
                   gh api --method DELETE "/$package_namespace/$OWNER/packages/container/$package/versions/$version_id"
