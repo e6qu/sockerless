@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2582 filed - 2535 fixed - 10 open - 16 false positives.**
+**2583 filed - 2536 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2583~~ | P1 | Bleephub wake release | the pre-push dependency-freshness gate found the Amazon Lambda SDK behind the current release | The Bleephub wake module now used the current Amazon Lambda SDK release required by the repository freshness gate. |
 | ~~2581~~ | P0 | Bleephub idle controller | idle shutdown synchronously waited past the Amazon Lambda timeout while Amazon Elastic Container Service drained tasks | Idle shutdown now sets every Bleephub runtime service to zero concurrently and lets Amazon Elastic Container Service complete its native drain asynchronously, while its timeout covers real control-plane work without abandoning a partial quorum. |
 | ~~2580~~ | P1 | Bleephub GitHub Container Registry retention | package retention assumed an organization namespace for a user-owned repository | Retention now resolves the repository owner type and calls the matching GitHub Packages user or organization endpoint before preserving the newest 20 Bleephub releases. |
 | ~~2579~~ | P1 | standalone Google Cloud modules | dependency refresh left Cloud Run module graphs unreconciled outside the workspace | Cloud Run and Cloud Run Functions now carry the reconciled Cloud Build dependency metadata, so `GOWORK=off` no-UI binary builds succeed exactly as the release matrix runs them. |

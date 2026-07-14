@@ -14,6 +14,8 @@ The Bleephub idle controller now switched the public route back to wake and set 
 
 The Bleephub Terraform module now published a cache-controlled, non-sensitive startup document from a dedicated Amazon Simple Storage Service bucket through an explicit Amazon API Gateway route. The wake Lambda retained only capacity control and token-protected administrator status JSON, while the document visibly tracked startup, loaded the healthy Bleephub document without a browser refresh, and showed administrator Amazon Elastic Container Service counts plus direct Amazon CloudWatch Logs, Amazon CloudWatch idle-alarm, and Amazon ECS console links only after administrator-token authentication. The release workflow built the versioned startup ZIP as a GitHub Container Registry package and retained its newest 20 releases alongside the multi-architecture Bleephub images. Every authenticated and sign-in Bleephub page showed the immutable image version and publication timestamp embedded at release build time.
 
+The wake module also used the current Amazon Lambda SDK release required by the dependency-freshness gate.
+
 The Google Cloud dependency refresh also reconciled the Cloud Run and Cloud Run Functions module graphs under `GOWORK=off`. The release-matrix no-UI binaries now build with their standalone module metadata instead of requiring a workspace-mediated dependency selection.
 
 ## 2026-07-14 - Bleephub Terraform Module Relocation (`feat/bleephub-terraform-module`)
