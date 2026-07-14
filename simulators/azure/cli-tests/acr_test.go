@@ -28,14 +28,16 @@ func TestACR_CreateAndShow(t *testing.T) {
 			Name string `json:"name"`
 		} `json:"sku"`
 		Properties struct {
-			ProvisioningState string `json:"provisioningState"`
-			LoginServer       string `json:"loginServer"`
+			ProvisioningState  string `json:"provisioningState"`
+			LoginServer        string `json:"loginServer"`
+			RoleAssignmentMode string `json:"roleAssignmentMode"`
 		} `json:"properties"`
 	}
 	parseJSON(t, out, &registry)
 	assert.Equal(t, "clitestregistry", registry.Name)
 	assert.Equal(t, "eastus", registry.Location)
 	assert.NotEmpty(t, registry.Properties.LoginServer)
+	assert.Equal(t, "LegacyRegistryPermissions", registry.Properties.RoleAssignmentMode)
 
 	// GET
 	out = runCLI(t, azRest("GET", url, ""))

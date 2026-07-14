@@ -186,7 +186,15 @@ func runTerraformTestsInDocker() int {
 
 	image := "sockerless-test-azure"
 	dockerfile := filepath.Join(repoRoot, "simulators", "Dockerfile.test")
-	build := exec.Command("docker", "build", "-t", image, "-f", dockerfile, repoRoot)
+	// A docker-container buildx driver retains a plain `docker build` result
+	// only in its build cache. The nested test container must run the tagged
+	// image, so load it into the daemon store whenever buildx is available.
+	buildArgs := []string{"build"}
+	if exec.Command("docker", "buildx", "version").Run() == nil {
+		buildArgs = []string{"buildx", "build", "--load"}
+	}
+	buildArgs = append(buildArgs, "-t", image, "-f", dockerfile, repoRoot)
+	build := exec.Command("docker", buildArgs...)
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {

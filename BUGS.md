@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2585 filed - 2538 fixed - 10 open - 16 false positives.**
+**2587 filed - 2540 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2587~~ | P1 | Azure Terraform simulator harness | macOS Docker's docker-container buildx driver retained the nested test image only in its build cache | The harness now uses `docker buildx build --load` when available, materializing its real test image before it starts the inner Terraform test. |
+| ~~2586~~ | P1 | Azure Container Registry simulator | registry reads omitted the default role-assignment mode required by the current AzureRM provider | Registry responses now preserve an explicit mode and return Azure's `LegacyRegistryPermissions` default when the request omits it, so Terraform apply is idempotent. |
 | ~~2585~~ | P1 | Bleephub ARM64 release image | an Ubuntu archive publication race returned a stale package URL during dqlite dependency installation | The release image now retries each apt package transaction from a newly fetched index when the upstream archive changes during the build. |
 | ~~2584~~ | P1 | Bleephub GitHub Container Registry retention | the startup-package retention predicate used invalid `jq` syntax | Retention now evaluates package tags through a valid explicit kept-tag filter before deleting obsolete GitHub Container Registry versions. |
 | ~~2583~~ | P1 | Bleephub wake release | the pre-push dependency-freshness gate found the Amazon Lambda SDK behind the current release | The Bleephub wake module now used the current Amazon Lambda SDK release required by the repository freshness gate. |
