@@ -81,3 +81,56 @@ jobs:
             --tag "$IMAGE:$TAG" \
             "$IMAGE:$TAG-amd64" \
             "$IMAGE:$TAG-arm64"
+
+  prune:
+    name: Retain 20 Bleephub releases
+    needs: [metadata, manifest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - name: Delete package versions outside the newest 20 releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: sockerless-bleephub
+        run: |
+          set -euo pipefail
+
+          versions_file="$(mktemp)"
+          gh api --paginate \
+            "/orgs/$OWNER/packages/container/$PACKAGE/versions?per_page=100" \
+            | jq -s 'add' > "$versions_file"
+
+          keep_tags="$({
+            jq -r '
+              [ .[]
+                | select(any(.metadata.container.tags[]?; test("^[0-9a-f]{12}$")))
+              ]
+              | sort_by(.created_at)
+              | reverse
+              | .[:20]
+              | .[]
+              | .metadata.container.tags[]
+              | select(test("^[0-9a-f]{12}$"))
+            ' "$versions_file" \
+              | while IFS= read -r tag; do
+                  printf '%s\n' "$tag" "$tag-amd64" "$tag-arm64"
+                done
+          } | jq -R . | jq -s 'unique')"
+
+          jq -r --argjson keep "$keep_tags" '
+            .[] as $version
+            | ($version.metadata.container.tags // []) as $tags
+            | select(
+                ($tags | length == 0)
+                or (($tags | any(. as $tag; $keep | index($tag) != null)) | not)
+              )
+            | $version.id
+          ' "$versions_file" \
+            | while IFS= read -r version_id; do
+                echo "Deleting obsolete package version $version_id"
+                gh api --method DELETE \
+                  "/orgs/$OWNER/packages/container/$PACKAGE/versions/$version_id"
+              done
