@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2580 filed - 2534 fixed - 9 open - 16 false positives.**
+**2582 filed - 2535 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2582 | P2 | repository lint | full `golangci-lint` sweep attempted to analyze Go-module directories with no analyzable Go files | The lint module enumerator needs to exclude or correctly resolve empty `backends/azure-common` and `backends/core` directories so a full repository gate does not fail before source analysis. |
 | 2569 | P1 | Bleephub Amazon Elastic Container Service Terraform simulator harness | apply did not terminate within the bounded test window | The local Sockerless AWS Terraform apply/destroy harness left Terraform and simulator subprocesses running past its 90-second test deadline, so the blocking provider operation and subprocess lifecycle need a deterministic fix. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
@@ -20,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2581~~ | P0 | Bleephub idle controller | idle shutdown synchronously waited past the Amazon Lambda timeout while Amazon Elastic Container Service drained tasks | Idle shutdown now sets every Bleephub runtime service to zero concurrently and lets Amazon Elastic Container Service complete its native drain asynchronously, while its timeout covers real control-plane work without abandoning a partial quorum. |
 | ~~2580~~ | P1 | Bleephub GitHub Container Registry retention | package retention assumed an organization namespace for a user-owned repository | Retention now resolves the repository owner type and calls the matching GitHub Packages user or organization endpoint before preserving the newest 20 Bleephub releases. |
 | ~~2579~~ | P1 | standalone Google Cloud modules | dependency refresh left Cloud Run module graphs unreconciled outside the workspace | Cloud Run and Cloud Run Functions now carry the reconciled Cloud Build dependency metadata, so `GOWORK=off` no-UI binary builds succeed exactly as the release matrix runs them. |
 | ~~2578~~ | P2 | dependency freshness | the pre-push gate found newly published Google Cloud and supporting Go module releases | The affected Bleephub, cloud-backend, simulator, runner-dispatcher, agent, command, and test modules now use the latest versions required by the dependency-freshness gate. |

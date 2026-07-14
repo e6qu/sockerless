@@ -10,6 +10,8 @@ CI kept the complete validation matrix on pull requests and moved post-merge `ma
 
 Retention resolved the repository owner's GitHub account type before calling the GitHub Packages API, so the user-owned `e6qu` namespace used `/users/` while organization namespaces used `/orgs/`.
 
+The Bleephub idle controller now switched the public route back to wake and set the application plus every dqlite voter to zero in one Amazon Elastic Container Service control-plane pass. Amazon Elastic Container Service completed the real connection drain asynchronously, so the Lambda did not time out and leave a partial quorum running.
+
 The Google Cloud dependency refresh also reconciled the Cloud Run and Cloud Run Functions module graphs under `GOWORK=off`. The release-matrix no-UI binaries now build with their standalone module metadata instead of requiring a workspace-mediated dependency selection.
 
 ## 2026-07-14 - Bleephub Terraform Module Relocation (`feat/bleephub-terraform-module`)

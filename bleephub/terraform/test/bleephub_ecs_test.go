@@ -117,6 +117,10 @@ module "bleephub" {
 	}
 	runTerraform(t, dir, "init", "-backend=false")
 	runTerraform(t, dir, "apply", "-auto-approve")
+	idleShutdown := runTerraformOutput(t, dir, "state", "show", "module.bleephub.aws_lambda_function.idle_shutdown")
+	if !strings.Contains(idleShutdown, "timeout                         = 300") {
+		t.Fatalf("idle shutdown Lambda did not retain the 300-second control-plane timeout:\n%s", idleShutdown)
+	}
 	runTerraform(t, dir, "plan", "-detailed-exitcode")
 	runTerraform(t, dir, "destroy", "-auto-approve")
 }
@@ -139,6 +143,11 @@ func buildWake(t *testing.T, destination string) {
 
 func runTerraform(t *testing.T, directory string, arguments ...string) {
 	t.Helper()
+	_ = runTerraformOutput(t, directory, arguments...)
+}
+
+func runTerraformOutput(t *testing.T, directory string, arguments ...string) string {
+	t.Helper()
 	command := exec.Command("terraform", arguments...)
 	command.Dir = directory
 	command.Env = append(os.Environ(), "AWS_ENDPOINT_URL="+simulatorURL, "AWS_ACCESS_KEY_ID=test", "AWS_SECRET_ACCESS_KEY=test", "AWS_DEFAULT_REGION=eu-west-1", "TF_LOG=")
@@ -146,4 +155,5 @@ func runTerraform(t *testing.T, directory string, arguments ...string) {
 	if err != nil {
 		t.Fatalf("terraform %s: %v\n%s", strings.Join(arguments, " "), err, output)
 	}
+	return string(output)
 }

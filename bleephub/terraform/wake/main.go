@@ -64,29 +64,8 @@ func wake(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 		if err := routeToWake(ctx, apiClient, apiID); err != nil {
 			return events.APIGatewayV2HTTPResponse{}, err
 		}
-		if services.Services[0].DesiredCount != 0 {
-			if _, err := ecsClient.UpdateService(ctx, &ecs.UpdateServiceInput{Cluster: aws.String(cluster), Service: aws.String(service), DesiredCount: aws.Int32(0)}); err != nil {
-				return events.APIGatewayV2HTTPResponse{}, fmt.Errorf("stop ECS service after idle timeout: %w", err)
-			}
-		}
-		appTasks, err := stopServiceTasks(ctx, ecsClient, cluster, service)
-		if err != nil {
-			return events.APIGatewayV2HTTPResponse{}, err
-		}
-		if err := waitForTasksStopped(ctx, ecsClient, cluster, appTasks); err != nil {
-			return events.APIGatewayV2HTTPResponse{}, err
-		}
-		if err := setDesiredCount(ctx, ecsClient, cluster, dqliteServices, 0); err != nil {
-			return events.APIGatewayV2HTTPResponse{}, fmt.Errorf("stop dqlite quorum after application drain: %w", err)
-		}
-		for _, dqliteService := range dqliteServices {
-			tasks, err := stopServiceTasks(ctx, ecsClient, cluster, dqliteService)
-			if err != nil {
-				return events.APIGatewayV2HTTPResponse{}, err
-			}
-			if err := waitForTasksStopped(ctx, ecsClient, cluster, tasks); err != nil {
-				return events.APIGatewayV2HTTPResponse{}, fmt.Errorf("wait for dqlite voter %s to stop: %w", dqliteService, err)
-			}
+		if err := setDesiredCount(ctx, ecsClient, cluster, append([]string{service}, dqliteServices...), 0); err != nil {
+			return events.APIGatewayV2HTTPResponse{}, fmt.Errorf("set Bleephub services to zero after idle timeout: %w", err)
 		}
 		return response(http.StatusAccepted, "Bleephub stopped after five minutes without requests."), nil
 	}
@@ -216,19 +195,6 @@ func armIdleAlarm(ctx context.Context, cloudWatchClient *cloudwatch.Client, lamb
 	return nil
 }
 
-func stopServiceTasks(ctx context.Context, ecsClient *ecs.Client, cluster, service string) ([]string, error) {
-	tasks, err := ecsClient.ListTasks(ctx, &ecs.ListTasksInput{Cluster: aws.String(cluster), ServiceName: aws.String(service), DesiredStatus: "RUNNING"})
-	if err != nil {
-		return nil, fmt.Errorf("list running ECS tasks for %s: %w", service, err)
-	}
-	for _, task := range tasks.TaskArns {
-		if _, err := ecsClient.StopTask(ctx, &ecs.StopTaskInput{Cluster: aws.String(cluster), Task: aws.String(task), Reason: aws.String("Bleephub idle shutdown")}); err != nil {
-			return nil, fmt.Errorf("stop ECS task %s for %s: %w", task, service, err)
-		}
-	}
-	return tasks.TaskArns, nil
-}
-
 func csvEnv(name string) []string {
 	values := []string{}
 	for _, value := range strings.Split(os.Getenv(name), ",") {
@@ -285,36 +251,6 @@ func ensureDqlite(ctx context.Context, ecsClient *ecs.Client, loadBalancerClient
 	// dqlite commits with a majority of its configured voters. Requiring every
 	// voter here turns a recoverable single-voter restart into a full outage.
 	return healthyVoters >= len(targetGroups)/2+1, nil
-}
-
-func waitForTasksStopped(ctx context.Context, ecsClient *ecs.Client, cluster string, tasks []string) error {
-	if len(tasks) == 0 {
-		return nil
-	}
-	for {
-		described, err := ecsClient.DescribeTasks(ctx, &ecs.DescribeTasksInput{Cluster: aws.String(cluster), Tasks: tasks})
-		if err != nil {
-			return fmt.Errorf("describe draining ECS tasks: %w", err)
-		}
-		if len(described.Tasks) != len(tasks) {
-			return fmt.Errorf("describe draining ECS tasks returned %d tasks, expected %d", len(described.Tasks), len(tasks))
-		}
-		stopped := true
-		for _, task := range described.Tasks {
-			if aws.ToString(task.LastStatus) != "STOPPED" {
-				stopped = false
-				break
-			}
-		}
-		if stopped {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("wait for Bleephub ECS tasks to stop: %w", ctx.Err())
-		case <-time.After(2 * time.Second):
-		}
-	}
 }
 
 func routeToWake(ctx context.Context, client *apigatewayv2.Client, apiID string) error {
