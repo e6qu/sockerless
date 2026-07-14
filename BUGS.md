@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2591 filed - 2544 fixed - 11 open - 16 false positives.**
+**2592 filed - 2545 fixed - 11 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -22,6 +22,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2592~~ | P0 | Bleephub Git SSH authorization | An external GitHub administrator authenticated with a registered SSH key but could not push to an organization repository because the repository authorization path ignored the administrator override | Site administrators now hold read, push, and administrative access to every repository, including through the real SSH Git transport. |
 | ~~2591~~ | P2 | dependency freshness | the pre-push gate found stale Amazon Web Services service clients in the Amazon Elastic Container Service, AWS Lambda, Bleephub wake, and AWS simulator modules | The affected modules now use the latest Amazon Cloud Map, AWS Lambda, and Amazon Simple Systems Manager Go service clients; their real backend, wake, and simulator SDK tests passed. |
 | ~~2590~~ | P0 | Bleephub GitHub Container Registry release | Buildx provenance made each architecture tag an OCI index whose anonymous child manifest could not be fetched by Amazon ECS on AWS Fargate | Native architecture tags now publish direct image manifests without provenance indexes, so Amazon ECS resolves and pulls the public ARM64 or AMD64 image before composing the retained multi-architecture manifest. |
 | ~~2588~~ | P1 | Azure Key Vault simulator | purge returned JSON `200`, causing generated AzureRM clients to poll the already removed deleted-vault resource | Purge now returns Azure's documented `202` with a terminal Location-based operation endpoint, so the generated client completes the real long-running-operation lifecycle. |
