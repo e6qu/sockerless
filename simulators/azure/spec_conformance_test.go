@@ -162,9 +162,10 @@ var allowedNonSpecAzureRoutes = map[string]string{
 	// Azure-AsyncOperation / Location header carries — the URL shape is
 	// service-internal and never appears in a swagger. These are the
 	// sim-emitted polling targets.
-	"GET /subscriptions/{subscriptionId}/providers/Microsoft.App/locations/{location}/operationStatuses/{opId}": "sim-emitted LRO polling URL (Azure-AsyncOperation)",
-	"GET /subscriptions/{subscriptionId}/providers/{provider}/locations/{location}/operationResults/{opId}":     "sim-emitted LRO polling URL (Location header)",
-	"GET /subscriptions/{subscriptionId}/providers/{provider}/locations/{location}/operationStatuses/{opId}":    "sim-emitted LRO polling URL (Azure-AsyncOperation)",
+	"GET /subscriptions/{subscriptionId}/providers/Microsoft.App/locations/{location}/operationStatuses/{opId}":                  "sim-emitted LRO polling URL (Azure-AsyncOperation)",
+	"GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}/purge/operation": "sim-emitted Azure Key Vault purge LRO polling URL (documented Location header)",
+	"GET /subscriptions/{subscriptionId}/providers/{provider}/locations/{location}/operationResults/{opId}":                      "sim-emitted LRO polling URL (Location header)",
+	"GET /subscriptions/{subscriptionId}/providers/{provider}/locations/{location}/operationStatuses/{opId}":                     "sim-emitted LRO polling URL (Azure-AsyncOperation)",
 
 	// Exec bridges: the real APIs return an opaque WebSocket URI
 	// (webSocketUri / execEndpoint) that clients connect to verbatim;
