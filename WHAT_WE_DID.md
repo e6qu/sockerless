@@ -18,6 +18,8 @@ Each native architecture tag now published a direct OCI image manifest without a
 
 Closed BUG-2591 by upgrading stale Amazon Cloud Map, AWS Lambda, and Amazon Simple Systems Manager Go service clients in the Amazon Elastic Container Service backend, AWS Lambda backend, Bleephub wake function, and AWS simulator software development kit module. The affected backend, wake, and simulator software development kit suites passed against the updated clients, and repository dependency freshness passed.
 
+Closed BUG-2592 by making Bleephub site administrators authoritative for repository authorization. An external GitHub administrator with a registered SSH key could now read, push, and administer organization-owned repositories through the same Git Smart HTTP and SSH checks as every other Git client; focused SSH transport coverage and the complete Bleephub suite passed.
+
 Retention resolved the repository owner's GitHub account type before calling the GitHub Packages API, so the user-owned `e6qu` namespace used `/users/` while organization namespaces used `/orgs/`.
 
 The Bleephub idle controller now switched the public route back to wake and set the application plus every dqlite voter to zero in one Amazon Elastic Container Service control-plane pass. Amazon Elastic Container Service completed the real connection drain asynchronously, so the Lambda did not time out and leave a partial quorum running.

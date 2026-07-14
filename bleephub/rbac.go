@@ -29,6 +29,9 @@ func canReadRepo(st *Store, user *User, repo *Repo) bool {
 	if !repo.Private {
 		return true
 	}
+	if user != nil && user.SiteAdmin {
+		return true
+	}
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return canPullRepoLocked(st, user, repo)
@@ -47,6 +50,9 @@ func canReadRepoLocked(st *Store, user *User, repo *Repo) bool {
 func canAdminRepo(st *Store, user *User, repo *Repo) bool {
 	if user == nil {
 		return false
+	}
+	if user.SiteAdmin {
+		return true
 	}
 	// Owner can always admin
 	if repo.Owner != nil && repo.Owner.ID == user.ID {
@@ -70,6 +76,9 @@ func canAdminRepo(st *Store, user *User, repo *Repo) bool {
 func canPushRepo(st *Store, user *User, repo *Repo) bool {
 	if user == nil {
 		return false
+	}
+	if user.SiteAdmin {
+		return true
 	}
 	if repo.Owner != nil && repo.Owner.ID == user.ID {
 		return true
