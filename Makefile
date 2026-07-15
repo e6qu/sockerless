@@ -15,7 +15,6 @@
 #
 #   make backends/ecs/build              # build a single app via path
 #   make backends/ecs/test-integration   # sim-backed integration tests
-#   make bleephub/test-integration       # bleephub gh-runner integration
 #   make tests/test                      # cross-backend e2e suite
 #   make cmd/sockerless-admin/run        # run a single app via path
 #
@@ -26,7 +25,7 @@
 #
 # Cross-cutting Docker-driven suites live in dedicated sections below
 # (smoke-test-*, tf-int-test-*, e2e-github-*, e2e-gitlab-*,
-# upstream-test-*, bleephub-gh-docker-test). Per-app aliases were
+# upstream-test-*). Per-app aliases were
 # removed — sockerless is under active development and carries no
 # legacy compatibility surface; use the path-delegation form
 # (`make <dir>/<target>`) instead.
@@ -50,8 +49,6 @@ endef
 # Go binaries with optional embedded UI (12).
 GO_UI_APPS := \
   cmd/sockerless-admin \
-  bleephub \
-  bleeplab \
   backends/docker \
   backends/ecs \
   backends/lambda \
@@ -77,8 +74,6 @@ GO_APPS := \
 # (except `core`, which is a shared library).
 UI_APPS := \
   ui/packages/admin \
-  ui/packages/bleephub \
-  ui/packages/bleeplab \
   ui/packages/backend-docker \
   ui/packages/backend-ecs \
   ui/packages/backend-lambda \
@@ -166,9 +161,8 @@ _fanout:
 # the full target with the suffix appended.
 
 # FORCE keeps the recipe from being short-circuited when a directory
-# happens to share the target name (e.g. `bleephub/test/` exists on
-# disk, so without FORCE `make bleephub/test` would silently report
-# "up to date" instead of delegating into bleephub's Makefile).
+# happens to share the target name, so without FORCE a path target
+# could silently report "up to date" instead of delegating to its Makefile.
 .PHONY: FORCE
 FORCE:
 
@@ -375,144 +369,3 @@ upstream-test-gcl-all:
 	  printf "$(COLOR_CYAN)=== Upstream GCL: %s ===$(COLOR_RESET)\n" "$$b" && \
 	  $(MAKE) -s upstream-test-gcl-$$b || true; \
 	done
-
-# ── Bleephub gh CLI parity harness (Docker) ─────────────────────────
-#
-# Builds a Docker image that bundles bleephub + the official `gh`
-# binary, then runs bleephub/test/run-gh-test.sh against it. Real gh,
-# real TLS, real HTTP. Image build is ~60s cold, ~10s warm.
-.PHONY: bleephub-gh-docker-test
-bleephub-gh-docker-test:
-	@printf "$(COLOR_CYAN)▸ Building bleephub gh-test image…$(COLOR_RESET)\n"
-	$(call docker_build_local,-f bleephub/Dockerfile.gh-test -t bleephub-gh-test:local .)
-	@printf "$(COLOR_CYAN)▸ Running gh CLI parity harness…$(COLOR_RESET)\n"
-	@docker run --rm bleephub-gh-test:local
-
-# Official actions/runner against bleephub end-to-end: the runner
-# registers, polls the broker, executes host-mode AND container-mode
-# jobs (jobContainer null vs image string — real GitHub's shapes),
-# service containers, uploads timeline records + logs, and completes.
-# Container/service jobs dispatch through the selected sockerless
-# backend to its cloud simulator; workloads run on the host engine via
-# the mounted docker.sock, sharing the runner's workspace through the
-# sim storage host dir mounted at an identical path inside and out (the
-# runner-as-cloud-task data plane, sim-proven). One image serves every
-# backend; the run target picks via BLEEPHUB_BACKEND. Ports: 80
-# (bleephub — the runner strips non-standard ports from URLs) and 3375
-# (backend — workload agents dial back via host.docker.internal).
-.PHONY: bleephub-runner-docker-build
-bleephub-runner-docker-build:
-	@printf "$(COLOR_CYAN)▸ Building bleephub runner-integration image…$(COLOR_RESET)\n"
-	$(call docker_build_local,-f bleephub/Dockerfile -t bleephub-runner-int:local .)
-
-# $(1) = backend (ecs|aca|cloudrun). $(2) = the sim's in-container HTTP
-# port, published to the host engine at 127.0.0.1:5000 so the overlay
-# build→push→pull (ACA ACR Tasks / Cloud Run Cloud Build) reaches the
-# sim's /v2/. Mounts an identical-path host data dir that the sim
-# materialises cloud storage into and the host engine binds into
-# workload containers.
-define run_bleephub_harness
-	@printf "$(COLOR_CYAN)▸ Running official actions/runner harness ($(1))…$(COLOR_RESET)\n"
-	@rm -rf /tmp/sockerless-bleephub-data && mkdir -p /tmp/sockerless-bleephub-data
-	@docker run --rm \
-	  --security-opt label=disable \
-	  -v $(CURDIR)/bleephub/test:/test:ro \
-	  -v /var/run/docker.sock:/var/run/docker.sock \
-	  -v /tmp/sockerless-bleephub-data:/tmp/sockerless-bleephub-data \
-	  -e SOCKERLESS_HARNESS_DATA_DIR=/tmp/sockerless-bleephub-data \
-	  -e BLEEPHUB_BACKEND=$(1) \
-	  -e BLEEPHUB_TEST_FROM \
-	  -e BLEEPHUB_HOLD \
-	  -p 80:80 -p 3375:3375 -p 5000:$(2) \
-	  bleephub-runner-int:local
-endef
-
-.PHONY: bleephub-runner-docker-test
-bleephub-runner-docker-test: bleephub-runner-docker-build
-	$(call run_bleephub_harness,ecs,4566)
-
-.PHONY: bleephub-runner-docker-test-aca
-bleephub-runner-docker-test-aca: bleephub-runner-docker-build bleephub-sim-registry-trust
-	$(call run_bleephub_harness,aca,4568)
-
-.PHONY: bleephub-runner-docker-test-azf
-bleephub-runner-docker-test-azf: bleephub-runner-docker-build bleephub-sim-registry-trust
-	$(call run_bleephub_harness,azf,4568)
-
-.PHONY: bleephub-runner-docker-test-cloudrun
-bleephub-runner-docker-test-cloudrun: bleephub-runner-docker-build bleephub-sim-registry-trust
-	$(call run_bleephub_harness,cloudrun,4567)
-
-.PHONY: bleephub-runner-docker-test-gcf
-bleephub-runner-docker-test-gcf: bleephub-runner-docker-build bleephub-sim-registry-trust
-	$(call run_bleephub_harness,gcf,4567)
-
-# ── bleeplab GitLab docker-executor harness ─────────────────────────────
-# A real gitlab-runner registers against the bleeplab control-plane sim and
-# runs CI jobs through a docker executor whose host is sockerless. The job +
-# helper containers dispatch through sockerless to the cloud sim and run on
-# the host engine (mounted docker.sock). Ports: 8929 (bleeplab) and 3375
-# (backend — workload agents dial back via host.docker.internal).
-.PHONY: bleeplab-runner-docker-build
-bleeplab-runner-docker-build:
-	@printf "$(COLOR_CYAN)▸ Building bleeplab runner-integration image…$(COLOR_RESET)\n"
-	$(call docker_build_local,-f bleeplab/Dockerfile -t bleeplab-runner-int:local .)
-
-# $(1)=backend, $(2)=sim port. Publishes the sim's /v2/ registry at
-# 127.0.0.1:5000 so the overlay build→push→pull (cloudrun) reaches it; ECS
-# has no overlay/registry so the publish is a harmless no-op there.
-define run_bleeplab_harness
-	@printf "$(COLOR_CYAN)▸ Running gitlab-runner harness ($(1))…$(COLOR_RESET)\n"
-	@rm -rf /tmp/sockerless-bleeplab-data && mkdir -p /tmp/sockerless-bleeplab-data
-	@docker run --rm \
-	  --security-opt label=disable \
-	  -v $(CURDIR)/bleeplab/test:/test:ro \
-	  -v /var/run/docker.sock:/var/run/docker.sock \
-	  -v /tmp/sockerless-bleeplab-data:/tmp/sockerless-bleeplab-data \
-	  -e SOCKERLESS_HARNESS_DATA_DIR=/tmp/sockerless-bleeplab-data \
-	  -e BLEEPLAB_BACKEND=$(1) \
-	  -e BLEEPLAB_HOLD \
-	  -p 8929:8929 -p 3375:3375 -p 5000:$(2) \
-	  bleeplab-runner-int:local
-endef
-
-.PHONY: bleeplab-runner-docker-test-ecs
-bleeplab-runner-docker-test-ecs: bleeplab-runner-docker-build
-	$(call run_bleeplab_harness,ecs,4566)
-
-# cloudrun + gcf: overlay build→push→pull through the sim registry, so they
-# need the :5000 publish + the podman insecure-registry trust (reused from
-# bleephub). Both run on the gcp sim (port 4567).
-.PHONY: bleeplab-runner-docker-test-cloudrun
-bleeplab-runner-docker-test-cloudrun: bleeplab-runner-docker-build bleephub-sim-registry-trust
-	$(call run_bleeplab_harness,cloudrun,4567)
-
-.PHONY: bleeplab-runner-docker-test-gcf
-bleeplab-runner-docker-test-gcf: bleeplab-runner-docker-build bleephub-sim-registry-trust
-	$(call run_bleeplab_harness,gcf,4567)
-
-# aca + azf run on the azure sim (port 4568): the ACA App-overlay and the AZF
-# sitecontainers-overlay paths build→push→pull the bootstrap overlay through
-# ACR Tasks at the sim's /v2/ published to 127.0.0.1:5000 (needs the registry
-# trust drop-in on podman).
-.PHONY: bleeplab-runner-docker-test-aca
-bleeplab-runner-docker-test-aca: bleeplab-runner-docker-build bleephub-sim-registry-trust
-	$(call run_bleeplab_harness,aca,4568)
-
-.PHONY: bleeplab-runner-docker-test-azf
-bleeplab-runner-docker-test-azf: bleeplab-runner-docker-build bleephub-sim-registry-trust
-	$(call run_bleeplab_harness,azf,4568)
-
-# Both the ACA App-overlay (ACR Tasks) and the Cloud Run overlay (Cloud
-# Build) paths do a real docker push + pull of the bootstrap overlay
-# through the sim's registry, published at 127.0.0.1:5000. Docker
-# auto-trusts loopback registries; Podman does not, so on a
-# podman-machine host add a scoped, idempotent insecure drop-in
-# (loopback:5000 only). On Docker, and on Linux CI, this is a no-op.
-.PHONY: bleephub-sim-registry-trust
-bleephub-sim-registry-trust:
-	@if docker version 2>/dev/null | grep -qi podman && command -v podman >/dev/null 2>&1; then \
-	  printf "$(COLOR_CYAN)▸ Trusting the sim registry (127.0.0.1:5000) on the podman machine…$(COLOR_RESET)\n"; \
-	  podman machine ssh "printf '[[registry]]\nlocation = \"127.0.0.1:5000\"\ninsecure = true\n' | sudo tee /etc/containers/registries.conf.d/sockerless-sim-insecure.conf >/dev/null" 2>/dev/null || \
-	    printf "  (could not auto-configure; add 127.0.0.1:5000 to the engine's insecure registries)\n"; \
-	fi

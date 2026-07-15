@@ -4,6 +4,12 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-15 - Standalone Bleephub and Bleeplab Extraction (`chore/extract-bleep-products`)
+
+Bleephub and Bleeplab moved into the independent `e6qu/bleephub` and `e6qu/bleeplab` repositories without retaining Sockerless commit history. Each repository retained exactly one root commit authored by the e6qu noreply identity. Bleephub now owns its Go server layout, web application, SSH gateway, dqlite node, Terraform module, tests, and official GitHub Actions runner consumer harness. Bleeplab now owns its server, user interface, tests, and official GitLab Runner consumer harness.
+
+Sockerless removed the product implementations, user-interface packages, Terraform module, product workflows, administration wiring, stale local paths, and obsolete build artifacts. Documentation now treats both products as external consumers. The Bleephub runner harness builds its own product image and the real Sockerless simulator/backend binaries from a named build context; its spawned-runner image uses that same loaded harness image. The Bleeplab runner harness follows the same real consumer model. Terragrunt configuration in `e6qu/infra` pins the standalone Bleephub Terraform module root commit.
+
 ## 2026-07-14 - Targeted Main Validation and Standalone Cloud Run Builds (`fix-main-ci-trigger`)
 
 Azure Key Vault purge now modeled the documented accepted long-running-operation form. The simulator deleted the recoverable vault, returned `202 Accepted` with an absolute Location operation URI, and served a terminal zero-length `200 OK` at that URI. The terminal poll URI is explicitly allowed by the Swagger conformance ratchet because the documented Location target has no upstream Swagger path. This let the current generated AzureRM client complete `VaultsPurgeDeletedThenPoll` without attempting to poll an already removed deleted-vault resource. Focused Azure Key Vault SDK coverage and a real Dockerized AzureRM apply, idempotency plan, and destroy run passed.

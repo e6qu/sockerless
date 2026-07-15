@@ -467,9 +467,9 @@ sequenceDiagram
 
 GitLab Runner's docker executor talks directly to the Docker API. By setting `host` in the runner's `config.toml` to the Sockerless backend address (`tcp://localhost:3375`), all container operations route through Sockerless. No runner modifications needed.
 
-### bleephub — Local GitHub API Simulator
+### Bleephub — External GitHub API Simulator
 
-For **local testing** without github.com, `bleephub/` implements enough of the GitHub Actions runner service API for the official `actions/runner` binary to register, receive jobs, execute them, and report results. This lets us run the real runner in a fully offline test harness.
+For **local testing** without github.com, [Bleephub](https://github.com/e6qu/bleephub) implements enough of the GitHub Actions runner service API for the official `actions/runner` binary to register, receive jobs, execute them, and report results. This lets us run the real runner in a fully offline test harness.
 
 ```mermaid
 sequenceDiagram
@@ -512,7 +512,7 @@ bleephub also implements enough of the GitHub REST/GraphQL API and Git smart HTT
 | **Git HTTP** | Smart HTTP protocol (`go-git`) for `actions/checkout` |
 | **Persistence** | Optional SQLite write-through (`BLEEPHUB_PERSIST=true`) — users, tokens, apps, oauth_apps, installations, installation_tokens, user_to_server_tokens, refresh_tokens, repos |
 
-**Current scope:** Full GitHub Actions workflow execution — multi-job workflows with `needs:` dependencies, matrix strategies (`strategy.matrix`), secrets injection, expression evaluation (`${{ }}` syntax), concurrency groups with cancel-in-progress, persistent artifacts, and `uses:` actions (docker container actions). Both `run:` (script) and `uses: docker://` steps are supported. Output passing between steps and jobs works via `$GITHUB_OUTPUT`. GitHub Apps installation tokens (`ghs_`), user-to-server tokens (`ghu_`), and OAuth user tokens (`gho_`) flow through `requirePerm(scope, level)` enforcement on write-class endpoints. See [bleephub/README.md](bleephub/README.md) and [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md) for the per-endpoint inventory.
+**Current scope:** Full GitHub Actions workflow execution — multi-job workflows with `needs:` dependencies, matrix strategies (`strategy.matrix`), secrets injection, expression evaluation (`${{ }}` syntax), concurrency groups with cancel-in-progress, persistent artifacts, and `uses:` actions (docker container actions). Both `run:` (script) and `uses: docker://` steps are supported. Output passing between steps and jobs works via `$GITHUB_OUTPUT`. GitHub Apps installation tokens (`ghs_`), user-to-server tokens (`ghu_`), and OAuth user tokens (`gho_`) flow through `requirePerm(scope, level)` enforcement on write-class endpoints. See the [Bleephub API parity inventory](https://github.com/e6qu/bleephub/blob/main/specs/BLEEPHUB_GITHUB_API_PARITY.md).
 
 ---
 
@@ -569,7 +569,6 @@ sockerless/
 │   ├── aca/                      # Azure Container Apps Jobs
 │   └── azure-functions/          # Azure Functions
 ├── agent/                        # WebSocket agent binary
-├── bleephub/                     # GitHub Actions runner service API
 ├── cmd/
 │   ├── sockerless/               # CLI tool (context management)
 │   └── sockerless-admin/         # Admin dashboard server
@@ -598,7 +597,7 @@ graph TB
     subgraph "E2E (CI Runners)"
         GH["act (GitHub Actions)<br/><i>make e2e-github-all</i>"]
         GL["GitLab Runner<br/><i>make e2e-gitlab-all</i>"]
-        BPH["Official GitHub Runner<br/><i>make bleephub/test-integration</i>"]
+        BPH["Official GitHub Runner<br/><i>Bleephub consumer harness</i>"]
     end
 
     subgraph "Infrastructure"
@@ -615,5 +614,5 @@ graph TB
 
 - **Sim-backend tests**: Start a simulator + backend pair, run 59 Docker SDK test functions against them.
 - **E2E tests (act + GitLab)**: Start the full stack (simulator + backend), run real CI workflows (GitHub Actions via `act`, GitLab CI via `gitlab-runner`) that exercise container create/start/exec/stop/remove.
-- **E2E tests (official runner)**: Start bleephub + Sockerless backend, run the official `actions/runner` through the full job lifecycle (`make bleephub/test-integration`, Docker-only).
+- **E2E tests (official runner)**: Bleephub starts a Sockerless backend and runs the official `actions/runner` through the full job lifecycle in its consumer harness.
 - **Terraform integration tests**: Apply real Terraform modules against simulators to verify IaC compatibility.

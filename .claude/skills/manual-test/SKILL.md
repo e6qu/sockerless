@@ -79,33 +79,11 @@ aws --endpoint-url http://localhost:<port> <service> <verb>
 pkill -f sockerless-simulator-<cloud>
 ```
 
-### `bleephub`
+### Bleephub consumer integration
 
-```bash
-# Quick start (5-step canonical recipe from bleephub/README.md)
-cd bleephub && make build
-
-openssl req -x509 -newkey rsa:2048 -days 1 -nodes \
-  -keyout /tmp/bph.key -out /tmp/bph.crt \
-  -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-sudo security add-trusted-cert -d -r trustRoot \
-  -k /Library/Keychains/System.keychain /tmp/bph.crt   # macOS
-
-sudo BPH_TLS_CERT=/tmp/bph.crt BPH_TLS_KEY=/tmp/bph.key \
-  ./sockerless-bleephub --addr :443 &
-
-echo "bleephub-admin-token-00000000000000000000" \
-  | gh auth login --hostname localhost --with-token
-export GH_HOST=localhost
-
-# Round-trip
-gh repo create demo --public
-gh issue create --repo admin/demo --title "test" --body "manual smoke"
-gh issue list --repo admin/demo
-
-# Or the full Docker harness:
-make bleephub-gh-docker-test
-```
+Run Bleephub's documented real-client harness from its standalone repository. Its
+`runner-sockerless-test` target builds the same Sockerless simulators and backend
+binaries a consumer uses in production-style integration testing.
 
 ### Full e2e (sim + backend + runner)
 

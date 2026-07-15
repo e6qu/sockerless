@@ -61,8 +61,8 @@ func TestInstanceValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "bleephub ok",
-			inst: Instance{Name: "my-bleep", Kind: InstanceKindBleephub, Port: 5555},
+			name: "sim ok",
+			inst: Instance{Name: "my-sim", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4500},
 		},
 		{
 			name:    "bad kind",
@@ -71,12 +71,12 @@ func TestInstanceValidate(t *testing.T) {
 		},
 		{
 			name:    "bad name",
-			inst:    Instance{Name: "Up", Kind: InstanceKindBleephub, Port: 1},
+			inst:    Instance{Name: "Up", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 1},
 			wantErr: true,
 		},
 		{
 			name:    "zero port",
-			inst:    Instance{Name: "x", Kind: InstanceKindBleephub, Port: 0},
+			inst:    Instance{Name: "x", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 0},
 			wantErr: true,
 		},
 	}

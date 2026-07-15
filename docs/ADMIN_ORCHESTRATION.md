@@ -1,8 +1,8 @@
 # Admin Orchestration
 
-How `sockerless-admin` controls multiple sims / backends / bleephubs across multiple projects, declaratively from `sockerless.yaml` at the repo root.
+How `sockerless-admin` controls multiple simulators and backends across multiple projects, declaratively from `sockerless.yaml` at the repo root.
 
-> **Invariant:** sims, backends, bleephub remain independently configurable, buildable, runnable. Admin reads only `/v1/health`, `/v1/info`, env vars they already document. No admin-required env vars on components, no startup registration, no "I'm being managed" hooks. A component started via admin behaves identically to one started by hand.
+> **Invariant:** simulators and backends remain independently configurable, buildable, runnable. Admin reads only `/v1/health`, `/v1/info`, env vars they already document. No admin-required env vars on components, no startup registration, no "I'm being managed" hooks. A component started via admin behaves identically to one started by hand.
 
 ## sockerless.yaml schema
 
@@ -16,7 +16,6 @@ projects:
           config:
             AWS_REGION: us-east-1
             SOCKERLESS_ECS_NETWORK_DISCOVERY: service-mesh }
-      - { name: my-bleep, kind: bleephub, port: 5555 }
   - name: my-gcp-test
     instances:
       - { name: gcp-sim,  kind: sim,      cloud: gcp,   port: 4567 }
@@ -30,7 +29,6 @@ ports:
   ranges:
     sim:      { from: 4500, to: 4999 }
     backend:  { from: 3300, to: 3399 }
-    bleephub: { from: 5500, to: 5599 }
 ```
 
 ### Field rules
@@ -41,7 +39,6 @@ ports:
 - **Instance kinds:**
   - `sim`: requires `cloud` ∈ {aws, gcp, azure}.
   - `backend`: requires `cloud` + `backend` ∈ valid pair (e.g. cloud=aws + backend=ecs|lambda).
-  - `bleephub`: just `port`.
 - **Validation is fail-loud.** Duplicate names, unknown kinds, port collisions, missing sim refs → admin refuses to load / refuses the PUT. No silent fallback.
 
 ## Migration from legacy per-project JSONs
@@ -70,7 +67,7 @@ All under `/api/v1/topology`:
 | `POST   /api/v1/topology/projects/{project}/instances/{instance}/restart` | stop + start with a freshly rendered env file |
 | `POST   /api/v1/topology/projects/{project}/instances/{instance}/rebuild` | shells `make rebuild-component` |
 | `POST   /api/v1/topology/stop-all` | schedules the repo's real `make stack-down` path |
-| `POST   /api/v1/topology/allocate-port?kind=<sim|backend|bleephub>` | next free port from the configured pool |
+| `POST   /api/v1/topology/allocate-port?kind=<sim|backend>` | next free port from the configured pool |
 
 Status codes:
 - 400 — invalid JSON body or validation failure (renames in `PUT instance`, port collisions, etc).
@@ -143,7 +140,7 @@ What it shows:
 What it can do:
 
 - **Add project / delete project.** "+ project" opens a single-field modal; "delete project" prompts a confirmation modal. Deleting a project does NOT stop running processes — stop instances first if you want a clean teardown.
-- **Add / edit / delete instance.** "+ instance" opens a per-kind form (sim → cloud + port; backend → cloud + backend + port + optional sim ref; bleephub → port). The form includes an "auto-allocate" button that calls `POST /api/v1/topology/allocate-port?kind=<kind>` and fills the port field. Edit lets you change everything except the name + kind (rename = delete + add); the env-config table is fully editable.
+- **Add / edit / delete instance.** "+ instance" opens a per-kind form (sim → cloud + port; backend → cloud + backend + port + optional sim ref). The form includes an "auto-allocate" button that calls `POST /api/v1/topology/allocate-port?kind=<kind>` and fills the port field. Edit lets you change everything except the name + kind (rename = delete + add); the env-config table is fully editable.
 - **Start / stop / restart / rebuild per instance.** Buttons in each row POST to the lifecycle endpoints, which in turn shell the relevant `make *-component` target. Toast feedback on success + failure; the row's status badge picks up the new state on the next poll tick.
 - **Open logs, console, and component UI.** Each row links to the admin log stream, the project console, and the component's own `http://localhost:<port>/ui/` surface.
 - **Stop the whole stack.** The header-level "stop stack" button schedules the same `make stack-down` target operators run from a terminal. The response returns before admin kills itself, so the UI will disconnect after the shutdown starts.

@@ -19,14 +19,10 @@ Every script must be shellcheck-clean and run under both bash and zsh on macOS a
 
 ## Code-quality scans
 
-All eight run in pre-commit when the matching files are touched, and unconditionally in the CI `bleephub-quality` / `simulators-quality` jobs.
+The four simulator scans run in pre-commit when matching files are touched and unconditionally in the CI simulator-quality job.
 
 | Script | What it does |
 |---|---|
-| `bleephub-deadcode.sh` | `deadcode` (unreachable Go functions) over `bleephub/`. |
-| `bleephub-dupl.sh` | `dupl` Go copy-paste detection over bleephub (≥200 tokens). |
-| `bleephub-knip.sh` | `knip` dead-TS-exports check over the bleephub UI package. |
-| `bleephub-jscpd.sh` | `jscpd` TS copy-paste detection over the bleephub UI (≥200 tokens). |
 | `simulators-deadcode.sh` | `deadcode` per simulator module (aws/gcp/azure, `noui` tag, `GOWORK=off`). |
 | `simulators-dupl.sh` | `dupl` over the per-cloud simulator handler sources (≥200 tokens). |
 | `simulators-knip.sh` | `knip` over the three simulator dashboard UI packages. |
@@ -49,7 +45,6 @@ All eight run in pre-commit when the matching files are touched, and uncondition
 | Script | What it does | When it runs |
 |---|---|---|
 | `seed-surface-tables.sh` | Regenerates [`specs/SIM_SURFACE_TABLES/`](../specs/SIM_SURFACE_TABLES/README.md) stubs from registered sim `HandleFunc` patterns; hand-written sections inside `<!-- HAND-WRITTEN BEGIN/END -->` are preserved. | manual, after adding sim routes |
-| `update-github-openapi.sh` | Refreshes the vendored GitHub OpenAPI description (`bleephub/testdata/github-openapi.json.gz`) behind bleephub's hermetic route-definition fidelity test and its runtime response-shape ratchet (`bleephub/openapi-violation-allowlist.txt`). | manual |
 | `fetch-aws-spec.sh` | Vendors/refreshes one AWS Smithy model into [`specs/cloud-api/aws/`](../specs/cloud-api/README.md), pinned to an `aws/aws-sdk-go-v2` commit; rewrites the `SOURCES.md` row. | manual, when adding a service / refreshing pins |
 | `fetch-gcp-discovery.sh` | Vendors/refreshes one Google API Discovery document into `specs/cloud-api/gcp/`, pinned by the document's `revision`. | manual |
 | `fetch-azure-spec.sh` | Vendors/refreshes one Azure Swagger 2.0 spec into `specs/cloud-api/azure/`, pinned to an `Azure/azure-rest-api-specs` commit. | manual |

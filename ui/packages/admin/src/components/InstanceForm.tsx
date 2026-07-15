@@ -30,7 +30,6 @@ const backendsByCloud: Record<CloudType, BackendType[]> = {
 const kindOptions: { value: InstanceKind; label: string }[] = [
   { value: "sim", label: "sim — cloud simulator" },
   { value: "backend", label: "backend — sockerless backend" },
-  { value: "bleephub", label: "bleephub — github simulator" },
 ];
 
 const labelStyle: CSSProperties = {
@@ -108,7 +107,6 @@ function fromInstance(inst: TopologyInstance): FormState {
  * Per-kind fields:
  *   - sim:      cloud + port
  *   - backend:  cloud + backend + port + (optional) sim ref
- *   - bleephub: port only
  *
  * The form does not enforce server-side validation rules — the admin
  * REST surface returns a 400 with a readable message that the caller
@@ -154,13 +152,9 @@ export function InstanceForm({
       if (key === "cloud" && prev.cloud !== value) {
         next.backend = "";
       }
-      // Clear cloud + backend + sim when kind changes to bleephub.
+      // Clear backend-only fields when switching to a simulator.
       if (key === "kind") {
-        if (value === "bleephub") {
-          next.cloud = "";
-          next.backend = "";
-          next.sim = "";
-        } else if (value === "sim") {
+        if (value === "sim") {
           next.backend = "";
           next.sim = "";
         }

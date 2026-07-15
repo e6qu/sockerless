@@ -1,53 +1,30 @@
 # Sockerless - Status
 
-Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BUGS.md) - narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) - coverage [specs/SIM_TEST_COVERAGE_MATRIX.md](specs/SIM_TEST_COVERAGE_MATRIX.md).
+Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BUGS.md) - narrative [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
 ## Snapshot
 
 | | |
 |---|---|
-| Active branch | `main` |
-| Branch purpose | Bleephub deployed as an independently managed, production-like Amazon Elastic Container Service on AWS Fargate stack with private networking, Amazon Simple Storage Service git/object persistence, native dqlite voters, an internal Network Load Balancer, Amazon API Gateway wake routing, and real GitHub-compatible UI/API/Git transports. CI retained complete pull-request validation and published only the Bleephub multi-architecture GitHub Container Registry image after `main` changes. |
-| Current fixes | Bleephub now has a fully baked ARM64 release image, GitHub OAuth and local administrator identity, production Git Smart HTTP and SSH transports, a private administrator origin, and an idle controller that returns application and dqlite tasks to zero after five minutes without requests by delegating native drain completion to Amazon Elastic Container Service. The release image retries each dependency transaction from a freshly fetched Ubuntu package index, so an archive publication race cannot fail an ARM64 release build on a stale package URL. The Azure Container Registry simulator returns the real `LegacyRegistryPermissions` default role-assignment mode, keeping current AzureRM Terraform plans idempotent; its macOS nested Terraform harness loads Buildx images before running them. Azure Key Vault purge now uses the documented Location-based long-running-operation response and its documented, unswaggered terminal poll URI is explicitly ratcheted, allowing generated AzureRM clients to complete an actual purge lifecycle. A dedicated Amazon Simple Storage Service startup document keeps the browser visibly informed while the stack wakes and hydrates the healthy application without a refresh; the administrator origin protects live Amazon Elastic Container Service counts and CloudWatch console links with the existing administrator token. Bleephub's public native architecture tags now contain direct image manifests, so Amazon ECS on AWS Fargate can resolve the ARM64/AMD64 image before the retained multi-architecture manifest references it. Site administrators have full repository read, push, and administrative access through Git Smart HTTP and SSH, including organization-owned repositories. Every normal UI page displays its immutable build version and publication time. The Amazon Simple Storage Service git bucket has versioning suspended and removes noncurrent versions. The real-browser harness starts an SSH listener with an ephemeral host key and validates port-aware clone URLs; the embedded user interface serves its branded favicon. Complete CI runs on pull requests; `main` publishes only the immutable multi-architecture Bleephub container plus a versioned startup ZIP GitHub Container Registry package, retaining the newest 20 of each. The Amazon Elastic Container Service, AWS Lambda, Bleephub wake, and AWS simulator modules use current Amazon Cloud Map, AWS Lambda, and Amazon Simple Systems Manager clients required by the dependency-freshness gate. |
-| Last merged (#795) | **Move Bleephub Terraform module**. It relocated the reusable Bleephub Amazon Elastic Container Service module to `bleephub/terraform`, retained its documented production wiring, and made post-merge GitHub Container Registry release retention keep the newest 20 immutable multi-architecture releases. |
-| Last merged (#794) | **Publish Bleephub multiarch image on main**. It retained complete pull-request CI, published only short-SHA Bleephub AMD64/ARM64 GitHub Container Registry images and their immutable manifest after `main` changes, and reconciled standalone Google Cloud module metadata. |
-| Last merged (#790) | **Publish real Bleephub GitHub Pages sites**. It retrieved and validated real workflow artifact bytes, verified signed OpenID Connect identity and Pages permissions, stored published archives in object storage, served public/private sites, and reclaimed replaced or deleted publication objects. |
-| Last merged (#788) | **Harden Bleephub state, Git provider, UI, Apps, Actions, packages, Projects v2, and runner authentication**. It made repository ownership strict, removed execution-image and runner-label fallbacks, moved container-package coverage to the GitHub Container Registry-compatible data plane, tightened Projects v2 and runner wire contracts, made commit listing fail loudly, kept empty-repository UI behavior faithful, and fixed GitHub App organization repository creation authorization. |
-| Last merged (#787) | **Store Bleephub CodeQL query packs and preserve runner logs**. It moved CodeQL variant-analysis query-pack tarballs to object storage, made query-pack download and repository cleanup read/purge those objects fail-loud, and made runner-log object-store upload/deletion failures preserve live log, console, and timeline state. |
-| Last merged (#786) | **Store Bleephub service bytes in objects and harden public ingestion**. It moved release assets, GitHub Packages file bytes, GitHub Container Registry blobs, GitHub CodeQL database archives, and artifact attestation Sigstore bundles to object-backed storage; made relevant public byte routes read object storage; hardened repository deletion cleanup; moved public/official-client setup and security alert ingestion away from operator-only routes; and fixed incidental dependency and simulator test issues. |
-| Last merged (#785) | **Clean Bleephub Codespaces, require Actions object storage, and harden AWS SDK CI**. It made repository deletion clean real Codespace runtime/workspace state before deleting repository records, hardened the AWS simulator SDK CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs. |
-| Last merged (#784) | **Purge Bleephub repository durable state**. It made repository rename, transfer, deletion, and deployment deletion keep persisted repository-owned state coherent so old repository names and IDs do not leave durable issue, pull request, notification, Projects v2, Actions allowlist, code-security, deployment, environment, Pages deployment, team access, artifact metadata, source import, dependency graph, SBOM export, enterprise Dependabot access, label, milestone, or reaction state that can attach to later reuse. |
-| Last merged (#783) | **Harden Bleephub GitHub service, UI, and runtime fidelity**. It continued the #781/#782 Bleephub fidelity arc across public GitHub REST/GraphQL/UI/runner behavior, persisted state, checked entropy, Actions runtime data, Docker-backed official-client harnesses, and incidental AWS simulator CI hardening. |
-| Last merged (#782) | **Persist Bleephub repository metadata and permissions from real state**. It wired repository license metadata, feature flags, merge settings, Pages capability, pushed/archive timestamps, template provenance, and permissions to real persisted state, and rebalanced AWS Command Line Interface simulator shards without changing required check names. |
-| Older context | #781 moved Actions artifacts/caches/logs to object storage and advanced GitHub Apps, Actions, storage, and repository fidelity; #778 closed the actionable open GitHub issues other than upstream-blocked AzureAD; #774 redesigned the Bleephub UI into a functional GitHub clone; #773 added fuzz/load/concurrency coverage; and #665-#700 built the simulator conformance-gate and service-ratchet foundation. Older detail lives in PR descriptions and `git log`. |
-| Open GitHub issues | #394 azuread Terraform Graph override - upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header: 2592 filed, 2545 fixed, 11 open, 16 false positives. The local Amazon Elastic Container Service Terraform simulator apply/destroy hang and local Azure Container Registry Tasks registry-trust gap remained tracked as BUG-2569 and BUG-2589. |
-| Local Docker | Available through Docker CLI compatibility backed by Podman 6.0.1; `docker version`, `docker ps`, `docker run --rm alpine:3 true`, and `make bleephub-gh-docker-test` passed on this branch. |
-| Local cache cleanup | Disposable Go/pre-commit/npm validation caches and 21 stale Amazon Elastic Container Service simulator task containers were removed; unused container images were pruned without touching volumes or active development services. Local free space increased from 31 GiB to 54 GiB, while Docker/Podman retained only 9.8 MB of nominally reclaimable image data. |
-| Live infra | Bleephub ran in its own eu-west-1 stack: `bleephub.e6qu.dev` served UI/API through Amazon API Gateway, `admin.bleephub.e6qu.dev` served the private administrator origin, and `ssh.bleephub.e6qu.dev` served SSH Git. A verified cold wake restored the dqlite quorum and application before returning healthy UI/API responses. |
+| Active branch | `chore/extract-bleep-products` |
+| Branch purpose | Bleephub and Bleeplab were extracted into independent `e6qu/bleephub` and `e6qu/bleeplab` repositories. |
+| Product ownership | The standalone repositories own product source, web user interfaces, Terraform, official-client tests, and runner consumer harnesses. Sockerless remains a standalone Docker-compatible cloud backend and simulator project. |
+| Integration contract | Both product harnesses build and exercise real Sockerless simulator and backend binaries through a named build context; they contain no Sockerless source dependency. |
+| Open pull request | [#800 Extract Bleephub and Bleeplab](https://github.com/e6qu/sockerless/pull/800) removed all tracked product code and stale local product paths from Sockerless. |
+| Infrastructure | [Infra PR #4](https://github.com/e6qu/infra/pull/4) pinned its Terragrunt Bleephub module source to the standalone repository root commit. |
+| Open bugs | See [BUGS.md](BUGS.md). The Amazon Elastic Container Service Terraform simulator lifecycle and Azure Container Registry Tasks registry trust gaps remained open. |
 
 ## What's Next
 
-- Resolve BUG-2569 by making the Bleephub Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate faithfully and deterministically.
-- Continue Bleephub GitHub-compatible REST/GraphQL/UI/runner parity backed by SQLite metadata plus git/object storage.
-- Continue page-level UI parity beyond the shared shell, starting with repository Settings/Security, issue/pull-request timelines and reviews, Actions run/job logs, organization settings, and account/App/token flows in both themes.
-- Prefer classes of fixes: public GitHub endpoints over `/internal/*`, real git/object-store state over fabricated IDs/SHAs/timestamps, fail-loud errors over fallbacks, and official client compatibility over hand-built harness behavior.
-- Keep the other open gaps visible: BUG-2441 current `knip`/Node deprecation warning, BUG-1075 live-cloud validation, and BUG-1345 AzureAD Terraform provider upstream endpoint support.
+- Merge the green extraction pull request after review; no Bleephub or Bleeplab implementation belongs in Sockerless afterward.
+- Continue fidelity work on the tracked Amazon Elastic Container Service Terraform simulator lifecycle and Azure Container Registry Tasks registry-trust issues.
+- Keep cross-repository runner validation real: Bleephub and Bleeplab consume built Sockerless simulators/backends rather than using local stand-ins.
 
 ## Invariants
 
-- Never auto-merge PRs; the user handles merges.
-- At most one PR open at a time. Put all work in the single in-progress PR.
-- Rebase PR branches on `origin/main` before pushing; sync local `main` after.
-- File a concrete `BUGS.md` entry before fixing a discovered defect.
+- Never auto-merge pull requests; the user handles merges.
+- At most one pull request is open in Sockerless. Put all work in that pull request.
+- Rebase pull-request branches on `origin/main` before pushing; then sync local `main`.
 - No stubs, fakes, mocks, synthetic responses, silent fallbacks, or degraded modes.
 - Do not bypass, remove, ignore, stash around, or unstage around pre-commit/pre-push hooks.
-- External identity stays GitHub/GitHub Enterprise Server-shaped: public paths, fields, `GITHUB_*` variables, runner contract, and user-facing UI text.
-- Simulators remain real local cloud application programming interface slices, one binary per cloud, with official software development kit, command-line interface, and Terraform coverage where those surfaces exist.
-
-## Environment Notes
-
-- Simulator ports: AWS 4566, GCP 4567, Azure 4568.
-- Azure Terraform tests are Docker-only because the AzureRM provider needs the local HTTPS gateway.
-- Linux network-fabric tests require `CAP_NET_ADMIN`, iproute2, and nftables; off-Linux they skip through the realexec capability gate.
-- Bleephub runner topology harnesses: `make bleephub-runner-docker-test` and `make bleephub-runner-docker-test-aca`; `BLEEPHUB_TEST_FROM=N` starts at a numbered test.
+- Simulators remain real cloud application programming interface slices, with official software development kit, command-line interface, and Terraform coverage where those surfaces exist.

@@ -24,7 +24,7 @@
 # discover the repo root by counting up from $(CURDIR) — but to keep
 # leaves dead-simple, we accept a REPO_ROOT_REL var the leaf Makefile
 # may set. Default: ../.. (works for backends/<x>/, simulators/<x>/,
-# cmd/<x>/, bleephub/, agent/).
+# cmd/<x>/ and agent/).
 
 REPO_ROOT_REL ?= ../..
 REPO_ROOT     := $(abspath $(CURDIR)/$(REPO_ROOT_REL))

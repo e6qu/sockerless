@@ -9,7 +9,7 @@ Sockerless is a vibe-coded project with explicit countermeasures. Read [`docs/VI
 
 ## When this skill applies
 
-- Before writing or modifying a Go file under `backends/`, `simulators/`, `bleephub/`, `cmd/`.
+- Before writing or modifying a Go file under `backends/`, `simulators/`, or `cmd/`.
 - Before writing or modifying a TypeScript file under `ui/packages/*/src/`.
 - Before adding a test.
 - Before staging a "fix" for a bug.

@@ -20,8 +20,6 @@ The top-level app lists currently cover three kinds of independently buildable p
 | App | Binary | UI package consumed | Default port |
 |---|---|---|---|
 | `cmd/sockerless-admin` | `sockerless-admin` | `ui/packages/admin` | `:9090` |
-| `bleephub` | `bleephub-server` | `ui/packages/bleephub` | `:5555` |
-| `bleeplab` | `bleeplab` | `ui/packages/bleeplab` | `:8929` |
 | `backends/docker` | `sockerless-backend-docker` | `ui/packages/backend-docker` | `:3375` |
 | `backends/ecs` | `sockerless-backend-ecs` | `ui/packages/backend-ecs` | `:3375` |
 | `backends/lambda` | `sockerless-backend-lambda` | `ui/packages/backend-lambda` | `:3375` |
@@ -50,8 +48,6 @@ The top-level app lists currently cover three kinds of independently buildable p
 | Package | Embeds into |
 |---|---|
 | `ui/packages/admin` | `cmd/sockerless-admin` |
-| `ui/packages/bleephub` | `bleephub` |
-| `ui/packages/bleeplab` | `bleeplab` |
 | `ui/packages/backend-{docker,ecs,lambda,cloudrun,gcf,aca,azf}` | corresponding backend |
 | `ui/packages/simulator-{aws,gcp,azure}` | corresponding simulator |
 | `ui/packages/core` | (shared lib — no embed) |
@@ -239,7 +235,7 @@ make simulators/aws/sdk-tests/test
 make ui/packages/admin/test
 ```
 
-Cross-cutting Docker-driven suites remain as top-level targets because they span multiple apps or external tools: `e2e-*`, `tf-int-test-*`, `smoke-test-*`, `faas-smoke-test-*`, `upstream-test-*`, and `bleephub-gh-docker-test`.
+Cross-cutting Docker-driven suites remain as top-level targets because they span multiple apps or external tools: `e2e-*`, `tf-int-test-*`, `smoke-test-*`, `faas-smoke-test-*`, and `upstream-test-*`.
 
 ## Stack orchestration
 
@@ -253,7 +249,6 @@ Cross-cutting Docker-driven suites remain as top-level targets because they span
 | `make stack-gcp-gcf` | GCP simulator + Cloud Run Functions backend + admin |
 | `make stack-azure-aca` | Azure simulator + ACA backend + admin |
 | `make stack-azure-azf` | Azure simulator + Azure Functions backend + admin |
-| `make stack-bleephub-up` | Optional bleephub on `:5555`, after a stack is running |
 
 Each `stack-X-Y` target composes the real per-component targets from `make/components.mk`:
 

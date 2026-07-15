@@ -35,7 +35,6 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - { name: sockerless-bleephub, dockerfile: bleephub/Dockerfile.release, context: . }
           - { name: sockerless-simulator-aws, dockerfile: simulators/aws/Dockerfile, context: simulators }
           - { name: sockerless-simulator-gcp, dockerfile: simulators/gcp/Dockerfile, context: simulators }
           - { name: sockerless-simulator-azure, dockerfile: simulators/azure/Dockerfile, context: simulators }
@@ -82,7 +81,6 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - sockerless-bleephub
           - sockerless-simulator-aws
           - sockerless-simulator-gcp
           - sockerless-simulator-azure

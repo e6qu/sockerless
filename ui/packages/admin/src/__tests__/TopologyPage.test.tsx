@@ -68,7 +68,6 @@ const sampleTopology = {
     ranges: {
       sim: { from: 4500, to: 4999 },
       backend: { from: 3300, to: 3399 },
-      bleephub: { from: 5500, to: 5599 },
     },
   },
 };

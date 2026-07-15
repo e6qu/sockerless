@@ -1,5 +1,0 @@
-#!/bin/sh
-set -eu
-
-export BUNDLE_GEMFILE=/opt/bleephub-pages/Gemfile
-exec bundle exec jekyll "$@"

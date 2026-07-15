@@ -26,7 +26,7 @@ cd "$(git rev-parse --show-toplevel)" || exit 2
 allowlist="scripts/locked-helpers-allowlist.txt"
 
 # shellcheck disable=SC2016 # awk $0/$NF are awk fields, not shell expansions
-hits="$(find bleephub backends agent simulators core cmd -name '*.go' ! -name '*_test.go' 2>/dev/null \
+hits="$(find backends agent simulators core cmd -name '*.go' ! -name '*_test.go' 2>/dev/null \
   | sort \
   | xargs awk -v allowfile="$allowlist" '
       BEGIN {

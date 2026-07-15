@@ -21,7 +21,7 @@ pattern='(strings|bytes)\.(Last)?Index([A-Za-z]*)?\([^)]*\.To(Lower|Upper)\('
 
 hits="$(git grep -nE "$pattern" -- '*.go' 2>/dev/null \
   | grep -vE '_test\.go:' \
-  | grep -E '^(simulators|backends|agent|bleephub|core)/' || true)"
+  | grep -E '^(simulators|backends|agent|core)/' || true)"
 
 if [ -n "$hits" ]; then
   echo "Forbidden case-fold-then-index pattern (slice-bounds panic class):"

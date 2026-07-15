@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run dupl (Go copy-paste detector) on the cloud simulator sources.
 # Threshold: 200 tokens (irreducible structural HTTP-handler clones below this
-# — matches the bleephub threshold). Each simulator (aws/gcp/azure) is scanned
+# — one threshold for every simulator). Each simulator (aws/gcp/azure) is scanned
 # over its top-level non-test Go files (the cloud-API handler surface).
 #
 # File names are fed to dupl via its `-files` stdin interface (one per line).

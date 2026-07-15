@@ -964,9 +964,6 @@ sockerless/
 │   ├── gcp/                           # Module: GCP API simulator (Cloud Run, GCF, Artifact Registry, Logging)
 │   └── azure/                         # Module: Azure API simulator (ACA, AZF, ACR, Monitor)
 │
-├── bleephub/                          # Module: GitHub Actions server-side implementation
-│   └── go.mod                         #   Implements the internal API that actions/runner expects
-│
 ├── tests/                             # Module: black-box API tests
 │   └── go.mod                         #   Deps: Docker client SDK (as test client)
 │
@@ -982,7 +979,7 @@ sockerless/
 └── Makefile
 ```
 
-**18+ Go modules, 13+ binaries:**
+**Sockerless Go modules and binaries:**
 
 | # | Module | Binary Name | External Dependencies |
 |---|--------|------------|----------------------|
@@ -999,7 +996,6 @@ sockerless/
 | 13 | `simulators/aws/` | `sim-aws` | AWS SDK types (for request/response formats) |
 | 15 | `simulators/gcp/` | `sim-gcp` | GCP protobuf types |
 | 16 | `simulators/azure/` | `sim-azure` | Azure SDK types |
-| 17 | `bleephub/` | `bleephub` | JWT, HTTP server |
 | 18 | `tests/` | *(test binary — `go test`)* | Docker client SDK |
 
 ### 6.3 Frontend

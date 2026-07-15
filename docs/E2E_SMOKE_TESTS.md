@@ -91,8 +91,8 @@ under `tests/upstream/act/` (`make upstream-test-act-{ecs,lambda,cloudrun,gcf,ac
 These run GitLab Runner or gitlab-ci-local style Docker executor flows against
 simulator-endpoint backends (the data plane). For the full GitLab
 control-plane flow — a real `gitlab-runner` registering against the
-[bleeplab](../bleeplab/README.md) simulator and dispatching jobs through a
-sockerless backend — see `make bleeplab-runner-docker-test-{ecs,cloudrun,gcf,aca}`.
+[Bleeplab](https://github.com/e6qu/bleeplab) simulator and dispatching jobs through a
+sockerless backend — see Bleeplab's `runner-sockerless-test` target.
 
 ```bash
 make e2e-gitlab-ecs
