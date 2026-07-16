@@ -35,6 +35,12 @@ export interface ContextInfo {
   backend_addr?: string;
 }
 
+export interface AuthSession {
+  authenticated: boolean;
+  name?: string;
+  role?: "admin" | "developer";
+}
+
 export interface ProcessInfo {
   name: string;
   binary: string;
@@ -235,6 +241,10 @@ export class AdminApiClient {
 
   components(): Promise<AdminComponent[]> {
     return this.request("/api/v1/components");
+  }
+
+  session(): Promise<AuthSession> {
+    return this.request("/auth/session");
   }
 
   overview(): Promise<OverviewResponse> {

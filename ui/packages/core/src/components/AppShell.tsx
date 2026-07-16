@@ -12,6 +12,8 @@ export interface AppShellProps {
   kicker?: string;
   navItems: NavItem[];
   renderLink: (item: NavItem, isActive?: boolean) => ReactNode;
+  /** Optional signed-in user control rendered above the global shell controls. */
+  accountControl?: ReactNode;
   children: ReactNode;
 }
 
@@ -22,7 +24,7 @@ export interface AppShellProps {
  * itself without needing a logo. Content area dropped onto a textured
  * page (the dotted grid is in the global stylesheet).
  */
-export function AppShell({ title, kicker, navItems, renderLink, children }: AppShellProps) {
+export function AppShell({ title, kicker, navItems, renderLink, accountControl, children }: AppShellProps) {
   return (
     <div
       className="grid h-screen w-full"
@@ -93,6 +95,11 @@ export function AppShell({ title, kicker, navItems, renderLink, children }: AppS
           </ul>
         </nav>
 
+        {accountControl && (
+          <div className="border-t px-4 py-3" style={{ borderColor: "var(--color-border)" }}>
+            {accountControl}
+          </div>
+        )}
         <div
           className="flex items-center justify-between gap-2 border-t px-5 py-3 text-[10px] uppercase tracking-[0.2em]"
           style={{
