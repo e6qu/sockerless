@@ -4,6 +4,12 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-16 - Shauth Operator Sign-In and Simulator Quality Gates (`feat/shauth-operator-console`)
+
+The Sockerless operator console gained optional Shauth OpenID Connect authorization-code sign-in with discovery, PKCE, nonce, state, signed HttpOnly sessions, audience validation, role enforcement, identity display, accessible avatar semantics, and logout. It guarded only the browser console and its administration API; the AWS, Google Cloud, and Azure simulator endpoints retained their native cloud protocols without browser-auth middleware.
+
+The simulator dead-code gate now preserved analyzer diagnostics instead of exiting silently. The reported Azure failure identified and reconciled the simulator's standalone Go module graph after the SQLite shared-module refresh. The AWS, Google Cloud, and Azure dead-code scans and Azure no-UI module suite passed after that reconciliation.
+
 ## 2026-07-15 - Standalone Bleephub and Bleeplab Extraction (`chore/extract-bleep-products`)
 
 Bleephub and Bleeplab moved into the independent `e6qu/bleephub` and `e6qu/bleeplab` repositories without retaining Sockerless commit history. Each repository retained exactly one root commit authored by the e6qu noreply identity. Bleephub now owns its Go server layout, web application, SSH gateway, dqlite node, Terraform module, tests, and official GitHub Actions runner consumer harness. Bleeplab now owns its server, user interface, tests, and official GitLab Runner consumer harness.

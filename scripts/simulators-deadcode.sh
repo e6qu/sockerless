@@ -17,8 +17,13 @@ fi
 ROOT=$(git rev-parse --show-toplevel)
 fail=0
 for cloud in aws gcp azure; do
-  out=$(cd "$ROOT/simulators/$cloud" && GOWORK=off "$DEADCODE" -tags noui . 2>&1)
-  if [[ -n "$out" ]]; then
+	if ! out=$(cd "$ROOT/simulators/$cloud" && GOWORK=off "$DEADCODE" -tags noui . 2>&1); then
+		echo "FAIL: simulators/$cloud deadcode analysis did not complete:" >&2
+		echo "$out" >&2
+		fail=1
+		continue
+	fi
+	if [[ -n "$out" ]]; then
     echo "FAIL: simulators/$cloud deadcode found unreachable functions:" >&2
     echo "$out" >&2
     fail=1
