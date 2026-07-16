@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/bigtable v1.50.0
 	cloud.google.com/go/compute/metadata v0.9.0
 	cloud.google.com/go/eventarc v1.25.0
-	cloud.google.com/go/firestore v1.23.0
+	cloud.google.com/go/firestore v1.24.0
 	cloud.google.com/go/functions v1.25.0
 	cloud.google.com/go/iam v1.12.0
 	cloud.google.com/go/kms v1.32.0
@@ -19,7 +19,7 @@ require (
 	google.golang.org/api v0.288.0
 	google.golang.org/genproto v0.0.0-20260713224248-f5fc221cf8c4
 	google.golang.org/genproto/googleapis/api v0.0.0-20260713224248-f5fc221cf8c4
-	google.golang.org/grpc v1.82.0
+	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -32,9 +32,9 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
 	cloud.google.com/go/monitoring v1.30.0 // indirect
-	cloud.google.com/go/pubsub v1.50.4
+	cloud.google.com/go/pubsub v1.51.0
 	cloud.google.com/go/pubsub/v2 v2.6.1 // indirect
-	cloud.google.com/go/spanner v1.92.0
+	cloud.google.com/go/spanner v1.93.0
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.34.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.58.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.58.0 // indirect

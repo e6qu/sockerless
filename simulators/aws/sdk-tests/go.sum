@@ -52,8 +52,8 @@ github.com/aws/aws-sdk-go-v2/service/efs v1.43.1 h1:MhegB7GAidlQa5SsRpbDMhNXUTR6
 github.com/aws/aws-sdk-go-v2/service/efs v1.43.1/go.mod h1:yXgsIt7Lw+d8V7khvXEXvIoziyW65xfJhr7Fb9U8Kao=
 github.com/aws/aws-sdk-go-v2/service/elasticache v1.55.1 h1:R49voYjntDAoRAPcdkiXZ8UGm0GkZixSSpvKCvSXZQI=
 github.com/aws/aws-sdk-go-v2/service/elasticache v1.55.1/go.mod h1:roYWQ6ZmGI1VshRoopJCfMYdDgI1z4ArMtTOJJjsHXg=
-github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.56.1 h1:ZxXNco/WHTRkiai8xXo7hvoaWlqoMc4hmhfM/o6qFaQ=
-github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.56.1/go.mod h1:qNnJkZTDHDL2sO8hyVH2yILcfSEkjP/pIns2JsF1g1o=
+github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.57.0 h1:Qq9WDWJ6jKchg3U1Uwy511vdmYldeo8RZrg0+nRHjfI=
+github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.57.0/go.mod h1:qNnJkZTDHDL2sO8hyVH2yILcfSEkjP/pIns2JsF1g1o=
 github.com/aws/aws-sdk-go-v2/service/eventbridge v1.47.1 h1:dRpu/A28oj2z+FpfR7v55PrhgG8ewU5doVYdfHbXpRo=
 github.com/aws/aws-sdk-go-v2/service/eventbridge v1.47.1/go.mod h1:3g/foYPw/4CT8yV7/A1QsbvnhDZW/2x2uzl4vkqX49o=
 github.com/aws/aws-sdk-go-v2/service/glue v1.148.1 h1:6KQevT0luaukdmROGyWbUUwN1lLCl7+GExhORcbMc9Q=
@@ -78,8 +78,8 @@ github.com/aws/aws-sdk-go-v2/service/lambda v1.99.0 h1:F5jW/w63W6/2/rwqhc1QzqiRY
 github.com/aws/aws-sdk-go-v2/service/lambda v1.99.0/go.mod h1:gKWVtxlMTgoLU9m6FDw7z6FAEFh8u8CoaPJx0zWk5J8=
 github.com/aws/aws-sdk-go-v2/service/organizations v1.52.1 h1:FYLkiPCZw0a1foyrXxgAps3vZM3QfOkE20GnKo5Thto=
 github.com/aws/aws-sdk-go-v2/service/organizations v1.52.1/go.mod h1:2ibX1FoyhvTXbIR4TP/Vf6BB6Tc3YW9jWbvNflSOcUM=
-github.com/aws/aws-sdk-go-v2/service/rds v1.120.1 h1:5wsyc5K9vvSegxdkzsLAFo9WF1Jd2PF8c3TUoBhaLlc=
-github.com/aws/aws-sdk-go-v2/service/rds v1.120.1/go.mod h1:Ve7qHa8jBmStKNz/oaxs2yBuFnwyvN0k/8PpPZVxkEY=
+github.com/aws/aws-sdk-go-v2/service/rds v1.121.0 h1:DKOTtGQS43asDjB6Fs7lGPmN2bhUGoTTgZ2Ef2jdV5s=
+github.com/aws/aws-sdk-go-v2/service/rds v1.121.0/go.mod h1:Ve7qHa8jBmStKNz/oaxs2yBuFnwyvN0k/8PpPZVxkEY=
 github.com/aws/aws-sdk-go-v2/service/route53 v1.64.1 h1:qL5ELChQ1o1ZbzHvsl8gzQfAZdbQtrDbUyzJkjkMKcg=
 github.com/aws/aws-sdk-go-v2/service/route53 v1.64.1/go.mod h1:0hIRXFez1bZsDFMGkLZvNJbByTSVZ4sFZWpxZ39NPuM=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.105.1 h1:LkBKxAOE5WXjlFuFZqPG1rREnl6I6QCMElcXFDEidos=
