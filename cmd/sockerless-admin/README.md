@@ -149,6 +149,31 @@ $ curl -s http://localhost:9090/api/v1/components | jq '.[]'
 }
 ```
 
+## Shauth browser sign-in
+
+The operator console supported optional Shauth OpenID Connect sign-in without
+changing any simulator, backend, SDK, command-line interface, or Terraform API
+endpoint. Configure all four values together in a deployed console:
+
+```sh
+SOCKERLESS_ADMIN_SHAUTH_ISSUER=https://auth.dev.e6qu.dev
+SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID=sockerless-admin-dev
+SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET=<from AWS Secrets Manager>
+SOCKERLESS_ADMIN_PUBLIC_URL=https://sockerless.dev.e6qu.dev
+```
+
+Register `https://sockerless.dev.e6qu.dev/auth/shauth/callback` as the Shauth
+client redirect URI. The console discovered Shauth, used authorization code +
+PKCE and nonce validation, verified the signed ID token, and accepted only
+`developer` or `admin` roles. It displayed the signed-in user, role, initial
+avatar, and a logout control. Cookies were secure and HTTP-only; development
+could explicitly opt into insecure cookies with
+`SOCKERLESS_ADMIN_INSECURE_COOKIES=true`.
+
+With no Shauth variables the existing local operator workflow remained
+unauthenticated. Partial or non-HTTPS production configuration failed at
+startup rather than exposing a partially protected console.
+
 ## Known issues
 
 None open. The admin's components-decoupled invariant is load-bearing: components must remain runnable standalone via `make backends/<x>/run`, with the admin reading only `/v1/health` + `/v1/info` + env vars. No admin-side env vars on the components.
@@ -157,7 +182,10 @@ None open. The admin's components-decoupled invariant is load-bearing: component
 
 - **Multi-machine orchestration.** This is a single-machine local-dev orchestrator. For multi-host serverless capacity, the cloud's own orchestrator (ECS Fargate, Cloud Run, ACA, etc.) is the answer; the admin is for routing.
 - **Persistent state across restarts.** Project + topology files persist to `~/.sockerless/projects/` and the topology file. Live component health resets on admin restart.
-- **Auth.** The current implementation has none. Run behind a reverse proxy if exposing externally.
+- **Cloud service deployment.** The admin remains a local operator application;
+  a public deployment needs its own Amazon Elastic Container Service service,
+  Shauth client, and AWS Secrets Manager client secret. The simulator API
+  binaries themselves remain cloud-protocol endpoints rather than browser apps.
 - **Cloud-side resource creation.** The admin does not provision AWS / GCP / Azure infra; it observes resources that backends create. Use Terraform for provisioning (see per-backend READMEs).
 - **Replacing `sockerless` (CLI).** The CLI is for context + lifecycle on a single backend. The admin is for orchestrating many. They overlap but neither subsumes the other.
 

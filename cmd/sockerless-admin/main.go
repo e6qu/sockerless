@@ -49,6 +49,10 @@ func main() {
 		fmt.Printf("sockerless-admin %s\n", version)
 		os.Exit(0)
 	}
+	shauth := shauthConfigFromEnvironment()
+	if err := shauth.validate(); err != nil {
+		log.Fatalf("Shauth configuration: %v", err)
+	}
 
 	reg := NewRegistry()
 	procMgr := NewProcessManager(reg)
@@ -97,6 +101,10 @@ func main() {
 	registerHTTPSGatewayAPI(mux)
 	obsCfg := loadObservabilityConfig()
 	mux.HandleFunc("GET /api/v1/observability", handleObservabilityConfig(obsCfg))
+	mux.HandleFunc("GET /auth/shauth", shauth.login)
+	mux.HandleFunc("GET /auth/shauth/callback", shauth.callback)
+	mux.HandleFunc("POST /auth/logout", shauth.logout)
+	mux.HandleFunc("GET /auth/session", shauth.session)
 	registerUI(mux)
 
 	// Redirect / to /ui/
@@ -116,7 +124,7 @@ func main() {
 	// otelhttp.NewHandler at the outermost layer captures every
 	// admin API + UI request as a span. Spans emit to a no-op
 	// tracer unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
-	handler := otelhttp.NewHandler(mux, "sockerless-admin")
+	handler := otelhttp.NewHandler(shauth.middleware(mux), "sockerless-admin")
 	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	// Handle graceful shutdown

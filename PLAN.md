@@ -4,7 +4,7 @@ State [STATUS.md](STATUS.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](
 
 ## Goal
 
-Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker Compose, Testcontainers, CI runners), backed by real cloud infrastructure or high-fidelity local cloud simulators. Bleephub is the GitHub Enterprise Server-compatible service surface: git repository provider, release provider, CI/CD provider, Pages provider, authentication source, packages/container registry, and GitHub-compatible REST/GraphQL/UI/runner implementation.
+Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker Compose, Testcontainers, CI runners), backed by real cloud infrastructure or high-fidelity local cloud simulators. Bleephub is an independent GitHub Enterprise Server-compatible service and consumes Sockerless through its published simulator/backend integration contract.
 
 ## Non-Negotiable Principles
 
@@ -18,7 +18,7 @@ Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker C
 
 ## Active Focus
 
-**Bleephub real-service hardening, production operation, and live-cloud validation.**
+**Cloud simulator/backend fidelity, production operation, and live-cloud validation.**
 
 The Bleephub Amazon Elastic Container Service on AWS Fargate module deployed an independent eu-west-1 service with private networking, fck-nat, an Amazon Simple Storage Service gateway endpoint, Amazon Simple Storage Service git/object persistence, native dqlite quorum storage, Amazon API Gateway scale-to-zero wake routing, and an internal Network Load Balancer. GitHub OAuth, local administrator identity, Git Smart HTTP, and SSH Git were verified against the live service. The remaining deployment-specific gap is BUG-2569: the same module's local Amazon Elastic Container Service Terraform simulator apply/destroy harness did not terminate deterministically.
 

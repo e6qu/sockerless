@@ -690,3 +690,17 @@ npx knip
 - AWS, GCP, and Azure simulators are real cloud API slices with conformance/coverage ratchets and official client coverage.
 - Bleephub implements GitHub Enterprise Server-shaped REST, GraphQL, Actions, GitHub Apps/OAuth, repositories, issues, pull requests, releases, packages, webhooks, checks/statuses, Pages, and UI surfaces, with more fidelity work still active.
 - GitHub Actions runner and GitLab docker-executor topologies are sim-proven across container-capable backends; live-cloud validation remains open under BUG-1075.
+
+## Shauth operator-console authentication
+
+Sockerless-admin gained optional Shauth OpenID Connect browser authentication.
+When all production coordinates were configured, the console performed
+authorization-code sign-in with PKCE and nonce validation, verified the ID
+token, accepted developer and administrator roles, and used short-lived signed
+HTTP-only sessions. Its shared application shell displayed the signed-in name,
+role, initial avatar, and logout control. Local operator use stayed unchanged
+when no Shauth coordinates were configured, while partial or insecure
+production configuration failed at startup. The Amazon Web Services, Google
+Cloud, and Microsoft Azure simulator API endpoints were not wrapped because
+their real SDK, command-line interface, and Terraform contracts remained
+unchanged.

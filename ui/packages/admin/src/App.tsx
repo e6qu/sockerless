@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router";
+import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
   ErrorBoundary,
@@ -6,6 +7,7 @@ import {
   ToastProvider,
   type NavItem,
 } from "@sockerless/ui-core/components";
+import { AdminApiClient } from "./api.js";
 import { DashboardPage } from "./pages/DashboardPage.js";
 import { ComponentsPage } from "./pages/ComponentsPage.js";
 import { ComponentDetailPage } from "./pages/ComponentDetailPage.js";
@@ -31,6 +33,8 @@ const navItems: NavItem[] = [
   { label: "Contexts", to: "/ui/contexts" },
 ];
 
+const api = new AdminApiClient();
+
 function renderNavLink(item: NavItem) {
   return (
     <NavLink to={item.to} end={item.to === "/ui/"}>
@@ -40,6 +44,29 @@ function renderNavLink(item: NavItem) {
 }
 
 export function App() {
+  const { data: session } = useQuery({
+    queryKey: ["auth-session"],
+    queryFn: () => api.session(),
+    retry: false,
+  });
+  const accountControl = session?.authenticated ? (
+    <div className="flex items-center gap-2" aria-label="Signed-in user">
+      <span
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+        aria-hidden="true"
+        style={{ background: "var(--color-accent-soft)", color: "var(--color-fg)" }}
+      >
+        {(session.name || "?").slice(0, 1).toUpperCase()}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium" style={{ color: "var(--color-fg)" }}>{session.name}</p>
+        <p className="text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--color-fg-subtle)" }}>{session.role}</p>
+      </div>
+      <form method="post" action="/auth/logout">
+        <button className="text-xs underline" type="submit" aria-label="Sign out">Sign out</button>
+      </form>
+    </div>
+  ) : undefined;
   return (
     <ErrorBoundary>
       <ToastProvider>
@@ -49,6 +76,7 @@ export function App() {
           title="Admin"
           navItems={navItems}
           renderLink={renderNavLink}
+          accountControl={accountControl}
         >
           <Routes>
             <Route path="/ui/" element={<DashboardPage />} />
