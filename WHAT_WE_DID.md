@@ -4,6 +4,10 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-19 - Amazon ECS A-Record Service-Registry Fidelity (`fix/ecs-a-record-service-registry-validation`)
+
+The AWS simulator now validates Amazon Elastic Container Service service-registry port coordinates against the registered AWS Cloud Map DNS record type. A-record services reject `containerPort` or `port` with the same invalid-parameter contract as Amazon ECS, while portless registrations preserve task ENI discovery. Focused official AWS SDK coverage creates the real Cloud Map A-record registry, proves the rejected port-bearing request, and proves the valid portless request.
+
 ## 2026-07-18 - Cloud-Independent API-Only Simulator Runtime Contract (`feat/api-only-runtime-capability`)
 
 The Amazon Web Services, Google Cloud, and Microsoft Azure simulators now exposed a common `/health` capability document with the configured runtime and a `workloadExecution` flag. `SIM_RUNTIME=process` remained a generic API-only simulator coordinate rather than a deployment-platform mode: storage, queues, eventing, audit, and control-plane slices continued to use their real API implementations, while callers could reliably discover that container workloads were unavailable.

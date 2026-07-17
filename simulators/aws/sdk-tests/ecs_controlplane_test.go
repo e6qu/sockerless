@@ -6,9 +6,78 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/servicediscovery"
+	sdtypes "github.com/aws/aws-sdk-go-v2/service/servicediscovery/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestECS_ARecordServiceRegistryRejectsPort(t *testing.T) {
+	ecsClient := ecsClient()
+	cloudMapClient := cmClient()
+	cluster := "a-record-registry-cluster"
+	_, err := ecsClient.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = ecsClient.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)}) })
+
+	_, err = ecsClient.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:      aws.String("a-record-registry-task"),
+		NetworkMode: ecstypes.NetworkModeAwsvpc,
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:  aws.String("dqlite"),
+			Image: aws.String("public.ecr.aws/docker/library/alpine:3.20"),
+		}},
+	})
+	require.NoError(t, err)
+
+	namespace, err := cloudMapClient.CreatePrivateDnsNamespace(ctx, &servicediscovery.CreatePrivateDnsNamespaceInput{
+		Name: aws.String("a-record-registry.local"),
+		Vpc:  aws.String("vpc-a-record-registry"),
+	})
+	require.NoError(t, err)
+	operation, err := cloudMapClient.GetOperation(ctx, &servicediscovery.GetOperationInput{OperationId: namespace.OperationId})
+	require.NoError(t, err)
+	namespaceID := operation.Operation.Targets["NAMESPACE"]
+	t.Cleanup(func() {
+		_, _ = cloudMapClient.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{Id: aws.String(namespaceID)})
+	})
+
+	registry, err := cloudMapClient.CreateService(ctx, &servicediscovery.CreateServiceInput{
+		Name:        aws.String("dqlite"),
+		NamespaceId: aws.String(namespaceID),
+		DnsConfig: &sdtypes.DnsConfig{DnsRecords: []sdtypes.DnsRecord{{
+			Type: sdtypes.RecordTypeA,
+			TTL:  aws.Int64(10),
+		}}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = cloudMapClient.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: registry.Service.Id})
+	})
+
+	_, err = ecsClient.CreateService(ctx, &ecs.CreateServiceInput{
+		Cluster:        aws.String(cluster),
+		ServiceName:    aws.String("invalid-a-record-registry"),
+		TaskDefinition: aws.String("a-record-registry-task"),
+		ServiceRegistries: []ecstypes.ServiceRegistry{{
+			RegistryArn:   registry.Service.Arn,
+			ContainerPort: aws.Int32(9000),
+		}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "do not require a value for 'containerPort'")
+
+	created, err := ecsClient.CreateService(ctx, &ecs.CreateServiceInput{
+		Cluster:        aws.String(cluster),
+		ServiceName:    aws.String("valid-a-record-registry"),
+		TaskDefinition: aws.String("a-record-registry-task"),
+		ServiceRegistries: []ecstypes.ServiceRegistry{{
+			RegistryArn: registry.Service.Arn,
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "valid-a-record-registry", aws.ToString(created.Service.ServiceName))
+}
 
 // TestECS_CapacityProviderLifecycle exercises CreateCapacityProvider,
 // UpdateCapacityProvider, and DeleteCapacityProvider (DescribeCapacityProviders
