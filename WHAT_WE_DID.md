@@ -10,6 +10,8 @@ Sockerless now published fully baked Amazon Elastic Container Service-ready imag
 
 The release workflow built every image natively on ARM64 and AMD64 runners, published `:<short-sha>-arm64` and `:<short-sha>-amd64`, and composed only `:<short-sha>` as the multi-architecture manifest. It emitted no mutable branch, semantic-version, or `latest` tags. Local ARM64 release-image builds passed for all four images. The three simulator images started in their documented API-only coordinate and served both `/health` and `/ui/`; the Admin image completed its Go tests, production web build, and startup check.
 
+The required dependency-freshness gate also found an Amazon S3 service-client release and a Google API release across seven independently resolved backend and dispatcher module graphs. All graphs now use their current releases with reconciled transitive dependencies. The complete freshness gate and the affected Amazon Elastic Container Service, AWS Lambda, Google Cloud Run, Google Cloud Run Functions, common-library, and runner-dispatcher suites passed.
+
 ## 2026-07-16 - Shauth Operator Sign-In and Simulator Quality Gates (`feat/shauth-operator-console`)
 
 The Sockerless operator console gained optional Shauth OpenID Connect authorization-code sign-in with discovery, PKCE, nonce, state, signed HttpOnly sessions, audience validation, role enforcement, identity display, accessible avatar semantics, and logout. It guarded only the browser console and its administration API; the AWS, Google Cloud, and Azure simulator endpoints retained their native cloud protocols without browser-auth middleware.
