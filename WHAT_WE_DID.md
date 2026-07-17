@@ -14,6 +14,8 @@ The required dependency-freshness gate also found an Amazon S3 service-client re
 
 The same gate then found the matching Amazon S3, Smithy, and Google API drift in the AWS and Google Cloud simulator SDK graphs. Those official-client graphs were refreshed, and both complete SDK suites passed against their real simulator servers.
 
+The simulator lint bootstrap now retries transient golangci-lint download transport errors with explicit connection and total-time limits, while `pipefail` preserves a real installer failure. This prevented a transient TLS reset from being reported as a source-lint defect.
+
 ## 2026-07-16 - Shauth Operator Sign-In and Simulator Quality Gates (`feat/shauth-operator-console`)
 
 The Sockerless operator console gained optional Shauth OpenID Connect authorization-code sign-in with discovery, PKCE, nonce, state, signed HttpOnly sessions, audience validation, role enforcement, identity display, accessible avatar semantics, and logout. It guarded only the browser console and its administration API; the AWS, Google Cloud, and Azure simulator endpoints retained their native cloud protocols without browser-auth middleware.
