@@ -12,6 +12,8 @@ The release workflow built every image natively on ARM64 and AMD64 runners, publ
 
 The required dependency-freshness gate also found an Amazon S3 service-client release and a Google API release across seven independently resolved backend and dispatcher module graphs. All graphs now use their current releases with reconciled transitive dependencies. The complete freshness gate and the affected Amazon Elastic Container Service, AWS Lambda, Google Cloud Run, Google Cloud Run Functions, common-library, and runner-dispatcher suites passed.
 
+The same gate then found the matching Amazon S3, Smithy, and Google API drift in the AWS and Google Cloud simulator SDK graphs. Those official-client graphs were refreshed, and both complete SDK suites passed against their real simulator servers.
+
 ## 2026-07-16 - Shauth Operator Sign-In and Simulator Quality Gates (`feat/shauth-operator-console`)
 
 The Sockerless operator console gained optional Shauth OpenID Connect authorization-code sign-in with discovery, PKCE, nonce, state, signed HttpOnly sessions, audience validation, role enforcement, identity display, accessible avatar semantics, and logout. It guarded only the browser console and its administration API; the AWS, Google Cloud, and Azure simulator endpoints retained their native cloud protocols without browser-auth middleware.

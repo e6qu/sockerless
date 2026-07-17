@@ -16,7 +16,7 @@ require (
 	cloud.google.com/go/storage v1.63.1
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
-	google.golang.org/api v0.288.0
+	google.golang.org/api v0.289.0
 	google.golang.org/genproto v0.0.0-20260713224248-f5fc221cf8c4
 	google.golang.org/genproto/googleapis/api v0.0.0-20260713224248-f5fc221cf8c4
 	google.golang.org/grpc v1.82.1
