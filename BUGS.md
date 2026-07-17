@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2595 filed - 2549 fixed - 10 open - 16 false positives.**
+**2596 filed - 2550 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2596~~ | P1 | release image build | The containerized web builds omitted the shared TypeScript base configuration and simulator release Dockerfiles compiled out their embedded interfaces | Release images now copy the complete UI build contract, embed each production interface, and publish immutable short-SHA ARM64/AMD64 tags plus their multi-architecture manifest. |
 | ~~2595~~ | P1 | simulator quality continuous integration | The dead-code script exited before reporting the Azure analyzer diagnostic, hiding an unreconciled Azure module graph | The script now retains tool stderr, and the Azure simulator module graph is reconciled with its shared SQLite dependency so dead-code analysis and no-UI tests pass. |
 | ~~2594~~ | P2 | dependency freshness | The Azure simulator software development kit module pinned Azure Cosmos Database below the current release | The Azure Cosmos Database software development kit dependency now uses v1.5.0, and the standalone simulator SDK suite plus freshness gate passed. |
 | ~~2582~~ | P2 | repository lint | Standalone lint resolution found stale core and Azure common module dependency metadata | Both modules now carry reconciled standalone module graphs, so `GOWORK=off` lint and tests resolve the same real packages as continuous integration. |
