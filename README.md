@@ -110,7 +110,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 **Go**
 
 ![core](https://img.shields.io/badge/core-19.8k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-170.4k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-170.5k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-50.8k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-49.7k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
