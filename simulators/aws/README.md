@@ -58,6 +58,9 @@ aws iam create-service-linked-role --aws-service-name cloudfront.amazonaws.com
 Docker or Podman is required for ECS and Lambda execution paths. For
 control-plane or data-plane API checks that do not start workloads,
 `SIM_RUNTIME=process` starts the AWS simulator without initializing Docker/Podman.
+The `/health` response reports `runtime` and
+`capabilities.workloadExecution`; clients must require that capability before
+submitting work that needs a running container.
 
 **ECS managed EBS volumes** use Docker named volumes (`sockerless-ebs-<id>`) rather than bind-mounts on the sim process's filesystem. This means the sim can run in a container (with the Docker socket mounted) and task containers will see the correct volume data — no path-sharing between host and sim container is required.
 

@@ -52,6 +52,9 @@ Docker or Podman is required when Cloud Run or Cloud Functions calls execute
 workloads. For API-only checks that do not invoke workload execution,
 `SIM_RUNTIME=process` starts the GCP simulator without initializing
 Docker/Podman.
+The `/health` response reports `runtime` and
+`capabilities.workloadExecution`; clients must require that capability before
+submitting work that needs a running container.
 
 For Terraform:
 

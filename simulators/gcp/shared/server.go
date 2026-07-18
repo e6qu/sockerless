@@ -72,9 +72,17 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Health check endpoint
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		WriteJSON(w, http.StatusOK, map[string]string{
+		runtime := os.Getenv("SIM_RUNTIME")
+		if runtime == "" {
+			runtime = "docker"
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{
 			"status":   "ok",
 			"provider": cfg.Provider,
+			"runtime":  runtime,
+			"capabilities": map[string]bool{
+				"workloadExecution": runtime != "process",
+			},
 		})
 	})
 
