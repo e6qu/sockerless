@@ -8,7 +8,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Continue Here
 
-1. Deploy the published Sockerless operator console and Amazon Web Services, Google Cloud, and Microsoft Azure simulator images as real Amazon Elastic Container Service services. Keep Shauth at the browser/operator boundary, consume each simulator's generic `/health` runtime-capability contract, and preserve the simulators' native cloud protocol endpoints for official software development kit, command-line interface, and Terraform clients.
+1. Deploy the published Sockerless operator console and Amazon Web Services, Google Cloud, and Microsoft Azure simulator images as real Amazon Elastic Container Service services. Keep the operator's unauthenticated `/healthz` liveness coordinate separate from the Shauth-protected browser/operator boundary, consume each simulator's generic `/health` runtime-capability contract, and preserve the simulators' native cloud protocol endpoints for official software development kit, command-line interface, and Terraform clients.
 2. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
 3. Resolve BUG-2589: configure the local Azure Container Registry Tasks SDK harness with a Docker-trusted simulator registry transport, matching the working CI coordinate.
 4. Continue complete simulator and backend fidelity work, including the open live-cloud cells documented in BUGS.md.

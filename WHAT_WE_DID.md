@@ -12,6 +12,10 @@ The Microsoft Azure Container Instances slice no longer fabricated a successful 
 
 The AWS RDS official SDK test module now used the current client release required by the repository freshness gate, keeping the simulator's required CI dependency graph current.
 
+## 2026-07-18 - Operator Console Liveness (`fix/admin-health-liveness`)
+
+Sockerless Admin served `GET /healthz` as a small unauthenticated liveness endpoint. Amazon Elastic Container Service and Shauth managed-app monitoring could therefore distinguish a live operator console from protected user-interface routes without attempting to authenticate a health probe. The browser console, administration API, Shauth authorization-code flow, and logout routes remained protected by the existing Shauth middleware. Focused operator-console tests verified the exact successful liveness response.
+
 ## 2026-07-17 - Immutable Sockerless Operator and Simulator Images (`feat/publish-sockerless-admin-image`)
 
 Sockerless now published fully baked Amazon Elastic Container Service-ready images for the Shauth-capable operator console and all three cloud simulators. The Amazon Web Services, Google Cloud, and Microsoft Azure simulator images embedded their existing production web interfaces rather than compiling with `noui`; each continued to serve the same protocol-faithful cloud API and UI from its real binary. The operator image embedded the production Admin interface and ran as an unprivileged user.

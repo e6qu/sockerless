@@ -84,6 +84,16 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 }
 
+func TestAdminHealthzIsUnauthenticatedLivenessEndpoint(t *testing.T) {
+	mux := http.NewServeMux()
+	registerHealthz(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if response.Code != http.StatusOK || response.Body.String() != "ok\n" {
+		t.Fatalf("health response = %d body=%q", response.Code, response.Body.String())
+	}
+}
+
 func TestNormalizeAddr(t *testing.T) {
 	tests := []struct {
 		input string
