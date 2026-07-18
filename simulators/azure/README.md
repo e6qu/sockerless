@@ -43,6 +43,9 @@ Docker or Podman is required when Container Apps or Azure Functions calls execut
 workloads. For API-only checks that do not invoke workload execution,
 `SIM_RUNTIME=process` starts the Azure simulator without initializing
 Docker/Podman.
+The `/health` response reports `runtime` and
+`capabilities.workloadExecution`; clients must require that capability before
+submitting work that needs a running container.
 
 Service Bus raw AMQP/TLS is a second, optional listener because real
 Azure Service Bus exposes AMQP as a TCP/TLS transport in addition to

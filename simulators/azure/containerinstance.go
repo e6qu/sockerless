@@ -760,11 +760,7 @@ func aciSetGroupState(group *ACIContainerGroup, state ACIContainerState) {
 
 func aciStartGroupContainers(group ACIContainerGroup) error {
 	if DockerRuntimeDisabled() {
-		aciContainerGroups.Update(group.ID, func(stored *ACIContainerGroup) {
-			aciSetGroupState(stored, ACIStateRunning)
-			aciSetGroupProvisioning(stored, "Succeeded")
-		})
-		return nil
+		return fmt.Errorf("container execution requires a Docker or Podman runtime; SIM_RUNTIME=process supports API-only operations")
 	}
 	containers := aciContainers(&group)
 	for _, c := range containers {
