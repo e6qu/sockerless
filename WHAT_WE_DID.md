@@ -10,6 +10,8 @@ The Amazon Web Services, Google Cloud, and Microsoft Azure simulators now expose
 
 The Microsoft Azure Container Instances slice no longer fabricated a successful running group in API-only mode. It returned a documented deployment failure before persisting a workload that it could not execute, matching the simulator's explicit runtime capability rather than presenting synthetic state. Focused shared-server health tests and a no-user-interface Azure Container Instances process-runtime test validated the contract.
 
+The AWS RDS official SDK test module now used the current client release required by the repository freshness gate, keeping the simulator's required CI dependency graph current.
+
 ## 2026-07-17 - Immutable Sockerless Operator and Simulator Images (`feat/publish-sockerless-admin-image`)
 
 Sockerless now published fully baked Amazon Elastic Container Service-ready images for the Shauth-capable operator console and all three cloud simulators. The Amazon Web Services, Google Cloud, and Microsoft Azure simulator images embedded their existing production web interfaces rather than compiling with `noui`; each continued to serve the same protocol-faithful cloud API and UI from its real binary. The operator image embedded the production Admin interface and ran as an unprivileged user.
