@@ -96,6 +96,7 @@ func main() {
 	go reg.PollLoop(5*time.Second, done)
 
 	mux := http.NewServeMux()
+	registerHealthz(mux)
 	registerAPI(mux, reg, procMgr, projectMgr)
 	registerTopologyAPI(mux, topologyMgr, NewInstanceLifecycle("", 0))
 	registerHTTPSGatewayAPI(mux)
@@ -145,6 +146,13 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func registerHealthz(mux *http.ServeMux) {
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("ok\n"))
+	})
 }
 
 // normalizeAddr ensures the address has an http:// scheme.
