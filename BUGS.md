@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2612 filed - 2566 fixed - 10 open - 16 false positives.**
+**2613 filed - 2567 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2613~~ | P0 | simulator dashboard authorization | `/sim/v1/*` operator data bypassed OpenID Connect while the single-page application that consumed it was protected | Dashboard handlers now register through the shared operator authorization boundary while health checks and native cloud APIs preserve their existing contracts. |
 | ~~2612~~ | P1 | backend browser validation | Playwright reused stale compiled binaries, cloud suites used dead endpoint coordinates, backend pages loaded remote fonts, and continuous integration never ran the browser matrix | The browser harness now builds current source, starts the real matching simulator and provisions its required public cloud resources, serves only self-contained assets, validates all seven backends in Playwright, and runs every Admin, simulator, and backend browser suite in continuous integration. |
 | ~~2611~~ | P0 | Sockerless OpenID Connect relying parties | Admin and simulator logout accepted requests without browser origin evidence, rewrote configured issuers, and incompletely validated back-channel logout transport and event shape | Admin and simulator authentication now preserves the exact issuer, enforces same-origin logout evidence and issuer-origin discovery, accepts logout tokens only from form bodies, validates the required event object and `iat`, atomically rejects replay while revoking sessions, and lands on a public no-cache signed-out page. |
 | ~~2610~~ | P1 | simulator smoke container builds | standalone simulator and backend module replacements were absent from cloud and GitLab Docker build contexts | Every affected smoke image now copies the shared OpenID Connect and agent modules it resolves, GitLab simulator builds consistently select the intentional headless build tag, and repository checks enforce both invariants. |
