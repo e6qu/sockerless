@@ -3,9 +3,11 @@ package simulator
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path"
@@ -49,6 +51,9 @@ type Server struct {
 // (bad path, perms, full disk) and produce silent data loss across
 // restarts.
 func NewServer(cfg Config) (*Server, error) {
+	if err := validateUIAuthCoordinates(cfg); err != nil {
+		return nil, err
+	}
 	level, err := zerolog.ParseLevel(cfg.LogLevel)
 	if err != nil {
 		level = zerolog.InfoLevel
@@ -134,6 +139,25 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	return srv, nil
+}
+
+func validateUIAuthCoordinates(cfg Config) error {
+	if (cfg.UIIdentityEndpoint == "") != (cfg.UILogoutEndpoint == "") {
+		return errors.New("SIM_UI_IDENTITY_ENDPOINT and SIM_UI_LOGOUT_ENDPOINT must be configured together")
+	}
+	for name, value := range map[string]string{
+		"SIM_UI_IDENTITY_ENDPOINT": cfg.UIIdentityEndpoint,
+		"SIM_UI_LOGOUT_ENDPOINT":   cfg.UILogoutEndpoint,
+	} {
+		if value == "" {
+			continue
+		}
+		u, err := url.ParseRequestURI(value)
+		if err != nil || u.IsAbs() || u.Host != "" || strings.HasPrefix(value, "//") || !strings.HasPrefix(u.Path, "/") {
+			return fmt.Errorf("%s must be a same-origin absolute-path coordinate", name)
+		}
+	}
+	return nil
 }
 
 // DB returns the SQLite database connection, or nil if persistence is disabled.
@@ -242,6 +266,13 @@ func (s *Server) ListenAndServe() error {
 // surface wins: registering the redirect anyway would panic the mux at startup,
 // and the UI stays reachable at /ui/ directly.
 func (s *Server) RegisterUI(fsys fs.FS) {
+	s.mux.HandleFunc("GET /ui/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		WriteJSON(w, http.StatusOK, map[string]string{
+			"identityEndpoint": s.config.UIIdentityEndpoint,
+			"logoutEndpoint":   s.config.UILogoutEndpoint,
+		})
+	})
 	s.mux.Handle("GET /ui/", spaHandler(fsys, "/ui/"))
 	if !slices.Contains(s.routePatterns, "GET /{$}") {
 		s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {

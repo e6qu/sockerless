@@ -3,9 +3,8 @@
 # to other registries (Docker Hub, GAR, ACR) by adding matrix entries
 # or per-registry login steps.
 #
-# Triggers: `main` and manual `workflow_dispatch`. Every published image is
-# addressed only by the immutable short commit SHA; no mutable branch or
-# `latest` tags are emitted.
+# Every main commit publishes exactly one immutable short-SHA manifest and its
+# two native architecture images. No mutable branch or latest tags are emitted.
 #
 # Multi-arch shape: each (image, arch) pair builds + pushes its own
 # digest on a NATIVE runner (linux/arm64 → ubuntu-24.04-arm,
@@ -18,7 +17,6 @@ name: Publish container images
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
@@ -106,6 +104,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compose multi-arch manifest list
+        shell: bash
         run: |
           set -euo pipefail
           TAG="${{ env.REGISTRY }}/e6qu/${{ matrix.image }}:${{ needs.prepare.outputs.short_sha }}"

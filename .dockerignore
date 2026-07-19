@@ -3,6 +3,8 @@
 .claude
 .gocache
 .stack-pids
+**/node_modules
+**/dist
 **/.terraform
 **/.terragrunt-cache
 **/.terraform.lock.hcl

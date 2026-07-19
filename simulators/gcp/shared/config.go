@@ -39,6 +39,15 @@ type Config struct {
 	// InitObservability when the operator brought up the OTel stack
 	// . Unset = today's stderr-only behaviour.
 	LogWriter *OTelLogWriter
+
+	// UIIdentityEndpoint is the browser-reachable endpoint that returns the
+	// authenticated operator's OpenID Connect claims as JSON. It is a
+	// deployment coordinate; the simulator does not implement authentication.
+	UIIdentityEndpoint string
+
+	// UILogoutEndpoint is the browser-reachable endpoint that ends the
+	// operator's local application session.
+	UILogoutEndpoint string
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -47,15 +56,19 @@ type Config struct {
 //	SIM_TLS_CERT    — TLS certificate file path
 //	SIM_TLS_KEY     — TLS private key file path
 //	SIM_LOG_LEVEL   — log level (default "info")
+//	SIM_UI_IDENTITY_ENDPOINT — same-origin operator identity endpoint
+//	SIM_UI_LOGOUT_ENDPOINT   — same-origin application logout endpoint
 func ConfigFromEnv(provider string) Config {
 	return Config{
-		ListenAddr: envOrDefault("SIM_LISTEN_ADDR", ":8443"),
-		TLSCert:    os.Getenv("SIM_TLS_CERT"),
-		TLSKey:     os.Getenv("SIM_TLS_KEY"),
-		LogLevel:   envOrDefault("SIM_LOG_LEVEL", "info"),
-		Provider:   provider,
-		DataDir:    os.Getenv("SIM_DATA_DIR"),
-		Persist:    os.Getenv("SIM_PERSIST") == "true" || os.Getenv("SIM_PERSIST") == "1",
+		ListenAddr:         envOrDefault("SIM_LISTEN_ADDR", ":8443"),
+		TLSCert:            os.Getenv("SIM_TLS_CERT"),
+		TLSKey:             os.Getenv("SIM_TLS_KEY"),
+		LogLevel:           envOrDefault("SIM_LOG_LEVEL", "info"),
+		Provider:           provider,
+		DataDir:            os.Getenv("SIM_DATA_DIR"),
+		Persist:            os.Getenv("SIM_PERSIST") == "true" || os.Getenv("SIM_PERSIST") == "1",
+		UIIdentityEndpoint: os.Getenv("SIM_UI_IDENTITY_ENDPOINT"),
+		UILogoutEndpoint:   os.Getenv("SIM_UI_LOGOUT_ENDPOINT"),
 	}
 }
 

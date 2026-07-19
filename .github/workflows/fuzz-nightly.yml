@@ -50,5 +50,5 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fuzz-crashers-${{ matrix.group }}
-          path: '**/testdata/fuzz/**'
+          path: '.fuzz-artifacts/**'
           if-no-files-found: ignore
