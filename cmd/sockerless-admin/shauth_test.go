@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,23 @@ func TestSHAUTHConfigRequiresCompleteHTTPSCoordinates(t *testing.T) {
 	}
 	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
 		t.Fatal("non-HTTPS issuer was accepted")
+	}
+	if err := (shauthConfig{issuer: "https://user@auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
+		t.Fatal("issuer with user information was accepted")
+	}
+}
+
+func TestSHAUTHConfigPreservesExactIssuer(t *testing.T) {
+	t.Setenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER", "https://auth.dev.e6qu.dev/tenant/")
+	t.Setenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID", "client")
+	t.Setenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET", "secret")
+	t.Setenv("SOCKERLESS_ADMIN_PUBLIC_URL", "https://admin.dev.e6qu.dev/")
+	config := shauthConfigFromEnvironment()
+	if config.issuer != "https://auth.dev.e6qu.dev/tenant/" {
+		t.Fatalf("issuer = %q", config.issuer)
+	}
+	if config.publicURL != "https://admin.dev.e6qu.dev" {
+		t.Fatalf("public URL = %q", config.publicURL)
 	}
 }
 
@@ -127,7 +145,23 @@ func TestSHAUTHBackchannelLogoutRevokesMatchingSessionsAndRejectsReplay(t *testi
 	if err != nil {
 		t.Fatalf("create signer: %v", err)
 	}
-	payload, err := json.Marshal(map[string]any{
+	signClaims := func(claims map[string]any) string {
+		t.Helper()
+		payload, err := json.Marshal(claims)
+		if err != nil {
+			t.Fatalf("encode logout token: %v", err)
+		}
+		signed, err := signer.Sign(payload)
+		if err != nil {
+			t.Fatalf("sign logout token: %v", err)
+		}
+		raw, err := signed.CompactSerialize()
+		if err != nil {
+			t.Fatalf("serialize logout token: %v", err)
+		}
+		return raw
+	}
+	rawLogoutToken := signClaims(map[string]any{
 		"iss":    config.issuer,
 		"sub":    "subject",
 		"sid":    "upstream-session",
@@ -137,17 +171,6 @@ func TestSHAUTHBackchannelLogoutRevokesMatchingSessionsAndRejectsReplay(t *testi
 		"jti":    "logout-token-1",
 		"events": map[string]any{"http://schemas.openid.net/event/backchannel-logout": map[string]any{}},
 	})
-	if err != nil {
-		t.Fatalf("encode logout token: %v", err)
-	}
-	signed, err := signer.Sign(payload)
-	if err != nil {
-		t.Fatalf("sign logout token: %v", err)
-	}
-	rawLogoutToken, err := signed.CompactSerialize()
-	if err != nil {
-		t.Fatalf("serialize logout token: %v", err)
-	}
 	verifier := oidc.NewVerifier(config.issuer, &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{privateKey.Public()}}, &oidc.Config{ClientID: config.clientID, Now: func() time.Time { return now }})
 
 	if err := config.processBackchannelLogout(context.Background(), rawLogoutToken, verifier, now); err != nil {
@@ -161,6 +184,22 @@ func TestSHAUTHBackchannelLogoutRevokesMatchingSessionsAndRejectsReplay(t *testi
 	}
 	if err := config.processBackchannelLogout(context.Background(), rawLogoutToken, verifier, now); err == nil {
 		t.Fatal("replayed logout token was accepted")
+	}
+	missingIssuedAt := signClaims(map[string]any{
+		"iss": config.issuer, "sub": "subject", "aud": config.clientID,
+		"exp": now.Add(5 * time.Minute).Unix(), "jti": "logout-token-2",
+		"events": map[string]any{shauthLogoutEvent: map[string]any{}},
+	})
+	if err := config.processBackchannelLogout(context.Background(), missingIssuedAt, verifier, now); err == nil {
+		t.Fatal("logout token without iat was accepted")
+	}
+	invalidEvent := signClaims(map[string]any{
+		"iss": config.issuer, "sub": "subject", "aud": config.clientID,
+		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "jti": "logout-token-3",
+		"events": map[string]any{shauthLogoutEvent: nil},
+	})
+	if err := config.processBackchannelLogout(context.Background(), invalidEvent, verifier, now); err == nil {
+		t.Fatal("logout token with a null event was accepted")
 	}
 }
 
@@ -181,5 +220,83 @@ func TestSHAUTHMiddlewareRejectsSessionAfterServerRestart(t *testing.T) {
 	})).ServeHTTP(response, request)
 	if response.Code != http.StatusFound || response.Header().Get("Location") != "/auth/shauth" {
 		t.Fatalf("restarted server accepted stale session: status=%d location=%q", response.Code, response.Header().Get("Location"))
+	}
+}
+
+func TestSHAUTHLogoutRequiresSameOriginBrowserEvidence(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		configure func(*http.Request)
+		want      bool
+	}{
+		"same origin":                {configure: func(r *http.Request) { r.Header.Set("Origin", "https://admin.dev.e6qu.dev") }, want: true},
+		"same-origin referer":        {configure: func(r *http.Request) { r.Header.Set("Referer", "https://admin.dev.e6qu.dev/ui/") }, want: true},
+		"same-origin fetch metadata": {configure: func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "same-origin") }, want: true},
+		"missing evidence":           {configure: func(*http.Request) {}, want: false},
+		"cross-origin referer":       {configure: func(r *http.Request) { r.Header.Set("Referer", "https://attacker.example/") }, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "https://admin.dev.e6qu.dev/auth/logout", nil)
+			testCase.configure(request)
+			if got := sameOriginRequest(request, testSHAUTHConfig().publicURL); got != testCase.want {
+				t.Fatalf("sameOriginRequest() = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestSHAUTHBackchannelLogoutRequiresFormBody(t *testing.T) {
+	config := testSHAUTHConfig()
+	for name, testCase := range map[string]struct {
+		target, contentType string
+		wantStatus          int
+	}{
+		"missing media type": {target: "/auth/shauth/backchannel-logout", wantStatus: http.StatusUnsupportedMediaType},
+		"JSON media type":    {target: "/auth/shauth/backchannel-logout", contentType: "application/json", wantStatus: http.StatusUnsupportedMediaType},
+		"query token":        {target: "/auth/shauth/backchannel-logout?logout_token=query", contentType: "application/x-www-form-urlencoded", wantStatus: http.StatusBadRequest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, testCase.target, strings.NewReader(""))
+			if testCase.contentType != "" {
+				request.Header.Set("Content-Type", testCase.contentType)
+			}
+			recorder := httptest.NewRecorder()
+			config.backchannelLogout(recorder, request)
+			if recorder.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, testCase.wantStatus)
+			}
+			if recorder.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("Cache-Control = %q", recorder.Header().Get("Cache-Control"))
+			}
+		})
+	}
+}
+
+func TestSHAUTHBackchannelLogoutEventMustBeJSONObject(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		raw  string
+		want bool
+	}{
+		"empty object":     {raw: `{}`, want: true},
+		"non-empty object": {raw: `{"reason":"admin"}`, want: true},
+		"missing":          {raw: ``, want: false},
+		"null":             {raw: `null`, want: false},
+		"string":           {raw: `"logout"`, want: false},
+		"array":            {raw: `[]`, want: false},
+		"invalid":          {raw: `{`, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := validSHAUTHLogoutEvent(json.RawMessage(testCase.raw)); got != testCase.want {
+				t.Fatalf("validSHAUTHLogoutEvent(%q) = %v, want %v", testCase.raw, got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestSHAUTHSignedOutResponseIsPublicAndNotCached(t *testing.T) {
+	config := testSHAUTHConfig()
+	recorder := httptest.NewRecorder()
+	config.middleware(http.HandlerFunc(config.signedOut)).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, shauthSignedOutPath, nil))
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("signed-out response = %d Cache-Control=%q", recorder.Code, recorder.Header().Get("Cache-Control"))
 	}
 }

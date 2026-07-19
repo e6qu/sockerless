@@ -165,7 +165,7 @@ SOCKERLESS_ADMIN_PUBLIC_URL=https://admin.dev.e6qu.dev
 Register these Shauth relying-party coordinates:
 
 - redirect URI: `https://admin.dev.e6qu.dev/auth/shauth/callback`
-- post-logout redirect URI: `https://admin.dev.e6qu.dev/`
+- post-logout redirect URI: `https://admin.dev.e6qu.dev/auth/signed-out`
 - back-channel logout URI: `https://admin.dev.e6qu.dev/auth/shauth/backchannel-logout`
 
 The console discovered Shauth, used authorization code + PKCE and nonce

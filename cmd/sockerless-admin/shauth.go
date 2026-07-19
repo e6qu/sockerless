@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html/template"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,6 +25,9 @@ import (
 const (
 	shauthTransactionCookie = "sockerless_admin_shauth_tx"
 	shauthSessionCookie     = "sockerless_admin_shauth_session"
+	shauthSignedOutPath     = "/auth/signed-out"
+	shauthMaximumFormBytes  = 1 << 20
+	shauthLogoutEvent       = "http://schemas.openid.net/event/backchannel-logout"
 )
 
 // shauthConfig is optional so the local operator workflow remains available.
@@ -39,7 +44,7 @@ type shauthConfig struct {
 
 func shauthConfigFromEnvironment() shauthConfig {
 	return shauthConfig{
-		issuer:       strings.TrimRight(os.Getenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER"), "/"),
+		issuer:       os.Getenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER"),
 		clientID:     os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID"),
 		clientSecret: os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET"),
 		publicURL:    strings.TrimRight(os.Getenv("SOCKERLESS_ADMIN_PUBLIC_URL"), "/"),
@@ -65,10 +70,13 @@ func (c shauthConfig) validate() error {
 	if configured != 4 {
 		return fmt.Errorf("SOCKERLESS_ADMIN_SHAUTH_ISSUER, SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID, SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET, and SOCKERLESS_ADMIN_PUBLIC_URL must be configured together")
 	}
-	for _, value := range []string{c.issuer, c.publicURL} {
+	for name, value := range map[string]string{"issuer": c.issuer, "public URL": c.publicURL} {
 		parsed, err := url.ParseRequestURI(value)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return fmt.Errorf("shauth issuer and public URL must be absolute HTTPS URLs")
+		}
+		if name == "public URL" && strings.TrimRight(parsed.Path, "/") != "" {
+			return fmt.Errorf("shauth public URL must not contain a path")
 		}
 	}
 	return nil
@@ -129,9 +137,7 @@ func (s *shauthSessionStore) delete(id string) {
 	delete(s.sessions, id)
 }
 
-func (s *shauthSessionStore) revoke(subject, upstreamSID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *shauthSessionStore) revokeLocked(subject, upstreamSID string) {
 	for id, session := range s.sessions {
 		if (upstreamSID != "" && session.UpstreamSID == upstreamSID) ||
 			(subject != "" && session.Subject == subject) {
@@ -140,7 +146,7 @@ func (s *shauthSessionStore) revoke(subject, upstreamSID string) {
 	}
 }
 
-func (s *shauthSessionStore) consumeLogoutToken(id string, expiry, now time.Time) bool {
+func (s *shauthSessionStore) consumeAndRevoke(id string, expiry time.Time, subject, upstreamSID string, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.prune(now)
@@ -148,6 +154,7 @@ func (s *shauthSessionStore) consumeLogoutToken(id string, expiry, now time.Time
 		return false
 	}
 	s.logoutTokens[id] = expiry
+	s.revokeLocked(subject, upstreamSID)
 	return true
 }
 
@@ -226,7 +233,7 @@ func (c shauthConfig) middleware(next http.Handler) http.Handler {
 }
 
 func isSHAUTHRoute(path string) bool {
-	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session"
+	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session" || path == shauthSignedOutPath
 }
 
 func (c shauthConfig) sessionIsActive(session shauthSession, now time.Time) bool {
@@ -274,6 +281,7 @@ func (c shauthConfig) login(w http.ResponseWriter, r *http.Request) {
 
 func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(shauthTransactionCookie)
+	http.SetCookie(w, &http.Cookie{Name: shauthTransactionCookie, Path: "/auth/shauth", MaxAge: -1, HttpOnly: true, Secure: c.secureCookie(), SameSite: http.SameSiteLaxMode})
 	if err != nil {
 		http.Error(w, "Shauth transaction is missing", http.StatusBadRequest)
 		return
@@ -283,7 +291,6 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth transaction is invalid", http.StatusBadRequest)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: shauthTransactionCookie, Path: "/auth/shauth", MaxAge: -1, HttpOnly: true, Secure: c.secureCookie(), SameSite: http.SameSiteLaxMode})
 	provider, err := oidc.NewProvider(r.Context(), c.issuer)
 	if err != nil {
 		http.Error(w, "Shauth discovery failed", http.StatusBadGateway)
@@ -305,6 +312,10 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth ID token verification failed", http.StatusUnauthorized)
 		return
 	}
+	if err := idToken.VerifyAccessToken(tokens.AccessToken); err != nil {
+		http.Error(w, "Shauth access token verification failed", http.StatusUnauthorized)
+		return
+	}
 	var claims struct {
 		Nonce             string `json:"nonce"`
 		PreferredUsername string `json:"preferred_username"`
@@ -315,6 +326,10 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth identity is not authorized", http.StatusForbidden)
 		return
 	}
+	name := claims.PreferredUsername
+	if name == "" {
+		name = idToken.Subject
+	}
 	if c.sessions == nil {
 		http.Error(w, "Shauth session storage is unavailable", http.StatusInternalServerError)
 		return
@@ -324,14 +339,18 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not create Shauth session", http.StatusInternalServerError)
 		return
 	}
-	expires := time.Now().Add(8 * time.Hour).Unix()
-	session, err := c.sign(shauthSession{ID: sessionID, Subject: idToken.Subject, Name: claims.PreferredUsername, Role: claims.Role, Expires: expires})
+	expiresAt := time.Now().Add(8 * time.Hour)
+	if idToken.Expiry.Before(expiresAt) {
+		expiresAt = idToken.Expiry
+	}
+	expires := expiresAt.Unix()
+	session, err := c.sign(shauthSession{ID: sessionID, Subject: idToken.Subject, Name: name, Role: claims.Role, Expires: expires})
 	if err != nil {
 		http.Error(w, "could not create Shauth session", http.StatusInternalServerError)
 		return
 	}
 	c.sessions.put(sessionID, shauthSessionRecord{Subject: idToken.Subject, UpstreamSID: claims.SessionID, RawIDToken: rawIDToken, Expires: expires})
-	http.SetCookie(w, &http.Cookie{Name: shauthSessionCookie, Value: session, Path: "/", HttpOnly: true, Secure: c.secureCookie(), SameSite: http.SameSiteLaxMode, MaxAge: 8 * 60 * 60})
+	http.SetCookie(w, &http.Cookie{Name: shauthSessionCookie, Value: session, Path: "/", HttpOnly: true, Secure: c.secureCookie(), SameSite: http.SameSiteLaxMode, MaxAge: int(time.Until(expiresAt).Seconds())})
 	http.Redirect(w, r, "/ui/", http.StatusFound)
 }
 
@@ -368,38 +387,63 @@ func (c shauthConfig) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logoutURL, err := url.Parse(metadata.EndSessionEndpoint)
-	if err != nil || !logoutURL.IsAbs() || logoutURL.Scheme != "https" {
+	if err != nil || !logoutURL.IsAbs() || logoutURL.Scheme != "https" || !sameSHAUTHOrigin(logoutURL, c.issuer) {
 		http.Error(w, "Shauth logout endpoint is invalid", http.StatusBadGateway)
 		return
 	}
 	query := logoutURL.Query()
-	query.Set("post_logout_redirect_uri", c.publicURL+"/")
+	query.Set("post_logout_redirect_uri", c.publicURL+shauthSignedOutPath)
 	if rawIDToken != "" {
 		query.Set("id_token_hint", rawIDToken)
+	} else {
+		query.Set("client_id", c.clientID)
 	}
 	logoutURL.RawQuery = query.Encode()
 	http.Redirect(w, r, logoutURL.String(), http.StatusFound)
 }
 
 func sameOriginRequest(r *http.Request, publicURL string) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
 	want, err := url.Parse(publicURL)
 	if err != nil {
 		return false
 	}
-	got, err := url.Parse(origin)
-	return err == nil && got.Scheme == want.Scheme && got.Host == want.Host
+	if origin := r.Header.Get("Origin"); origin != "" {
+		got, err := url.Parse(origin)
+		return err == nil && sameSHAUTHParsedOrigin(got, want)
+	}
+	if referer := r.Header.Get("Referer"); referer != "" {
+		got, err := url.Parse(referer)
+		return err == nil && sameSHAUTHParsedOrigin(got, want)
+	}
+	return r.Header.Get("Sec-Fetch-Site") == "same-origin" && r.Host == want.Host
+}
+
+func sameSHAUTHOrigin(got *url.URL, wantRaw string) bool {
+	want, err := url.Parse(wantRaw)
+	return err == nil && sameSHAUTHParsedOrigin(got, want)
+}
+
+func sameSHAUTHParsedOrigin(got, want *url.URL) bool {
+	return got != nil && want != nil && got.IsAbs() && got.User == nil && got.Scheme == want.Scheme && got.Host == want.Host
 }
 
 func (c shauthConfig) backchannelLogout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if !c.enabled() || c.sessions == nil {
 		http.Error(w, "Shauth is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	rawLogoutToken := r.PostFormValue("logout_token")
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/x-www-form-urlencoded" {
+		http.Error(w, "content type must be application/x-www-form-urlencoded", http.StatusUnsupportedMediaType)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, shauthMaximumFormBytes)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid logout request", http.StatusBadRequest)
+		return
+	}
+	rawLogoutToken := r.PostForm.Get("logout_token")
 	if rawLogoutToken == "" {
 		http.Error(w, "logout_token is required", http.StatusBadRequest)
 		return
@@ -421,12 +465,37 @@ func (c shauthConfig) processBackchannelLogout(ctx context.Context, rawLogoutTok
 	if err != nil {
 		return err
 	}
-	if !c.sessions.consumeLogoutToken(logoutToken.TokenID, logoutToken.Expiry, now) {
+	if logoutToken.IssuedAt.IsZero() {
+		return fmt.Errorf("logout token is missing the iat claim")
+	}
+	var claims struct {
+		Events map[string]json.RawMessage `json:"events"`
+	}
+	if err := logoutToken.Claims(&claims); err != nil || !validSHAUTHLogoutEvent(claims.Events[shauthLogoutEvent]) {
+		return fmt.Errorf("logout token contains an invalid back-channel logout event")
+	}
+	if !c.sessions.consumeAndRevoke(logoutToken.TokenID, logoutToken.Expiry, logoutToken.Subject, logoutToken.SessionID, now) {
 		return fmt.Errorf("logout token was already processed")
 	}
-	c.sessions.revoke(logoutToken.Subject, logoutToken.SessionID)
 	return nil
 }
+
+func validSHAUTHLogoutEvent(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var event map[string]json.RawMessage
+	return json.Unmarshal(raw, &event) == nil && event != nil
+}
+
+func (c shauthConfig) signedOut(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+	_ = shauthSignedOutTemplate.Execute(w, nil)
+}
+
+var shauthSignedOutTemplate = template.Must(template.New("signed-out").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out · Sockerless Admin</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fff7ed;color:#21130f;font:16px system-ui,sans-serif}.card{max-width:34rem;padding:2.5rem;border:1px solid #fed7aa;border-radius:1.25rem;background:#fff;box-shadow:0 16px 40px #7c2d1214}a{display:inline-block;margin-top:1rem;padding:.7rem 1rem;border-radius:.6rem;background:#ea580c;color:#fff;font-weight:700;text-decoration:none}a:focus-visible{outline:3px solid #0ea5e9;outline-offset:3px}@media(prefers-color-scheme:dark){body{background:#160c09;color:#fff7ed}.card{background:#26130d;border-color:#7c2d12}}</style></head><body><main class="card"><h1>Signed out of Sockerless Admin</h1><p>Your Sockerless Admin session and shared Shauth session have ended.</p><a href="/auth/shauth">Sign in again</a></main></body></html>`))
 
 func (c shauthConfig) session(w http.ResponseWriter, r *http.Request) {
 	if !c.enabled() {

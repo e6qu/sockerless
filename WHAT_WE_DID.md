@@ -801,3 +801,33 @@ production configuration failed at startup. The Amazon Web Services, Google
 Cloud, and Microsoft Azure simulator API endpoints were not wrapped because
 their real SDK, command-line interface, and Terraform contracts remained
 unchanged.
+
+## OpenID Connect logout protocol hardening
+
+Sockerless Admin and the shared simulator user-interface authentication module
+preserved the configured issuer exactly, rejected issuer and public coordinates
+containing user information, constrained discovered logout endpoints to the
+configured issuer origin, and required same-origin browser evidence for logout.
+Back-channel logout accepted only bounded
+`application/x-www-form-urlencoded` POST bodies, rejected query tokens,
+validated `iat` and the required logout event as a JSON object, and consumed
+each `jti` atomically with `sid`/`sub` session revocation. Admin retained a
+validated ID token only for its owning session, bounded its session by the ID
+token expiry, and used the client identifier when no ID-token hint remained.
+Both Admin and the simulators returned an explicit public no-cache signed-out
+page after the shared Shauth session ended, so logout did not immediately enter
+a new sign-in flow.
+
+## Current-source browser validation
+
+The shared backend Playwright harness built the current web interface and Go
+binary for every run instead of reusing an untracked executable. Cloud backend
+suites started the corresponding real Sockerless simulator in API-only process
+mode and provisioned their prerequisite Amazon ECS cluster, Google Cloud Storage
+bucket, or Azure resources through the public cloud API surface. All seven
+backend interfaces validated status, navigation, resources, metrics, and their
+declared favicon in 77 browser scenarios. Their HTML stopped loading Google
+Fonts at runtime, leaving each production bundle self-contained. Continuous
+integration gained an explicit browser matrix for Admin, every simulator, and
+every backend, while pre-commit and pre-push validation covered the shared
+browser shell scripts.

@@ -17,7 +17,11 @@ export default defineConfig({
     { name: "chromium", use: { browserName: "chromium", launchOptions: chromiumExecutable ? { executablePath: chromiumExecutable } : {} } },
   ],
   webServer: {
-    command: `ADMIN_BIN=${process.env.ADMIN_BIN || "../../../cmd/sockerless-admin/sockerless-admin"} BACKEND_BIN=${process.env.BACKEND_BIN || "../../../backends/docker/sockerless-backend-docker"} BACKEND_PORT=${BACKEND_PORT} ADMIN_PORT=${ADMIN_PORT} bash e2e/start-server.sh`,
+    command: `BACKEND_PORT=${BACKEND_PORT} ADMIN_PORT=${ADMIN_PORT} bash e2e/start-server.sh`,
+    env: {
+      ...(process.env.ADMIN_BIN ? { ADMIN_BIN: process.env.ADMIN_BIN } : {}),
+      ...(process.env.BACKEND_BIN ? { BACKEND_BIN: process.env.BACKEND_BIN } : {}),
+    },
     port: ADMIN_PORT,
     reuseExistingServer: false,
     timeout: 15_000,

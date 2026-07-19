@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
-# Starts the real Docker passthrough backend and Admin server for Playwright.
-# Expects ADMIN_BIN and BACKEND_BIN to point at compiled binaries.
+# Builds and starts the real Docker passthrough backend and Admin server for
+# Playwright. Explicit ADMIN_BIN and BACKEND_BIN coordinates remain available
+# for release-image or cross-build validation.
 set -euo pipefail
 
 BACKEND_PORT="${BACKEND_PORT:-29100}"
 ADMIN_PORT="${ADMIN_PORT:-29090}"
-: "${BACKEND_BIN:?BACKEND_BIN must point to the compiled Docker backend}"
-: "${ADMIN_BIN:?ADMIN_BIN must point to the compiled Admin server}"
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+if [[ -z "${ADMIN_BIN:-}" ]]; then
+  bun run build
+  make -C "$repo_root/cmd/sockerless-admin" build
+  ADMIN_BIN="$repo_root/cmd/sockerless-admin/sockerless-admin"
+fi
+if [[ -z "${BACKEND_BIN:-}" ]]; then
+  make -C "$repo_root/backends/docker" build-noui
+  BACKEND_BIN="$repo_root/backends/docker/sockerless-backend-docker"
+fi
+export ADMIN_BIN BACKEND_BIN
 
 SOCKERLESS_HOME="$(mktemp -d)"
 export SOCKERLESS_HOME

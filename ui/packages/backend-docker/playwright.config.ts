@@ -3,8 +3,9 @@ import { defineConfig } from "@playwright/test";
 process.env.BACKEND_TITLE = "Docker Backend";
 
 const PORT = 19280;
-const BIN = process.env.BACKEND_BIN || "../../../backends/docker/sockerless-backend-docker";
+const BIN = process.env.BACKEND_BIN;
 const HEALTH = `http://localhost:${PORT}/internal/v1/healthz`;
+const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: "../core/e2e",
@@ -16,10 +17,17 @@ export default defineConfig({
     headless: true,
   },
   projects: [
-    { name: "chromium", use: { browserName: "chromium" } },
+    { name: "chromium", use: { browserName: "chromium", launchOptions: chromiumExecutable ? { executablePath: chromiumExecutable } : {} } },
   ],
   webServer: {
-    command: `SERVER_BIN="${BIN}" SERVER_PORT=${PORT} HEALTH_URL="${HEALTH}" bash ../core/e2e/start-backend.sh`,
+    command: `bash ../core/e2e/start-backend.sh`,
+    env: {
+      SERVER_PORT: String(PORT),
+      HEALTH_URL: HEALTH,
+      SERVER_PACKAGE: "backends/docker",
+      SERVER_NAME: "sockerless-backend-docker",
+      ...(BIN ? { SERVER_BIN: BIN } : {}),
+    },
     port: PORT,
     reuseExistingServer: false,
     timeout: 15_000,

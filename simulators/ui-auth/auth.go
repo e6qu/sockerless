@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,14 +24,15 @@ import (
 )
 
 const (
-	LoginPath             = "/auth/oidc/login"
-	CallbackPath          = "/auth/oidc/callback"
-	SessionPath           = "/auth/session"
-	LogoutPath            = "/auth/logout"
-	BackchannelLogoutPath = "/auth/oidc/backchannel-logout"
-	SignedOutPath         = "/auth/signed-out"
-	transactionLifetime   = 10 * time.Minute
-	maximumFormBytes      = 1 << 20
+	LoginPath              = "/auth/oidc/login"
+	CallbackPath           = "/auth/oidc/callback"
+	SessionPath            = "/auth/session"
+	LogoutPath             = "/auth/logout"
+	BackchannelLogoutPath  = "/auth/oidc/backchannel-logout"
+	SignedOutPath          = "/auth/signed-out"
+	transactionLifetime    = 10 * time.Minute
+	maximumFormBytes       = 1 << 20
+	backchannelLogoutEvent = "http://schemas.openid.net/event/backchannel-logout"
 )
 
 type Config struct {
@@ -66,7 +68,7 @@ func (c Config) Validate() error {
 	}
 	for name, raw := range map[string]string{"issuer": c.Issuer, "public URL": c.PublicURL} {
 		u, err := url.Parse(raw)
-		if err != nil || !u.IsAbs() || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+		if err != nil || !u.IsAbs() || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return fmt.Errorf("OIDC %s must be an absolute origin URL", name)
 		}
 		if (!c.InsecureCookies && u.Scheme != "https") || (u.Scheme != "https" && u.Scheme != "http") {
@@ -91,7 +93,6 @@ func New(config Config) (*Auth, error) {
 	if config.SessionLifetime <= 0 {
 		config.SessionLifetime = 8 * time.Hour
 	}
-	config.Issuer = strings.TrimRight(config.Issuer, "/")
 	config.PublicURL = strings.TrimRight(config.PublicURL, "/")
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -309,7 +310,8 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logoutURL, err := url.Parse(metadata.EndSessionEndpoint)
-	if err != nil || !logoutURL.IsAbs() || (logoutURL.Scheme != "https" && (!a.config.InsecureCookies || logoutURL.Scheme != "http")) {
+	if err != nil || !logoutURL.IsAbs() || !sameURLOrigin(logoutURL, a.config.Issuer) ||
+		(logoutURL.Scheme != "https" && (!a.config.InsecureCookies || logoutURL.Scheme != "http")) {
 		http.Error(w, "OIDC logout endpoint is invalid", http.StatusBadGateway)
 		return
 	}
@@ -325,6 +327,12 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Auth) backchannelLogout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/x-www-form-urlencoded" {
+		http.Error(w, "content type must be application/x-www-form-urlencoded", http.StatusUnsupportedMediaType)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maximumFormBytes)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid logout request", http.StatusBadRequest)
@@ -352,15 +360,24 @@ func (a *Auth) processBackchannelLogout(ctx context.Context, raw string, verifie
 	if err != nil {
 		return err
 	}
-	if !a.store.consumeLogoutToken(logoutToken.TokenID, logoutToken.Expiry, now) {
+	if logoutToken.IssuedAt.IsZero() {
+		return errors.New("logout token is missing the iat claim")
+	}
+	var claims struct {
+		Events map[string]json.RawMessage `json:"events"`
+	}
+	if err := logoutToken.Claims(&claims); err != nil || !validLogoutEvent(claims.Events[backchannelLogoutEvent]) {
+		return errors.New("logout token contains an invalid back-channel logout event")
+	}
+	if !a.store.consumeAndRevoke(logoutToken.TokenID, logoutToken.Expiry, logoutToken.Subject, logoutToken.SessionID, now) {
 		return errors.New("logout token was already processed")
 	}
-	a.store.revoke(logoutToken.Subject, logoutToken.SessionID)
 	return nil
 }
 
 func (a *Auth) signedOut(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
 	_ = signedOutTemplate.Execute(w, map[string]string{"Name": a.config.ApplicationName, "Login": LoginPath})
 }
@@ -436,16 +453,37 @@ func safeReturnTo(value string) string {
 }
 
 func sameOrigin(r *http.Request, publicURL string) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
 	want, err := url.Parse(publicURL)
 	if err != nil {
 		return false
 	}
-	got, err := url.Parse(origin)
-	return err == nil && got.Scheme == want.Scheme && got.Host == want.Host
+	if origin := r.Header.Get("Origin"); origin != "" {
+		got, err := url.Parse(origin)
+		return err == nil && sameParsedOrigin(got, want)
+	}
+	if referer := r.Header.Get("Referer"); referer != "" {
+		got, err := url.Parse(referer)
+		return err == nil && sameParsedOrigin(got, want)
+	}
+	return r.Header.Get("Sec-Fetch-Site") == "same-origin" && r.Host == want.Host
+}
+
+func sameURLOrigin(got *url.URL, wantRaw string) bool {
+	want, err := url.Parse(wantRaw)
+	return err == nil && sameParsedOrigin(got, want)
+}
+
+func sameParsedOrigin(got, want *url.URL) bool {
+	return got != nil && want != nil && got.IsAbs() && got.User == nil &&
+		got.Scheme == want.Scheme && got.Host == want.Host
+}
+
+func validLogoutEvent(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var event map[string]json.RawMessage
+	return json.Unmarshal(raw, &event) == nil && event != nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -478,16 +516,14 @@ func (s *sessionStore) get(id string, now time.Time) (sessionRecord, bool) {
 	record, ok := s.sessions[id]
 	return record, ok
 }
-func (s *sessionStore) revoke(subject, sid string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *sessionStore) revokeLocked(subject, sid string) {
 	for id, record := range s.sessions {
 		if (sid != "" && record.UpstreamSID == sid) || (subject != "" && record.Subject == subject) {
 			delete(s.sessions, id)
 		}
 	}
 }
-func (s *sessionStore) consumeLogoutToken(id string, expiry, now time.Time) bool {
+func (s *sessionStore) consumeAndRevoke(id string, expiry time.Time, subject, sid string, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.prune(now)
@@ -495,6 +531,7 @@ func (s *sessionStore) consumeLogoutToken(id string, expiry, now time.Time) bool
 		return false
 	}
 	s.logoutTokens[id] = expiry
+	s.revokeLocked(subject, sid)
 	return true
 }
 func (s *sessionStore) prune(now time.Time) {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ func TestConfigRequiresCompleteSecureCoordinates(t *testing.T) {
 		"missing client secret": func(c *Config) { c.ClientSecret = "" },
 		"short session secret":  func(c *Config) { c.SessionSecret = "short" },
 		"insecure issuer":       func(c *Config) { c.Issuer = "http://auth.example.test" },
+		"issuer user info":      func(c *Config) { c.Issuer = "https://user@auth.example.test" },
 		"public path":           func(c *Config) { c.PublicURL += "/sim" },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -41,6 +43,18 @@ func TestConfigRequiresCompleteSecureCoordinates(t *testing.T) {
 				t.Fatal("invalid OpenID Connect configuration was accepted")
 			}
 		})
+	}
+}
+
+func TestConfigPreservesExactIssuer(t *testing.T) {
+	config := testConfig()
+	config.Issuer = "https://auth.example.test/tenant/"
+	auth, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.config.Issuer != config.Issuer {
+		t.Fatalf("issuer = %q, want exact %q", auth.config.Issuer, config.Issuer)
 	}
 }
 
@@ -119,22 +133,27 @@ func TestBackchannelLogoutRevokesMatchingSessionAndRejectsReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(map[string]any{
+	signClaims := func(claims map[string]any) string {
+		t.Helper()
+		payload, err := json.Marshal(claims)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signed, err := signer.Sign(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := signed.CompactSerialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	raw := signClaims(map[string]any{
 		"iss": auth.config.Issuer, "sub": "subject", "sid": "upstream", "aud": auth.config.ClientID,
 		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "jti": "logout-1",
 		"events": map[string]any{"http://schemas.openid.net/event/backchannel-logout": map[string]any{}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	signed, err := signer.Sign(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := signed.CompactSerialize()
-	if err != nil {
-		t.Fatal(err)
-	}
 	verifier := oidc.NewVerifier(auth.config.Issuer, &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{privateKey.Public()}}, &oidc.Config{ClientID: auth.config.ClientID, Now: func() time.Time { return now }})
 	if err := auth.processBackchannelLogout(context.Background(), raw, verifier, now); err != nil {
 		t.Fatal(err)
@@ -147,6 +166,22 @@ func TestBackchannelLogoutRevokesMatchingSessionAndRejectsReplay(t *testing.T) {
 	}
 	if err := auth.processBackchannelLogout(context.Background(), raw, verifier, now); err == nil {
 		t.Fatal("replayed logout token was accepted")
+	}
+	missingIssuedAt := signClaims(map[string]any{
+		"iss": auth.config.Issuer, "sub": "subject", "aud": auth.config.ClientID,
+		"exp": now.Add(5 * time.Minute).Unix(), "jti": "logout-2",
+		"events": map[string]any{backchannelLogoutEvent: map[string]any{}},
+	})
+	if err := auth.processBackchannelLogout(context.Background(), missingIssuedAt, verifier, now); err == nil {
+		t.Fatal("logout token without iat was accepted")
+	}
+	invalidEvent := signClaims(map[string]any{
+		"iss": auth.config.Issuer, "sub": "subject", "aud": auth.config.ClientID,
+		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "jti": "logout-3",
+		"events": map[string]any{backchannelLogoutEvent: nil},
+	})
+	if err := auth.processBackchannelLogout(context.Background(), invalidEvent, verifier, now); err == nil {
+		t.Fatal("logout token with a null event was accepted")
 	}
 }
 
@@ -161,5 +196,89 @@ func TestLogoutRejectsCrossOriginBeforeProviderAccess(t *testing.T) {
 	auth.logout(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin logout status = %d", recorder.Code)
+	}
+}
+
+func TestLogoutRequiresSameOriginBrowserEvidence(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		configure func(*http.Request)
+		want      bool
+	}{
+		"same origin":                {configure: func(r *http.Request) { r.Header.Set("Origin", "https://sim.example.test") }, want: true},
+		"same-origin referer":        {configure: func(r *http.Request) { r.Header.Set("Referer", "https://sim.example.test/ui/") }, want: true},
+		"same-origin fetch metadata": {configure: func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "same-origin") }, want: true},
+		"missing evidence":           {configure: func(*http.Request) {}, want: false},
+		"cross-origin referer":       {configure: func(r *http.Request) { r.Header.Set("Referer", "https://attacker.example/") }, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "https://sim.example.test"+LogoutPath, nil)
+			testCase.configure(request)
+			if got := sameOrigin(request, testConfig().PublicURL); got != testCase.want {
+				t.Fatalf("sameOrigin() = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestBackchannelLogoutRequiresFormBody(t *testing.T) {
+	auth, err := New(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, testCase := range map[string]struct {
+		target, contentType string
+		wantStatus          int
+	}{
+		"missing media type": {target: BackchannelLogoutPath, wantStatus: http.StatusUnsupportedMediaType},
+		"JSON media type":    {target: BackchannelLogoutPath, contentType: "application/json", wantStatus: http.StatusUnsupportedMediaType},
+		"query token":        {target: BackchannelLogoutPath + "?logout_token=query", contentType: "application/x-www-form-urlencoded", wantStatus: http.StatusBadRequest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, testCase.target, strings.NewReader(""))
+			if testCase.contentType != "" {
+				request.Header.Set("Content-Type", testCase.contentType)
+			}
+			recorder := httptest.NewRecorder()
+			auth.backchannelLogout(recorder, request)
+			if recorder.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, testCase.wantStatus)
+			}
+			if recorder.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("Cache-Control = %q", recorder.Header().Get("Cache-Control"))
+			}
+		})
+	}
+}
+
+func TestBackchannelLogoutEventMustBeJSONObject(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		raw  string
+		want bool
+	}{
+		"empty object":     {raw: `{}`, want: true},
+		"non-empty object": {raw: `{"reason":"admin"}`, want: true},
+		"missing":          {raw: ``, want: false},
+		"null":             {raw: `null`, want: false},
+		"string":           {raw: `"logout"`, want: false},
+		"array":            {raw: `[]`, want: false},
+		"invalid":          {raw: `{`, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := validLogoutEvent(json.RawMessage(testCase.raw)); got != testCase.want {
+				t.Fatalf("validLogoutEvent(%q) = %v, want %v", testCase.raw, got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestSignedOutResponseIsNotCached(t *testing.T) {
+	auth, err := New(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	auth.signedOut(recorder, httptest.NewRequest(http.MethodGet, SignedOutPath, nil))
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("signed-out response = %d Cache-Control=%q", recorder.Code, recorder.Header().Get("Cache-Control"))
 	}
 }

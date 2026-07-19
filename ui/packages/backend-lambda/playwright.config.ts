@@ -3,8 +3,10 @@ import { defineConfig } from "@playwright/test";
 process.env.BACKEND_TITLE = "Lambda Backend";
 
 const PORT = 19230;
-const BIN = process.env.BACKEND_BIN || "../../../backends/lambda/sockerless-backend-lambda";
+const SIMULATOR_PORT = 19330;
+const BIN = process.env.BACKEND_BIN;
 const HEALTH = `http://localhost:${PORT}/internal/v1/healthz`;
+const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: "../core/e2e",
@@ -16,12 +18,26 @@ export default defineConfig({
     headless: true,
   },
   projects: [
-    { name: "chromium", use: { browserName: "chromium" } },
+    { name: "chromium", use: { browserName: "chromium", launchOptions: chromiumExecutable ? { executablePath: chromiumExecutable } : {} } },
   ],
   webServer: {
-    command: `SOCKERLESS_ENDPOINT_URL=http://localhost:1 SERVER_BIN="${BIN}" SERVER_PORT=${PORT} HEALTH_URL="${HEALTH}" bash ../core/e2e/start-backend.sh`,
+    command: `bash ../core/e2e/start-backend.sh`,
+    env: {
+      SERVER_PORT: String(PORT),
+      HEALTH_URL: HEALTH,
+      SERVER_PACKAGE: "backends/lambda",
+      SERVER_NAME: "sockerless-backend-lambda",
+      ...(BIN ? { SERVER_BIN: BIN } : {}),
+      SIMULATOR_PACKAGE: "simulators/aws",
+      SIMULATOR_NAME: "simulator-aws",
+      SIMULATOR_PORT: String(SIMULATOR_PORT),
+      SOCKERLESS_ENDPOINT_URL: `http://127.0.0.1:${SIMULATOR_PORT}`,
+      SOCKERLESS_LAMBDA_ROLE_ARN: "arn:aws:iam::000000000000:role/sockerless-e2e",
+      SOCKERLESS_LAMBDA_ARCHITECTURE: "arm64",
+      SOCKERLESS_CALLBACK_URL: `ws://127.0.0.1:${PORT}/v1/lambda/reverse`,
+    },
     port: PORT,
     reuseExistingServer: false,
-    timeout: 15_000,
+    timeout: 60_000,
   },
 });

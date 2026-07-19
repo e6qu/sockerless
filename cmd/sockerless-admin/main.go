@@ -107,6 +107,7 @@ func main() {
 	mux.HandleFunc("POST /auth/shauth/backchannel-logout", shauth.backchannelLogout)
 	mux.HandleFunc("POST /auth/logout", shauth.logout)
 	mux.HandleFunc("GET /auth/session", shauth.session)
+	mux.HandleFunc("GET "+shauthSignedOutPath, shauth.signedOut)
 	registerUI(mux)
 
 	// Redirect / to /ui/

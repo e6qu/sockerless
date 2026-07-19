@@ -8,7 +8,7 @@
     "build": "bun --bun vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "bash ../core/e2e/run-tests.sh",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -20,7 +20,7 @@
     "@sockerless/ui-core": "workspace:*"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/vite": "^4.1.0",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.3.0",
