@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`fix/simulator-console-ui` contained the polished shared Admin/simulator interface, corrected compiled-server browser harnesses, and standards-compliant Sockerless Admin logout participation. Its Go, TypeScript, production-build, and real-browser suites passed locally.
+`fix/simulator-console-ui` contained the polished shared Admin/simulator interface, corrected compiled-server browser harnesses, standards-compliant Sockerless Admin logout participation, and a shared first-party OpenID Connect relying-party implementation for all simulator UIs. Its Go, TypeScript, production-build, and real-browser suites passed locally.
 
 ## Continue Here
 
-1. Merge this branch through its single pull request, publish its short-SHA operator-console and simulator manifests, and deploy them as real Amazon Elastic Container Service services. Register `https://admin.dev.e6qu.dev/auth/shauth/backchannel-logout` and `https://admin.dev.e6qu.dev/` as the Admin client's back-channel and post-logout coordinates, then run the complete live Shauth SSO acceptance matrix.
+1. Merge this branch through its single pull request, publish its short-SHA operator-console and simulator manifests, and deploy them as real Amazon Elastic Container Service services. Register Admin's callback `/auth/shauth/callback`, post-logout `/`, and back-channel `/auth/shauth/backchannel-logout` coordinates. For each `aws`, `gcp`, and `azure` origin, register callback `/auth/oidc/callback`, post-logout `/auth/signed-out`, and back-channel `/auth/oidc/backchannel-logout`, supply its `SIM_UI_OIDC_*`, `SIM_UI_PUBLIC_URL`, and `SIM_UI_SESSION_SECRET` values, then run the complete live Shauth SSO acceptance matrix.
 2. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
 3. Resolve BUG-2589: configure the local Azure Container Registry Tasks SDK harness with a Docker-trusted simulator registry transport, matching the working CI coordinate.
 4. Continue complete simulator and backend fidelity work, including the open live-cloud cells documented in BUGS.md.
@@ -16,6 +16,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 ## Recent Validation
 
 - Sockerless Admin's complete Go suite and vet passed with real server-tracked sessions, signed OIDC Back-Channel Logout validation, `sid`/`sub` revocation, `jti` replay rejection, and RP-Initiated Logout.
+- The shared simulator UI-auth module passed signed-session, direct-entry redirect, identity, cross-origin logout, signed back-channel revocation, and replay-rejection tests; every provider shared-server suite proved that only UI routes were protected while native cloud routes remained unaffected.
 - The compiled Admin, AWS, Google Cloud, and Microsoft Azure servers passed 41 Playwright scenarios across responsive shell behavior, both themes, self-contained browser assets, every navigation surface, and real management/simulator HTTP data.
 - The shared UI unit suite passed 50 tests; every affected UI package passed TypeScript checking and its production build.
 - Amazon ECS service-discovery SDK coverage proved that A-record registries rejected explicit ports and accepted task-ENI-only registration, matching the real Amazon ECS control plane.

@@ -23,17 +23,24 @@ Sockerless Admin also became a complete Shauth logout participant. Its browser
 sessions were tracked server-side, verified OIDC Back-Channel Logout tokens
 revoked matching sessions by `sid` or `sub`, replayed `jti` values were
 rejected, and the user logout control initiated RP-Initiated Logout through
-Shauth's discovered `end_session_endpoint`. The simulator cloud APIs remained
-unchanged; their deployment-owned authentication proxies continued to own
-their browser sessions and logout coordinates.
+Shauth's discovered `end_session_endpoint`.
+
+The AWS, Google Cloud, and Microsoft Azure dashboards used the same first-party
+OpenID Connect relying-party module rather than an infrastructure-specific
+authentication proxy. Direct UI entry used authorization code + PKCE with
+state and nonce validation; signed local sessions exposed identity and a POST
+logout control; RP-Initiated Logout carried the ID-token hint; and signed OIDC
+Back-Channel Logout revoked sessions by `sid` or `sub` with `jti` replay
+rejection. Only UI, identity, and logout routes were protected. Every native
+cloud API slice retained its existing authentication and wire behavior.
 
 ## 2026-07-19 - Authenticated Simulator Dashboards and Truthful Release Validation
 
-The AWS, Google Cloud, and Microsoft Azure simulator dashboards now read
-validated, same-origin deployment coordinates for signed-in identity and
-application logout. Their shared shell displays the authenticated operator with
-accessible user details and a real logout control while leaving every cloud API
-route unchanged. Image publication runs only after a push to `main` and emits
+The AWS, Google Cloud, and Microsoft Azure simulator dashboards now use their
+shared first-party OpenID Connect session coordinates for signed-in identity
+and application logout. Their shared shell displays the authenticated operator
+with accessible user details and a real logout control while leaving every
+cloud API route unchanged. Image publication runs only after a push to `main` and emits
 the immutable short-SHA manifest plus its explicit `-arm64` and `-amd64`
 images.
 

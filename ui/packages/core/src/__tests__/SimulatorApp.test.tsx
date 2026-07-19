@@ -62,7 +62,7 @@ describe("SimulatorApp", () => {
     mockFetch
       .mockResolvedValueOnce(jsonResponse({
         identityEndpoint: "/oauth2/userinfo",
-        logoutEndpoint: "/oauth2/sign_out?rd=%2F",
+        logoutEndpoint: "/auth/logout",
       }))
       .mockResolvedValueOnce(jsonResponse({
         name: "Ada Lovelace",
@@ -72,15 +72,16 @@ describe("SimulatorApp", () => {
 
     await waitFor(() => expect(container.textContent).toContain("Ada Lovelace"));
     expect(container.textContent).toContain("ada@example.test");
-    const signOut = container.querySelector<HTMLAnchorElement>('a[aria-label="Sign out Ada Lovelace"]');
-    expect(signOut?.getAttribute("href")).toBe("/oauth2/sign_out?rd=%2F");
+    const signOut = container.querySelector<HTMLButtonElement>('button[aria-label="Sign out Ada Lovelace"]');
+    expect(signOut?.closest("form")?.getAttribute("method")).toBe("post");
+    expect(signOut?.closest("form")?.getAttribute("action")).toBe("/auth/logout");
   });
 
   it("reports a configured identity endpoint failure", async () => {
     mockFetch
       .mockResolvedValueOnce(jsonResponse({
         identityEndpoint: "/oauth2/userinfo",
-        logoutEndpoint: "/oauth2/sign_out",
+        logoutEndpoint: "/auth/logout",
       }))
       .mockResolvedValueOnce(new Response("unauthorized", { status: 401 }));
     const { container } = renderApp("GCP Simulator", [{ label: "Overview", to: "/ui/" }]);

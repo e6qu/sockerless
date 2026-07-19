@@ -101,13 +101,15 @@ export function OperatorAccount() {
         <p className="truncate text-xs font-medium" style={{ color: "var(--color-fg)" }}>{name}</p>
         <p className="truncate text-[10px]" style={{ color: "var(--color-fg-subtle)" }}>{detail}</p>
       </div>
-      <a
-        href={config.data.logoutEndpoint}
-        className="text-xs underline"
-        aria-label={`Sign out ${name}`}
-      >
-        Sign out
-      </a>
+      <form method="post" action={config.data.logoutEndpoint}>
+        <button
+          type="submit"
+          className="text-xs underline"
+          aria-label={`Sign out ${name}`}
+        >
+          Sign out
+        </button>
+      </form>
     </section>
   );
 }

@@ -1,0 +1,511 @@
+// Package uiauth provides first-party OpenID Connect sessions for simulator
+// operator interfaces without changing any simulated cloud API route.
+package uiauth
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html/template"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
+)
+
+const (
+	LoginPath             = "/auth/oidc/login"
+	CallbackPath          = "/auth/oidc/callback"
+	SessionPath           = "/auth/session"
+	LogoutPath            = "/auth/logout"
+	BackchannelLogoutPath = "/auth/oidc/backchannel-logout"
+	SignedOutPath         = "/auth/signed-out"
+	transactionLifetime   = 10 * time.Minute
+	maximumFormBytes      = 1 << 20
+)
+
+type Config struct {
+	Issuer          string
+	ClientID        string
+	ClientSecret    string
+	PublicURL       string
+	SessionSecret   string
+	CookieName      string
+	ApplicationName string
+	SessionLifetime time.Duration
+	InsecureCookies bool
+}
+
+func (c Config) Enabled() bool {
+	return c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.PublicURL != "" || c.SessionSecret != ""
+}
+
+func (c Config) Validate() error {
+	if !c.Enabled() {
+		return nil
+	}
+	for name, value := range map[string]string{
+		"issuer": c.Issuer, "client ID": c.ClientID, "client secret": c.ClientSecret,
+		"public URL": c.PublicURL, "session secret": c.SessionSecret, "cookie name": c.CookieName,
+	} {
+		if value == "" {
+			return fmt.Errorf("OIDC %s is required when simulator UI authentication is enabled", name)
+		}
+	}
+	if len(c.SessionSecret) < 32 {
+		return errors.New("OIDC session secret must contain at least 32 bytes")
+	}
+	for name, raw := range map[string]string{"issuer": c.Issuer, "public URL": c.PublicURL} {
+		u, err := url.Parse(raw)
+		if err != nil || !u.IsAbs() || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("OIDC %s must be an absolute origin URL", name)
+		}
+		if (!c.InsecureCookies && u.Scheme != "https") || (u.Scheme != "https" && u.Scheme != "http") {
+			return fmt.Errorf("OIDC %s must use HTTPS", name)
+		}
+		if name == "public URL" && strings.TrimRight(u.Path, "/") != "" {
+			return errors.New("OIDC public URL must not contain a path")
+		}
+	}
+	return nil
+}
+
+type Auth struct {
+	config Config
+	store  *sessionStore
+
+	providerMu sync.Mutex
+	provider   *oidc.Provider
+}
+
+func New(config Config) (*Auth, error) {
+	if config.SessionLifetime <= 0 {
+		config.SessionLifetime = 8 * time.Hour
+	}
+	config.Issuer = strings.TrimRight(config.Issuer, "/")
+	config.PublicURL = strings.TrimRight(config.PublicURL, "/")
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	return &Auth{config: config, store: newSessionStore()}, nil
+}
+
+func (a *Auth) Enabled() bool { return a != nil && a.config.Enabled() }
+
+func (a *Auth) Register(mux *http.ServeMux) {
+	if !a.Enabled() {
+		return
+	}
+	mux.HandleFunc("GET "+LoginPath, a.login)
+	mux.HandleFunc("GET "+CallbackPath, a.callback)
+	mux.HandleFunc("GET "+SessionPath, a.session)
+	mux.HandleFunc("POST "+LogoutPath, a.logout)
+	mux.HandleFunc("POST "+BackchannelLogoutPath, a.backchannelLogout)
+	mux.HandleFunc("GET "+SignedOutPath, a.signedOut)
+}
+
+func (a *Auth) Protect(next http.Handler) http.Handler {
+	if !a.Enabled() {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := a.requestSession(r, time.Now()); ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		target := r.URL.RequestURI()
+		if !strings.HasPrefix(target, "/ui/") {
+			target = "/ui/"
+		}
+		http.Redirect(w, r, LoginPath+"?return_to="+url.QueryEscape(target), http.StatusFound)
+	})
+}
+
+func (a *Auth) providerFor(ctx context.Context) (*oidc.Provider, error) {
+	a.providerMu.Lock()
+	defer a.providerMu.Unlock()
+	if a.provider != nil {
+		return a.provider, nil
+	}
+	provider, err := oidc.NewProvider(ctx, a.config.Issuer)
+	if err != nil {
+		return nil, err
+	}
+	a.provider = provider
+	return provider, nil
+}
+
+func (a *Auth) oauthConfig(provider *oidc.Provider) oauth2.Config {
+	return oauth2.Config{
+		ClientID: a.config.ClientID, ClientSecret: a.config.ClientSecret,
+		Endpoint: provider.Endpoint(), RedirectURL: a.config.PublicURL + CallbackPath,
+		Scopes: []string{oidc.ScopeOpenID, "profile", "email"},
+	}
+}
+
+type transaction struct {
+	State, Nonce, Verifier, ReturnTo string
+	Expires                          int64
+}
+
+type browserSession struct {
+	ID, Subject, Name, Email, Picture, Role string
+	Expires                                 int64
+}
+
+type sessionRecord struct {
+	Subject, UpstreamSID, RawIDToken string
+	Expires                          int64
+}
+
+func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
+	provider, err := a.providerFor(r.Context())
+	if err != nil {
+		http.Error(w, "OIDC discovery failed", http.StatusBadGateway)
+		return
+	}
+	state, err := randomValue()
+	if err != nil {
+		http.Error(w, "could not create OIDC transaction", http.StatusInternalServerError)
+		return
+	}
+	nonce, err := randomValue()
+	if err != nil {
+		http.Error(w, "could not create OIDC transaction", http.StatusInternalServerError)
+		return
+	}
+	verifier := oauth2.GenerateVerifier()
+	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
+	value, err := a.sign(transaction{State: state, Nonce: nonce, Verifier: verifier, ReturnTo: returnTo, Expires: time.Now().Add(transactionLifetime).Unix()})
+	if err != nil {
+		http.Error(w, "could not create OIDC transaction", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.cookie(a.transactionCookieName(), value, int(transactionLifetime.Seconds())))
+	oauthConfig := a.oauthConfig(provider)
+	http.Redirect(w, r, oauthConfig.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), http.StatusFound)
+}
+
+func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(a.transactionCookieName())
+	a.clearCookie(w, a.transactionCookieName())
+	var tx transaction
+	if err == nil {
+		err = a.verify(cookie.Value, &tx)
+	}
+	if err != nil || tx.Expires <= time.Now().Unix() || tx.State == "" || r.URL.Query().Get("state") != tx.State || r.URL.Query().Get("code") == "" {
+		http.Error(w, "invalid OIDC authorization transaction", http.StatusBadRequest)
+		return
+	}
+	provider, err := a.providerFor(r.Context())
+	if err != nil {
+		http.Error(w, "OIDC discovery failed", http.StatusBadGateway)
+		return
+	}
+	oauthConfig := a.oauthConfig(provider)
+	tokens, err := oauthConfig.Exchange(r.Context(), r.URL.Query().Get("code"), oauth2.VerifierOption(tx.Verifier))
+	if err != nil {
+		http.Error(w, "OIDC token exchange failed", http.StatusBadGateway)
+		return
+	}
+	rawIDToken, ok := tokens.Extra("id_token").(string)
+	if !ok || rawIDToken == "" {
+		http.Error(w, "OIDC response did not contain an ID token", http.StatusBadGateway)
+		return
+	}
+	idToken, err := provider.Verifier(&oidc.Config{ClientID: a.config.ClientID}).Verify(r.Context(), rawIDToken)
+	if err != nil {
+		http.Error(w, "OIDC ID token validation failed", http.StatusForbidden)
+		return
+	}
+	if err := idToken.VerifyAccessToken(tokens.AccessToken); err != nil {
+		http.Error(w, "OIDC access token validation failed", http.StatusForbidden)
+		return
+	}
+	var claims struct {
+		Nonce             string `json:"nonce"`
+		SID               string `json:"sid"`
+		Name              string `json:"name"`
+		Email             string `json:"email"`
+		Picture           string `json:"picture"`
+		Role              string `json:"role"`
+		PreferredUsername string `json:"preferred_username"`
+	}
+	if err := idToken.Claims(&claims); err != nil || claims.Nonce != tx.Nonce {
+		http.Error(w, "OIDC identity validation failed", http.StatusForbidden)
+		return
+	}
+	name := claims.Name
+	if name == "" {
+		name = claims.PreferredUsername
+	}
+	if name == "" {
+		name = idToken.Subject
+	}
+	sessionID, err := randomValue()
+	if err != nil {
+		http.Error(w, "could not create OIDC session", http.StatusInternalServerError)
+		return
+	}
+	expiresAt := time.Now().Add(a.config.SessionLifetime)
+	if idToken.Expiry.Before(expiresAt) {
+		expiresAt = idToken.Expiry
+	}
+	session := browserSession{ID: sessionID, Subject: idToken.Subject, Name: name, Email: claims.Email, Picture: claims.Picture, Role: claims.Role, Expires: expiresAt.Unix()}
+	value, err := a.sign(session)
+	if err != nil {
+		http.Error(w, "could not create OIDC session", http.StatusInternalServerError)
+		return
+	}
+	a.store.put(sessionID, sessionRecord{Subject: idToken.Subject, UpstreamSID: claims.SID, RawIDToken: rawIDToken, Expires: session.Expires})
+	http.SetCookie(w, a.cookie(a.config.CookieName, value, int(time.Until(expiresAt).Seconds())))
+	http.Redirect(w, r, tx.ReturnTo, http.StatusFound)
+}
+
+func (a *Auth) session(w http.ResponseWriter, r *http.Request) {
+	session, ok := a.requestSession(r, time.Now())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"authenticated": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated": true, "sub": session.Subject, "name": session.Name,
+		"email": session.Email, "picture": session.Picture, "role": session.Role,
+	})
+}
+
+func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r, a.config.PublicURL) {
+		http.Error(w, "cross-origin request denied", http.StatusForbidden)
+		return
+	}
+	var rawIDToken string
+	if session, ok := a.requestSession(r, time.Now()); ok {
+		if record, exists := a.store.get(session.ID, time.Now()); exists {
+			rawIDToken = record.RawIDToken
+		}
+		a.store.delete(session.ID)
+	}
+	a.clearCookie(w, a.config.CookieName)
+	provider, err := a.providerFor(r.Context())
+	if err != nil {
+		http.Error(w, "OIDC discovery failed", http.StatusBadGateway)
+		return
+	}
+	var metadata struct {
+		EndSessionEndpoint string `json:"end_session_endpoint"`
+	}
+	if err := provider.Claims(&metadata); err != nil || metadata.EndSessionEndpoint == "" {
+		http.Error(w, "OIDC logout endpoint is unavailable", http.StatusBadGateway)
+		return
+	}
+	logoutURL, err := url.Parse(metadata.EndSessionEndpoint)
+	if err != nil || !logoutURL.IsAbs() || (logoutURL.Scheme != "https" && (!a.config.InsecureCookies || logoutURL.Scheme != "http")) {
+		http.Error(w, "OIDC logout endpoint is invalid", http.StatusBadGateway)
+		return
+	}
+	query := logoutURL.Query()
+	query.Set("post_logout_redirect_uri", a.config.PublicURL+SignedOutPath)
+	if rawIDToken != "" {
+		query.Set("id_token_hint", rawIDToken)
+	} else {
+		query.Set("client_id", a.config.ClientID)
+	}
+	logoutURL.RawQuery = query.Encode()
+	http.Redirect(w, r, logoutURL.String(), http.StatusFound)
+}
+
+func (a *Auth) backchannelLogout(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maximumFormBytes)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid logout request", http.StatusBadRequest)
+		return
+	}
+	raw := r.PostForm.Get("logout_token")
+	if raw == "" {
+		http.Error(w, "logout_token is required", http.StatusBadRequest)
+		return
+	}
+	provider, err := a.providerFor(r.Context())
+	if err != nil {
+		http.Error(w, "OIDC discovery failed", http.StatusBadGateway)
+		return
+	}
+	if err := a.processBackchannelLogout(r.Context(), raw, provider.Verifier(&oidc.Config{ClientID: a.config.ClientID}), time.Now()); err != nil {
+		http.Error(w, "invalid logout token", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (a *Auth) processBackchannelLogout(ctx context.Context, raw string, verifier *oidc.IDTokenVerifier, now time.Time) error {
+	logoutToken, err := verifier.VerifyLogout(ctx, raw)
+	if err != nil {
+		return err
+	}
+	if !a.store.consumeLogoutToken(logoutToken.TokenID, logoutToken.Expiry, now) {
+		return errors.New("logout token was already processed")
+	}
+	a.store.revoke(logoutToken.Subject, logoutToken.SessionID)
+	return nil
+}
+
+func (a *Auth) signedOut(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+	_ = signedOutTemplate.Execute(w, map[string]string{"Name": a.config.ApplicationName, "Login": LoginPath})
+}
+
+var signedOutTemplate = template.Must(template.New("signed-out").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f7ff;color:#17172b;font:16px system-ui,sans-serif}.card{max-width:34rem;padding:2.5rem;border:1px solid #dfe3f0;border-radius:1.25rem;background:#fff;box-shadow:0 16px 40px #24284a14}a{display:inline-block;margin-top:1rem;padding:.7rem 1rem;border-radius:.6rem;background:#7c3aed;color:#fff;font-weight:700;text-decoration:none}@media(prefers-color-scheme:dark){body{background:#0b1020;color:#f5f7ff}.card{background:#151c30;border-color:#2c3652}}</style></head><body><main class="card"><h1>Signed out of {{.Name}}</h1><p>Your local session and shared identity session have ended.</p><a href="{{.Login}}">Sign in again</a></main></body></html>`))
+
+func (a *Auth) requestSession(r *http.Request, now time.Time) (browserSession, bool) {
+	var session browserSession
+	cookie, err := r.Cookie(a.config.CookieName)
+	if err != nil || a.verify(cookie.Value, &session) != nil || session.ID == "" || session.Expires <= now.Unix() {
+		return session, false
+	}
+	record, ok := a.store.get(session.ID, now)
+	return session, ok && record.Subject == session.Subject && record.Expires == session.Expires
+}
+
+func (a *Auth) transactionCookieName() string { return a.config.CookieName + "_tx" }
+
+func (a *Auth) cookie(name, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: true, Secure: !a.config.InsecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: maxAge}
+}
+
+func (a *Auth) clearCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, a.cookie(name, "", -1))
+}
+
+func (a *Auth) sign(value any) (string, error) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, []byte(a.config.SessionSecret))
+	_, _ = mac.Write([]byte(encoded))
+	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func (a *Auth) verify(value string, target any) error {
+	parts := strings.Split(value, ".")
+	if len(parts) != 2 {
+		return errors.New("invalid signed value")
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return err
+	}
+	mac := hmac.New(sha256.New, []byte(a.config.SessionSecret))
+	_, _ = mac.Write([]byte(parts[0]))
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return errors.New("invalid signed value")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(payload, target)
+}
+
+func randomValue() (string, error) {
+	value := make([]byte, 32)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+func safeReturnTo(value string) string {
+	u, err := url.ParseRequestURI(value)
+	if err != nil || u.IsAbs() || u.Host != "" || !strings.HasPrefix(u.Path, "/ui/") {
+		return "/ui/"
+	}
+	return u.RequestURI()
+}
+
+func sameOrigin(r *http.Request, publicURL string) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	want, err := url.Parse(publicURL)
+	if err != nil {
+		return false
+	}
+	got, err := url.Parse(origin)
+	return err == nil && got.Scheme == want.Scheme && got.Host == want.Host
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+type sessionStore struct {
+	mu           sync.Mutex
+	sessions     map[string]sessionRecord
+	logoutTokens map[string]time.Time
+}
+
+func newSessionStore() *sessionStore {
+	return &sessionStore{sessions: make(map[string]sessionRecord), logoutTokens: make(map[string]time.Time)}
+}
+
+func (s *sessionStore) put(id string, record sessionRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[id] = record
+}
+func (s *sessionStore) delete(id string) { s.mu.Lock(); defer s.mu.Unlock(); delete(s.sessions, id) }
+func (s *sessionStore) get(id string, now time.Time) (sessionRecord, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prune(now)
+	record, ok := s.sessions[id]
+	return record, ok
+}
+func (s *sessionStore) revoke(subject, sid string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, record := range s.sessions {
+		if (sid != "" && record.UpstreamSID == sid) || (subject != "" && record.Subject == subject) {
+			delete(s.sessions, id)
+		}
+	}
+}
+func (s *sessionStore) consumeLogoutToken(id string, expiry, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prune(now)
+	if _, exists := s.logoutTokens[id]; exists {
+		return false
+	}
+	s.logoutTokens[id] = expiry
+	return true
+}
+func (s *sessionStore) prune(now time.Time) {
+	for id, record := range s.sessions {
+		if record.Expires <= now.Unix() {
+			delete(s.sessions, id)
+		}
+	}
+	for id, expiry := range s.logoutTokens {
+		if !expiry.After(now) {
+			delete(s.logoutTokens, id)
+		}
+	}
+}
