@@ -3,8 +3,11 @@ import { defineConfig } from "@playwright/test";
 process.env.BACKEND_TITLE = "Cloud Run Backend";
 
 const PORT = 19240;
-const BIN = process.env.BACKEND_BIN || "../../../backends/cloudrun/sockerless-backend-cloudrun";
+const SIMULATOR_PORT = 19340;
+const SIMULATOR_GRPC_PORT = 19341;
+const BIN = process.env.BACKEND_BIN;
 const HEALTH = `http://localhost:${PORT}/internal/v1/healthz`;
+const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: "../core/e2e",
@@ -16,12 +19,29 @@ export default defineConfig({
     headless: true,
   },
   projects: [
-    { name: "chromium", use: { browserName: "chromium" } },
+    { name: "chromium", use: { browserName: "chromium", launchOptions: chromiumExecutable ? { executablePath: chromiumExecutable } : {} } },
   ],
   webServer: {
-    command: `SOCKERLESS_ENDPOINT_URL=http://localhost:1 SERVER_BIN="${BIN}" SERVER_PORT=${PORT} HEALTH_URL="${HEALTH}" bash ../core/e2e/start-backend.sh`,
+    command: `bash ../core/e2e/start-backend.sh`,
+    env: {
+      SERVER_PORT: String(PORT),
+      HEALTH_URL: HEALTH,
+      SERVER_PACKAGE: "backends/cloudrun",
+      SERVER_NAME: "sockerless-backend-cloudrun",
+      ...(BIN ? { SERVER_BIN: BIN } : {}),
+      SIMULATOR_PACKAGE: "simulators/gcp",
+      SIMULATOR_NAME: "simulator-gcp",
+      SIMULATOR_PORT: String(SIMULATOR_PORT),
+      SIMULATOR_GRPC_PORT: String(SIMULATOR_GRPC_PORT),
+      SIMULATOR_SETUP: "gcp",
+      SOCKERLESS_ENDPOINT_URL: `http://127.0.0.1:${SIMULATOR_PORT}`,
+      SOCKERLESS_GCP_LOGADMIN_ENDPOINT: `127.0.0.1:${SIMULATOR_GRPC_PORT}`,
+      SOCKERLESS_GCR_PROJECT: "sockerless-e2e",
+      SOCKERLESS_GCP_BUILD_BUCKET: "sockerless-e2e-build",
+      SOCKERLESS_CALLBACK_URL: `ws://127.0.0.1:${PORT}/v1/cloudrun/reverse`,
+    },
     port: PORT,
     reuseExistingServer: false,
-    timeout: 15_000,
+    timeout: 180_000,
   },
 });

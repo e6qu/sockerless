@@ -158,6 +158,14 @@ Create PRs with `gh pr create`. Never run `gh pr merge`. The user handles all me
 
 ## Branch hygiene
 
+Remote repository state is authoritative. Before inspecting or editing a
+repository, fetch the freshest `origin/main` and the active pull-request branch
+or ref, then compare the local worktree and `HEAD` with those fetched refs.
+Never assume a local branch, cached pull-request checkout, or continuity file is
+current. Preserve dirty work deliberately while reconciling it with the fetched
+remote; do not overwrite or discard it. Repeat this check before rebasing and
+pushing so review and validation always cover the newest remote code.
+
 Before pushing a PR branch, always rebase it on top of `origin/main`:
 
 ```

@@ -20,7 +20,7 @@ export function CloudFunctionsPage() {
   return (
     <ResourceListPage<CloudFunction>
       kicker="gcp · simulator · functions"
-      title={<>Functions</>}
+      title={<>Cloud Functions</>}
       countNoun="function"
       columns={columns}
       queryKey={["cloud-functions"]}

@@ -1,49 +1,97 @@
 #!/usr/bin/env bash
-# Starts mock backend + admin server for Playwright E2E tests.
-# Expects ADMIN_BIN to be set to the path of the compiled sockerless-admin binary.
-set -e
+# Builds and starts the real Docker passthrough backend and Admin server for
+# Playwright. Explicit ADMIN_BIN and BACKEND_BIN coordinates remain available
+# for release-image or cross-build validation.
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MOCK_PORT="${MOCK_BACKEND_PORT:-19100}"
-ADMIN_PORT="${ADMIN_PORT:-19090}"
+BACKEND_PORT="${BACKEND_PORT:-29100}"
+ADMIN_PORT="${ADMIN_PORT:-29090}"
 
-export SOCKERLESS_HOME="$(mktemp -d)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+if [[ -z "${ADMIN_BIN:-}" ]]; then
+  bun run build
+  make -C "$repo_root/cmd/sockerless-admin" build
+  ADMIN_BIN="$repo_root/cmd/sockerless-admin/sockerless-admin"
+fi
+if [[ -z "${BACKEND_BIN:-}" ]]; then
+  make -C "$repo_root/backends/docker" build-noui
+  BACKEND_BIN="$repo_root/backends/docker/sockerless-backend-docker"
+fi
+export ADMIN_BIN BACKEND_BIN
 
-# Start mock backend
-node "$SCRIPT_DIR/mock-backend.mjs" &
-MOCK_PID=$!
+SOCKERLESS_HOME="$(mktemp -d)"
+export SOCKERLESS_HOME
 
-# Wait for mock backend to be ready
-for i in $(seq 1 30); do
-  if curl -s "http://localhost:${MOCK_PORT}/internal/v1/healthz" > /dev/null 2>&1; then
+docker_host="${DOCKER_HOST:-}"
+if [[ -z "$docker_host" && -S /var/run/docker.sock ]]; then
+  docker_host="unix:///var/run/docker.sock"
+fi
+if [[ -z "$docker_host" ]] && command -v podman >/dev/null 2>&1; then
+  podman_socket="$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null || true)"
+  if [[ -n "$podman_socket" && -S "$podman_socket" ]]; then
+    docker_host="unix://${podman_socket}"
+  fi
+fi
+if [[ -z "$docker_host" ]]; then
+  echo "a reachable Docker or Podman API socket is required" >&2
+  exit 1
+fi
+
+"$BACKEND_BIN" --addr ":${BACKEND_PORT}" --docker-host "$docker_host" --log-level warn &
+BACKEND_PID=$!
+
+ADMIN_PID=""
+cleanup() {
+  trap - EXIT INT TERM
+  if [[ -n "$ADMIN_PID" ]]; then
+    kill "$ADMIN_PID" 2>/dev/null || true
+    wait "$ADMIN_PID" 2>/dev/null || true
+  fi
+  kill "$BACKEND_PID" 2>/dev/null || true
+  wait "$BACKEND_PID" 2>/dev/null || true
+  rm -rf "$SOCKERLESS_HOME"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Wait for the real backend to be ready.
+attempt=0
+while ((attempt < 30)); do
+  if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+    echo "Docker backend exited before becoming ready" >&2
+    exit 1
+  fi
+  if curl -s "http://localhost:${BACKEND_PORT}/internal/v1/healthz" > /dev/null 2>&1; then
     break
   fi
   sleep 0.1
+  attempt=$((attempt + 1))
 done
+curl --fail --silent "http://localhost:${BACKEND_PORT}/internal/v1/healthz" >/dev/null
 
-# Start admin server pointing at mock backend
+# Start Admin pointing at the real backend.
 "$ADMIN_BIN" \
   -addr ":${ADMIN_PORT}" \
-  -backend "memory=http://localhost:${MOCK_PORT}" &
+  -backend "docker=http://localhost:${BACKEND_PORT}" &
 ADMIN_PID=$!
 
 # Wait for admin to be ready
-for i in $(seq 1 30); do
+attempt=0
+while ((attempt < 30)); do
+  if ! kill -0 "$ADMIN_PID" 2>/dev/null; then
+    echo "admin server exited before becoming ready" >&2
+    exit 1
+  fi
   if curl -s "http://localhost:${ADMIN_PORT}/api/v1/components" > /dev/null 2>&1; then
     break
   fi
   sleep 0.1
+  attempt=$((attempt + 1))
 done
+curl --fail --silent "http://localhost:${ADMIN_PORT}/api/v1/components" >/dev/null
 
-echo "Mock backend PID=$MOCK_PID on :$MOCK_PORT"
+echo "Docker backend PID=$BACKEND_PID on :$BACKEND_PORT"
 echo "Admin server PID=$ADMIN_PID on :$ADMIN_PORT"
 
-# Keep running until killed
-cleanup() {
-  kill $ADMIN_PID 2>/dev/null || true
-  kill $MOCK_PID 2>/dev/null || true
-  rm -rf "$SOCKERLESS_HOME"
-}
-trap cleanup EXIT
-
-wait $ADMIN_PID
+wait "$ADMIN_PID"

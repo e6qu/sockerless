@@ -14,12 +14,12 @@ export function ThemeToggle() {
       onClick={toggle}
       aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
       title={isDark ? "Switch to light theme" : "Switch to dark theme"}
-      className="inline-flex h-8 w-8 items-center justify-center"
+      className="inline-flex h-9 w-9 items-center justify-center"
       style={{
-        background: "transparent",
-        color: "var(--color-fg-muted)",
+        background: "var(--color-bg-subtle)",
+        color: "var(--color-fg)",
         border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-sm)",
+        borderRadius: "0.7rem",
         transition: "color 0.12s var(--ease-out-quint), border-color 0.12s var(--ease-out-quint)",
       }}
       onMouseEnter={(e) => {

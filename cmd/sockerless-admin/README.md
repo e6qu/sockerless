@@ -159,15 +159,25 @@ endpoint. Configure all four values together in a deployed console:
 SOCKERLESS_ADMIN_SHAUTH_ISSUER=https://auth.dev.e6qu.dev
 SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID=sockerless-admin-dev
 SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET=<from AWS Secrets Manager>
-SOCKERLESS_ADMIN_PUBLIC_URL=https://sockerless.dev.e6qu.dev
+SOCKERLESS_ADMIN_PUBLIC_URL=https://admin.dev.e6qu.dev
 ```
 
-Register `https://sockerless.dev.e6qu.dev/auth/shauth/callback` as the Shauth
-client redirect URI. The console discovered Shauth, used authorization code +
-PKCE and nonce validation, verified the signed ID token, and accepted only
-`developer` or `admin` roles. It displayed the signed-in user, role, initial
-avatar, and a logout control. Cookies were secure and HTTP-only; development
-could explicitly opt into insecure cookies with
+Register these Shauth relying-party coordinates:
+
+- redirect URI: `https://admin.dev.e6qu.dev/auth/shauth/callback`
+- post-logout redirect URI: `https://admin.dev.e6qu.dev/auth/signed-out`
+- back-channel logout URI: `https://admin.dev.e6qu.dev/auth/shauth/backchannel-logout`
+
+The console discovered Shauth, used authorization code + PKCE and nonce
+validation, verified the signed ID token, and accepted only `developer` or
+`admin` roles. It displayed the signed-in user, role, initial avatar, and a
+logout control. Browser sessions were server-tracked, so a signed OIDC
+Back-Channel Logout token revoked matching sessions by `sid` or `sub`; replayed
+logout tokens were rejected by `jti`. Signing out initiated logout at Shauth's
+discovered `end_session_endpoint` with an ID-token hint, so signing out of the
+console ended the shared Shauth session rather than immediately signing the
+user back in. Cookies were secure and HTTP-only; development could explicitly
+opt into insecure cookies with
 `SOCKERLESS_ADMIN_INSECURE_COOKIES=true`.
 
 With no Shauth variables the existing local operator workflow remained

@@ -8,9 +8,9 @@ import (
 	"testing/fstest"
 )
 
-func TestRegisterUIExposesDeploymentNeutralIdentityCoordinates(t *testing.T) {
+func TestRegisterUIReportsAuthenticationDisabledWithoutOIDC(t *testing.T) {
 	t.Setenv("SIM_RUNTIME", "process")
-	srv, err := NewServer(Config{Provider: "gcp", LogLevel: "disabled", UIIdentityEndpoint: "/identity", UILogoutEndpoint: "/logout"})
+	srv, err := NewServer(Config{Provider: "gcp", LogLevel: "disabled"})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -21,7 +21,30 @@ func TestRegisterUIExposesDeploymentNeutralIdentityCoordinates(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
 		t.Fatalf("UI config response: %d %q", rec.Code, rec.Body.String())
 	}
-	if got["identityEndpoint"] != "/identity" || got["logoutEndpoint"] != "/logout" {
+	if got["identityEndpoint"] != "" || got["logoutEndpoint"] != "" {
 		t.Fatalf("UI config coordinates: got %#v", got)
+	}
+}
+
+func TestFirstPartyOIDCProtectsOnlyTheUserInterface(t *testing.T) {
+	t.Setenv("SIM_RUNTIME", "process")
+	srv, err := NewServer(Config{
+		Provider: "gcp", LogLevel: "disabled", UIOIDCIssuer: "https://auth.example.test",
+		UIOIDCClientID: "gcp", UIOIDCClientSecret: "secret", UIPublicURL: "https://gcp.example.test",
+		UISessionSecret: "0123456789abcdef0123456789abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.RegisterUI(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ui")}})
+	recorder := httptest.NewRecorder()
+	srv.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ui/", nil))
+	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/auth/oidc/login?return_to=%2Fui%2F" {
+		t.Fatalf("UI redirect = %d %q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	recorder = httptest.NewRecorder()
+	srv.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cloud-independent health status = %d", recorder.Code)
 	}
 }

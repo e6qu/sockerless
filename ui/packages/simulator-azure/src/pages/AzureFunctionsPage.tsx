@@ -13,7 +13,7 @@ export function AzureFunctionsPage() {
   return (
     <ResourceListPage<FunctionSite>
       kicker="azure · simulator · functions"
-      title={<>Sites</>}
+      title={<>Azure Functions</>}
       countNoun="site"
       columns={columns}
       queryKey={["azf-sites"]}

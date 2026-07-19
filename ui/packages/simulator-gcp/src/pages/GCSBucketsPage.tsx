@@ -10,7 +10,7 @@ export function GCSBucketsPage() {
   return (
     <ResourceListPage<GCSBucket>
       kicker="gcp · simulator · gcs"
-      title={<>Buckets</>}
+      title={<>GCS Buckets</>}
       countNoun="bucket"
       columns={columns}
       queryKey={["gcs-buckets"]}

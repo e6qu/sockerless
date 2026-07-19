@@ -22,7 +22,7 @@ export function LogGroupsPage() {
   return (
     <ResourceListPage<CWLogGroup>
       kicker="aws · simulator · cloudwatch"
-      title={<>Log groups</>}
+      title={<>CloudWatch Log Groups</>}
       countNoun="log group"
       columns={columns}
       queryKey={["cw-log-groups"]}

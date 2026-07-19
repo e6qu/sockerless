@@ -70,6 +70,26 @@ describe("ResourceListPage", () => {
     });
   });
 
+  it("renders an English plural for nouns ending in y", async () => {
+    const fetchFn = vi.fn(async (): Promise<Row[]> => [
+      { name: "one", size: 1 },
+      { name: "two", size: 2 },
+    ]);
+    renderWithClient(
+      <ResourceListPage<Row>
+        title={<>Repositories</>}
+        countNoun="repository"
+        columns={columns}
+        queryKey={["plural-y"]}
+        queryFn={fetchFn}
+        refetchInterval={false}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("2 repositories")).toBeInTheDocument();
+    });
+  });
+
   it("renders InlineError + retry on failure", async () => {
     let calls = 0;
     const fetchFn = vi.fn(async (): Promise<Row[]> => {

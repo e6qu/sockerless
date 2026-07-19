@@ -22,7 +22,7 @@ export function ECSTasksPage() {
   return (
     <ResourceListPage<ECSTask>
       kicker="aws · simulator · ecs"
-      title={<>Tasks</>}
+      title={<>ECS Tasks</>}
       countNoun="task"
       columns={columns}
       queryKey={["ecs-tasks"]}

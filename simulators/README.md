@@ -69,13 +69,39 @@ Environment knobs (per sim — full list in each sub-README):
 | `SIM_RUNTIME` | `docker` | Workload runtime mode. The default initializes Docker/Podman for execution. Set `process` only for explicit API-only runs that do not invoke workload-execution APIs. |
 | `SIM_SERVICEBUS_AMQP_LISTEN_ADDR` | unset | Azure-only raw Service Bus AMQP/TLS listener; requires `SIM_SERVICEBUS_AMQP_TLS_CERT` / `SIM_SERVICEBUS_AMQP_TLS_KEY` or the shared TLS cert/key |
 | `SIM_LOG_LEVEL` | `info` | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
-| `SIM_UI_IDENTITY_ENDPOINT` | unset | Same-origin JSON endpoint for the authenticated operator identity shown by the embedded UI. Configure together with `SIM_UI_LOGOUT_ENDPOINT`. |
-| `SIM_UI_LOGOUT_ENDPOINT` | unset | Same-origin application-session logout coordinate exposed by the embedded UI. Configure together with `SIM_UI_IDENTITY_ENDPOINT`. |
+| `SIM_UI_OIDC_ISSUER` | unset | OpenID Connect issuer for the embedded operator UI. Configure all UI OIDC values together. |
+| `SIM_UI_OIDC_CLIENT_ID` | unset | OpenID Connect relying-party client ID for this simulator dashboard. |
+| `SIM_UI_OIDC_CLIENT_SECRET` | unset | OpenID Connect relying-party client secret, supplied through the deployment secret store. |
+| `SIM_UI_PUBLIC_URL` | unset | Externally visible origin for callback and logout redirects, such as `https://aws.dev.e6qu.dev`. |
+| `SIM_UI_SESSION_SECRET` | unset | Independent random value of at least 32 bytes used to sign local browser sessions. |
+| `SIM_UI_INSECURE_COOKIES` | `false` | Explicit local-development opt-in for HTTP issuer/public coordinates and non-Secure cookies. |
 
-The optional UI authentication coordinates keep deployment authentication
-outside the simulator. Both must be same-origin absolute paths and both must be
-configured; a partial or external coordinate fails startup. The cloud API
-surface remains unchanged.
+The optional first-party UI authentication layer uses authorization code +
+PKCE, nonce and state validation, signed server-tracked sessions, RP-Initiated
+Logout with an ID-token hint, and signed OIDC Back-Channel Logout correlated by
+`sid` or `sub`. It protects only `/ui/` and the UI identity/logout endpoints;
+all AWS, Google Cloud, and Microsoft Azure API routes retain their native
+authentication and protocol behavior. Partial configuration fails startup.
+
+Each simulator dashboard registers these relying-party coordinates, replacing
+`<origin>` with that dashboard's `SIM_UI_PUBLIC_URL`:
+
+- redirect URI: `<origin>/auth/oidc/callback`
+- post-logout redirect URI: `<origin>/auth/signed-out`
+- back-channel logout URI: `<origin>/auth/oidc/backchannel-logout`
+
+The development registrations are therefore:
+
+| Dashboard | Redirect URI | Post-logout redirect URI | Back-channel logout URI |
+|---|---|---|---|
+| AWS | `https://aws.dev.e6qu.dev/auth/oidc/callback` | `https://aws.dev.e6qu.dev/auth/signed-out` | `https://aws.dev.e6qu.dev/auth/oidc/backchannel-logout` |
+| Google Cloud | `https://gcp.dev.e6qu.dev/auth/oidc/callback` | `https://gcp.dev.e6qu.dev/auth/signed-out` | `https://gcp.dev.e6qu.dev/auth/oidc/backchannel-logout` |
+| Microsoft Azure | `https://azure.dev.e6qu.dev/auth/oidc/callback` | `https://azure.dev.e6qu.dev/auth/signed-out` | `https://azure.dev.e6qu.dev/auth/oidc/backchannel-logout` |
+
+The browser starts at `/ui/`, is redirected through `/auth/oidc/login` when no
+local session is active, obtains its identity from `/auth/session`, and submits
+logout to `/auth/logout`. No authentication proxy is required or supported for
+the simulator UI.
 
 Docker or Podman is required when simulator calls execute workloads. If the
 operator intentionally needs only non-execution API surfaces, `SIM_RUNTIME=process`

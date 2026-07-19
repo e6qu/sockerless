@@ -3,11 +3,9 @@ package simulator
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path"
@@ -17,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	uiauth "github.com/sockerless/simulator-ui-auth"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -34,6 +33,7 @@ type Server struct {
 	handler http.Handler
 	db      *sql.DB         // nil when persistence disabled
 	tracker *ProcessTracker // nil when persistence disabled
+	uiAuth  *uiauth.Auth
 
 	// routePatterns records every mux pattern registered through
 	// Handle/HandleFunc, in registration order. The spec-conformance
@@ -51,7 +51,13 @@ type Server struct {
 // (bad path, perms, full disk) and produce silent data loss across
 // restarts.
 func NewServer(cfg Config) (*Server, error) {
-	if err := validateUIAuthCoordinates(cfg); err != nil {
+	uiAuth, err := uiauth.New(uiauth.Config{
+		Issuer: cfg.UIOIDCIssuer, ClientID: cfg.UIOIDCClientID, ClientSecret: cfg.UIOIDCClientSecret,
+		PublicURL: cfg.UIPublicURL, SessionSecret: cfg.UISessionSecret,
+		CookieName: "sockerless_" + cfg.Provider + "_session", ApplicationName: "Sockerless " + strings.ToUpper(cfg.Provider) + " Simulator",
+		InsecureCookies: cfg.UIOIDCInsecureCookies,
+	})
+	if err != nil {
 		return nil, err
 	}
 	level, err := zerolog.ParseLevel(cfg.LogLevel)
@@ -118,6 +124,7 @@ func NewServer(cfg Config) (*Server, error) {
 		logger:  logger,
 		mux:     mux,
 		handler: handler,
+		uiAuth:  uiAuth,
 	}
 
 	// Open SQLite database if persistence enabled. No fallback —
@@ -139,25 +146,6 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	return srv, nil
-}
-
-func validateUIAuthCoordinates(cfg Config) error {
-	if (cfg.UIIdentityEndpoint == "") != (cfg.UILogoutEndpoint == "") {
-		return errors.New("SIM_UI_IDENTITY_ENDPOINT and SIM_UI_LOGOUT_ENDPOINT must be configured together")
-	}
-	for name, value := range map[string]string{
-		"SIM_UI_IDENTITY_ENDPOINT": cfg.UIIdentityEndpoint,
-		"SIM_UI_LOGOUT_ENDPOINT":   cfg.UILogoutEndpoint,
-	} {
-		if value == "" {
-			continue
-		}
-		u, err := url.ParseRequestURI(value)
-		if err != nil || u.IsAbs() || u.Host != "" || strings.HasPrefix(value, "//") || !strings.HasPrefix(u.Path, "/") {
-			return fmt.Errorf("%s must be a same-origin absolute-path coordinate", name)
-		}
-	}
-	return nil
 }
 
 // Handle registers a pattern on the server's mux.
@@ -266,14 +254,20 @@ func (s *Server) ListenAndServe() error {
 // "GET /{$}" — the API surface wins: registering the redirect anyway would
 // panic the mux at startup, and the UI stays reachable at /ui/ directly.
 func (s *Server) RegisterUI(fsys fs.FS) {
-	s.mux.HandleFunc("GET /ui/config.json", func(w http.ResponseWriter, _ *http.Request) {
+	identityEndpoint, logoutEndpoint := "", ""
+	if s.uiAuth.Enabled() {
+		identityEndpoint, logoutEndpoint = uiauth.SessionPath, uiauth.LogoutPath
+		s.uiAuth.Register(s.mux)
+	}
+	configHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		WriteJSON(w, http.StatusOK, map[string]string{
-			"identityEndpoint": s.config.UIIdentityEndpoint,
-			"logoutEndpoint":   s.config.UILogoutEndpoint,
+			"identityEndpoint": identityEndpoint,
+			"logoutEndpoint":   logoutEndpoint,
 		})
 	})
-	s.mux.Handle("GET /ui/", spaHandler(fsys, "/ui/"))
+	s.mux.Handle("GET /ui/config.json", s.uiAuth.Protect(configHandler))
+	s.mux.Handle("GET /ui/", s.uiAuth.Protect(spaHandler(fsys, "/ui/")))
 	if !slices.Contains(s.routePatterns, "GET /{$}") {
 		s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)

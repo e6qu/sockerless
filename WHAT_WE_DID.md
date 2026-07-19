@@ -4,13 +4,54 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-19 - Polished Simulator Consoles and Global Admin Logout (`fix/simulator-console-ui`)
+
+Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
+dashboards now shared a polished responsive shell with saturated accessible
+light/dark palettes, consistent navigation, service-specific resource names,
+keyboard focus treatment, and a screen-reader skip link. The current compiled
+Go servers passed real Chromium coverage across every dashboard and Admin's
+live overview, component status, metrics, reload, containers, and operational
+pages through the real Docker passthrough backend. Every bundle served the same
+self-contained Sockerless browser mark and Admin no longer depended on an
+external font host. The Admin harness removed
+its synthetic HTTP backend, used collision-free ports, detected dead child
+processes, and cleaned its process tree deterministically instead of silently
+testing against another local service.
+
+Sockerless Admin also became a complete Shauth logout participant. Its browser
+sessions were tracked server-side, verified OIDC Back-Channel Logout tokens
+revoked matching sessions by `sid` or `sub`, replayed `jti` values were
+rejected, and the user logout control initiated RP-Initiated Logout through
+Shauth's discovered `end_session_endpoint`.
+
+The AWS, Google Cloud, and Microsoft Azure dashboards used the same first-party
+OpenID Connect relying-party module rather than an infrastructure-specific
+authentication proxy. Direct UI entry used authorization code + PKCE with
+state and nonce validation; signed local sessions exposed identity and a POST
+logout control; RP-Initiated Logout carried the ID-token hint; and signed OIDC
+Back-Channel Logout revoked sessions by `sid` or `sub` with `jti` replay
+rejection. Only UI, identity, and logout routes were protected. Every native
+cloud API slice retained its existing authentication and wire behavior.
+
+Every cloud and GitLab smoke image now copied the shared OpenID Connect module
+required by the standalone simulator graphs. The Google Cloud Run and Azure
+Container Apps GitLab images also carried the shared agent module required by
+their backend graphs, and the legacy AWS GitLab image selected the intentional
+headless simulator build. All affected images compiled successfully; the exact
+Amazon Elastic Container Service continuous-integration image also passed all
+15 real simulator/backend Docker lifecycle assertions. A pre-commit and
+continuous-integration contract now rejects any smoke Dockerfile that loses a
+required shared module or compiles a GitLab simulator with its browser bundle
+absent.
+
 ## 2026-07-19 - Authenticated Simulator Dashboards and Truthful Release Validation
 
-The AWS, Google Cloud, and Microsoft Azure simulator dashboards now read
-validated, same-origin deployment coordinates for signed-in identity and
-application logout. Their shared shell displays the authenticated operator with
-accessible user details and a real logout control while leaving every cloud API
-route unchanged. Image publication runs only after a push to `main` and emits
+The AWS, Google Cloud, and Microsoft Azure simulator dashboards now use their
+shared first-party OpenID Connect session coordinates for signed-in identity
+and application logout. Their shared shell displays the authenticated operator
+with accessible user details and a real logout control while leaving every
+cloud API route unchanged. Image publication runs only after a push to `main` and emits
 the immutable short-SHA manifest plus its explicit `-arm64` and `-amd64`
 images.
 
@@ -760,3 +801,37 @@ production configuration failed at startup. The Amazon Web Services, Google
 Cloud, and Microsoft Azure simulator API endpoints were not wrapped because
 their real SDK, command-line interface, and Terraform contracts remained
 unchanged.
+
+## OpenID Connect logout protocol hardening
+
+Sockerless Admin and the shared simulator user-interface authentication module
+preserved the configured issuer exactly, rejected issuer and public coordinates
+containing user information, constrained discovered logout endpoints to the
+configured issuer origin, and required same-origin browser evidence for logout.
+Back-channel logout accepted only bounded
+`application/x-www-form-urlencoded` POST bodies, rejected query tokens,
+validated `iat` and the required logout event as a JSON object, and consumed
+each `jti` atomically with `sid`/`sub` session revocation. Admin retained a
+validated ID token only for its owning session, bounded its session by the ID
+token expiry, and used the client identifier when no ID-token hint remained.
+Both Admin and the simulators returned an explicit public no-cache signed-out
+page after the shared Shauth session ended, so logout did not immediately enter
+a new sign-in flow.
+
+## Current-source browser validation
+
+The shared backend Playwright harness built the current web interface and Go
+binary for every run instead of reusing an untracked executable, and launched
+each server through its native command-line or environment coordinate. Cloud backend
+suites started the corresponding real Sockerless simulator in API-only process
+mode and provisioned their prerequisite Amazon ECS cluster, Google Cloud Storage
+bucket, or Azure resources through the public cloud API surface. All seven
+backend interfaces validated status, navigation, resources, metrics, and their
+declared favicon in 77 browser scenarios. Their HTML stopped loading Google
+Fonts at runtime, leaving each production bundle self-contained. Continuous
+integration gained an explicit browser matrix for Admin, every simulator, and
+every backend, while pre-commit and pre-push validation covered the shared
+browser shell scripts. Each Playwright web server allowed bounded cold Go
+dependency compilation in continuous integration before the harness applied
+its separate 30-second runtime-health deadline, while individual browser tests
+retained their 30-second timeout.

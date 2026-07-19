@@ -152,5 +152,11 @@ function defaultMeta(
 ): ReactNode {
   if (query.isLoading) return "loading…";
   if (query.isError) return "error";
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+  return `${count} ${count === 1 ? noun : pluralize(noun)}`;
+}
+
+function pluralize(noun: string): string {
+  if (/[^aeiou]y$/i.test(noun)) return `${noun.slice(0, -1)}ies`;
+  if (/(s|x|z|ch|sh)$/i.test(noun)) return `${noun}es`;
+  return `${noun}s`;
 }

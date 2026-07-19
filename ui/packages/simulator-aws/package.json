@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "bun --bun vite build",
     "preview": "vite preview",
-    "test:e2e": "playwright test",
+    "test:e2e": "bash ../core/e2e/run-tests.sh",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -19,7 +19,7 @@
     "@sockerless/ui-core": "workspace:*"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
+    "@playwright/test": "^1.61.1",
     "@vitejs/plugin-react": "^4.5.0",
     "@tailwindcss/vite": "^4.1.0",
     "tailwindcss": "^4.1.0",

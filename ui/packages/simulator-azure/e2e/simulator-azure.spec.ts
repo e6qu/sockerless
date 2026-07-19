@@ -1,10 +1,21 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Azure Simulator SPA", () => {
-  test("redirects / to /ui/", async ({ page }) => {
+  test("uses the shared responsive application shell", async ({ page }) => {
+    await page.goto("/ui/");
+    await expect((await page.request.get("/ui/favicon.svg")).status()).toBe(200);
+    const shell = page.locator(".sl-shell");
+    const sidebar = page.getByRole("complementary");
+    await expect(shell).toHaveCSS("display", "grid");
+    await expect(sidebar).toHaveCSS("border-radius", "20px");
+    await page.setViewportSize({ width: 700, height: 900 });
+    await expect(sidebar).toHaveCSS("position", "static");
+  });
+
+  test("keeps the Azure API root separate from /ui/", async ({ page }) => {
     const response = await page.goto("/");
-    expect(page.url()).toContain("/ui/");
-    expect(response?.status()).toBe(200);
+    expect(page.url()).toBe("http://localhost:19330/");
+    expect(response?.status()).toBe(404);
   });
 
   test("renders Azure Simulator title in sidebar", async ({ page }) => {
@@ -26,7 +37,7 @@ test.describe("Azure Simulator SPA", () => {
 test.describe("Overview Page", () => {
   test("renders heading and status", async ({ page }) => {
     await page.goto("/ui/");
-    await expect(page.getByRole("heading", { name: "Azure Simulator" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   });
 });
 
@@ -101,6 +112,6 @@ test.describe("Navigation", () => {
 
     await page.getByRole("link", { name: "Overview" }).click();
     await expect(page.url()).toContain("/ui/");
-    await expect(page.getByRole("heading", { name: "Azure Simulator" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   });
 });

@@ -12,7 +12,7 @@ export function ACRRegistriesPage() {
   return (
     <ResourceListPage<ACRRegistry>
       kicker="azure · simulator · acr"
-      title={<>Registries</>}
+      title={<>ACR Registries</>}
       countNoun="registry"
       columns={columns}
       queryKey={["acr-registries"]}

@@ -31,14 +31,9 @@ func TestHealthReportsProcessRuntimeCapability(t *testing.T) {
 	}
 }
 
-func TestRegisterUIExposesDeploymentNeutralIdentityCoordinates(t *testing.T) {
+func TestRegisterUIReportsAuthenticationDisabledWithoutOIDC(t *testing.T) {
 	t.Setenv("SIM_RUNTIME", "process")
-	srv, err := NewServer(Config{
-		Provider:           "aws",
-		LogLevel:           "disabled",
-		UIIdentityEndpoint: "/oauth2/userinfo",
-		UILogoutEndpoint:   "/oauth2/sign_out?rd=%2F",
-	})
+	srv, err := NewServer(Config{Provider: "aws", LogLevel: "disabled"})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -56,29 +51,45 @@ func TestRegisterUIExposesDeploymentNeutralIdentityCoordinates(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode UI config: %v", err)
 	}
-	if got["identityEndpoint"] != "/oauth2/userinfo" || got["logoutEndpoint"] != "/oauth2/sign_out?rd=%2F" {
+	if got["identityEndpoint"] != "" || got["logoutEndpoint"] != "" {
 		t.Fatalf("UI config coordinates: got %#v", got)
 	}
 }
 
-func TestNewServerRejectsUnsafeOrPartialUIAuthCoordinates(t *testing.T) {
+func TestNewServerRejectsPartialUIOIDCConfiguration(t *testing.T) {
 	t.Setenv("SIM_RUNTIME", "process")
 	for name, cfg := range map[string]Config{
-		"partial": {
-			Provider: "aws", LogLevel: "disabled", UIIdentityEndpoint: "/oauth2/userinfo",
-		},
-		"cross-origin identity": {
-			Provider: "aws", LogLevel: "disabled", UIIdentityEndpoint: "https://example.test/userinfo", UILogoutEndpoint: "/logout",
-		},
-		"scheme-relative logout": {
-			Provider: "aws", LogLevel: "disabled", UIIdentityEndpoint: "/identity", UILogoutEndpoint: "//example.test/logout",
-		},
+		"partial":  {Provider: "aws", LogLevel: "disabled", UIOIDCIssuer: "https://auth.example.test"},
+		"insecure": {Provider: "aws", LogLevel: "disabled", UIOIDCIssuer: "http://auth.example.test", UIOIDCClientID: "aws", UIOIDCClientSecret: "secret", UIPublicURL: "https://aws.example.test", UISessionSecret: "0123456789abcdef0123456789abcdef"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := NewServer(cfg); err == nil {
-				t.Fatal("unsafe UI authentication coordinates must fail startup")
+				t.Fatal("invalid UI OpenID Connect configuration must fail startup")
 			}
 		})
+	}
+}
+
+func TestFirstPartyOIDCProtectsOnlyTheUserInterface(t *testing.T) {
+	t.Setenv("SIM_RUNTIME", "process")
+	srv, err := NewServer(Config{
+		Provider: "aws", LogLevel: "disabled", UIOIDCIssuer: "https://auth.example.test",
+		UIOIDCClientID: "aws", UIOIDCClientSecret: "secret", UIPublicURL: "https://aws.example.test",
+		UISessionSecret: "0123456789abcdef0123456789abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.RegisterUI(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ui")}})
+	recorder := httptest.NewRecorder()
+	srv.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ui/", nil))
+	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/auth/oidc/login?return_to=%2Fui%2F" {
+		t.Fatalf("UI redirect = %d %q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	recorder = httptest.NewRecorder()
+	srv.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cloud-independent health status = %d", recorder.Code)
 	}
 }
 

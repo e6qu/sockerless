@@ -1,10 +1,22 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("AWS Simulator SPA", () => {
-  test("redirects / to /ui/", async ({ page }) => {
+  test("uses the shared responsive application shell", async ({ page }) => {
+    await page.goto("/ui/");
+    await expect((await page.request.get("/ui/favicon.svg")).status()).toBe(200);
+    const shell = page.locator(".sl-shell");
+    const sidebar = page.getByRole("complementary");
+    await expect(shell).toHaveCSS("display", "grid");
+    await expect(sidebar).toHaveCSS("border-radius", "20px");
+    await page.setViewportSize({ width: 700, height: 900 });
+    await expect(sidebar).toHaveCSS("position", "static");
+  });
+
+  test("keeps the AWS S3 root protocol surface separate from /ui/", async ({ page }) => {
     const response = await page.goto("/");
-    expect(page.url()).toContain("/ui/");
+    expect(page.url()).toBe("http://localhost:19310/");
     expect(response?.status()).toBe(200);
+    await expect(page.locator("body")).toContainText("ListAllMyBucketsResult");
   });
 
   test("renders AWS Simulator title in sidebar", async ({ page }) => {

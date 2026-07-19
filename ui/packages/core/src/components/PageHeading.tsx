@@ -11,21 +11,15 @@ export interface PageHeadingProps {
   actions?: ReactNode;
 }
 
-/**
- * Editorial-magazine page header: a small uppercase kicker over a
- * large italic-serif title, optional monospace meta beneath, and a
- * right-aligned actions slot. Sets the voice for every page.
- */
 export function PageHeading({ kicker, title, meta, actions }: PageHeadingProps) {
   return (
-    <header className="mb-8 flex flex-wrap items-end justify-between gap-x-8 gap-y-3 border-b pb-5"
-      style={{ borderColor: "var(--color-border)" }}
+    <header className="mb-7 flex flex-wrap items-center justify-between gap-x-8 gap-y-3"
     >
       <div className="min-w-0 flex-1">
         {kicker && (
           <div
-            className="mb-2 text-[10px] uppercase tracking-[0.22em]"
-            style={{ color: "var(--color-fg-subtle)" }}
+            className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em]"
+            style={{ color: "var(--color-accent)" }}
           >
             {kicker}
           </div>
@@ -33,10 +27,9 @@ export function PageHeading({ kicker, title, meta, actions }: PageHeadingProps) 
         <h2
           className="font-display"
           style={{
-            fontStyle: "italic",
-            fontWeight: 600,
-            fontSize: "clamp(1.6rem, 2.4vw, 2.4rem)",
-            lineHeight: 1.05,
+            fontWeight: 800,
+            fontSize: "clamp(1.75rem, 2.4vw, 2.55rem)",
+            lineHeight: 1.1,
             letterSpacing: "-0.025em",
             color: "var(--color-fg)",
           }}
@@ -45,7 +38,7 @@ export function PageHeading({ kicker, title, meta, actions }: PageHeadingProps) 
         </h2>
         {meta && (
           <div
-            className="mt-2 text-xs font-mono"
+            className="mt-2 text-sm"
             style={{ color: "var(--color-fg-muted)" }}
           >
             {meta}
