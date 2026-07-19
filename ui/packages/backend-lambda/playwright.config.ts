@@ -38,6 +38,6 @@ export default defineConfig({
     },
     port: PORT,
     reuseExistingServer: false,
-    timeout: 60_000,
+    timeout: 180_000,
   },
 });

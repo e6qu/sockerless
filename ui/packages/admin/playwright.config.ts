@@ -24,6 +24,6 @@ export default defineConfig({
     },
     port: ADMIN_PORT,
     reuseExistingServer: false,
-    timeout: 15_000,
+    timeout: 180_000,
   },
 });

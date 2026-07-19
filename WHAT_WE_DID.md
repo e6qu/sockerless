@@ -831,4 +831,7 @@ declared favicon in 77 browser scenarios. Their HTML stopped loading Google
 Fonts at runtime, leaving each production bundle self-contained. Continuous
 integration gained an explicit browser matrix for Admin, every simulator, and
 every backend, while pre-commit and pre-push validation covered the shared
-browser shell scripts.
+browser shell scripts. Each Playwright web server allowed bounded cold Go
+dependency compilation in continuous integration before the harness applied
+its separate 30-second runtime-health deadline, while individual browser tests
+retained their 30-second timeout.
