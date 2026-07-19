@@ -844,3 +844,14 @@ authorization boundary as the rendered operator interface. Unauthenticated
 browsers could no longer read dashboard inventory behind a protected shell,
 while health probes and native cloud API routes retained their existing
 protocol-specific contracts.
+
+## Direct architecture release manifests
+
+The release workflow disabled provenance attestations on each native ARM64 and
+AMD64 build so the explicit architecture tags resolved directly to OCI image
+manifests instead of single-platform indexes with anonymous attestation
+children. The manifest job verified both architecture media types and rejected
+any generic short-SHA index whose platform set differed from exactly Linux
+ARM64 and AMD64. This preserved the generic multi-architecture image for Amazon
+Elastic Container Service and Kubernetes while keeping the explicit tags
+usable by consumers that require a single-architecture image manifest.
