@@ -3,6 +3,7 @@ import { BrowserRouter, NavLink, Routes } from "react-router";
 import { AppShell, NavLinkButton, type NavItem } from "./AppShell.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { ToastProvider } from "./Toast.js";
+import { OperatorAccount } from "./OperatorAccount.js";
 
 function renderNavLink(item: NavItem) {
   return (
@@ -30,6 +31,7 @@ export function SimulatorApp({ title, kicker, navItems, children }: SimulatorApp
             kicker={kicker ?? "cloud · simulator"}
             navItems={navItems}
             renderLink={renderNavLink}
+            accountControl={<OperatorAccount />}
           >
             <Routes>{children}</Routes>
           </AppShell>

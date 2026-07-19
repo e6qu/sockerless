@@ -69,6 +69,13 @@ Environment knobs (per sim — full list in each sub-README):
 | `SIM_RUNTIME` | `docker` | Workload runtime mode. The default initializes Docker/Podman for execution. Set `process` only for explicit API-only runs that do not invoke workload-execution APIs. |
 | `SIM_SERVICEBUS_AMQP_LISTEN_ADDR` | unset | Azure-only raw Service Bus AMQP/TLS listener; requires `SIM_SERVICEBUS_AMQP_TLS_CERT` / `SIM_SERVICEBUS_AMQP_TLS_KEY` or the shared TLS cert/key |
 | `SIM_LOG_LEVEL` | `info` | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
+| `SIM_UI_IDENTITY_ENDPOINT` | unset | Same-origin JSON endpoint for the authenticated operator identity shown by the embedded UI. Configure together with `SIM_UI_LOGOUT_ENDPOINT`. |
+| `SIM_UI_LOGOUT_ENDPOINT` | unset | Same-origin application-session logout coordinate exposed by the embedded UI. Configure together with `SIM_UI_IDENTITY_ENDPOINT`. |
+
+The optional UI authentication coordinates keep deployment authentication
+outside the simulator. Both must be same-origin absolute paths and both must be
+configured; a partial or external coordinate fails startup. The cloud API
+surface remains unchanged.
 
 Docker or Podman is required when simulator calls execute workloads. If the
 operator intentionally needs only non-execution API surfaces, `SIM_RUNTIME=process`

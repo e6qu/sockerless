@@ -4,6 +4,32 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-19 - Authenticated Simulator Dashboards and Truthful Release Validation
+
+The AWS, Google Cloud, and Microsoft Azure simulator dashboards now read
+validated, same-origin deployment coordinates for signed-in identity and
+application logout. Their shared shell displays the authenticated operator with
+accessible user details and a real logout control while leaving every cloud API
+route unchanged. Image publication runs only after a push to `main` and emits
+the immutable short-SHA manifest plus its explicit `-arm64` and `-amd64`
+images.
+
+The nightly fuzz harness now selects the intentional headless build, skips
+nested Go modules until their own matrix entry, reports build or target failures
+without calling them crashers, bounds per-target workers, and collects only new
+minimized inputs. Root-context simulator image builds also exclude local
+dependency and generated output directories. The previous workflow failures
+were resolved at their shared build, resource, and artifact boundaries rather
+than being recorded as nonexistent parser crashes.
+
+The repository-wide core test also reconciled the Go workspace checksum set
+with the current transitive module graph, so the required gate leaves a clean
+worktree on subsequent runs.
+
+## 2026-07-19 - Amazon ECS A-Record Service-Registry Fidelity (`fix/ecs-a-record-service-registry-validation`)
+
+The AWS simulator now validates Amazon Elastic Container Service service-registry port coordinates against the registered AWS Cloud Map DNS record type. A-record services reject `containerPort` or `port` with the same invalid-parameter contract as Amazon ECS, while portless registrations preserve task ENI discovery. Focused official AWS SDK coverage creates the real Cloud Map A-record registry, proves the rejected port-bearing request, and proves the valid portless request.
+
 ## 2026-07-18 - Cloud-Independent API-Only Simulator Runtime Contract (`feat/api-only-runtime-capability`)
 
 The Amazon Web Services, Google Cloud, and Microsoft Azure simulators now exposed a common `/health` capability document with the configured runtime and a `workloadExecution` flag. `SIM_RUNTIME=process` remained a generic API-only simulator coordinate rather than a deployment-platform mode: storage, queues, eventing, audit, and control-plane slices continued to use their real API implementations, while callers could reliably discover that container workloads were unavailable.

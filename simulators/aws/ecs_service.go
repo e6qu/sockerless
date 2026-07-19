@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -263,6 +264,42 @@ func ecsServiceNameFromRef(ref string) string {
 
 func ecsServiceKey(cluster, service string) string { return cluster + "/" + service }
 
+// validateECSServiceRegistries enforces the Amazon ECS service-discovery
+// coordinate rules that depend on the AWS Cloud Map DNS record type.
+func validateECSServiceRegistries(raw json.RawMessage) (string, string) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", ""
+	}
+	var registries []struct {
+		RegistryArn   string `json:"registryArn"`
+		ContainerPort *int   `json:"containerPort"`
+		Port          *int   `json:"port"`
+	}
+	if err := json.Unmarshal(raw, &registries); err != nil {
+		return "InvalidParameterException", "serviceRegistries must be an array"
+	}
+	for _, registry := range registries {
+		serviceID := registry.RegistryArn[strings.LastIndex(registry.RegistryArn, "/")+1:]
+		service, found := cmServices.Get(serviceID)
+		if !found || service.Arn != registry.RegistryArn {
+			return "InvalidParameterException", fmt.Sprintf("Service registry %s does not exist", registry.RegistryArn)
+		}
+		hasSRVRecord := false
+		if service.DnsConfig != nil {
+			for _, record := range service.DnsConfig.DnsRecords {
+				if record.Type == "SRV" {
+					hasSRVRecord = true
+					break
+				}
+			}
+		}
+		if !hasSRVRecord && (registry.ContainerPort != nil || registry.Port != nil) {
+			return "InvalidParameterException", fmt.Sprintf("The values specified for serviceRegistries do not require a value for 'containerPort'. Remove the value and retry. Registry: %s", registry.RegistryArn)
+		}
+	}
+	return "", ""
+}
+
 // ecsServiceFromARN resolves a service ARN (arn:...:service/<cluster>/<name>,
 // or the older arn:...:service/<name> form) to its stored service.
 func ecsServiceFromARN(arn string) (clusterName, key string, svc ECSService, ok bool) {
@@ -311,6 +348,10 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if code, message := validateECSServiceRegistries(req.ServiceRegistries); code != "" {
+		sim.AWSError(w, code, message, http.StatusBadRequest)
 		return
 	}
 	if req.ServiceName == "" {
@@ -597,6 +638,10 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if code, message := validateECSServiceRegistries(req.ServiceRegistries); code != "" {
+		sim.AWSError(w, code, message, http.StatusBadRequest)
 		return
 	}
 	clusterName := ecsClusterNameFromRef(req.Cluster)

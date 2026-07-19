@@ -132,6 +132,24 @@ All work goes on a single branch and a single PR — even several independent co
 
 Any problem you notice — failing/flaky test, build or lint warning, dropped field, wrong status code, suspicious log — gets one of two outcomes: **fix it on the spot** (strongly preferred), or, if you truly can't now, **file it in `BUGS.md`** (area, symptom, suspected cause, fix shape). Noticing it and moving on is forbidden. "Pre-existing", "not caused by my change", "not my job" are not exits.
 
+This is the **Boy Scout rule**, and it is a hard rule: in this project there
+is no safe category of "unrelated" defect. A symptom in one component can
+share credentials, wire formats, state, lifecycle, deployment coordinates, or
+an assumption with another component even when that relationship is not yet
+visible. Agents have limited working context; treating an observation as
+unrelated because its connection is not immediately remembered is therefore a
+reliability failure. Investigate the relationship first, then fix the defect
+where the evidence leads. A change is not complete while a noticed failure is
+being merely described, excused, or left for a hypothetical later pass.
+
+When a real external dependency prevents an immediate repair, record the
+concrete evidence, owner boundary, and intended repair in `BUGS.md`, tell the
+user, and resume it as soon as the dependency changes. Do not use a tracking
+entry to hide an inconvenient investigation, to narrow a test, or to preserve
+a broken behavior. Tests, observability, deployment configuration, UI paths,
+documentation, and operational hygiene are all part of the same product and
+are subject to this rule.
+
 "Unrelated" must be *earned with evidence*, never assumed — and especially not by an agent whose context resets across compactions and sessions, so it often can't see that a failure shares a helper, wire format, or store invariant with its change. Even a genuinely orthogonal failure still gets fixed or filed. This is a vibe-coded codebase: unfixed problems compound fast and hide the next one. Proactivity is required, not optional.
 
 ## Never merge PRs

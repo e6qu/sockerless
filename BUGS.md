@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2599 filed - 2553 fixed - 10 open - 16 false positives.**
+**2606 filed - 2560 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,13 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2606~~ | P2 | Go workspace dependency metadata | the complete core test resolved current transitive module versions that were absent or stale in `go.work.sum` | The workspace checksum set now matches the module graph exercised by the required core test instead of modifying the worktree during validation. |
+| ~~2605~~ | P1 | simulator image publication | manual workflow dispatch could publish an arbitrary branch revision despite the main-only release contract | Image publication now runs only after a push to `main` and emits only the short-SHA manifest plus its explicit architecture images. |
+| ~~2604~~ | P2 | simulator container build context | local dependency and generated frontend directories entered every root-context simulator image build | The root Docker ignore contract now excludes all nested `node_modules` and `dist` directories while each image builds its own frontend artifact inside the image build. |
+| ~~2603~~ | P1 | fuzz harness resource control | the harness expanded to every host CPU and a one-second router fuzz pass intermittently missed the Go coordinator shutdown deadline | Fuzz targets now use a bounded four-worker default, which retained high execution throughput and passed ten consecutive one-second router runs. |
+| ~~2602~~ | P1 | simulator operator identity | the three shared simulator dashboards had no authenticated-user view or application logout control | The shared simulator shell now obtained deployment-owned same-origin identity and logout coordinates, displayed the signed-in operator accessibly, and exposed working local logout without coupling any cloud API slice to its hosting platform. |
+| ~~2601~~ | P1 | nightly fuzz continuous integration | absent embedded frontend artifacts made simulator fuzz targets fail compilation, while the harness mislabeled each build failure as a crasher and uploaded the committed corpus | Fuzzing now selects the intentional headless build, respects nested Go module boundaries, reports target failures truthfully, and uploads only newly generated minimized inputs. |
+| ~~2600~~ | P1 | Amazon Elastic Container Service service discovery simulator | A-record AWS Cloud Map registries accepted an explicit port that the real Amazon Elastic Container Service control plane rejects | Amazon Elastic Container Service now validates registry ports against the Cloud Map DNS record type and returns the real invalid-parameter response for A records while accepting portless task-ENI registration. |
 | ~~2599~~ | P1 | simulator continuous integration | A transient TLS reset while downloading golangci-lint aborted simulator lint before any source analysis ran | Tool installation now uses bounded retry, connection, and total-time limits with pipe-failure propagation, so lint retries transient registry transport faults and fails only with a truthful install result. |
 | ~~2598~~ | P1 | simulator software development kit freshness | The required freshness gate found current Amazon S3, Smithy, and Google API releases missing from the standalone AWS and Google Cloud simulator SDK client graphs | The simulator SDK graphs now use the current client releases, and their complete official SDK suites pass against real simulator servers. |
 | ~~2597~~ | P1 | dependency freshness | The mandatory freshness gate found Amazon Simple Storage Service and Google API client releases newer than seven standalone backend and dispatcher module graphs | Every affected graph now uses the current Amazon S3 and Google API releases with reconciled transitive dependencies, and the complete freshness gate plus focused backend suites pass. |
