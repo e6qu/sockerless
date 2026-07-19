@@ -11,6 +11,7 @@ RUN chmod +x /usr/local/bin/retry-go-build
 # Build simulator (independent module, not in go.work)
 WORKDIR /sim
 COPY simulators/realexec/ /realexec/
+COPY simulators/ui-auth/ /ui-auth/
 COPY simulators/azure/ /sim/
 RUN retry-go-build /usr/local/bin/simulator-azure .
 

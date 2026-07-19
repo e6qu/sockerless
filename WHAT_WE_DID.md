@@ -34,6 +34,17 @@ Back-Channel Logout revoked sessions by `sid` or `sub` with `jti` replay
 rejection. Only UI, identity, and logout routes were protected. Every native
 cloud API slice retained its existing authentication and wire behavior.
 
+Every cloud and GitLab smoke image now copied the shared OpenID Connect module
+required by the standalone simulator graphs. The Google Cloud Run and Azure
+Container Apps GitLab images also carried the shared agent module required by
+their backend graphs, and the legacy AWS GitLab image selected the intentional
+headless simulator build. All affected images compiled successfully; the exact
+Amazon Elastic Container Service continuous-integration image also passed all
+15 real simulator/backend Docker lifecycle assertions. A pre-commit and
+continuous-integration contract now rejects any smoke Dockerfile that loses a
+required shared module or compiles a GitLab simulator with its browser bundle
+absent.
+
 ## 2026-07-19 - Authenticated Simulator Dashboards and Truthful Release Validation
 
 The AWS, Google Cloud, and Microsoft Azure simulator dashboards now use their

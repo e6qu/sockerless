@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`fix/simulator-console-ui` contained the polished shared Admin/simulator interface, corrected compiled-server browser harnesses, standards-compliant Sockerless Admin logout participation, and a shared first-party OpenID Connect relying-party implementation for all simulator UIs. Its Go, TypeScript, production-build, and real-browser suites passed locally.
+`fix/simulator-console-ui` contained the polished shared Admin/simulator interface, corrected compiled-server browser harnesses, standards-compliant Sockerless Admin logout participation, and a shared first-party OpenID Connect relying-party implementation for all simulator UIs. Its Go, TypeScript, production-build, real-browser, cloud smoke-image, and GitLab smoke-image suites passed locally.
 
 ## Continue Here
 
@@ -15,6 +15,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- The exact Amazon Elastic Container Service continuous-integration smoke image built and passed all 15 real simulator/backend Docker lifecycle assertions. The Google Cloud Run and Azure Container Apps smoke images built successfully, and all four GitLab smoke images resolved their complete local module graphs and compiled successfully.
 - Sockerless Admin's complete Go suite and vet passed with real server-tracked sessions, signed OIDC Back-Channel Logout validation, `sid`/`sub` revocation, `jti` replay rejection, and RP-Initiated Logout.
 - The shared simulator UI-auth module passed signed-session, direct-entry redirect, identity, cross-origin logout, signed back-channel revocation, and replay-rejection tests; every provider shared-server suite proved that only UI routes were protected while native cloud routes remained unaffected.
 - The compiled Admin, AWS, Google Cloud, and Microsoft Azure servers passed 41 Playwright scenarios across responsive shell behavior, both themes, self-contained browser assets, every navigation surface, and real management/simulator HTTP data.

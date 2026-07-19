@@ -3,12 +3,14 @@ FROM golang:1.25 AS builder
 # Build simulator
 WORKDIR /sim
 COPY simulators/realexec/ /realexec/
+COPY simulators/ui-auth/ /ui-auth/
 COPY simulators/gcp/ /sim/
 RUN GOWORK=off go build -tags noui -o /simulator-gcp .
 
 # Build backend
 WORKDIR /src
 COPY api/ api/
+COPY agent/ agent/
 COPY backends/core/ backends/core/
 COPY backends/gcp-common/ backends/gcp-common/
 COPY backends/cloudrun/ backends/cloudrun/

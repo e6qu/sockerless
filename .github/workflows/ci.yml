@@ -76,6 +76,8 @@ jobs:
           shellcheck -x -s bash scripts/*.sh
           bash -n scripts/*.sh
           zsh -n scripts/*.sh
+      - name: Check smoke Docker build contexts
+        run: bash scripts/check-smoke-build-contexts.sh
       - name: Check dependency freshness (bash)
         run: bash scripts/check-latest-deps.sh
       - name: Check dependency freshness (zsh)
