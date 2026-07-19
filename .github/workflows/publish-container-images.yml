@@ -76,6 +76,7 @@ jobs:
           file: ${{ matrix.image.dockerfile }}
           platforms: ${{ matrix.arch.platform }}
           push: true
+          provenance: false
           tags: ${{ env.REGISTRY }}/e6qu/${{ matrix.image.name }}:${{ needs.prepare.outputs.short_sha }}-${{ matrix.arch.suffix }}
           cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.arch.suffix }}
           cache-to: type=gha,scope=${{ matrix.image.name }}-${{ matrix.arch.suffix }},mode=max
@@ -115,3 +116,17 @@ jobs:
             --tag "$TAG" \
             "$AMD64_REF" \
             "$ARM64_REF"
+
+          for REF in "$AMD64_REF" "$ARM64_REF"; do
+            MEDIA_TYPE=$(docker buildx imagetools inspect \
+              --format '{{.Manifest.MediaType}}' "$REF")
+            test "$MEDIA_TYPE" = "application/vnd.oci.image.manifest.v1+json"
+          done
+
+          MEDIA_TYPE=$(docker buildx imagetools inspect \
+            --format '{{.Manifest.MediaType}}' "$TAG")
+          test "$MEDIA_TYPE" = "application/vnd.oci.image.index.v1+json"
+          PLATFORMS=$(docker buildx imagetools inspect \
+            --format '{{range .Manifest.Manifests}}{{printf "%s/%s\n" .Platform.OS .Platform.Architecture}}{{end}}' \
+            "$TAG" | sort)
+          test "$PLATFORMS" = "$(printf 'linux/amd64\nlinux/arm64')"

@@ -4,17 +4,18 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`fix/protect-simulator-dashboard-api` applied the simulator user-interface authorization boundary to the `/sim/v1/*` dashboard data consumed by the protected single-page application. Native cloud API routes and unauthenticated health probes retained their existing contracts. The complete AWS, Google Cloud, and Microsoft Azure simulator suites and vet passed locally.
+`fix/publish-arch-image-manifests` made every short-SHA `-arm64` and `-amd64` release tag a direct OCI image manifest by disabling provenance attestations on the native builds. The manifest job verified both child media types and required the generic OCI index to contain exactly Linux ARM64 and AMD64.
 
 ## Continue Here
 
-1. Merge this branch through its single pull request, publish its short-SHA operator-console and simulator manifests, and deploy them as real Amazon Elastic Container Service services. Register Admin's callback `/auth/shauth/callback`, post-logout `/auth/signed-out`, and back-channel `/auth/shauth/backchannel-logout` coordinates. For each `aws`, `gcp`, and `azure` origin, register callback `/auth/oidc/callback`, post-logout `/auth/signed-out`, and back-channel `/auth/oidc/backchannel-logout`, supply its `SIM_UI_OIDC_*`, `SIM_UI_PUBLIC_URL`, and `SIM_UI_SESSION_SECRET` values, then run the complete live Shauth SSO acceptance matrix, including unauthenticated rejection of `/sim/v1/*` dashboard data.
+1. Merge this branch through its single pull request, verify the published direct architecture manifests and generic index, and deploy them as real Amazon Elastic Container Service services. Register Admin's callback `/auth/shauth/callback`, post-logout `/auth/signed-out`, and back-channel `/auth/shauth/backchannel-logout` coordinates. For each `aws`, `gcp`, and `azure` origin, register callback `/auth/oidc/callback`, post-logout `/auth/signed-out`, and back-channel `/auth/oidc/backchannel-logout`, supply its `SIM_UI_OIDC_*`, `SIM_UI_PUBLIC_URL`, and `SIM_UI_SESSION_SECRET` values, then run the complete live Shauth SSO acceptance matrix, including unauthenticated rejection of `/sim/v1/*` dashboard data.
 2. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
 3. Resolve BUG-2589: configure the local Azure Container Registry Tasks SDK harness with a Docker-trusted simulator registry transport, matching the working CI coordinate.
 4. Continue complete simulator and backend fidelity work, including the open live-cloud cells documented in BUGS.md.
 
 ## Recent Validation
 
+- The merged `9fe520a3ef14` release demonstrated that provenance-enabled native tags were OCI indexes with attestation children; the corrected workflow disabled provenance and added registry-shape assertions that reject that contract violation before a publication job succeeds.
 - The complete AWS, Google Cloud, and Microsoft Azure simulator suites and vet passed after the shared operator authorization boundary covered each `/sim/v1/*` dashboard handler; direct tests proved UI and dashboard data redirected unauthenticated browsers while health remained public.
 - The exact Amazon Elastic Container Service continuous-integration smoke image built and passed all 15 real simulator/backend Docker lifecycle assertions. The Google Cloud Run and Azure Container Apps smoke images built successfully, and all four GitLab smoke images resolved their complete local module graphs and compiled successfully.
 - Sockerless Admin's complete Go suite and vet passed with real server-tracked sessions, signed OIDC Back-Channel Logout validation, `sid`/`sub` revocation, `jti` replay rejection, and RP-Initiated Logout.
