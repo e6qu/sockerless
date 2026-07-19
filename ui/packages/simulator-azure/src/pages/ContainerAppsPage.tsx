@@ -13,7 +13,7 @@ export function ContainerAppsPage() {
   return (
     <ResourceListPage<ContainerAppJob>
       kicker="azure · simulator · container apps"
-      title={<>Jobs</>}
+      title={<>Container Apps Jobs</>}
       countNoun="job"
       columns={columns}
       queryKey={["ca-jobs"]}

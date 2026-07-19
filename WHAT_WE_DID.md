@@ -4,6 +4,29 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-19 - Polished Simulator Consoles and Global Admin Logout (`fix/simulator-console-ui`)
+
+Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
+dashboards now shared a polished responsive shell with saturated accessible
+light/dark palettes, consistent navigation, service-specific resource names,
+keyboard focus treatment, and a screen-reader skip link. The current compiled
+Go servers passed real Chromium coverage across every dashboard and Admin's
+live overview, component status, metrics, reload, containers, and operational
+pages through the real Docker passthrough backend. Every bundle served the same
+self-contained Sockerless browser mark and Admin no longer depended on an
+external font host. The Admin harness removed
+its synthetic HTTP backend, used collision-free ports, detected dead child
+processes, and cleaned its process tree deterministically instead of silently
+testing against another local service.
+
+Sockerless Admin also became a complete Shauth logout participant. Its browser
+sessions were tracked server-side, verified OIDC Back-Channel Logout tokens
+revoked matching sessions by `sid` or `sub`, replayed `jti` values were
+rejected, and the user logout control initiated RP-Initiated Logout through
+Shauth's discovered `end_session_endpoint`. The simulator cloud APIs remained
+unchanged; their deployment-owned authentication proxies continued to own
+their browser sessions and logout coordinates.
+
 ## 2026-07-19 - Authenticated Simulator Dashboards and Truthful Release Validation
 
 The AWS, Google Cloud, and Microsoft Azure simulator dashboards now read

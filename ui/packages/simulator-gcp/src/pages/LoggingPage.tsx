@@ -20,7 +20,7 @@ export function LoggingPage() {
   return (
     <ResourceListPage<LogEntry>
       kicker="gcp · simulator · logging"
-      title={<>Entries</>}
+      title={<>Cloud Logging</>}
       countNoun="entry"
       columns={columns}
       queryKey={["log-entries"]}

@@ -104,6 +104,7 @@ func main() {
 	mux.HandleFunc("GET /api/v1/observability", handleObservabilityConfig(obsCfg))
 	mux.HandleFunc("GET /auth/shauth", shauth.login)
 	mux.HandleFunc("GET /auth/shauth/callback", shauth.callback)
+	mux.HandleFunc("POST /auth/shauth/backchannel-logout", shauth.backchannelLogout)
 	mux.HandleFunc("POST /auth/logout", shauth.logout)
 	mux.HandleFunc("GET /auth/session", shauth.session)
 	registerUI(mux)

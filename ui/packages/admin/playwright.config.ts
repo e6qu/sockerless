@@ -1,7 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
-const ADMIN_PORT = 19090;
-const MOCK_BACKEND_PORT = 19100;
+const ADMIN_PORT = 29090;
+const BACKEND_PORT = 29100;
+const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -13,10 +14,10 @@ export default defineConfig({
     headless: true,
   },
   projects: [
-    { name: "chromium", use: { browserName: "chromium" } },
+    { name: "chromium", use: { browserName: "chromium", launchOptions: chromiumExecutable ? { executablePath: chromiumExecutable } : {} } },
   ],
   webServer: {
-    command: `ADMIN_BIN=${process.env.ADMIN_BIN || "../../../cmd/sockerless-admin/sockerless-admin"} MOCK_BACKEND_PORT=${MOCK_BACKEND_PORT} ADMIN_PORT=${ADMIN_PORT} bash e2e/start-server.sh`,
+    command: `ADMIN_BIN=${process.env.ADMIN_BIN || "../../../cmd/sockerless-admin/sockerless-admin"} BACKEND_BIN=${process.env.BACKEND_BIN || "../../../backends/docker/sockerless-backend-docker"} BACKEND_PORT=${BACKEND_PORT} ADMIN_PORT=${ADMIN_PORT} bash e2e/start-server.sh`,
     port: ADMIN_PORT,
     reuseExistingServer: false,
     timeout: 15_000,

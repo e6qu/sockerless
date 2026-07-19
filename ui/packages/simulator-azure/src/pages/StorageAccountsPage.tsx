@@ -13,7 +13,7 @@ export function StorageAccountsPage() {
   return (
     <ResourceListPage<StorageAccount>
       kicker="azure · simulator · storage"
-      title={<>Accounts</>}
+      title={<>Storage Accounts</>}
       countNoun="account"
       columns={columns}
       queryKey={["storage-accounts"]}

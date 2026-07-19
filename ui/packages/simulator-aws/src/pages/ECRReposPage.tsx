@@ -18,7 +18,7 @@ export function ECRReposPage() {
   return (
     <ResourceListPage<ECRRepo>
       kicker="aws · simulator · ecr"
-      title={<>Repositories</>}
+      title={<>ECR Repositories</>}
       countNoun="repository"
       columns={columns}
       queryKey={["ecr-repos"]}

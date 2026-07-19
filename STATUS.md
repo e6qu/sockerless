@@ -6,12 +6,13 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/ecs-a-record-service-registry-validation` |
-| Branch purpose | The shared simulator service-discovery, operator identity, main-only image-publication, and fuzz-continuous-integration contracts were hardened together. |
+| Active branch | `fix/simulator-console-ui` |
+| Branch purpose | The shared operator and simulator interface was polished across responsive light/dark layouts, and Sockerless Admin became a standards-compliant Shauth logout participant. |
 | Product ownership | The standalone repositories own product source, web user interfaces, Terraform, official-client tests, and runner consumer harnesses. Sockerless remains a standalone Docker-compatible cloud backend and simulator project. |
 | Integration contract | Both product harnesses build and exercise real Sockerless simulator and backend binaries through a named build context; they contain no Sockerless source dependency. |
-| Operator identity | `sockerless-admin` supports optional Shauth OpenID Connect browser sign-in for its operator UI and administration API while simulator cloud APIs remain protocol-faithful. Its unauthenticated `GET /healthz` liveness route supports infrastructure and managed-app probes without exposing protected console state. |
-| Simulator identity | The AWS, Google Cloud, and Microsoft Azure dashboards consume validated same-origin identity/logout coordinates, display the signed-in operator, and keep authentication outside their cloud API slices. |
+| Operator identity | `sockerless-admin` supports optional Shauth OpenID Connect browser sign-in, server-tracked relying-party sessions, signed back-channel logout with replay rejection, and RP-initiated global logout while simulator cloud APIs remain protocol-faithful. Its unauthenticated `GET /healthz` liveness route supports infrastructure probes without exposing protected console state. |
+| Operator interface | Admin and the AWS, Google Cloud, and Microsoft Azure dashboards share a saturated, responsive, accessible light/dark shell with explicit service naming, keyboard focus, self-contained browser assets, and real browser coverage against each compiled server. |
+| Simulator identity | The three dashboards consume validated same-origin deployment coordinates for identity and application logout, display the signed-in operator, and keep authentication outside their cloud API slices. |
 | API-only contract | Every cloud simulator reports its configured runtime and workload-execution capability at `/health`. `SIM_RUNTIME=process` remains a cloud-independent API-only mode: durable control-plane and data-plane APIs remain available, while workload execution is rejected instead of being reported as running. |
 | Release images | The operator console and the Amazon Web Services, Google Cloud, and Microsoft Azure simulators publish native ARM64 and AMD64 images plus an immutable short-SHA multi-architecture manifest only after a push to `main`. Every image contains its production web interface; simulator APIs and UI assets are served by the same real binary. |
 | Fuzz CI | The nightly harness selected headless simulator builds, respected nested Go modules, bounded worker concurrency, distinguished target failures from crashers, and collected only newly minimized inputs. |
@@ -22,9 +23,9 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 ## What's Next
 
-- Deploy the published operator-console and simulator images in the shared development environment, keeping the console behind Shauth, reading the generic simulator capability contract, and preserving the simulators' native cloud protocol contracts.
+- Publish and deploy the updated operator-console and simulator images in the shared development environment. Register Admin's callback, post-logout, and back-channel logout coordinates in Shauth, and preserve the simulators' native cloud protocol contracts.
 - Continue fidelity work on the tracked Amazon Elastic Container Service Terraform simulator lifecycle and Azure Container Registry Tasks registry-trust issues.
-- Deploy the published simulator image SHA through the private infrastructure repository and run its complete direct-entry, portal-entry, identity, local-logout, SSO-reentry, and global-logout browser matrix.
+- Configure each deployment-owned simulator authentication proxy to clear its own session before initiating Shauth logout, then run the complete direct-entry, portal-entry, identity, SSO-reentry, and global-logout browser matrix.
 - Keep cross-repository runner validation real: Bleephub and Bleeplab consume built Sockerless simulators/backends rather than using local stand-ins.
 
 ## Invariants

@@ -13,7 +13,7 @@ export function CloudRunJobsPage() {
   return (
     <ResourceListPage<CloudRunJob>
       kicker="gcp · simulator · cloudrun"
-      title={<>Jobs</>}
+      title={<>Cloud Run Jobs</>}
       countNoun="job"
       columns={columns}
       queryKey={["cloudrun-jobs"]}

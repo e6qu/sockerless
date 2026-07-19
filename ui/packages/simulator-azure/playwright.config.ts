@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test";
 const PORT = 19330;
 const BIN = process.env.SERVER_BIN || "../../../simulators/azure/simulator-azure";
 const HEALTH = `http://localhost:${PORT}/health`;
+const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -14,7 +15,7 @@ export default defineConfig({
     headless: true,
   },
   projects: [
-    { name: "chromium", use: { browserName: "chromium" } },
+    { name: "chromium", use: { browserName: "chromium", launchOptions: chromiumExecutable ? { executablePath: chromiumExecutable } : {} } },
   ],
   webServer: {
     command: `SERVER_BIN="${BIN}" SERVER_PORT=${PORT} HEALTH_URL="${HEALTH}" SIM_MODE=1 bash ../core/e2e/start-backend.sh`,

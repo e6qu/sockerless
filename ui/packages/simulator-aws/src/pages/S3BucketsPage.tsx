@@ -11,7 +11,7 @@ export function S3BucketsPage() {
   return (
     <ResourceListPage<S3Bucket>
       kicker="aws · simulator · s3"
-      title={<>Buckets</>}
+      title={<>S3 Buckets</>}
       countNoun="bucket"
       columns={columns}
       queryKey={["s3-buckets"]}

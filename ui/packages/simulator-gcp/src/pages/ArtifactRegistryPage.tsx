@@ -12,7 +12,7 @@ export function ArtifactRegistryPage() {
   return (
     <ResourceListPage<ARRepo>
       kicker="gcp · simulator · artifact registry"
-      title={<>Repositories</>}
+      title={<>Artifact Registry</>}
       countNoun="repository"
       columns={columns}
       queryKey={["ar-repos"]}

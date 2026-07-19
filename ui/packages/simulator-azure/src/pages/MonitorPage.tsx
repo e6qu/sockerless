@@ -25,7 +25,7 @@ export function MonitorPage() {
   return (
     <ResourceListPage<MonitorLogRow>
       kicker="azure · simulator · monitor"
-      title={<>Logs</>}
+      title={<>Azure Monitor Logs</>}
       countNoun="entry"
       columns={columns}
       queryKey={["monitor-logs"]}

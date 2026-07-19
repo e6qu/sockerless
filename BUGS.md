@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2606 filed - 2560 fixed - 10 open - 16 false positives.**
+**2608 filed - 2562 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2608~~ | P0 | Sockerless Admin single sign-on | local logout deleted only a self-contained application cookie and immediately re-entered the still-active Shauth session | Admin sessions are server-tracked, OIDC Back-Channel Logout revokes them by `sid` or `sub` with signed-token and replay validation, and the user logout control initiates Shauth's discovered RP logout flow. |
+| ~~2607~~ | P1 | Admin and simulator web interfaces | the shared editorial shell rendered cramped raw layouts and its stale Admin browser harness silently connected to an unrelated service on a reused port | Admin and all three simulator dashboards now use a polished responsive light/dark shell, explicit service labels, keyboard-accessible controls, self-contained browser assets, and current compiled-server Playwright coverage; Admin exercises the real Docker passthrough backend instead of synthetic HTTP data. |
 | ~~2606~~ | P2 | Go workspace dependency metadata | the complete core test resolved current transitive module versions that were absent or stale in `go.work.sum` | The workspace checksum set now matches the module graph exercised by the required core test instead of modifying the worktree during validation. |
 | ~~2605~~ | P1 | simulator image publication | manual workflow dispatch could publish an arbitrary branch revision despite the main-only release contract | Image publication now runs only after a push to `main` and emits only the short-SHA manifest plus its explicit architecture images. |
 | ~~2604~~ | P2 | simulator container build context | local dependency and generated frontend directories entered every root-context simulator image build | The root Docker ignore contract now excludes all nested `node_modules` and `dist` directories while each image builds its own frontend artifact inside the image build. |

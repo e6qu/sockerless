@@ -77,6 +77,25 @@ outside the simulator. Both must be same-origin absolute paths and both must be
 configured; a partial or external coordinate fails startup. The cloud API
 surface remains unchanged.
 
+When `oauth2-proxy` 7.15 or newer protects a deployed dashboard, configure the
+coordinates as follows:
+
+```text
+SIM_UI_IDENTITY_ENDPOINT=/oauth2/userinfo
+SIM_UI_LOGOUT_ENDPOINT=/oauth2/sign_out?rd=<percent-encoded-Shauth-end_session_endpoint-with-id_token_hint={id_token}-and-this-dashboard-as-post_logout_redirect_uri>
+```
+
+Version 7.15 or newer expands its `{id_token}` placeholder before redirecting the
+browser to Shauth's discovered `end_session_endpoint`; its redirect-domain
+allowlist must include the Shauth origin. Register that relying party's OIDC
+Front-Channel Logout URI as `<dashboard-origin>/oauth2/sign_out` only. Do not
+put the recursive `rd` query in the registered front-channel URI: Shauth calls
+the local endpoint to clear the proxy session, while an explicit user logout
+first clears that same local session and then uses `rd` to initiate the shared
+Shauth logout. The simulator only publishes these same-origin coordinates to
+its UI and remains independent of the authentication proxy and deployment
+platform.
+
 Docker or Podman is required when simulator calls execute workloads. If the
 operator intentionally needs only non-execution API surfaces, `SIM_RUNTIME=process`
 starts the simulator without initializing Docker/Podman; execution endpoints still

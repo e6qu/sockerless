@@ -22,7 +22,7 @@ export function LambdaFunctionsPage() {
   return (
     <ResourceListPage<LambdaFunction>
       kicker="aws · simulator · lambda"
-      title={<>Functions</>}
+      title={<>Lambda Functions</>}
       countNoun="function"
       columns={columns}
       queryKey={["lambda-functions"]}
