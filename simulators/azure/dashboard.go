@@ -7,12 +7,12 @@ import (
 )
 
 func registerDashboard(srv *sim.Server) {
-	srv.HandleFunc("GET /sim/v1/summary", handleDashboardSummary)
-	srv.HandleFunc("GET /sim/v1/container-apps/jobs", handleDashboardCAJobs)
-	srv.HandleFunc("GET /sim/v1/functions/sites", handleDashboardFunctionSites)
-	srv.HandleFunc("GET /sim/v1/acr/registries", handleDashboardACRRegistries)
-	srv.HandleFunc("GET /sim/v1/storage/accounts", handleDashboardStorageAccounts)
-	srv.HandleFunc("GET /sim/v1/monitor/logs", handleDashboardMonitorLogs)
+	srv.HandleUIFunc("GET /sim/v1/summary", handleDashboardSummary)
+	srv.HandleUIFunc("GET /sim/v1/container-apps/jobs", handleDashboardCAJobs)
+	srv.HandleUIFunc("GET /sim/v1/functions/sites", handleDashboardFunctionSites)
+	srv.HandleUIFunc("GET /sim/v1/acr/registries", handleDashboardACRRegistries)
+	srv.HandleUIFunc("GET /sim/v1/storage/accounts", handleDashboardStorageAccounts)
+	srv.HandleUIFunc("GET /sim/v1/monitor/logs", handleDashboardMonitorLogs)
 }
 
 func handleDashboardSummary(w http.ResponseWriter, _ *http.Request) {

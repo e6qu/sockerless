@@ -835,3 +835,12 @@ browser shell scripts. Each Playwright web server allowed bounded cold Go
 dependency compilation in continuous integration before the harness applied
 its separate 30-second runtime-health deadline, while individual browser tests
 retained their 30-second timeout.
+
+## Simulator dashboard authorization boundary
+
+The AWS, Google Cloud, and Microsoft Azure simulator dashboards registered
+their `/sim/v1/*` data handlers through the same first-party OpenID Connect
+authorization boundary as the rendered operator interface. Unauthenticated
+browsers could no longer read dashboard inventory behind a protected shell,
+while health probes and native cloud API routes retained their existing
+protocol-specific contracts.

@@ -26,7 +26,7 @@ func TestRegisterUIReportsAuthenticationDisabledWithoutOIDC(t *testing.T) {
 	}
 }
 
-func TestFirstPartyOIDCProtectsOnlyTheUserInterface(t *testing.T) {
+func TestFirstPartyOIDCProtectsOperatorSurfacesOnly(t *testing.T) {
 	t.Setenv("SIM_RUNTIME", "process")
 	srv, err := NewServer(Config{
 		Provider: "azure", LogLevel: "disabled", UIOIDCIssuer: "https://auth.example.test",
@@ -36,11 +36,19 @@ func TestFirstPartyOIDCProtectsOnlyTheUserInterface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	srv.HandleUIFunc("GET /sim/v1/summary", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("dashboard"))
+	})
 	srv.RegisterUI(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ui")}})
 	recorder := httptest.NewRecorder()
 	srv.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ui/", nil))
 	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/auth/oidc/login?return_to=%2Fui%2F" {
 		t.Fatalf("UI redirect = %d %q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	recorder = httptest.NewRecorder()
+	srv.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/sim/v1/summary", nil))
+	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/auth/oidc/login?return_to=%2Fui%2F" {
+		t.Fatalf("dashboard redirect = %d %q", recorder.Code, recorder.Header().Get("Location"))
 	}
 	recorder = httptest.NewRecorder()
 	srv.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/health", nil))

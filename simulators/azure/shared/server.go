@@ -181,6 +181,13 @@ func (s *Server) HandleFunc(pattern string, handler http.HandlerFunc) {
 	s.mux.HandleFunc(pattern, handler)
 }
 
+// HandleUIFunc registers a simulator operator endpoint that shares the user
+// interface's OpenID Connect session boundary. Native cloud API routes must
+// continue to use Handle or HandleFunc so their public protocol is unchanged.
+func (s *Server) HandleUIFunc(pattern string, handler http.HandlerFunc) {
+	s.Handle(pattern, s.uiAuth.Protect(handler))
+}
+
 // RoutePatterns returns every pattern registered through Handle /
 // HandleFunc, in registration order.
 func (s *Server) RoutePatterns() []string {
