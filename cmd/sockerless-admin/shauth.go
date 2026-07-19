@@ -8,9 +8,11 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -72,7 +74,8 @@ func (c shauthConfig) validate() error {
 	}
 	for name, value := range map[string]string{"issuer": c.issuer, "public URL": c.publicURL} {
 		parsed, err := url.ParseRequestURI(value)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+			(parsed.Scheme != "https" && (!c.insecure || parsed.Scheme != "http" || !isSHAUTHLoopback(parsed.Hostname()))) {
 			return fmt.Errorf("shauth issuer and public URL must be absolute HTTPS URLs")
 		}
 		if name == "public URL" && strings.TrimRight(parsed.Path, "/") != "" {
@@ -135,6 +138,13 @@ func (s *shauthSessionStore) delete(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, id)
+}
+
+func (s *shauthSessionStore) revoke(subject, upstreamSID string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prune(now)
+	s.revokeLocked(subject, upstreamSID)
 }
 
 func (s *shauthSessionStore) revokeLocked(subject, upstreamSID string) {
@@ -233,7 +243,7 @@ func (c shauthConfig) middleware(next http.Handler) http.Handler {
 }
 
 func isSHAUTHRoute(path string) bool {
-	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session" || path == shauthSignedOutPath
+	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/frontchannel-logout" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session" || path == shauthSignedOutPath
 }
 
 func (c shauthConfig) sessionIsActive(session shauthSession, now time.Time) bool {
@@ -275,7 +285,7 @@ func (c shauthConfig) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: shauthTransactionCookie, Value: transaction, Path: "/auth/shauth", HttpOnly: true, Secure: c.secureCookie(), SameSite: http.SameSiteLaxMode, MaxAge: 600})
-	oauthConfig := oauth2.Config{ClientID: c.clientID, ClientSecret: c.clientSecret, Endpoint: provider.Endpoint(), RedirectURL: c.publicURL + "/auth/shauth/callback", Scopes: []string{oidc.ScopeOpenID, "profile", "email"}}
+	oauthConfig := c.oauthConfig(provider)
 	http.Redirect(w, r, oauthConfig.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), http.StatusFound)
 }
 
@@ -296,7 +306,7 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth discovery failed", http.StatusBadGateway)
 		return
 	}
-	oauthConfig := oauth2.Config{ClientID: c.clientID, ClientSecret: c.clientSecret, Endpoint: provider.Endpoint(), RedirectURL: c.publicURL + "/auth/shauth/callback"}
+	oauthConfig := c.oauthConfig(provider)
 	tokens, err := oauthConfig.Exchange(r.Context(), r.URL.Query().Get("code"), oauth2.VerifierOption(transaction.Verifier))
 	if err != nil {
 		http.Error(w, "Shauth code exchange failed", http.StatusUnauthorized)
@@ -354,7 +364,18 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ui/", http.StatusFound)
 }
 
+func (c shauthConfig) oauthConfig(provider *oidc.Provider) oauth2.Config {
+	endpoint := provider.Endpoint()
+	endpoint.AuthStyle = oauth2.AuthStyleInParams
+	return oauth2.Config{
+		ClientID: c.clientID, ClientSecret: c.clientSecret,
+		Endpoint: endpoint, RedirectURL: c.publicURL + "/auth/shauth/callback",
+		Scopes: []string{oidc.ScopeOpenID, "profile", "email"},
+	}
+}
+
 func (c shauthConfig) logout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if !sameOriginRequest(r, c.publicURL) {
 		http.Error(w, "cross-origin request denied", http.StatusForbidden)
 		return
@@ -386,20 +407,28 @@ func (c shauthConfig) logout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth logout endpoint is unavailable", http.StatusBadGateway)
 		return
 	}
-	logoutURL, err := url.Parse(metadata.EndSessionEndpoint)
-	if err != nil || !logoutURL.IsAbs() || logoutURL.Scheme != "https" || !sameSHAUTHOrigin(logoutURL, c.issuer) {
+	logoutURL, err := c.logoutURL(metadata.EndSessionEndpoint, rawIDToken)
+	if err != nil {
 		http.Error(w, "Shauth logout endpoint is invalid", http.StatusBadGateway)
 		return
 	}
+	http.Redirect(w, r, logoutURL.String(), http.StatusFound)
+}
+
+func (c shauthConfig) logoutURL(endpoint, rawIDToken string) (*url.URL, error) {
+	logoutURL, err := url.Parse(endpoint)
+	if err != nil || !logoutURL.IsAbs() || !sameSHAUTHOrigin(logoutURL, c.issuer) ||
+		(logoutURL.Scheme != "https" && (!c.insecure || logoutURL.Scheme != "http")) {
+		return nil, errors.New("invalid Shauth logout endpoint")
+	}
 	query := logoutURL.Query()
+	query.Set("client_id", c.clientID)
 	query.Set("post_logout_redirect_uri", c.publicURL+shauthSignedOutPath)
 	if rawIDToken != "" {
 		query.Set("id_token_hint", rawIDToken)
-	} else {
-		query.Set("client_id", c.clientID)
 	}
 	logoutURL.RawQuery = query.Encode()
-	http.Redirect(w, r, logoutURL.String(), http.StatusFound)
+	return logoutURL, nil
 }
 
 func sameOriginRequest(r *http.Request, publicURL string) bool {
@@ -425,6 +454,14 @@ func sameSHAUTHOrigin(got *url.URL, wantRaw string) bool {
 
 func sameSHAUTHParsedOrigin(got, want *url.URL) bool {
 	return got != nil && want != nil && got.IsAbs() && got.User == nil && got.Scheme == want.Scheme && got.Host == want.Host
+}
+
+func isSHAUTHLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (c shauthConfig) backchannelLogout(w http.ResponseWriter, r *http.Request) {
@@ -460,6 +497,17 @@ func (c shauthConfig) backchannelLogout(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 }
 
+func (c shauthConfig) frontchannelLogout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors "+c.issuer+"; base-uri 'none'; form-action 'none'")
+	if c.enabled() && c.sessions != nil && r.URL.Query().Get("iss") == c.issuer {
+		c.sessions.revoke("", r.URL.Query().Get("sid"), time.Now())
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("<!doctype html><html lang=en><title>Signed out</title><body>Signed out</body></html>"))
+}
+
 func (c shauthConfig) processBackchannelLogout(ctx context.Context, rawLogoutToken string, verifier *oidc.IDTokenVerifier, now time.Time) error {
 	logoutToken, err := verifier.VerifyLogout(ctx, rawLogoutToken)
 	if err != nil {
@@ -485,7 +533,7 @@ func validSHAUTHLogoutEvent(raw json.RawMessage) bool {
 		return false
 	}
 	var event map[string]json.RawMessage
-	return json.Unmarshal(raw, &event) == nil && event != nil
+	return json.Unmarshal(raw, &event) == nil && event != nil && len(event) == 0
 }
 
 func (c shauthConfig) signedOut(w http.ResponseWriter, _ *http.Request) {

@@ -46,6 +46,20 @@ func TestConfigRequiresCompleteSecureCoordinates(t *testing.T) {
 	}
 }
 
+func TestConfigAllowsHTTPOnlyForExplicitLoopbackDevelopment(t *testing.T) {
+	config := testConfig()
+	config.Issuer = "http://localhost:8080"
+	config.PublicURL = "http://127.0.0.1:4566"
+	config.InsecureCookies = true
+	if _, err := New(config); err != nil {
+		t.Fatalf("explicit loopback development configuration: %v", err)
+	}
+	config.Issuer = "http://auth.example.test"
+	if _, err := New(config); err == nil {
+		t.Fatal("public HTTP issuer was accepted in insecure development mode")
+	}
+}
+
 func TestConfigPreservesExactIssuer(t *testing.T) {
 	config := testConfig()
 	config.Issuer = "https://auth.example.test/tenant/"
@@ -199,6 +213,46 @@ func TestLogoutRejectsCrossOriginBeforeProviderAccess(t *testing.T) {
 	}
 }
 
+func TestLogoutRevokesLocalSessionBeforeProviderFailure(t *testing.T) {
+	config := testConfig()
+	config.Issuer = "https://127.0.0.1:1"
+	auth, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour).Unix()
+	session := browserSession{ID: "session-1", Subject: "subject", Role: "developer", Expires: expires}
+	value, err := auth.sign(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.store.put(session.ID, sessionRecord{Subject: session.Subject, RawIDToken: "id-token", Expires: expires})
+
+	request := httptest.NewRequest(http.MethodPost, config.PublicURL+LogoutPath, nil)
+	request.Header.Set("Origin", config.PublicURL)
+	request.AddCookie(&http.Cookie{Name: config.CookieName, Value: value})
+	recorder := httptest.NewRecorder()
+	auth.logout(recorder, request)
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("provider failure status = %d, want %d", recorder.Code, http.StatusBadGateway)
+	}
+	if _, exists := auth.store.get(session.ID, time.Now()); exists {
+		t.Fatal("local session remained active after provider failure")
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	cleared := false
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == config.CookieName && cookie.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("session cookie was not cleared before provider failure")
+	}
+}
+
 func TestLogoutRequiresSameOriginBrowserEvidence(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		configure func(*http.Request)
@@ -217,6 +271,40 @@ func TestLogoutRequiresSameOriginBrowserEvidence(t *testing.T) {
 				t.Fatalf("sameOrigin() = %v, want %v", got, testCase.want)
 			}
 		})
+	}
+}
+
+func TestLogoutURLReturnsToOriginatingSimulator(t *testing.T) {
+	auth, err := New(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logoutURL, err := auth.logoutURL("https://auth.example.test/oauth2/sessions/logout", "signed-id-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logoutURL.Scheme != "https" || logoutURL.Host != "auth.example.test" || logoutURL.Path != "/oauth2/sessions/logout" {
+		t.Fatalf("logout endpoint = %q", logoutURL.String())
+	}
+	query := logoutURL.Query()
+	if got := query.Get("client_id"); got != testConfig().ClientID {
+		t.Fatalf("client_id = %q", got)
+	}
+	if got := query.Get("id_token_hint"); got != "signed-id-token" {
+		t.Fatalf("id_token_hint = %q", got)
+	}
+	if got := query.Get("post_logout_redirect_uri"); got != "https://sim.example.test"+SignedOutPath {
+		t.Fatalf("post_logout_redirect_uri = %q", got)
+	}
+}
+
+func TestLogoutURLRejectsAnotherIssuerOrigin(t *testing.T) {
+	auth, err := New(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.logoutURL("https://attacker.example/oauth2/sessions/logout", ""); err == nil {
+		t.Fatal("cross-origin logout endpoint was accepted")
 	}
 }
 
@@ -250,13 +338,39 @@ func TestBackchannelLogoutRequiresFormBody(t *testing.T) {
 	}
 }
 
+func TestFrontchannelLogoutRevokesOnlyTrustedIssuerSession(t *testing.T) {
+	auth, err := New(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour).Unix()
+	auth.store.put("session-1", sessionRecord{Subject: "subject", UpstreamSID: "provider-session", Expires: expires})
+
+	request := httptest.NewRequest(http.MethodGet, FrontchannelLogoutPath+"?iss=https%3A%2F%2Fattacker.example&sid=provider-session", nil)
+	recorder := httptest.NewRecorder()
+	auth.frontchannelLogout(recorder, request)
+	if _, exists := auth.store.get("session-1", time.Now()); !exists {
+		t.Fatal("untrusted front-channel issuer revoked a session")
+	}
+
+	request = httptest.NewRequest(http.MethodGet, FrontchannelLogoutPath+"?iss=https%3A%2F%2Fauth.example.test&sid=provider-session", nil)
+	recorder = httptest.NewRecorder()
+	auth.frontchannelLogout(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("front-channel response = %d Cache-Control=%q", recorder.Code, recorder.Header().Get("Cache-Control"))
+	}
+	if _, exists := auth.store.get("session-1", time.Now()); exists {
+		t.Fatal("trusted front-channel logout left the session active")
+	}
+}
+
 func TestBackchannelLogoutEventMustBeJSONObject(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		raw  string
 		want bool
 	}{
 		"empty object":     {raw: `{}`, want: true},
-		"non-empty object": {raw: `{"reason":"admin"}`, want: true},
+		"non-empty object": {raw: `{"reason":"admin"}`, want: false},
 		"missing":          {raw: ``, want: false},
 		"null":             {raw: `null`, want: false},
 		"string":           {raw: `"logout"`, want: false},

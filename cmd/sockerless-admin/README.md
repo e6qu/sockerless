@@ -166,19 +166,29 @@ Register these Shauth relying-party coordinates:
 
 - redirect URI: `https://admin.dev.e6qu.dev/auth/shauth/callback`
 - post-logout redirect URI: `https://admin.dev.e6qu.dev/auth/signed-out`
+- front-channel logout URI: `https://admin.dev.e6qu.dev/auth/shauth/frontchannel-logout`
 - back-channel logout URI: `https://admin.dev.e6qu.dev/auth/shauth/backchannel-logout`
 
 The console discovered Shauth, used authorization code + PKCE and nonce
 validation, verified the signed ID token, and accepted only `developer` or
 `admin` roles. It displayed the signed-in user, role, initial avatar, and a
-logout control. Browser sessions were server-tracked, so a signed OIDC
+logout control. Browser sessions were server-tracked, so OIDC Front-Channel
+Logout revoked sessions by a trusted issuer and `sid`, while a signed OIDC
 Back-Channel Logout token revoked matching sessions by `sid` or `sub`; replayed
 logout tokens were rejected by `jti`. Signing out initiated logout at Shauth's
 discovered `end_session_endpoint` with an ID-token hint, so signing out of the
 console ended the shared Shauth session rather than immediately signing the
-user back in. Cookies were secure and HTTP-only; development could explicitly
-opt into insecure cookies with
-`SOCKERLESS_ADMIN_INSECURE_COOKIES=true`.
+user back in. Cookies were secure and HTTP-only; loopback development could
+explicitly opt into HTTP coordinates and non-secure cookies with
+`SOCKERLESS_ADMIN_INSECURE_COOKIES=true`. Non-loopback HTTP coordinates were
+rejected even in that development mode.
+
+Continuous integration ran the compiled console and all three compiled
+simulator dashboards against real Shauth, Ory Hydra, and PostgreSQL. The
+browser matrix covered direct and catalog entry, shared sign-on, user identity,
+logout initiated by every relying party, global session revocation, the exact
+originating signed-out URL, and signed-out page reload without automatic
+reauthentication.
 
 With no Shauth variables the existing local operator workflow remained
 unauthenticated. Partial or non-HTTPS production configuration failed at

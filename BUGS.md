@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2614 filed - 2568 fixed - 10 open - 16 false positives.**
+**2615 filed - 2569 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2615~~ | P0 | Sockerless OpenID Connect relying-party matrix | Admin omitted its registered front-channel logout path from the public authentication route set, local HTTP test mode accepted non-loopback coordinates, and no real cross-application browser matrix proved global logout | Admin and all three simulator dashboards passed a real Shauth/Ory Hydra/PostgreSQL browser matrix; front-channel logout remained reachable after local revocation, development HTTP was loopback-only, and logout from every app returned locally while invalidating the shared session. |
 | ~~2614~~ | P0 | release image publication | provenance attestations made the explicit `-arm64` and `-amd64` tags OCI indexes instead of direct architecture image manifests | Native publication disabled provenance, verified both architecture tags were direct OCI image manifests, and required the generic index to contain exactly Linux ARM64 and AMD64. |
 | ~~2613~~ | P0 | simulator dashboard authorization | `/sim/v1/*` operator data bypassed OpenID Connect while the single-page application that consumed it was protected | Dashboard handlers now register through the shared operator authorization boundary while health checks and native cloud APIs preserve their existing contracts. |
 | ~~2612~~ | P1 | backend browser validation | Playwright reused stale compiled binaries, cloud suites used dead endpoint coordinates, backend pages loaded remote fonts, and continuous integration never ran the browser matrix | The browser harness now builds current source, starts the real matching simulator and provisions its required public cloud resources, serves only self-contained assets, validates all seven backends in Playwright, and runs every Admin, simulator, and backend browser suite in continuous integration. |

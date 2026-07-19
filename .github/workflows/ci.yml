@@ -617,6 +617,33 @@ jobs:
       - run: cd ui && bunx playwright install --with-deps chromium
       - run: cd "ui/packages/${{ matrix.package }}" && bun run test:e2e
 
+  sso-browser:
+    name: browser (Shauth relying parties)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.0
+        with:
+          repository: e6qu/shauth
+          ref: a77159518aafe8135898e50e3bf1f0dc0808aed7
+          path: .test-deps/shauth
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: '1.3'
+      - run: sudo apt-get update && sudo apt-get install -y jq
+      - run: cd ui && bun install --frozen-lockfile
+      - run: cd ui && bunx playwright install --with-deps chromium
+      - run: SHAUTH_SOURCE_DIR="$GITHUB_WORKSPACE/.test-deps/shauth" bash scripts/test-shauth-rps.sh
+
   simulators-quality:
     name: simulators (dead code + copy-paste)
     runs-on: ubuntu-latest

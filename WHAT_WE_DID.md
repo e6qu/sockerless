@@ -4,6 +4,28 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-20 - Real Shauth Relying-Party Contract
+
+Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
+dashboards passed one real browser contract against PostgreSQL, Ory Hydra, and
+Shauth. The matrix entered every application directly and through Shauth's app
+catalog, signed in once, verified each application identity, initiated logout
+from every relying party, observed global cross-application revocation, landed
+exactly on the initiating application's public signed-out page, reloaded that
+page without restarting authentication, and proved protected re-entry failed
+closed. The test pinned the exact CI-green Shauth revision that served all
+browser assets locally.
+
+Admin registered its OIDC Front-Channel Logout route outside the local-session
+boundary, preventing provider logout iframes from being redirected into an
+interactive login page after the initiating session had already been revoked.
+Admin and the shared simulator authentication module supported
+`client_secret_post`, revoked local state before provider discovery failures,
+required the OIDC Back-Channel Logout event claim to be the exact empty object,
+and accepted explicit HTTP development coordinates only on loopback hosts.
+Both front- and back-channel logout remained correlated to trusted issuer,
+session, subject, and replay identifiers.
+
 ## 2026-07-19 - Polished Simulator Consoles and Global Admin Logout (`fix/simulator-console-ui`)
 
 Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator

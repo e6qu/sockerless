@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,12 @@ func TestSHAUTHConfigRequiresCompleteHTTPSCoordinates(t *testing.T) {
 	}
 	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
 		t.Fatal("non-HTTPS issuer was accepted")
+	}
+	if err := (shauthConfig{issuer: "http://localhost:8080", clientID: "client", clientSecret: "secret", publicURL: "http://localhost:29090", insecure: true}).validate(); err != nil {
+		t.Fatalf("explicit loopback test configuration: %v", err)
+	}
+	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", publicURL: "http://admin.dev.e6qu.dev", insecure: true}).validate(); err == nil {
+		t.Fatal("public HTTP coordinates were accepted in insecure test mode")
 	}
 	if err := (shauthConfig{issuer: "https://user@auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
 		t.Fatal("issuer with user information was accepted")
@@ -223,6 +230,18 @@ func TestSHAUTHMiddlewareRejectsSessionAfterServerRestart(t *testing.T) {
 	}
 }
 
+func TestSHAUTHMiddlewareAllowsFrontchannelLogoutWithoutLocalSession(t *testing.T) {
+	config := testSHAUTHConfig()
+	request := httptest.NewRequest(http.MethodGet, "/auth/shauth/frontchannel-logout?iss="+url.QueryEscape(config.issuer)+"&sid=provider-session", nil)
+	response := httptest.NewRecorder()
+	config.middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("front-channel logout was redirected behind authentication: status=%d location=%q", response.Code, response.Header().Get("Location"))
+	}
+}
+
 func TestSHAUTHLogoutRequiresSameOriginBrowserEvidence(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		configure func(*http.Request)
@@ -241,6 +260,78 @@ func TestSHAUTHLogoutRequiresSameOriginBrowserEvidence(t *testing.T) {
 				t.Fatalf("sameOriginRequest() = %v, want %v", got, testCase.want)
 			}
 		})
+	}
+}
+
+func TestSHAUTHLogoutRevokesLocalSessionBeforeProviderFailure(t *testing.T) {
+	config := testSHAUTHConfig()
+	config.issuer = "https://127.0.0.1:1"
+	expires := time.Now().Add(time.Hour).Unix()
+	session := shauthSession{ID: "session-1", Subject: "subject", Role: "developer", Expires: expires}
+	value, err := config.sign(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.sessions.put(session.ID, shauthSessionRecord{Subject: session.Subject, RawIDToken: "id-token", Expires: expires})
+
+	request := httptest.NewRequest(http.MethodPost, config.publicURL+"/auth/logout", nil)
+	request.Header.Set("Origin", config.publicURL)
+	request.AddCookie(&http.Cookie{Name: shauthSessionCookie, Value: value})
+	recorder := httptest.NewRecorder()
+	config.logout(recorder, request)
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("provider failure status = %d, want %d", recorder.Code, http.StatusBadGateway)
+	}
+	if _, exists := config.sessions.get(session.ID, time.Now()); exists {
+		t.Fatal("local session remained active after provider failure")
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	cleared := false
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == shauthSessionCookie && cookie.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("session cookie was not cleared before provider failure")
+	}
+}
+
+func TestSHAUTHLogoutURLReturnsToSockerlessAdmin(t *testing.T) {
+	config := testSHAUTHConfig()
+	logoutURL, err := config.logoutURL("https://auth.dev.e6qu.dev/oauth2/sessions/logout", "signed-id-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := logoutURL.Query()
+	if got := query.Get("client_id"); got != config.clientID {
+		t.Fatalf("client_id = %q", got)
+	}
+	if got := query.Get("id_token_hint"); got != "signed-id-token" {
+		t.Fatalf("id_token_hint = %q", got)
+	}
+	if got := query.Get("post_logout_redirect_uri"); got != "https://admin.dev.e6qu.dev"+shauthSignedOutPath {
+		t.Fatalf("post_logout_redirect_uri = %q", got)
+	}
+}
+
+func TestSHAUTHLogoutURLRejectsAnotherIssuerOrigin(t *testing.T) {
+	if _, err := testSHAUTHConfig().logoutURL("https://attacker.example/oauth2/sessions/logout", ""); err == nil {
+		t.Fatal("cross-origin logout endpoint was accepted")
+	}
+}
+
+func TestSHAUTHLogoutURLAllowsHTTPOnlyInExplicitInsecureMode(t *testing.T) {
+	config := testSHAUTHConfig()
+	config.issuer = "http://localhost:8080"
+	if _, err := config.logoutURL("http://localhost:8080/oauth2/sessions/logout", ""); err == nil {
+		t.Fatal("HTTP logout endpoint was accepted without explicit insecure mode")
+	}
+	config.insecure = true
+	if _, err := config.logoutURL("http://localhost:8080/oauth2/sessions/logout", ""); err != nil {
+		t.Fatalf("HTTP logout endpoint was rejected in explicit insecure mode: %v", err)
 	}
 }
 
@@ -271,13 +362,36 @@ func TestSHAUTHBackchannelLogoutRequiresFormBody(t *testing.T) {
 	}
 }
 
+func TestSHAUTHFrontchannelLogoutRevokesOnlyTrustedIssuerSession(t *testing.T) {
+	config := testSHAUTHConfig()
+	expires := time.Now().Add(time.Hour).Unix()
+	config.sessions.put("session-1", shauthSessionRecord{Subject: "subject", UpstreamSID: "provider-session", Expires: expires})
+
+	request := httptest.NewRequest(http.MethodGet, "/auth/shauth/frontchannel-logout?iss=https%3A%2F%2Fattacker.example&sid=provider-session", nil)
+	recorder := httptest.NewRecorder()
+	config.frontchannelLogout(recorder, request)
+	if _, exists := config.sessions.get("session-1", time.Now()); !exists {
+		t.Fatal("untrusted front-channel issuer revoked a session")
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/auth/shauth/frontchannel-logout?iss=https%3A%2F%2Fauth.dev.e6qu.dev&sid=provider-session", nil)
+	recorder = httptest.NewRecorder()
+	config.frontchannelLogout(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("front-channel response = %d Cache-Control=%q", recorder.Code, recorder.Header().Get("Cache-Control"))
+	}
+	if _, exists := config.sessions.get("session-1", time.Now()); exists {
+		t.Fatal("trusted front-channel logout left the session active")
+	}
+}
+
 func TestSHAUTHBackchannelLogoutEventMustBeJSONObject(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		raw  string
 		want bool
 	}{
 		"empty object":     {raw: `{}`, want: true},
-		"non-empty object": {raw: `{"reason":"admin"}`, want: true},
+		"non-empty object": {raw: `{"reason":"admin"}`, want: false},
 		"missing":          {raw: ``, want: false},
 		"null":             {raw: `null`, want: false},
 		"string":           {raw: `"logout"`, want: false},
