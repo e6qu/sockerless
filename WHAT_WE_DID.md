@@ -821,7 +821,8 @@ a new sign-in flow.
 ## Current-source browser validation
 
 The shared backend Playwright harness built the current web interface and Go
-binary for every run instead of reusing an untracked executable. Cloud backend
+binary for every run instead of reusing an untracked executable, and launched
+each server through its native command-line or environment coordinate. Cloud backend
 suites started the corresponding real Sockerless simulator in API-only process
 mode and provisioned their prerequisite Amazon ECS cluster, Google Cloud Storage
 bucket, or Azure resources through the public cloud API surface. All seven

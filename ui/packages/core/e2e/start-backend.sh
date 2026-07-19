@@ -138,7 +138,11 @@ if [[ -z "${SERVER_BIN:-}" ]]; then
   SERVER_BIN="$repo_root/$SERVER_PACKAGE/$SERVER_NAME"
 fi
 
-"$SERVER_BIN" -addr ":${SERVER_PORT}" &
+if [[ "${SIM_MODE:-}" == "1" ]]; then
+  SIM_LISTEN_ADDR=":${SERVER_PORT}" "$SERVER_BIN" &
+else
+  "$SERVER_BIN" -addr ":${SERVER_PORT}" &
+fi
 server_pid=$!
 wait_for_url "$HEALTH_URL" "$SERVER_NAME" "$server_pid"
 
