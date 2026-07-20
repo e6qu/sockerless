@@ -99,6 +99,9 @@ wait_for_url http://localhost:8080/healthz Shauth
 wait_for_url http://localhost:4444/health/ready "Ory Hydra"
 
 (cd "$repo_root/ui" && bun install --frozen-lockfile)
+for package in admin simulator-aws simulator-gcp simulator-azure; do
+  (cd "$repo_root/ui/packages/$package" && bun run build)
+done
 make -C "$repo_root/cmd/sockerless-admin" build
 make -C "$repo_root/simulators/aws" build
 make -C "$repo_root/simulators/gcp" build

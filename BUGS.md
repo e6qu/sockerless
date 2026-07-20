@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2615 filed - 2569 fixed - 10 open - 16 false positives.**
+**2616 filed - 2570 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2616~~ | P0 | Sockerless OpenID Connect continuous integration | the Shauth browser harness inherited local frontend bundles, while a clean runner compiled headless servers and returned 404 for every operator interface | The harness now builds the Admin and all three simulator production bundles before compiling their servers, pins the verified-email Shauth revision, and passes from a clean real PostgreSQL/Ory Hydra/Chromium stack. |
 | 2589 | P1 | Azure Container Registry Tasks SDK harness | the local Docker daemon did not trust the real HTTP simulator registry endpoint used by an ACR Tasks image push | Configure the test registry coordinate with a Docker-trusted transport or a real TLS endpoint so the complete SDK suite passes on macOS as it does in CI. |
 | 2569 | P1 | Bleephub Amazon Elastic Container Service Terraform simulator harness | apply did not terminate within the bounded test window | The local Sockerless AWS Terraform apply/destroy harness left Terraform and simulator subprocesses running past its 90-second test deadline, so the blocking provider operation and subprocess lifecycle need a deterministic fix. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |

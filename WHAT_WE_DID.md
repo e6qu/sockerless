@@ -4,6 +4,17 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-20 — Made the Shauth relying-party matrix hermetic
+
+The Sockerless Admin and AWS, Google Cloud, and Microsoft Azure simulator
+single-sign-on harness built each production frontend before compiling its Go
+server. Clean continuous-integration runners therefore exercised the same
+embedded interfaces as local runs instead of silently falling back to headless
+binaries and returning `404` for `/ui/`. The matrix used the exact Shauth
+verified-email revision and passed the real PostgreSQL, Ory Hydra, and Chromium
+direct-entry, catalog-entry, shared-sign-on, identity, app-local landing, and
+global-logout contract.
+
 ## 2026-07-20 - Real Shauth Relying-Party Contract
 
 Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
