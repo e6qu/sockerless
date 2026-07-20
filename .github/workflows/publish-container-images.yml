@@ -130,3 +130,26 @@ jobs:
             --format '{{range .Manifest.Manifests}}{{printf "%s/%s\n" .Platform.OS .Platform.Architecture}}{{end}}' \
             "$TAG" | sort)
           test "$PLATFORMS" = "$(printf 'linux/amd64\nlinux/arm64')"
+
+  retention:
+    needs: manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - sockerless-admin
+          - sockerless-simulator-aws
+          - sockerless-simulator-gcp
+          - sockerless-simulator-azure
+    name: ${{ matrix.image }} retention
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Retain the newest 20 immutable releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/prune-ghcr-images.sh "${{ github.repository_owner }}" "${{ matrix.image }}" 20

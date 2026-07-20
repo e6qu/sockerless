@@ -8,9 +8,12 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,22 +37,24 @@ const (
 // A deployed administrator console must set every coordinate and is then
 // guarded by Shauth; simulator cloud API endpoints are never wrapped here.
 type shauthConfig struct {
-	issuer       string
-	clientID     string
-	clientSecret string
-	publicURL    string
-	insecure     bool
-	sessions     *shauthSessionStore
+	issuer        string
+	clientID      string
+	clientSecret  string
+	sessionSecret string
+	publicURL     string
+	insecure      bool
+	sessions      *shauthSessionStore
 }
 
 func shauthConfigFromEnvironment() shauthConfig {
 	return shauthConfig{
-		issuer:       os.Getenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER"),
-		clientID:     os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID"),
-		clientSecret: os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET"),
-		publicURL:    strings.TrimRight(os.Getenv("SOCKERLESS_ADMIN_PUBLIC_URL"), "/"),
-		insecure:     os.Getenv("SOCKERLESS_ADMIN_INSECURE_COOKIES") == "true",
-		sessions:     newSHAUTHSessionStore(),
+		issuer:        os.Getenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER"),
+		clientID:      os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID"),
+		clientSecret:  os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET"),
+		sessionSecret: os.Getenv("SOCKERLESS_ADMIN_SESSION_SECRET"),
+		publicURL:     strings.TrimRight(os.Getenv("SOCKERLESS_ADMIN_PUBLIC_URL"), "/"),
+		insecure:      os.Getenv("SOCKERLESS_ADMIN_INSECURE_COOKIES") == "true",
+		sessions:      newSHAUTHSessionStore(),
 	}
 }
 
@@ -59,7 +64,7 @@ func (c shauthConfig) enabled() bool {
 
 func (c shauthConfig) validate() error {
 	configured := 0
-	for _, value := range []string{c.issuer, c.clientID, c.clientSecret, c.publicURL} {
+	for _, value := range []string{c.issuer, c.clientID, c.clientSecret, c.sessionSecret, c.publicURL} {
 		if value != "" {
 			configured++
 		}
@@ -67,12 +72,16 @@ func (c shauthConfig) validate() error {
 	if configured == 0 {
 		return nil
 	}
-	if configured != 4 {
-		return fmt.Errorf("SOCKERLESS_ADMIN_SHAUTH_ISSUER, SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID, SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET, and SOCKERLESS_ADMIN_PUBLIC_URL must be configured together")
+	if configured != 5 {
+		return fmt.Errorf("SOCKERLESS_ADMIN_SHAUTH_ISSUER, SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID, SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET, SOCKERLESS_ADMIN_SESSION_SECRET, and SOCKERLESS_ADMIN_PUBLIC_URL must be configured together")
+	}
+	if len(c.sessionSecret) < 32 {
+		return fmt.Errorf("SOCKERLESS_ADMIN_SESSION_SECRET must contain at least 32 bytes")
 	}
 	for name, value := range map[string]string{"issuer": c.issuer, "public URL": c.publicURL} {
 		parsed, err := url.ParseRequestURI(value)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+			(parsed.Scheme != "https" && (!c.insecure || parsed.Scheme != "http" || !isSHAUTHLoopback(parsed.Hostname()))) {
 			return fmt.Errorf("shauth issuer and public URL must be absolute HTTPS URLs")
 		}
 		if name == "public URL" && strings.TrimRight(parsed.Path, "/") != "" {
@@ -137,6 +146,13 @@ func (s *shauthSessionStore) delete(id string) {
 	delete(s.sessions, id)
 }
 
+func (s *shauthSessionStore) revoke(subject, upstreamSID string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prune(now)
+	s.revokeLocked(subject, upstreamSID)
+}
+
 func (s *shauthSessionStore) revokeLocked(subject, upstreamSID string) {
 	for id, session := range s.sessions {
 		if (upstreamSID != "" && session.UpstreamSID == upstreamSID) ||
@@ -185,7 +201,7 @@ func (c shauthConfig) sign(value any) (string, error) {
 		return "", err
 	}
 	payload := base64.RawURLEncoding.EncodeToString(raw)
-	mac := hmac.New(sha256.New, []byte(c.clientSecret))
+	mac := hmac.New(sha256.New, []byte(c.sessionSecret))
 	_, _ = mac.Write([]byte(payload))
 	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
@@ -199,7 +215,7 @@ func (c shauthConfig) verify(value string, destination any) error {
 	if err != nil {
 		return fmt.Errorf("invalid signed value")
 	}
-	mac := hmac.New(sha256.New, []byte(c.clientSecret))
+	mac := hmac.New(sha256.New, []byte(c.sessionSecret))
 	_, _ = mac.Write([]byte(parts[0]))
 	if subtle.ConstantTimeCompare(signature, mac.Sum(nil)) != 1 {
 		return fmt.Errorf("invalid signed value")
@@ -233,7 +249,7 @@ func (c shauthConfig) middleware(next http.Handler) http.Handler {
 }
 
 func isSHAUTHRoute(path string) bool {
-	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session" || path == shauthSignedOutPath
+	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/frontchannel-logout" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session" || path == shauthSignedOutPath
 }
 
 func (c shauthConfig) sessionIsActive(session shauthSession, now time.Time) bool {
@@ -275,7 +291,7 @@ func (c shauthConfig) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: shauthTransactionCookie, Value: transaction, Path: "/auth/shauth", HttpOnly: true, Secure: c.secureCookie(), SameSite: http.SameSiteLaxMode, MaxAge: 600})
-	oauthConfig := oauth2.Config{ClientID: c.clientID, ClientSecret: c.clientSecret, Endpoint: provider.Endpoint(), RedirectURL: c.publicURL + "/auth/shauth/callback", Scopes: []string{oidc.ScopeOpenID, "profile", "email"}}
+	oauthConfig := c.oauthConfig(provider)
 	http.Redirect(w, r, oauthConfig.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), http.StatusFound)
 }
 
@@ -296,7 +312,7 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth discovery failed", http.StatusBadGateway)
 		return
 	}
-	oauthConfig := oauth2.Config{ClientID: c.clientID, ClientSecret: c.clientSecret, Endpoint: provider.Endpoint(), RedirectURL: c.publicURL + "/auth/shauth/callback"}
+	oauthConfig := c.oauthConfig(provider)
 	tokens, err := oauthConfig.Exchange(r.Context(), r.URL.Query().Get("code"), oauth2.VerifierOption(transaction.Verifier))
 	if err != nil {
 		http.Error(w, "Shauth code exchange failed", http.StatusUnauthorized)
@@ -354,7 +370,18 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ui/", http.StatusFound)
 }
 
+func (c shauthConfig) oauthConfig(provider *oidc.Provider) oauth2.Config {
+	endpoint := provider.Endpoint()
+	endpoint.AuthStyle = oauth2.AuthStyleInParams
+	return oauth2.Config{
+		ClientID: c.clientID, ClientSecret: c.clientSecret,
+		Endpoint: endpoint, RedirectURL: c.publicURL + "/auth/shauth/callback",
+		Scopes: []string{oidc.ScopeOpenID, "profile", "email"},
+	}
+}
+
 func (c shauthConfig) logout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if !sameOriginRequest(r, c.publicURL) {
 		http.Error(w, "cross-origin request denied", http.StatusForbidden)
 		return
@@ -386,20 +413,28 @@ func (c shauthConfig) logout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth logout endpoint is unavailable", http.StatusBadGateway)
 		return
 	}
-	logoutURL, err := url.Parse(metadata.EndSessionEndpoint)
-	if err != nil || !logoutURL.IsAbs() || logoutURL.Scheme != "https" || !sameSHAUTHOrigin(logoutURL, c.issuer) {
+	logoutURL, err := c.logoutURL(metadata.EndSessionEndpoint, rawIDToken)
+	if err != nil {
 		http.Error(w, "Shauth logout endpoint is invalid", http.StatusBadGateway)
 		return
 	}
+	http.Redirect(w, r, logoutURL.String(), http.StatusFound)
+}
+
+func (c shauthConfig) logoutURL(endpoint, rawIDToken string) (*url.URL, error) {
+	logoutURL, err := url.Parse(endpoint)
+	if err != nil || !logoutURL.IsAbs() || !sameSHAUTHOrigin(logoutURL, c.issuer) ||
+		(logoutURL.Scheme != "https" && (!c.insecure || logoutURL.Scheme != "http")) {
+		return nil, errors.New("invalid Shauth logout endpoint")
+	}
 	query := logoutURL.Query()
+	query.Set("client_id", c.clientID)
 	query.Set("post_logout_redirect_uri", c.publicURL+shauthSignedOutPath)
 	if rawIDToken != "" {
 		query.Set("id_token_hint", rawIDToken)
-	} else {
-		query.Set("client_id", c.clientID)
 	}
 	logoutURL.RawQuery = query.Encode()
-	http.Redirect(w, r, logoutURL.String(), http.StatusFound)
+	return logoutURL, nil
 }
 
 func sameOriginRequest(r *http.Request, publicURL string) bool {
@@ -425,6 +460,14 @@ func sameSHAUTHOrigin(got *url.URL, wantRaw string) bool {
 
 func sameSHAUTHParsedOrigin(got, want *url.URL) bool {
 	return got != nil && want != nil && got.IsAbs() && got.User == nil && got.Scheme == want.Scheme && got.Host == want.Host
+}
+
+func isSHAUTHLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (c shauthConfig) backchannelLogout(w http.ResponseWriter, r *http.Request) {
@@ -457,7 +500,19 @@ func (c shauthConfig) backchannelLogout(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid logout token", http.StatusBadRequest)
 		return
 	}
+	log.Printf("accepted Shauth back-channel logout for client %q", c.clientID)
 	w.WriteHeader(http.StatusOK)
+}
+
+func (c shauthConfig) frontchannelLogout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors "+c.issuer+"; base-uri 'none'; form-action 'none'")
+	if c.enabled() && c.sessions != nil && r.URL.Query().Get("iss") == c.issuer {
+		c.sessions.revoke("", r.URL.Query().Get("sid"), time.Now())
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("<!doctype html><html lang=en><title>Signed out</title><body>Signed out</body></html>"))
 }
 
 func (c shauthConfig) processBackchannelLogout(ctx context.Context, rawLogoutToken string, verifier *oidc.IDTokenVerifier, now time.Time) error {
@@ -467,6 +522,9 @@ func (c shauthConfig) processBackchannelLogout(ctx context.Context, rawLogoutTok
 	}
 	if logoutToken.IssuedAt.IsZero() {
 		return fmt.Errorf("logout token is missing the iat claim")
+	}
+	if logoutToken.Expiry.IsZero() || !logoutToken.Expiry.After(now) {
+		return fmt.Errorf("logout token is missing a valid exp claim")
 	}
 	var claims struct {
 		Events map[string]json.RawMessage `json:"events"`
@@ -485,7 +543,7 @@ func validSHAUTHLogoutEvent(raw json.RawMessage) bool {
 		return false
 	}
 	var event map[string]json.RawMessage
-	return json.Unmarshal(raw, &event) == nil && event != nil
+	return json.Unmarshal(raw, &event) == nil && event != nil && len(event) == 0
 }
 
 func (c shauthConfig) signedOut(w http.ResponseWriter, _ *http.Request) {

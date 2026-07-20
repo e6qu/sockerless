@@ -339,6 +339,68 @@ func TestECSContainerLogs(t *testing.T) {
 	}
 }
 
+func TestECSAttachedContainerRunsTwoCompleteCycles(t *testing.T) {
+	ctx := context.Background()
+	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+		Image:        "alpine:latest",
+		Cmd:          []string{"sh"},
+		OpenStdin:    true,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	}, nil, nil, nil, "ecs-attached-restart-"+generateTestID())
+	if err != nil {
+		t.Fatalf("create attached container: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	runCycle := func(marker string) {
+		t.Helper()
+		attached, err := dockerClient.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+			Stream: true,
+			Stdin:  true,
+			Stdout: true,
+			Stderr: true,
+		})
+		if err != nil {
+			t.Fatalf("attach cycle %q: %v", marker, err)
+		}
+		defer attached.Close()
+
+		var stdout, stderr bytes.Buffer
+		readDone := make(chan error, 1)
+		go func() {
+			_, err := stdcopy.StdCopy(&stdout, &stderr, attached.Reader)
+			readDone <- err
+		}()
+
+		if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+			t.Fatalf("start cycle %q: %v", marker, err)
+		}
+		if _, err := io.WriteString(attached.Conn, "echo "+marker+"\n"); err != nil {
+			t.Fatalf("write cycle %q stdin: %v", marker, err)
+		}
+		if err := attached.CloseWrite(); err != nil {
+			t.Fatalf("close cycle %q stdin: %v", marker, err)
+		}
+
+		select {
+		case err := <-readDone:
+			if err != nil {
+				t.Fatalf("read cycle %q attach: %v", marker, err)
+			}
+		case <-time.After(5 * time.Minute):
+			t.Fatalf("cycle %q attach did not end with its Amazon ECS task", marker)
+		}
+		if output := stdout.String() + stderr.String(); !strings.Contains(output, marker) {
+			t.Fatalf("cycle %q output %q did not contain its marker", marker, output)
+		}
+	}
+
+	runCycle("first-cycle-complete")
+	runCycle("second-cycle-complete")
+}
+
 func TestECSContainerExec(t *testing.T) {
 	ctx := context.Background()
 

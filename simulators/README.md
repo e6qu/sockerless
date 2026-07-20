@@ -74,12 +74,14 @@ Environment knobs (per sim — full list in each sub-README):
 | `SIM_UI_OIDC_CLIENT_SECRET` | unset | OpenID Connect relying-party client secret, supplied through the deployment secret store. |
 | `SIM_UI_PUBLIC_URL` | unset | Externally visible origin for callback and logout redirects, such as `https://aws.dev.e6qu.dev`. |
 | `SIM_UI_SESSION_SECRET` | unset | Independent random value of at least 32 bytes used to sign local browser sessions. |
-| `SIM_UI_INSECURE_COOKIES` | `false` | Explicit local-development opt-in for HTTP issuer/public coordinates and non-Secure cookies. |
+| `SIM_UI_INSECURE_COOKIES` | `false` | Explicit loopback-development opt-in for HTTP issuer/public coordinates and non-Secure cookies; non-loopback HTTP coordinates remain invalid. |
 
 The optional first-party UI authentication layer uses authorization code +
 PKCE, nonce and state validation, signed server-tracked sessions, RP-Initiated
-Logout with an ID-token hint, and signed OIDC Back-Channel Logout correlated by
-`sid` or `sub`. It protects only `/ui/` and the UI identity/logout endpoints;
+Logout with an ID-token hint, OIDC Front-Channel Logout correlated by trusted
+issuer and `sid`, and signed OIDC Back-Channel Logout correlated by `sid` or
+`sub` with required `iat`, future `exp`, and single-use `jti` claims. It
+protects only `/ui/` and the UI identity/logout endpoints;
 all AWS, Google Cloud, and Microsoft Azure API routes retain their native
 authentication and protocol behavior. Partial configuration fails startup.
 
@@ -88,20 +90,28 @@ Each simulator dashboard registers these relying-party coordinates, replacing
 
 - redirect URI: `<origin>/auth/oidc/callback`
 - post-logout redirect URI: `<origin>/auth/signed-out`
+- front-channel logout URI: `<origin>/auth/oidc/frontchannel-logout`
 - back-channel logout URI: `<origin>/auth/oidc/backchannel-logout`
 
 The development registrations are therefore:
 
-| Dashboard | Redirect URI | Post-logout redirect URI | Back-channel logout URI |
-|---|---|---|---|
-| AWS | `https://aws.dev.e6qu.dev/auth/oidc/callback` | `https://aws.dev.e6qu.dev/auth/signed-out` | `https://aws.dev.e6qu.dev/auth/oidc/backchannel-logout` |
-| Google Cloud | `https://gcp.dev.e6qu.dev/auth/oidc/callback` | `https://gcp.dev.e6qu.dev/auth/signed-out` | `https://gcp.dev.e6qu.dev/auth/oidc/backchannel-logout` |
-| Microsoft Azure | `https://azure.dev.e6qu.dev/auth/oidc/callback` | `https://azure.dev.e6qu.dev/auth/signed-out` | `https://azure.dev.e6qu.dev/auth/oidc/backchannel-logout` |
+| Dashboard | Redirect URI | Post-logout redirect URI | Front-channel logout URI | Back-channel logout URI |
+|---|---|---|---|---|
+| AWS | `https://aws.dev.e6qu.dev/auth/oidc/callback` | `https://aws.dev.e6qu.dev/auth/signed-out` | `https://aws.dev.e6qu.dev/auth/oidc/frontchannel-logout` | `https://aws.dev.e6qu.dev/auth/oidc/backchannel-logout` |
+| Google Cloud | `https://gcp.dev.e6qu.dev/auth/oidc/callback` | `https://gcp.dev.e6qu.dev/auth/signed-out` | `https://gcp.dev.e6qu.dev/auth/oidc/frontchannel-logout` | `https://gcp.dev.e6qu.dev/auth/oidc/backchannel-logout` |
+| Microsoft Azure | `https://azure.dev.e6qu.dev/auth/oidc/callback` | `https://azure.dev.e6qu.dev/auth/signed-out` | `https://azure.dev.e6qu.dev/auth/oidc/frontchannel-logout` | `https://azure.dev.e6qu.dev/auth/oidc/backchannel-logout` |
 
 The browser starts at `/ui/`, is redirected through `/auth/oidc/login` when no
 local session is active, obtains its identity from `/auth/session`, and submits
 logout to `/auth/logout`. No authentication proxy is required or supported for
 the simulator UI.
+
+Continuous integration ran the compiled AWS, Google Cloud, and Microsoft
+Azure dashboards together with Sockerless Admin against real Shauth, Ory
+Hydra, and PostgreSQL. One browser matrix verified direct and app-catalog entry,
+shared sign-on, identity, logout from every relying party, global revocation,
+exact app-local signed-out destinations, and signed back-channel acceptance at
+every dashboard.
 
 Docker or Podman is required when simulator calls execute workloads. If the
 operator intentionally needs only non-execution API surfaces, `SIM_RUNTIME=process`

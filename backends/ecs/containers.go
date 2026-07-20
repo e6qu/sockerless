@@ -62,6 +62,11 @@ func (s *Server) runECSTask(containerID, taskDefARN string, c *api.Container) (t
 	} else {
 		securityGroups = append(securityGroups, s.config.SecurityGroups...)
 	}
+	networkMode := c.HostConfig.NetworkMode
+	if networkMode == "" || networkMode == "default" {
+		networkMode = "bridge"
+	}
+	tags.Network = networkMode
 
 	runResult, err := s.aws.ECS.RunTask(s.ctx(), &awsecs.RunTaskInput{
 		Cluster:        aws.String(s.config.Cluster),
@@ -253,9 +258,7 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 				// terminal so a blocked ContainerWait unblocks instead of
 				// polling forever.
 				if gone++; gone >= pollGoneThreshold {
-					if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
-						closeWaitCh(ch)
-					}
+					s.finishWaitCycle(containerID, exitCh)
 					return
 				}
 				continue
@@ -264,7 +267,7 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 
 			task := result.Tasks[0]
 			// Apply task status on every poll (updates IP for RUNNING, exits for STOPPED)
-			s.applyTaskStatus(containerID, task)
+			s.applyTaskStatus(containerID, task, exitCh)
 			if aws.ToString(task.LastStatus) == "STOPPED" {
 				return
 			}
@@ -281,15 +284,13 @@ const pollGoneThreshold = 5
 // applyTaskStatus processes ECS task status changes.
 // Cloud is the source of truth for container state — no local Store.Containers writes.
 // Only closes wait channels when the task stops (needed for ContainerWait).
-func (s *Server) applyTaskStatus(containerID string, task ecstypes.Task) {
+func (s *Server) applyTaskStatus(containerID string, task ecstypes.Task, exitCh chan struct{}) {
 	status := aws.ToString(task.LastStatus)
 
 	switch status {
 	case "STOPPED":
 		// Close wait channel so ContainerWait unblocks
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
-			closeWaitCh(ch)
-		}
+		s.finishWaitCycle(containerID, exitCh)
 	case "RUNNING":
 		// No-op: cloud is the source of truth for IP/MAC.
 	}

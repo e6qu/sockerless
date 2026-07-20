@@ -20,6 +20,27 @@ func asWaitCh(v any) chan struct{} {
 	return ch
 }
 
+// beginWaitCycle gives each cloud task launch its own completion channel. A
+// restarted Docker container keeps its ID, but its previous Amazon ECS task
+// poller must never own or close the new launch's channel.
+func (s *Server) beginWaitCycle(containerID string) chan struct{} {
+	if previous, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
+		closeWaitCh(previous)
+	}
+	exitCh := make(chan struct{})
+	s.Store.WaitChs.Store(containerID, exitCh)
+	return exitCh
+}
+
+// finishWaitCycle closes only the channel belonging to the task cycle that
+// finished. CompareAndDelete prevents a delayed poll for an older Amazon ECS
+// task from deleting a restarted container's current completion channel.
+func (s *Server) finishWaitCycle(containerID string, exitCh chan struct{}) {
+	if exitCh != nil && s.Store.WaitChs.CompareAndDelete(containerID, exitCh) {
+		close(exitCh)
+	}
+}
+
 // asStdinPipe returns the stdin pipe pulled from stdinPipes, or nil.
 func asStdinPipe(v any) *stdinPipe {
 	p, _ := v.(*stdinPipe)

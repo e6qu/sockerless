@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,6 +30,7 @@ const (
 	CallbackPath           = "/auth/oidc/callback"
 	SessionPath            = "/auth/session"
 	LogoutPath             = "/auth/logout"
+	FrontchannelLogoutPath = "/auth/oidc/frontchannel-logout"
 	BackchannelLogoutPath  = "/auth/oidc/backchannel-logout"
 	SignedOutPath          = "/auth/signed-out"
 	transactionLifetime    = 10 * time.Minute
@@ -71,7 +74,8 @@ func (c Config) Validate() error {
 		if err != nil || !u.IsAbs() || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return fmt.Errorf("OIDC %s must be an absolute origin URL", name)
 		}
-		if (!c.InsecureCookies && u.Scheme != "https") || (u.Scheme != "https" && u.Scheme != "http") {
+		if (!c.InsecureCookies && u.Scheme != "https") ||
+			(u.Scheme != "https" && (u.Scheme != "http" || !isLoopbackHost(u.Hostname()))) {
 			return fmt.Errorf("OIDC %s must use HTTPS", name)
 		}
 		if name == "public URL" && strings.TrimRight(u.Path, "/") != "" {
@@ -110,6 +114,7 @@ func (a *Auth) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+CallbackPath, a.callback)
 	mux.HandleFunc("GET "+SessionPath, a.session)
 	mux.HandleFunc("POST "+LogoutPath, a.logout)
+	mux.HandleFunc("GET "+FrontchannelLogoutPath, a.frontchannelLogout)
 	mux.HandleFunc("POST "+BackchannelLogoutPath, a.backchannelLogout)
 	mux.HandleFunc("GET "+SignedOutPath, a.signedOut)
 }
@@ -146,9 +151,11 @@ func (a *Auth) providerFor(ctx context.Context) (*oidc.Provider, error) {
 }
 
 func (a *Auth) oauthConfig(provider *oidc.Provider) oauth2.Config {
+	endpoint := provider.Endpoint()
+	endpoint.AuthStyle = oauth2.AuthStyleInParams
 	return oauth2.Config{
 		ClientID: a.config.ClientID, ClientSecret: a.config.ClientSecret,
-		Endpoint: provider.Endpoint(), RedirectURL: a.config.PublicURL + CallbackPath,
+		Endpoint: endpoint, RedirectURL: a.config.PublicURL + CallbackPath,
 		Scopes: []string{oidc.ScopeOpenID, "profile", "email"},
 	}
 }
@@ -285,6 +292,7 @@ func (a *Auth) session(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if !sameOrigin(r, a.config.PublicURL) {
 		http.Error(w, "cross-origin request denied", http.StatusForbidden)
 		return
@@ -309,21 +317,28 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "OIDC logout endpoint is unavailable", http.StatusBadGateway)
 		return
 	}
-	logoutURL, err := url.Parse(metadata.EndSessionEndpoint)
-	if err != nil || !logoutURL.IsAbs() || !sameURLOrigin(logoutURL, a.config.Issuer) ||
-		(logoutURL.Scheme != "https" && (!a.config.InsecureCookies || logoutURL.Scheme != "http")) {
+	logoutURL, err := a.logoutURL(metadata.EndSessionEndpoint, rawIDToken)
+	if err != nil {
 		http.Error(w, "OIDC logout endpoint is invalid", http.StatusBadGateway)
 		return
 	}
+	http.Redirect(w, r, logoutURL.String(), http.StatusFound)
+}
+
+func (a *Auth) logoutURL(endpoint, rawIDToken string) (*url.URL, error) {
+	logoutURL, err := url.Parse(endpoint)
+	if err != nil || !logoutURL.IsAbs() || !sameURLOrigin(logoutURL, a.config.Issuer) ||
+		(logoutURL.Scheme != "https" && (!a.config.InsecureCookies || logoutURL.Scheme != "http")) {
+		return nil, errors.New("invalid OIDC logout endpoint")
+	}
 	query := logoutURL.Query()
+	query.Set("client_id", a.config.ClientID)
 	query.Set("post_logout_redirect_uri", a.config.PublicURL+SignedOutPath)
 	if rawIDToken != "" {
 		query.Set("id_token_hint", rawIDToken)
-	} else {
-		query.Set("client_id", a.config.ClientID)
 	}
 	logoutURL.RawQuery = query.Encode()
-	http.Redirect(w, r, logoutURL.String(), http.StatusFound)
+	return logoutURL, nil
 }
 
 func (a *Auth) backchannelLogout(w http.ResponseWriter, r *http.Request) {
@@ -352,7 +367,19 @@ func (a *Auth) backchannelLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid logout token", http.StatusBadRequest)
 		return
 	}
+	log.Printf("accepted Shauth back-channel logout for client %q", a.config.ClientID)
 	w.WriteHeader(http.StatusOK)
+}
+
+func (a *Auth) frontchannelLogout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors "+a.config.Issuer+"; base-uri 'none'; form-action 'none'")
+	if r.URL.Query().Get("iss") == a.config.Issuer {
+		a.store.revoke("", r.URL.Query().Get("sid"), time.Now())
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("<!doctype html><html lang=en><title>Signed out</title><body>Signed out</body></html>"))
 }
 
 func (a *Auth) processBackchannelLogout(ctx context.Context, raw string, verifier *oidc.IDTokenVerifier, now time.Time) error {
@@ -362,6 +389,9 @@ func (a *Auth) processBackchannelLogout(ctx context.Context, raw string, verifie
 	}
 	if logoutToken.IssuedAt.IsZero() {
 		return errors.New("logout token is missing the iat claim")
+	}
+	if logoutToken.Expiry.IsZero() || !logoutToken.Expiry.After(now) {
+		return errors.New("logout token is missing a valid exp claim")
 	}
 	var claims struct {
 		Events map[string]json.RawMessage `json:"events"`
@@ -478,12 +508,20 @@ func sameParsedOrigin(got, want *url.URL) bool {
 		got.Scheme == want.Scheme && got.Host == want.Host
 }
 
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func validLogoutEvent(raw json.RawMessage) bool {
 	if len(raw) == 0 {
 		return false
 	}
 	var event map[string]json.RawMessage
-	return json.Unmarshal(raw, &event) == nil && event != nil
+	return json.Unmarshal(raw, &event) == nil && event != nil && len(event) == 0
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -507,6 +545,13 @@ func (s *sessionStore) put(id string, record sessionRecord) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[id] = record
+}
+
+func (s *sessionStore) revoke(subject, upstreamSID string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prune(now)
+	s.revokeLocked(subject, upstreamSID)
 }
 func (s *sessionStore) delete(id string) { s.mu.Lock(); defer s.mu.Unlock(); delete(s.sessions, id) }
 func (s *sessionStore) get(id string, now time.Time) (sessionRecord, bool) {

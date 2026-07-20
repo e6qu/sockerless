@@ -192,6 +192,25 @@ func TestTaskToContainer_NetworkIPFromENI(t *testing.T) {
 	}
 }
 
+func TestTaskToContainer_DefaultNetworkUsesBridgeSemantics(t *testing.T) {
+	task := ecstypes.Task{
+		LastStatus: aws.String("STOPPED"),
+		Containers: []ecstypes.Container{{Name: aws.String("main"), Image: aws.String("alpine")}},
+	}
+	tags := map[string]string{
+		"sockerless-container-id": "abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+		"sockerless-network":      "default",
+	}
+
+	c := taskToContainer(task, tags, ecstypes.TaskDefinition{})
+	if c.HostConfig.NetworkMode != "bridge" {
+		t.Fatalf("default network mode = %q, want bridge", c.HostConfig.NetworkMode)
+	}
+	if c.NetworkSettings.Networks["bridge"] == nil {
+		t.Fatal("default network was not exposed as bridge")
+	}
+}
+
 func TestTaskToContainer_DefaultNameFromID(t *testing.T) {
 	task := ecstypes.Task{
 		LastStatus: aws.String("PENDING"),

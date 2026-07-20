@@ -37,6 +37,7 @@ The four simulator scans run in pre-commit when matching files are touched and u
 | `check-rebased-on-main.sh` | Fails if the branch is not rebased on `origin/main` (origin/main an ancestor of HEAD), history isn't linear, you're on `main`, or local `main` is out of sync; mirror-remote pushes are exempt. Best-effort offline, authoritative in CI. | pre-push + CI (`rebased-on-main` job) |
 | `check-single-open-pr.sh` | Fails if more than one PR is open in the project — all work goes in the single open PR. Best-effort offline, authoritative in CI. | pre-commit + CI (`single-open-pr` job) |
 | `check-no-tool-absent-skips.sh` | Fails if a diff adds a test skip for a missing tool/dependency; required tools must be installed by the harness or fail loud. | pre-commit |
+| `check-container-publication.sh` | Locks the main-only immutable short-SHA GHCR publication shape: native ARM64/AMD64 tags, a two-platform manifest, no mutable tags, and 20-release retention for every operator image. | pre-commit + CI `check-deps` |
 | `update-readme-badges.sh` | Recomputes the badge values in the top-level `README.md` from codebase stats. | pre-push |
 | `check-latest-deps.sh` | Fails if any direct Go module require, Terraform provider constraint, or pinned GitHub Action is behind its latest published version (fix with `make upgrade-deps`). | pre-push + CI `lint` (bash and zsh passes) |
 
@@ -64,3 +65,5 @@ The four simulator scans run in pre-commit when matching files are touched and u
 |---|---|---|
 | `manual-test-real-workloads.sh` | Exercises a sockerless backend with real container workloads via `docker run` against `DOCKER_HOST`, batching probes to keep cloud cold-start latency manageable. | manual |
 | `dispatch-gcp-cells.sh` | Operator runbook automation for the GCP runner cells: triggers each cell via `gh` / GitLab REST, polls to a terminal state, prints run URLs + status. | manual (needs `GITHUB_TOKEN` / `GITLAB_TOKEN`) |
+| `prune-ghcr-images.sh` | Deletes unrecognized and obsolete GHCR versions while retaining the newest 20 complete immutable releases (`tag`, `tag-amd64`, `tag-arm64`) for one container package. | main-only publication workflow |
+| `select-obsolete-container-versions.jq` | Release-aware GHCR retention selector used by `prune-ghcr-images.sh`. | helper |

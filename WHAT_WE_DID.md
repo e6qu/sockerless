@@ -4,6 +4,55 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-20 — Enforced release-aware GitHub Container Registry retention
+
+The main-only operator and simulator publication workflow retained the newest
+20 complete immutable releases for each of `sockerless-admin`,
+`sockerless-simulator-aws`, `sockerless-simulator-gcp`, and
+`sockerless-simulator-azure`. Its release-aware selector kept each 12-character
+source tag together with its `-amd64` and `-arm64` images and deleted obsolete,
+untagged, or otherwise unrecognized package versions. The publication gate
+locked the native runners, direct OCI architecture manifests, two-platform OCI
+index, immutable tag grammar, complete package matrix, and retention invocation
+into pull-request continuous integration and pre-commit validation.
+
+## 2026-07-20 — Made the Shauth relying-party matrix hermetic
+
+The Sockerless Admin and AWS, Google Cloud, and Microsoft Azure simulator
+single-sign-on harness built each production frontend before compiling its Go
+server. Clean continuous-integration runners therefore exercised the same
+embedded interfaces as local runs instead of silently falling back to headless
+binaries and returning `404` for `/ui/`. The matrix used the exact Shauth
+verified-email revision and passed the real PostgreSQL, Ory Hydra, and Chromium
+direct-entry, catalog-entry, shared-sign-on, identity, app-local landing, and
+global-logout contract.
+
+## 2026-07-20 - Real Shauth Relying-Party Contract
+
+Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
+dashboards passed one real browser contract against PostgreSQL, Ory Hydra, and
+Shauth. The matrix entered every application directly and through Shauth's app
+catalog, signed in once, verified each application identity, initiated logout
+from every relying party, observed global cross-application revocation, landed
+exactly on the initiating application's public signed-out page, reloaded that
+page without restarting authentication, and proved protected re-entry failed
+closed. The test pinned the exact CI-green Shauth revision that served all
+browser assets locally.
+
+Admin registered its OIDC Front-Channel Logout route outside the local-session
+boundary, preventing provider logout iframes from being redirected into an
+interactive login page after the initiating session had already been revoked.
+Admin and the shared simulator authentication module supported
+`client_secret_post`, revoked local state before provider discovery failures,
+required the OIDC Back-Channel Logout event claim to be the exact empty object,
+and accepted explicit HTTP development coordinates only on loopback hosts.
+Both front- and back-channel logout remained correlated to trusted issuer,
+session, subject, and replay identifiers.
+
+The dependency freshness gate also advanced `actions/setup-node` to its current
+major release for the new browser job. The generated README status badges were
+refreshed by the repository's sanctioned pre-push badge hook.
+
 ## 2026-07-19 - Polished Simulator Consoles and Global Admin Logout (`fix/simulator-console-ui`)
 
 Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
@@ -855,3 +904,38 @@ any generic short-SHA index whose platform set differed from exactly Linux
 ARM64 and AMD64. This preserved the generic multi-architecture image for Amazon
 Elastic Container Service and Kubernetes while keeping the explicit tags
 usable by consumers that require a single-architecture image manifest.
+
+## Expiring back-channel logout qualification
+
+Sockerless Admin and the shared simulator identity module required every OIDC
+Back-Channel Logout token to carry an expiry later than the validation time.
+The real Shauth matrix registered all four relying-party back-channel paths,
+kept the public browser coordinates on their loopback origins, and rewrote only
+Ory Hydra's container-to-host delivery coordinates. The browser exercised
+direct and catalog entry, shared sign-on, logout from every application,
+application-local signed-out return, and fail-closed re-entry. Each compiled
+relying party recorded successful signed back-channel acceptance, so the
+matrix could not pass solely through front-channel iframes.
+
+## Amazon ECS attached-container task generations
+
+Reusing a stopped attached container created a fresh Amazon ECS execution
+generation. The pending record reset to Docker's created state, every start
+owned a new wait channel, and a delayed poller removed only its own channel.
+While the new task was pending, cloud recovery no longer selected a historical
+stopped task, so attach bound to the current task's CloudWatch stream instead
+of replaying the previous cycle. Default Docker networking was normalized to
+bridge semantics before task tagging and cloud-state reconstruction. A real
+simulator/backend integration test ran two scripts through the same attached
+container ID and received each cycle's distinct output.
+
+## Independent Sockerless Admin session credentials
+
+Sockerless Admin required a dedicated browser-session signing secret of at
+least 32 bytes whenever Shauth OpenID Connect was enabled. The confidential
+OpenID Connect client secret remained limited to client authentication, so
+provider credential rotation no longer invalidated locally signed state or
+session values. Focused validation proved that only rotation of the dedicated
+session secret invalidated existing signatures, and the complete real
+PostgreSQL, patched Ory Hydra, Shauth, compiled relying-party, and Chromium
+matrix passed with the separated credentials.
