@@ -43,6 +43,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
+	github.com/sockerless/simulator-testutil v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/oauth2 v0.36.0
 )
@@ -67,3 +68,5 @@ require (
 )
 
 replace github.com/sockerless/simulator-realexec => ../../realexec
+
+replace github.com/sockerless/simulator-testutil => ../../testutil

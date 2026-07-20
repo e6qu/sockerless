@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sockerless/simulator-testutil/registrytrust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,9 @@ func TestCloudBuild_FaithfulBuildPush(t *testing.T) {
 
 	const regPort = "5098"
 	startThrowawayRegistry(t, regPort)
+	cleanupTrust, err := registrytrust.ConfigureLoopbackHTTPRegistry(context.Background(), "127.0.0.1:"+regPort)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, cleanupTrust()) })
 	// Pre-pull the build's base image so the sim's `docker build` uses the
 	// local cache instead of racing a throttle-prone public-mirror pull.
 	pullImageWithRetry(t, "public.ecr.aws/docker/library/alpine:3.20")
@@ -111,10 +115,9 @@ func pullImageWithRetry(t *testing.T, image string) {
 }
 
 // startThrowawayRegistry runs a real registry:2 on 127.0.0.1:<port> for the
-// duration of the test — a reachable, auto-insecure (on Docker) stand-in for
-// the AR `/v2/` endpoint the sim's Cloud Build pushes to. Docker auto-trusts a
-// 127.0.0.1 registry; a local Podman host needs an insecure-registries drop-in.
-// Every docker call carries a deadline so a wedged runtime fails fast.
+// duration of the test — a reachable stand-in for the Artifact Registry `/v2/`
+// endpoint the simulated Cloud Build pushes to. Every Docker call carries a
+// deadline so a wedged runtime fails fast.
 func startThrowawayRegistry(t *testing.T, port string) {
 	t.Helper()
 	const regImage = "public.ecr.aws/docker/library/registry:2"

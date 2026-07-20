@@ -53,7 +53,7 @@ test.describe("Admin application shell", () => {
     expect(response?.status()).toBe(200);
     await expect(page).toHaveURL(/\/auth\/signed-out$/);
     await expect(page.getByRole("heading", { name: "Signed out of Sockerless Admin" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Sign in again" })).toHaveAttribute("href", "/auth/shauth");
+    await expect(page.getByRole("link", { name: "Sign in with Shauth" })).toHaveAttribute("href", "/auth/shauth");
 
     await page.emulateMedia({ colorScheme: "dark" });
     await expect(page.locator("body")).toHaveCSS("background-color", "rgb(22, 12, 9)");

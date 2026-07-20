@@ -30,7 +30,7 @@ jobs:
       matrix:
         backend: [ecs, lambda, cloudrun, gcf, aca, azf]
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - name: Run E2E GitHub (${{ matrix.backend }})
         if: inputs.backend == 'all' || inputs.backend == matrix.backend
         run: make e2e-github-${{ matrix.backend }}
@@ -44,7 +44,7 @@ jobs:
       matrix:
         backend: [ecs, lambda, cloudrun, gcf, aca, azf]
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - name: Run E2E GitLab (${{ matrix.backend }})
         if: inputs.backend == 'all' || inputs.backend == matrix.backend
         run: make e2e-gitlab-${{ matrix.backend }}

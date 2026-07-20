@@ -72,7 +72,7 @@ while IFS= read -r mod_file; do
     fi
   done <<<"$deps"
   popd >/dev/null
-done < <(find . -name go.mod -not -path '*/node_modules/*' | sort)
+done < <(git ls-files 'go.mod' '*/go.mod' | sort)
 
 # 2. Terraform providers ---------------------------------------------
 echo
@@ -109,11 +109,7 @@ while IFS= read -r tf; do
       fail=$((fail + 1))
     fi
   done <<<"$parsed"
-done < <(find . -name versions.tf \
-  -not -path '*/node_modules/*' \
-  -not -path '*/.terraform/*' \
-  -not -path '*/.terragrunt-cache/*' \
-  | sort)
+done < <(git ls-files 'versions.tf' '*/versions.tf' | sort)
 
 # 3. GitHub Actions ---------------------------------------------------
 echo
@@ -132,7 +128,7 @@ if [[ -d .github/workflows ]]; then
           if (ref ~ /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@/) print FILENAME "|" ref
         }
       ' "$workflow_file"
-    done < <(find .github/workflows \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | sort) | sort -u
+    done < <(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' | sort) | sort -u
   )
 
   while IFS='|' read -r file action_ref; do

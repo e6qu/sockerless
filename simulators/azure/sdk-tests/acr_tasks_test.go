@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/sockerless/simulator-testutil/registrytrust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,11 +42,10 @@ func TestACRTasks_ScheduleRunDockerBuild(t *testing.T) {
 		regPort = "5099"
 	)
 	// A real registry the build host can push to / the test can read.
-	// Docker auto-trusts a 127.0.0.1:<port> registry as insecure, so no daemon
-	// config is needed (CI runs Docker). Podman does NOT — a local Podman host
-	// needs an insecure-registries drop-in for 127.0.0.1:<port> or the sim's
-	// `docker push` fails with "server gave HTTP response to HTTPS client".
 	startThrowawayRegistry(t, regPort)
+	cleanupTrust, err := registrytrust.ConfigureLoopbackHTTPRegistry(ctx, "127.0.0.1:"+regPort)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, cleanupTrust()) })
 	// Pre-pull the build's base image so the sim's `docker build` uses the
 	// local cache instead of racing a fresh (throttle-prone) public-mirror
 	// pull mid-build.

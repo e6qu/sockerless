@@ -53,7 +53,7 @@ jobs:
     env:
       AWS_REGION: ${{ inputs.region }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: aws-actions/configure-aws-credentials@v6.2.2
         with:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
@@ -73,7 +73,7 @@ jobs:
     env:
       AWS_REGION: ${{ inputs.region }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.25'
@@ -98,7 +98,7 @@ jobs:
       AWS_REGION: ${{ inputs.region }}
       NGROK_AUTHTOKEN: ${{ secrets.AWS_LIVE_NGROK_AUTHTOKEN }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - run: |
           if [ -z "$NGROK_AUTHTOKEN" ]; then
             echo "::warning::ngrok authtoken absent; skipping 3-lambda-runtime-api.sh"
@@ -117,7 +117,7 @@ jobs:
       AWS_REGION: ${{ inputs.region }}
       GITHUB_PAT: ${{ secrets.AWS_LIVE_GITHUB_PAT }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - run: |
           if [ -z "$GITHUB_PAT" ]; then
             echo "::warning::github_pat absent; skipping 4-github-runner.sh"
@@ -150,7 +150,7 @@ jobs:
     env:
       AWS_REGION: ${{ inputs.region }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: aws-actions/configure-aws-credentials@v6.2.2
         with:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
