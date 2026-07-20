@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2619 filed - 2573 fixed - 10 open - 16 false positives.**
+**2620 filed - 2574 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -22,6 +22,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2620~~ | P1 | Sockerless GitHub Container Registry retention | operator and simulator publication accumulated untagged and obsolete package versions without enforcing the 20-release retention contract | Main-only publication now removes every unrecognized or obsolete version after verifying the four manifests and retains the newest 20 complete short-SHA releases with their ARM64 and AMD64 images. |
 | ~~2619~~ | P1 | Sockerless Admin session key separation | the OpenID Connect confidential-client credential also signed browser session values, coupling provider credential rotation to local application sessions | Admin now requires a distinct 32-byte-or-longer session secret, and unit plus real relying-party matrix coverage proved the two credentials rotate independently. |
 | ~~2618~~ | P0 | Sockerless OpenID Connect relying-party matrix | Admin and simulator relying parties accepted non-expiring back-channel logout tokens, while the browser harness registered no delivery coordinates and could pass through front-channel revocation alone | Both relying-party implementations require a future `exp`; the real four-app matrix rewrites only Ory Hydra's container-to-host delivery coordinates, proves every app accepted a signed back-channel token, and waits for application readiness before initiating logout. |
 | ~~2617~~ | P0 | Amazon Elastic Container Service attached-container restart | a reused stopped container shadowed its new task with stale terminal state and task coordinates, while a delayed old poller could delete the new cycle's wait channel | Each start cycle now owns a fresh completion channel, old pollers close only their own generation, pending restarts expose created state, and attach follows the new task's CloudWatch stream; a real two-cycle simulator/backend test proved distinct scripts and output. |

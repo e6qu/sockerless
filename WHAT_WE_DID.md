@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-20 — Enforced release-aware GitHub Container Registry retention
+
+The main-only operator and simulator publication workflow retained the newest
+20 complete immutable releases for each of `sockerless-admin`,
+`sockerless-simulator-aws`, `sockerless-simulator-gcp`, and
+`sockerless-simulator-azure`. Its release-aware selector kept each 12-character
+source tag together with its `-amd64` and `-arm64` images and deleted obsolete,
+untagged, or otherwise unrecognized package versions. The publication gate
+locked the native runners, direct OCI architecture manifests, two-platform OCI
+index, immutable tag grammar, complete package matrix, and retention invocation
+into pull-request continuous integration and pre-commit validation.
+
 ## 2026-07-20 — Made the Shauth relying-party matrix hermetic
 
 The Sockerless Admin and AWS, Google Cloud, and Microsoft Azure simulator

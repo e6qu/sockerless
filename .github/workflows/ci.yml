@@ -78,6 +78,8 @@ jobs:
           zsh -n scripts/*.sh
       - name: Check smoke Docker build contexts
         run: bash scripts/check-smoke-build-contexts.sh
+      - name: Check container publication contract
+        run: bash scripts/check-container-publication.sh
       - name: Check dependency freshness (bash)
         run: bash scripts/check-latest-deps.sh
       - name: Check dependency freshness (zsh)
