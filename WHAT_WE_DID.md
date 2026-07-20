@@ -26,6 +26,10 @@ and accepted explicit HTTP development coordinates only on loopback hosts.
 Both front- and back-channel logout remained correlated to trusted issuer,
 session, subject, and replay identifiers.
 
+The dependency freshness gate also advanced `actions/setup-node` to its current
+major release for the new browser job. The generated README status badges were
+refreshed by the repository's sanctioned pre-push badge hook.
+
 ## 2026-07-19 - Polished Simulator Consoles and Global Admin Logout (`fix/simulator-console-ui`)
 
 Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
