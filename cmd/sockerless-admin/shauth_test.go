@@ -515,4 +515,8 @@ func TestSHAUTHSignedOutResponseIsPublicAndNotCached(t *testing.T) {
 	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("signed-out response = %d Cache-Control=%q", recorder.Code, recorder.Header().Get("Cache-Control"))
 	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, `href="/auth/shauth"`) || !strings.Contains(body, `>Sign in with Shauth</a>`) {
+		t.Fatalf("signed-out response omitted the explicit Shauth sign-in control: %s", body)
+	}
 }

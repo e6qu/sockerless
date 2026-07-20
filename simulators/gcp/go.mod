@@ -9,7 +9,7 @@ require (
 	cloud.google.com/go/logging v1.19.0
 	cloud.google.com/go/longrunning v1.2.0
 	cloud.google.com/go/pubsub v1.51.0
-	cloud.google.com/go/secretmanager v1.20.0
+	cloud.google.com/go/secretmanager v1.21.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/sockerless/simulator v0.0.0
 	github.com/sockerless/simulator-realexec v0.0.0

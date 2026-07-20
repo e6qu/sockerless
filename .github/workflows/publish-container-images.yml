@@ -57,7 +57,7 @@ jobs:
     runs-on: ${{ matrix.arch.runner }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - uses: docker/setup-buildx-action@v4.2.0
 
@@ -148,7 +148,7 @@ jobs:
           - sockerless-simulator-azure
     name: ${{ matrix.image }} retention
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - name: Retain the newest 20 immutable releases
         env:
           GH_TOKEN: ${{ github.token }}

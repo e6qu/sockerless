@@ -4,6 +4,42 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-20 — Made simulator registry pushes portable and faithful
+
+The Google Cloud Build and Azure Container Registry Tasks official SDK
+harnesses shared one container-engine registry-policy utility. Docker Engine
+continued to trust HTTP loopback registries natively, while Podman received an
+exact scoped registry policy and reloaded that policy before the real build and
+ordinary Docker-compatible push. Cleanup removed only the test-owned policy and
+reloaded Podman again. The complete Google Cloud and Microsoft Azure official
+SDK suites passed on macOS Podman, including real registry manifests and image
+cleanup.
+
+## 2026-07-20 — Scoped dependency freshness to repository source
+
+The mandatory dependency freshness gate enumerated Git-tracked Go modules,
+Terraform provider declarations, and GitHub Actions instead of walking
+arbitrary nested directories in the worktree. User-owned untracked worktrees
+therefore could not contaminate a repository release gate. The same pass moved
+all three Google Cloud Secret Manager consumers and every workflow checkout
+action to their current published releases, with the affected module graphs and
+checks reconciled.
+
+## 2026-07-20 — Made signed-out Shauth re-entry explicit
+
+Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
+terminal pages exposed accessible, keyboard-visible `Sign in with Shauth`
+controls instead of generic return actions. Admin linked to `/auth/shauth`; each
+simulator linked to `/auth/oidc/login`. The standalone responses retained
+no-cache headers, responsive layouts, semantic status text, and automatic
+light/dark rendering.
+
+The real PostgreSQL, patched Ory Hydra, Shauth, compiled four-relying-party,
+and Chromium matrix logged out from every application, proved cross-application
+session invalidation, exact app-local landing, and reload persistence, then
+validated and clicked each exact Shauth control. Focused Go and Playwright
+coverage locked the same labels and coordinates into each owning component.
+
 ## 2026-07-20 — Enforced Sockerless Admin administrator authorization
 
 Sockerless Admin required the Shauth `admin` role at the one middleware boundary

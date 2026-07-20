@@ -8,10 +8,10 @@ assert.ok(password, "SHAUTH_BOOTSTRAP_ADMIN_PASSWORD is required");
 assert.ok(developerPassword, "SHAUTH_DEVELOPER_PASSWORD is required");
 
 const apps = [
-  { name: "Sockerless Admin", launch: "http://localhost:29090/ui/", identity: "http://localhost:29090/auth/session", signedOut: "http://localhost:29090/auth/signed-out" },
-  { name: "Sockerless AWS simulator", launch: "http://localhost:29310/ui/", identity: "http://localhost:29310/auth/session", signedOut: "http://localhost:29310/auth/signed-out" },
-  { name: "Sockerless Google Cloud simulator", launch: "http://localhost:29320/ui/", identity: "http://localhost:29320/auth/session", signedOut: "http://localhost:29320/auth/signed-out" },
-  { name: "Sockerless Microsoft Azure simulator", launch: "http://localhost:29330/ui/", identity: "http://localhost:29330/auth/session", signedOut: "http://localhost:29330/auth/signed-out" },
+  { name: "Sockerless Admin", launch: "http://localhost:29090/ui/", identity: "http://localhost:29090/auth/session", signedOut: "http://localhost:29090/auth/signed-out", login: "/auth/shauth" },
+  { name: "Sockerless AWS simulator", launch: "http://localhost:29310/ui/", identity: "http://localhost:29310/auth/session", signedOut: "http://localhost:29310/auth/signed-out", login: "/auth/oidc/login" },
+  { name: "Sockerless Google Cloud simulator", launch: "http://localhost:29320/ui/", identity: "http://localhost:29320/auth/session", signedOut: "http://localhost:29320/auth/signed-out", login: "/auth/oidc/login" },
+  { name: "Sockerless Microsoft Azure simulator", launch: "http://localhost:29330/ui/", identity: "http://localhost:29330/auth/session", signedOut: "http://localhost:29330/auth/signed-out", login: "/auth/oidc/login" },
 ];
 
 const browser = await chromium.launch({ headless: true });
@@ -74,6 +74,12 @@ try {
     assert.equal((await context.request.get(app.identity)).status(), 401, `${app.name} local session survived logout`);
     await page.reload({ waitUntil: "domcontentloaded" });
     assert.equal(page.url(), app.signedOut, `${app.name} signed-out page restarted authentication after reload`);
+
+    const signIn = page.getByRole("link", { name: "Sign in with Shauth", exact: true });
+    await signIn.waitFor({ state: "visible" });
+    assert.equal(await signIn.getAttribute("href"), app.login, `${app.name} exposed the wrong Shauth sign-in start`);
+    await signIn.click();
+    await waitForShauthLogin(page);
 
     await page.goto(`${authOrigin}/apps`, { waitUntil: "domcontentloaded" });
     await waitForShauthLogin(page);

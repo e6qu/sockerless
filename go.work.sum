@@ -531,6 +531,7 @@ cloud.google.com/go/scheduler v1.16.0 h1:EPdChptxnvCasdMixuu58247qhKMO1iAlrVaQhv
 cloud.google.com/go/scheduler v1.16.0/go.mod h1:0hsZg0MZJADyke1lutI0FHAYJR8Dtm8oIivXkmpACkA=
 cloud.google.com/go/secretmanager v1.14.3/go.mod h1:Pwzcfn69Ni9Lrk1/XBzo1H9+MCJwJ6CDCoeoQUsMN+c=
 cloud.google.com/go/secretmanager v1.16.0/go.mod h1://C/e4I8D26SDTz1f3TQcddhcmiC3rMEl0S1Cakvs3Q=
+cloud.google.com/go/secretmanager v1.20.0/go.mod h1:9OmSuOeiiUicANglrbdKWSnT3gYkRcXuUQDk7dDW0zU=
 cloud.google.com/go/security v1.18.3/go.mod h1:NmlSnEe7vzenMRoTLehUwa/ZTZHDQE59IPRevHcpCe4=
 cloud.google.com/go/security v1.19.2/go.mod h1:KXmf64mnOsLVKe8mk/bZpU1Rsvxqc0Ej0A6tgCeN93w=
 cloud.google.com/go/security v1.23.0/go.mod h1:XaB3p0SE7v2bBitsLBb1hM6R8/oI/k/IujpXFJalFK0=

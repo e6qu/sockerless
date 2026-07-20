@@ -12,9 +12,10 @@ require (
 	cloud.google.com/go/kms v1.32.0
 	cloud.google.com/go/logging v1.19.0
 	cloud.google.com/go/run v1.22.0
-	cloud.google.com/go/secretmanager v1.20.0
+	cloud.google.com/go/secretmanager v1.21.0
 	cloud.google.com/go/storage v1.63.1
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
+	github.com/sockerless/simulator-testutil v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/api v0.289.0
 	google.golang.org/genproto v0.0.0-20260713224248-f5fc221cf8c4
@@ -76,3 +77,5 @@ require (
 )
 
 replace github.com/sockerless/simulator-realexec => ../../realexec
+
+replace github.com/sockerless/simulator-testutil => ../../testutil

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2621 filed - 2575 fixed - 10 open - 16 false positives.**
+**2624 filed - 2579 fixed - 9 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -11,7 +11,6 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
 | ~~2616~~ | P0 | Sockerless OpenID Connect continuous integration | the Shauth browser harness inherited local frontend bundles, while a clean runner compiled headless servers and returned 404 for every operator interface | The harness now builds the Admin and all three simulator production bundles before compiling their servers, pins the verified-email Shauth revision, and passes from a clean real PostgreSQL/Ory Hydra/Chromium stack. |
-| 2589 | P1 | Azure Container Registry Tasks SDK harness | the local Docker daemon did not trust the real HTTP simulator registry endpoint used by an ACR Tasks image push | Configure the test registry coordinate with a Docker-trusted transport or a real TLS endpoint so the complete SDK suite passes on macOS as it does in CI. |
 | 2569 | P1 | Bleephub Amazon Elastic Container Service Terraform simulator harness | apply did not terminate within the bounded test window | The local Sockerless AWS Terraform apply/destroy harness left Terraform and simulator subprocesses running past its 90-second test deadline, so the blocking provider operation and subprocess lifecycle need a deterministic fix. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
@@ -22,6 +21,10 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2624~~ | P1 | Google Cloud Build SDK harness | Podman's Docker-compatible API rejected the real HTTP loopback registry used by the simulator's ordinary image push | The shared simulator test utility now applied the container engine's scoped loopback-registry trust policy, reloaded Podman before and after each test, and preserved the same ordinary Docker push used with Docker Engine. |
+| ~~2589~~ | P1 | Azure Container Registry Tasks SDK harness | Podman's Docker-compatible API rejected the real HTTP loopback registry used by the simulator's ordinary image push | The Azure and Google Cloud SDK harnesses now shared a scoped container-engine registry policy utility, and both complete official-client suites passed their real build, ordinary push, registry-manifest, and cleanup paths on macOS Podman. |
+| ~~2623~~ | P1 | Dependency freshness gate | the pre-push scan traversed an untracked nested worktree and the tracked graph lagged current Google Cloud Secret Manager plus `actions/checkout` patch releases | Freshness discovery now reads only Git-tracked module, Terraform, and workflow files; all three Google Cloud Secret Manager consumers and every workflow checkout action use the current published release. |
+| ~~2622~~ | P1 | Sockerless signed-out user experience | Admin and simulator terminal pages offered a generic return action that did not identify Shauth or prove the real re-entry coordinate | Every Sockerless relying party now presents an accessible, theme-aware `Sign in with Shauth` control with its exact first-party login coordinate, and the real PostgreSQL/Ory Hydra/Shauth/Chromium matrix clicks each control and reaches Shauth after proving global logout and reload persistence. |
 | ~~2621~~ | P0 | Sockerless Admin authorization | every active Shauth developer or administrator session entered the operator UI and mutation APIs | The shared Admin authorization boundary now requires the Shauth administrator role, returns explicit no-cache UI or JSON denials to developers, and passed both focused persistence coverage and a real Shauth/PostgreSQL/Ory Hydra/Chromium developer-versus-administrator matrix. |
 | ~~2620~~ | P1 | Sockerless GitHub Container Registry retention | operator and simulator publication accumulated untagged and obsolete package versions without enforcing the 20-release retention contract | Main-only publication now removes every unrecognized or obsolete version after verifying the four manifests and retains the newest 20 complete short-SHA releases with their ARM64 and AMD64 images. |
 | ~~2619~~ | P1 | Sockerless Admin session key separation | the OpenID Connect confidential-client credential also signed browser session values, coupling provider credential rotation to local application sessions | Admin now requires a distinct 32-byte-or-longer session secret, and unit plus real relying-party matrix coverage proved the two credentials rotate independently. |

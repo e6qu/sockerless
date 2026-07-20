@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	cloud.google.com/go/run v1.22.0
-	cloud.google.com/go/secretmanager v1.20.0
+	cloud.google.com/go/secretmanager v1.21.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/sockerless/github-runner-dispatcher-aws v0.0.0
 	google.golang.org/api v0.289.0

@@ -4,18 +4,20 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`fix/admin-role-gate` made Sockerless Admin an administrator-only relying party at its shared UI and API authorization boundary. Authenticated Shauth developers received an explicit no-cache `403` page with a working logout control and JSON API denials, while administrators retained the complete operator surface. Focused tests used the real topology manager and filesystem, and the complete Shauth/PostgreSQL/Ory Hydra/Chromium matrix provisioned a developer through Shauth's own administration UI before proving developer denial and administrator persistence/cleanup.
+`fix/signed-out-shauth-controls` made every Sockerless-owned terminal page identify its identity provider with an accessible `Sign in with Shauth` control. Admin used `/auth/shauth`; the AWS, Google Cloud, and Microsoft Azure simulators used `/auth/oidc/login`. The complete PostgreSQL/Ory Hydra/Shauth/Chromium matrix proved global logout, exact app-local landing, reload persistence, each exact control target, and a real return to Shauth.
 
 ## Continue Here
 
-1. Merge this branch through its single pull request, verify the published direct ARM64 and AMD64 manifests plus generic index, deploy the administrator-gated Admin image, and run the developer-denial/administrator-mutation matrix against the live Shauth and Admin origins.
+1. Merge this branch through its single pull request, verify the published direct ARM64 and AMD64 manifests plus generic indexes, deploy the Admin and simulator images, and run the signed-out control plus developer-denial/administrator-mutation matrices against the live origins.
 2. Re-run Bleeplab's real Sockerless runner consumer against the merged revision and confirm its multi-stage helper completes beyond the previously observed source-fetch duration without an API-triggered task stop.
 3. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
-4. Resolve BUG-2589: configure the local Azure Container Registry Tasks SDK harness with a Docker-trusted simulator registry transport, matching the working CI coordinate.
-5. Continue complete simulator and backend fidelity work, including the open live-cloud cells documented in BUGS.md.
+4. Continue complete simulator and backend fidelity work, including the open live-cloud cells documented in BUGS.md.
 
 ## Recent Validation
 
+- The complete Google Cloud and Microsoft Azure official SDK suites passed on macOS Podman after their real Cloud Build and Azure Container Registry Tasks paths applied a scoped loopback-registry trust policy and performed ordinary Docker-compatible image pushes.
+- The complete dependency freshness gate passed after its discovery scope moved from arbitrary nested filesystem content to Git-tracked modules, providers, and workflows; all Google Cloud Secret Manager consumers and workflow checkout actions used their current published releases.
+- Fresh Shauth `470f789` served the complete real PostgreSQL, patched Ory Hydra, compiled Admin and three simulator relying parties, and Chromium matrix. Logout from every relying party invalidated the shared session, landed on and persisted the exact local terminal page, exposed the exact `Sign in with Shauth` coordinate, and returned the browser to Shauth when clicked.
 - Fresh Shauth `744343810897` served a real PostgreSQL, patched Ory Hydra, and Chromium matrix that created a developer through Shauth's administration UI, authenticated that developer through OpenID Connect, returned the Admin no-cache `403` page, rejected a real topology-project mutation, then authenticated an administrator and persisted and removed a real project through the same API.
 - The exact Shauth pull-request head passed the complete real PostgreSQL, patched Ory Hydra, Shauth, compiled four-relying-party, and Chromium matrix with an independent Admin session secret; focused tests also proved that changing the OpenID Connect client secret preserved existing session signatures while changing the session secret invalidated them.
 - The compiled Admin and all three compiled simulator dashboards passed a clean real PostgreSQL, Ory Hydra, Shauth, and Chromium matrix after the harness built every production frontend instead of inheriting local `dist` directories. It covered direct entry, catalog entry, shared sign-on, identity, logout initiated by every relying party, global cross-application revocation, exact app-local signed-out destinations, signed-out reload, and fail-closed re-entry against the exact CI-green Shauth verified-email revision.
