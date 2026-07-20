@@ -82,7 +82,7 @@ func TestSHAUTHSignedSessionGuardsOperatorSurface(t *testing.T) {
 	}
 
 	expires := time.Now().Add(time.Hour).Unix()
-	value, err := config.sign(shauthSession{ID: "session-1", Subject: "subject", Name: "operator", Role: "developer", Expires: expires})
+	value, err := config.sign(shauthSession{ID: "session-1", Subject: "subject", Name: "operator", Role: "admin", Expires: expires})
 	if err != nil {
 		t.Fatalf("sign session: %v", err)
 	}
@@ -100,6 +100,76 @@ func TestSHAUTHSignedSessionGuardsOperatorSurface(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("session endpoint = %d, want %d", response.Code, http.StatusNoContent)
+	}
+}
+
+func TestSHAUTHAdministratorRoleGuardsUIAndRealTopologyMutations(t *testing.T) {
+	config := testSHAUTHConfig()
+	config.insecure = true
+	topology := NewTopologyManager(t.TempDir() + "/sockerless.yaml")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ui/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("operator console"))
+	})
+	registerTopologyAPI(mux, topology, nil)
+	handler := config.middleware(mux)
+
+	newSessionCookie := func(t *testing.T, id, role string) *http.Cookie {
+		t.Helper()
+		expires := time.Now().Add(time.Hour).Unix()
+		value, err := config.sign(shauthSession{ID: id, Subject: id, Name: id, Role: role, Expires: expires})
+		if err != nil {
+			t.Fatalf("sign %s session: %v", role, err)
+		}
+		config.sessions.put(id, shauthSessionRecord{Subject: id, Expires: expires})
+		return &http.Cookie{Name: shauthSessionCookie, Value: value}
+	}
+	developer := newSessionCookie(t, "developer-session", "developer")
+	administrator := newSessionCookie(t, "administrator-session", shauthAdministratorRole)
+
+	request := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	request.AddCookie(developer)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "Administrator access required") {
+		t.Fatalf("developer UI response = %d %q", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("developer denial cache control = %q", response.Header().Get("Cache-Control"))
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/topology/projects", strings.NewReader(`{"name":"denied-project","instances":[]}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(developer)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "administrator role required") {
+		t.Fatalf("developer mutation response = %d %q", response.Code, response.Body.String())
+	}
+	if len(topology.Get().Projects) != 0 {
+		t.Fatalf("developer mutation changed topology: %#v", topology.Get().Projects)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	request.AddCookie(administrator)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "operator console" {
+		t.Fatalf("administrator UI response = %d %q", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/topology/projects", strings.NewReader(`{"name":"authorized-project","instances":[]}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(administrator)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("administrator mutation response = %d %q", response.Code, response.Body.String())
+	}
+	projects := topology.Get().Projects
+	if len(projects) != 1 || projects[0].Name != "authorized-project" {
+		t.Fatalf("administrator mutation did not persist topology: %#v", projects)
 	}
 }
 

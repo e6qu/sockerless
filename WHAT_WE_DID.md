@@ -4,6 +4,23 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-20 — Enforced Sockerless Admin administrator authorization
+
+Sockerless Admin required the Shauth `admin` role at the one middleware boundary
+shared by its operator user interface and APIs. An authenticated developer
+received a no-cache accessible `403` page with a logout control, while API
+requests received a JSON `403` before an operator handler ran. Administrator
+sessions retained the complete operator surface.
+
+Focused coverage drove the real topology manager and filesystem, proving a
+developer could not persist a project while an administrator could. The full
+PostgreSQL, patched Ory Hydra, Shauth, compiled relying-party, and Chromium
+matrix also created a developer through Shauth's own administration interface,
+authenticated both roles through the real OpenID Connect flow, proved the
+developer denial, and persisted and removed an administrator-owned topology
+project. The harness ran Admin from an isolated temporary working directory so
+its real persistence proof never changed the repository topology.
+
 ## 2026-07-20 — Enforced release-aware GitHub Container Registry retention
 
 The main-only operator and simulator publication workflow retained the newest

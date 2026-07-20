@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2620 filed - 2574 fixed - 10 open - 16 false positives.**
+**2621 filed - 2575 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -22,6 +22,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2621~~ | P0 | Sockerless Admin authorization | every active Shauth developer or administrator session entered the operator UI and mutation APIs | The shared Admin authorization boundary now requires the Shauth administrator role, returns explicit no-cache UI or JSON denials to developers, and passed both focused persistence coverage and a real Shauth/PostgreSQL/Ory Hydra/Chromium developer-versus-administrator matrix. |
 | ~~2620~~ | P1 | Sockerless GitHub Container Registry retention | operator and simulator publication accumulated untagged and obsolete package versions without enforcing the 20-release retention contract | Main-only publication now removes every unrecognized or obsolete version after verifying the four manifests and retains the newest 20 complete short-SHA releases with their ARM64 and AMD64 images. |
 | ~~2619~~ | P1 | Sockerless Admin session key separation | the OpenID Connect confidential-client credential also signed browser session values, coupling provider credential rotation to local application sessions | Admin now requires a distinct 32-byte-or-longer session secret, and unit plus real relying-party matrix coverage proved the two credentials rotate independently. |
 | ~~2618~~ | P0 | Sockerless OpenID Connect relying-party matrix | Admin and simulator relying parties accepted non-expiring back-channel logout tokens, while the browser harness registered no delivery coordinates and could pass through front-channel revocation alone | Both relying-party implementations require a future `exp`; the real four-app matrix rewrites only Ory Hydra's container-to-host delivery coordinates, proves every app accepted a signed back-channel token, and waits for application readiness before initiating logout. |
