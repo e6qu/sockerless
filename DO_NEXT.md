@@ -4,18 +4,21 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`fix/shauth-sso-rp-matrix` completed the first-party Shauth contract for Sockerless Admin plus all three simulator dashboards. A real Shauth, Ory Hydra, PostgreSQL, and Chromium matrix proved shared sign-on and global logout from every relying party. The direct architecture image publication fix had already merged through pull request 808.
+`fix/shauth-sso-rp-matrix` completed the first-party Shauth contract for Sockerless Admin plus all three simulator dashboards. A real Shauth, patched Ory Hydra, PostgreSQL, and Chromium matrix proved shared sign-on, app-local return, future-expiring signed back-channel delivery, and global logout from every relying party. The same branch fixed Amazon ECS reused attached-container generations after the Bleeplab GitLab Runner consumer exposed stale terminal state, wait-channel ownership, and CloudWatch task-stream selection. The direct architecture image publication fix had already merged through pull request 808.
 
 ## Continue Here
 
 1. Merge this branch through its single pull request, verify the published direct architecture manifests and generic index, and deploy them as real Amazon Elastic Container Service services. Register Admin's callback `/auth/shauth/callback`, post-logout `/auth/signed-out`, front-channel `/auth/shauth/frontchannel-logout`, and back-channel `/auth/shauth/backchannel-logout` coordinates. For each `aws`, `gcp`, and `azure` origin, register callback `/auth/oidc/callback`, post-logout `/auth/signed-out`, front-channel `/auth/oidc/frontchannel-logout`, and back-channel `/auth/oidc/backchannel-logout`; supply its `SIM_UI_OIDC_*`, `SIM_UI_PUBLIC_URL`, and `SIM_UI_SESSION_SECRET` values; then run the proven direct/catalog/global-logout matrix against the live origins.
-2. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
-3. Resolve BUG-2589: configure the local Azure Container Registry Tasks SDK harness with a Docker-trusted simulator registry transport, matching the working CI coordinate.
-4. Continue complete simulator and backend fidelity work, including the open live-cloud cells documented in BUGS.md.
+2. Re-run Bleeplab's real Sockerless runner consumer against the merged revision and confirm its multi-stage helper completes beyond the previously observed source-fetch duration without an API-triggered task stop.
+3. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
+4. Resolve BUG-2589: configure the local Azure Container Registry Tasks SDK harness with a Docker-trusted simulator registry transport, matching the working CI coordinate.
+5. Continue complete simulator and backend fidelity work, including the open live-cloud cells documented in BUGS.md.
 
 ## Recent Validation
 
 - The compiled Admin and all three compiled simulator dashboards passed a clean real PostgreSQL, Ory Hydra, Shauth, and Chromium matrix after the harness built every production frontend instead of inheriting local `dist` directories. It covered direct entry, catalog entry, shared sign-on, identity, logout initiated by every relying party, global cross-application revocation, exact app-local signed-out destinations, signed-out reload, and fail-closed re-entry against the exact CI-green Shauth verified-email revision.
+- Ory Hydra delivered its signed logout token over Docker's host-gateway coordinate to each real host relying party while every public browser coordinate remained loopback-origin consistent. Admin and all three simulators recorded successful acceptance, and their validators required the token's `exp` to be present and in the future.
+- A real Amazon ECS simulator/backend attached-container regression ran two start/attach/stdin/task/log cycles under one Docker container ID. Each cycle returned only its own marker, and delayed completion from the prior task could not terminate or retarget the next cycle.
 - Admin and simulator authentication accepted explicit HTTP development coordinates only on loopback hosts, required `client_secret_post`, exposed front-channel logout outside the local-session boundary, revoked locally before provider failure, and required the OIDC Back-Channel Logout event claim to be exactly the empty JSON object.
 - The merged `9fe520a3ef14` release demonstrated that provenance-enabled native tags were OCI indexes with attestation children; the corrected workflow disabled provenance and added registry-shape assertions that reject that contract violation before a publication job succeeds.
 - The complete AWS, Google Cloud, and Microsoft Azure simulator suites and vet passed after the shared operator authorization boundary covered each `/sim/v1/*` dashboard handler; direct tests proved UI and dashboard data redirected unauthenticated browsers while health remained public.

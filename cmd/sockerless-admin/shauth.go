@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -494,6 +495,7 @@ func (c shauthConfig) backchannelLogout(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid logout token", http.StatusBadRequest)
 		return
 	}
+	log.Printf("accepted Shauth back-channel logout for client %q", c.clientID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -515,6 +517,9 @@ func (c shauthConfig) processBackchannelLogout(ctx context.Context, rawLogoutTok
 	}
 	if logoutToken.IssuedAt.IsZero() {
 		return fmt.Errorf("logout token is missing the iat claim")
+	}
+	if logoutToken.Expiry.IsZero() || !logoutToken.Expiry.After(now) {
+		return fmt.Errorf("logout token is missing a valid exp claim")
 	}
 	var claims struct {
 		Events map[string]json.RawMessage `json:"events"`

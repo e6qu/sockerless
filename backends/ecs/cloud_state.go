@@ -640,7 +640,7 @@ func taskToContainer(task ecstypes.Task, tags map[string]string, td ecstypes.Tas
 	}
 
 	networkName := tags["sockerless-network"]
-	if networkName == "" {
+	if networkName == "" || networkName == "default" {
 		networkName = "bridge"
 	}
 

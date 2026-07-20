@@ -20,7 +20,7 @@ try {
     const failures = monitor(page);
     await page.goto(app.launch, { waitUntil: "domcontentloaded" });
     await signInIfRequired(page);
-    await waitForOrigin(page, new URL(app.launch).origin);
+    await waitForApplication(page, app);
     await assertIdentity(context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
     await context.close();
@@ -36,7 +36,7 @@ try {
     const appLink = portalPage.getByRole("link", { name: `Open ${app.name}`, exact: true });
     await appLink.waitFor({ state: "visible" });
     await appLink.click();
-    await waitForOrigin(portalPage, new URL(app.launch).origin);
+    await waitForApplication(portalPage, app);
     assert.notEqual(new URL(portalPage.url()).origin, authOrigin, `${app.name} catalog launch remained on Shauth`);
     await assertIdentity(portalContext, app);
   }
@@ -52,15 +52,16 @@ try {
 
     await page.goto(app.launch, { waitUntil: "domcontentloaded" });
     await signInIfRequired(page);
-    await waitForOrigin(page, new URL(app.launch).origin);
+    await waitForApplication(page, app);
     await assertIdentity(context, app);
 
     await page.goto(sentinel.launch, { waitUntil: "domcontentloaded" });
     assert.notEqual(new URL(page.url()).pathname, "/login", `${sentinel.name} prompted after shared SSO was established`);
-    await waitForOrigin(page, new URL(sentinel.launch).origin);
+    await waitForApplication(page, sentinel);
     await assertIdentity(context, sentinel);
 
     await page.goto(app.launch, { waitUntil: "domcontentloaded" });
+    await waitForApplication(page, app);
     await page.locator('form[action="/auth/logout"] button').click();
     await page.waitForURL(app.signedOut, { timeout: 30_000 });
     assert.equal(page.url(), app.signedOut, `${app.name} logout did not finish on the originating app`);
@@ -88,6 +89,12 @@ async function signInIfRequired(page) {
 
 async function waitForOrigin(page, origin) {
   await page.waitForURL((raw) => new URL(raw.toString()).origin === origin && !new URL(raw.toString()).pathname.includes("callback"), { timeout: 30_000 });
+}
+
+async function waitForApplication(page, app) {
+  await waitForOrigin(page, new URL(app.launch).origin);
+  await page.waitForLoadState("networkidle");
+  await page.locator('form[action="/auth/logout"] button').waitFor({ state: "visible" });
 }
 
 async function waitForShauthLogin(page) {

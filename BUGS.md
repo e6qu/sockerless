@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2616 filed - 2570 fixed - 10 open - 16 false positives.**
+**2618 filed - 2572 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -22,6 +22,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2618~~ | P0 | Sockerless OpenID Connect relying-party matrix | Admin and simulator relying parties accepted non-expiring back-channel logout tokens, while the browser harness registered no delivery coordinates and could pass through front-channel revocation alone | Both relying-party implementations require a future `exp`; the real four-app matrix rewrites only Ory Hydra's container-to-host delivery coordinates, proves every app accepted a signed back-channel token, and waits for application readiness before initiating logout. |
+| ~~2617~~ | P0 | Amazon Elastic Container Service attached-container restart | a reused stopped container shadowed its new task with stale terminal state and task coordinates, while a delayed old poller could delete the new cycle's wait channel | Each start cycle now owns a fresh completion channel, old pollers close only their own generation, pending restarts expose created state, and attach follows the new task's CloudWatch stream; a real two-cycle simulator/backend test proved distinct scripts and output. |
 | ~~2615~~ | P0 | Sockerless OpenID Connect relying-party matrix | Admin omitted its registered front-channel logout path from the public authentication route set, local HTTP test mode accepted non-loopback coordinates, and no real cross-application browser matrix proved global logout | Admin and all three simulator dashboards passed a real Shauth/Ory Hydra/PostgreSQL browser matrix; front-channel logout remained reachable after local revocation, development HTTP was loopback-only, and logout from every app returned locally while invalidating the shared session. |
 | ~~2614~~ | P0 | release image publication | provenance attestations made the explicit `-arm64` and `-amd64` tags OCI indexes instead of direct architecture image manifests | Native publication disabled provenance, verified both architecture tags were direct OCI image manifests, and required the generic index to contain exactly Linux ARM64 and AMD64. |
 | ~~2613~~ | P0 | simulator dashboard authorization | `/sim/v1/*` operator data bypassed OpenID Connect while the single-page application that consumed it was protected | Dashboard handlers now register through the shared operator authorization boundary while health checks and native cloud APIs preserve their existing contracts. |

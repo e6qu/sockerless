@@ -16,6 +16,12 @@ func (s *Server) getTaskID(containerID string) string {
 	if ecsState, ok := s.ECS.Get(containerID); ok && ecsState.TaskARN != "" {
 		return extractTaskIDFromARN(ecsState.TaskARN)
 	}
+	// PendingCreates is the authoritative state while a restarted container's
+	// new task is being launched. Falling through to cloud recovery here would
+	// bind attach to the previous stopped task's log stream.
+	if _, pending := s.PendingCreates.Get(containerID); pending {
+		return "unknown"
+	}
 
 	// Query cloud — find the task by sockerless-container-id tag
 	taskARN := s.findTaskARNByContainerID(containerID)

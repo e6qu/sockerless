@@ -33,14 +33,15 @@ bootstrap_apps=$(jq -cn \
   --arg gcp "$gcp_client_secret" \
   --arg azure "$azure_client_secret" '
   [
-    {slug:"sockerless-admin",name:"Sockerless Admin",description:"Sockerless operator console",launch_url:"http://localhost:29090/ui/",oidc_client_id:"sockerless-admin",oidc_client_secret:$admin,redirect_uris:["http://localhost:29090/auth/shauth/callback"],post_logout_redirect_uris:["http://localhost:29090/auth/signed-out"],frontchannel_logout_uri:"http://localhost:29090/auth/shauth/frontchannel-logout",health_url:"http://localhost:29090/healthz",monitoring_url:"http://localhost:29090/ui/"},
-    {slug:"sockerless-aws",name:"Sockerless AWS simulator",description:"Amazon Web Services simulator",launch_url:"http://localhost:29310/ui/",oidc_client_id:"sockerless-aws",oidc_client_secret:$aws,redirect_uris:["http://localhost:29310/auth/oidc/callback"],post_logout_redirect_uris:["http://localhost:29310/auth/signed-out"],frontchannel_logout_uri:"http://localhost:29310/auth/oidc/frontchannel-logout",health_url:"http://localhost:29310/health",monitoring_url:""},
-    {slug:"sockerless-gcp",name:"Sockerless Google Cloud simulator",description:"Google Cloud simulator",launch_url:"http://localhost:29320/ui/",oidc_client_id:"sockerless-gcp",oidc_client_secret:$gcp,redirect_uris:["http://localhost:29320/auth/oidc/callback"],post_logout_redirect_uris:["http://localhost:29320/auth/signed-out"],frontchannel_logout_uri:"http://localhost:29320/auth/oidc/frontchannel-logout",health_url:"http://localhost:29320/health",monitoring_url:""},
-    {slug:"sockerless-azure",name:"Sockerless Microsoft Azure simulator",description:"Microsoft Azure simulator",launch_url:"http://localhost:29330/ui/",oidc_client_id:"sockerless-azure",oidc_client_secret:$azure,redirect_uris:["http://localhost:29330/auth/oidc/callback"],post_logout_redirect_uris:["http://localhost:29330/auth/signed-out"],frontchannel_logout_uri:"http://localhost:29330/auth/oidc/frontchannel-logout",health_url:"http://localhost:29330/health",monitoring_url:""}
+    {slug:"sockerless-admin",name:"Sockerless Admin",description:"Sockerless operator console",launch_url:"http://localhost:29090/ui/",oidc_client_id:"sockerless-admin",oidc_client_secret:$admin,redirect_uris:["http://localhost:29090/auth/shauth/callback"],post_logout_redirect_uris:["http://localhost:29090/auth/signed-out"],frontchannel_logout_uri:"http://localhost:29090/auth/shauth/frontchannel-logout",backchannel_logout_uri:"http://localhost:29090/auth/shauth/backchannel-logout",health_url:"http://localhost:29090/healthz",monitoring_url:"http://localhost:29090/ui/"},
+    {slug:"sockerless-aws",name:"Sockerless AWS simulator",description:"Amazon Web Services simulator",launch_url:"http://localhost:29310/ui/",oidc_client_id:"sockerless-aws",oidc_client_secret:$aws,redirect_uris:["http://localhost:29310/auth/oidc/callback"],post_logout_redirect_uris:["http://localhost:29310/auth/signed-out"],frontchannel_logout_uri:"http://localhost:29310/auth/oidc/frontchannel-logout",backchannel_logout_uri:"http://localhost:29310/auth/oidc/backchannel-logout",health_url:"http://localhost:29310/health",monitoring_url:""},
+    {slug:"sockerless-gcp",name:"Sockerless Google Cloud simulator",description:"Google Cloud simulator",launch_url:"http://localhost:29320/ui/",oidc_client_id:"sockerless-gcp",oidc_client_secret:$gcp,redirect_uris:["http://localhost:29320/auth/oidc/callback"],post_logout_redirect_uris:["http://localhost:29320/auth/signed-out"],frontchannel_logout_uri:"http://localhost:29320/auth/oidc/frontchannel-logout",backchannel_logout_uri:"http://localhost:29320/auth/oidc/backchannel-logout",health_url:"http://localhost:29320/health",monitoring_url:""},
+    {slug:"sockerless-azure",name:"Sockerless Microsoft Azure simulator",description:"Microsoft Azure simulator",launch_url:"http://localhost:29330/ui/",oidc_client_id:"sockerless-azure",oidc_client_secret:$azure,redirect_uris:["http://localhost:29330/auth/oidc/callback"],post_logout_redirect_uris:["http://localhost:29330/auth/signed-out"],frontchannel_logout_uri:"http://localhost:29330/auth/oidc/frontchannel-logout",backchannel_logout_uri:"http://localhost:29330/auth/oidc/backchannel-logout",health_url:"http://localhost:29330/health",monitoring_url:""}
   ]')
 
 compose() {
-  docker compose --project-name "$compose_project" --project-directory "$shauth_root" -f "$shauth_root/compose.yaml" "$@"
+  docker compose --project-name "$compose_project" --project-directory "$shauth_root" \
+    -f "$shauth_root/compose.yaml" "$@"
 }
 
 cleanup() {
@@ -98,6 +99,21 @@ wait_for_url() {
 wait_for_url http://localhost:8080/healthz Shauth
 wait_for_url http://localhost:4444/health/ready "Ory Hydra"
 
+# The browser and every relying party use their public loopback coordinates.
+# Ory Hydra runs in Docker, so only its server-to-server delivery coordinate is
+# rewritten to Docker's host gateway after Shauth has reconciled each client.
+for client_coordinate in \
+  sockerless-admin:29090:/auth/shauth/backchannel-logout \
+  sockerless-aws:29310:/auth/oidc/backchannel-logout \
+  sockerless-gcp:29320:/auth/oidc/backchannel-logout \
+  sockerless-azure:29330:/auth/oidc/backchannel-logout; do
+  IFS=: read -r client_id port path <<<"$client_coordinate"
+  registration=$(curl --fail --silent --show-error "http://localhost:4445/admin/clients/$client_id")
+  registration=$(jq --arg uri "http://host.docker.internal:${port}${path}" '.backchannel_logout_uri = $uri' <<<"$registration")
+  curl --fail --silent --show-error --request PUT --header 'Content-Type: application/json' \
+    --data "$registration" "http://localhost:4445/admin/clients/$client_id" >/dev/null
+done
+
 (cd "$repo_root/ui" && bun install --frozen-lockfile)
 for package in admin simulator-aws simulator-gcp simulator-azure; do
   (cd "$repo_root/ui/packages/$package" && bun run build)
@@ -143,3 +159,8 @@ wait_for_url http://localhost:29320/health "Google Cloud simulator"
 wait_for_url http://localhost:29330/health "Microsoft Azure simulator"
 
 SHAUTH_BOOTSTRAP_ADMIN_PASSWORD="$admin_password" node "$repo_root/ui/e2e/shauth-rps.mjs"
+
+grep -q 'accepted Shauth back-channel logout' "$work_dir/admin.log"
+grep -q 'accepted Shauth back-channel logout' "$work_dir/aws.log"
+grep -q 'accepted Shauth back-channel logout' "$work_dir/gcp.log"
+grep -q 'accepted Shauth back-channel logout' "$work_dir/azure.log"

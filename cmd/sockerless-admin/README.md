@@ -175,7 +175,8 @@ validation, verified the signed ID token, and accepted only `developer` or
 logout control. Browser sessions were server-tracked, so OIDC Front-Channel
 Logout revoked sessions by a trusted issuer and `sid`, while a signed OIDC
 Back-Channel Logout token revoked matching sessions by `sid` or `sub`; replayed
-logout tokens were rejected by `jti`. Signing out initiated logout at Shauth's
+logout tokens were rejected by `jti`, and every token required `iat` plus a
+future `exp`. Signing out initiated logout at Shauth's
 discovered `end_session_endpoint` with an ID-token hint, so signing out of the
 console ended the shared Shauth session rather than immediately signing the
 user back in. Cookies were secure and HTTP-only; loopback development could
@@ -187,8 +188,8 @@ Continuous integration ran the compiled console and all three compiled
 simulator dashboards against real Shauth, Ory Hydra, and PostgreSQL. The
 browser matrix covered direct and catalog entry, shared sign-on, user identity,
 logout initiated by every relying party, global session revocation, the exact
-originating signed-out URL, and signed-out page reload without automatic
-reauthentication.
+originating signed-out URL, signed back-channel acceptance at every relying
+party, and signed-out page reload without automatic reauthentication.
 
 With no Shauth variables the existing local operator workflow remained
 unauthenticated. Partial or non-HTTPS production configuration failed at

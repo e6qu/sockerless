@@ -892,3 +892,27 @@ any generic short-SHA index whose platform set differed from exactly Linux
 ARM64 and AMD64. This preserved the generic multi-architecture image for Amazon
 Elastic Container Service and Kubernetes while keeping the explicit tags
 usable by consumers that require a single-architecture image manifest.
+
+## Expiring back-channel logout qualification
+
+Sockerless Admin and the shared simulator identity module required every OIDC
+Back-Channel Logout token to carry an expiry later than the validation time.
+The real Shauth matrix registered all four relying-party back-channel paths,
+kept the public browser coordinates on their loopback origins, and rewrote only
+Ory Hydra's container-to-host delivery coordinates. The browser exercised
+direct and catalog entry, shared sign-on, logout from every application,
+application-local signed-out return, and fail-closed re-entry. Each compiled
+relying party recorded successful signed back-channel acceptance, so the
+matrix could not pass solely through front-channel iframes.
+
+## Amazon ECS attached-container task generations
+
+Reusing a stopped attached container created a fresh Amazon ECS execution
+generation. The pending record reset to Docker's created state, every start
+owned a new wait channel, and a delayed poller removed only its own channel.
+While the new task was pending, cloud recovery no longer selected a historical
+stopped task, so attach bound to the current task's CloudWatch stream instead
+of replaying the previous cycle. Default Docker networking was normalized to
+bridge semantics before task tagging and cloud-state reconstruction. A real
+simulator/backend integration test ran two scripts through the same attached
+container ID and received each cycle's distinct output.

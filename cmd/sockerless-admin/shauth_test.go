@@ -200,6 +200,14 @@ func TestSHAUTHBackchannelLogoutRevokesMatchingSessionsAndRejectsReplay(t *testi
 	if err := config.processBackchannelLogout(context.Background(), missingIssuedAt, verifier, now); err == nil {
 		t.Fatal("logout token without iat was accepted")
 	}
+	missingExpiry := signClaims(map[string]any{
+		"iss": config.issuer, "sub": "subject", "aud": config.clientID,
+		"iat": now.Unix(), "jti": "logout-token-missing-expiry",
+		"events": map[string]any{shauthLogoutEvent: map[string]any{}},
+	})
+	if err := config.processBackchannelLogout(context.Background(), missingExpiry, verifier, now); err == nil {
+		t.Fatal("logout token without exp was accepted")
+	}
 	invalidEvent := signClaims(map[string]any{
 		"iss": config.issuer, "sub": "subject", "aud": config.clientID,
 		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "jti": "logout-token-3",

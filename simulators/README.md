@@ -80,7 +80,8 @@ The optional first-party UI authentication layer uses authorization code +
 PKCE, nonce and state validation, signed server-tracked sessions, RP-Initiated
 Logout with an ID-token hint, OIDC Front-Channel Logout correlated by trusted
 issuer and `sid`, and signed OIDC Back-Channel Logout correlated by `sid` or
-`sub`. It protects only `/ui/` and the UI identity/logout endpoints;
+`sub` with required `iat`, future `exp`, and single-use `jti` claims. It
+protects only `/ui/` and the UI identity/logout endpoints;
 all AWS, Google Cloud, and Microsoft Azure API routes retain their native
 authentication and protocol behavior. Partial configuration fails startup.
 
@@ -109,7 +110,8 @@ Continuous integration ran the compiled AWS, Google Cloud, and Microsoft
 Azure dashboards together with Sockerless Admin against real Shauth, Ory
 Hydra, and PostgreSQL. One browser matrix verified direct and app-catalog entry,
 shared sign-on, identity, logout from every relying party, global revocation,
-and exact app-local signed-out destinations.
+exact app-local signed-out destinations, and signed back-channel acceptance at
+every dashboard.
 
 Docker or Podman is required when simulator calls execute workloads. If the
 operator intentionally needs only non-execution API surfaces, `SIM_RUNTIME=process`

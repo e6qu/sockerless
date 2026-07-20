@@ -249,6 +249,11 @@ func (s *Server) ContainerStart(ref string) error {
 			return &api.NotFoundError{Resource: "container", ID: ref}
 		}
 		c = resolved
+		c.State = api.ContainerState{Status: "created"}
+		s.ECS.Update(c.ID, func(state *ECSState) {
+			state.TaskARN = ""
+			state.ClusterARN = ""
+		})
 		// Restore the container to PendingCreates so the rest of the
 		// start flow (taskdef registration, RunTask, waitForRunning)
 		// finds it via the existing path. The entry is removed again
@@ -265,14 +270,9 @@ func (s *Server) ContainerStart(ref string) error {
 
 	// markRunning emits the start event and sets up the wait channel.
 	// Container state is no longer written to Store.Containers — the cloud is the truth.
-	markRunning := func() chan struct{} {
-		// Use existing exitCh if already created, otherwise create new one
-		var exitCh chan struct{}
-		if ch, ok := s.Store.WaitChs.Load(id); ok {
-			exitCh = asWaitCh(ch)
-		} else {
-			exitCh = make(chan struct{})
-			s.Store.WaitChs.Store(id, exitCh)
+	markRunning := func(exitCh chan struct{}) chan struct{} {
+		if exitCh == nil {
+			exitCh = s.beginWaitCycle(id)
 		}
 		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		return exitCh
@@ -307,7 +307,7 @@ func (s *Server) ContainerStart(ref string) error {
 		// the gitlab-runner helper's `gitlab-runner-build` then hangs
 		// forever waiting for stdin.
 		if pipe := s.waitForOpenStdinPipe(id, 5*time.Second); pipe != nil {
-			exitCh := markRunning()
+			exitCh := markRunning(nil)
 			cContainer := c
 			go s.launchAfterStdin(id, &cContainer, pipe, exitCh)
 			return nil
@@ -332,20 +332,23 @@ func (s *Server) ContainerStart(ref string) error {
 	// Deferred start: if container is in a multi-container pod, wait for all siblings
 	shouldDefer, podContainers := s.PodDeferredStart(id)
 	if shouldDefer {
-		markRunning()
+		markRunning(nil)
 		return nil
 	}
 
 	if len(podContainers) > 1 {
 		// Multi-container pod: register combined task definition and run a single task
-		exitCh := markRunning()
-		return s.startMultiContainerTaskTyped(id, podContainers, exitCh)
+		exitCh := markRunning(nil)
+		if err := s.startMultiContainerTaskTyped(id, podContainers, exitCh); err != nil {
+			s.finishWaitCycle(id, exitCh)
+			return err
+		}
+		return nil
 	}
 
 	// Pre-create exit channel so ContainerWait works even if the task
 	// exits quickly.
-	exitCh := make(chan struct{})
-	s.Store.WaitChs.Store(id, exitCh)
+	exitCh := s.beginWaitCycle(id)
 
 	// Run ECS task before marking container as running, so docker ps
 	// doesn't show a false-positive running state if RunTask fails.
@@ -356,11 +359,11 @@ func (s *Server) ContainerStart(ref string) error {
 		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: aws.String(taskDefARN),
 		})
-		s.Store.WaitChs.Delete(id)
+		s.finishWaitCycle(id, exitCh)
 		return awscommon.MapAWSError(err, "task", id)
 	}
 
-	markRunning()
+	markRunning(exitCh)
 
 	s.ECS.Update(id, func(state *ECSState) {
 		state.TaskARN = taskARN
@@ -384,9 +387,7 @@ func (s *Server) ContainerStart(ref string) error {
 	taskAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			closeWaitCh(ch)
-		}
+		s.finishWaitCycle(id, exitCh)
 		return err
 	}
 
@@ -401,9 +402,7 @@ func (s *Server) ContainerStart(ref string) error {
 		// so subsequent inspect/ps reads come from CloudState (which
 		// reflects the actual STOPPED state).
 		s.PendingCreates.Delete(id)
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			closeWaitCh(ch)
-		}
+		s.finishWaitCycle(id, exitCh)
 		return nil
 	}
 
@@ -425,7 +424,7 @@ func (s *Server) ContainerStart(ref string) error {
 		if ep == nil || ep.NetworkID == "" {
 			continue
 		}
-		if netName == "bridge" || netName == "host" || netName == "none" {
+		if netName == "bridge" || netName == "host" || netName == "none" || netName == "default" {
 			continue
 		}
 		for _, name := range cloudMapNamesFor(hostname, ep.Aliases) {
@@ -1341,9 +1340,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 		s.Logger.Info().Str("container", id[:12]).Int("buffered_bytes", len(pipe.Bytes())).Msg("stdin-pipe wait timeout — proceeding with buffered bytes")
 	case <-s.ctx().Done():
 		s.Logger.Warn().Str("container", id[:12]).Msg("stdin-pipe wait cancelled before EOF")
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			closeWaitCh(ch)
-		}
+		s.finishWaitCycle(id, exitCh)
 		return
 	}
 
@@ -1382,9 +1379,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 	})
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to register task definition")
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			closeWaitCh(ch)
-		}
+		s.finishWaitCycle(id, exitCh)
 		return
 	}
 	s.ECS.Update(id, func(state *ECSState) { state.TaskDefARN = taskDefARN })
@@ -1395,9 +1390,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 		_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: aws.String(taskDefARN),
 		})
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			closeWaitCh(ch)
-		}
+		s.finishWaitCycle(id, exitCh)
 		return
 	}
 	s.ECS.Update(id, func(state *ECSState) {
@@ -1408,9 +1401,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 	taskAddr, err := s.waitForTaskRunning(s.ctx(), taskARN)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("task", taskARN).Msg("deferred-stdin: task failed to reach RUNNING state")
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			closeWaitCh(ch)
-		}
+		s.finishWaitCycle(id, exitCh)
 		return
 	}
 
@@ -1424,9 +1415,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 		// EOFs the stream — gitlab-runner's per-stage `docker attach`
 		// hangs indefinitely waiting for the container to "exit".
 		s.PendingCreates.Delete(id)
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			closeWaitCh(ch)
-		}
+		s.finishWaitCycle(id, exitCh)
 		return
 	}
 
@@ -1448,7 +1437,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 		if ep == nil || ep.NetworkID == "" {
 			continue
 		}
-		if netName == "bridge" || netName == "host" || netName == "none" {
+		if netName == "bridge" || netName == "host" || netName == "none" || netName == "default" {
 			continue
 		}
 		for _, name := range cloudMapNamesFor(hostname, ep.Aliases) {
