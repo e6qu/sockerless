@@ -127,6 +127,7 @@ SOCKERLESS_HOME="$work_dir/admin-home" \
 SOCKERLESS_ADMIN_SHAUTH_ISSUER=http://localhost:8080 \
 SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID=sockerless-admin \
 SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET="$admin_client_secret" \
+SOCKERLESS_ADMIN_SESSION_SECRET="$session_secret" \
 SOCKERLESS_ADMIN_PUBLIC_URL=http://localhost:29090 \
 SOCKERLESS_ADMIN_INSECURE_COOKIES=true \
   "$repo_root/cmd/sockerless-admin/sockerless-admin" -addr :29090 >"$work_dir/admin.log" 2>&1 &

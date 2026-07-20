@@ -916,3 +916,14 @@ of replaying the previous cycle. Default Docker networking was normalized to
 bridge semantics before task tagging and cloud-state reconstruction. A real
 simulator/backend integration test ran two scripts through the same attached
 container ID and received each cycle's distinct output.
+
+## Independent Sockerless Admin session credentials
+
+Sockerless Admin required a dedicated browser-session signing secret of at
+least 32 bytes whenever Shauth OpenID Connect was enabled. The confidential
+OpenID Connect client secret remained limited to client authentication, so
+provider credential rotation no longer invalidated locally signed state or
+session values. Focused validation proved that only rotation of the dedicated
+session secret invalidated existing signatures, and the complete real
+PostgreSQL, patched Ory Hydra, Shauth, compiled relying-party, and Chromium
+matrix passed with the separated credentials.

@@ -37,22 +37,24 @@ const (
 // A deployed administrator console must set every coordinate and is then
 // guarded by Shauth; simulator cloud API endpoints are never wrapped here.
 type shauthConfig struct {
-	issuer       string
-	clientID     string
-	clientSecret string
-	publicURL    string
-	insecure     bool
-	sessions     *shauthSessionStore
+	issuer        string
+	clientID      string
+	clientSecret  string
+	sessionSecret string
+	publicURL     string
+	insecure      bool
+	sessions      *shauthSessionStore
 }
 
 func shauthConfigFromEnvironment() shauthConfig {
 	return shauthConfig{
-		issuer:       os.Getenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER"),
-		clientID:     os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID"),
-		clientSecret: os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET"),
-		publicURL:    strings.TrimRight(os.Getenv("SOCKERLESS_ADMIN_PUBLIC_URL"), "/"),
-		insecure:     os.Getenv("SOCKERLESS_ADMIN_INSECURE_COOKIES") == "true",
-		sessions:     newSHAUTHSessionStore(),
+		issuer:        os.Getenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER"),
+		clientID:      os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID"),
+		clientSecret:  os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET"),
+		sessionSecret: os.Getenv("SOCKERLESS_ADMIN_SESSION_SECRET"),
+		publicURL:     strings.TrimRight(os.Getenv("SOCKERLESS_ADMIN_PUBLIC_URL"), "/"),
+		insecure:      os.Getenv("SOCKERLESS_ADMIN_INSECURE_COOKIES") == "true",
+		sessions:      newSHAUTHSessionStore(),
 	}
 }
 
@@ -62,7 +64,7 @@ func (c shauthConfig) enabled() bool {
 
 func (c shauthConfig) validate() error {
 	configured := 0
-	for _, value := range []string{c.issuer, c.clientID, c.clientSecret, c.publicURL} {
+	for _, value := range []string{c.issuer, c.clientID, c.clientSecret, c.sessionSecret, c.publicURL} {
 		if value != "" {
 			configured++
 		}
@@ -70,8 +72,11 @@ func (c shauthConfig) validate() error {
 	if configured == 0 {
 		return nil
 	}
-	if configured != 4 {
-		return fmt.Errorf("SOCKERLESS_ADMIN_SHAUTH_ISSUER, SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID, SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET, and SOCKERLESS_ADMIN_PUBLIC_URL must be configured together")
+	if configured != 5 {
+		return fmt.Errorf("SOCKERLESS_ADMIN_SHAUTH_ISSUER, SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID, SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET, SOCKERLESS_ADMIN_SESSION_SECRET, and SOCKERLESS_ADMIN_PUBLIC_URL must be configured together")
+	}
+	if len(c.sessionSecret) < 32 {
+		return fmt.Errorf("SOCKERLESS_ADMIN_SESSION_SECRET must contain at least 32 bytes")
 	}
 	for name, value := range map[string]string{"issuer": c.issuer, "public URL": c.publicURL} {
 		parsed, err := url.ParseRequestURI(value)
@@ -196,7 +201,7 @@ func (c shauthConfig) sign(value any) (string, error) {
 		return "", err
 	}
 	payload := base64.RawURLEncoding.EncodeToString(raw)
-	mac := hmac.New(sha256.New, []byte(c.clientSecret))
+	mac := hmac.New(sha256.New, []byte(c.sessionSecret))
 	_, _ = mac.Write([]byte(payload))
 	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
@@ -210,7 +215,7 @@ func (c shauthConfig) verify(value string, destination any) error {
 	if err != nil {
 		return fmt.Errorf("invalid signed value")
 	}
-	mac := hmac.New(sha256.New, []byte(c.clientSecret))
+	mac := hmac.New(sha256.New, []byte(c.sessionSecret))
 	_, _ = mac.Write([]byte(parts[0]))
 	if subtle.ConstantTimeCompare(signature, mac.Sum(nil)) != 1 {
 		return fmt.Errorf("invalid signed value")

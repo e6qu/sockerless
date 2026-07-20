@@ -19,11 +19,12 @@ import (
 
 func testSHAUTHConfig() shauthConfig {
 	return shauthConfig{
-		issuer:       "https://auth.dev.e6qu.dev",
-		clientID:     "client",
-		clientSecret: "this-is-a-test-secret",
-		publicURL:    "https://admin.dev.e6qu.dev",
-		sessions:     newSHAUTHSessionStore(),
+		issuer:        "https://auth.dev.e6qu.dev",
+		clientID:      "client",
+		clientSecret:  "this-is-a-test-secret",
+		sessionSecret: "0123456789abcdef0123456789abcdef",
+		publicURL:     "https://admin.dev.e6qu.dev",
+		sessions:      newSHAUTHSessionStore(),
 	}
 }
 
@@ -34,17 +35,20 @@ func TestSHAUTHConfigRequiresCompleteHTTPSCoordinates(t *testing.T) {
 	if err := (shauthConfig{issuer: "https://auth.dev.e6qu.dev", clientID: "client"}).validate(); err == nil {
 		t.Fatal("partial configuration was accepted")
 	}
-	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
+	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
 		t.Fatal("non-HTTPS issuer was accepted")
 	}
-	if err := (shauthConfig{issuer: "http://localhost:8080", clientID: "client", clientSecret: "secret", publicURL: "http://localhost:29090", insecure: true}).validate(); err != nil {
+	if err := (shauthConfig{issuer: "http://localhost:8080", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "http://localhost:29090", insecure: true}).validate(); err != nil {
 		t.Fatalf("explicit loopback test configuration: %v", err)
 	}
-	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", publicURL: "http://admin.dev.e6qu.dev", insecure: true}).validate(); err == nil {
+	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "http://admin.dev.e6qu.dev", insecure: true}).validate(); err == nil {
 		t.Fatal("public HTTP coordinates were accepted in insecure test mode")
 	}
-	if err := (shauthConfig{issuer: "https://user@auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
+	if err := (shauthConfig{issuer: "https://user@auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
 		t.Fatal("issuer with user information was accepted")
+	}
+	if err := (shauthConfig{issuer: "https://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "short", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
+		t.Fatal("short session secret was accepted")
 	}
 }
 
@@ -52,6 +56,7 @@ func TestSHAUTHConfigPreservesExactIssuer(t *testing.T) {
 	t.Setenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER", "https://auth.dev.e6qu.dev/tenant/")
 	t.Setenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID", "client")
 	t.Setenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET", "secret")
+	t.Setenv("SOCKERLESS_ADMIN_SESSION_SECRET", "0123456789abcdef0123456789abcdef")
 	t.Setenv("SOCKERLESS_ADMIN_PUBLIC_URL", "https://admin.dev.e6qu.dev/")
 	config := shauthConfigFromEnvironment()
 	if config.issuer != "https://auth.dev.e6qu.dev/tenant/" {
@@ -107,6 +112,25 @@ func TestSHAUTHSessionDoesNotAcceptTampering(t *testing.T) {
 	var session shauthSession
 	if err := config.verify(value+"x", &session); err == nil {
 		t.Fatal("tampered session was accepted")
+	}
+}
+
+func TestSHAUTHSessionKeyIsIndependentFromOIDCClientSecret(t *testing.T) {
+	config := testSHAUTHConfig()
+	value, err := config.sign(shauthSession{Subject: "subject", Expires: time.Now().Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatalf("sign session: %v", err)
+	}
+	rotatedClient := config
+	rotatedClient.clientSecret = "rotated-confidential-client-secret"
+	var session shauthSession
+	if err := rotatedClient.verify(value, &session); err != nil {
+		t.Fatalf("rotating OIDC client secret changed cookie verification: %v", err)
+	}
+	rotatedSession := config
+	rotatedSession.sessionSecret = "fedcba9876543210fedcba9876543210"
+	if err := rotatedSession.verify(value, &session); err == nil {
+		t.Fatal("session signed with the previous cookie key was accepted")
 	}
 }
 

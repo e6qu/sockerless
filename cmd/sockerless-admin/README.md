@@ -159,6 +159,7 @@ endpoint. Configure all four values together in a deployed console:
 SOCKERLESS_ADMIN_SHAUTH_ISSUER=https://auth.dev.e6qu.dev
 SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID=sockerless-admin-dev
 SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET=<from AWS Secrets Manager>
+SOCKERLESS_ADMIN_SESSION_SECRET=<independent random value of at least 32 bytes>
 SOCKERLESS_ADMIN_PUBLIC_URL=https://admin.dev.e6qu.dev
 ```
 
