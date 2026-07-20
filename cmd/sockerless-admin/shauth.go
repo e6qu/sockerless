@@ -29,6 +29,7 @@ const (
 	shauthTransactionCookie = "sockerless_admin_shauth_tx"
 	shauthSessionCookie     = "sockerless_admin_shauth_session"
 	shauthSignedOutPath     = "/auth/signed-out"
+	shauthAdministratorRole = "admin"
 	shauthMaximumFormBytes  = 1 << 20
 	shauthLogoutEvent       = "http://schemas.openid.net/event/backchannel-logout"
 )
@@ -241,11 +242,31 @@ func (c shauthConfig) middleware(next http.Handler) http.Handler {
 			err = c.verify(cookie.Value, &session)
 		}
 		if err == nil && c.sessionIsActive(session, time.Now()) {
-			next.ServeHTTP(w, r)
+			if session.Role == shauthAdministratorRole {
+				next.ServeHTTP(w, r)
+				return
+			}
+			c.forbidden(w, r, session)
 			return
 		}
 		http.Redirect(w, r, "/auth/shauth", http.StatusFound)
 	})
+}
+
+func (c shauthConfig) forbidden(w http.ResponseWriter, r *http.Request, session shauthSession) {
+	w.Header().Set("Cache-Control", "no-store")
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "Shauth administrator role required"})
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	if err := shauthForbiddenTemplate.Execute(w, struct {
+		Name string
+		Role string
+	}{Name: session.Name, Role: session.Role}); err != nil {
+		log.Printf("render Shauth authorization denial: %v", err)
+	}
 }
 
 func isSHAUTHRoute(path string) bool {
@@ -554,6 +575,8 @@ func (c shauthConfig) signedOut(w http.ResponseWriter, _ *http.Request) {
 }
 
 var shauthSignedOutTemplate = template.Must(template.New("signed-out").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out · Sockerless Admin</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fff7ed;color:#21130f;font:16px system-ui,sans-serif}.card{max-width:34rem;padding:2.5rem;border:1px solid #fed7aa;border-radius:1.25rem;background:#fff;box-shadow:0 16px 40px #7c2d1214}a{display:inline-block;margin-top:1rem;padding:.7rem 1rem;border-radius:.6rem;background:#ea580c;color:#fff;font-weight:700;text-decoration:none}a:focus-visible{outline:3px solid #0ea5e9;outline-offset:3px}@media(prefers-color-scheme:dark){body{background:#160c09;color:#fff7ed}.card{background:#26130d;border-color:#7c2d12}}</style></head><body><main class="card"><h1>Signed out of Sockerless Admin</h1><p>Your Sockerless Admin session and shared Shauth session have ended.</p><a href="/auth/shauth">Sign in again</a></main></body></html>`))
+
+var shauthForbiddenTemplate = template.Must(template.New("forbidden").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Administrator access required · Sockerless Admin</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fff7ed;color:#21130f;font:16px system-ui,sans-serif}.card{max-width:36rem;padding:2.5rem;border:1px solid #fed7aa;border-radius:1.25rem;background:#fff;box-shadow:0 16px 40px #7c2d1214}.eyebrow{font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#c2410c}button{margin-top:1rem;padding:.7rem 1rem;border:0;border-radius:.6rem;background:#ea580c;color:#fff;font:inherit;font-weight:700;cursor:pointer}button:focus-visible{outline:3px solid #0ea5e9;outline-offset:3px}@media(prefers-color-scheme:dark){body{background:#160c09;color:#fff7ed}.card{background:#26130d;border-color:#7c2d12}.eyebrow{color:#fb923c}}</style></head><body><main class="card"><p class="eyebrow">Access denied</p><h1>Administrator access required</h1><p>{{if .Name}}{{.Name}} is{{else}}You are{{end}} signed in with the <strong>{{.Role}}</strong> role. Sockerless Admin contains operator controls and requires the Shauth administrator role.</p><form method="post" action="/auth/logout"><button type="submit">Sign out</button></form></main></body></html>`))
 
 func (c shauthConfig) session(w http.ResponseWriter, r *http.Request) {
 	if !c.enabled() {

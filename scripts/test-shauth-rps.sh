@@ -19,6 +19,7 @@ work_dir=$(mktemp -d)
 postgres_password=$(openssl rand -hex 32)
 hydra_secret=$(openssl rand -base64 48 | tr -d '\n')
 admin_password=$(openssl rand -base64 48 | tr -d '\n')
+developer_password=$(openssl rand -base64 48 | tr -d '\n')
 admin_client_secret=$(openssl rand -hex 32)
 aws_client_secret=$(openssl rand -hex 32)
 gcp_client_secret=$(openssl rand -hex 32)
@@ -123,14 +124,19 @@ make -C "$repo_root/simulators/aws" build
 make -C "$repo_root/simulators/gcp" build
 make -C "$repo_root/simulators/azure" build
 
-SOCKERLESS_HOME="$work_dir/admin-home" \
-SOCKERLESS_ADMIN_SHAUTH_ISSUER=http://localhost:8080 \
-SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID=sockerless-admin \
-SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET="$admin_client_secret" \
-SOCKERLESS_ADMIN_SESSION_SECRET="$session_secret" \
-SOCKERLESS_ADMIN_PUBLIC_URL=http://localhost:29090 \
-SOCKERLESS_ADMIN_INSECURE_COOKIES=true \
-  "$repo_root/cmd/sockerless-admin/sockerless-admin" -addr :29090 >"$work_dir/admin.log" 2>&1 &
+mkdir -p "$work_dir/admin-home"
+(
+  cd "$work_dir/admin-home"
+  exec env \
+    SOCKERLESS_HOME="$work_dir/admin-home" \
+    SOCKERLESS_ADMIN_SHAUTH_ISSUER=http://localhost:8080 \
+    SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID=sockerless-admin \
+    SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET="$admin_client_secret" \
+    SOCKERLESS_ADMIN_SESSION_SECRET="$session_secret" \
+    SOCKERLESS_ADMIN_PUBLIC_URL=http://localhost:29090 \
+    SOCKERLESS_ADMIN_INSECURE_COOKIES=true \
+    "$repo_root/cmd/sockerless-admin/sockerless-admin" -addr :29090
+) >"$work_dir/admin.log" 2>&1 &
 pids+=("$!")
 
 start_simulator() {
@@ -159,7 +165,9 @@ wait_for_url http://localhost:29310/health "AWS simulator"
 wait_for_url http://localhost:29320/health "Google Cloud simulator"
 wait_for_url http://localhost:29330/health "Microsoft Azure simulator"
 
-SHAUTH_BOOTSTRAP_ADMIN_PASSWORD="$admin_password" node "$repo_root/ui/e2e/shauth-rps.mjs"
+SHAUTH_BOOTSTRAP_ADMIN_PASSWORD="$admin_password" \
+SHAUTH_DEVELOPER_PASSWORD="$developer_password" \
+  node "$repo_root/ui/e2e/shauth-rps.mjs"
 
 grep -q 'accepted Shauth back-channel logout' "$work_dir/admin.log"
 grep -q 'accepted Shauth back-channel logout' "$work_dir/aws.log"

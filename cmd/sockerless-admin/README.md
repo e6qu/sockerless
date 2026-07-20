@@ -15,7 +15,7 @@ Local orchestration server for Sockerless topologies — backends, simulators, a
 
 | Test path | What runs | Last green |
 |---|---|---|
-| `cmd/sockerless-admin/*_test.go` (40+ files) | Unit tests for topology CRUD, project lifecycle, process manager, instance lifecycle, OTel wiring, config migration. | 2026-05-26 |
+| `cmd/sockerless-admin/*_test.go` (40+ files) | Unit tests for topology CRUD, administrator authorization, project lifecycle, process manager, instance lifecycle, OTel wiring, and config migration. | 2026-07-20 |
 | `ui/packages/admin/` (Vitest) | UI component + route tests via [Vitest](https://vitest.dev). | 2026-05-26 |
 | `make cmd/sockerless-admin/test` | Leaf-Makefile suite per [`docs/MAKEFILE_STANDARD.md`](../../docs/MAKEFILE_STANDARD.md). | 2026-05-26 |
 | Manual round-trip | `sockerless-admin --addr :9090` -> open `http://localhost:9090/ui/` in a browser, register a backend, start it, drive a container through. | continuous |
@@ -153,7 +153,7 @@ $ curl -s http://localhost:9090/api/v1/components | jq '.[]'
 
 The operator console supported optional Shauth OpenID Connect sign-in without
 changing any simulator, backend, SDK, command-line interface, or Terraform API
-endpoint. Configure all four values together in a deployed console:
+endpoint. Configure all five values together in a deployed console:
 
 ```sh
 SOCKERLESS_ADMIN_SHAUTH_ISSUER=https://auth.dev.e6qu.dev
@@ -171,9 +171,14 @@ Register these Shauth relying-party coordinates:
 - back-channel logout URI: `https://admin.dev.e6qu.dev/auth/shauth/backchannel-logout`
 
 The console discovered Shauth, used authorization code + PKCE and nonce
-validation, verified the signed ID token, and accepted only `developer` or
-`admin` roles. It displayed the signed-in user, role, initial avatar, and a
-logout control. Browser sessions were server-tracked, so OIDC Front-Channel
+validation and verified the signed ID token. The console authenticated both
+`developer` and `admin` identities so it could report the signed-in identity
+truthfully, but only the Shauth `admin` role could enter the operator UI or
+invoke its APIs. Developers received an explicit no-cache `403` page with a
+logout control, and API requests received a JSON `403` without reaching the
+operator handler. The console displayed an authorized administrator's signed-in
+name, role, initial avatar, and logout control. Browser sessions were
+server-tracked, so OIDC Front-Channel
 Logout revoked sessions by a trusted issuer and `sid`, while a signed OIDC
 Back-Channel Logout token revoked matching sessions by `sid` or `sub`; replayed
 logout tokens were rejected by `jti`, and every token required `iat` plus a
@@ -187,10 +192,13 @@ rejected even in that development mode.
 
 Continuous integration ran the compiled console and all three compiled
 simulator dashboards against real Shauth, Ory Hydra, and PostgreSQL. The
-browser matrix covered direct and catalog entry, shared sign-on, user identity,
-logout initiated by every relying party, global session revocation, the exact
-originating signed-out URL, signed back-channel acceptance at every relying
-party, and signed-out page reload without automatic reauthentication.
+browser matrix created a real developer through Shauth's administration UI,
+proved developer denial for the Admin UI and a topology mutation, proved an
+administrator could persist and remove a real topology project, and covered
+direct and catalog entry, shared sign-on, user identity, logout initiated by
+every relying party, global session revocation, the exact originating
+signed-out URL, signed back-channel acceptance at every relying party, and
+signed-out page reload without automatic reauthentication.
 
 With no Shauth variables the existing local operator workflow remained
 unauthenticated. Partial or non-HTTPS production configuration failed at
