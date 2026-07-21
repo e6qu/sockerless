@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2626 filed - 2580 fixed - 6 open - 16 false positives.**
+**2627 filed - 2581 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2627~~ | P1 | Sockerless Shauth browser continuous integration | the job isolated Shauth's nested Go module but selected Sockerless's older Go toolchain | The Shauth relying-party job now derives its Go toolchain directly from the pinned Shauth `go.mod`, so a provider toolchain change and its standalone validator build cannot drift apart. |
 | ~~2626~~ | P0 | containerized AWS simulator workload callbacks | nested workloads inherited the simulator container's default route instead of its real outer-host alias | The simulator now propagated the existing `host.docker.internal` or `host.containers.internal` IPv4 address into nested workloads before considering the route gateway; a real Bleeplab Amazon ECS runner pipeline reached the Git origin, compiled and consumed artifacts, and connected to Redis over the build pod network. |
 | ~~2616~~ | P0 | Sockerless OpenID Connect continuous integration | the Shauth browser harness inherited local frontend bundles, while a clean runner compiled headless servers and returned 404 for every operator interface | The harness now builds the Admin and all three simulator production bundles before compiling their servers, pins the verified-email Shauth revision, and passes from a clean real PostgreSQL/Ory Hydra/Chromium stack. |
 | ~~2624~~ | P1 | Google Cloud Build SDK harness | Podman's Docker-compatible API rejected the real HTTP loopback registry used by the simulator's ordinary image push | The shared simulator test utility now applied the container engine's scoped loopback-registry trust policy, reloaded Podman before and after each test, and preserved the same ordinary Docker push used with Docker Engine. |

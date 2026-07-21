@@ -632,7 +632,7 @@ jobs:
           path: .test-deps/shauth
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: '.test-deps/shauth/go.mod'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - uses: actions/setup-node@v7.0.0

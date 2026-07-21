@@ -1038,4 +1038,6 @@ The same run completed the full GitLab-style pipeline, compiled and consumed
 an artifact, and reached Redis through the build pod's service alias.
 Sockerless's Shauth harness also isolated the standalone validator's Go module,
 so the same build succeeded when Shauth was checked out beneath Sockerless's
-workspace in continuous integration.
+workspace in continuous integration. The browser job selected the Go toolchain
+from that pinned Shauth module, preventing the provider's compiler requirement
+from drifting behind Sockerless's own toolchain.
