@@ -27,14 +27,15 @@ import (
 )
 
 const (
-	shauthTransactionCookie = "sockerless_admin_shauth_tx"
-	shauthSessionCookie     = "sockerless_admin_shauth_session"
-	shauthSignedOutPath     = "/auth/signed-out"
-	shauthValidationPath    = "/auth/validation"
-	shauthAdministratorRole = "admin"
-	shauthMaximumFormBytes  = 1 << 20
-	shauthLogoutEvent       = "http://schemas.openid.net/event/backchannel-logout"
-	shauthDiscoveryTimeout  = 10 * time.Second
+	shauthTransactionCookie  = "sockerless_admin_shauth_tx"
+	shauthSessionCookie      = "sockerless_admin_shauth_session"
+	shauthLogoutCompletePath = "/auth/shauth/logout/complete"
+	shauthSignedOutPath      = "/auth/signed-out"
+	shauthValidationPath     = "/auth/validation"
+	shauthAdministratorRole  = "admin"
+	shauthMaximumFormBytes   = 1 << 20
+	shauthLogoutEvent        = "http://schemas.openid.net/event/backchannel-logout"
+	shauthDiscoveryTimeout   = 10 * time.Second
 )
 
 var immutableSHAUTHApplicationRelease = regexp.MustCompile(`^(?:[0-9a-f]{12,64}|sha256:[0-9a-f]{64})$`)
@@ -308,7 +309,7 @@ func (c shauthConfig) forbidden(w http.ResponseWriter, r *http.Request, session 
 }
 
 func isSHAUTHRoute(path string) bool {
-	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/frontchannel-logout" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session" || path == shauthSignedOutPath || path == shauthValidationPath
+	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/frontchannel-logout" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session" || path == shauthLogoutCompletePath || path == shauthSignedOutPath || path == shauthValidationPath
 }
 
 func (c shauthConfig) sessionIsActive(session shauthSession, now time.Time) bool {
@@ -492,12 +493,30 @@ func (c shauthConfig) logoutURL(endpoint, rawIDToken string) (*url.URL, error) {
 	}
 	query := logoutURL.Query()
 	query.Set("client_id", c.clientID)
-	query.Set("post_logout_redirect_uri", c.publicURL+shauthSignedOutPath)
+	query.Set("post_logout_redirect_uri", c.publicURL+shauthLogoutCompletePath)
 	if rawIDToken != "" {
 		query.Set("id_token_hint", rawIDToken)
 	}
 	logoutURL.RawQuery = query.Encode()
 	return logoutURL, nil
+}
+
+// logoutComplete ignores request input and returns to Shauth's fixed
+// completion endpoint.
+func (c shauthConfig) logoutComplete(w http.ResponseWriter, r *http.Request) {
+	target, err := url.Parse(c.issuer)
+	if err != nil || !target.IsAbs() || target.Host == "" || target.User != nil {
+		http.Error(w, "Shauth issuer is invalid", http.StatusInternalServerError)
+		return
+	}
+	target.Path = "/oauth/logout/complete"
+	target.RawPath = ""
+	target.RawQuery = ""
+	target.Fragment = ""
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(w, r, target.String(), http.StatusSeeOther)
 }
 
 func sameOriginRequest(r *http.Request, publicURL string) bool {

@@ -5,7 +5,7 @@ go 1.25.8
 require (
 	cloud.google.com/go/logging v1.19.0
 	cloud.google.com/go/run v1.22.0
-	cloud.google.com/go/storage v1.63.1
+	cloud.google.com/go/storage v1.64.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/rs/zerolog v1.35.1
 	github.com/sockerless/api v0.0.0

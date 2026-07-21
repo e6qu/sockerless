@@ -20,34 +20,26 @@ Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker C
 
 **Cloud simulator/backend fidelity, production operation, and live-cloud validation.**
 
-The simulator operator surfaces used one first-party OpenID Connect authorization boundary for both their rendered interfaces and the `/sim/v1/*` dashboard data those interfaces consumed. Sockerless Admin and all three simulator dashboards passed one real Shauth, Ory Hydra, PostgreSQL, and Chromium matrix for direct/catalog entry, shared sign-on, identity, app-local logout landing, global cross-application revocation, signed-out reload persistence, and explicit `Sign in with Shauth` re-entry. Sockerless Admin additionally required the Shauth administrator role at its shared UI/API boundary; the real matrix provisioned a developer through Shauth, proved that role could not open Admin or mutate topology, and proved an administrator could persist and remove a topology project. Health probes and native AWS, Google Cloud, and Microsoft Azure protocol routes remained outside that browser-session boundary. Native release tags were direct architecture image manifests, while the short-SHA generic tag was an OCI index containing exactly Linux ARM64 and AMD64.
+Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator dashboards completed one first-party OpenID Connect boundary for their rendered interfaces and operator data while native cloud protocol routes remained independent. The exact PostgreSQL, Ory Hydra, Shauth, compiled relying-party, and Chromium matrix proved direct and catalog entry, shared sign-on, identity, relying-party and provider logout, correlated logout completion, application-local signed-out return, reload, reauthentication, global revocation, release identity, anonymous fail-closed behavior, active event-stream readiness, and validator-credential isolation.
 
-The Bleephub Amazon Elastic Container Service on AWS Fargate module deployed an independent eu-west-1 service with private networking, fck-nat, an Amazon Simple Storage Service gateway endpoint, Amazon Simple Storage Service git/object persistence, native dqlite quorum storage, Amazon API Gateway scale-to-zero wake routing, and an internal Network Load Balancer. GitHub OAuth, local administrator identity, Git Smart HTTP, and SSH Git were verified against the live service. The remaining deployment-specific gap is BUG-2569: the same module's local Amazon Elastic Container Service Terraform simulator apply/destroy harness did not terminate deterministically.
+Production operation had enforceable resource and artifact contracts. Every ordinary GitHub Actions job was bounded to 15 minutes, the historically over-budget AWS edge and Amazon EC2 command-line interface groups were split without losing any of the 630 tests, nightly fuzz targets ran in bounded parallel batches, and clean production builds created every frontend before compiling all 11 UI-bearing Go binaries. Native release tags remained direct architecture manifests while each short-SHA tag remained an OCI index containing exactly Linux ARM64 and AMD64.
 
-Merged #791 made GitHub Pages branch publication and committed-reference eventing real. The active branch then closed the release-provider class and continued through the shared parity/UI layer, retained GitHub Classroom product, and fine-grained personal access token workflow: routed release and asset management, real git-tag identity, strict repository isolation, complete lifecycle events, race-safe workflow discovery, saturated light/dark chrome, organization-admin Classroom management, real repository-backed coursework and grading, transition export/import, durable one-time token creation, organization approval, GitHub App-only administration, and resource/permission enforcement.
-
-The merged #783/#787 baselines pushed many shallow GitHub-compatible areas toward real behavior: repository metadata and permissions, pull request status rollups including count-by-state and Actions workflow-run links, durable GitHub Actions workflow-run and attempt history, durable gist/comment/star/fork state, release asset upload, GraphQL release immutable-state exposure, GitHub Pages deployment status routing, notification thread identity/URLs, user/organization/team/audit-log UI public-route usage, OAuth UI endpoint usage with explicit registered clients, registered OAuth client validation, stored-token browser authentication, persisted account suspension, checked credential entropy, Actions artifact and run/job repository scoping, workflow-dispatch ref resolution and organization provisioning for official `gh` command-line interface inputs, runtime enterprise coordinates for the Bleephub UI, Codespaces fail-loud semantics, GitHub App seed identity validation, Docker-backed local-image build loading, full local Docker-backed Bleephub hook coverage, public runner and metrics UI routing, route-level UI code-splitting, repository deletion durable-state cascades, object-backed Actions artifacts/caches/logs/release assets/package files/container-registry blobs/CodeQL database archives/CodeQL variant-analysis query packs/artifact attestation bundles, public security alert ingestion, removal of obsolete operator seed routes, runner-log object-store failure consistency, and incidental AWS simulator CI hardening. The active follow-up branch tightened persisted repository ownership, internal and public GitHub Actions execution-image and runner-label explicitness, container-package publishing through the GitHub Container Registry-compatible data plane, Projects v2 GraphQL owner resolution, GitHub Actions runner public-key wire-format validation, workflow runner-label validation, public repository commit-listing errors for empty or broken git state, empty-repository UI handling for that public commit-listing contract without browser resource errors, and GitHub App installation-token authorization for organization repository creation, then continued from there by finding remaining places where Bleephub still:
-
-- returns shape-only GraphQL/REST data instead of real store/git/object state;
-- exposes user workflows through internal-only endpoints;
-- fabricates SHAs, refs, timestamps, IDs, permissions, counters, URLs, or repository context;
-- falls back silently when storage, Docker, git, auth, or object storage is required;
-- differs from GitHub's official REST/GraphQL/runner/client behavior in request/response shape or status codes;
-- lacks UI coverage for a public GitHub-compatible workflow.
+The next fidelity work stayed evidence-driven: deterministic Amazon Elastic Container Service Terraform simulator lifecycle, provider-faithful simulator credential authentication, and authenticated real-cloud validation. Standalone products consumed published Sockerless simulator and backend contracts and retained their own source, deployment modules, and product-specific tests.
 
 ## Active Branch Priorities
 
-1. Keep hardening Bleephub as a real GitHub-compatible service, not a simulator-specific harness.
-2. Favor class fixes over point fixes: e.g. "all release uploads use raw upload contract", "all workflow refs resolve through git storage", "all public payload URLs avoid `/internal/`".
-3. Add tests that drive public GitHub-shaped paths or official clients wherever practical.
-4. Keep continuity concise and current; old per-bug detail belongs in PR descriptions and `git log`.
+1. Preserved the exact Shauth browser contract in the real PostgreSQL, Ory Hydra, compiled relying-party, and Chromium matrix.
+2. Kept every ordinary workflow job within the enforced 15-minute ceiling without narrowing test coverage.
+3. Kept production builds and releases incapable of silently omitting embedded web interfaces.
+4. Kept nightly fuzzing bounded, complete across discovered targets, and truthful about missing modules, failures, and crashers.
+5. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
-## Verified Next Bleephub Gaps
+## Verified Next Gaps
 
-1. Resolve BUG-2569 in the local Amazon Elastic Container Service Terraform simulator apply/destroy harness without changing real-provider coordinates or behavior.
-2. Add a complete GitHub GraphQL schema/introspection ratchet; current coverage proves selected consumer surfaces only.
-3. Extend page-level light/dark fidelity from the shared shell, repository Code view, Classroom, and account token settings through Settings/Security, issue/pull-request review workflows, Actions logs, organization administration, and remaining App settings.
-4. Extend REST proof beyond registered/observed shapes into exhaustive permission, status/header, pagination, redirect, conditional-request, webhook, cascade, and failure-atomicity matrices.
+1. BUG-2569 still required deterministic local Amazon Elastic Container Service Terraform simulator apply/destroy completion without changing real-provider coordinates or behavior.
+2. BUG-2625 still required provider-faithful credential issuance and verification across all three simulators.
+3. BUG-1075 still required authenticated validation for the remaining real-cloud backend cells.
+4. The merged authentication and workflow contracts still required publication, deployment, and the exact live-origin browser matrix.
 
 ## Standing Work
 

@@ -123,9 +123,23 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: embedded-ui-build-order
+        name: Embedded web interfaces build before Go binaries
+        entry: bash scripts/check-embedded-ui-build-order.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: container-publication
         name: Immutable multi-architecture container publication contract
         entry: bash scripts/check-container-publication.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: workflow-timeouts
+        name: GitHub Actions jobs finish within 15 minutes
+        entry: bash -c 'scripts/test-workflow-timeouts.sh && scripts/check-workflow-timeouts.sh'
         language: system
         pass_filenames: false
         always_run: true

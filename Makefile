@@ -102,7 +102,7 @@ ALL_APPS := $(GO_UI_APPS) $(GO_APPS) $(UI_APPS)
 #
 # `make build` → run `make build` in every app, in series. Fail fast.
 
-.PHONY: install build build-noui test test-integration lint clean upgrade-deps check-deps hooks
+.PHONY: install build build-noui test test-integration lint clean upgrade-deps check-deps check-workflow-timeouts hooks
 
 install: ## install deps in every app
 	@$(MAKE) -s _fanout TARGET=install APPS="$(ALL_APPS)"
@@ -113,7 +113,7 @@ hooks: ## install pre-commit / commit-msg / pre-push git hooks (one-time bootstr
 	@pre-commit install --hook-type commit-msg --hook-type pre-push
 
 build: ## build every app
-	@$(MAKE) -s _fanout TARGET=build APPS="$(GO_UI_APPS) $(GO_APPS) $(UI_APPS)"
+	@$(MAKE) -s _fanout TARGET=build APPS="$(UI_APPS) $(GO_UI_APPS) $(GO_APPS)"
 
 build-noui: ## build every Go app with -tags noui (skips UI embed)
 	@$(MAKE) -s _fanout TARGET=build-noui APPS="$(GO_UI_APPS) $(GO_APPS)"
@@ -140,6 +140,10 @@ upgrade-deps: ## bump every Go module's direct deps to latest (per-module indepe
 
 check-deps: ## fail if any Go module / Terraform provider is behind its latest published version
 	@bash scripts/check-latest-deps.sh
+
+check-workflow-timeouts: ## verify every GitHub Actions job has a timeout of at most 15 minutes
+	@bash scripts/test-workflow-timeouts.sh
+	@bash scripts/check-workflow-timeouts.sh
 
 # Internal helper: iterate APPS and run TARGET in each. Stops on
 # first failure. Honours --keep-going via $(MAKEFLAGS).

@@ -353,8 +353,27 @@ func TestLogoutURLReturnsToOriginatingSimulator(t *testing.T) {
 	if got := query.Get("id_token_hint"); got != "signed-id-token" {
 		t.Fatalf("id_token_hint = %q", got)
 	}
-	if got := query.Get("post_logout_redirect_uri"); got != "https://sim.example.test"+SignedOutPath {
+	if got := query.Get("post_logout_redirect_uri"); got != "https://sim.example.test"+LogoutCompletePath {
 		t.Fatalf("post_logout_redirect_uri = %q", got)
+	}
+}
+
+func TestLogoutCompleteUsesOnlyConfiguredIssuer(t *testing.T) {
+	auth, err := New(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://sim.example.test"+LogoutCompletePath+"?next=https%3A%2F%2Fattacker.example&code=secret", nil)
+	recorder := httptest.NewRecorder()
+	auth.logoutComplete(recorder, request)
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if location := recorder.Header().Get("Location"); location != "https://auth.example.test/oauth/logout/complete" {
+		t.Fatalf("bridge location = %q", location)
+	}
+	if recorder.Header().Get("Cache-Control") != "no-store" || recorder.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatal("logout completion bridge omitted no-store/no-referrer headers")
 	}
 }
 

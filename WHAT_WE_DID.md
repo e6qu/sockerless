@@ -4,6 +4,40 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-21 — Completed the exact Shauth and bounded-release contracts
+
+Sockerless Admin's logout-completion bridge remained public after local session
+revocation and redirected only to Shauth's issuer-correlated completion
+endpoint. Admin and the AWS, Google Cloud, and Microsoft Azure simulator
+dashboards passed the exact Shauth `0fda680cba964e5768ed75a9c3e5b7230c418ca6`
+contract against real PostgreSQL, Ory Hydra, freshly compiled relying parties,
+and Chromium. Eight serialized application-and-direction flows proved direct
+and catalog entry, relying-party and provider logout, exact completion
+bridging, application-local signed-out return, reload, reauthentication,
+global revocation, immutable release identity, anonymous fail-closed behavior,
+active event-stream readiness, and validator-credential isolation.
+
+The production build created every frontend bundle before compiling all 11
+UI-bearing Go binaries, and a repository gate rejected ordering regressions
+that could silently produce headless release artifacts. Every ordinary GitHub
+Actions job declared an enforced timeout of at most 15 minutes. Historical
+runtime evidence split the over-budget AWS edge and Amazon EC2 command-line
+interface groups into four non-overlapping shards while preserving exact
+single coverage of all 630 AWS CLI tests.
+
+The nightly fuzz harness ran targets in bounded parallel batches with one Go
+fuzz worker per target, retained truthful logs and crasher handling, and failed
+on missing modules instead of skipping them. A complete one-second pass
+exercised every discovered target in the AWS, Google Cloud, and Microsoft Azure
+simulators and shared modules, core, Docker backend, and agent. The complete
+test, lint, clean production-build, pre-commit, real authentication, and fuzz
+gates passed together.
+
+The required pre-push freshness gate also advanced every tracked Google Cloud
+Storage consumer to v1.64.0. The complete Google Cloud Run, Google Cloud Run
+Functions, shared Google Cloud backend, and standalone Google Cloud simulator
+SDK suites passed with the reconciled module graphs.
+
 ## 2026-07-20 — Made simulator registry pushes portable and faithful
 
 The Google Cloud Build and Azure Container Registry Tasks official SDK

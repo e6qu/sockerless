@@ -43,7 +43,7 @@ concurrency:
 jobs:
   probe-and-compile:
     runs-on: [self-hosted, sockerless-cloudrun]
-    timeout-minutes: 45
+    timeout-minutes: 15
     container:
       image: golang:1.22-alpine
     services:

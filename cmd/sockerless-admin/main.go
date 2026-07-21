@@ -106,6 +106,7 @@ func main() {
 	mux.HandleFunc("GET /auth/shauth/callback", shauth.callback)
 	mux.HandleFunc("GET /auth/shauth/frontchannel-logout", shauth.frontchannelLogout)
 	mux.HandleFunc("POST /auth/shauth/backchannel-logout", shauth.backchannelLogout)
+	mux.HandleFunc("GET "+shauthLogoutCompletePath, shauth.logoutComplete)
 	mux.HandleFunc("POST /auth/logout", shauth.logout)
 	mux.HandleFunc("GET /auth/session", shauth.session)
 	mux.HandleFunc("GET "+shauthSignedOutPath, shauth.signedOut)

@@ -167,7 +167,12 @@ APPLICATION_RELEASE_REVISION=<immutable-commit-or-container-digest>
 Register these Shauth relying-party coordinates:
 
 - redirect URI: `https://admin.dev.e6qu.dev/auth/shauth/callback`
-- post-logout redirect URI: `https://admin.dev.e6qu.dev/auth/signed-out`
+- post-logout redirect URI: `https://admin.dev.e6qu.dev/auth/shauth/logout/complete`
+
+The fixed completion bridge returns to Shauth's `/oauth/logout/complete` endpoint;
+Shauth then redirects to the registered application-local
+`https://admin.dev.e6qu.dev/auth/signed-out` page. The bridge ignores all query
+parameters and never reflects a caller-controlled destination.
 - front-channel logout URI: `https://admin.dev.e6qu.dev/auth/shauth/frontchannel-logout`
 - back-channel logout URI: `https://admin.dev.e6qu.dev/auth/shauth/backchannel-logout`
 

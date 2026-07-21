@@ -8,10 +8,10 @@ assert.ok(password, "SHAUTH_BOOTSTRAP_ADMIN_PASSWORD is required");
 assert.ok(developerPassword, "SHAUTH_DEVELOPER_PASSWORD is required");
 
 const apps = [
-  { name: "Sockerless Admin", launch: "http://localhost:29090/ui/", identity: "http://localhost:29090/auth/session", signedOut: "http://localhost:29090/auth/signed-out", login: "/auth/shauth" },
-  { name: "Sockerless AWS simulator", launch: "http://localhost:29310/ui/", identity: "http://localhost:29310/auth/session", signedOut: "http://localhost:29310/auth/signed-out", login: "/auth/oidc/login" },
-  { name: "Sockerless Google Cloud simulator", launch: "http://localhost:29320/ui/", identity: "http://localhost:29320/auth/session", signedOut: "http://localhost:29320/auth/signed-out", login: "/auth/oidc/login" },
-  { name: "Sockerless Microsoft Azure simulator", launch: "http://localhost:29330/ui/", identity: "http://localhost:29330/auth/session", signedOut: "http://localhost:29330/auth/signed-out", login: "/auth/oidc/login" },
+  { name: "Sockerless Admin", launch: "http://localhost:29090/ui/", identity: "http://localhost:29090/auth/session", bridge: "http://localhost:29090/auth/shauth/logout/complete", signedOut: "http://localhost:29090/auth/signed-out", login: "/auth/shauth" },
+  { name: "Sockerless AWS simulator", launch: "http://localhost:29310/ui/", identity: "http://localhost:29310/auth/session", bridge: "http://localhost:29310/auth/shauth/logout/complete", signedOut: "http://localhost:29310/auth/signed-out", login: "/auth/oidc/login" },
+  { name: "Sockerless Google Cloud simulator", launch: "http://localhost:29320/ui/", identity: "http://localhost:29320/auth/session", bridge: "http://localhost:29320/auth/shauth/logout/complete", signedOut: "http://localhost:29320/auth/signed-out", login: "/auth/oidc/login" },
+  { name: "Sockerless Microsoft Azure simulator", launch: "http://localhost:29330/ui/", identity: "http://localhost:29330/auth/session", bridge: "http://localhost:29330/auth/shauth/logout/complete", signedOut: "http://localhost:29330/auth/signed-out", login: "/auth/oidc/login" },
 ];
 
 const browser = await chromium.launch({ headless: true });
@@ -28,6 +28,7 @@ try {
     await waitForApplication(page, app);
     await assertIdentity(context, app);
     if (app.name === "Sockerless Admin") await assertAdministratorMutation(context);
+    await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
     await context.close();
   }
@@ -45,6 +46,12 @@ try {
     await waitForApplication(portalPage, app);
     assert.notEqual(new URL(portalPage.url()).origin, authOrigin, `${app.name} catalog launch remained on Shauth`);
     await assertIdentity(portalContext, app);
+  }
+  await logoutFromShauth(portalPage);
+  for (const app of apps) {
+    assert.equal((await portalContext.request.get(app.identity, { maxRedirects: 0 })).status(), 401, `${app.name} session survived provider logout`);
+    await portalPage.goto(app.launch, { waitUntil: "domcontentloaded" });
+    await waitForShauthLogin(portalPage);
   }
   assert.deepEqual(portalFailures, [], "catalog SSO emitted browser failures");
   await portalContext.close();
@@ -68,18 +75,7 @@ try {
 
     await page.goto(app.launch, { waitUntil: "domcontentloaded" });
     await waitForApplication(page, app);
-    await page.locator('form[action="/auth/logout"] button').click();
-    await page.waitForURL(app.signedOut, { timeout: 30_000 });
-    assert.equal(page.url(), app.signedOut, `${app.name} logout did not finish on the originating app`);
-    assert.equal((await context.request.get(app.identity)).status(), 401, `${app.name} local session survived logout`);
-    await page.reload({ waitUntil: "domcontentloaded" });
-    assert.equal(page.url(), app.signedOut, `${app.name} signed-out page restarted authentication after reload`);
-
-    const signIn = page.getByRole("link", { name: "Sign in with Shauth", exact: true });
-    await signIn.waitFor({ state: "visible" });
-    assert.equal(await signIn.getAttribute("href"), app.login, `${app.name} exposed the wrong Shauth sign-in start`);
-    await signIn.click();
-    await waitForShauthLogin(page);
+    await logoutFromApplication(page, context, app);
 
     await page.goto(`${authOrigin}/apps`, { waitUntil: "domcontentloaded" });
     await waitForShauthLogin(page);
@@ -90,6 +86,29 @@ try {
   }
 } finally {
   await browser.close();
+}
+
+async function logoutFromApplication(page, context, app) {
+  const bridgeRequest = page.waitForRequest((request) => request.resourceType() === "document" && request.url() === app.bridge);
+  await page.locator('form[action="/auth/logout"] button').click();
+  assert.equal((await bridgeRequest).url(), app.bridge, `${app.name} did not traverse its exact logout-completion bridge`);
+  await page.waitForURL(app.signedOut, { timeout: 30_000 });
+  assert.equal(page.url(), app.signedOut, `${app.name} logout did not finish on the originating app`);
+  assert.equal((await context.request.get(app.identity, { maxRedirects: 0 })).status(), 401, `${app.name} local session survived logout`);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  assert.equal(page.url(), app.signedOut, `${app.name} signed-out page restarted authentication after reload`);
+
+  const signIn = page.getByRole("link", { name: "Sign in with Shauth", exact: true });
+  await signIn.waitFor({ state: "visible" });
+  assert.equal(await signIn.getAttribute("href"), app.login, `${app.name} exposed the wrong Shauth sign-in start`);
+  await signIn.click();
+  await waitForShauthLogin(page);
+}
+
+async function logoutFromShauth(page) {
+  await page.goto(`${authOrigin}/logout`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Sign out of all apps", exact: true }).click();
+  await page.waitForURL(`${authOrigin}/signed-out`, { timeout: 30_000 });
 }
 
 async function signInIfRequired(page, username = "admin", accountPassword = password) {
