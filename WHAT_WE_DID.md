@@ -1022,3 +1022,20 @@ The mandatory pre-push dependency audit also advanced the Amazon Web Services
 Organizations SDK test client to its current patch release. The complete
 official SDK module and the repository-wide dependency freshness gate passed
 with the updated module graph.
+
+## Containerized simulator outer-host propagation
+
+A containerized AWS simulator resolved the outer runtime's existing
+`host.docker.internal` or `host.containers.internal` IPv4 coordinate before
+falling back to its own default route. It propagated that exact address to
+nested workloads for metadata, callbacks, and user-supplied endpoint
+coordinates, so Podman's simulator and workload networks no longer confused
+the simulator gateway with the actual host.
+
+The Bleeplab runner harness added a targeted real Amazon ECS workload check
+that required the exact Bleeplab health response from inside the nested task.
+The same run completed the full GitLab-style pipeline, compiled and consumed
+an artifact, and reached Redis through the build pod's service alias.
+Sockerless's Shauth harness also isolated the standalone validator's Go module,
+so the same build succeeded when Shauth was checked out beneath Sockerless's
+workspace in continuous integration.

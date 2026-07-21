@@ -207,7 +207,7 @@ SHAUTH_DEVELOPER_PASSWORD="$developer_password" \
   node "$repo_root/ui/e2e/shauth-rps.mjs"
 
 (cd "$shauth_root" && npm ci)
-(cd "$shauth_root" && go build -o "$work_dir/shauth-validator" ./cmd/shauth-validator)
+(cd "$shauth_root" && GOWORK=off go build -o "$work_dir/shauth-validator" ./cmd/shauth-validator)
 SHAUTH_URL=http://localhost:8080 \
 SHAUTH_VALIDATOR_TOKEN="$validator_token" \
 SHAUTH_VALIDATION_USERNAME=shauth-validator \
