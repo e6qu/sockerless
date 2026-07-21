@@ -1017,3 +1017,8 @@ revocation. Sockerless Admin cached validated provider discovery metadata behind
 a bounded initial lookup, preventing logout requests from hanging on repeated
 discovery, and validation-page content security policy allowed only the exact
 Shauth origin required by the real redirect chain.
+
+The mandatory pre-push dependency audit also advanced the Amazon Web Services
+Organizations SDK test client to its current patch release. The complete
+official SDK module and the repository-wide dependency freshness gate passed
+with the updated module graph.
