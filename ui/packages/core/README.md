@@ -11,6 +11,14 @@ Shared design system, API client, hooks, and shells for every Sockerless UI pack
 - **Interaction** — `Button`, `RefreshButton`, `Modal`, `ContainerDetailModal`, `Spinner`.
 - **Theming** — `ThemeToggle` (lives in `AppShell`'s footer; flips the `dark` class via `useTheme`).
 
+### Shauth product-UI contract
+
+Authenticated application shells expose `data-shauth-user="<exact username>"`
+on the visible account control and `data-shauth-sign-out` on the real sign-out control. These
+stable hooks let the post-deployment browser qualification exercise the same
+identity and logout controls that a user sees; they do not replace accessible
+names, semantic elements, or application-local authorization checks.
+
 ### Hooks
 - **API** — `ApiClientProvider`, `useApiClient`, `useHealth`, `useStatus`, `useContainers`, `useMetrics`, `useResources`, `useCheck`, `useInfo` (TanStack Query wrappers; auto-poll 5–10s).
 - **Simulator** — `useSimHealth`, `useSimSummary`.

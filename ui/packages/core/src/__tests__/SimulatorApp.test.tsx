@@ -72,7 +72,12 @@ describe("SimulatorApp", () => {
 
     await waitFor(() => expect(container.textContent).toContain("Ada Lovelace"));
     expect(container.textContent).toContain("ada@example.test");
+    const account = container.querySelector<HTMLElement>("[data-shauth-user]");
+    expect(account).not.toBeNull();
+    expect(account).toHaveAttribute("data-shauth-user", "Ada Lovelace");
+    expect(account?.textContent).toContain("Ada Lovelace");
     const signOut = container.querySelector<HTMLButtonElement>('button[aria-label="Sign out Ada Lovelace"]');
+    expect(signOut).toHaveAttribute("data-shauth-sign-out");
     expect(signOut?.closest("form")?.getAttribute("method")).toBe("post");
     expect(signOut?.closest("form")?.getAttribute("action")).toBe("/auth/logout");
   });
