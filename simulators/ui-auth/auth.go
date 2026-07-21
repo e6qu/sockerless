@@ -33,6 +33,7 @@ const (
 	LogoutPath             = "/auth/logout"
 	FrontchannelLogoutPath = "/auth/oidc/frontchannel-logout"
 	BackchannelLogoutPath  = "/auth/oidc/backchannel-logout"
+	LogoutCompletePath     = "/auth/shauth/logout/complete"
 	SignedOutPath          = "/auth/signed-out"
 	ValidationPath         = "/auth/validation"
 	transactionLifetime    = 10 * time.Minute
@@ -125,6 +126,7 @@ func (a *Auth) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+LogoutPath, a.logout)
 	mux.HandleFunc("GET "+FrontchannelLogoutPath, a.frontchannelLogout)
 	mux.HandleFunc("POST "+BackchannelLogoutPath, a.backchannelLogout)
+	mux.HandleFunc("GET "+LogoutCompletePath, a.logoutComplete)
 	mux.HandleFunc("GET "+SignedOutPath, a.signedOut)
 	mux.HandleFunc("GET "+ValidationPath, a.validation)
 }
@@ -343,12 +345,30 @@ func (a *Auth) logoutURL(endpoint, rawIDToken string) (*url.URL, error) {
 	}
 	query := logoutURL.Query()
 	query.Set("client_id", a.config.ClientID)
-	query.Set("post_logout_redirect_uri", a.config.PublicURL+SignedOutPath)
+	query.Set("post_logout_redirect_uri", a.config.PublicURL+LogoutCompletePath)
 	if rawIDToken != "" {
 		query.Set("id_token_hint", rawIDToken)
 	}
 	logoutURL.RawQuery = query.Encode()
 	return logoutURL, nil
+}
+
+// logoutComplete ignores request input and returns to Shauth's fixed
+// completion endpoint.
+func (a *Auth) logoutComplete(w http.ResponseWriter, r *http.Request) {
+	target, err := url.Parse(a.config.Issuer)
+	if err != nil || !target.IsAbs() || target.Host == "" || target.User != nil {
+		http.Error(w, "OIDC issuer is invalid", http.StatusInternalServerError)
+		return
+	}
+	target.Path = "/oauth/logout/complete"
+	target.RawPath = ""
+	target.RawQuery = ""
+	target.Fragment = ""
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(w, r, target.String(), http.StatusSeeOther)
 }
 
 func (a *Auth) backchannelLogout(w http.ResponseWriter, r *http.Request) {

@@ -2,45 +2,23 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS.md) - narrative [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
-## Current Branch
+## Completed Baseline
 
-`fix/shauth-validation-contract` gave Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator dashboards the exact Shauth validation surface. Each authenticated validation page exposed verified username, email, role, and immutable release, used the real global logout flow, and rejected bearer-only or anonymous access. The clean pinned PostgreSQL/Ory Hydra/Shauth/Chromium matrix proved all four relying parties from both the Shauth catalog and their direct origins.
+`fix/shauth-final-pin-ci-timeouts` completed the exact Shauth relying-party contract for Sockerless Admin and all three simulator dashboards. The branch also enforced UI-first release builds, bounded nightly fuzz concurrency, and a 15-minute maximum for every ordinary GitHub Actions job without dropping any of the 630 AWS CLI tests.
 
-## Continue Here
+The real pinned Shauth, PostgreSQL, Ory Hydra, freshly compiled relying parties, and Chromium matrix passed direct and catalog entry, relying-party and provider logout, application-local signed-out return, reload, reauthentication, global revocation, release identity, anonymous fail-closed behavior, active event-stream readiness, and credential isolation.
 
-1. Merge this branch through its single pull request, verify the published direct ARM64 and AMD64 manifests plus generic indexes, deploy the Admin and simulator images, and run the same eight-direction validation matrix against the live origins.
-2. Re-run Bleeplab's real Sockerless runner consumer against the merged revision and confirm its multi-stage helper completes beyond the previously observed source-fetch duration without an API-triggered task stop.
-3. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
-4. Continue complete simulator and backend fidelity work, including the open live-cloud cells documented in BUGS.md.
+## Remaining Work
 
-## Recent Validation
+1. The merged revision needed immutable Admin and simulator images published and deployed in the shared development environment, followed by the same exact eight-flow browser matrix against the live origins.
+2. The standalone Bleeplab GitLab Runner consumer needed another real run against the merged Sockerless revision so its slower two-cycle source-fetch path exercised the corrected wait-channel and CloudWatch stream generation.
+3. BUG-2569 still required deterministic termination of the local Amazon Elastic Container Service Terraform simulator apply/destroy harness without changing the real provider path.
+4. BUG-2625 still required provider-faithful simulator credential issuance and verification for AWS, Google Cloud, and Microsoft Azure, with exact errors and official SDK, command-line interface, and Terraform coverage.
+5. The remaining live-cloud cells in BUG-1075 still required authenticated validation before being marked green.
 
-- Clean Shauth `5417497b2f795b9ea6949392134626982512769a` served the real PostgreSQL, patched Ory Hydra, compiled Admin and three simulator relying parties, and Chromium matrix. Eight serialized catalog-entry and direct-entry jobs proved exact release identity, relying-party global logout, app-local signed-out return, reload persistence, reauthentication, provider logout with witness revocation, anonymous fail-closed behavior, and confinement of validator credentials to Shauth. The exact validator module also built successfully from a nested continuous-integration checkout with its workspace isolated, and its job selected the Go toolchain declared by the pinned Shauth module.
-- The real Bleeplab Amazon ECS runner harness reached Bleeplab from inside a nested workload through the propagated outer-host coordinate, completed a GitLab-style pipeline, compiled and consumed an artifact, and reached Redis through its service alias.
-- The current AWS Organizations SDK patch release passed the complete isolated official SDK module, and the repository-wide dependency freshness gate reported no remaining Go, Terraform provider, or GitHub Actions drift.
-- The complete Google Cloud and Microsoft Azure official SDK suites passed on macOS Podman after their real Cloud Build and Azure Container Registry Tasks paths applied a scoped loopback-registry trust policy and performed ordinary Docker-compatible image pushes.
-- The complete dependency freshness gate passed after its discovery scope moved from arbitrary nested filesystem content to Git-tracked modules, providers, and workflows; all Google Cloud Secret Manager consumers and workflow checkout actions used their current published releases.
-- Fresh Shauth `470f789` served the complete real PostgreSQL, patched Ory Hydra, compiled Admin and three simulator relying parties, and Chromium matrix. Logout from every relying party invalidated the shared session, landed on and persisted the exact local terminal page, exposed the exact `Sign in with Shauth` coordinate, and returned the browser to Shauth when clicked.
-- Fresh Shauth `744343810897` served a real PostgreSQL, patched Ory Hydra, and Chromium matrix that created a developer through Shauth's administration UI, authenticated that developer through OpenID Connect, returned the Admin no-cache `403` page, rejected a real topology-project mutation, then authenticated an administrator and persisted and removed a real project through the same API.
-- The exact Shauth pull-request head passed the complete real PostgreSQL, patched Ory Hydra, Shauth, compiled four-relying-party, and Chromium matrix with an independent Admin session secret; focused tests also proved that changing the OpenID Connect client secret preserved existing session signatures while changing the session secret invalidated them.
-- The compiled Admin and all three compiled simulator dashboards passed a clean real PostgreSQL, Ory Hydra, Shauth, and Chromium matrix after the harness built every production frontend instead of inheriting local `dist` directories. It covered direct entry, catalog entry, shared sign-on, identity, logout initiated by every relying party, global cross-application revocation, exact app-local signed-out destinations, signed-out reload, and fail-closed re-entry against the exact CI-green Shauth verified-email revision.
-- Ory Hydra delivered its signed logout token over Docker's host-gateway coordinate to each real host relying party while every public browser coordinate remained loopback-origin consistent. Admin and all three simulators recorded successful acceptance, and their validators required the token's `exp` to be present and in the future.
-- A real Amazon ECS simulator/backend attached-container regression ran two start/attach/stdin/task/log cycles under one Docker container ID. Each cycle returned only its own marker, and delayed completion from the prior task could not terminate or retarget the next cycle.
-- Admin and simulator authentication accepted explicit HTTP development coordinates only on loopback hosts, required `client_secret_post`, exposed front-channel logout outside the local-session boundary, revoked locally before provider failure, and required the OIDC Back-Channel Logout event claim to be exactly the empty JSON object.
-- The merged `9fe520a3ef14` release demonstrated that provenance-enabled native tags were OCI indexes with attestation children; the corrected workflow disabled provenance and added registry-shape assertions that reject that contract violation before a publication job succeeds.
-- GitHub Container Registry metadata for all four packages showed only immutable 12-character source tags and their architecture suffixes; the publication contract now pruned obsolete and unrecognized versions while retaining 20 complete releases per package.
-- The complete AWS, Google Cloud, and Microsoft Azure simulator suites and vet passed after the shared operator authorization boundary covered each `/sim/v1/*` dashboard handler; direct tests proved UI and dashboard data redirected unauthenticated browsers while health remained public.
-- The exact Amazon Elastic Container Service continuous-integration smoke image built and passed all 15 real simulator/backend Docker lifecycle assertions. The Google Cloud Run and Azure Container Apps smoke images built successfully, and all four GitLab smoke images resolved their complete local module graphs and compiled successfully.
-- Sockerless Admin's complete Go suite and vet passed with real server-tracked sessions, signed OIDC Back-Channel Logout validation, `sid`/`sub` revocation, `jti` replay rejection, and RP-Initiated Logout.
-- Admin and the simulator relying parties preserved the configured issuer exactly, accepted only same-origin browser logout requests, constrained the discovered logout endpoint to the issuer origin, required form-body back-channel tokens, validated the required logout event as a JSON object, and combined replay consumption with session revocation atomically.
-- The shared simulator UI-auth module passed signed-session, direct-entry redirect, identity, cross-origin logout, signed back-channel revocation, and replay-rejection tests; every provider shared-server suite proved that only UI routes were protected while native cloud routes remained unaffected.
-- The compiled Admin, AWS, Google Cloud, and Microsoft Azure servers passed 42 Playwright scenarios across responsive shell behavior, both themes, self-contained browser assets, every navigation surface, and real management/simulator HTTP data.
-- The seven backend interfaces passed 77 Playwright scenarios against freshly compiled binaries and matching real simulators; their harnesses provisioned prerequisite resources through public cloud API operations, rejected stale/dead coordinates, and served no remote browser dependency. Continuous integration ran every Admin, simulator, and backend browser suite.
-- The shared UI unit suite passed 50 tests; every affected UI package passed TypeScript checking and its production build.
-- Amazon ECS service-discovery SDK coverage proved that A-record registries rejected explicit ports and accepted task-ENI-only registration, matching the real Amazon ECS control plane.
-- The AWS, Google Cloud, and Microsoft Azure ARM64 release images built with their real embedded dashboards and served `/ui/` plus validated operator identity/logout coordinates from running containers.
-- The complete shared UI typecheck and test suites passed, including signed-in identity, accessible user details, local logout, and visible identity failures.
-- The corrected fuzz harness passed every simulator, nested shared-module, core, Docker backend, and agent target in the same module layout used by GitHub Actions; the formerly flaky router target also passed ten consecutive one-second runs with bounded workers.
-- The Bleeplab `runner-sockerless` GitHub Actions job passed against real Sockerless simulator and backend binaries.
-- Bleephub's complete server, browser, GitHub Command Line Interface, and web application jobs passed. Its runner consumer job exercised the same real Sockerless build context on a Linux runner.
-- Sockerless PR #800 completed the full required continuous-integration matrix successfully before the final orphan-test and documentation cleanup.
+## Durable Validation Contract
+
+- Production builds created every frontend before any UI-bearing Go binary.
+- Workflow changes kept every ordinary job at or below 15 minutes and preserved exact AWS CLI shard coverage.
+- Fuzz changes exercised every discovered target and treated a missing module, build failure, target failure, or crasher as a real failure.
+- Shauth changes ran the real PostgreSQL, Ory Hydra, relying-party, and Chromium matrix from the exact pinned provider revision.

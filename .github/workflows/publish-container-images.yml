@@ -27,6 +27,7 @@ env:
 
 jobs:
   prepare:
+    timeout-minutes: 5
     name: Release coordinates
     runs-on: ubuntu-latest
     outputs:
@@ -55,7 +56,7 @@ jobs:
           - { platform: linux/arm64, runner: ubuntu-24.04-arm, suffix: arm64 }
     name: ${{ matrix.image.name }} (${{ matrix.arch.suffix }})
     runs-on: ${{ matrix.arch.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -84,7 +85,7 @@ jobs:
   manifest:
     needs: [prepare, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write

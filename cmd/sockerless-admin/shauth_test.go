@@ -455,8 +455,24 @@ func TestSHAUTHLogoutURLReturnsToSockerlessAdmin(t *testing.T) {
 	if got := query.Get("id_token_hint"); got != "signed-id-token" {
 		t.Fatalf("id_token_hint = %q", got)
 	}
-	if got := query.Get("post_logout_redirect_uri"); got != "https://admin.dev.e6qu.dev"+shauthSignedOutPath {
+	if got := query.Get("post_logout_redirect_uri"); got != "https://admin.dev.e6qu.dev"+shauthLogoutCompletePath {
 		t.Fatalf("post_logout_redirect_uri = %q", got)
+	}
+}
+
+func TestSHAUTHLogoutCompleteUsesOnlyConfiguredIssuer(t *testing.T) {
+	config := testSHAUTHConfig()
+	request := httptest.NewRequest(http.MethodGet, "https://admin.dev.e6qu.dev"+shauthLogoutCompletePath+"?next=https%3A%2F%2Fattacker.example&code=secret", nil)
+	recorder := httptest.NewRecorder()
+	config.middleware(http.HandlerFunc(config.logoutComplete)).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, location = %q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	if location := recorder.Header().Get("Location"); location != "https://auth.dev.e6qu.dev/oauth/logout/complete" {
+		t.Fatalf("bridge location = %q", location)
+	}
+	if recorder.Header().Get("Cache-Control") != "no-store" || recorder.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatal("logout completion bridge omitted no-store/no-referrer headers")
 	}
 }
 

@@ -23,6 +23,7 @@ concurrency:
 
 jobs:
   github-runner:
+    timeout-minutes: 15
     if: inputs.runner == 'all' || inputs.runner == 'github'
     runs-on: ubuntu-latest
     strategy:
@@ -34,9 +35,10 @@ jobs:
       - name: Run E2E GitHub (${{ matrix.backend }})
         if: inputs.backend == 'all' || inputs.backend == matrix.backend
         run: make e2e-github-${{ matrix.backend }}
-        timeout-minutes: 20
+        timeout-minutes: 15
 
   gitlab-runner:
+    timeout-minutes: 15
     if: inputs.runner == 'all' || inputs.runner == 'gitlab'
     runs-on: ubuntu-latest
     strategy:
@@ -48,4 +50,4 @@ jobs:
       - name: Run E2E GitLab (${{ matrix.backend }})
         if: inputs.backend == 'all' || inputs.backend == matrix.backend
         run: make e2e-gitlab-${{ matrix.backend }}
-        timeout-minutes: 45
+        timeout-minutes: 15

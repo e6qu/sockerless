@@ -90,7 +90,12 @@ Each simulator dashboard registers these relying-party coordinates, replacing
 `<origin>` with that dashboard's `SIM_UI_PUBLIC_URL`:
 
 - redirect URI: `<origin>/auth/oidc/callback`
-- post-logout redirect URI: `<origin>/auth/signed-out`
+- post-logout redirect URI: `<origin>/auth/shauth/logout/complete`
+
+The fixed completion bridge returns to Shauth's `/oauth/logout/complete` endpoint;
+Shauth then redirects to the registered application-local
+`<origin>/auth/signed-out` page. The bridge ignores all query parameters and
+never reflects a caller-controlled destination.
 - front-channel logout URI: `<origin>/auth/oidc/frontchannel-logout`
 - back-channel logout URI: `<origin>/auth/oidc/backchannel-logout`
 

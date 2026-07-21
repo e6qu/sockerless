@@ -13,7 +13,7 @@ require (
 	cloud.google.com/go/logging v1.19.0
 	cloud.google.com/go/run v1.22.0
 	cloud.google.com/go/secretmanager v1.21.0
-	cloud.google.com/go/storage v1.63.1
+	cloud.google.com/go/storage v1.64.0
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/sockerless/simulator-testutil v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1

@@ -171,7 +171,7 @@ jobs:
   test-backend:
     name: test (${{ matrix.shard }})
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
+    timeout-minutes: 15
     env:
       SOCKERLESS_TEST_TARGET: "sim"
     strategy:
@@ -210,7 +210,7 @@ jobs:
   test-faas-smoke:
     name: test (${{ matrix.shard }} faas-smoke)
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
+    timeout-minutes: 15
     env:
       SOCKERLESS_TEST_TARGET: "sim"
     strategy:
@@ -244,7 +244,7 @@ jobs:
     # Native linux/arm64 CPU architecture, matching the simulator
     # capacity contract without QEMU.
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    timeout-minutes: 15
     name: test (e2e)
     steps:
       - uses: actions/checkout@v7.0.1
@@ -285,7 +285,7 @@ jobs:
   sim:
     # VM-backed simulator slices require /dev/kvm for real Firecracker guests.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -364,7 +364,7 @@ jobs:
   sim-aws-sdk:
     name: sim (aws sdk)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
@@ -435,31 +435,39 @@ jobs:
   sim-aws-cli:
     name: sim (aws cli ${{ matrix.suite }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
-          - suite: edge
-            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|CloudFront|CloudTrail|CodeBuild|ELBv2|Glue)'
+          - suite: edge-routing
+            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch)'
             timeout: 1200s
-            timeout_minutes: 20
-          - suite: ec2
-            run: '^Test(EC2)'
+            timeout_minutes: 15
+          - suite: edge-delivery
+            run: '^Test(CloudFront|CloudTrail|CodeBuild|ELBv2|Glue)'
+            timeout: 1200s
+            timeout_minutes: 15
+          - suite: ec2-a-m
+            run: '^Test(EC2(CLI_[A-M]|Copy|EBS|Instance|Key|Launch))'
             timeout: 1500s
-            timeout_minutes: 27
+            timeout_minutes: 15
+          - suite: ec2-n-z
+            run: '^Test(EC2(CLI_[N-Z]|Nat|Network|Routing|Security|Subnet))'
+            timeout: 1500s
+            timeout_minutes: 15
           - suite: compute
             run: '^Test(CloudMap|DynamoDB|CLI_ECR|ECR|ECS|EFS|Logs)'
             timeout: 1200s
-            timeout_minutes: 20
+            timeout_minutes: 15
           - suite: appdata
             run: '^Test(CloudWatch|EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|Organizations|ResourceTags)'
             timeout: 1200s
-            timeout_minutes: 20
+            timeout_minutes: 15
           - suite: appdata2
             run: '^Test(RDS|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
             timeout: 1200s
-            timeout_minutes: 20
+            timeout_minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
@@ -514,7 +522,7 @@ jobs:
     # against a provider sequence that the SDK tests had already
     # marked green).
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -589,7 +597,7 @@ jobs:
   ui-browser:
     name: browser (${{ matrix.package }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -622,13 +630,13 @@ jobs:
   sso-browser:
     name: browser (Shauth relying parties)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/checkout@v7.0.1
         with:
           repository: e6qu/shauth
-          ref: 5417497b2f795b9ea6949392134626982512769a
+          ref: 0fda680cba964e5768ed75a9c3e5b7230c418ca6
           path: .test-deps/shauth
       - uses: actions/setup-go@v7.0.0
         with:
@@ -644,7 +652,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y jq
       - run: cd ui && bun install --frozen-lockfile
       - run: cd ui && bunx playwright install --with-deps chromium
-      - run: SHAUTH_SOURCE_DIR="$GITHUB_WORKSPACE/.test-deps/shauth" SHAUTH_EXPECTED_COMMIT=5417497b2f795b9ea6949392134626982512769a bash scripts/test-shauth-rps.sh
+      - run: SHAUTH_SOURCE_DIR="$GITHUB_WORKSPACE/.test-deps/shauth" bash scripts/test-shauth-rps.sh
 
   simulators-quality:
     name: simulators (dead code + copy-paste)
@@ -768,7 +776,7 @@ jobs:
   smoke:
     # Native linux/arm64 CPU architecture — simulator primary capacity.
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Smoke test (ecs)
@@ -789,7 +797,7 @@ jobs:
 
   terraform:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
