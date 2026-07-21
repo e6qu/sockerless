@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2624 filed - 2579 fixed - 9 open - 16 false positives.**
+**2625 filed - 2579 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,7 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| ~~2616~~ | P0 | Sockerless OpenID Connect continuous integration | the Shauth browser harness inherited local frontend bundles, while a clean runner compiled headless servers and returned 404 for every operator interface | The harness now builds the Admin and all three simulator production bundles before compiling their servers, pins the verified-email Shauth revision, and passes from a clean real PostgreSQL/Ory Hydra/Chromium stack. |
+| 2625 | P0 | cloud simulator credential authentication | native cloud API requests accepted unverified caller-controlled credentials | The AWS simulator derives identity from unsigned Signature Version 4 text, while the Google Cloud and Microsoft Azure simulators derive identity from arbitrary bearer-token content; provider-faithful credential issuance plus signature, audience, expiry, and permission validation must replace those paths, with exact cloud errors and official SDK, CLI, and Terraform coverage. |
 | 2569 | P1 | Bleephub Amazon Elastic Container Service Terraform simulator harness | apply did not terminate within the bounded test window | The local Sockerless AWS Terraform apply/destroy harness left Terraform and simulator subprocesses running past its 90-second test deadline, so the blocking provider operation and subprocess lifecycle need a deterministic fix. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2616~~ | P0 | Sockerless OpenID Connect continuous integration | the Shauth browser harness inherited local frontend bundles, while a clean runner compiled headless servers and returned 404 for every operator interface | The harness now builds the Admin and all three simulator production bundles before compiling their servers, pins the verified-email Shauth revision, and passes from a clean real PostgreSQL/Ory Hydra/Chromium stack. |
 | ~~2624~~ | P1 | Google Cloud Build SDK harness | Podman's Docker-compatible API rejected the real HTTP loopback registry used by the simulator's ordinary image push | The shared simulator test utility now applied the container engine's scoped loopback-registry trust policy, reloaded Podman before and after each test, and preserved the same ordinary Docker push used with Docker Engine. |
 | ~~2589~~ | P1 | Azure Container Registry Tasks SDK harness | Podman's Docker-compatible API rejected the real HTTP loopback registry used by the simulator's ordinary image push | The Azure and Google Cloud SDK harnesses now shared a scoped container-engine registry policy utility, and both complete official-client suites passed their real build, ordinary push, registry-manifest, and cleanup paths on macOS Podman. |
 | ~~2623~~ | P1 | Dependency freshness gate | the pre-push scan traversed an untracked nested worktree and the tracked graph lagged current Google Cloud Secret Manager plus `actions/checkout` patch releases | Freshness discovery now reads only Git-tracked module, Terraform, and workflow files; all three Google Cloud Secret Manager consumers and every workflow checkout action use the current published release. |

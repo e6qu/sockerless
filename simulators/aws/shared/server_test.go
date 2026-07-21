@@ -60,7 +60,7 @@ func TestNewServerRejectsPartialUIOIDCConfiguration(t *testing.T) {
 	t.Setenv("SIM_RUNTIME", "process")
 	for name, cfg := range map[string]Config{
 		"partial":  {Provider: "aws", LogLevel: "disabled", UIOIDCIssuer: "https://auth.example.test"},
-		"insecure": {Provider: "aws", LogLevel: "disabled", UIOIDCIssuer: "http://auth.example.test", UIOIDCClientID: "aws", UIOIDCClientSecret: "secret", UIPublicURL: "https://aws.example.test", UISessionSecret: "0123456789abcdef0123456789abcdef"},
+		"insecure": {Provider: "aws", LogLevel: "disabled", UIOIDCIssuer: "http://auth.example.test", UIOIDCClientID: "aws", UIOIDCClientSecret: "secret", UIPublicURL: "https://aws.example.test", UISessionSecret: "0123456789abcdef0123456789abcdef", ApplicationReleaseRevision: "0123456789ab"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := NewServer(cfg); err == nil {
@@ -75,7 +75,7 @@ func TestFirstPartyOIDCProtectsOperatorSurfacesOnly(t *testing.T) {
 	srv, err := NewServer(Config{
 		Provider: "aws", LogLevel: "disabled", UIOIDCIssuer: "https://auth.example.test",
 		UIOIDCClientID: "aws", UIOIDCClientSecret: "secret", UIPublicURL: "https://aws.example.test",
-		UISessionSecret: "0123456789abcdef0123456789abcdef",
+		UISessionSecret: "0123456789abcdef0123456789abcdef", ApplicationReleaseRevision: "0123456789ab",
 	})
 	if err != nil {
 		t.Fatal(err)

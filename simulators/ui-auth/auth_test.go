@@ -21,7 +21,7 @@ func testConfig() Config {
 		Issuer: "https://auth.example.test", ClientID: "simulator-test",
 		ClientSecret: "client-secret", PublicURL: "https://sim.example.test",
 		SessionSecret: "0123456789abcdef0123456789abcdef", CookieName: "sim_session",
-		ApplicationName: "Simulator", SessionLifetime: time.Hour,
+		ApplicationName: "Simulator", ReleaseRevision: "0123456789ab", SessionLifetime: time.Hour,
 	}
 }
 
@@ -35,6 +35,8 @@ func TestConfigRequiresCompleteSecureCoordinates(t *testing.T) {
 		"insecure issuer":       func(c *Config) { c.Issuer = "http://auth.example.test" },
 		"issuer user info":      func(c *Config) { c.Issuer = "https://user@auth.example.test" },
 		"public path":           func(c *Config) { c.PublicURL += "/sim" },
+		"missing release":       func(c *Config) { c.ReleaseRevision = "" },
+		"moving release":        func(c *Config) { c.ReleaseRevision = "latest" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := testConfig()
@@ -43,6 +45,56 @@ func TestConfigRequiresCompleteSecureCoordinates(t *testing.T) {
 				t.Fatal("invalid OpenID Connect configuration was accepted")
 			}
 		})
+	}
+}
+
+func TestValidationRequiresSessionAndExposesExactContract(t *testing.T) {
+	auth, err := New(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	anonymous := httptest.NewRequest(http.MethodGet, ValidationPath, nil)
+	anonymous.Header.Set("Authorization", "Bearer validator-material-must-not-authenticate")
+	recorder := httptest.NewRecorder()
+	auth.validation(recorder, anonymous)
+	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != SignedOutPath {
+		t.Fatalf("anonymous validation = %d %q", recorder.Code, recorder.Header().Get("Location"))
+	}
+
+	expires := time.Now().Add(time.Hour).Unix()
+	session := browserSession{ID: "validation-session", Subject: "subject", Name: "shauth-validator", Email: "validator@example.test", Role: "developer", Expires: expires}
+	value, err := auth.sign(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.store.put(session.ID, sessionRecord{Subject: session.Subject, Expires: expires})
+	request := httptest.NewRequest(http.MethodGet, ValidationPath, nil)
+	request.AddCookie(&http.Cookie{Name: auth.config.CookieName, Value: value})
+	recorder = httptest.NewRecorder()
+	auth.validation(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("authenticated validation = %d Cache-Control=%q", recorder.Code, recorder.Header().Get("Cache-Control"))
+	}
+	if csp := recorder.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self' https://auth.example.test") {
+		t.Fatalf("validation Content-Security-Policy omitted the exact Shauth origin: %q", csp)
+	}
+	for _, expected := range []string{
+		`data-testid="validation-username">shauth-validator</dd>`,
+		`data-testid="validation-email">validator@example.test</dd>`,
+		`data-testid="validation-role">developer</dd>`,
+		`data-testid="validation-release">0123456789ab</dd>`,
+		`action="/auth/logout"`, `>Sign out</button>`,
+	} {
+		if !strings.Contains(recorder.Body.String(), expected) {
+			t.Fatalf("validation response omitted %q: %s", expected, recorder.Body.String())
+		}
+	}
+}
+
+func TestURLOriginDropsIssuerPath(t *testing.T) {
+	if got := urlOrigin("https://auth.example.test/tenant/"); got != "https://auth.example.test" {
+		t.Fatalf("OpenID Connect issuer origin = %q", got)
 	}
 }
 

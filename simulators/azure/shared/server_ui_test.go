@@ -31,7 +31,7 @@ func TestFirstPartyOIDCProtectsOperatorSurfacesOnly(t *testing.T) {
 	srv, err := NewServer(Config{
 		Provider: "azure", LogLevel: "disabled", UIOIDCIssuer: "https://auth.example.test",
 		UIOIDCClientID: "azure", UIOIDCClientSecret: "secret", UIPublicURL: "https://azure.example.test",
-		UISessionSecret: "0123456789abcdef0123456789abcdef",
+		UISessionSecret: "0123456789abcdef0123456789abcdef", ApplicationReleaseRevision: "0123456789ab",
 	})
 	if err != nil {
 		t.Fatal(err)

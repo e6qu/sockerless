@@ -153,7 +153,7 @@ $ curl -s http://localhost:9090/api/v1/components | jq '.[]'
 
 The operator console supported optional Shauth OpenID Connect sign-in without
 changing any simulator, backend, SDK, command-line interface, or Terraform API
-endpoint. Configure all five values together in a deployed console:
+endpoint. Configure all six values together in a deployed console:
 
 ```sh
 SOCKERLESS_ADMIN_SHAUTH_ISSUER=https://auth.dev.e6qu.dev
@@ -161,6 +161,7 @@ SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID=sockerless-admin-dev
 SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET=<from AWS Secrets Manager>
 SOCKERLESS_ADMIN_SESSION_SECRET=<independent random value of at least 32 bytes>
 SOCKERLESS_ADMIN_PUBLIC_URL=https://admin.dev.e6qu.dev
+APPLICATION_RELEASE_REVISION=<immutable-commit-or-container-digest>
 ```
 
 Register these Shauth relying-party coordinates:
@@ -169,6 +170,16 @@ Register these Shauth relying-party coordinates:
 - post-logout redirect URI: `https://admin.dev.e6qu.dev/auth/signed-out`
 - front-channel logout URI: `https://admin.dev.e6qu.dev/auth/shauth/frontchannel-logout`
 - back-channel logout URI: `https://admin.dev.e6qu.dev/auth/shauth/backchannel-logout`
+
+Shauth validates the deployed console at
+`https://admin.dev.e6qu.dev/auth/validation`. Anonymous requests receive an
+exact `303` to the console's own `/auth/signed-out` page. An authenticated
+request exposes the verified username, email, role, and immutable
+`APPLICATION_RELEASE_REVISION` through the standard `validation-username`,
+`validation-email`, `validation-role`, and `validation-release` fields. The
+validation page signs out through the same real global OpenID Connect logout
+flow as the operator interface. Validator bearer material is never an Admin
+credential and cannot authenticate this endpoint.
 
 The console discovered Shauth, used authorization code + PKCE and nonce
 validation and verified the signed ID token. The console authenticated both
@@ -182,10 +193,10 @@ server-tracked, so OIDC Front-Channel
 Logout revoked sessions by a trusted issuer and `sid`, while a signed OIDC
 Back-Channel Logout token revoked matching sessions by `sid` or `sub`; replayed
 logout tokens were rejected by `jti`, and every token required `iat` plus a
-future `exp`. Signing out initiated logout at Shauth's
-discovered `end_session_endpoint` with an ID-token hint, so signing out of the
-console ended the shared Shauth session rather than immediately signing the
-user back in. Cookies were secure and HTTP-only; loopback development could
+future `exp`. Signing out used bounded cached discovery metadata to initiate
+logout at Shauth's `end_session_endpoint` with an ID-token hint, so signing out
+of the console ended the shared Shauth session rather than immediately signing
+the user back in. Cookies were secure and HTTP-only; loopback development could
 explicitly opt into HTTP coordinates and non-secure cookies with
 `SOCKERLESS_ADMIN_INSECURE_COOKIES=true`. Non-loopback HTTP coordinates were
 rejected even in that development mode.
@@ -198,7 +209,11 @@ administrator could persist and remove a real topology project, and covered
 direct and catalog entry, shared sign-on, user identity, logout initiated by
 every relying party, global session revocation, the exact originating
 signed-out URL, signed back-channel acceptance at every relying party, and
-signed-out page reload without automatic reauthentication.
+signed-out page reload without automatic reauthentication. Shauth's
+passwordless validator additionally exercised each application from both the
+Shauth catalog and its direct public origin, checked every exact validation and
+release field, reauthenticated after relying-party logout, and proved
+provider-initiated logout against a second relying-party witness.
 
 With no Shauth variables the existing local operator workflow remained
 unauthenticated. Partial or non-HTTPS production configuration failed at
