@@ -4,6 +4,23 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-21 — Qualified the real product user interface, not a protocol page
+
+Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
+dashboards exposed the authenticated operator through
+`data-shauth-user="<exact username>"` on the visible account control and
+`data-shauth-sign-out` on the real sign-out control. The browser qualification
+matrix asserted the visible username against the identity endpoint and signed
+out by clicking the control a person clicks, so a deployment whose product
+shell renders no user or no sign-out control failed qualification even when its
+protocol endpoints answered correctly. The markers carried no authorization
+meaning and replaced no accessible name or semantic element.
+
+A stale required-status-check list on `main` still demanded the pre-shard
+`sim (aws cli edge)` and `sim (aws cli ec2)` contexts, which the four-shard
+matrix could no longer emit; the list was corrected to the shard contexts and
+the drift was recorded as BUG-2633.
+
 ## 2026-07-21 — Completed the exact Shauth and bounded-release contracts
 
 Sockerless Admin's logout-completion bridge remained public after local session

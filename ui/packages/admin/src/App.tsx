@@ -50,7 +50,7 @@ export function App() {
     retry: false,
   });
   const accountControl = session?.authenticated ? (
-    <div className="flex items-center gap-2" aria-label="Signed-in user">
+    <div className="flex items-center gap-2" aria-label="Signed-in user" data-shauth-user={session.name}>
       <span
         className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
         aria-hidden="true"
@@ -63,7 +63,7 @@ export function App() {
         <p className="text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--color-fg-subtle)" }}>{session.role}</p>
       </div>
       <form method="post" action="/auth/logout">
-        <button className="text-xs underline" type="submit" aria-label="Sign out">Sign out</button>
+        <button className="text-xs underline" type="submit" aria-label="Sign out" data-shauth-sign-out>Sign out</button>
       </form>
     </div>
   ) : undefined;

@@ -26,7 +26,7 @@ try {
     await page.goto(app.launch, { waitUntil: "domcontentloaded" });
     await signInIfRequired(page);
     await waitForApplication(page, app);
-    await assertIdentity(context, app);
+    await assertIdentity(page, context, app);
     if (app.name === "Sockerless Admin") await assertAdministratorMutation(context);
     await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
@@ -45,7 +45,7 @@ try {
     await appLink.click();
     await waitForApplication(portalPage, app);
     assert.notEqual(new URL(portalPage.url()).origin, authOrigin, `${app.name} catalog launch remained on Shauth`);
-    await assertIdentity(portalContext, app);
+    await assertIdentity(portalPage, portalContext, app);
   }
   await logoutFromShauth(portalPage);
   for (const app of apps) {
@@ -66,12 +66,12 @@ try {
     await page.goto(app.launch, { waitUntil: "domcontentloaded" });
     await signInIfRequired(page);
     await waitForApplication(page, app);
-    await assertIdentity(context, app);
+    await assertIdentity(page, context, app);
 
     await page.goto(sentinel.launch, { waitUntil: "domcontentloaded" });
     assert.notEqual(new URL(page.url()).pathname, "/login", `${sentinel.name} prompted after shared SSO was established`);
     await waitForApplication(page, sentinel);
-    await assertIdentity(context, sentinel);
+    await assertIdentity(page, context, sentinel);
 
     await page.goto(app.launch, { waitUntil: "domcontentloaded" });
     await waitForApplication(page, app);
@@ -90,7 +90,7 @@ try {
 
 async function logoutFromApplication(page, context, app) {
   const bridgeRequest = page.waitForRequest((request) => request.resourceType() === "document" && request.url() === app.bridge);
-  await page.locator('form[action="/auth/logout"] button').click();
+  await page.locator("[data-shauth-sign-out]").click();
   assert.equal((await bridgeRequest).url(), app.bridge, `${app.name} did not traverse its exact logout-completion bridge`);
   await page.waitForURL(app.signedOut, { timeout: 30_000 });
   assert.equal(page.url(), app.signedOut, `${app.name} logout did not finish on the originating app`);
@@ -185,8 +185,9 @@ async function waitForOrigin(page, origin) {
 
 async function waitForApplication(page, app) {
   await waitForOrigin(page, new URL(app.launch).origin);
-  await page.waitForLoadState("networkidle");
-  await page.locator('form[action="/auth/logout"] button').waitFor({ state: "visible" });
+  await page.waitForLoadState("domcontentloaded");
+  await page.locator("[data-shauth-user]").waitFor({ state: "visible" });
+  await page.locator("[data-shauth-sign-out]").waitFor({ state: "visible" });
 }
 
 async function waitForShauthLogin(page) {
@@ -196,11 +197,23 @@ async function waitForShauthLogin(page) {
   }, { timeout: 30_000 });
 }
 
-async function assertIdentity(context, app) {
+async function assertIdentity(page, context, app) {
   const response = await context.request.get(app.identity);
   assert.equal(response.status(), 200, `${app.name} identity endpoint returned ${response.status()}`);
   const identity = await response.json();
   assert.equal(identity.authenticated, true, `${app.name} did not expose an authenticated identity`);
+  const expectedName = identity.name || identity.preferred_username || identity.preferredUsername || identity.login || identity.user || identity.email || identity.sub;
+  assert.equal(typeof expectedName, "string", `${app.name} identity omitted every user-facing name`);
+  assert.notEqual(expectedName.trim(), "", `${app.name} identity exposed an empty user-facing name`);
+  const account = page.locator("[data-shauth-user]");
+  await account.waitFor({ state: "visible" });
+  assert.equal(await account.getAttribute("data-shauth-user"), expectedName, `${app.name} product UI exposed the wrong Shauth username marker`);
+  assert.match(await account.innerText(), new RegExp(escapeRegExp(expectedName), "i"), `${app.name} product UI did not show the authenticated user`);
+  await page.locator("[data-shauth-sign-out]").waitFor({ state: "visible" });
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function monitor(page, allowedDocumentStatuses = new Set()) {

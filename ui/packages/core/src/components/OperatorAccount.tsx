@@ -80,7 +80,7 @@ export function OperatorAccount() {
   const name = identityName(identity.data);
   const detail = identity.data.email && identity.data.email !== name ? identity.data.email : "Authenticated by Shauth";
   return (
-    <section className="flex items-center gap-2" aria-label="Signed-in user">
+    <section className="flex items-center gap-2" aria-label="Signed-in user" data-shauth-user={name}>
       {identity.data.picture ? (
         <img
           src={identity.data.picture}
@@ -106,6 +106,7 @@ export function OperatorAccount() {
           type="submit"
           className="text-xs underline"
           aria-label={`Sign out ${name}`}
+          data-shauth-sign-out
         >
           Sign out
         </button>

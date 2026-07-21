@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2632 filed - 2610 fixed - 6 open - 16 false positives.**
+**2633 filed - 2610 fixed - 7 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2633 | P1 | required-check drift between workflow matrix and branch protection | renaming a matrix job silently made a required check unreachable | Splitting the AWS command-line interface `edge` and `ec2` groups into four shards renamed their job names, but `main`'s required-status-check list still demanded `sim (aws cli edge)` and `sim (aws cli ec2)`; those contexts could never report again, so every pull request stalled as pending. The list was corrected to the four shard contexts. A repository gate must compare every `name:` a workflow can emit against the required-check list so a rename fails the pull request that causes it instead of blocking the merge queue silently. |
 | 2625 | P0 | cloud simulator credential authentication | native cloud API requests accepted unverified caller-controlled credentials | The AWS simulator derives identity from unsigned Signature Version 4 text, while the Google Cloud and Microsoft Azure simulators derive identity from arbitrary bearer-token content; provider-faithful credential issuance plus signature, audience, expiry, and permission validation must replace those paths, with exact cloud errors and official SDK, CLI, and Terraform coverage. |
 | 2569 | P1 | Bleephub Amazon Elastic Container Service Terraform simulator harness | apply did not terminate within the bounded test window | The local Sockerless AWS Terraform apply/destroy harness left Terraform and simulator subprocesses running past its 90-second test deadline, so the blocking provider operation and subprocess lifecycle need a deterministic fix. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
