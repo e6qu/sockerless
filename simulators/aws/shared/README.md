@@ -58,6 +58,18 @@ Loaded from environment variables via `sim.ConfigFromEnv(provider)`:
 | `SIM_TLS_CERT` | — | TLS certificate file path |
 | `SIM_TLS_KEY` | — | TLS private key file path |
 | `SIM_LOG_LEVEL` | `info` | Log level: trace, debug, info, warn, error |
+| `SIM_UI_OIDC_ISSUER` | — | Shauth OpenID Connect issuer; enables dashboard authentication with the remaining UI values |
+| `SIM_UI_OIDC_CLIENT_ID` | — | Dashboard relying-party client ID |
+| `SIM_UI_OIDC_CLIENT_SECRET` | — | Dashboard relying-party client secret |
+| `SIM_UI_PUBLIC_URL` | — | Exact public dashboard origin |
+| `SIM_UI_SESSION_SECRET` | — | Independent random session-signing secret of at least 32 bytes |
+| `SIM_UI_INSECURE_COOKIES` | `false` | Allows HTTP only for explicit loopback integration tests |
+| `APPLICATION_RELEASE_REVISION` | — | Immutable 12–64 character lowercase hexadecimal revision or `sha256:` digest; required with dashboard authentication |
+
+Authenticated dashboards expose `GET /auth/validation` with Shauth's exact
+username, email, role, and immutable release fields. Anonymous and bearer-only
+requests receive an exact `303` to the dashboard's public
+`/auth/signed-out` page; validator material is accepted only by Shauth.
 
 ## Usage
 

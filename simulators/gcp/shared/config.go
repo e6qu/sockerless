@@ -40,12 +40,13 @@ type Config struct {
 	// . Unset = today's stderr-only behaviour.
 	LogWriter *OTelLogWriter
 
-	UIOIDCIssuer          string
-	UIOIDCClientID        string
-	UIOIDCClientSecret    string
-	UIPublicURL           string
-	UISessionSecret       string
-	UIOIDCInsecureCookies bool
+	UIOIDCIssuer               string
+	UIOIDCClientID             string
+	UIOIDCClientSecret         string
+	UIPublicURL                string
+	UISessionSecret            string
+	UIOIDCInsecureCookies      bool
+	ApplicationReleaseRevision string
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -59,21 +60,23 @@ type Config struct {
 //	SIM_UI_OIDC_CLIENT_SECRET — simulator dashboard relying-party secret
 //	SIM_UI_PUBLIC_URL         — externally visible simulator origin
 //	SIM_UI_SESSION_SECRET     — random secret used to sign local sessions
+//	APPLICATION_RELEASE_REVISION — immutable deployed release exposed to Shauth validation
 func ConfigFromEnv(provider string) Config {
 	return Config{
-		ListenAddr:            envOrDefault("SIM_LISTEN_ADDR", ":8443"),
-		TLSCert:               os.Getenv("SIM_TLS_CERT"),
-		TLSKey:                os.Getenv("SIM_TLS_KEY"),
-		LogLevel:              envOrDefault("SIM_LOG_LEVEL", "info"),
-		Provider:              provider,
-		DataDir:               os.Getenv("SIM_DATA_DIR"),
-		Persist:               os.Getenv("SIM_PERSIST") == "true" || os.Getenv("SIM_PERSIST") == "1",
-		UIOIDCIssuer:          os.Getenv("SIM_UI_OIDC_ISSUER"),
-		UIOIDCClientID:        os.Getenv("SIM_UI_OIDC_CLIENT_ID"),
-		UIOIDCClientSecret:    os.Getenv("SIM_UI_OIDC_CLIENT_SECRET"),
-		UIPublicURL:           os.Getenv("SIM_UI_PUBLIC_URL"),
-		UISessionSecret:       os.Getenv("SIM_UI_SESSION_SECRET"),
-		UIOIDCInsecureCookies: os.Getenv("SIM_UI_INSECURE_COOKIES") == "true",
+		ListenAddr:                 envOrDefault("SIM_LISTEN_ADDR", ":8443"),
+		TLSCert:                    os.Getenv("SIM_TLS_CERT"),
+		TLSKey:                     os.Getenv("SIM_TLS_KEY"),
+		LogLevel:                   envOrDefault("SIM_LOG_LEVEL", "info"),
+		Provider:                   provider,
+		DataDir:                    os.Getenv("SIM_DATA_DIR"),
+		Persist:                    os.Getenv("SIM_PERSIST") == "true" || os.Getenv("SIM_PERSIST") == "1",
+		UIOIDCIssuer:               os.Getenv("SIM_UI_OIDC_ISSUER"),
+		UIOIDCClientID:             os.Getenv("SIM_UI_OIDC_CLIENT_ID"),
+		UIOIDCClientSecret:         os.Getenv("SIM_UI_OIDC_CLIENT_SECRET"),
+		UIPublicURL:                os.Getenv("SIM_UI_PUBLIC_URL"),
+		UISessionSecret:            os.Getenv("SIM_UI_SESSION_SECRET"),
+		UIOIDCInsecureCookies:      os.Getenv("SIM_UI_INSECURE_COOKIES") == "true",
+		ApplicationReleaseRevision: os.Getenv("APPLICATION_RELEASE_REVISION"),
 	}
 }
 

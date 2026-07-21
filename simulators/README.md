@@ -75,6 +75,7 @@ Environment knobs (per sim — full list in each sub-README):
 | `SIM_UI_PUBLIC_URL` | unset | Externally visible origin for callback and logout redirects, such as `https://aws.dev.e6qu.dev`. |
 | `SIM_UI_SESSION_SECRET` | unset | Independent random value of at least 32 bytes used to sign local browser sessions. |
 | `SIM_UI_INSECURE_COOKIES` | `false` | Explicit loopback-development opt-in for HTTP issuer/public coordinates and non-Secure cookies; non-loopback HTTP coordinates remain invalid. |
+| `APPLICATION_RELEASE_REVISION` | unset | Immutable 12–64 character lowercase hexadecimal revision or `sha256:` image digest; required whenever UI OpenID Connect is enabled. |
 
 The optional first-party UI authentication layer uses authorization code +
 PKCE, nonce and state validation, signed server-tracked sessions, RP-Initiated
@@ -106,12 +107,24 @@ local session is active, obtains its identity from `/auth/session`, and submits
 logout to `/auth/logout`. No authentication proxy is required or supported for
 the simulator UI.
 
+Shauth validates each deployed dashboard at `<origin>/auth/validation`.
+Anonymous and bearer-only requests receive an exact `303` to the dashboard's
+own `/auth/signed-out` page. An authenticated request exposes the verified
+username, email, role, and immutable release through the standard
+`validation-username`, `validation-email`, `validation-role`, and
+`validation-release` fields and signs out through the same global OpenID
+Connect flow as the dashboard.
+
 Continuous integration ran the compiled AWS, Google Cloud, and Microsoft
 Azure dashboards together with Sockerless Admin against real Shauth, Ory
 Hydra, and PostgreSQL. One browser matrix verified direct and app-catalog entry,
 shared sign-on, identity, logout from every relying party, global revocation,
 exact app-local signed-out destinations, and signed back-channel acceptance at
-every dashboard.
+every dashboard. Shauth's passwordless validator ran both catalog and direct
+entry for each dashboard, verified exact identity and release fields,
+reauthenticated after relying-party logout, and proved provider logout against
+a second relying-party witness without exposing validator credentials to any
+Sockerless process.
 
 Docker or Podman is required when simulator calls execute workloads. If the
 operator intentionally needs only non-execution API surfaces, `SIM_RUNTIME=process`

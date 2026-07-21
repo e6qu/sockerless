@@ -255,11 +255,13 @@ func simHostMetadataPort() (int, error) {
 }
 
 // hostMetadataExtraHosts returns ExtraHosts entries needed for the
-// workload to resolve host.docker.internal AND the IMDS link-local
-// 169.254.169.254 to the sim's host gateway. The AWS SDK respects
-// AWS_EC2_METADATA_SERVICE_ENDPOINT, so workloads that go through the
-// SDK don't need the link-local hostname; ExtraHosts is best-effort
-// for raw HTTP clients.
+// workload to resolve host.docker.internal through the same outer-host
+// coordinate visible to a containerized simulator. Docker and Podman can use
+// different networks for the simulator and its nested workload containers, so
+// the simulator's default route is only a fallback when neither standard host
+// alias exists. The AWS SDK respects AWS_EC2_METADATA_SERVICE_ENDPOINT, so
+// workloads that go through the SDK don't need the link-local hostname;
+// ExtraHosts is best-effort for raw HTTP clients.
 func hostMetadataExtraHosts() []string {
 	if entries := hostMetadataHostEntries(); len(entries) > 0 {
 		out := make([]string, 0, len(entries))
@@ -279,19 +281,39 @@ func hostMetadataHostEntries() []sim.HostEntry {
 	if !runningInsideContainer() {
 		return nil
 	}
-	gateway := defaultRouteGatewayIPv4()
+	gateway := workloadHostGatewayIPv4(net.LookupHost, defaultRouteGatewayIPv4)
 	if gateway == "" {
 		return nil
 	}
-	return []sim.HostEntry{{IP: gateway, Name: "host.docker.internal"}}
+	return []sim.HostEntry{
+		{IP: gateway, Name: "host.docker.internal"},
+		{IP: gateway, Name: "host.containers.internal"},
+	}
 }
 
 func rewriteHostDockerInternalEnv(env map[string]string) map[string]string {
-	gateway := defaultRouteGatewayIPv4()
+	gateway := workloadHostGatewayIPv4(net.LookupHost, defaultRouteGatewayIPv4)
 	if gateway == "" {
 		return env
 	}
 	return rewriteHostDockerInternalEnvWithGateway(env, gateway)
+}
+
+func workloadHostGatewayIPv4(lookup func(string) ([]string, error), fallback func() string) string {
+	for _, hostname := range []string{"host.docker.internal", "host.containers.internal"} {
+		addresses, err := lookup(hostname)
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip := net.ParseIP(strings.TrimSpace(address))
+			if ip == nil || ip.To4() == nil || !ip.IsGlobalUnicast() || ip.IsLoopback() {
+				continue
+			}
+			return ip.To4().String()
+		}
+	}
+	return fallback()
 }
 
 func rewriteHostDockerInternalEnvWithGateway(env map[string]string, gateway string) map[string]string {

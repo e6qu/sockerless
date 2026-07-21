@@ -19,12 +19,27 @@ import (
 
 func testSHAUTHConfig() shauthConfig {
 	return shauthConfig{
-		issuer:        "https://auth.dev.e6qu.dev",
-		clientID:      "client",
-		clientSecret:  "this-is-a-test-secret",
-		sessionSecret: "0123456789abcdef0123456789abcdef",
-		publicURL:     "https://admin.dev.e6qu.dev",
-		sessions:      newSHAUTHSessionStore(),
+		issuer:          "https://auth.dev.e6qu.dev",
+		clientID:        "client",
+		clientSecret:    "this-is-a-test-secret",
+		sessionSecret:   "0123456789abcdef0123456789abcdef",
+		publicURL:       "https://admin.dev.e6qu.dev",
+		releaseRevision: "0123456789ab",
+		sessions:        newSHAUTHSessionStore(),
+		providerCache:   &shauthProviderCache{},
+	}
+}
+
+func TestSHAUTHProviderCacheReturnsDiscoveredProvider(t *testing.T) {
+	config := testSHAUTHConfig()
+	want := &oidc.Provider{}
+	config.providerCache.provider = want
+	got, err := config.providerFor(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatal("cached OpenID Connect provider was not reused")
 	}
 }
 
@@ -32,23 +47,36 @@ func TestSHAUTHConfigRequiresCompleteHTTPSCoordinates(t *testing.T) {
 	if err := (shauthConfig{}).validate(); err != nil {
 		t.Fatalf("disabled configuration: %v", err)
 	}
+	if err := (shauthConfig{releaseRevision: "0123456789ab"}).validate(); err != nil {
+		t.Fatalf("release metadata without optional browser authentication: %v", err)
+	}
 	if err := (shauthConfig{issuer: "https://auth.dev.e6qu.dev", clientID: "client"}).validate(); err == nil {
 		t.Fatal("partial configuration was accepted")
 	}
-	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
+	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "https://admin.dev.e6qu.dev", releaseRevision: "0123456789ab"}).validate(); err == nil {
 		t.Fatal("non-HTTPS issuer was accepted")
 	}
-	if err := (shauthConfig{issuer: "http://localhost:8080", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "http://localhost:29090", insecure: true}).validate(); err != nil {
+	if err := (shauthConfig{issuer: "http://localhost:8080", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "http://localhost:29090", releaseRevision: "0123456789ab", insecure: true}).validate(); err != nil {
 		t.Fatalf("explicit loopback test configuration: %v", err)
 	}
-	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "http://admin.dev.e6qu.dev", insecure: true}).validate(); err == nil {
+	if err := (shauthConfig{issuer: "http://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "http://admin.dev.e6qu.dev", releaseRevision: "0123456789ab", insecure: true}).validate(); err == nil {
 		t.Fatal("public HTTP coordinates were accepted in insecure test mode")
 	}
-	if err := (shauthConfig{issuer: "https://user@auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
+	if err := (shauthConfig{issuer: "https://user@auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "0123456789abcdef0123456789abcdef", publicURL: "https://admin.dev.e6qu.dev", releaseRevision: "0123456789ab"}).validate(); err == nil {
 		t.Fatal("issuer with user information was accepted")
 	}
-	if err := (shauthConfig{issuer: "https://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "short", publicURL: "https://admin.dev.e6qu.dev"}).validate(); err == nil {
+	if err := (shauthConfig{issuer: "https://auth.dev.e6qu.dev", clientID: "client", clientSecret: "secret", sessionSecret: "short", publicURL: "https://admin.dev.e6qu.dev", releaseRevision: "0123456789ab"}).validate(); err == nil {
 		t.Fatal("short session secret was accepted")
+	}
+	config := testSHAUTHConfig()
+	config.releaseRevision = ""
+	if err := config.validate(); err == nil {
+		t.Fatal("missing application release was accepted")
+	}
+	config = testSHAUTHConfig()
+	config.releaseRevision = "latest"
+	if err := config.validate(); err == nil {
+		t.Fatal("moving application release was accepted")
 	}
 }
 
@@ -58,12 +86,22 @@ func TestSHAUTHConfigPreservesExactIssuer(t *testing.T) {
 	t.Setenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET", "secret")
 	t.Setenv("SOCKERLESS_ADMIN_SESSION_SECRET", "0123456789abcdef0123456789abcdef")
 	t.Setenv("SOCKERLESS_ADMIN_PUBLIC_URL", "https://admin.dev.e6qu.dev/")
+	t.Setenv("APPLICATION_RELEASE_REVISION", "0123456789ab")
 	config := shauthConfigFromEnvironment()
 	if config.issuer != "https://auth.dev.e6qu.dev/tenant/" {
 		t.Fatalf("issuer = %q", config.issuer)
 	}
 	if config.publicURL != "https://admin.dev.e6qu.dev" {
 		t.Fatalf("public URL = %q", config.publicURL)
+	}
+	if config.releaseRevision != "0123456789ab" {
+		t.Fatalf("application release revision = %q", config.releaseRevision)
+	}
+}
+
+func TestSHAUTHOriginDropsIssuerPath(t *testing.T) {
+	if got := shauthOrigin("https://auth.dev.e6qu.dev/tenant/"); got != "https://auth.dev.e6qu.dev" {
+		t.Fatalf("Shauth origin = %q", got)
 	}
 }
 
@@ -137,6 +175,9 @@ func TestSHAUTHAdministratorRoleGuardsUIAndRealTopologyMutations(t *testing.T) {
 	}
 	if response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("developer denial cache control = %q", response.Header().Get("Cache-Control"))
+	}
+	if csp := response.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self' https://auth.dev.e6qu.dev") {
+		t.Fatalf("developer denial Content-Security-Policy omitted the exact Shauth origin: %q", csp)
 	}
 
 	request = httptest.NewRequest(http.MethodPost, "/api/v1/topology/projects", strings.NewReader(`{"name":"denied-project","instances":[]}`))
@@ -518,5 +559,45 @@ func TestSHAUTHSignedOutResponseIsPublicAndNotCached(t *testing.T) {
 	body := recorder.Body.String()
 	if !strings.Contains(body, `href="/auth/shauth"`) || !strings.Contains(body, `>Sign in with Shauth</a>`) {
 		t.Fatalf("signed-out response omitted the explicit Shauth sign-in control: %s", body)
+	}
+}
+
+func TestSHAUTHValidationRequiresSessionAndExposesExactContract(t *testing.T) {
+	config := testSHAUTHConfig()
+	anonymous := httptest.NewRequest(http.MethodGet, shauthValidationPath, nil)
+	anonymous.Header.Set("Authorization", "Bearer validator-material-must-not-authenticate")
+	recorder := httptest.NewRecorder()
+	config.validation(recorder, anonymous)
+	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != shauthSignedOutPath {
+		t.Fatalf("anonymous validation = %d %q", recorder.Code, recorder.Header().Get("Location"))
+	}
+
+	expires := time.Now().Add(time.Hour).Unix()
+	session := shauthSession{ID: "validation-session", Subject: "subject", Name: "shauth-validator", Email: "validator@example.test", Role: "developer", Expires: expires}
+	value, err := config.sign(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.sessions.put(session.ID, shauthSessionRecord{Subject: session.Subject, Expires: expires})
+	request := httptest.NewRequest(http.MethodGet, shauthValidationPath, nil)
+	request.AddCookie(&http.Cookie{Name: shauthSessionCookie, Value: value})
+	recorder = httptest.NewRecorder()
+	config.validation(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("authenticated validation = %d Cache-Control=%q", recorder.Code, recorder.Header().Get("Cache-Control"))
+	}
+	if csp := recorder.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self' https://auth.dev.e6qu.dev") {
+		t.Fatalf("validation Content-Security-Policy omitted the exact Shauth origin: %q", csp)
+	}
+	for _, expected := range []string{
+		`data-testid="validation-username">shauth-validator</dd>`,
+		`data-testid="validation-email">validator@example.test</dd>`,
+		`data-testid="validation-role">developer</dd>`,
+		`data-testid="validation-release">0123456789ab</dd>`,
+		`action="/auth/logout"`, `>Sign out</button>`,
+	} {
+		if !strings.Contains(recorder.Body.String(), expected) {
+			t.Fatalf("validation response omitted %q: %s", expected, recorder.Body.String())
+		}
 	}
 }

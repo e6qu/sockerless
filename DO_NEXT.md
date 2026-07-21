@@ -4,17 +4,20 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`fix/signed-out-shauth-controls` made every Sockerless-owned terminal page identify its identity provider with an accessible `Sign in with Shauth` control. Admin used `/auth/shauth`; the AWS, Google Cloud, and Microsoft Azure simulators used `/auth/oidc/login`. The complete PostgreSQL/Ory Hydra/Shauth/Chromium matrix proved global logout, exact app-local landing, reload persistence, each exact control target, and a real return to Shauth.
+`fix/shauth-validation-contract` gave Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator dashboards the exact Shauth validation surface. Each authenticated validation page exposed verified username, email, role, and immutable release, used the real global logout flow, and rejected bearer-only or anonymous access. The clean pinned PostgreSQL/Ory Hydra/Shauth/Chromium matrix proved all four relying parties from both the Shauth catalog and their direct origins.
 
 ## Continue Here
 
-1. Merge this branch through its single pull request, verify the published direct ARM64 and AMD64 manifests plus generic indexes, deploy the Admin and simulator images, and run the signed-out control plus developer-denial/administrator-mutation matrices against the live origins.
+1. Merge this branch through its single pull request, verify the published direct ARM64 and AMD64 manifests plus generic indexes, deploy the Admin and simulator images, and run the same eight-direction validation matrix against the live origins.
 2. Re-run Bleeplab's real Sockerless runner consumer against the merged revision and confirm its multi-stage helper completes beyond the previously observed source-fetch duration without an API-triggered task stop.
 3. Resolve BUG-2569: make the local Amazon Elastic Container Service Terraform simulator apply/destroy harness terminate deterministically without weakening the real provider path.
 4. Continue complete simulator and backend fidelity work, including the open live-cloud cells documented in BUGS.md.
 
 ## Recent Validation
 
+- Clean Shauth `5417497b2f795b9ea6949392134626982512769a` served the real PostgreSQL, patched Ory Hydra, compiled Admin and three simulator relying parties, and Chromium matrix. Eight serialized catalog-entry and direct-entry jobs proved exact release identity, relying-party global logout, app-local signed-out return, reload persistence, reauthentication, provider logout with witness revocation, anonymous fail-closed behavior, and confinement of validator credentials to Shauth. The exact validator module also built successfully from a nested continuous-integration checkout with its workspace isolated, and its job selected the Go toolchain declared by the pinned Shauth module.
+- The real Bleeplab Amazon ECS runner harness reached Bleeplab from inside a nested workload through the propagated outer-host coordinate, completed a GitLab-style pipeline, compiled and consumed an artifact, and reached Redis through its service alias.
+- The current AWS Organizations SDK patch release passed the complete isolated official SDK module, and the repository-wide dependency freshness gate reported no remaining Go, Terraform provider, or GitHub Actions drift.
 - The complete Google Cloud and Microsoft Azure official SDK suites passed on macOS Podman after their real Cloud Build and Azure Container Registry Tasks paths applied a scoped loopback-registry trust policy and performed ordinary Docker-compatible image pushes.
 - The complete dependency freshness gate passed after its discovery scope moved from arbitrary nested filesystem content to Git-tracked modules, providers, and workflows; all Google Cloud Secret Manager consumers and workflow checkout actions used their current published releases.
 - Fresh Shauth `470f789` served the complete real PostgreSQL, patched Ory Hydra, compiled Admin and three simulator relying parties, and Chromium matrix. Logout from every relying party invalidated the shared session, landed on and persisted the exact local terminal page, exposed the exact `Sign in with Shauth` coordinate, and returned the browser to Shauth when clicked.

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -29,33 +30,46 @@ const (
 	shauthTransactionCookie = "sockerless_admin_shauth_tx"
 	shauthSessionCookie     = "sockerless_admin_shauth_session"
 	shauthSignedOutPath     = "/auth/signed-out"
+	shauthValidationPath    = "/auth/validation"
 	shauthAdministratorRole = "admin"
 	shauthMaximumFormBytes  = 1 << 20
 	shauthLogoutEvent       = "http://schemas.openid.net/event/backchannel-logout"
+	shauthDiscoveryTimeout  = 10 * time.Second
 )
+
+var immutableSHAUTHApplicationRelease = regexp.MustCompile(`^(?:[0-9a-f]{12,64}|sha256:[0-9a-f]{64})$`)
 
 // shauthConfig is optional so the local operator workflow remains available.
 // A deployed administrator console must set every coordinate and is then
 // guarded by Shauth; simulator cloud API endpoints are never wrapped here.
 type shauthConfig struct {
-	issuer        string
-	clientID      string
-	clientSecret  string
-	sessionSecret string
-	publicURL     string
-	insecure      bool
-	sessions      *shauthSessionStore
+	issuer          string
+	clientID        string
+	clientSecret    string
+	sessionSecret   string
+	publicURL       string
+	releaseRevision string
+	insecure        bool
+	sessions        *shauthSessionStore
+	providerCache   *shauthProviderCache
+}
+
+type shauthProviderCache struct {
+	mu       sync.Mutex
+	provider *oidc.Provider
 }
 
 func shauthConfigFromEnvironment() shauthConfig {
 	return shauthConfig{
-		issuer:        os.Getenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER"),
-		clientID:      os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID"),
-		clientSecret:  os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET"),
-		sessionSecret: os.Getenv("SOCKERLESS_ADMIN_SESSION_SECRET"),
-		publicURL:     strings.TrimRight(os.Getenv("SOCKERLESS_ADMIN_PUBLIC_URL"), "/"),
-		insecure:      os.Getenv("SOCKERLESS_ADMIN_INSECURE_COOKIES") == "true",
-		sessions:      newSHAUTHSessionStore(),
+		issuer:          os.Getenv("SOCKERLESS_ADMIN_SHAUTH_ISSUER"),
+		clientID:        os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID"),
+		clientSecret:    os.Getenv("SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET"),
+		sessionSecret:   os.Getenv("SOCKERLESS_ADMIN_SESSION_SECRET"),
+		publicURL:       strings.TrimRight(os.Getenv("SOCKERLESS_ADMIN_PUBLIC_URL"), "/"),
+		releaseRevision: strings.TrimSpace(os.Getenv("APPLICATION_RELEASE_REVISION")),
+		insecure:        os.Getenv("SOCKERLESS_ADMIN_INSECURE_COOKIES") == "true",
+		sessions:        newSHAUTHSessionStore(),
+		providerCache:   &shauthProviderCache{},
 	}
 }
 
@@ -78,6 +92,9 @@ func (c shauthConfig) validate() error {
 	}
 	if len(c.sessionSecret) < 32 {
 		return fmt.Errorf("SOCKERLESS_ADMIN_SESSION_SECRET must contain at least 32 bytes")
+	}
+	if !immutableSHAUTHApplicationRelease.MatchString(c.releaseRevision) {
+		return fmt.Errorf("APPLICATION_RELEASE_REVISION must identify an immutable deployed release")
 	}
 	for name, value := range map[string]string{"issuer": c.issuer, "public URL": c.publicURL} {
 		parsed, err := url.ParseRequestURI(value)
@@ -103,6 +120,7 @@ type shauthSession struct {
 	ID      string `json:"id"`
 	Subject string `json:"subject"`
 	Name    string `json:"name"`
+	Email   string `json:"email"`
 	Role    string `json:"role"`
 	Expires int64  `json:"expires"`
 }
@@ -230,6 +248,25 @@ func (c shauthConfig) verify(value string, destination any) error {
 
 func (c shauthConfig) secureCookie() bool { return !c.insecure }
 
+func (c shauthConfig) providerFor(ctx context.Context) (*oidc.Provider, error) {
+	if c.providerCache == nil {
+		return nil, errors.New("shauth provider cache is unavailable")
+	}
+	c.providerCache.mu.Lock()
+	defer c.providerCache.mu.Unlock()
+	if c.providerCache.provider != nil {
+		return c.providerCache.provider, nil
+	}
+	discoveryContext, cancel := context.WithTimeout(ctx, shauthDiscoveryTimeout)
+	defer cancel()
+	provider, err := oidc.NewProvider(discoveryContext, c.issuer)
+	if err != nil {
+		return nil, err
+	}
+	c.providerCache.provider = provider
+	return provider, nil
+}
+
 func (c shauthConfig) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !c.enabled() || isSHAUTHRoute(r.URL.Path) || r.URL.Path == "/healthz" {
@@ -260,6 +297,7 @@ func (c shauthConfig) forbidden(w http.ResponseWriter, r *http.Request, session 
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' "+shauthOrigin(c.issuer))
 	w.WriteHeader(http.StatusForbidden)
 	if err := shauthForbiddenTemplate.Execute(w, struct {
 		Name string
@@ -270,7 +308,7 @@ func (c shauthConfig) forbidden(w http.ResponseWriter, r *http.Request, session 
 }
 
 func isSHAUTHRoute(path string) bool {
-	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/frontchannel-logout" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session" || path == shauthSignedOutPath
+	return path == "/auth/shauth" || path == "/auth/shauth/callback" || path == "/auth/shauth/frontchannel-logout" || path == "/auth/shauth/backchannel-logout" || path == "/auth/logout" || path == "/auth/session" || path == shauthSignedOutPath || path == shauthValidationPath
 }
 
 func (c shauthConfig) sessionIsActive(session shauthSession, now time.Time) bool {
@@ -286,7 +324,7 @@ func (c shauthConfig) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	provider, err := oidc.NewProvider(r.Context(), c.issuer)
+	provider, err := c.providerFor(r.Context())
 	if err != nil {
 		http.Error(w, "Shauth discovery failed", http.StatusBadGateway)
 		return
@@ -328,7 +366,7 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth transaction is invalid", http.StatusBadRequest)
 		return
 	}
-	provider, err := oidc.NewProvider(r.Context(), c.issuer)
+	provider, err := c.providerFor(r.Context())
 	if err != nil {
 		http.Error(w, "Shauth discovery failed", http.StatusBadGateway)
 		return
@@ -356,6 +394,7 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 	var claims struct {
 		Nonce             string `json:"nonce"`
 		PreferredUsername string `json:"preferred_username"`
+		Email             string `json:"email"`
 		Role              string `json:"role"`
 		SessionID         string `json:"sid"`
 	}
@@ -381,7 +420,7 @@ func (c shauthConfig) callback(w http.ResponseWriter, r *http.Request) {
 		expiresAt = idToken.Expiry
 	}
 	expires := expiresAt.Unix()
-	session, err := c.sign(shauthSession{ID: sessionID, Subject: idToken.Subject, Name: name, Role: claims.Role, Expires: expires})
+	session, err := c.sign(shauthSession{ID: sessionID, Subject: idToken.Subject, Name: name, Email: claims.Email, Role: claims.Role, Expires: expires})
 	if err != nil {
 		http.Error(w, "could not create Shauth session", http.StatusInternalServerError)
 		return
@@ -422,8 +461,10 @@ func (c shauthConfig) logout(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ui/", http.StatusFound)
 		return
 	}
-	provider, err := oidc.NewProvider(r.Context(), c.issuer)
+	discoveryStarted := time.Now()
+	provider, err := c.providerFor(r.Context())
 	if err != nil {
+		log.Printf("Shauth logout discovery failed for client %q after %s", c.clientID, time.Since(discoveryStarted).Round(time.Millisecond))
 		http.Error(w, "Shauth discovery failed", http.StatusBadGateway)
 		return
 	}
@@ -439,6 +480,7 @@ func (c shauthConfig) logout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Shauth logout endpoint is invalid", http.StatusBadGateway)
 		return
 	}
+	log.Printf("initiated Shauth global logout for client %q after %s", c.clientID, time.Since(discoveryStarted).Round(time.Millisecond))
 	http.Redirect(w, r, logoutURL.String(), http.StatusFound)
 }
 
@@ -483,6 +525,14 @@ func sameSHAUTHParsedOrigin(got, want *url.URL) bool {
 	return got != nil && want != nil && got.IsAbs() && got.User == nil && got.Scheme == want.Scheme && got.Host == want.Host
 }
 
+func shauthOrigin(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return "'none'"
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
+
 func isSHAUTHLoopback(host string) bool {
 	if host == "localhost" {
 		return true
@@ -512,7 +562,7 @@ func (c shauthConfig) backchannelLogout(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "logout_token is required", http.StatusBadRequest)
 		return
 	}
-	provider, err := oidc.NewProvider(r.Context(), c.issuer)
+	provider, err := c.providerFor(r.Context())
 	if err != nil {
 		http.Error(w, "Shauth discovery failed", http.StatusBadGateway)
 		return
@@ -528,7 +578,7 @@ func (c shauthConfig) backchannelLogout(w http.ResponseWriter, r *http.Request) 
 func (c shauthConfig) frontchannelLogout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors "+c.issuer+"; base-uri 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors "+shauthOrigin(c.issuer)+"; base-uri 'none'; form-action 'none'")
 	if c.enabled() && c.sessions != nil && r.URL.Query().Get("iss") == c.issuer {
 		c.sessions.revoke("", r.URL.Query().Get("sid"), time.Now())
 	}
@@ -574,7 +624,27 @@ func (c shauthConfig) signedOut(w http.ResponseWriter, _ *http.Request) {
 	_ = shauthSignedOutTemplate.Execute(w, nil)
 }
 
+func (c shauthConfig) validation(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(shauthSessionCookie)
+	var session shauthSession
+	if err == nil {
+		err = c.verify(cookie.Value, &session)
+	}
+	if err != nil || !c.sessionIsActive(session, time.Now()) {
+		http.Redirect(w, r, shauthSignedOutPath, http.StatusSeeOther)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' "+shauthOrigin(c.issuer))
+	_ = shauthValidationTemplate.Execute(w, map[string]string{
+		"Username": session.Name, "Email": session.Email, "Role": session.Role, "Release": c.releaseRevision,
+	})
+}
+
 var shauthSignedOutTemplate = template.Must(template.New("signed-out").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out · Sockerless Admin</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fff7ed;color:#21130f;font:16px system-ui,sans-serif}.card{max-width:34rem;padding:2.5rem;border:1px solid #fed7aa;border-radius:1.25rem;background:#fff;box-shadow:0 16px 40px #7c2d1214}a{display:inline-block;margin-top:1rem;padding:.7rem 1rem;border-radius:.6rem;background:#ea580c;color:#fff;font-weight:700;text-decoration:none}a:focus-visible{outline:3px solid #0ea5e9;outline-offset:3px}@media(prefers-color-scheme:dark){body{background:#160c09;color:#fff7ed}.card{background:#26130d;border-color:#7c2d12}}</style></head><body><main class="card" aria-labelledby="signed-out-title"><h1 id="signed-out-title">Signed out of Sockerless Admin</h1><p role="status">Your Sockerless Admin session and shared Shauth session have ended.</p><a href="/auth/shauth">Sign in with Shauth</a></main></body></html>`))
+
+var shauthValidationTemplate = template.Must(template.New("validation").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authentication validation · Sockerless Admin</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fff7ed;color:#21130f;font:16px system-ui,sans-serif}.card{width:min(34rem,calc(100% - 2rem));padding:2.5rem;border:1px solid #fed7aa;border-radius:1.25rem;background:#fff;box-shadow:0 16px 40px #7c2d1214}dl{display:grid;grid-template-columns:max-content 1fr;gap:.65rem 1rem}dt{font-weight:700}dd{margin:0;overflow-wrap:anywhere}button{padding:.7rem 1rem;border:0;border-radius:.6rem;background:#ea580c;color:#fff;font:inherit;font-weight:700;cursor:pointer}button:focus-visible{outline:3px solid #0ea5e9;outline-offset:3px}@media(prefers-color-scheme:dark){body{background:#160c09;color:#fff7ed}.card{background:#26130d;border-color:#7c2d12}}</style></head><body><main class="card" aria-labelledby="validation-title"><h1 id="validation-title">Signed in to Sockerless Admin</h1><dl><dt>Username</dt><dd data-testid="validation-username">{{.Username}}</dd><dt>Email</dt><dd data-testid="validation-email">{{.Email}}</dd><dt>Role</dt><dd data-testid="validation-role">{{.Role}}</dd><dt>Release</dt><dd data-testid="validation-release">{{.Release}}</dd></dl><form method="post" action="/auth/logout"><button type="submit">Sign out</button></form></main></body></html>`))
 
 var shauthForbiddenTemplate = template.Must(template.New("forbidden").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Administrator access required · Sockerless Admin</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fff7ed;color:#21130f;font:16px system-ui,sans-serif}.card{max-width:36rem;padding:2.5rem;border:1px solid #fed7aa;border-radius:1.25rem;background:#fff;box-shadow:0 16px 40px #7c2d1214}.eyebrow{font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#c2410c}button{margin-top:1rem;padding:.7rem 1rem;border:0;border-radius:.6rem;background:#ea580c;color:#fff;font:inherit;font-weight:700;cursor:pointer}button:focus-visible{outline:3px solid #0ea5e9;outline-offset:3px}@media(prefers-color-scheme:dark){body{background:#160c09;color:#fff7ed}.card{background:#26130d;border-color:#7c2d12}.eyebrow{color:#fb923c}}</style></head><body><main class="card"><p class="eyebrow">Access denied</p><h1>Administrator access required</h1><p>{{if .Name}}{{.Name}} is{{else}}You are{{end}} signed in with the <strong>{{.Role}}</strong> role. Sockerless Admin contains operator controls and requires the Shauth administrator role.</p><form method="post" action="/auth/logout"><button type="submit">Sign out</button></form></main></body></html>`))
 

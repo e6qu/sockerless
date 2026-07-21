@@ -109,6 +109,7 @@ func main() {
 	mux.HandleFunc("POST /auth/logout", shauth.logout)
 	mux.HandleFunc("GET /auth/session", shauth.session)
 	mux.HandleFunc("GET "+shauthSignedOutPath, shauth.signedOut)
+	mux.HandleFunc("GET "+shauthValidationPath, shauth.validation)
 	registerUI(mux)
 
 	// Redirect / to /ui/

@@ -992,3 +992,52 @@ session values. Focused validation proved that only rotation of the dedicated
 session secret invalidated existing signatures, and the complete real
 PostgreSQL, patched Ory Hydra, Shauth, compiled relying-party, and Chromium
 matrix passed with the separated credentials.
+
+## Release-aware Shauth relying-party validation
+
+Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator
+dashboards implemented Shauth's standard `/auth/validation` contract. Each
+authenticated page exposed the verified username, email, role, and immutable
+application release through exact machine-readable fields and used the
+application's real global logout action. Anonymous requests returned an exact
+`303` to the application's own signed-out page, while arbitrary bearer material
+could not authenticate a relying party. The deployed authentication
+configuration required a commit or container digest so Shauth could validate
+the release actually serving each public origin.
+
+The continuous-integration harness pinned and verified a clean Shauth source
+revision before starting its real PostgreSQL and patched Ory Hydra stack. It
+built the current production bundles and binaries for Admin and all three
+simulators, confined passwordless validator credentials to Shauth, and rejected
+their presence in relying-party process environments. Eight serialized browser
+jobs covered catalog and direct entry for every application, exact identity and
+release fields, relying-party global logout, application-local signed-out
+return, reload persistence, reauthentication, and provider logout with witness
+revocation. Sockerless Admin cached validated provider discovery metadata behind
+a bounded initial lookup, preventing logout requests from hanging on repeated
+discovery, and validation-page content security policy allowed only the exact
+Shauth origin required by the real redirect chain.
+
+The mandatory pre-push dependency audit also advanced the Amazon Web Services
+Organizations SDK test client to its current patch release. The complete
+official SDK module and the repository-wide dependency freshness gate passed
+with the updated module graph.
+
+## Containerized simulator outer-host propagation
+
+A containerized AWS simulator resolved the outer runtime's existing
+`host.docker.internal` or `host.containers.internal` IPv4 coordinate before
+falling back to its own default route. It propagated that exact address to
+nested workloads for metadata, callbacks, and user-supplied endpoint
+coordinates, so Podman's simulator and workload networks no longer confused
+the simulator gateway with the actual host.
+
+The Bleeplab runner harness added a targeted real Amazon ECS workload check
+that required the exact Bleeplab health response from inside the nested task.
+The same run completed the full GitLab-style pipeline, compiled and consumed
+an artifact, and reached Redis through the build pod's service alias.
+Sockerless's Shauth harness also isolated the standalone validator's Go module,
+so the same build succeeded when Shauth was checked out beneath Sockerless's
+workspace in continuous integration. The browser job selected the Go toolchain
+from that pinned Shauth module, preventing the provider's compiler requirement
+from drifting behind Sockerless's own toolchain.

@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -33,10 +34,13 @@ const (
 	FrontchannelLogoutPath = "/auth/oidc/frontchannel-logout"
 	BackchannelLogoutPath  = "/auth/oidc/backchannel-logout"
 	SignedOutPath          = "/auth/signed-out"
+	ValidationPath         = "/auth/validation"
 	transactionLifetime    = 10 * time.Minute
 	maximumFormBytes       = 1 << 20
 	backchannelLogoutEvent = "http://schemas.openid.net/event/backchannel-logout"
 )
+
+var immutableApplicationRelease = regexp.MustCompile(`^(?:[0-9a-f]{12,64}|sha256:[0-9a-f]{64})$`)
 
 type Config struct {
 	Issuer          string
@@ -46,6 +50,7 @@ type Config struct {
 	SessionSecret   string
 	CookieName      string
 	ApplicationName string
+	ReleaseRevision string
 	SessionLifetime time.Duration
 	InsecureCookies bool
 }
@@ -61,6 +66,7 @@ func (c Config) Validate() error {
 	for name, value := range map[string]string{
 		"issuer": c.Issuer, "client ID": c.ClientID, "client secret": c.ClientSecret,
 		"public URL": c.PublicURL, "session secret": c.SessionSecret, "cookie name": c.CookieName,
+		"application release revision": c.ReleaseRevision,
 	} {
 		if value == "" {
 			return fmt.Errorf("OIDC %s is required when simulator UI authentication is enabled", name)
@@ -68,6 +74,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.SessionSecret) < 32 {
 		return errors.New("OIDC session secret must contain at least 32 bytes")
+	}
+	if !immutableApplicationRelease.MatchString(c.ReleaseRevision) {
+		return errors.New("application release revision must identify an immutable deployed release")
 	}
 	for name, raw := range map[string]string{"issuer": c.Issuer, "public URL": c.PublicURL} {
 		u, err := url.Parse(raw)
@@ -117,6 +126,7 @@ func (a *Auth) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+FrontchannelLogoutPath, a.frontchannelLogout)
 	mux.HandleFunc("POST "+BackchannelLogoutPath, a.backchannelLogout)
 	mux.HandleFunc("GET "+SignedOutPath, a.signedOut)
+	mux.HandleFunc("GET "+ValidationPath, a.validation)
 }
 
 func (a *Auth) Protect(next http.Handler) http.Handler {
@@ -374,7 +384,7 @@ func (a *Auth) backchannelLogout(w http.ResponseWriter, r *http.Request) {
 func (a *Auth) frontchannelLogout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors "+a.config.Issuer+"; base-uri 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors "+urlOrigin(a.config.Issuer)+"; base-uri 'none'; form-action 'none'")
 	if r.URL.Query().Get("iss") == a.config.Issuer {
 		a.store.revoke("", r.URL.Query().Get("sid"), time.Now())
 	}
@@ -412,7 +422,24 @@ func (a *Auth) signedOut(w http.ResponseWriter, _ *http.Request) {
 	_ = signedOutTemplate.Execute(w, map[string]string{"Name": a.config.ApplicationName, "Login": LoginPath})
 }
 
+func (a *Auth) validation(w http.ResponseWriter, r *http.Request) {
+	session, ok := a.requestSession(r, time.Now())
+	if !ok {
+		http.Redirect(w, r, SignedOutPath, http.StatusSeeOther)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' "+urlOrigin(a.config.Issuer))
+	_ = validationTemplate.Execute(w, map[string]string{
+		"Name": session.Name, "Email": session.Email, "Role": session.Role,
+		"Release": a.config.ReleaseRevision, "Application": a.config.ApplicationName,
+	})
+}
+
 var signedOutTemplate = template.Must(template.New("signed-out").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out · {{.Name}}</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f7ff;color:#17172b;font:16px system-ui,sans-serif}.card{max-width:34rem;padding:2.5rem;border:1px solid #dfe3f0;border-radius:1.25rem;background:#fff;box-shadow:0 16px 40px #24284a14}a{display:inline-block;margin-top:1rem;padding:.7rem 1rem;border-radius:.6rem;background:#7c3aed;color:#fff;font-weight:700;text-decoration:none}a:focus-visible{outline:3px solid #0891b2;outline-offset:3px}@media(prefers-color-scheme:dark){body{background:#0b1020;color:#f5f7ff}.card{background:#151c30;border-color:#2c3652}}</style></head><body><main class="card" aria-labelledby="signed-out-title"><h1 id="signed-out-title">Signed out of {{.Name}}</h1><p role="status">Your local session and shared Shauth session have ended.</p><a href="{{.Login}}">Sign in with Shauth</a></main></body></html>`))
+
+var validationTemplate = template.Must(template.New("validation").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authentication validation · {{.Application}}</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f7ff;color:#17172b;font:16px system-ui,sans-serif}.card{width:min(34rem,calc(100% - 2rem));padding:2.5rem;border:1px solid #dfe3f0;border-radius:1.25rem;background:#fff;box-shadow:0 16px 40px #24284a14}dl{display:grid;grid-template-columns:max-content 1fr;gap:.65rem 1rem}dt{font-weight:700}dd{margin:0;overflow-wrap:anywhere}button{padding:.7rem 1rem;border:0;border-radius:.6rem;background:#7c3aed;color:#fff;font:inherit;font-weight:700;cursor:pointer}button:focus-visible{outline:3px solid #0891b2;outline-offset:3px}@media(prefers-color-scheme:dark){body{background:#0b1020;color:#f5f7ff}.card{background:#151c30;border-color:#2c3652}}</style></head><body><main class="card" aria-labelledby="validation-title"><h1 id="validation-title">Signed in to {{.Application}}</h1><dl><dt>Username</dt><dd data-testid="validation-username">{{.Name}}</dd><dt>Email</dt><dd data-testid="validation-email">{{.Email}}</dd><dt>Role</dt><dd data-testid="validation-role">{{.Role}}</dd><dt>Release</dt><dd data-testid="validation-release">{{.Release}}</dd></dl><form method="post" action="/auth/logout"><button type="submit">Sign out</button></form></main></body></html>`))
 
 func (a *Auth) requestSession(r *http.Request, now time.Time) (browserSession, bool) {
 	var session browserSession
@@ -506,6 +533,14 @@ func sameURLOrigin(got *url.URL, wantRaw string) bool {
 func sameParsedOrigin(got, want *url.URL) bool {
 	return got != nil && want != nil && got.IsAbs() && got.User == nil &&
 		got.Scheme == want.Scheme && got.Host == want.Host
+}
+
+func urlOrigin(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return "'none'"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func isLoopbackHost(host string) bool {
