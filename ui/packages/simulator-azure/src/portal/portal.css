@@ -1,0 +1,294 @@
+/* Microsoft Azure portal layout. See tokens.css for why these values. */
+
+.azure,
+.azure h1,
+.azure h2,
+.azure h3,
+.azure button,
+.azure input {
+  font-family: var(--az-font);
+}
+
+/* The shared shell tints the document background; the portal owns the whole
+ * viewport, so it is reset here rather than showing through at the edges. */
+body:has(.azure) { background: var(--az-layout-bg); }
+
+.azure {
+  min-height: 100vh;
+  width: 100%;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  background: var(--az-layout-bg);
+  color: var(--az-fg);
+  font-size: 14px;
+}
+
+/* Global header ---------------------------------------------------------- */
+/* The header sizes to its contents and establishes a stacking context. A
+ * fixed height leaves whatever is taller than it — the account control, in
+ * practice — drawn outside the header box, where the bar below paints over it
+ * and clicks land on the wrong element. */
+.az-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 12px;
+  min-height: 44px;
+  position: relative;
+  z-index: 1;
+  background: var(--az-header-bg);
+  color: var(--az-header-fg);
+}
+.az-header-brand { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.az-hamburger { font-size: 16px; }
+.az-wordmark { font-size: 15px; white-space: nowrap; }
+.az-header-search { flex: 1; display: flex; justify-content: center; min-width: 0; }
+.az-header-search input {
+  width: 100%;
+  max-width: 620px;
+  border: 1px solid transparent;
+  border-radius: var(--az-radius);
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--az-fg);
+  background: var(--az-surface);
+}
+.az-header-search input:focus-visible { outline: 2px solid #ffffff; outline-offset: 1px; }
+.az-header-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; min-width: 0; }
+.az-icon-button {
+  border: 1px solid transparent;
+  border-radius: var(--az-radius);
+  background: transparent;
+  color: var(--az-header-fg);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.az-icon-button:hover { background: var(--az-header-hover); }
+
+/* Breadcrumbs ------------------------------------------------------------ */
+.az-breadcrumbs { padding: 8px 16px; background: var(--az-surface); border-bottom: 1px solid var(--az-border-subtle); }
+.az-breadcrumbs ol { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.az-breadcrumbs li + li::before { content: ">"; margin-right: 6px; color: var(--az-fg-secondary); }
+.az-breadcrumbs a { color: var(--az-link); text-decoration: none; }
+.az-breadcrumbs a:hover { text-decoration: underline; }
+.az-breadcrumbs [aria-current="page"] { color: var(--az-fg-secondary); }
+
+/* Working pane ----------------------------------------------------------- */
+.az-body { display: grid; grid-template-columns: 260px minmax(0, 1fr); align-items: start; background: var(--az-surface); }
+
+.az-resource-title { padding: 12px 20px 4px; grid-column: 1 / -1; background: var(--az-surface); }
+.az-resource-title h1 { margin: 0; font-size: 20px; font-weight: 600; }
+.az-resource-title p { margin: 2px 0 0; font-size: 12px; color: var(--az-fg-secondary); display: flex; gap: 12px; }
+.az-directory { border-left: 1px solid var(--az-border-subtle); padding-left: 12px; }
+
+/* Command bar ------------------------------------------------------------ */
+/* The command bar sits above the working pane, to the right of the service
+ * menu — the commands act on what the pane is showing, not on the menu. */
+.az-command-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 20px;
+  border-bottom: 1px solid var(--az-border-subtle);
+  background: var(--az-surface);
+}
+.az-command {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--az-radius);
+  background: transparent;
+  color: var(--az-link);
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.az-command:hover:not(:disabled) { background: var(--az-surface-alt); }
+.az-command:disabled { color: var(--az-fg-disabled); cursor: default; }
+.az-command-glyph { font-size: 13px; }
+
+/* Service menu ----------------------------------------------------------- */
+.az-service-menu {
+  border-right: 1px solid var(--az-border-subtle);
+  padding: 12px 0;
+  min-height: calc(100vh - 160px);
+  background: var(--az-surface);
+}
+.az-service-search {
+  width: calc(100% - 24px);
+  margin: 0 12px 8px;
+  border: 1px solid var(--az-border);
+  border-radius: var(--az-radius);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--az-fg);
+  background: var(--az-surface);
+}
+.az-service-menu ul { list-style: none; margin: 0; padding: 0; }
+.az-service-link {
+  display: block;
+  padding: 6px 12px 6px 20px;
+  font-size: 13px;
+  color: var(--az-fg);
+  text-decoration: none;
+  border-left: 3px solid transparent;
+}
+.az-service-link:hover { background: var(--az-surface-alt); }
+.az-service-link-active {
+  background: var(--az-surface-selected);
+  border-left-color: var(--az-accent);
+  font-weight: 600;
+}
+.az-service-group { margin-top: 4px; }
+.az-service-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--az-fg);
+  text-align: left;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.az-service-group-toggle:hover { background: var(--az-surface-alt); }
+.az-chevron { font-size: 11px; color: var(--az-fg-secondary); width: 10px; }
+.az-service-group ul .az-service-link { padding-left: 38px; }
+
+/* Main pane -------------------------------------------------------------- */
+.az-main { padding: 16px 20px 48px; min-width: 0; }
+
+/* Essentials ------------------------------------------------------------- */
+.az-essentials { border-bottom: 1px solid var(--az-border-subtle); padding-bottom: 12px; margin-bottom: 16px; }
+.az-essentials-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--az-fg);
+  padding: 4px 0;
+  cursor: pointer;
+}
+/* Essentials is a two-column grid in the portal, however wide the window is.
+ * Letting it fan out to as many columns as fit scatters properties that are
+ * read as a pair down a column. */
+.az-essentials-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 48px;
+  margin: 8px 0 0;
+  max-width: 1200px;
+}
+@media (max-width: 900px) {
+  .az-essentials-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.az-essentials-pair { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 8px; font-size: 13px; }
+.az-essentials-pair dt { color: var(--az-fg-secondary); }
+.az-essentials-pair dd { margin: 0; color: var(--az-fg); overflow-wrap: anywhere; }
+.az-essentials-pair dd::before { content: ": "; color: var(--az-fg-secondary); }
+
+/* Tabs ------------------------------------------------------------------- */
+.az-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--az-border-subtle); margin-bottom: 16px; }
+.az-tab {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--az-fg-secondary);
+  padding: 6px 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.az-tab-active { color: var(--az-fg); font-weight: 600; border-bottom-color: var(--az-accent); }
+
+/* Table ------------------------------------------------------------------ */
+.az-table-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.az-input {
+  flex: 1;
+  max-width: 420px;
+  border: 1px solid var(--az-border);
+  border-radius: var(--az-radius);
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--az-fg);
+  background: var(--az-surface);
+}
+.az-input:focus-visible { outline: 2px solid var(--az-accent); outline-offset: 0; border-color: var(--az-accent); }
+.az-pagination { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--az-fg-secondary); }
+.az-pagination button {
+  border: 0; background: transparent; font: inherit; font-size: 15px;
+  color: var(--az-link); cursor: pointer; padding: 0 6px;
+}
+.az-pagination button:disabled { color: var(--az-fg-disabled); cursor: default; }
+
+.az-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.az-table th, .az-table td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--az-border-subtle);
+  vertical-align: top;
+}
+.az-table th { font-weight: 600; white-space: nowrap; }
+.az-table th button {
+  border: 0; background: transparent; font: inherit; font-weight: 600;
+  color: var(--az-fg); cursor: pointer; padding: 0; display: inline-flex; gap: 6px; align-items: center;
+}
+.az-sort { color: var(--az-fg-disabled); font-size: 10px; }
+.az-table-select { width: 36px; }
+.az-table tbody tr:hover { background: var(--az-surface-alt); }
+.az-row-selected { background: var(--az-surface-selected) !important; }
+.az-table td { color: var(--az-fg-secondary); overflow-wrap: anywhere; }
+.az-table-state { padding: 0; }
+.az-table-state .az-empty, .az-table-state .az-message { margin: 0; border: 0; }
+
+/* States ----------------------------------------------------------------- */
+.az-empty { padding: 36px 12px; text-align: center; color: var(--az-fg-secondary); }
+.az-empty strong { display: block; color: var(--az-fg); font-size: 14px; margin-bottom: 4px; }
+.az-message { padding: 12px; font-size: 13px; }
+.az-message-error { color: var(--az-status-error); }
+
+.az-status { display: inline-flex; align-items: center; gap: 6px; }
+.az-status-success { color: var(--az-status-success); }
+.az-status-error { color: var(--az-status-error); }
+.az-status-warning { color: var(--az-status-warning); }
+.az-status-inactive { color: var(--az-status-inactive); }
+
+/* Cards on the overview -------------------------------------------------- */
+.az-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.az-card {
+  background: var(--az-surface);
+  border: 1px solid var(--az-border-subtle);
+  border-radius: var(--az-radius);
+  padding: 14px 16px;
+}
+.az-card h2 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.az-card a { font-size: 26px; color: var(--az-link); text-decoration: none; }
+.az-card a:hover { text-decoration: underline; }
+
+/* Every control shows where focus is, in both themes. */
+.azure a:focus-visible,
+.azure button:focus-visible,
+.azure input:focus-visible {
+  outline: 2px solid var(--az-accent);
+  outline-offset: 1px;
+}
+.az-header a:focus-visible,
+.az-header button:focus-visible {
+  outline-color: #ffffff;
+}

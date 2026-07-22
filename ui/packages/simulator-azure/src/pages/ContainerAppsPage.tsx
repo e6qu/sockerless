@@ -1,25 +1,30 @@
-import { type ColumnDef } from "@tanstack/react-table";
-import { ResourceListPage } from "@sockerless/ui-core/components";
+import { AzureResourceTable, type AzureColumn } from "../portal/index.js";
+import { resourceGroupOf, locationLabel } from "../portal/format.js";
 import { fetchContainerAppJobs, type ContainerAppJob } from "../api.js";
 
-const columns: ColumnDef<ContainerAppJob, unknown>[] = [
-  { accessorKey: "name", header: "Name" },
-  { accessorKey: "location", header: "Location" },
-  { accessorKey: "type", header: "Type" },
-  { accessorKey: "id", header: "Resource ID" },
+const columns: AzureColumn<ContainerAppJob>[] = [
+  { id: "name", header: "Name", cell: (row) => row.name, value: (row) => row.name },
+  { id: "resourceGroup", header: "Resource group", cell: (row) => resourceGroupOf(row.id), value: (row) => resourceGroupOf(row.id) },
+  { id: "location", header: "Location", cell: (row) => locationLabel(row.location), value: (row) => row.location },
+  { id: "type", header: "Type", cell: (row) => row.type, value: (row) => row.type },
 ];
 
 export function ContainerAppsPage() {
   return (
-    <ResourceListPage<ContainerAppJob>
-      kicker="azure · simulator · container apps"
-      title={<>Container Apps Jobs</>}
-      countNoun="job"
+    <AzureResourceTable<ContainerAppJob>
       columns={columns}
       queryKey={["ca-jobs"]}
       queryFn={fetchContainerAppJobs}
-      filterPlaceholder="Filter jobs…"
-      emptyMessage="No Container App jobs tracked."
+      filterPlaceholder="Filter by name"
+      resourceNoun="Container Apps jobs"
+      emptyTitle="No Container Apps jobs to display"
+      emptyDescription="Jobs created in this subscription appear here."
+      rowKey={(row) => row.id}
+      essentials={(rows) => [
+        { label: "Subscription", value: "Simulator" },
+        { label: "Jobs", value: String(rows.length) },
+        { label: "Locations", value: new Set(rows.map((row) => row.location)).size || "—" },
+      ]}
     />
   );
 }

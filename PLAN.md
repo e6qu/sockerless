@@ -85,9 +85,10 @@ against the other two.
 1. **AWS simulator console parity.** Shell, navigation, resource tables, and
    empty states in the Cloudscape idiom. Done.
 2. **Azure simulator console parity.** Portal shell, command bar, service menu,
-   and Essentials-style resource properties.
-3. **Google Cloud simulator console parity.** To be specified once the console
-   reference is captured.
+   and Essentials-style resource properties. Done.
+3. **Google Cloud simulator console parity.** Light header with its project
+   chip and central search, inline text actions beside the page title, the
+   filter chip with column settings, and the illustrated empty state.
 
 Every interface carries a light and a dark theme, a theme control in the top
 right of the header where each console keeps its own, and text that meets WCAG

@@ -1,25 +1,30 @@
-import { type ColumnDef } from "@tanstack/react-table";
-import { ResourceListPage } from "@sockerless/ui-core/components";
+import { AzureResourceTable, type AzureColumn } from "../portal/index.js";
+import { resourceGroupOf, locationLabel } from "../portal/format.js";
 import { fetchStorageAccounts, type StorageAccount } from "../api.js";
 
-const columns: ColumnDef<StorageAccount, unknown>[] = [
-  { accessorKey: "name", header: "Name" },
-  { accessorKey: "kind", header: "Kind" },
-  { accessorKey: "location", header: "Location" },
-  { accessorKey: "id", header: "Resource ID" },
+const columns: AzureColumn<StorageAccount>[] = [
+  { id: "name", header: "Name", cell: (row) => row.name, value: (row) => row.name },
+  { id: "resourceGroup", header: "Resource group", cell: (row) => resourceGroupOf(row.id), value: (row) => resourceGroupOf(row.id) },
+  { id: "location", header: "Location", cell: (row) => locationLabel(row.location), value: (row) => row.location },
+  { id: "kind", header: "Kind", cell: (row) => row.kind, value: (row) => row.kind },
 ];
 
 export function StorageAccountsPage() {
   return (
-    <ResourceListPage<StorageAccount>
-      kicker="azure · simulator · storage"
-      title={<>Storage Accounts</>}
-      countNoun="account"
+    <AzureResourceTable<StorageAccount>
       columns={columns}
       queryKey={["storage-accounts"]}
       queryFn={fetchStorageAccounts}
-      filterPlaceholder="Filter accounts…"
-      emptyMessage="No storage accounts tracked."
+      filterPlaceholder="Filter by name"
+      resourceNoun="storage accounts"
+      emptyTitle="No storage accounts to display"
+      emptyDescription="Storage accounts created in this subscription appear here."
+      rowKey={(row) => row.id}
+      essentials={(rows) => [
+        { label: "Subscription", value: "Simulator" },
+        { label: "Storage accounts", value: String(rows.length) },
+        { label: "Locations", value: new Set(rows.map((row) => row.location)).size || "—" },
+      ]}
     />
   );
 }

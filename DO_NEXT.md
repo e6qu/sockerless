@@ -12,15 +12,15 @@ The real pinned Shauth, PostgreSQL, Ory Hydra, freshly compiled relying parties,
 
 ## Remaining Work
 
-The next change is **Azure simulator console parity** — the portal shell, its
-horizontal command bar, the service menu with its own search and expandable
-groups, and Essentials-style resource properties as a two-column key/value
-grid. Google Cloud follows, against the reference captured in
-[PLAN.md](PLAN.md): the light header with its project chip and central search,
-inline text actions beside the page title, the filter chip with column
-settings, and the illustrated empty state. Both carry light and dark themes
-with the control in the top right, and contrast measured against the rendered
-surfaces rather than assumed from the palette.
+The next change is **Google Cloud simulator console parity**, against the
+reference captured in [PLAN.md](PLAN.md): the light global header with its
+project chip and wide central search, a product navigation whose active item is
+a filled rounded pill, inline text actions beside the page title rather than a
+button group, a filter chip with column settings above a table whose headers
+hold inline help, and an illustrated empty state that names the side effect of
+its primary action. It carries light and dark themes with the control in the
+top right, and holds contrast with a test that measures the rendered surfaces,
+as the Azure portal parity change does.
 
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.

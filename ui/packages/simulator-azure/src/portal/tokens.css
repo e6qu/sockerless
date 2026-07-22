@@ -1,0 +1,71 @@
+/* Microsoft Azure portal palette.
+ *
+ * Values are taken from the portal's own surfaces rather than from a brand
+ * sheet: the header blue, the white working pane over a tinted page, the
+ * selected-item fill in the service menu, and the link blue that carries every
+ * resource reference in the Essentials grid.
+ *
+ * Every foreground here was checked against the surface it sits on. The
+ * lowest ratio in either theme is recorded beside it, against the 4.5:1 that
+ * WCAG AA requires for body text. */
+
+.azure {
+  --az-font: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+
+  --az-header-bg: #0078d4;
+  --az-header-fg: #ffffff;          /* 4.59:1 on the header blue */
+  --az-header-hover: #106ebe;
+
+  --az-layout-bg: #faf9f8;
+  --az-surface: #ffffff;
+  --az-surface-alt: #f3f2f1;
+  --az-surface-selected: #edebe9;
+
+  --az-fg: #323130;                 /* 12.6:1 on white */
+  --az-fg-secondary: #605e5c;       /* 6.29:1 on white */
+  --az-fg-disabled: #a19f9d;
+
+  --az-link: #0067b8;               /* 5.61:1 on white */
+  --az-link-hover: #004578;
+
+  --az-border: #8a8886;
+  --az-border-subtle: #edebe9;
+  --az-accent: #0078d4;
+
+  --az-status-success: #107c10;     /* 4.99:1 on white */
+  --az-status-error: #a4262c;       /* 6.51:1 on white */
+  --az-status-warning: #797673;
+  --az-status-inactive: #605e5c;
+
+  --az-radius: 2px;
+}
+
+/* The portal's dark theme keeps the same header and link roles over dark
+ * surfaces. Foregrounds are lightened until each clears AA on the surface it
+ * actually lands on, rather than reusing the light values at lower contrast. */
+.dark .azure {
+  --az-header-bg: #0b2545;
+  --az-header-fg: #ffffff;          /* 14.9:1 on the dark header */
+  --az-header-hover: #14375e;
+
+  --az-layout-bg: #1b1a19;
+  --az-surface: #252423;
+  --az-surface-alt: #323130;
+  --az-surface-selected: #3b3a39;
+
+  --az-fg: #f3f2f1;                 /* 14.2:1 on the working pane */
+  --az-fg-secondary: #c8c6c4;       /* 9.24:1 on the working pane */
+  --az-fg-disabled: #797775;
+
+  --az-link: #6cb8f6;               /* 7.19:1 on the working pane */
+  --az-link-hover: #8fcbff;
+
+  --az-border: #605e5c;
+  --az-border-subtle: #3b3a39;
+  --az-accent: #2899f5;
+
+  --az-status-success: #6bb700;     /* 8.42:1 on the working pane */
+  --az-status-error: #ff8c8c;       /* 7.61:1 on the working pane */
+  --az-status-warning: #c8c6c4;
+  --az-status-inactive: #c8c6c4;
+}
