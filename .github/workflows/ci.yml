@@ -80,10 +80,18 @@ jobs:
         run: bash scripts/check-smoke-build-contexts.sh
       - name: Check container publication contract
         run: bash scripts/check-container-publication.sh
+      # The Actions half of this check reads the GitHub API. Unauthenticated
+      # requests are rate limited, and a throttled reply is indistinguishable
+      # from "this action has no newer tag", so the token is passed explicitly
+      # rather than left to whatever quota the runner happens to have.
       - name: Check dependency freshness (bash)
         run: bash scripts/check-latest-deps.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Check dependency freshness (zsh)
         run: zsh scripts/check-latest-deps.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # README badges are refreshed by the update-readme-badges pre-push hook.
       # Re-run it here so a push that skipped the hook (e.g. --no-verify) can't
       # land stale badges — the line counts are computed from committed files

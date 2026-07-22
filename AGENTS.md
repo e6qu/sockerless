@@ -124,6 +124,26 @@ If you believe a hook is genuinely wrong or that something should be ignored, **
 
 The **one** sanctioned `--no-verify` is the badge auto-commit: `scripts/update-readme-badges.sh`, running as the pre-push hook, auto-commits a refreshed `README.md` (and only `README.md` — a single deterministic, generated file the badge job owns) with `--no-verify`, then fails the push so you re-run it and the badge commit goes out too. That bypass is safe because the commit carries nothing the hooks could meaningfully validate. It does not license `--no-verify` anywhere else.
 
+## Always bundle dependency updates into the open PR
+
+When `scripts/check-latest-deps.sh` reports drift — from the pre-push hook or
+the `check-deps` CI job — **upgrade the drifted modules and commit them into
+the pull request already in flight**. This is settled practice here, not a
+judgement call: do it as part of the work, without asking.
+
+Never propose a separate dependency-refresh pull request, never present the
+choice as a trade-off, and never defer the upgrade to a later branch. One PR
+is open at a time (see below), so a standalone dependency PR cannot exist
+without blocking the actual work, and the freshness check gates every push —
+drift found mid-branch either lands on that branch or nothing lands at all.
+
+Run `make upgrade-deps` in each drifted module; a module without that target
+takes `GOWORK=off go get -u <module>@latest && go mod tidy`. Then re-run the
+check, build and test every upgraded module, and run the SDK test suites when a
+cloud SDK moved, so the upgrade is verified against real request and response
+wire shapes rather than a compile. Fresh drift often appears between a local
+run and CI — upgrade again and push.
+
 ## Never create more than one PR — one branch, one PR
 
 All work goes on a single branch and a single PR — even several independent concerns or consumer issues in one session. Never open a second PR while one is open. If two ever exist, **consolidate** their work into one PR (merge the branches together); never close one to "fix the count", never open another, never game the check. **Closing a PR without merging it abandons and deletes that work for good** — it is never a way to park work for later. Enforced by `scripts/check-single-open-pr.sh` (pre-commit + the `single-open-pr` CI job).
