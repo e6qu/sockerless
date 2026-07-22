@@ -1,0 +1,237 @@
+/* Amazon Web Services console layout. See tokens.css for why these values. */
+
+.aws,
+.aws h1,
+.aws h2,
+.aws h3,
+.aws button,
+.aws input {
+  /* The shared shell sets a display face on headings and controls. The AWS
+   * console uses one family throughout, so it is reasserted here rather than
+   * inherited. */
+  font-family: var(--aws-font);
+}
+
+/* The shared shell tints the document background; the console owns the whole
+ * viewport, so it is reset here rather than showing through at the edges. */
+body:has(.aws) { background: var(--aws-layout-bg); }
+
+.aws {
+  min-height: 100vh;
+  width: 100%;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  background: var(--aws-layout-bg);
+  color: var(--aws-fg);
+  font-family: var(--aws-font);
+  font-size: 14px;
+}
+
+/* Global header ---------------------------------------------------------- */
+/* The header sizes to its contents. A fixed height clipped the account
+ * control out of the header box, and the breadcrumb bar below paints over
+ * whatever overflows — which put the sign-out control underneath an opaque
+ * sibling, where a click reaches the breadcrumbs instead. The stacking
+ * context keeps the header above its neighbours regardless of content. */
+.aws-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 16px;
+  min-height: 40px;
+  position: relative;
+  z-index: 1;
+  background: var(--aws-header-bg);
+  color: var(--aws-header-fg);
+}
+.aws-header-left, .aws-header-right { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.aws-logo { font-weight: 700; letter-spacing: 0.02em; font-size: 18px; }
+.aws-header-title { font-size: 14px; font-weight: 700; }
+.aws-header-region { font-size: 12px; color: #d1d5db; }
+
+/* Breadcrumbs ------------------------------------------------------------ */
+.aws-breadcrumbs { padding: 8px 24px; background: var(--aws-layout-bg); }
+.aws-breadcrumbs ol { display: flex; gap: 8px; list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.aws-breadcrumbs li + li::before { content: "/"; margin-right: 8px; color: var(--aws-fg-disabled); }
+.aws-breadcrumbs a { color: var(--aws-link); text-decoration: none; }
+.aws-breadcrumbs a:hover { text-decoration: underline; }
+.aws-breadcrumbs [aria-current="page"] { color: var(--aws-fg-secondary); }
+
+/* Body: service navigation beside the working area ----------------------- */
+.aws-body { display: grid; grid-template-columns: 280px minmax(0, 1fr); align-items: start; gap: 0; }
+.aws-sidenav {
+  background: var(--aws-surface);
+  border-right: 1px solid var(--aws-border-subtle);
+  min-height: calc(100vh - 80px);
+  padding: 20px 0;
+}
+.aws-sidenav-title { font-size: 18px; font-weight: 700; padding: 0 20px 12px; }
+.aws-sidenav-group { padding: 8px 0; }
+.aws-sidenav-group + .aws-sidenav-group { border-top: 1px solid var(--aws-border-subtle); margin-top: 8px; }
+.aws-sidenav-group-label {
+  padding: 8px 20px 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--aws-fg);
+}
+.aws-sidenav ul { list-style: none; margin: 0; padding: 0; }
+.aws-sidenav-link {
+  display: block;
+  padding: 6px 20px;
+  font-size: 14px;
+  color: var(--aws-link);
+  text-decoration: none;
+}
+.aws-sidenav a { text-decoration: none; }
+.aws-sidenav-link:hover { text-decoration: underline; }
+.aws-sidenav-link-active {
+  color: var(--aws-fg);
+  font-weight: 700;
+  border-left: 2px solid var(--aws-primary);
+  padding-left: 18px;
+  background: color-mix(in srgb, var(--aws-primary) 12%, transparent);
+}
+
+.aws-main { padding: 20px 24px 48px; min-width: 0; }
+
+/* Page header ------------------------------------------------------------ */
+.aws-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.aws-page-header h1 { margin: 0; font-size: 20px; font-weight: 700; }
+.aws-page-count { font-weight: 400; color: var(--aws-fg-secondary); }
+.aws-page-description { margin: 4px 0 0; font-size: 14px; color: var(--aws-fg-secondary); }
+.aws-page-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* Buttons ---------------------------------------------------------------- */
+.aws-button {
+  border: 1px solid var(--aws-primary);
+  border-radius: var(--aws-radius-button);
+  background: transparent;
+  color: var(--aws-primary);
+  font: inherit;
+  font-weight: 700;
+  padding: 4px 20px;
+  cursor: pointer;
+}
+.aws-button:hover:not(:disabled) { background: color-mix(in srgb, var(--aws-primary) 12%, transparent); color: var(--aws-primary-hover); border-color: var(--aws-primary-hover); }
+.aws-button:disabled { border-color: var(--aws-fg-disabled); color: var(--aws-fg-disabled); cursor: default; }
+.aws-button-primary { background: var(--aws-primary); color: #fff; }
+.aws-button-primary:hover:not(:disabled) { background: var(--aws-primary-hover); color: #fff; }
+
+/* Container -------------------------------------------------------------- */
+.aws-container {
+  background: var(--aws-surface);
+  border: 1px solid var(--aws-border-subtle);
+  border-radius: var(--aws-radius-container);
+  overflow: hidden;
+}
+
+/* Table tools ------------------------------------------------------------ */
+.aws-table-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--aws-border-subtle);
+}
+.aws-input {
+  flex: 1;
+  max-width: 480px;
+  border: 1px solid var(--aws-border);
+  border-radius: var(--aws-radius-control);
+  padding: 6px 12px;
+  font: inherit;
+  color: var(--aws-fg);
+  background: var(--aws-surface);
+}
+.aws-input:focus-visible { outline: 2px solid var(--aws-primary); outline-offset: 0; border-color: var(--aws-primary); }
+.aws-pagination { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--aws-fg-secondary); }
+.aws-pagination button {
+  border: 0; background: transparent; font: inherit; font-size: 16px;
+  color: var(--aws-link); cursor: pointer; padding: 0 6px; border-radius: 4px;
+}
+.aws-pagination button:disabled { color: var(--aws-fg-disabled); cursor: default; }
+
+/* Table ------------------------------------------------------------------ */
+.aws-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.aws-table th, .aws-table td {
+  text-align: left;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--aws-border-subtle);
+  vertical-align: top;
+}
+.aws-table th { font-weight: 700; white-space: nowrap; }
+.aws-table th button {
+  border: 0; background: transparent; font: inherit; font-weight: 700;
+  color: var(--aws-fg); cursor: pointer; padding: 0; display: inline-flex; gap: 6px; align-items: center;
+}
+.aws-sort { color: var(--aws-fg-disabled); font-size: 10px; }
+.aws-table-select { width: 40px; }
+.aws-table tbody tr:hover { background: var(--aws-surface-alt); }
+.aws-row-selected { background: color-mix(in srgb, var(--aws-primary) 12%, transparent) !important; }
+.aws-table td { color: var(--aws-fg-secondary); overflow-wrap: anywhere; }
+
+/* Status ----------------------------------------------------------------- */
+.aws-status { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.aws-status-success { color: var(--aws-status-success); }
+.aws-status-error { color: var(--aws-status-error); }
+.aws-status-warning { color: var(--aws-status-warning); }
+.aws-status-inactive { color: var(--aws-status-inactive); }
+
+/* Empty and error states ------------------------------------------------- */
+.aws-empty { padding: 40px 16px; text-align: center; color: var(--aws-fg-secondary); }
+.aws-empty strong { display: block; font-size: 16px; color: var(--aws-fg); margin-bottom: 4px; }
+.aws-empty p { margin: 0 0 12px; }
+.aws-flash { padding: 12px 16px; font-size: 14px; }
+.aws-flash-error {
+  background: color-mix(in srgb, var(--aws-status-error) 10%, transparent);
+  color: var(--aws-status-error);
+}
+
+/* Overview --------------------------------------------------------------- */
+.aws-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.aws-metric { padding: 16px; }
+.aws-metric-label { font-size: 14px; font-weight: 700; color: var(--aws-fg); }
+.aws-metric-value { font-size: 32px; font-weight: 400; color: var(--aws-link); line-height: 1.2; margin-top: 4px; }
+.aws-metric-value a { color: inherit; text-decoration: none; border-bottom: 2px solid currentColor; }
+
+@media (max-width: 900px) {
+  .aws-body { grid-template-columns: minmax(0, 1fr); }
+  .aws-sidenav { min-height: 0; border-right: 0; border-bottom: 1px solid var(--aws-border-subtle); }
+}
+
+/* Theme control, in the header where the console keeps it. */
+.aws-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--aws-header-fg);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+.aws-theme-toggle:hover { background: var(--aws-header-hover); }
+/* A visible focus ring on the dark header needs its own colour; the link blue
+ * does not carry enough contrast against it. */
+.aws-theme-toggle:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }
+
+/* Every interactive control shows where focus is, which keyboard and
+ * screen-magnifier users depend on. */
+.aws a:focus-visible,
+.aws button:focus-visible,
+.aws input:focus-visible {
+  outline: 2px solid var(--aws-primary);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+/* The state row spans the full width so a message reads across the table
+ * rather than under the first column. */
+.aws-table-state { padding: 0; }
+.aws-table-state .aws-empty, .aws-table-state .aws-flash { margin: 0; border: 0; }

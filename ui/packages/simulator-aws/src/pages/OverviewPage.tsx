@@ -1,51 +1,78 @@
+import { Link } from "react-router";
 import { useSimSummary, useSimHealth } from "@sockerless/ui-core/hooks";
-import {
-  InlineError,
-  MetricsCard,
-  PageHeading,
-  Spinner,
-  StatusBadge,
-} from "@sockerless/ui-core/components";
+import { AwsContainer, AwsPageHeader, AwsStatus } from "../console/index.js";
+
+/**
+ * The AWS console's service dashboard states where you are looking before it
+ * states what is there: Region and service health, then counts that link
+ * through to the resource that owns them.
+ */
+const SERVICES: { label: string; key: string; to: string }[] = [
+  { label: "Tasks", key: "ecs_tasks", to: "/ui/ecs" },
+  { label: "Functions", key: "lambda_functions", to: "/ui/lambda" },
+  { label: "Repositories", key: "ecr_repositories", to: "/ui/ecr" },
+  { label: "Buckets", key: "s3_buckets", to: "/ui/s3" },
+  { label: "Log groups", key: "cw_log_groups", to: "/ui/logs" },
+];
 
 export function OverviewPage() {
   const health = useSimHealth();
   const summary = useSimSummary();
 
-  if (health.isLoading || summary.isLoading) return <Spinner label="loading" />;
-  // A failed summary/health fetch must not render an all-zeros "healthy" board.
-  if (health.isError || summary.isError) {
+  if (health.isLoading || summary.isLoading) {
     return (
-      <InlineError
-        title="Failed to load simulator overview"
-        detail={String(summary.error ?? health.error)}
-      />
+      <>
+        <AwsPageHeader title="Overview" />
+        <AwsContainer>
+          <div className="aws-empty">Loading service overview…</div>
+        </AwsContainer>
+      </>
     );
   }
 
-  const services = summary.data?.services ?? {};
+  // A failed fetch must not render an all-zeros board that reads as healthy.
+  if (health.isError || summary.isError) {
+    return (
+      <>
+        <AwsPageHeader title="Overview" />
+        <AwsContainer>
+          <div className="aws-flash aws-flash-error" role="alert">
+            <strong>Could not load the service overview.</strong>{" "}
+            {String(summary.error ?? health.error)}
+          </div>
+        </AwsContainer>
+      </>
+    );
+  }
+
+  const services = (summary.data?.services ?? {}) as Record<string, number>;
   const isOk = health.data?.status === "ok";
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeading
-        kicker="aws · simulator"
-        title={<>Overview</>}
-        meta="Service-by-service resource counts."
-        actions={<StatusBadge status={isOk ? "running" : "error"} />}
-      />
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        <MetricsCard title="ECS Tasks" value={services.ecs_tasks ?? 0} />
-        <MetricsCard
-          title="Lambda Functions"
-          value={services.lambda_functions ?? 0}
-        />
-        <MetricsCard
-          title="ECR Repositories"
-          value={services.ecr_repositories ?? 0}
-        />
-        <MetricsCard title="S3 Buckets" value={services.s3_buckets ?? 0} />
-        <MetricsCard title="Log Groups" value={services.cw_log_groups ?? 0} />
+    <>
+      <AwsPageHeader title="Overview" description="Resources in this account and Region." />
+      <div className="aws-overview-grid">
+        <AwsContainer>
+          <div className="aws-metric">
+            <div className="aws-metric-label">Region</div>
+            <div style={{ marginTop: 4 }}>eu-west-1</div>
+            <div className="aws-metric-label" style={{ marginTop: 12 }}>Service health</div>
+            <div style={{ marginTop: 4 }}>
+              <AwsStatus status={isOk ? "Operating normally" : "Unavailable"} kind={isOk ? "success" : "error"} />
+            </div>
+          </div>
+        </AwsContainer>
+        {SERVICES.map((service) => (
+          <AwsContainer key={service.key}>
+            <div className="aws-metric">
+              <div className="aws-metric-label">{service.label}</div>
+              <div className="aws-metric-value">
+                <Link to={service.to}>{services[service.key] ?? 0}</Link>
+              </div>
+            </div>
+          </AwsContainer>
+        ))}
       </div>
-    </div>
+    </>
   );
 }

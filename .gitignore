@@ -163,3 +163,8 @@ simulators/*/dist/
 .stack-pids/
 temp/
 agent/sockerless-cloudrun-bootstrap-aca-test-*
+# Agent worktrees and their pre-commit caches are local scratch, not project files.
+.agents/
+
+# Checkouts of pinned external repositories that the test harnesses clone.
+.test-deps/

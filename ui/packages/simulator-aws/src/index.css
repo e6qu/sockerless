@@ -1,5 +1,10 @@
 @import "tailwindcss";
 @import "@sockerless/ui-core/styles";
+/* The AWS console appearance. Imported after the shared styles so this
+ * simulator presents as the AWS Management Console rather than as the generic
+ * shell the other simulators share. */
+@import "./console/tokens.css";
+@import "./console/console.css";
 
 /* Per-app accent — see ui/packages/core/src/styles/tokens.css for the
  * full token surface this overrides. */

@@ -41,6 +41,54 @@ The next fidelity work stayed evidence-driven: deterministic Amazon Elastic Cont
 3. BUG-1075 still required authenticated validation for the remaining real-cloud backend cells.
 4. The merged authentication and workflow contracts still required publication, deployment, and the exact live-origin browser matrix.
 
+## Simulator Console Parity
+
+The three simulator interfaces are one generic application wearing three accent
+colours. Layout, navigation, typography, density, and component set are
+identical across AWS, Google Cloud, and Azure; only the tint and the navigation
+labels differ. Each real console is unmistakably its own product, so an operator
+who knows one of them recognises nothing here.
+
+The goal is recognisability, not replication: adopt each cloud's real shell,
+information architecture, density, colour, and terminology, using each
+vendor's published design guidance, without copying proprietary assets.
+
+Evidence gathered by opening both sides and capturing them, rather than from
+memory:
+
+- **AWS** builds its console from the Cloudscape Design System, which is
+  published. Its resource pages carry a dark global header, breadcrumbs, a
+  collapsible grouped service navigation, a `Resource (count)` heading with an
+  information link, a primary create action beside secondary row actions,
+  per-column sorting and filtering, selection checkboxes, per-row overflow
+  menus, pagination, density settings, and dismissible notifications. Its
+  dashboards carry region context, service health, and charts.
+- **Azure** publishes an annotated diagram of its portal shell: a dark global
+  header, breadcrumb, global search, a horizontal command bar of icon actions,
+  a service menu with its own search and expandable groups, and an Essentials
+  panel presenting resource properties as a two-column key/value grid.
+- **Google Cloud** reference still to be captured.
+
+Three changes, one per cloud, in this order. Each is a separate pull request so
+one cloud's interface can be reviewed against its own console rather than
+against the other two.
+
+1. **AWS simulator console parity.** Shell, navigation, resource tables, and
+   empty states in the Cloudscape idiom. Done.
+2. **Azure simulator console parity.** Portal shell, command bar, service menu,
+   and Essentials-style resource properties.
+3. **Google Cloud simulator console parity.** To be specified once the console
+   reference is captured.
+
+Every interface carries a light and a dark theme, a theme control in the top
+right of the header where each console keeps its own, and text that meets WCAG
+AA contrast in both. Contrast is measured against the rendered surfaces rather
+than assumed from the palette.
+
+Shared shell components currently live in `ui/packages/core`. Divergence is the
+point here, so per-cloud presentation belongs in each simulator package, and
+only genuinely cloud-neutral behaviour stays shared.
+
 ## Standing Work
 
 - **Bleephub full-service parity:** continue closing REST, GraphQL, UI, runner, auth, Pages, release, packages, and repository-provider gaps until Bleephub is usable as a real GitHub-compatible service.
