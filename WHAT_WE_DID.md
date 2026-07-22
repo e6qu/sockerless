@@ -4,6 +4,30 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-22 — Reclaimed the microVM workspaces that filled the runner volume
+
+The `sim (aws sdk)` job began with 89 GB free after its own cleanup and still
+exhausted the runner volume, killing the runner process as it wrote its own
+diagnostic log. Nothing identified the writer, because uploading the job log
+needs the disk that was full.
+
+The step now writes test output to a file under a watched budget and reports
+the largest consumers on the volume when a threshold is crossed — while there
+is still disk to report them on. That named the consumer immediately:
+`/tmp/sockerless-firecracker` held 24.7 GB of the 26 GB a passing run consumed.
+
+Each Firecracker machine staged a full copy of the root filesystem tree in
+order to build an ext4 image from it, then kept both for as long as the machine
+ran. The staging tree is now removed once the image exists, since nothing reads
+it afterwards.
+
+A machine that is killed rather than stopped never ran its own cleanup, so its
+workspace — a root filesystem image each — stayed for the life of the host. A
+machine now records which process its workspace belongs to, and a later machine
+reclaims workspaces whose owner is gone. Workspaces too young to have recorded
+an owner are left alone, so a machine on its way to starting is not swept out
+from under itself.
+
 ## 2026-07-22 — Gave the AWS simulator the AWS console's interface
 
 The three simulator interfaces were one generic application wearing three

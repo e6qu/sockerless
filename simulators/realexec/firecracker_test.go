@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestShortPathNameKeepsFirecrackerSocketPathShort(t *testing.T) {
@@ -297,5 +299,64 @@ func TestExt4RootFSImageSizeUsesMeasuredPayload(t *testing.T) {
 				t.Fatalf("size = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSweepStaleFirecrackerWorkspacesRemovesOnlyAbandonedOnes(t *testing.T) {
+	base := t.TempDir()
+
+	// A workspace whose machine is still running. os.Getpid is a process that
+	// certainly exists, which is what the sweep tests for.
+	live := filepath.Join(base, "live-1")
+	writeWorkspace(t, live, strconv.Itoa(os.Getpid()))
+
+	// A workspace whose machine is gone. Kernel PIDs are bounded by
+	// /proc/sys/kernel/pid_max, well under this value, so it cannot be live.
+	abandoned := filepath.Join(base, "abandoned-1")
+	writeWorkspace(t, abandoned, "2147483646")
+
+	// A workspace that recorded nothing. Old enough that its machine cannot
+	// still be on its way to starting.
+	stale := filepath.Join(base, "stale-1")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * firecrackerWorkspaceGrace)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	// A workspace created moments ago, before its machine could record itself.
+	// Sweeping it would delete a workspace that is about to be used.
+	young := filepath.Join(base, "young-1")
+	if err := os.MkdirAll(young, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sweepStaleFirecrackerWorkspaces(base)
+
+	for _, kept := range []string{live, young} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("sweep removed a workspace that was still in use: %s", filepath.Base(kept))
+		}
+	}
+	for _, removed := range []string{abandoned, stale} {
+		if _, err := os.Stat(removed); !os.IsNotExist(err) {
+			t.Errorf("sweep kept an abandoned workspace: %s", filepath.Base(removed))
+		}
+	}
+}
+
+func writeWorkspace(t *testing.T, dir, pid string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A workspace holds a root filesystem image; the sweep must reclaim it.
+	if err := os.WriteFile(filepath.Join(dir, "rootfs.ext4"), []byte("image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, firecrackerOwnerFile), []byte(pid), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

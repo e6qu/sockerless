@@ -96,6 +96,7 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 		if err := os.MkdirAll(baseDir, 0o755); err != nil {
 			return nil, err
 		}
+		sweepStaleFirecrackerWorkspaces(baseDir)
 		workDir, err := os.MkdirTemp(baseDir, shortPathName(cfg.ID)+"-")
 		if err != nil {
 			return nil, err
@@ -139,6 +140,14 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
+	// The staging tree exists to be turned into the image above. Keeping it
+	// afterwards holds a second copy of the whole root filesystem for as long
+	// as the machine runs, which is what fills the volume when many machines
+	// are started.
+	if err := os.RemoveAll(rootfsDir); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
 	apiSocket := filepath.Join(cfg.WorkDir, "firecracker.socket")
 	_ = os.Remove(apiSocket)
 
@@ -164,6 +173,13 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 		_, _ = cmd.Process.Wait()
 		return nil
 	})
+	// Records which process the workspace belongs to, so a later machine can
+	// tell an abandoned workspace from one still in use. A machine whose owner
+	// is killed — a cancelled run, an expired deadline — never reaches Stop,
+	// and without this its workspace stays for the life of the host.
+	if cmd.Process != nil {
+		_ = os.WriteFile(filepath.Join(cfg.WorkDir, firecrackerOwnerFile), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
+	}
 
 	if err := waitForUnixSocket(ctx, apiSocket, cmd, 10*time.Second); err != nil {
 		err = withFirecrackerFailureLogs(err, cfg.WorkDir)
@@ -1000,4 +1016,50 @@ func shortPathName(value string) string {
 	}
 	sum := sha256.Sum256([]byte(value))
 	return sanitized[:16] + "-" + hex.EncodeToString(sum[:6])
+}
+
+// firecrackerOwnerFile records the process a workspace belongs to.
+const firecrackerOwnerFile = "firecracker.owner"
+
+// firecrackerWorkspaceGrace is how long a workspace with no recorded owner is
+// left alone. A workspace is created before its process starts, so a young one
+// may simply not have reached that point yet.
+const firecrackerWorkspaceGrace = 10 * time.Minute
+
+// sweepStaleFirecrackerWorkspaces removes workspaces whose machine is gone.
+// Each holds a root filesystem image, so on a host that starts many machines
+// they accumulate until the volume is full — and a machine that is killed
+// rather than stopped never removes its own.
+func sweepStaleFirecrackerWorkspaces(baseDir string) {
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(baseDir, entry.Name())
+		if firecrackerWorkspaceInUse(dir) {
+			continue
+		}
+		_ = os.RemoveAll(dir)
+	}
+}
+
+func firecrackerWorkspaceInUse(dir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, firecrackerOwnerFile))
+	if err != nil {
+		info, statErr := os.Stat(dir)
+		return statErr != nil || time.Since(info.ModTime()) < firecrackerWorkspaceGrace
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
 }
