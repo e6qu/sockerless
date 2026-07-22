@@ -67,7 +67,16 @@ memory:
   header, breadcrumb, global search, a horizontal command bar of icon actions,
   a service menu with its own search and expandable groups, and an Essentials
   panel presenting resource properties as a two-column key/value grid.
-- **Google Cloud** reference still to be captured.
+- **Google Cloud** presents a light global header — hamburger, wordmark, a
+  project picker chip, and a wide central search field, with the account and
+  tools at the right — over a product navigation whose active item is a filled
+  rounded pill. Its resource pages put inline text actions beside the page
+  title rather than a button group, describe the resource in a sentence beneath
+  it, and carry a filter chip with column settings above a table whose headers
+  hold inline help. Empty states pair a hand-drawn illustration with a headline,
+  an explanation, the side effect of the action, a filled primary button, and a
+  quickstart link. The console itself offers Light, Dark, and Same-as-device
+  themes plus an increased-contrast setting.
 
 Three changes, one per cloud, in this order. Each is a separate pull request so
 one cloud's interface can be reviewed against its own console rather than

@@ -6,8 +6,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/shauth-product-ui-markers` |
-| Branch purpose | Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator dashboards exposed the authenticated operator and the real sign-out control to browser qualification, so a deployment was certified through the product interface a person uses rather than through a protocol-only validation page. |
+| Active branch | `fix/firecracker-workspace-reclamation` |
+| Branch purpose | Firecracker machines reclaimed their workspaces: the root filesystem staging tree was removed once its image existed, and workspaces whose owning process was gone were swept by the next machine. The AWS SDK job bounded and accounted for what it wrote, so a runaway names itself instead of filling the volume and destroying the job log with it. |
 | Product ownership | Standalone repositories owned product source, web interfaces, Terraform, official-client tests, and runner consumer harnesses. Sockerless remained a standalone Docker-compatible cloud backend and simulator project. |
 | Operator identity | Admin required a Shauth administrator role, exact issuer validation, server-tracked sessions, front- and back-channel logout, and a public no-cache signed-out page. Its logout completion bridge remained reachable after local revocation and redirected only to Shauth's correlated completion endpoint. |
 | Simulator identity | All three dashboards used first-party OpenID Connect authorization code with PKCE, exact issuer validation, signed server-tracked sessions, identity, RP-Initiated Logout, signed back-channel revocation, atomic replay rejection, and application-local signed-out return. Native cloud API slices remained independent of browser authentication. |
