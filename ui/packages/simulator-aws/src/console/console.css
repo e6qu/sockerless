@@ -28,13 +28,20 @@ body:has(.aws) { background: var(--aws-layout-bg); }
 }
 
 /* Global header ---------------------------------------------------------- */
+/* The header sizes to its contents. A fixed height clipped the account
+ * control out of the header box, and the breadcrumb bar below paints over
+ * whatever overflows — which put the sign-out control underneath an opaque
+ * sibling, where a click reaches the breadcrumbs instead. The stacking
+ * context keeps the header above its neighbours regardless of content. */
 .aws-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 0 16px;
-  height: 40px;
+  padding: 4px 16px;
+  min-height: 40px;
+  position: relative;
+  z-index: 1;
   background: var(--aws-header-bg);
   color: var(--aws-header-fg);
 }
@@ -223,3 +230,8 @@ body:has(.aws) { background: var(--aws-layout-bg); }
   outline-offset: 1px;
   border-radius: 2px;
 }
+
+/* The state row spans the full width so a message reads across the table
+ * rather than under the first column. */
+.aws-table-state { padding: 0; }
+.aws-table-state .aws-empty, .aws-table-state .aws-flash { margin: 0; border: 0; }

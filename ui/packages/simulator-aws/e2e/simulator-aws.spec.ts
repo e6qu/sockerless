@@ -1,15 +1,64 @@
 import { test, expect } from "@playwright/test";
 
-test.describe("AWS Simulator SPA", () => {
-  test("uses the shared responsive application shell", async ({ page }) => {
+const SERVICES = [
+  { path: "/ui/ecs", nav: "Elastic Container Service", title: "Tasks", columns: ["Task ARN", "Last status"] },
+  { path: "/ui/lambda", nav: "Lambda", title: "Functions", columns: ["Function name", "State"] },
+  { path: "/ui/ecr", nav: "Elastic Container Registry", title: "Repositories", columns: ["Repository name", "URI"] },
+  { path: "/ui/s3", nav: "Simple Storage Service", title: "Buckets", columns: ["Name", "Creation date"] },
+  { path: "/ui/logs", nav: "CloudWatch Logs", title: "Log groups", columns: ["Log group", "Retention"] },
+];
+
+test.describe("AWS console shell", () => {
+  test("presents the console header, breadcrumbs and grouped service navigation", async ({ page }) => {
     await page.goto("/ui/");
-    await expect((await page.request.get("/ui/favicon.svg")).status()).toBe(200);
-    const shell = page.locator(".sl-shell");
-    const sidebar = page.getByRole("complementary");
-    await expect(shell).toHaveCSS("display", "grid");
-    await expect(sidebar).toHaveCSS("border-radius", "20px");
-    await page.setViewportSize({ width: 700, height: 900 });
-    await expect(sidebar).toHaveCSS("position", "static");
+    expect((await page.request.get("/ui/favicon.svg")).status()).toBe(200);
+    await expect(page.locator(".aws-header")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toBeVisible();
+    const nav = page.getByRole("navigation", { name: "Service" });
+    for (const group of ["Dashboard", "Compute", "Storage and registry", "Management"]) {
+      await expect(nav.getByText(group, { exact: true })).toBeVisible();
+    }
+  });
+
+  // The header used to be a fixed 40px tall. Anything taller than that — the
+  // account control in particular — spilled below it, and the breadcrumb bar
+  // painted over the overflow. A control covered by an opaque sibling still
+  // reports as visible, so the failure surfaced only as clicks landing on the
+  // breadcrumbs instead of the sign-out control. Assert containment, which is
+  // the property that actually broke.
+  test("contains every header control within the header itself", async ({ page }) => {
+    await page.goto("/ui/");
+    const header = page.locator(".aws-header");
+    const headerBox = await header.boundingBox();
+    expect(headerBox).not.toBeNull();
+    const controls = header.locator(":scope > * > *");
+    const count = await controls.count();
+    expect(count).toBeGreaterThan(0);
+    for (let index = 0; index < count; index += 1) {
+      const control = controls.nth(index);
+      const box = await control.boundingBox();
+      if (!box) continue;
+      const label = await control.evaluate((node) => node.outerHTML.slice(0, 80));
+      expect(box.y, `header control escaped the header: ${label}`).toBeGreaterThanOrEqual(headerBox!.y - 0.5);
+      expect(box.y + box.height, `header control escaped the header: ${label}`).toBeLessThanOrEqual(
+        headerBox!.y + headerBox!.height + 0.5,
+      );
+    }
+  });
+
+  test("puts the theme control in the top right and switches both ways", async ({ page }) => {
+    await page.goto("/ui/");
+    const toggle = page.locator(".aws-theme-toggle");
+    const headerBox = await page.locator(".aws-header").boundingBox();
+    const toggleBox = await toggle.boundingBox();
+    expect(toggleBox!.x).toBeGreaterThan(headerBox!.x + headerBox!.width / 2);
+
+    const isDark = () => page.evaluate(() => document.documentElement.classList.contains("dark"));
+    const before = await isDark();
+    await toggle.click();
+    expect(await isDark()).toBe(!before);
+    await toggle.click();
+    expect(await isDark()).toBe(before);
   });
 
   test("keeps the AWS S3 root protocol surface separate from /ui/", async ({ page }) => {
@@ -19,99 +68,45 @@ test.describe("AWS Simulator SPA", () => {
     await expect(page.locator("body")).toContainText("ListAllMyBucketsResult");
   });
 
-  test("renders AWS Simulator title in sidebar", async ({ page }) => {
+  test("exposes a skip link ahead of the console content", async ({ page }) => {
     await page.goto("/ui/");
-    await expect(page.locator("h1", { hasText: "AWS Simulator" })).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(page.locator(".sl-skip-link")).toBeFocused();
+    await expect(page.locator("#main-content")).toHaveCount(1);
   });
+});
 
-  test("sidebar has all 6 nav links", async ({ page }) => {
+test.describe("Overview", () => {
+  test("states the Region alongside the resource counts", async ({ page }) => {
     await page.goto("/ui/");
-    await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "ECS Tasks" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Lambda" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "ECR" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "S3" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Logs" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+    await expect(page.getByText("eu-west-1").first()).toBeVisible();
   });
 });
 
-test.describe("Overview Page", () => {
-  test("renders heading and status", async ({ page }) => {
-    await page.goto("/ui/");
-    await expect(page.getByRole("heading", { name: "AWS Simulator" })).toBeVisible();
+for (const service of SERVICES) {
+  test.describe(service.nav, () => {
+    test("renders its heading and table columns", async ({ page }) => {
+      await page.goto(service.path);
+      await expect(page.getByRole("heading", { name: service.title })).toBeVisible();
+      for (const column of service.columns) {
+        await expect(page.getByRole("columnheader", { name: column })).toBeVisible();
+      }
+    });
   });
-});
-
-test.describe("ECS Tasks Page", () => {
-  test("renders heading and table columns", async ({ page }) => {
-    await page.goto("/ui/ecs");
-    await expect(page.getByRole("heading", { name: "ECS Tasks" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Task ARN" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Status" })).toBeVisible();
-  });
-});
-
-test.describe("Lambda Functions Page", () => {
-  test("renders heading and table columns", async ({ page }) => {
-    await page.goto("/ui/lambda");
-    await expect(page.getByRole("heading", { name: "Lambda Functions" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Name" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Runtime" })).toBeVisible();
-  });
-});
-
-test.describe("ECR Repositories Page", () => {
-  test("renders heading and table columns", async ({ page }) => {
-    await page.goto("/ui/ecr");
-    await expect(page.getByRole("heading", { name: "ECR Repositories" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Name" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "URI" })).toBeVisible();
-  });
-});
-
-test.describe("S3 Buckets Page", () => {
-  test("renders heading and table columns", async ({ page }) => {
-    await page.goto("/ui/s3");
-    await expect(page.getByRole("heading", { name: "S3 Buckets" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Name" })).toBeVisible();
-  });
-});
-
-test.describe("CloudWatch Log Groups Page", () => {
-  test("renders heading and table columns", async ({ page }) => {
-    await page.goto("/ui/logs");
-    await expect(page.getByRole("heading", { name: "CloudWatch Log Groups" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Name" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Retention (days)" })).toBeVisible();
-  });
-});
+}
 
 test.describe("Navigation", () => {
-  test("navigates between all pages via sidebar", async ({ page }) => {
+  test("reaches every service from the side navigation and updates the breadcrumb", async ({ page }) => {
     await page.goto("/ui/");
-
-    await page.getByRole("link", { name: "ECS Tasks" }).click();
-    await expect(page.url()).toContain("/ui/ecs");
-    await expect(page.getByRole("heading", { name: "ECS Tasks" })).toBeVisible();
-
-    await page.getByRole("link", { name: "Lambda" }).click();
-    await expect(page.url()).toContain("/ui/lambda");
-    await expect(page.getByRole("heading", { name: "Lambda Functions" })).toBeVisible();
-
-    await page.getByRole("link", { name: "ECR" }).click();
-    await expect(page.url()).toContain("/ui/ecr");
-    await expect(page.getByRole("heading", { name: "ECR Repositories" })).toBeVisible();
-
-    await page.getByRole("link", { name: "S3" }).click();
-    await expect(page.url()).toContain("/ui/s3");
-    await expect(page.getByRole("heading", { name: "S3 Buckets" })).toBeVisible();
-
-    await page.getByRole("link", { name: "Logs" }).click();
-    await expect(page.url()).toContain("/ui/logs");
-    await expect(page.getByRole("heading", { name: "CloudWatch Log Groups" })).toBeVisible();
-
-    await page.getByRole("link", { name: "Overview" }).click();
-    await expect(page.url()).toContain("/ui/");
-    await expect(page.getByRole("heading", { name: "AWS Simulator" })).toBeVisible();
+    const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+    for (const service of SERVICES) {
+      await page.getByRole("link", { name: service.nav, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`${service.path}$`));
+      await expect(page.getByRole("heading", { name: service.title })).toBeVisible();
+      await expect(crumbs).toContainText(service.nav);
+    }
+    await page.getByRole("link", { name: "Overview", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   });
 });

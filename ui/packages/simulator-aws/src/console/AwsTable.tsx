@@ -119,54 +119,71 @@ export function AwsResourceTable<T>({
           </div>
         </div>
 
-        {isError ? (
-          <div className="aws-flash aws-flash-error" role="alert">
-            <strong>Could not load {title.toLowerCase()}.</strong>{" "}
-            {error instanceof Error ? error.message : "The simulator did not respond."}
-          </div>
-        ) : isLoading ? (
-          <div className="aws-empty">Loading {title.toLowerCase()}…</div>
-        ) : rows.length === 0 ? (
-          <div className="aws-empty">
-            <strong>{emptyTitle}</strong>
-            <p>{emptyDescription}</p>
-          </div>
-        ) : (
-          <table className="aws-table">
-            <thead>
+        {/* The console keeps the column headers whatever the body holds, so an
+         * operator can still see what the resource is described by while it is
+         * loading, empty, or failed. Replacing the whole table with a message
+         * takes that away exactly when it is most useful. */}
+        <table className="aws-table">
+          <thead>
+            <tr>
+              <th className="aws-table-select">
+                <input
+                  type="checkbox"
+                  aria-label="Select all resources on this page"
+                  checked={allVisibleSelected}
+                  disabled={visible.length === 0}
+                  onChange={() =>
+                    setSelected((current) => {
+                      const next = new Set(current);
+                      for (const row of visible) {
+                        if (allVisibleSelected) next.delete(rowKey(row));
+                        else next.add(rowKey(row));
+                      }
+                      return next;
+                    })
+                  }
+                />
+              </th>
+              {columns.map((column) => {
+                const active = sort?.column === column.id;
+                return (
+                  <th key={column.id} aria-sort={active ? (sort.ascending ? "ascending" : "descending") : "none"}>
+                    <button type="button" onClick={() => toggleSort(column.id)}>
+                      {column.header}
+                      <span aria-hidden className="aws-sort">{active ? (sort.ascending ? "▲" : "▼") : "⇅"}</span>
+                    </button>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {isError ? (
               <tr>
-                <th className="aws-table-select">
-                  <input
-                    type="checkbox"
-                    aria-label="Select all resources on this page"
-                    checked={allVisibleSelected}
-                    onChange={() =>
-                      setSelected((current) => {
-                        const next = new Set(current);
-                        for (const row of visible) {
-                          if (allVisibleSelected) next.delete(rowKey(row));
-                          else next.add(rowKey(row));
-                        }
-                        return next;
-                      })
-                    }
-                  />
-                </th>
-                {columns.map((column) => {
-                  const active = sort?.column === column.id;
-                  return (
-                    <th key={column.id} aria-sort={active ? (sort.ascending ? "ascending" : "descending") : "none"}>
-                      <button type="button" onClick={() => toggleSort(column.id)}>
-                        {column.header}
-                        <span aria-hidden className="aws-sort">{active ? (sort.ascending ? "▲" : "▼") : "⇅"}</span>
-                      </button>
-                    </th>
-                  );
-                })}
+                <td className="aws-table-state" colSpan={columns.length + 1}>
+                  <div className="aws-flash aws-flash-error" role="alert">
+                    <strong>Could not load {title.toLowerCase()}.</strong>{" "}
+                    {error instanceof Error ? error.message : "The simulator did not respond."}
+                  </div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {visible.map((row) => {
+            ) : isLoading ? (
+              <tr>
+                <td className="aws-table-state" colSpan={columns.length + 1}>
+                  <div className="aws-empty" role="status">Loading {title.toLowerCase()}…</div>
+                </td>
+              </tr>
+            ) : rows.length === 0 ? (
+              <tr>
+                <td className="aws-table-state" colSpan={columns.length + 1}>
+                  <div className="aws-empty">
+                    <strong>{emptyTitle}</strong>
+                    <p>{emptyDescription}</p>
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              visible.map((row) => {
                 const id = rowKey(row);
                 return (
                   <tr key={id} className={selected.has(id) ? "aws-row-selected" : undefined}>
@@ -183,10 +200,10 @@ export function AwsResourceTable<T>({
                     ))}
                   </tr>
                 );
-              })}
-            </tbody>
-          </table>
-        )}
+              })
+            )}
+          </tbody>
+        </table>
       </AwsContainer>
     </>
   );
