@@ -4,6 +4,35 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-22 — Gave the AWS simulator the AWS console's interface
+
+The three simulator interfaces were one generic application wearing three
+accent colours: identical layout, navigation, typography, and components, with
+only the tint and the navigation labels differing. An operator who knew any of
+the real consoles recognised nothing.
+
+The AWS simulator now presents as the AWS Management Console. It carries the
+dark global header, a breadcrumb trail, a service navigation that groups
+services the way the console groups them, `Resources (count)` page headers
+beside their actions, and resource tables with per-column sorting, selection,
+filtering, pagination, and the console's own empty states naming the resource
+and the Region. The service overview states Region and service health before
+counts, and each count links through to the resource that owns it.
+
+Values the previous interface dropped are shown: log retention, stored bytes,
+creation timestamps, and function state.
+
+Both themes are carried, with the control in the top right of the header where
+the console keeps it. Every text and surface pair was measured against the
+rendered result rather than assumed: the lowest ratio is 4.97:1 in light and
+5.25:1 in dark, against the 4.5:1 that WCAG AA requires for body text.
+
+Status is matched on whole words. A substring test reported success for
+failure states, because "unavailable" contains "available" and "inactive"
+contains "active", and a green tick on a failed resource stops an operator
+looking further. Callers that know the meaning pass it rather than having it
+inferred from wording.
+
 ## 2026-07-21 — Qualified the real product user interface, not a protocol page
 
 Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator

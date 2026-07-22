@@ -1,30 +1,26 @@
-import { type ColumnDef } from "@tanstack/react-table";
-import { ResourceListPage } from "@sockerless/ui-core/components";
+import { AwsResourceTable, AwsStatus, type AwsColumn } from "../console/index.js";
+import { formatEpoch } from "../console/format.js";
 import { fetchECRRepos, type ECRRepo } from "../api.js";
 
-const columns: ColumnDef<ECRRepo, unknown>[] = [
-  { accessorKey: "name", header: "Name" },
-  { accessorKey: "uri", header: "URI" },
-  {
-    accessorKey: "createdAt",
-    header: "Created",
-    cell: ({ getValue }) =>
-      new Date(getValue<number>() * 1000).toLocaleString(),
-    sortDescFirst: true,
-  },
+const columns: AwsColumn<ECRRepo>[] = [
+  { id: "name", header: "Repository name", cell: (row) => row.name, value: (row) => row.name },
+  { id: "uri", header: "URI", cell: (row) => row.uri, value: (row) => row.uri },
+  { id: "createdAt", header: "Created at", cell: (row) => formatEpoch(row.createdAt), value: (row) => String(row.createdAt) },
 ];
 
 export function ECRReposPage() {
   return (
-    <ResourceListPage<ECRRepo>
-      kicker="aws · simulator · ecr"
-      title={<>ECR Repositories</>}
-      countNoun="repository"
+    <AwsResourceTable<ECRRepo>
+      title="Repositories"
+      breadcrumbLabel="Repositories"
+      description="Private repositories in this account and Region."
       columns={columns}
       queryKey={["ecr-repos"]}
       queryFn={fetchECRRepos}
-      filterPlaceholder="Filter repositories…"
-      emptyMessage="No ECR repositories tracked."
+      filterPlaceholder="Find repositories"
+      emptyTitle="No repositories"
+      emptyDescription="No private repositories exist in this account and Region."
+      rowKey={(row) => row.name}
     />
   );
 }

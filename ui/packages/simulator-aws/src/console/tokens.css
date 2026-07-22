@@ -1,0 +1,85 @@
+/*
+ * Amazon Web Services Management Console appearance.
+ *
+ * The console is built from the Cloudscape Design System, which Amazon
+ * publishes. These are its visual decisions — the dark navigation header, the
+ * dense square-cornered surfaces, the specific blues — expressed as tokens so
+ * every page in this simulator reads as the AWS console rather than as a
+ * generic dashboard. No proprietary asset is reproduced; only the published
+ * design language is followed.
+ */
+.aws {
+  --aws-header-bg: #0f1b2d;
+  --aws-header-fg: #ffffff;
+  --aws-header-hover: #232f3e;
+
+  --aws-layout-bg: #f2f3f3;
+  --aws-surface: #ffffff;
+  --aws-surface-alt: #fafafa;
+
+  --aws-fg: #0f141a;
+  --aws-fg-secondary: #424650;
+  --aws-fg-disabled: #8c8c94;
+
+  --aws-link: #006ce0;
+  --aws-link-hover: #002b66;
+  --aws-primary: #006ce0;
+  --aws-primary-hover: #002b66;
+
+  --aws-border: #c6c6cd;
+  --aws-border-subtle: #e9ebed;
+  --aws-divider: #d1d5db;
+
+  --aws-status-success: #00802f;
+  --aws-status-error: #db0000;
+  --aws-status-warning: #855900;
+  --aws-status-info: #006ce0;
+  --aws-status-inactive: #656871;
+
+  --aws-flash-info-bg: #f0fbff;
+  --aws-flash-success-bg: #f2fcf3;
+
+  /* Cloudscape is a dense system: small radii, tight vertical rhythm. */
+  --aws-radius-container: 8px;
+  --aws-radius-control: 8px;
+  --aws-radius-button: 20px;
+
+  --aws-font: "Open Sans", "Helvetica Neue", Roboto, Arial, sans-serif;
+  --aws-font-mono: Menlo, Monaco, Consolas, "Courier New", monospace;
+}
+
+/*
+ * Dark mode. The console offers one, so the simulator does too. Values are
+ * chosen for contrast rather than by darkening the light palette: body text
+ * and links clear WCAG AA (4.5:1) against their own surface, and the status
+ * colours are lifted because the light-mode reds and greens fail against a
+ * dark background.
+ */
+.dark .aws {
+  --aws-header-bg: #0f1b2d;
+  --aws-header-fg: #ffffff;
+  --aws-header-hover: #192534;
+
+  --aws-layout-bg: #0f1b2d;
+  --aws-surface: #192534;
+  --aws-surface-alt: #1f2b3d;
+
+  --aws-fg: #d1d5db;
+  --aws-fg-secondary: #a4aab5;
+  --aws-fg-disabled: #6b7684;
+
+  --aws-link: #42b4ff;
+  --aws-link-hover: #89bdee;
+  --aws-primary: #42b4ff;
+  --aws-primary-hover: #89bdee;
+
+  --aws-border: #414d5c;
+  --aws-border-subtle: #414d5c;
+  --aws-divider: #414d5c;
+
+  --aws-status-success: #29ad32;
+  --aws-status-error: #ff7a7a;
+  --aws-status-warning: #e0a03a;
+  --aws-status-info: #42b4ff;
+  --aws-status-inactive: #a4aab5;
+}

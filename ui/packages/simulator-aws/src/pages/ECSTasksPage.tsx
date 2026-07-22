@@ -1,34 +1,28 @@
-import { type ColumnDef } from "@tanstack/react-table";
-import {
-  ResourceListPage,
-  StatusBadge,
-} from "@sockerless/ui-core/components";
+import { AwsResourceTable, AwsStatus, type AwsColumn } from "../console/index.js";
 import { fetchECSTasks, type ECSTask } from "../api.js";
 
-const columns: ColumnDef<ECSTask, unknown>[] = [
-  { accessorKey: "taskArn", header: "Task ARN" },
-  {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ getValue }) => <StatusBadge status={getValue<string>()} />,
-  },
-  { accessorKey: "clusterArn", header: "Cluster" },
-  { accessorKey: "launchType", header: "Launch Type" },
-  { accessorKey: "cpu", header: "CPU" },
-  { accessorKey: "memory", header: "Memory" },
+const columns: AwsColumn<ECSTask>[] = [
+  { id: "taskArn", header: "Task ARN", cell: (row) => row.taskArn, value: (row) => row.taskArn },
+  { id: "status", header: "Last status", cell: (row) => <AwsStatus status={row.status} />, value: (row) => row.status },
+  { id: "clusterArn", header: "Cluster", cell: (row) => row.clusterArn, value: (row) => row.clusterArn },
+  { id: "launchType", header: "Launch type", cell: (row) => row.launchType, value: (row) => row.launchType },
+  { id: "cpu", header: "CPU", cell: (row) => row.cpu, value: (row) => row.cpu },
+  { id: "memory", header: "Memory", cell: (row) => row.memory, value: (row) => row.memory },
 ];
 
 export function ECSTasksPage() {
   return (
-    <ResourceListPage<ECSTask>
-      kicker="aws · simulator · ecs"
-      title={<>ECS Tasks</>}
-      countNoun="task"
+    <AwsResourceTable<ECSTask>
+      title="Tasks"
+      breadcrumbLabel="Tasks"
+      description="Tasks running in this account and Region."
       columns={columns}
       queryKey={["ecs-tasks"]}
       queryFn={fetchECSTasks}
-      filterPlaceholder="Filter tasks…"
-      emptyMessage="No ECS tasks tracked."
+      filterPlaceholder="Find tasks"
+      emptyTitle="No tasks"
+      emptyDescription="No tasks are running in this account and Region."
+      rowKey={(row) => row.taskArn}
     />
   );
 }
