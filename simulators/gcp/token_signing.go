@@ -77,22 +77,16 @@ func rsaKeyID(pub *rsa.PublicKey) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:16])
 }
 
-// signAccessToken issues an RS256 JWT access token for the given principal,
-// signed with the simulator's access-token key. Every data-plane access token
-// the simulator mints flows through here.
-func signAccessToken(subject string, issuedAt, expiresAt time.Time) string {
+// signWithAccessKey signs an RS256 JWT with the given claim set using the
+// simulator's access-token key, so the data-plane bearer middleware verifies
+// it. Every bearer the simulator issues — access tokens and the GCE metadata
+// server's identity tokens — flows through here so all share one signing key
+// and one JWKS.
+func signWithAccessKey(claims map[string]any) string {
 	if accessSigner == nil {
 		panic("simulator access-token signer not initialised")
 	}
 	header := map[string]string{"alg": "RS256", "typ": "JWT", "kid": accessSigner.keyID}
-	claims := map[string]any{
-		"iss":   simAccessTokenIssuer,
-		"aud":   simAccessTokenAudience,
-		"sub":   subject,
-		"iat":   issuedAt.Unix(),
-		"exp":   expiresAt.Unix(),
-		"scope": "https://www.googleapis.com/auth/cloud-platform",
-	}
 	headerJSON, _ := json.Marshal(header)
 	claimsJSON, _ := json.Marshal(claims)
 	signingInput := base64.RawURLEncoding.EncodeToString(headerJSON) + "." +
@@ -100,9 +94,46 @@ func signAccessToken(subject string, issuedAt, expiresAt time.Time) string {
 	digest := sha256.Sum256([]byte(signingInput))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, accessSigner.key, crypto.SHA256, digest[:])
 	if err != nil {
-		panic(fmt.Sprintf("sign simulator access token: %v", err))
+		panic(fmt.Sprintf("sign simulator token: %v", err))
 	}
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+// signAccessToken issues an RS256 JWT access token for the given principal,
+// signed with the simulator's access-token key. Every data-plane access token
+// the simulator mints flows through here.
+func signAccessToken(subject string, issuedAt, expiresAt time.Time) string {
+	return signWithAccessKey(map[string]any{
+		"iss":   simAccessTokenIssuer,
+		"aud":   simAccessTokenAudience,
+		"sub":   subject,
+		"iat":   issuedAt.Unix(),
+		"exp":   expiresAt.Unix(),
+		"scope": "https://www.googleapis.com/auth/cloud-platform",
+	})
+}
+
+// signIdentityToken issues the RS256 identity token the GCE metadata server's
+// `service-accounts/{sa}/identity` endpoint hands a workload. Real Google
+// identity tokens are RS256 JWTs a workload presents as its bearer when
+// invoking another Cloud Run / Cloud Functions service (audience = the target
+// service URL); the simulator plays the same role. It signs with the same key
+// its data-plane middleware verifies against, and names both the
+// caller-requested audience (as real GCE does) and the simulator's own
+// resource-server audience, so the invoked endpoint accepts the token as a
+// valid bearer without dropping the requested-audience claim a real identity
+// token carries. The subject/email is the workload service-account email.
+func signIdentityToken(subject, audience string, issuedAt, expiresAt time.Time) string {
+	return signWithAccessKey(map[string]any{
+		"iss":            simAccessTokenIssuer,
+		"aud":            []string{audience, simAccessTokenAudience},
+		"azp":            subject,
+		"sub":            subject,
+		"email":          subject,
+		"email_verified": true,
+		"iat":            issuedAt.Unix(),
+		"exp":            expiresAt.Unix(),
+	})
 }
 
 // verifyAccessToken checks that a bearer token is one the simulator minted:

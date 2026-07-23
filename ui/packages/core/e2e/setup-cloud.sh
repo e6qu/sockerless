@@ -131,9 +131,15 @@ case "$SIMULATOR_SETUP" in
       "ecs"
     ;;
   gcp)
+    # The simulator now verifies bearer tokens on its Cloud Storage data plane,
+    # so obtain a real token from its GCE metadata server (the same coordinate a
+    # workload uses on real GCE) and present it, exactly as the backend does.
+    gcp_token="$(curl --fail --silent -H "Metadata-Flavor: Google" \
+      "$SIMULATOR_URL/computeMetadata/v1/instance/service-accounts/default/token" | jq -r .access_token)"
     curl --fail --silent --show-error \
       --request POST \
       --header "Content-Type: application/json" \
+      --header "Authorization: Bearer ${gcp_token}" \
       --data '{"name":"sockerless-e2e-build"}' \
       "$SIMULATOR_URL/storage/v1/b?project=sockerless-e2e" >/dev/null
     ;;

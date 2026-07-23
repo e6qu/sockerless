@@ -76,6 +76,16 @@ interface FederationSetup {
 //     not a fallback from a failed attempt.
 function resolveFederation(config: PortalConfig): FederationSetup | null {
   if (!config.federationClientId) {
+    // An operator auth layer with no cloud identity to federate the operator
+    // into is an incomplete federation configuration — surfaced loudly rather
+    // than degraded into unauthenticated reads the cloud would reject anyway.
+    // With no auth layer either, the portal runs unauthenticated: a local or
+    // test instance, chosen by the absence of both coordinates.
+    if (config.identityEndpoint) {
+      throw new Error(
+        "incomplete federation configuration: identityEndpoint is set but federationClientId is missing",
+      );
+    }
     return null;
   }
   const missing = (
