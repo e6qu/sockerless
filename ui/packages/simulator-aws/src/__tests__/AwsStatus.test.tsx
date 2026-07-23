@@ -33,11 +33,19 @@ describe("AwsStatus", () => {
     expect(kindOf("Provisioning")).toBe("warning");
   });
 
-  it("carries a glyph so the state does not depend on colour alone", () => {
+  it("carries a shape so the state does not depend on colour alone", () => {
     const { container } = render(<AwsStatus status="Unavailable" />);
     const status = container.querySelector(".aws-status-error");
     expect(status?.textContent).toContain("Unavailable");
-    // The glyph is decorative to a screen reader, which reads the word instead.
-    expect(status?.querySelector("[aria-hidden]")?.textContent).toBe("✖");
+    // The icon is a distinct shape per state — a screen reader ignores it
+    // (aria-hidden) and reads the word, while a sighted user reads the shape.
+    const icon = status?.querySelector("svg[aria-hidden]");
+    expect(icon).not.toBeNull();
+    // The error and success shapes differ, so state is legible without colour.
+    const success = render(<AwsStatus status="Running" />).container.querySelector(
+      ".aws-status-success svg[aria-hidden] path",
+    );
+    const error = icon?.querySelector("path");
+    expect(success?.getAttribute("d")).not.toBe(error?.getAttribute("d"));
   });
 });

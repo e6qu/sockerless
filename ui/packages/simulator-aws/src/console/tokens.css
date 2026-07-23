@@ -21,10 +21,11 @@
   --aws-fg-secondary: #424650;
   --aws-fg-disabled: #8c8c94;
 
-  --aws-link: #006ce0;
-  --aws-link-hover: #002b66;
-  --aws-primary: #006ce0;
-  --aws-primary-hover: #002b66;
+  /* Cloudscape's action blue, read from the design system. */
+  --aws-link: #0972d3;
+  --aws-link-hover: #033160;
+  --aws-primary: #0972d3;
+  --aws-primary-hover: #033160;
 
   --aws-border: #c6c6cd;
   --aws-border-subtle: #e9ebed;
@@ -39,8 +40,8 @@
   --aws-flash-info-bg: #f0fbff;
   --aws-flash-success-bg: #f2fcf3;
 
-  /* Cloudscape is a dense system: small radii, tight vertical rhythm. */
-  --aws-radius-container: 8px;
+  /* Cloudscape's current theme: rounded containers, pill buttons. */
+  --aws-radius-container: 16px;
   --aws-radius-control: 8px;
   --aws-radius-button: 20px;
 

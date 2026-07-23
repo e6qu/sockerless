@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AwsButton, AwsContainer, AwsPageHeader } from "./AwsConsole.js";
+import { AwsIcon } from "./icons.js";
 
 export interface AwsColumn<T> {
   id: string;
@@ -98,17 +99,30 @@ export function AwsResourceTable<T>({
       />
       <AwsContainer>
         <div className="aws-table-tools">
-          <input
-            className="aws-input"
-            type="search"
-            value={filter}
-            placeholder={filterPlaceholder}
-            aria-label={filterPlaceholder}
-            onChange={(event) => {
-              setFilter(event.target.value);
-              setPage(0);
-            }}
-          />
+          <div className="aws-table-filter">
+            <AwsIcon name="search" size={16} />
+            <input
+              className="aws-input"
+              type="search"
+              value={filter}
+              placeholder={filterPlaceholder}
+              aria-label={filterPlaceholder}
+              onChange={(event) => {
+                setFilter(event.target.value);
+                setPage(0);
+              }}
+            />
+          </div>
+          <button
+            type="button"
+            className="aws-table-refresh"
+            aria-label="Refresh"
+            title="Refresh"
+            disabled={isFetching}
+            onClick={() => refetch()}
+          >
+            <AwsIcon name="refresh" size={16} />
+          </button>
           <div className="aws-pagination">
             <span className="aws-pagination-summary">
               {rows.length === 0 ? "0 matches" : `${currentPage * PAGE_SIZE + 1}–${currentPage * PAGE_SIZE + visible.length} of ${rows.length}`}

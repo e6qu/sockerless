@@ -168,6 +168,13 @@ func handleSTSAssumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Request) 
 		stsErrorXML(w, "AccessDenied", fmt.Sprintf("Not authorized to perform sts:AssumeRoleWithWebIdentity on %s", roleArn), http.StatusForbidden)
 		return
 	}
+	// Verify the web identity token against the registered OpenID Connect
+	// provider, the way STS does, rather than minting credentials for any token.
+	tokenSubject, err := verifyWebIdentityToken(r.Context(), r.FormValue("WebIdentityToken"))
+	if err != nil {
+		stsErrorXML(w, "InvalidIdentityToken", err.Error(), http.StatusBadRequest)
+		return
+	}
 	akid, secret, token := stsMintTempCred()
 	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
 	assumedArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", awsAccountID(), role.RoleName, sessionName)
@@ -181,7 +188,7 @@ func handleSTSAssumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Request) 
   </AssumeRoleWithWebIdentityResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
 </AssumeRoleWithWebIdentityResponse>`, akid, xmlEscape(secret), xmlEscape(token), exp.Format(time.RFC3339),
-		xmlEscape(assumedArn), role.RoleId+":"+sessionName, "sim-web-identity-subject", generateUUID())
+		xmlEscape(assumedArn), role.RoleId+":"+sessionName, xmlEscape(tokenSubject), generateUUID())
 }
 
 func handleSTSGetSessionToken(w http.ResponseWriter, r *http.Request) {

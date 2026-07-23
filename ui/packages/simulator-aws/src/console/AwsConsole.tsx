@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { NavLink } from "react-router";
 import { useTheme } from "@sockerless/ui-core/hooks";
+import { AwsIcon } from "./icons.js";
 
 /**
  * The console shell: a dark global header, a breadcrumb trail, and a grouped
@@ -25,8 +26,8 @@ function AwsThemeToggle() {
   const isDark = theme === "dark";
   const label = isDark ? "Switch to light theme" : "Switch to dark theme";
   return (
-    <button type="button" className="aws-theme-toggle" onClick={toggle} aria-label={label} title={label}>
-      <span aria-hidden>{isDark ? "☀" : "☾"}</span>
+    <button type="button" className="aws-icon-button" onClick={toggle} aria-label={label} title={label}>
+      <AwsIcon name={isDark ? "sun" : "moon"} size={16} />
     </button>
   );
 }
@@ -35,10 +36,26 @@ export function AwsHeader({ region, account }: { region: string; account: ReactN
   return (
     <header className="aws-header">
       <div className="aws-header-left">
+        <button type="button" className="aws-icon-button" aria-label="Open menu">
+          <AwsIcon name="menu" size={16} />
+        </button>
         <span className="aws-logo" aria-hidden>aws</span>
         <span className="aws-header-title">Simulator Console</span>
       </div>
+      <div className="aws-header-search">
+        <AwsIcon name="search" size={16} />
+        <input type="search" aria-label="Search" placeholder="Search [Option+S]" />
+      </div>
       <div className="aws-header-right">
+        <button type="button" className="aws-icon-button" aria-label="Notifications">
+          <AwsIcon name="notification" size={16} />
+        </button>
+        <button type="button" className="aws-icon-button" aria-label="Settings">
+          <AwsIcon name="settings" size={16} />
+        </button>
+        <button type="button" className="aws-icon-button" aria-label="Support">
+          <AwsIcon name="help" size={16} />
+        </button>
         <span className="aws-header-region">{region}</span>
         {account}
         <AwsThemeToggle />
@@ -163,10 +180,17 @@ export function AwsStatus({ status, kind: explicitKind }: { status: string; kind
         ? "success"
         : "inactive";
   const resolved = explicitKind ?? kind;
-  const glyph = resolved === "success" ? "✔" : resolved === "error" ? "✖" : resolved === "warning" ? "⧗" : "–";
   return (
     <span className={`aws-status aws-status-${resolved}`}>
-      <span aria-hidden>{glyph}</span>
+      {resolved === "success" ? (
+        <AwsIcon name="status_positive" size={14} />
+      ) : resolved === "error" ? (
+        <AwsIcon name="status_negative" size={14} />
+      ) : resolved === "warning" ? (
+        <AwsIcon name="status_pending" size={14} />
+      ) : (
+        <span aria-hidden>–</span>
+      )}
       {status}
     </span>
   );

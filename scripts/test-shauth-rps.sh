@@ -192,12 +192,44 @@ provision_gcp_workforce_provider() {
     -d '{"displayName":"Shauth","oidc":{"issuerUri":"http://localhost:8080","clientId":"sockerless-gcp"},"attributeMapping":{"google.subject":"assertion.sub"}}'
 }
 
-start_simulator "$repo_root/simulators/aws/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision"
+# The AWS console federates through an IAM OpenID Connect provider that trusts
+# Shauth and a role that trusts the provider — the federation an administrator
+# provisions. The role ARN is the coordinate the console assumes.
+aws_federation_role="arn:aws:iam::123456789012:role/console-federation-role"
+provision_aws_federation() {
+  local base=http://localhost:29310
+  curl --silent --show-error --fail -o /dev/null -X POST "$base/" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode "Action=CreateOpenIDConnectProvider" \
+    --data-urlencode "Version=2010-05-08" \
+    --data-urlencode "Url=http://localhost:8080" \
+    --data-urlencode "ClientIDList.member.1=sockerless-aws" \
+    --data-urlencode "ThumbprintList.member.1=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  curl --silent --show-error --fail -o /dev/null -X POST "$base/" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode "Action=CreateRole" \
+    --data-urlencode "Version=2010-05-08" \
+    --data-urlencode "RoleName=console-federation-role" \
+    --data-urlencode 'AssumeRolePolicyDocument={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/localhost:8080"},"Action":"sts:AssumeRoleWithWebIdentity"}]}'
+  # The console reads across services, so the administrator grants the role the
+  # read access it needs; without it, the simulator's IAM enforcement denies the
+  # federated calls, exactly as real AWS would.
+  curl --silent --show-error --fail -o /dev/null -X POST "$base/" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode "Action=PutRolePolicy" \
+    --data-urlencode "Version=2010-05-08" \
+    --data-urlencode "RoleName=console-federation-role" \
+    --data-urlencode "PolicyName=console-read" \
+    --data-urlencode 'PolicyDocument={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecs:*","lambda:*","ecr:*","s3:*","logs:*"],"Resource":"*"}]}'
+}
+
+start_simulator "$repo_root/simulators/aws/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision" "$aws_federation_role"
 start_simulator "$repo_root/simulators/gcp/simulator-gcp" 29320 sockerless-gcp "$gcp_client_secret" "$work_dir/gcp.log" "$source_revision" "$gcp_workforce_provider"
 start_simulator "$repo_root/simulators/azure/simulator-azure" 29330 sockerless-azure "$azure_client_secret" "$work_dir/azure.log" "$source_revision"
 
 wait_for_url http://localhost:29090/healthz "Sockerless Admin"
 wait_for_url http://localhost:29310/health "AWS simulator"
+provision_aws_federation
 wait_for_url http://localhost:29320/health "Google Cloud simulator"
 provision_gcp_workforce_provider
 wait_for_url http://localhost:29330/health "Microsoft Azure simulator"

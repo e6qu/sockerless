@@ -205,7 +205,6 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	registerScheduler(srv)
 
 	// Dashboard summary endpoints for UI
-	registerDashboard(srv)
 
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)

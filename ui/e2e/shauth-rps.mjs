@@ -29,6 +29,7 @@ try {
     await assertIdentity(page, context, app);
     if (app.name === "Sockerless Admin") await assertAdministratorMutation(context);
     if (app.name === "Sockerless Google Cloud simulator") await assertFederatedCloudToken(context, page, app);
+    if (app.name === "Sockerless AWS simulator") await assertFederatedAwsCredentials(context, page, app);
     await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
     await context.close();
@@ -174,6 +175,41 @@ async function assertDeveloperCannotAccessAdmin() {
 // broker. The assertion is verified against Shauth's own discovery and key set,
 // so a token here means the whole federation works end to end with a live
 // identity, differing from the real cloud only in coordinates.
+// assertFederatedAwsCredentials proves the AWS console federates the signed-in
+// operator's real Shauth assertion into temporary credentials the way it reaches
+// AWS: it reads the assertion from the console's own auth layer, exchanges it at
+// the Security Token Service through AssumeRoleWithWebIdentity, and drives the
+// signed-in console through a real API read over the resulting credentials.
+async function assertFederatedAwsCredentials(context, page, app) {
+  const origin = new URL(app.launch).origin;
+
+  const subjectResponse = await context.request.get(`${origin}/auth/federation-subject`);
+  assert.equal(subjectResponse.status(), 200, `${app.name} auth layer did not expose the operator assertion`);
+  const { subject_token: subjectToken } = await subjectResponse.json();
+  assert.ok(subjectToken, `${app.name} exposed no operator assertion to federate`);
+
+  const exchange = await context.request.post(`${origin}/`, {
+    form: {
+      Action: "AssumeRoleWithWebIdentity",
+      Version: "2011-06-15",
+      RoleArn: "arn:aws:iam::123456789012:role/console-federation-role",
+      RoleSessionName: "console",
+      WebIdentityToken: subjectToken,
+    },
+  });
+  assert.equal(exchange.status(), 200, `${app.name} AssumeRoleWithWebIdentity returned ${exchange.status()}`);
+  const credentials = await exchange.text();
+  assert.match(credentials, /<AccessKeyId>ASIA/, `${app.name} exchange returned no temporary credentials`);
+
+  await page.goto(`${origin}/ui/ecs`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Tasks" }).waitFor({ state: "visible" });
+  assert.equal(
+    await page.getByText("Could not load").count(),
+    0,
+    `${app.name} console failed to read the real API over federation`,
+  );
+}
+
 async function assertFederatedCloudToken(context, page, app) {
   const origin = new URL(app.launch).origin;
 

@@ -48,7 +48,7 @@ test.describe("AWS console shell", () => {
 
   test("puts the theme control in the top right and switches both ways", async ({ page }) => {
     await page.goto("/ui/");
-    const toggle = page.locator(".aws-theme-toggle");
+    const toggle = page.getByRole("button", { name: /Switch to (light|dark) theme/ });
     const headerBox = await page.locator(".aws-header").boundingBox();
     const toggleBox = await toggle.boundingBox();
     expect(toggleBox!.x).toBeGreaterThan(headerBox!.x + headerBox!.width / 2);
@@ -73,6 +73,62 @@ test.describe("AWS console shell", () => {
     await page.keyboard.press("Tab");
     await expect(page.locator(".sl-skip-link")).toBeFocused();
     await expect(page.locator("#main-content")).toHaveCount(1);
+  });
+});
+
+// These pin the ground-truth values read from the live Cloudscape Design
+// System (cloudscape.design) — the console's font, action blue, rounded
+// containers, and header/table icon controls — so a regression away from the
+// AWS look fails here rather than being judged by eye.
+test.describe("Cloudscape visual fidelity", () => {
+  test("renders console text in Open Sans, Cloudscape's console font", async ({ page }) => {
+    await page.goto("/ui/");
+    // The shared shell sets the document body to its own display face; the AWS
+    // console reasserts Open Sans on its own root, so read that element.
+    const family = await page.locator(".aws").evaluate((node) => getComputedStyle(node).fontFamily);
+    expect(family).toContain("Open Sans");
+  });
+
+  test("uses Cloudscape's action blue for inactive links and dark text for the active one", async ({ page }) => {
+    // Pin both treatments on a page with a known active route: the current
+    // service reads as dark text, every other service link as the action blue.
+    // The colour lives on the .aws-sidenav-link span, not the wrapping anchor.
+    await page.goto("/ui/lambda");
+    const nav = page.getByRole("navigation", { name: "Service" });
+    const colorOf = (name: string) =>
+      nav.locator(".aws-sidenav-link", { hasText: name }).first().evaluate((node) => getComputedStyle(node).color);
+    // #0972d3, Cloudscape's action blue, read from the design system.
+    expect(await colorOf("Elastic Container Service")).toBe("rgb(9, 114, 211)");
+    // #0f141a, Cloudscape's primary text, marks the current page.
+    expect(await colorOf("Lambda")).toBe("rgb(15, 20, 26)");
+  });
+
+  test("rounds containers the way the current Cloudscape theme does", async ({ page }) => {
+    await page.goto("/ui/ecs");
+    const radius = await page
+      .locator(".aws-container")
+      .first()
+      .evaluate((node) => getComputedStyle(node).borderTopLeftRadius);
+    expect(radius).toBe("16px");
+  });
+
+  test("carries the global search field and header tool icons", async ({ page }) => {
+    await page.goto("/ui/");
+    const header = page.locator(".aws-header");
+    await expect(header.getByRole("searchbox", { name: "Search" })).toBeVisible();
+    for (const label of ["Notifications", "Settings", "Support"]) {
+      const button = header.getByRole("button", { name: label });
+      await expect(button).toBeVisible();
+      await expect(button.locator("svg")).toHaveCount(1);
+    }
+  });
+
+  test("gives the table a search-prefixed filter and a refresh control", async ({ page }) => {
+    await page.goto("/ui/ecs");
+    const filter = page.locator(".aws-table-filter");
+    await expect(filter.locator("svg")).toHaveCount(1);
+    await expect(filter.getByRole("searchbox")).toBeVisible();
+    await expect(page.locator(".aws-table-tools").getByRole("button", { name: "Refresh" })).toBeVisible();
   });
 });
 
@@ -108,5 +164,44 @@ test.describe("Navigation", () => {
     }
     await page.getByRole("link", { name: "Overview", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  });
+});
+
+test.describe("The console reads the real AWS APIs", () => {
+  // Seeds resources through the real AWS APIs the console reads, so the
+  // assertions prove live resources render rather than a fixture. The simulator
+  // accepts the calls unsigned; the console signs them, which the relying-party
+  // suite exercises with a live identity.
+  test("lists an ECR repository created through the real API", async ({ page }) => {
+    const name = `console-repo-${Date.now()}`;
+    const created = await page.request.post("/", {
+      headers: { "content-type": "application/x-amz-json-1.1", "x-amz-target": "AmazonEC2ContainerRegistry_V20150921.CreateRepository" },
+      data: { repositoryName: name },
+    });
+    expect(created.ok(), `creating repository: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/ecr");
+    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+  });
+
+  test("lists an S3 bucket created through the real API", async ({ page }) => {
+    const name = `console-bucket-${Date.now()}`;
+    const created = await page.request.put(`/${name}`);
+    expect(created.ok(), `creating bucket: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/s3");
+    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+  });
+
+  test("lists a CloudWatch log group created through the real API", async ({ page }) => {
+    const name = `console-log-group-${Date.now()}`;
+    const created = await page.request.post("/", {
+      headers: { "content-type": "application/x-amz-json-1.1", "x-amz-target": "Logs_20140328.CreateLogGroup" },
+      data: { logGroupName: name },
+    });
+    expect(created.ok(), `creating log group: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/logs");
+    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
   });
 });
