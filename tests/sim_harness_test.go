@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"os"
@@ -261,10 +262,13 @@ func setupAWSSimulator(simURL string, backendNames []string) error {
 		if name == "ecs" {
 			// Create the ECS cluster
 			clusterName := info.ExtraEnv["SOCKERLESS_ECS_CLUSTER"]
-			body := fmt.Sprintf(`{"clusterName":"%s"}`, clusterName)
-			req, _ := http.NewRequest("POST", simURL+"/", strings.NewReader(body))
+			body := []byte(fmt.Sprintf(`{"clusterName":"%s"}`, clusterName))
+			req, _ := http.NewRequest("POST", simURL+"/", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 			req.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.CreateCluster")
+			if err := signAWSControlPlane(req, body, "ecs"); err != nil {
+				return fmt.Errorf("failed to sign CreateCluster request: %w", err)
+			}
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				return fmt.Errorf("failed to create ECS cluster: %w", err)

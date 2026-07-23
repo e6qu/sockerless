@@ -5,6 +5,7 @@ package azf
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -30,6 +31,53 @@ var dockerClient *client.Client
 var backendPort int
 var evalImageName string
 var alpineImageName string
+
+// simIdentityHeader is the shared-secret value the Azure platform injects as
+// IDENTITY_HEADER alongside IDENTITY_ENDPOINT into a Functions app container.
+// DefaultAzureCredential echoes it back as the X-IDENTITY-HEADER request header
+// when it acquires a managed-identity token. The backend process receives the
+// same value below.
+const simIdentityHeader = "sim-identity-header"
+
+// simARMBearer acquires an Azure Resource Manager bearer token from the
+// simulator the exact way a managed-identity client does in production: an App
+// Service MSI request against IDENTITY_ENDPOINT (here the sim's /msi/token) for
+// the ARM resource. The simulator mints a real, RS256-signed token whose `aud`
+// is the management audience — the same token DefaultAzureCredential obtains
+// inside the backend. The operator-shaped ARM PUT that provisions the storage
+// account carries this bearer, exactly as a real ARM client must. Only the
+// coordinate (simURL) differs from real Azure.
+func simARMBearer(simURL string) string {
+	die := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, format, args...)
+		os.Exit(1)
+	}
+	req, err := http.NewRequest("GET",
+		simURL+"/msi/token?resource=https://management.azure.com/", nil)
+	if err != nil {
+		die("ERROR: build ARM token request: %v\n", err)
+	}
+	req.Header.Set("X-IDENTITY-HEADER", simIdentityHeader)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		die("ERROR: acquire ARM token from sim: %v\n", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		die("ERROR: sim /msi/token returned %d: %s\n", resp.StatusCode, string(body))
+	}
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &tok); err != nil {
+		die("ERROR: decode ARM token response: %v (body=%s)\n", err, string(body))
+	}
+	if tok.AccessToken == "" {
+		die("ERROR: sim /msi/token returned an empty access_token (body=%s)\n", string(body))
+	}
+	return tok.AccessToken
+}
 
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
@@ -187,9 +235,14 @@ ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 		subscriptionID = "00000000-0000-0000-0000-000000000001"
 		resourceGroup = "sim-rg"
 		storageAccount = "simstorage"
+		// Acquire a real ARM bearer from the sim's managed-identity endpoint;
+		// the sim now enforces bearer auth on the ARM control plane exactly as
+		// real Azure does, so the /subscriptions/ PUT must carry it.
+		armBearer := simARMBearer(simURL)
 		preCreate := func(url, body string) {
 			req, _ := http.NewRequest("PUT", url, strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+armBearer)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				failClean("ERROR: pre-create sim resource %s: %v\n", url, err)
@@ -240,6 +293,21 @@ ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 		// (which would race the suite's global -timeout and panic the binary).
 		"SOCKERLESS_AZF_ATTACH_TIMEOUT_SEC=60",
 	)
+	if target == "sim" {
+		// Inject the App Service / Azure Functions managed-identity coordinate
+		// the same way the real Azure platform injects it into a Functions app
+		// container. The backend's DefaultAzureCredential (used identically
+		// against real Azure and the simulator) reads IDENTITY_ENDPOINT +
+		// IDENTITY_HEADER and performs a real managed-identity token
+		// acquisition against it — here the simulator's /msi/token endpoint,
+		// which mints a real, verifiable ARM bearer. Only the coordinate value
+		// differs from real Azure. Against the cloud target the platform
+		// supplies these itself, so they are not set here.
+		backendCmd.Env = append(backendCmd.Env,
+			"IDENTITY_ENDPOINT="+endpointURL+"/msi/token",
+			"IDENTITY_HEADER="+simIdentityHeader,
+		)
+	}
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {

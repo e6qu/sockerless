@@ -5,6 +5,7 @@ package aca
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -40,7 +41,54 @@ var backendBaseEnv []string
 
 const (
 	acaAppsE2EEnv = "SOCKERLESS_ACA_APPS_E2E"
+
+	// simIdentityHeader is the shared-secret value the Azure platform injects
+	// as IDENTITY_HEADER alongside IDENTITY_ENDPOINT into an App Service /
+	// Container Apps container. DefaultAzureCredential echoes it back as the
+	// X-IDENTITY-HEADER request header when it acquires a managed-identity
+	// token. The backend process receives the same value below.
+	simIdentityHeader = "sim-identity-header"
 )
+
+// simARMBearer acquires an Azure Resource Manager bearer token from the
+// simulator the exact way a managed-identity client does in production: an App
+// Service MSI request against IDENTITY_ENDPOINT (here the sim's /msi/token) for
+// the ARM resource. The simulator mints a real, RS256-signed token whose `aud`
+// is the management audience — the same token DefaultAzureCredential obtains
+// inside the backend. The operator-shaped ARM PUTs that provision the storage
+// account and managed environment carry this bearer, exactly as a real ARM
+// client must. Only the coordinate (simURL) differs from real Azure.
+func simARMBearer(simURL string) string {
+	die := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, format, args...)
+		os.Exit(1)
+	}
+	req, err := http.NewRequest("GET",
+		simURL+"/msi/token?resource=https://management.azure.com/", nil)
+	if err != nil {
+		die("ERROR: build ARM token request: %v\n", err)
+	}
+	req.Header.Set("X-IDENTITY-HEADER", simIdentityHeader)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		die("ERROR: acquire ARM token from sim: %v\n", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		die("ERROR: sim /msi/token returned %d: %s\n", resp.StatusCode, string(body))
+	}
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &tok); err != nil {
+		die("ERROR: decode ARM token response: %v (body=%s)\n", err, string(body))
+	}
+	if tok.AccessToken == "" {
+		die("ERROR: sim /msi/token returned an empty access_token (body=%s)\n", string(body))
+	}
+	return tok.AccessToken
+}
 
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
@@ -285,9 +333,14 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 		resourceGroup = "sim-rg"
 		storageAccount = "simstorage"
 		logAnalyticsWS = "default"
+		// Acquire a real ARM bearer from the sim's managed-identity endpoint;
+		// the sim now enforces bearer auth on the ARM control plane exactly as
+		// real Azure does, so every /subscriptions/ PUT must carry it.
+		armBearer := simARMBearer(simURL)
 		preCreate := func(url, body string) {
 			req, _ := http.NewRequest("PUT", url, strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+armBearer)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				failClean("ERROR: pre-create sim resource %s: %v\n", url, err)
@@ -310,6 +363,7 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 					simURL, subscriptionID, resourceGroup),
 				nil,
 			)
+			req.Header.Set("Authorization", "Bearer "+armBearer)
 			if resp, err := http.DefaultClient.Do(req); err == nil {
 				resp.Body.Close()
 			}
@@ -366,6 +420,21 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 		"SOCKERLESS_ACA_STORAGE_ACCOUNT=" + storageAccount,
 		// Required at NewServer (no fallback).
 		"SOCKERLESS_CALLBACK_URL=" + fmt.Sprintf("ws://%s:%d/v1/aca/reverse", callbackHost, backendPort),
+	}
+	if target == "sim" {
+		// Inject the App Service / Container Apps managed-identity coordinate
+		// the same way the real Azure platform injects it into an ACA app
+		// container. The backend's DefaultAzureCredential (used identically
+		// against real Azure and the simulator) reads IDENTITY_ENDPOINT +
+		// IDENTITY_HEADER and performs a real managed-identity token
+		// acquisition against it — here the simulator's /msi/token endpoint,
+		// which mints a real, verifiable ARM bearer. Only the coordinate value
+		// differs from real Azure. Against the cloud target the platform
+		// supplies these itself, so they are not set here.
+		backendBaseEnv = append(backendBaseEnv,
+			"IDENTITY_ENDPOINT="+endpointURL+"/msi/token",
+			"IDENTITY_HEADER="+simIdentityHeader,
+		)
 	}
 	if os.Getenv(acaAppsE2EEnv) == "1" {
 		backendBaseEnv = append(backendBaseEnv, "SOCKERLESS_ACA_USE_APP=1")

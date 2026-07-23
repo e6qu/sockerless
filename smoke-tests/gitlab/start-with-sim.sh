@@ -21,19 +21,72 @@ wait_for_url() {
     return 1
 }
 
+# aws_sigv4_post signs an AWS control-plane request (awsJson) with SigV4 and
+# POSTs it, authenticating exactly as a real AWS SDK client does. The AWS
+# simulator verifies the signature at its POST / control-plane chokepoint and
+# rejects unsigned requests with 403 MissingAuthenticationToken, matching real
+# AWS. This differs from a real-cloud call only in coordinates: the endpoint
+# (local) and the simulator's seeded bootstrap admin credential (access
+# key/secret "test"/"test", region us-east-1) — the same static credential the
+# ECS backend uses.
+# Args: <endpoint> <service> <x-amz-target> <json-payload>
+aws_sigv4_post() {
+    local endpoint="$1" service="$2" target="$3" payload="$4"
+    local region="us-east-1" access_key="test" secret_key="test"
+    local host amz_date datestamp
+    host="$(printf '%s' "$endpoint" | sed -E 's#^https?://##; s#/.*$##')"
+    amz_date="$(date -u +%Y%m%dT%H%M%SZ)"
+    datestamp="$(date -u +%Y%m%d)"
+
+    _sha256_hex() { openssl dgst -sha256 | sed 's/^.* //'; }
+    _hmac_hex() { openssl dgst -sha256 -mac HMAC -macopt hexkey:"$1" | sed 's/^.* //'; }
+    _str_hex() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
+
+    local payload_hash signed_headers canonical_headers canonical_request
+    payload_hash="$(printf '%s' "$payload" | _sha256_hex)"
+    signed_headers="content-type;host;x-amz-content-sha256;x-amz-date;x-amz-target"
+    # Command substitution strips the trailing newline of the header block, so
+    # the blank line the canonical-request spec requires between the headers and
+    # the signed-headers list is written explicitly as the extra \n below.
+    canonical_headers="$(printf 'content-type:application/x-amz-json-1.1\nhost:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\nx-amz-target:%s\n' \
+        "$host" "$payload_hash" "$amz_date" "$target")"
+    canonical_request="$(printf 'POST\n/\n\n%s\n\n%s\n%s' "$canonical_headers" "$signed_headers" "$payload_hash")"
+
+    local cr_hash string_to_sign
+    cr_hash="$(printf '%s' "$canonical_request" | _sha256_hex)"
+    string_to_sign="$(printf 'AWS4-HMAC-SHA256\n%s\n%s/%s/%s/aws4_request\n%s' \
+        "$amz_date" "$datestamp" "$region" "$service" "$cr_hash")"
+
+    local k_date k_region k_service k_signing signature
+    k_date="$(printf '%s' "$datestamp" | _hmac_hex "$(_str_hex "AWS4${secret_key}")")"
+    k_region="$(printf '%s' "$region" | _hmac_hex "$k_date")"
+    k_service="$(printf '%s' "$service" | _hmac_hex "$k_region")"
+    k_signing="$(printf '%s' "aws4_request" | _hmac_hex "$k_service")"
+    signature="$(printf '%s' "$string_to_sign" | _hmac_hex "$k_signing")"
+
+    local authorization="AWS4-HMAC-SHA256 Credential=${access_key}/${datestamp}/${region}/${service}/aws4_request, SignedHeaders=${signed_headers}, Signature=${signature}"
+
+    curl -sf -X POST "${endpoint}/" \
+        -H "Content-Type: application/x-amz-json-1.1" \
+        -H "X-Amz-Target: ${target}" \
+        -H "X-Amz-Date: ${amz_date}" \
+        -H "X-Amz-Content-Sha256: ${payload_hash}" \
+        -H "Authorization: ${authorization}" \
+        -d "$payload"
+}
+
 export SOCKERLESS_POLL_INTERVAL="500ms"
 
 case "$CLOUD" in
     aws)
         SIM_LISTEN_ADDR=":4566" simulator-aws &
         wait_for_url "http://127.0.0.1:4566/health"
-        # Create ECS cluster
-        # -f so a non-2xx CreateCluster aborts (set -e) instead of starting the
-        # backend against a missing cluster.
-        curl -sf -X POST http://127.0.0.1:4566/ \
-            -H "Content-Type: application/x-amz-json-1.1" \
-            -H "X-Amz-Target: AmazonEC2ContainerServiceV20141113.CreateCluster" \
-            -d '{"clusterName":"sim-cluster"}' >/dev/null
+        # Create ECS cluster.
+        # -f (via aws_sigv4_post's curl -sf) so a non-2xx CreateCluster aborts
+        # (set -e) instead of starting the backend against a missing cluster.
+        aws_sigv4_post "http://127.0.0.1:4566" "ecs" \
+            "AmazonEC2ContainerServiceV20141113.CreateCluster" \
+            '{"clusterName":"sim-cluster"}' >/dev/null
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4566"
         export SOCKERLESS_ECS_CLUSTER="sim-cluster"
         export SOCKERLESS_ECS_SUBNETS="subnet-0123456789abcdef0"

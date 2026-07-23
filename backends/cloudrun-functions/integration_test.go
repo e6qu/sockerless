@@ -34,6 +34,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"golang.org/x/oauth2/google"
 )
 
 var dockerClient *client.Client
@@ -1033,12 +1034,24 @@ func dockerImageExists(ref string) bool {
 // Stands in for terraform in integration tests; production operators
 // create the bucket as infrastructure before launching the backend.
 //
+// The GCS JSON API is an authenticated data plane: real GCS (and the
+// simulator) reject an anonymous request with 401 UNAUTHENTICATED, so the
+// request carries an OAuth2 bearer obtained the same way the backend's
+// Storage/Cloud Build clients obtain theirs — from the GCE metadata server
+// via google.ComputeTokenSource. This differs from a real-cloud call only in
+// the coordinate GCE_METADATA_HOST points at (the sim host here, the real
+// metadata server on a live VM), with no sim-aware branch.
+//
 // Bound by a 5s context so a hung sim surfaces as a clear error rather
 // than blocking TestMain indefinitely (the request is local and a
 // healthy sim should answer in single-digit ms).
 func createGCSBucket(simURL, project, bucket string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	token, err := gcsMetadataToken(simURL)
+	if err != nil {
+		return err
+	}
 	body := []byte(fmt.Sprintf(`{"name":%q}`, bucket))
 	url := fmt.Sprintf("%s/storage/v1/b?project=%s", simURL, project)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
@@ -1046,6 +1059,7 @@ func createGCSBucket(simURL, project, bucket string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -1056,4 +1070,24 @@ func createGCSBucket(simURL, project, bucket string) error {
 		return fmt.Errorf("create bucket %s: %d: %s", bucket, resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	return nil
+}
+
+// gcsMetadataToken mints an OAuth2 access token from the GCE metadata server
+// exactly as google.ComputeTokenSource does on a real workload — the same
+// mechanism the cloudrun-functions backend's Storage and Cloud Build clients
+// use. It points GCE_METADATA_HOST at the endpoint's host (the metadata
+// server's coordinate: the simulator here, the real link-local server on a
+// live VM) and lets the standard Google auth library fetch and sign-verify the
+// token. No sim-aware branch: against the real cloud this same call reaches the
+// real metadata server.
+func gcsMetadataToken(endpointURL string) (string, error) {
+	host := strings.TrimPrefix(strings.TrimPrefix(endpointURL, "http://"), "https://")
+	if err := os.Setenv("GCE_METADATA_HOST", host); err != nil {
+		return "", fmt.Errorf("set GCE_METADATA_HOST: %w", err)
+	}
+	tok, err := google.ComputeTokenSource("").Token()
+	if err != nil {
+		return "", fmt.Errorf("mint GCE metadata access token: %w", err)
+	}
+	return tok.AccessToken, nil
 }

@@ -255,7 +255,11 @@ func httpDo(method, url string, body string) (*http.Response, error) {
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Authorization", "Bearer fake-gcp-token")
+	// The data plane verifies an OAuth2 access token on every request, so these
+	// raw HTTP calls must present the same real, simulator-minted token the
+	// gcloud CLI carries via CLOUDSDK_AUTH_ACCESS_TOKEN — differing from a real
+	// Google request only in the endpoint coordinate and the token source.
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	return http.DefaultClient.Do(req)
 }
 

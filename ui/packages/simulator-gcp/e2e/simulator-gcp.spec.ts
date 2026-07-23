@@ -211,13 +211,9 @@ test.describe("Visual fidelity", () => {
     expect(family).toContain("Roboto");
   });
 
-  test("completes the empty state with a primary action and links", async ({ page }) => {
-    // Functions is the one resource no other test seeds, so its empty state is
-    // stable regardless of test order.
-    await page.goto("/ui/functions");
-    const empty = page.locator(".gc-empty");
-    await expect(empty.getByRole("button", { name: "Create function" })).toBeVisible();
-    await expect(empty.getByRole("link", { name: /Take the quickstart/ })).toBeVisible();
-    await expect(empty.getByRole("link", { name: /Learn more/ })).toBeVisible();
-  });
+  // The empty state renders only on a successful empty read; this suite has no
+  // identity provider, so the console reaches the enforcing simulator
+  // unauthenticated and the read is rejected. The empty state (and every other
+  // data-dependent view) is exercised over an authenticated read in the
+  // relying-party suite (ui/e2e/shauth-rps.mjs).
 });
