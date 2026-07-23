@@ -116,6 +116,28 @@ func New(config Config) (*Auth, error) {
 
 func (a *Auth) Enabled() bool { return a != nil && a.config.Enabled() }
 
+// OperatorAssertion returns the OpenID Connect ID token the signed-in operator
+// authenticated with for the session bound to r, together with the identity
+// coordinates it was issued under: the issuer that signed it and the audience
+// (client ID) it was issued for. The console backend brokers this assertion
+// into short-lived cloud credentials the way a real console federates a
+// signed-in session; keeping it here means the raw assertion never leaves the
+// server. It reports false when no operator session is present.
+func (a *Auth) OperatorAssertion(r *http.Request) (assertion, issuer, audience string, ok bool) {
+	if !a.Enabled() {
+		return "", "", "", false
+	}
+	session, present := a.requestSession(r, time.Now())
+	if !present {
+		return "", "", "", false
+	}
+	record, stored := a.store.get(session.ID, time.Now())
+	if !stored || record.RawIDToken == "" {
+		return "", "", "", false
+	}
+	return record.RawIDToken, a.config.Issuer, a.config.ClientID, true
+}
+
 func (a *Auth) Register(mux *http.ServeMux) {
 	if !a.Enabled() {
 		return

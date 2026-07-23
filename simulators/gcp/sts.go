@@ -86,34 +86,45 @@ func handleSTSTokenExchange(w http.ResponseWriter, r *http.Request) {
 		stsError(w, "invalid_request", err.Error())
 		return
 	}
+
+	token, expiresIn, code, err := federateWorkforceSubject(r.Context(), providerName, subjectToken)
+	if err != nil {
+		stsError(w, code, err.Error())
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"access_token":      token,
+		"issued_token_type": tokenTypeAccessToken,
+		"token_type":        "Bearer",
+		"expires_in":        expiresIn,
+	})
+}
+
+// federateWorkforceSubject performs the Workforce Identity Federation token
+// exchange: it resolves the workforce pool provider, verifies the subject token
+// against that provider's OpenID Connect issuer, and mints a short-lived
+// federated access token naming the workforce principal. The Security Token
+// Service endpoint and the console's session broker share it so both take the
+// exact same verification path. The returned code is the OAuth error code to
+// report when err is non-nil.
+func federateWorkforceSubject(ctx context.Context, providerName, subjectToken string) (token string, expiresIn int, code string, err error) {
 	provider, ok := iamResources.Get(providerName)
 	if !ok {
-		stsError(w, "invalid_target", fmt.Sprintf("workforce pool provider %q does not exist", providerName))
-		return
+		return "", 0, "invalid_target", fmt.Errorf("workforce pool provider %q does not exist", providerName)
 	}
 	oidcConfig, issuerURI, allowedAudiences, err := workforceProviderOIDC(provider)
 	if err != nil {
-		stsError(w, "invalid_target", err.Error())
-		return
+		return "", 0, "invalid_target", err
 	}
-
-	subject, err := verifyWorkforceSubjectToken(r.Context(), subjectToken, issuerURI, allowedAudiences, oidcConfig)
+	subject, err := verifyWorkforceSubjectToken(ctx, subjectToken, issuerURI, allowedAudiences, oidcConfig)
 	if err != nil {
-		stsError(w, "invalid_grant", err.Error())
-		return
+		return "", 0, "invalid_grant", err
 	}
 
 	now := time.Now()
 	expires := now.Add(time.Hour)
 	principal := fmt.Sprintf("%s/subject/%s", workforcePoolFromProvider(providerName), subject)
-	token := mintFederatedAccessToken(principal, now, expires)
-
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"access_token":      token,
-		"issued_token_type": tokenTypeAccessToken,
-		"token_type":        "Bearer",
-		"expires_in":        int(time.Until(expires).Seconds()),
-	})
+	return mintFederatedAccessToken(principal, now, expires), int(time.Until(expires).Seconds()), "", nil
 }
 
 // workforceProviderFromAudience turns the STS audience — the workforce pool

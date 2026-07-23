@@ -479,3 +479,44 @@ func TestSignedOutResponseIsNotCached(t *testing.T) {
 		t.Fatalf("signed-out response omitted the explicit Shauth sign-in control: %s", body)
 	}
 }
+
+func TestOperatorAssertionBrokersTheSignedInIDToken(t *testing.T) {
+	auth, err := New(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No session: the broker has nothing to federate.
+	anonymous := httptest.NewRequest(http.MethodGet, "/auth/cloud-token", nil)
+	if _, _, _, ok := auth.OperatorAssertion(anonymous); ok {
+		t.Fatal("OperatorAssertion reported a session for an anonymous request")
+	}
+
+	// A signed-in operator whose ID token was captured at callback.
+	expires := time.Now().Add(time.Hour).Unix()
+	session := browserSession{ID: "broker-session", Subject: "operator", Expires: expires}
+	value, err := auth.sign(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.store.put(session.ID, sessionRecord{Subject: session.Subject, RawIDToken: "the-shauth-assertion", Expires: expires})
+
+	request := httptest.NewRequest(http.MethodGet, "/auth/cloud-token", nil)
+	request.AddCookie(&http.Cookie{Name: auth.config.CookieName, Value: value})
+	assertion, issuer, audience, ok := auth.OperatorAssertion(request)
+	if !ok {
+		t.Fatal("OperatorAssertion did not report the signed-in session")
+	}
+	if assertion != "the-shauth-assertion" {
+		t.Fatalf("assertion = %q, want the captured ID token", assertion)
+	}
+	if issuer != auth.config.Issuer || audience != auth.config.ClientID {
+		t.Fatalf("federation coordinates = %q/%q, want %q/%q", issuer, audience, auth.config.Issuer, auth.config.ClientID)
+	}
+
+	// A session record without a captured ID token cannot be federated.
+	auth.store.put(session.ID, sessionRecord{Subject: session.Subject, Expires: expires})
+	if _, _, _, ok := auth.OperatorAssertion(request); ok {
+		t.Fatal("OperatorAssertion federated a session that has no ID token")
+	}
+}
