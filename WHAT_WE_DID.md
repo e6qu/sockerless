@@ -4,6 +4,43 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-23 — Read the real Cloud Run API from the Google Cloud console, over Shauth federation
+
+The simulator consoles looked like their clouds but read data through
+sockerless-invented `/sim/v1/*` endpoints that returned a hand-trimmed shape.
+The Google Cloud console's Cloud Run jobs view now reads the real Cloud Run
+Admin API — the `/v2/.../jobs` list and the job resource behind a new detail
+page — and renders the true resource: status from the job's terminal condition,
+unique ID, launch stage, timestamps, labels, and executions. The invented
+endpoint was deleted.
+
+A real console reaches those APIs with a credential federated from the signed-in
+session, so the simulator gained the pieces it was missing. The Security Token
+Service token exchange (`/v1/token`) performs Workforce Identity Federation the
+way `sts.googleapis.com` does: it resolves the workforce pool provider the
+audience names, verifies the subject token against that provider's OpenID
+Connect issuer with real discovery, key set, signature, issuer, audience, and
+expiry checks, and issues a short-lived federated access token. A console
+credential broker on the operator-session boundary reads the operator's Shauth
+assertion — already captured in the ui-auth session — and exchanges it for that
+token, which the browser presents as a bearer credential. The raw assertion
+never leaves the server, exactly as a real console keeps it.
+
+Whether a credential is attached is a real deployment condition rather than a
+fallback: a simulator wired to a single sign-on provider federates the operator
+and every call carries a token, surfacing a broker failure; a simulator with no
+identity provider runs unauthenticated, the mode the account control already
+reports.
+
+The token exchange is driven end to end by the official external-account
+credential in the SDK tests, with the refusals that matter. The browser suite
+seeds a job through the real Cloud Run API and asserts the console lists it and
+opens its detail, proving live resources render. The relying-party suite drives
+the whole federation with a live Shauth identity, brokering the operator's
+assertion into a cloud token and checking a bearer token returns. The credential
+issuance advanced BUG-2625; the remaining Google Cloud resources and the AWS and
+Azure slices follow the same pattern (BUG-2635).
+
 ## 2026-07-23 — Gave the Google Cloud simulator the Google Cloud console's interface
 
 The last of the three simulator interfaces now presents as its own cloud's

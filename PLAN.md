@@ -129,7 +129,11 @@ One slice per cloud, one pull request each:
    validate that token; the console obtains it from the session broker and reads
    the real `GET /v2/.../jobs` (list) and `GetJob` (detail), rendering the true
    `Job` resource; the `/sim/v1/cloudrun` route is deleted. The workforce pool
-   and provider CRUD the exchange configures already exist in the GCP sim.
+   and provider CRUD the exchange configures already exist in the GCP sim. Done
+   — the Security Token Service token exchange, the session broker, the console
+   credential path, and the real Cloud Run jobs list and detail all landed. The
+   remaining Google Cloud resources (functions, Artifact Registry, Cloud
+   Storage, Logging) follow the same pattern next.
 2. **Amazon Web Services — real ECS/Lambda API** via
    `AssumeRoleWithWebIdentity` and browser-side Signature Version 4.
 3. **Microsoft Azure — real ARM API** via Entra federation into an ARM bearer

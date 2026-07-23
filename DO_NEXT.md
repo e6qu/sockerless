@@ -12,11 +12,15 @@ The real pinned Shauth, PostgreSQL, Ory Hydra, freshly compiled relying parties,
 
 ## Remaining Work
 
-The three-part simulator console parity effort is complete: AWS presents as the
-AWS Management Console, Azure as the Azure portal, and Google Cloud as the
-Google Cloud console, each carrying both themes with a measured contrast guard
-and a header-containment test. The next task is open — pick up from the roadmap
-in [PLAN.md](PLAN.md) and the open items in [BUGS.md](BUGS.md).
+The Google Cloud console now reads the real Cloud Run Admin API over Shauth
+federation, with the Security Token Service token exchange and the credential
+broker in place (BUG-2635, BUG-2625). The same pattern extends next to the
+remaining Google Cloud resources — Cloud Run functions, Artifact Registry, Cloud
+Storage, and Logging — reading their real APIs and deleting their `/sim/v1/*`
+endpoints. After Google Cloud, the AWS slice federates through
+`AssumeRoleWithWebIdentity` with browser-side Signature Version 4, and the Azure
+slice through Entra into an Azure Resource Manager token. Endpoint credential
+enforcement across the simulators remains BUG-2625.
 
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.
