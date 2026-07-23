@@ -92,12 +92,11 @@ type gcsObjectResource struct {
 	Metadata           *map[string]string `json:"metadata,omitempty"`
 }
 
-// Package-level stores. gcsBuckets is for dashboard access; gcsObjects
+// Package-level store: gcsObjects
 // is exposed so other slices (e.g. cloudbuild.go) can read uploaded
 // build context tarballs without depending on the gcs.go handler
 // closure.
 var (
-	gcsBuckets sim.Store[Bucket]
 	gcsObjects sim.Store[GCSObject]
 )
 
@@ -615,7 +614,6 @@ func requestScheme(r *http.Request) string {
 
 func registerGCS(srv *sim.Server) {
 	buckets := sim.MakeStore[Bucket](srv.DB(), "gcs_buckets")
-	gcsBuckets = buckets
 	gcsObjects = sim.MakeStore[GCSObject](srv.DB(), "gcs_objects")
 	objects := gcsObjects
 

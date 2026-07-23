@@ -125,7 +125,6 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerComputeMetadata(srv)
 
 	// Dashboard summary endpoints for UI
-	registerDashboard(srv)
 
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)

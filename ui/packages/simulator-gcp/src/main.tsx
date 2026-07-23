@@ -7,8 +7,11 @@ import { OverviewPage } from "./pages/OverviewPage.js";
 import { CloudRunJobsPage } from "./pages/CloudRunJobsPage.js";
 import { CloudRunJobDetailPage } from "./pages/CloudRunJobDetailPage.js";
 import { CloudFunctionsPage } from "./pages/CloudFunctionsPage.js";
+import { CloudFunctionDetailPage } from "./pages/CloudFunctionDetailPage.js";
 import { ArtifactRegistryPage } from "./pages/ArtifactRegistryPage.js";
+import { ARRepoDetailPage } from "./pages/ARRepoDetailPage.js";
 import { GCSBucketsPage } from "./pages/GCSBucketsPage.js";
+import { GCSBucketDetailPage } from "./pages/GCSBucketDetailPage.js";
 import { LoggingPage } from "./pages/LoggingPage.js";
 import "./index.css";
 
@@ -29,8 +32,11 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/cloudrun" element={<CloudRunJobsPage />} />
         <Route path="/ui/cloudrun/:name" element={<CloudRunJobDetailPage />} />
         <Route path="/ui/functions" element={<CloudFunctionsPage />} />
+        <Route path="/ui/functions/:name" element={<CloudFunctionDetailPage />} />
         <Route path="/ui/ar" element={<ArtifactRegistryPage />} />
+        <Route path="/ui/ar/:name" element={<ARRepoDetailPage />} />
         <Route path="/ui/gcs" element={<GCSBucketsPage />} />
+        <Route path="/ui/gcs/:name" element={<GCSBucketDetailPage />} />
         <Route path="/ui/logging" element={<LoggingPage />} />
       </GcpApp>
     </QueryClientProvider>

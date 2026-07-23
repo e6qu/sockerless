@@ -94,3 +94,17 @@ export async function authorizedJSON<T>(path: string): Promise<T> {
   }
   return (await response.json()) as T;
 }
+
+// authorizedJSONPost posts a JSON body to a real Google Cloud API path — the
+// shape Cloud Logging's `entries:list` and other list-by-POST methods take.
+export async function authorizedJSONPost<T>(path: string, body: unknown): Promise<T> {
+  const response = await authorizedFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`${path} returned HTTP ${response.status}`);
+  }
+  return (await response.json()) as T;
+}

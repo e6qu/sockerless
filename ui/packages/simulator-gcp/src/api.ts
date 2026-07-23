@@ -1,10 +1,4 @@
-import { authorizedJSON } from "./console/federation.js";
-
-async function fetchJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json() as Promise<T>;
-}
+import { authorizedJSON, authorizedJSONPost } from "./console/federation.js";
 
 // The console reads one project and region at a time, the way the real console
 // shows the selected project and region. These are the console's coordinates; a
@@ -67,22 +61,38 @@ export type CloudFunctionState =
   | "DELETING"
   | "UNKNOWN";
 
+// The real Cloud Functions (Gen2) resource, as the API returns it.
 export interface CloudFunction {
   name: string;
-  state: CloudFunctionState;
-  environment: string;
-  createTime: string;
+  state?: CloudFunctionState;
+  environment?: string;
+  description?: string;
+  createTime?: string;
+  updateTime?: string;
+  labels?: Record<string, string>;
+  serviceConfig?: { uri?: string; service?: string };
+  buildConfig?: { runtime?: string; entryPoint?: string };
 }
 
+// The real Artifact Registry repository resource.
 export interface ARRepo {
   name: string;
-  format: string;
-  createTime: string;
+  format?: string;
+  mode?: string;
+  description?: string;
+  createTime?: string;
+  updateTime?: string;
+  labels?: Record<string, string>;
 }
 
+// The real Cloud Storage bucket resource (storage#bucket).
 export interface GCSBucket {
   name: string;
-  data: Record<string, unknown>;
+  id?: string;
+  location?: string;
+  storageClass?: string;
+  timeCreated?: string;
+  updated?: string;
 }
 
 // Cloud Logging LogSeverity enum (proto .String()).
@@ -105,7 +115,34 @@ export interface LogEntry {
   textPayload?: string;
 }
 
-export const fetchCloudFunctions = () => fetchJSON<CloudFunction[]>("/sim/v1/functions");
-export const fetchARRepos = () => fetchJSON<ARRepo[]>("/sim/v1/ar/repositories");
-export const fetchGCSBuckets = () => fetchJSON<GCSBucket[]>("/sim/v1/gcs/buckets");
-export const fetchLogEntries = () => fetchJSON<LogEntry[]>("/sim/v1/logging/entries");
+
+const functionsParent = `/v2/projects/${CONSOLE_PROJECT}/locations/${CONSOLE_REGION}/functions`;
+const repositoriesParent = `/v1/projects/${CONSOLE_PROJECT}/locations/${CONSOLE_REGION}/repositories`;
+
+export const fetchCloudFunctions = async (): Promise<CloudFunction[]> =>
+  (await authorizedJSON<{ functions?: CloudFunction[] }>(functionsParent)).functions ?? [];
+
+export const fetchCloudFunction = (name: string): Promise<CloudFunction> =>
+  authorizedJSON<CloudFunction>(`${functionsParent}/${name}`);
+
+export const fetchARRepos = async (): Promise<ARRepo[]> =>
+  (await authorizedJSON<{ repositories?: ARRepo[] }>(repositoriesParent)).repositories ?? [];
+
+export const fetchARRepo = (name: string): Promise<ARRepo> =>
+  authorizedJSON<ARRepo>(`${repositoriesParent}/${name}`);
+
+export const fetchGCSBuckets = async (): Promise<GCSBucket[]> =>
+  (await authorizedJSON<{ items?: GCSBucket[] }>(`/storage/v1/b?project=${CONSOLE_PROJECT}`)).items ?? [];
+
+export const fetchGCSBucket = (name: string): Promise<GCSBucket> =>
+  authorizedJSON<GCSBucket>(`/storage/v1/b/${name}`);
+
+// Cloud Logging lists entries by POST, filtered to the project's logs.
+export const fetchLogEntries = async (): Promise<LogEntry[]> =>
+  (
+    await authorizedJSONPost<{ entries?: LogEntry[] }>("/v2/entries:list", {
+      resourceNames: [`projects/${CONSOLE_PROJECT}`],
+      orderBy: "timestamp desc",
+      pageSize: 100,
+    })
+  ).entries ?? [];
