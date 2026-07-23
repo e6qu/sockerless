@@ -1,0 +1,256 @@
+/* Google Cloud console layout. See tokens.css for why these values. */
+
+.gcp,
+.gcp button,
+.gcp input {
+  font-family: var(--gc-font);
+}
+.gcp h1,
+.gcp h2,
+.gcp .gc-wordmark,
+.gcp .gc-product-title {
+  font-family: var(--gc-font-display);
+}
+
+/* The shared shell tints the document background; the console owns the whole
+ * viewport, so it is reset here rather than showing through at the edges. */
+body:has(.gcp) { background: var(--gc-layout-bg); }
+
+.gcp {
+  min-height: 100vh;
+  width: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--gc-layout-bg);
+  color: var(--gc-fg);
+  font-size: 14px;
+}
+
+/* Global header ---------------------------------------------------------- */
+/* The header sizes to its contents and establishes a stacking context. A
+ * fixed height leaves anything taller drawn outside its box, where the row
+ * below paints over it and clicks land on the wrong element. */
+.gc-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 16px;
+  min-height: 48px;
+  position: relative;
+  z-index: 1;
+  background: var(--gc-header-bg);
+  color: var(--gc-header-fg);
+  border-bottom: 1px solid var(--gc-header-border);
+}
+.gc-header-left { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.gc-hamburger { font-size: 16px; color: var(--gc-fg-secondary); }
+.gc-wordmark { font-size: 18px; font-weight: 400; color: var(--gc-fg); white-space: nowrap; }
+.gc-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--gc-border);
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 13px;
+  color: var(--gc-fg);
+  white-space: nowrap;
+}
+.gc-project-dot { color: var(--gc-primary); font-size: 12px; }
+.gc-header-search { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; background: var(--gc-surface-alt); border-radius: var(--gc-radius); padding: 0 12px; max-width: 720px; }
+.gc-search-icon { color: var(--gc-fg-secondary); font-size: 16px; }
+.gc-header-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 8px 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--gc-fg);
+  min-width: 0;
+}
+.gc-header-search input:focus-visible { outline: none; }
+.gc-header-search:focus-within { outline: 2px solid var(--gc-primary); outline-offset: 1px; }
+.gc-header-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; min-width: 0; }
+.gc-icon-button {
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gc-fg-secondary);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.gc-icon-button:hover { background: var(--gc-surface-alt); }
+
+/* Product navigation ----------------------------------------------------- */
+.gc-body { display: grid; grid-template-columns: 256px minmax(0, 1fr); align-items: start; }
+.gc-product-nav {
+  background: var(--gc-surface);
+  border-right: 1px solid var(--gc-border-subtle);
+  min-height: calc(100vh - 49px);
+  padding: 8px 0;
+}
+.gc-product-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px 16px;
+  font-size: 17px;
+  color: var(--gc-fg);
+}
+.gc-product-glyph { color: var(--gc-primary); }
+.gc-product-nav ul { list-style: none; margin: 0; padding: 0; }
+.gc-product-nav li { padding: 0 8px; }
+.gc-nav-link {
+  display: block;
+  padding: 8px 16px;
+  margin: 2px 0;
+  border-radius: 0 999px 999px 0;
+  font-size: 14px;
+  color: var(--gc-fg);
+  text-decoration: none;
+}
+.gc-nav-link:hover { background: var(--gc-surface-alt); }
+.gc-nav-link-active {
+  background: var(--gc-nav-active-bg);
+  color: var(--gc-nav-active-fg);
+  font-weight: 500;
+}
+
+/* Working area ----------------------------------------------------------- */
+.gc-main { padding: 16px 24px 48px; min-width: 0; }
+
+/* Page header ------------------------------------------------------------ */
+.gc-page-header { margin-bottom: 16px; }
+.gc-page-header-row { display: flex; align-items: center; gap: 20px; }
+.gc-page-header h1 { margin: 0; font-size: 22px; font-weight: 400; }
+.gc-page-actions { display: flex; align-items: center; gap: 16px; }
+.gc-text-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--gc-link);
+  cursor: pointer;
+  padding: 4px 0;
+}
+.gc-text-action:disabled { color: var(--gc-fg-disabled); cursor: default; }
+.gc-text-action-primary { font-weight: 500; }
+.gc-action-glyph { font-size: 15px; }
+.gc-refresh {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--gc-link);
+  cursor: pointer;
+  padding: 4px 0;
+}
+.gc-refresh:disabled { color: var(--gc-fg-disabled); cursor: default; }
+.gc-page-description { margin: 8px 0 0; font-size: 14px; color: var(--gc-fg-secondary); max-width: 900px; }
+
+/* Table tools ------------------------------------------------------------ */
+.gc-table-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--gc-border-subtle);
+}
+.gc-filter-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--gc-fg-secondary); }
+.gc-filter-glyph { font-size: 14px; }
+.gc-filter-input {
+  flex: 1;
+  max-width: 640px;
+  border: 0;
+  background: transparent;
+  padding: 6px 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--gc-fg);
+}
+.gc-filter-input:focus-visible { outline: none; }
+.gc-table-tools:focus-within { box-shadow: inset 0 -2px 0 var(--gc-primary); }
+.gc-table-tools-right { margin-left: auto; display: flex; gap: 4px; }
+
+/* Table ------------------------------------------------------------------ */
+.gc-table-wrap { overflow-x: auto; }
+.gc-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.gc-table th, .gc-table td {
+  text-align: left;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--gc-border-subtle);
+  vertical-align: top;
+}
+.gc-table th { font-weight: 500; white-space: nowrap; color: var(--gc-fg-secondary); }
+.gc-table th button {
+  border: 0; background: transparent; font: inherit; font-weight: 500;
+  color: var(--gc-fg-secondary); cursor: pointer; padding: 0; display: inline-flex; gap: 6px; align-items: center;
+}
+.gc-header-help { color: var(--gc-fg-disabled); font-size: 12px; }
+.gc-sort { color: var(--gc-primary); font-size: 12px; min-width: 8px; }
+.gc-table-select { width: 44px; }
+.gc-table tbody tr:hover { background: var(--gc-surface-alt); }
+.gc-row-selected { background: var(--gc-nav-active-bg) !important; }
+.gc-table td { color: var(--gc-fg); overflow-wrap: anywhere; }
+.gc-table td a, .gc-table .gc-cell-link { color: var(--gc-link); text-decoration: none; }
+.gc-table td a:hover { text-decoration: underline; }
+.gc-table-state { padding: 0; }
+
+/* States ----------------------------------------------------------------- */
+.gc-loading { padding: 40px 16px; text-align: center; color: var(--gc-fg-secondary); }
+.gc-message { padding: 16px; font-size: 14px; }
+.gc-message-error { color: var(--gc-status-error); }
+
+/* The console pairs an illustration with a headline, an explanation, and the
+ * side effect of the primary action. */
+.gc-empty { padding: 48px 16px; text-align: center; color: var(--gc-fg-secondary); }
+.gc-empty-illustration { width: 160px; height: 96px; color: var(--gc-fg-disabled); margin-bottom: 16px; }
+.gc-empty-headline { margin: 0; font-size: 20px; font-weight: 400; color: var(--gc-fg); font-family: var(--gc-font-display); }
+.gc-empty-description { margin: 8px auto 0; font-size: 14px; max-width: 520px; }
+.gc-empty-sideeffect { margin: 16px 0 0; font-size: 13px; color: var(--gc-fg-secondary); }
+
+/* Pagination ------------------------------------------------------------- */
+.gc-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 0; font-size: 13px; color: var(--gc-fg-secondary); }
+.gc-pagination button {
+  border: 0; background: transparent; font: inherit; font-size: 16px;
+  color: var(--gc-link); cursor: pointer; padding: 0 6px; border-radius: 4px;
+}
+.gc-pagination button:disabled { color: var(--gc-fg-disabled); cursor: default; }
+
+/* Status ----------------------------------------------------------------- */
+.gc-status { display: inline-flex; align-items: center; gap: 6px; }
+.gc-status-success { color: var(--gc-status-success); }
+.gc-status-error { color: var(--gc-status-error); }
+.gc-status-warning { color: var(--gc-status-warning); }
+.gc-status-inactive { color: var(--gc-status-inactive); }
+
+/* Overview cards --------------------------------------------------------- */
+.gc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+.gc-card {
+  background: var(--gc-surface);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius);
+  padding: 20px;
+}
+.gc-card h2 { margin: 0 0 8px; font-size: 14px; font-weight: 500; color: var(--gc-fg-secondary); }
+.gc-card a { font-size: 32px; color: var(--gc-link); text-decoration: none; font-family: var(--gc-font-display); }
+.gc-card a:hover { text-decoration: underline; }
+
+/* Every control shows where focus is, in both themes. */
+.gcp a:focus-visible,
+.gcp button:focus-visible,
+.gcp input:focus-visible {
+  outline: 2px solid var(--gc-primary);
+  outline-offset: 2px;
+}
