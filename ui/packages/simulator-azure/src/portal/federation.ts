@@ -75,8 +75,12 @@ async function federatedToken(config: PortalConfig, scope: CloudScope): Promise<
     client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
     client_assertion: subjectToken,
   });
-  const tenant = config.federationTenant ?? "organizations";
-  const exchange = await fetch(`${config.federationEndpoint ?? ""}/${tenant}/oauth2/v2.0/token`, {
+  // An unconfigured coordinate arrives as an empty string (not undefined), so
+  // fall back with `||`: an empty tenant would otherwise build the
+  // protocol-relative `//oauth2/v2.0/token`, which resolves to the host
+  // "oauth2". `organizations` is Microsoft Entra's multi-tenant segment.
+  const tenant = config.federationTenant || "organizations";
+  const exchange = await fetch(`${config.federationEndpoint || ""}/${tenant}/oauth2/v2.0/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
