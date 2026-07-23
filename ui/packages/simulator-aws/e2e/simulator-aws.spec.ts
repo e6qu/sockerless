@@ -110,3 +110,42 @@ test.describe("Navigation", () => {
     await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   });
 });
+
+test.describe("The console reads the real AWS APIs", () => {
+  // Seeds resources through the real AWS APIs the console reads, so the
+  // assertions prove live resources render rather than a fixture. The simulator
+  // accepts the calls unsigned; the console signs them, which the relying-party
+  // suite exercises with a live identity.
+  test("lists an ECR repository created through the real API", async ({ page }) => {
+    const name = `console-repo-${Date.now()}`;
+    const created = await page.request.post("/", {
+      headers: { "content-type": "application/x-amz-json-1.1", "x-amz-target": "AmazonEC2ContainerRegistry_V20150921.CreateRepository" },
+      data: { repositoryName: name },
+    });
+    expect(created.ok(), `creating repository: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/ecr");
+    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+  });
+
+  test("lists an S3 bucket created through the real API", async ({ page }) => {
+    const name = `console-bucket-${Date.now()}`;
+    const created = await page.request.put(`/${name}`);
+    expect(created.ok(), `creating bucket: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/s3");
+    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+  });
+
+  test("lists a CloudWatch log group created through the real API", async ({ page }) => {
+    const name = `console-log-group-${Date.now()}`;
+    const created = await page.request.post("/", {
+      headers: { "content-type": "application/x-amz-json-1.1", "x-amz-target": "Logs_20140328.CreateLogGroup" },
+      data: { logGroupName: name },
+    });
+    expect(created.ok(), `creating log group: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/logs");
+    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+  });
+});

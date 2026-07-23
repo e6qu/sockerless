@@ -267,11 +267,24 @@ func (s *Server) RegisterUI(fsys fs.FS) {
 		identityEndpoint, logoutEndpoint = uiauth.SessionPath, uiauth.LogoutPath
 		s.uiAuth.Register(s.mux)
 	}
+	federationSubject := ""
+	if s.uiAuth.Enabled() {
+		federationSubject = uiauth.FederationSubjectPath
+	}
 	configHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		WriteJSON(w, http.StatusOK, map[string]string{
 			"identityEndpoint": identityEndpoint,
 			"logoutEndpoint":   logoutEndpoint,
+			// Cloud data-plane coordinates. Empty means the console's own origin,
+			// where the simulator serves the real AWS APIs and its Security Token
+			// Service; a deployment against real AWS points these at the AWS
+			// hosts and the role to assume. Provisioned the administrator's way
+			// and supplied as coordinates — never invented by the simulator.
+			"cloudApiEndpoint":   os.Getenv("SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT"),
+			"federationEndpoint": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT"),
+			"federationAudience": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_AUDIENCE"),
+			"federationSubject":  federationSubject,
 		})
 	})
 	s.mux.Handle("GET /ui/config.json", s.uiAuth.Protect(configHandler))
