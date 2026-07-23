@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GcpPageHeader, type GcpPageAction } from "./GcpConsole.js";
+import { Icon } from "./icons.js";
 
 export interface GcpColumn<T> {
   id: string;
@@ -92,7 +93,7 @@ export function GcpResourceTable<T>({
       />
       <div className="gc-table-tools">
         <span className="gc-filter-chip">
-          <span aria-hidden className="gc-filter-glyph">⧩</span>
+          <Icon name="filter_list" size="1.25em" />
           Filter
         </span>
         <input
@@ -107,8 +108,11 @@ export function GcpResourceTable<T>({
           }}
         />
         <div className="gc-table-tools-right">
+          <button type="button" className="gc-icon-button" aria-label="Help" title="Help">
+            <Icon name="help" size="1.25em" />
+          </button>
           <button type="button" className="gc-icon-button" aria-label="Column display options" title="Column display options">
-            <span aria-hidden>▤</span>
+            <Icon name="view_column" size="1.25em" />
           </button>
         </div>
       </div>
@@ -186,8 +190,17 @@ export function GcpResourceTable<T>({
                       />
                     </svg>
                     <p className="gc-empty-headline">{empty.headline}</p>
-                    <p className="gc-empty-description">{empty.description}</p>
+                    <p className="gc-empty-description">
+                      {empty.description}{" "}
+                      <a href="#" onClick={(event) => event.preventDefault()}>
+                        Learn more <Icon name="deployed_code" size="0.9em" />
+                      </a>
+                    </p>
                     {empty.sideEffect ? <p className="gc-empty-sideeffect">{empty.sideEffect}</p> : null}
+                    <div className="gc-empty-actions">
+                      <button type="button" className="gc-button-primary" disabled>{empty.primaryLabel}</button>
+                      <a href="#" className="gc-empty-quickstart" onClick={(event) => event.preventDefault()}>Take the quickstart</a>
+                    </div>
                   </div>
                 </td>
               </tr>

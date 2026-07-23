@@ -46,7 +46,7 @@ test.describe("Google Cloud console shell", () => {
 
   test("puts the theme control in the top right and switches both ways", async ({ page }) => {
     await page.goto("/ui/");
-    const toggle = page.locator(".gc-header-right .gc-icon-button");
+    const toggle = page.getByRole("button", { name: /Switch to (dark|light) theme/ });
     const headerBox = await page.locator(".gc-header").boundingBox();
     const toggleBox = await toggle.boundingBox();
     expect(toggleBox!.x).toBeGreaterThan(headerBox!.x + headerBox!.width / 2);
@@ -273,5 +273,46 @@ test.describe("The remaining resources read their real APIs", () => {
 
     await page.goto("/ui/logging");
     await expect(page.getByText(message)).toBeVisible();
+  });
+});
+
+test.describe("Visual fidelity", () => {
+  // Structural proxies for the visual rebuild, so the icons, typeface, and
+  // account avatar the console gained can't silently regress to the earlier
+  // glyph-and-text sketch.
+  test("renders a real icon on every navigation item", async ({ page }) => {
+    await page.goto("/ui/");
+    const links = page.getByRole("navigation", { name: "Product" }).getByRole("link");
+    const count = await links.count();
+    expect(count).toBeGreaterThanOrEqual(6);
+    for (let index = 0; index < count; index += 1) {
+      await expect(links.nth(index).locator("svg")).toHaveCount(1);
+    }
+  });
+
+  test("carries the header tool cluster and an account avatar, not an error string", async ({ page }) => {
+    await page.goto("/ui/");
+    // Several tool icons in the header rather than bare text.
+    const headerIcons = page.locator(".gc-header-right svg");
+    expect(await headerIcons.count()).toBeGreaterThanOrEqual(5);
+    // An unauthenticated console shows a neutral avatar, never "unavailable".
+    await expect(page.locator(".gc-avatar")).toBeVisible();
+    await expect(page.getByText(/identity is unavailable/i)).toHaveCount(0);
+  });
+
+  test("applies the Roboto typeface", async ({ page }) => {
+    await page.goto("/ui/");
+    const family = await page.evaluate(() => getComputedStyle(document.querySelector(".gcp")!).fontFamily);
+    expect(family).toContain("Roboto");
+  });
+
+  test("completes the empty state with a primary action and links", async ({ page }) => {
+    // Functions is the one resource no other test seeds, so its empty state is
+    // stable regardless of test order.
+    await page.goto("/ui/functions");
+    const empty = page.locator(".gc-empty");
+    await expect(empty.getByRole("button", { name: "Create function" })).toBeVisible();
+    await expect(empty.getByRole("link", { name: /Take the quickstart/ })).toBeVisible();
+    await expect(empty.getByRole("link", { name: /Learn more/ })).toBeVisible();
   });
 });

@@ -10,33 +10,37 @@
  * requires for body text. */
 
 .gcp {
-  --gc-font: "Google Sans Text", "Google Sans", Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif;
-  --gc-font-display: "Google Sans", "Google Sans Text", Roboto, Arial, sans-serif;
+  /* Roboto is the console's real body typeface (vendored); the display face is
+   * Google Sans, approximated by Roboto since that face is not redistributable. */
+  --gc-font: Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+  --gc-font-display: Roboto, Arial, sans-serif;
 
+  /* Values read from the live console's computed styles. The console's current
+   * theme is a blue-tinted light palette, not the older grey one. */
   --gc-header-bg: #ffffff;
-  --gc-header-fg: #3c4043;           /* 9.6:1 on the header */
-  --gc-header-border: #dadce0;
+  --gc-header-fg: #1f1f1f;           /* 15.6:1 on the header */
+  --gc-header-border: #c4c7c5;
 
-  --gc-layout-bg: #f8f9fa;
-  --gc-surface: #ffffff;
+  --gc-layout-bg: #f0f5fe;           /* the app frame's blue-tinted background */
+  --gc-surface: #ffffff;             /* the working area is white */
   --gc-surface-alt: #f1f3f4;
 
-  --gc-fg: #202124;                  /* 15.8:1 on white */
-  --gc-fg-secondary: #5f6368;        /* 7.0:1 on white */
+  --gc-fg: #1f1f1f;                  /* 16.1:1 on white */
+  --gc-fg-secondary: #444746;        /* 9.0:1 on white */
   --gc-fg-disabled: #9aa0a6;
 
-  --gc-link: #1565c0;                /* 5.6:1 on white */
-  --gc-link-hover: #174ea6;
+  --gc-link: #0b57d0;                /* 6.3:1 on white — the console's link blue */
+  --gc-link-hover: #0842a0;
 
-  --gc-primary: #1565c0;
-  --gc-primary-hover: #1967d2;
-  --gc-primary-fg: #ffffff;          /* 4.5:1 on the primary fill */
+  --gc-primary: #0b57d0;
+  --gc-primary-hover: #0842a0;
+  --gc-primary-fg: #ffffff;          /* 6.3:1 on the primary fill */
 
-  --gc-nav-active-bg: #e8f0fe;
-  --gc-nav-active-fg: #1967d2;       /* 5.9:1 on the active pill */
+  --gc-nav-active-bg: #dbedfc;       /* the active nav pill, from the console */
+  --gc-nav-active-fg: #1b2e5d;       /* 10.9:1 on the active pill */
 
-  --gc-border: #dadce0;
-  --gc-border-subtle: #e8eaed;
+  --gc-border: #747775;
+  --gc-border-subtle: #e1e3e1;
 
   --gc-status-success: #188038;      /* 4.6:1 on white */
   --gc-status-error: #c5221f;        /* 5.9:1 on white */

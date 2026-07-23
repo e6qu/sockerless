@@ -91,6 +91,9 @@ try {
 
 async function logoutFromApplication(page, context, app) {
   const bridgeRequest = page.waitForRequest((request) => request.resourceType() === "document" && request.url() === app.bridge);
+  // Some consoles nest sign-out inside an account menu behind the avatar, the
+  // way the real cloud console does; open it first when present.
+  await openAccountMenu(page);
   await page.locator("[data-shauth-sign-out]").click();
   assert.equal((await bridgeRequest).url(), app.bridge, `${app.name} did not traverse its exact logout-completion bridge`);
   await page.waitForURL(app.signedOut, { timeout: 30_000 });
@@ -227,8 +230,10 @@ async function waitForOrigin(page, origin) {
 async function waitForApplication(page, app) {
   await waitForOrigin(page, new URL(app.launch).origin);
   await page.waitForLoadState("domcontentloaded");
+  // The identity marker is always visible. Sign-out may sit inside an account
+  // menu behind the avatar, the way the real cloud console arranges it, so it
+  // is not present until the menu is opened — logout opens it and clicks it.
   await page.locator("[data-shauth-user]").waitFor({ state: "visible" });
-  await page.locator("[data-shauth-sign-out]").waitFor({ state: "visible" });
 }
 
 async function waitForShauthLogin(page) {
@@ -249,8 +254,22 @@ async function assertIdentity(page, context, app) {
   const account = page.locator("[data-shauth-user]");
   await account.waitFor({ state: "visible" });
   assert.equal(await account.getAttribute("data-shauth-user"), expectedName, `${app.name} product UI exposed the wrong Shauth username marker`);
+  // The signed-in name and sign-out may live inside an account menu behind the
+  // avatar, the way the real cloud console arranges them; open it before
+  // asserting they are shown.
+  await openAccountMenu(page);
   assert.match(await account.innerText(), new RegExp(escapeRegExp(expectedName), "i"), `${app.name} product UI did not show the authenticated user`);
   await page.locator("[data-shauth-sign-out]").waitFor({ state: "visible" });
+}
+
+// openAccountMenu reveals the account menu when the console tucks the identity
+// and sign-out behind an avatar. It is idempotent: a console that shows them
+// directly has no trigger, and one already open is left open.
+async function openAccountMenu(page) {
+  const trigger = page.locator("[data-shauth-account-trigger]");
+  if ((await trigger.count()) && (await trigger.getAttribute("aria-expanded")) === "false") {
+    await trigger.click();
+  }
 }
 
 function escapeRegExp(value) {

@@ -20,7 +20,7 @@ export function ArtifactRegistryPage() {
     <GcpResourceTable<ARRepo>
       title="Artifact Registry"
       description="Store and manage your build artifacts — container images and language packages — in one place."
-      actions={[{ label: "Create repository", glyph: "+", primary: true, disabled: true }]}
+      actions={[{ label: "Create repository", icon: "add", primary: true, disabled: true }]}
       columns={columns}
       queryKey={["ar-repos-real"]}
       queryFn={fetchARRepos}
