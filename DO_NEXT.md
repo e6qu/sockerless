@@ -12,14 +12,17 @@ The real pinned Shauth, PostgreSQL, Ory Hydra, freshly compiled relying parties,
 
 ## Remaining Work
 
-The whole Google Cloud console reads real cloud APIs over the console's own
-server-side Shauth federation, at configured coordinates, with every
-`/sim/v1/*` route deleted (BUG-2635, the rule in AGENTS.md). The AWS and Azure
-consoles follow the same pattern next: AWS federates through
-`AssumeRoleWithWebIdentity` with browser-side Signature Version 4 and reads the
-real ECS/Lambda/ECR/S3/CloudWatch APIs; Azure federates through Entra into an
-Azure Resource Manager token and reads the real ARM APIs. Endpoint credential
-enforcement across the simulators remains BUG-2625.
+The Google Cloud console now reads real cloud APIs over the console's own
+server-side Shauth federation (BUG-2635) *and* has been rebuilt to the
+console's real visual language, verified side-by-side against the live console
+with tokens read from its computed styles. The method is recorded so it is not
+repeated from memory: compare against the live reference, extract ground-truth
+tokens, vendor the open assets (Material Symbols SVG, Roboto), pin structural
+proxies, report honestly. The AWS and Azure consoles get the same rigor next —
+both the real-API federation (AWS `AssumeRoleWithWebIdentity` + browser
+Signature Version 4; Azure Entra → ARM token) and a visual pass against their
+live consoles, where their fonts and icons are largely proprietary and so stay
+honest approximations. Endpoint credential enforcement remains BUG-2625.
 
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.

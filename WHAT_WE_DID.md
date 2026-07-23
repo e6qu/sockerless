@@ -4,6 +4,28 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-23 — Rebuilt the Google Cloud console to the console's real visual language
+
+The console recognisably evoked Google Cloud but sat far below what was
+achievable — almost no icons, a fallback typeface, generic glyphs, and an
+"identity unavailable" error rendered into its own chrome. A side-by-side
+against the live console made the gap plain, and it turned out I had been
+grading against memory with structural-only tests and an overclaimed "presents
+as". This closed most of the gap, working from the console's own computed styles.
+
+Design tokens are the values the live console paints — its blue-tinted page
+background, the left-anchored active pill and its colour, the primary blue.
+Roboto is vendored as a latin woff2 subset for body text (the display face,
+Google Sans, is not redistributable and is approximated, said plainly); icons
+are Material Symbols Outlined vendored as inline SVG paths, so the console is
+self-contained — a real icon on every navigation item, the header tool cluster,
+the filter, sort and column controls. Both are Apache-2.0. The account is an
+avatar opening a menu with the identity and sign-out, neutral rather than an
+error when unauthenticated; the empty state is completed. The browser suite now
+pins the visual work structurally so it cannot regress to a sketch unseen. The
+information architecture stays a deliberate divergence — one rail for the
+resources the simulator implements rather than the real per-product navigation.
+
 ## 2026-07-23 — Read the last Google Cloud resources from their real APIs
 
 Cloud Run jobs already read the real Cloud Run API; the console's other four
