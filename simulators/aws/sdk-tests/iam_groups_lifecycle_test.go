@@ -98,29 +98,13 @@ func TestIAM_PermissionBoundaryPutDelete(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestSTS_GetSessionTokenAndWebIdentity covers GetSessionToken and
-// AssumeRoleWithWebIdentity (both permission-less STS calls).
-func TestSTS_GetSessionTokenAndWebIdentity(t *testing.T) {
+// TestSTS_GetSessionToken covers the permission-less GetSessionToken call.
+// AssumeRoleWithWebIdentity, which now verifies the web identity token against
+// a registered OpenID Connect provider, is covered in sts_webidentity_test.go.
+func TestSTS_GetSessionToken(t *testing.T) {
 	stsc := sts.NewFromConfig(sdkConfig(), func(o *sts.Options) { o.BaseEndpoint = aws.String(baseURL) })
 
 	st, err := stsc.GetSessionToken(ctx, &sts.GetSessionTokenInput{})
 	require.NoError(t, err)
 	assert.Contains(t, aws.ToString(st.Credentials.AccessKeyId), "ASIA")
-
-	c := iamClient()
-	role := "webid-role"
-	_, err = c.CreateRole(ctx, &iam.CreateRoleInput{
-		RoleName:                 aws.String(role),
-		AssumeRolePolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"accounts.google.com"},"Action":"sts:AssumeRoleWithWebIdentity"}]}`),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { c.DeleteRole(ctx, &iam.DeleteRoleInput{RoleName: aws.String(role)}) })
-
-	wi, err := stsc.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityInput{
-		RoleArn:          aws.String("arn:aws:iam::000000000000:role/" + role),
-		RoleSessionName:  aws.String("websess"),
-		WebIdentityToken: aws.String("dummy.jwt.token"),
-	})
-	require.NoError(t, err)
-	assert.Contains(t, aws.ToString(wi.AssumedRoleUser.Arn), "assumed-role/"+role+"/websess")
 }
