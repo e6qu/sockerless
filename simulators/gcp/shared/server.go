@@ -168,6 +168,15 @@ func (s *Server) HandleUIFunc(pattern string, handler http.HandlerFunc) {
 	s.Handle(pattern, s.uiAuth.Protect(handler))
 }
 
+// OperatorAssertion returns the OpenID Connect ID token the signed-in operator
+// authenticated with for the session bound to r, with the issuer and audience
+// it was issued under. The console backend brokers this into short-lived cloud
+// credentials; the raw assertion never leaves the server. It reports false when
+// no operator session is present.
+func (s *Server) OperatorAssertion(r *http.Request) (assertion, issuer, audience string, ok bool) {
+	return s.uiAuth.OperatorAssertion(r)
+}
+
 // RoutePatterns returns every pattern registered through Handle /
 // HandleFunc, in registration order.
 func (s *Server) RoutePatterns() []string {

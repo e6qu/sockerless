@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GcpApp } from "./console/index.js";
 import { OverviewPage } from "./pages/OverviewPage.js";
 import { CloudRunJobsPage } from "./pages/CloudRunJobsPage.js";
+import { CloudRunJobDetailPage } from "./pages/CloudRunJobDetailPage.js";
 import { CloudFunctionsPage } from "./pages/CloudFunctionsPage.js";
 import { ArtifactRegistryPage } from "./pages/ArtifactRegistryPage.js";
 import { GCSBucketsPage } from "./pages/GCSBucketsPage.js";
@@ -26,6 +27,7 @@ createRoot(document.getElementById("root")!).render(
       <GcpApp>
         <Route path="/ui/" element={<OverviewPage />} />
         <Route path="/ui/cloudrun" element={<CloudRunJobsPage />} />
+        <Route path="/ui/cloudrun/:name" element={<CloudRunJobDetailPage />} />
         <Route path="/ui/functions" element={<CloudFunctionsPage />} />
         <Route path="/ui/ar" element={<ArtifactRegistryPage />} />
         <Route path="/ui/gcs" element={<GCSBucketsPage />} />

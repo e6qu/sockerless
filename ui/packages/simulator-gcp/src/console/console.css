@@ -254,3 +254,13 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
   outline: 2px solid var(--gc-primary);
   outline-offset: 2px;
 }
+
+/* Resource detail pages ---------------------------------------------------- */
+.gc-detail-back { margin-bottom: 8px; font-size: 13px; }
+.gc-detail-back a { color: var(--gc-link); text-decoration: none; }
+.gc-detail-back a:hover { text-decoration: underline; }
+.gc-detail-heading { margin: 24px 0 8px; font-size: 16px; font-weight: 500; font-family: var(--gc-font-display); }
+.gc-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 4px 40px; margin: 0; }
+.gc-detail-pair { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 12px; padding: 8px 0; font-size: 14px; border-bottom: 1px solid var(--gc-border-subtle); }
+.gc-detail-pair dt { color: var(--gc-fg-secondary); }
+.gc-detail-pair dd { margin: 0; color: var(--gc-fg); overflow-wrap: anywhere; }

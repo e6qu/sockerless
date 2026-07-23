@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 const SERVICES = [
-  { path: "/ui/cloudrun", nav: "Cloud Run jobs", title: "Cloud Run jobs", columns: ["Name", "Created", "Executions", "Launch stage"] },
+  { path: "/ui/cloudrun", nav: "Cloud Run jobs", title: "Cloud Run jobs", columns: ["Name", "Status of last execution", "Created", "Executions", "Launch stage"] },
   { path: "/ui/functions", nav: "Cloud Run functions", title: "Cloud Run functions", columns: ["Name", "State", "Environment"] },
   { path: "/ui/ar", nav: "Artifact Registry", title: "Artifact Registry", columns: ["Name", "Format", "Created"] },
   { path: "/ui/gcs", nav: "Cloud Storage", title: "Cloud Storage", columns: ["Name"] },
@@ -176,5 +176,44 @@ test.describe("Contrast", () => {
         expect(sample.ratio, `${theme}: ${sample.tag} measured ${sample.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
       }
     }
+  });
+});
+
+test.describe("Cloud Run jobs read the real API", () => {
+  const project = "sockerless";
+  const region = "us-central1";
+  const jobsParent = `/v2/projects/${project}/locations/${region}/jobs`;
+
+  // Seeds a job through the real Cloud Run Admin API the console reads, so the
+  // assertions prove the console renders live resources rather than a fixture.
+  async function seedJob(request: import("@playwright/test").APIRequestContext, id: string) {
+    const response = await request.post(`${jobsParent}?jobId=${id}`, {
+      data: { template: { template: { containers: [{ image: "busybox:latest" }] } } },
+    });
+    expect(response.ok(), `seeding job ${id}: HTTP ${response.status()}`).toBeTruthy();
+  }
+
+  test("lists a job created through the real Cloud Run API and opens its detail", async ({ page }) => {
+    const id = `console-${Date.now()}`;
+    await seedJob(page.request, id);
+
+    await page.goto("/ui/cloudrun");
+    const row = page.getByRole("link", { name: id, exact: true });
+    await expect(row).toBeVisible();
+    // The status comes from the resource's terminal condition, not a fixed string.
+    await expect(page.getByText("Ready").first()).toBeVisible();
+
+    await row.click();
+    await expect(page).toHaveURL(new RegExp(`/ui/cloudrun/${id}$`));
+    await expect(page.getByRole("heading", { name: id })).toBeVisible();
+    await expect(page.getByText("Unique ID")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Executions" })).toBeVisible();
+  });
+
+  test("shows the console's empty state when the project has no jobs", async ({ page }) => {
+    // A project the seed never touched has no jobs, so the real list is empty.
+    await page.goto("/ui/cloudrun");
+    await expect(page.getByRole("heading", { name: "Cloud Run jobs" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Name", exact: true })).toBeVisible();
   });
 });
