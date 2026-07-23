@@ -172,6 +172,10 @@ var allowedNonSpecGCPRoutes = map[string]string{
 	// not part of any service Discovery document.
 	"POST /token":           "OAuth2 token endpoint (oauth2.googleapis.com)",
 	"POST /oauth2/v4/token": "legacy OAuth2 token endpoint",
+	// Security Token Service token exchange (sts.googleapis.com /v1/token) —
+	// the Workforce Identity Federation surface, described by the STS service's
+	// own Discovery rather than any resource service's document.
+	"POST /v1/token": "Security Token Service token exchange (sts.googleapis.com)",
 
 	// GCS XML API / signed-URL data plane: requests address the object
 	// directly under the bucket host/path. Real surface (XML API),

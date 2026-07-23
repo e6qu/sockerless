@@ -100,6 +100,46 @@ Shared shell components currently live in `ui/packages/core`. Divergence is the
 point here, so per-cloud presentation belongs in each simulator package, and
 only genuinely cloud-neutral behaviour stays shared.
 
+## Simulator Console Real-API Federation
+
+The console interfaces now look like their clouds but still read data through
+sockerless-invented `/sim/v1/<service>` endpoints that return a trimmed,
+hand-picked shape (BUG-2635). The faithful end state is what a real cloud
+console does: the browser calls the real cloud API paths with real short-lived
+credentials, obtained by federating the Shauth-authenticated operator session.
+Shauth OIDC SSO sits on top as the identity the federation consumes — additive
+to what the cloud UI natively needs, exactly as an enterprise wires an external
+identity provider into a cloud console.
+
+The mechanism per cloud is the cloud's own federation primitive: Google Cloud
+Workforce Identity Federation (an STS token exchange that takes an external
+OIDC assertion and returns a federated access token), AWS
+`AssumeRoleWithWebIdentity` (temporary credentials the browser signs requests
+with), and Microsoft Entra federation into an Azure Resource Manager token. The
+console backend already holds the operator's Shauth ID token in the ui-auth
+session, so it brokers the exchange and hands the browser only a short-lived
+cloud token; the raw assertion never leaves the server. The credential-issuance
+and validation this needs overlaps and advances BUG-2625.
+
+One slice per cloud, one pull request each:
+
+1. **Google Cloud — real Cloud Run API.** The sim's STS token-exchange endpoint
+   verifies the operator's Shauth assertion against a workforce pool provider
+   and issues a federated access token; the Cloud Run `v2` job endpoints
+   validate that token; the console obtains it from the session broker and reads
+   the real `GET /v2/.../jobs` (list) and `GetJob` (detail), rendering the true
+   `Job` resource; the `/sim/v1/cloudrun` route is deleted. The workforce pool
+   and provider CRUD the exchange configures already exist in the GCP sim.
+2. **Amazon Web Services — real ECS/Lambda API** via
+   `AssumeRoleWithWebIdentity` and browser-side Signature Version 4.
+3. **Microsoft Azure — real ARM API** via Entra federation into an ARM bearer
+   token.
+
+Each slice deletes its cloud's `/sim/v1/*` routes only once the real path is
+proven, keeps the resource detail pages the real Get APIs make possible, and
+carries the SDK, CLI, and Terraform coverage the simulator testing contract
+requires for every new endpoint.
+
 ## Standing Work
 
 - **Bleephub full-service parity:** continue closing REST, GraphQL, UI, runner, auth, Pages, release, packages, and repository-provider gaps until Bleephub is usable as a real GitHub-compatible service.
