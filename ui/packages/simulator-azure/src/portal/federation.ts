@@ -99,11 +99,22 @@ function baseFor(config: PortalConfig, scope: CloudScope): string {
 
 // authorizedFetch reaches a real Azure path at the configured cloud coordinate
 // for the given scope, attaching a scope-specific federated credential when the
-// portal is wired to an identity provider.
+// portal is wired to federation.
+//
+// Federation needs both halves of its configuration: an identity provider to
+// read the operator's assertion from (identityEndpoint) and a cloud identity to
+// federate that assertion into (federationClientId — the user-assigned managed
+// identity the federated identity credential is registered on). With both, every
+// call carries a token. With neither — a local or test instance — the portal
+// runs unauthenticated. With one but not the other, federation is not configured,
+// so the portal sends no token and the cloud decides: real Azure answers 401,
+// the simulator answers as it does any unauthenticated read. There is no
+// simulator-versus-cloud branch; the two are distinguished only by the portal's
+// own configuration.
 export async function authorizedFetch(path: string, scope: CloudScope = "arm", init: RequestInit = {}): Promise<Response> {
   const config = await portalConfig();
   const headers = new Headers(init.headers);
-  if (config.identityEndpoint) {
+  if (config.identityEndpoint && config.federationClientId) {
     headers.set("Authorization", `Bearer ${await federatedToken(config, scope)}`);
   }
   return fetch(`${baseFor(config, scope)}${path}`, { ...init, headers, credentials: "include" });
