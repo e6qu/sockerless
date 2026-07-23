@@ -12,17 +12,14 @@ The real pinned Shauth, PostgreSQL, Ory Hydra, freshly compiled relying parties,
 
 ## Remaining Work
 
-The Google Cloud console reaches the cloud only through real APIs at configured
-coordinates — no simulator-served endpoint on the data plane, the Shauth auth
-layer kept server-side as the console's own (BUG-2635, the rule in AGENTS.md).
-The remaining Google Cloud resources — Cloud Run functions, Artifact Registry,
-Cloud Storage, and Logging — follow this same coordinate-only pattern next:
-each reads its real API (Cloud Functions v2, Artifact Registry, Cloud Storage
-JSON, Cloud Logging `entries:list`) through `authorizedFetch`, gains a detail
-page, and drops its `/sim/v1/*` endpoint. After Google Cloud, the AWS console
-federates through `AssumeRoleWithWebIdentity` with browser-side Signature
-Version 4, and the Azure console through Entra into an Azure Resource Manager
-token. Endpoint credential enforcement across the simulators remains BUG-2625.
+The whole Google Cloud console reads real cloud APIs over the console's own
+server-side Shauth federation, at configured coordinates, with every
+`/sim/v1/*` route deleted (BUG-2635, the rule in AGENTS.md). The AWS and Azure
+consoles follow the same pattern next: AWS federates through
+`AssumeRoleWithWebIdentity` with browser-side Signature Version 4 and reads the
+real ECS/Lambda/ECR/S3/CloudWatch APIs; Azure federates through Entra into an
+Azure Resource Manager token and reads the real ARM APIs. Endpoint credential
+enforcement across the simulators remains BUG-2625.
 
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.

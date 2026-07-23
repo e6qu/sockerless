@@ -4,6 +4,25 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-23 — Read the last Google Cloud resources from their real APIs
+
+Cloud Run jobs already read the real Cloud Run API; the console's other four
+resources still read sockerless-invented `/sim/v1/*` endpoints with a trimmed
+shape. They now read their real cloud APIs through the same federated,
+coordinate-only path — Cloud Run functions from Cloud Functions v2, Artifact
+Registry from its repositories, Cloud Storage from the JSON API, and Cloud
+Logging from `entries:list` — each with a detail page on the real resource and
+each rendering the true shape.
+
+The overview counts each resource from the same real list its page reads,
+rather than a summary endpoint, and reports whether those APIs answered rather
+than a synthetic health signal. With the last consumer gone, the Google Cloud
+dashboard — every `/sim/v1/*` route including the summary — is deleted; the
+console reaches the cloud only through real APIs at configured coordinates. The
+browser suite creates a bucket, a repository, and a log entry through the real
+APIs and asserts the console lists each and opens its detail; the relying-party
+suite is unchanged and still green.
+
 ## 2026-07-23 — Made the Google Cloud console reach the cloud only through real APIs and coordinates
 
 The console had federated the operator through `/auth/cloud-token`, an endpoint
