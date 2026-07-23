@@ -51,18 +51,69 @@ async function portalConfig(): Promise<PortalConfig> {
   return configPromise;
 }
 
+// FederationSetup is a complete, validated federation configuration. Every field
+// is required and non-empty; a base endpoint that is the empty string is the
+// deliberate "same origin as the portal" coordinate, not a missing value.
+interface FederationSetup {
+  subject: string;
+  clientId: string;
+  tenant: string;
+  endpoint: string;
+}
+
+// resolveFederation turns the portal's configuration into an explicit decision,
+// with no implicit defaults and no partial fall-through:
+//   - A cloud identity to federate as (federationClientId) is the signal that a
+//     deployment intends to federate. When it is set, every coordinate the
+//     exchange needs must also be set; an incomplete set is a deployment error
+//     surfaced here, never patched with a default (an empty tenant, for one,
+//     would build the protocol-relative `//oauth2/v2.0/token`).
+//   - With no cloud identity configured, the portal does not federate; reads go
+//     unauthenticated and the cloud decides what they get (real Azure answers
+//     401; the simulator answers as it does any unauthenticated read). This is a
+//     deliberate, configuration-driven mode — a local instance, or a deployment
+//     that has not set federation up — chosen by the absence of the coordinate,
+//     not a fallback from a failed attempt.
+function resolveFederation(config: PortalConfig): FederationSetup | null {
+  if (!config.federationClientId) {
+    return null;
+  }
+  const missing = (
+    [
+      ["identityEndpoint", config.identityEndpoint],
+      ["federationSubject", config.federationSubject],
+      ["federationTenant", config.federationTenant],
+    ] as const
+  )
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  if (missing.length > 0) {
+    throw new Error(
+      `incomplete federation configuration: federationClientId is set but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing`,
+    );
+  }
+  // federationEndpoint is allowed to be empty: that is the portal's own origin,
+  // the coordinate for a console co-served with the cloud it reads.
+  return {
+    subject: config.federationSubject!,
+    clientId: config.federationClientId,
+    tenant: config.federationTenant!,
+    endpoint: config.federationEndpoint ?? "",
+  };
+}
+
 // federatedToken exchanges the operator's assertion for a short-lived Azure
 // token scoped to a resource at Microsoft Entra — the real Workload Identity
 // Federation client-assertion grant, at whichever coordinate the portal is
 // configured for.
-async function federatedToken(config: PortalConfig, scope: CloudScope): Promise<string> {
+async function federatedToken(setup: FederationSetup, scope: CloudScope): Promise<string> {
   const now = Date.now();
   const cached = cachedTokens[scope];
   if (cached && cached.expiresAt - 30_000 > now) {
     return cached.value;
   }
 
-  const subjectResponse = await fetch(config.federationSubject!, { credentials: "include" });
+  const subjectResponse = await fetch(setup.subject, { credentials: "include" });
   if (!subjectResponse.ok) {
     throw new Error(`could not read the operator assertion: HTTP ${subjectResponse.status}`);
   }
@@ -70,17 +121,12 @@ async function federatedToken(config: PortalConfig, scope: CloudScope): Promise<
 
   const body = new URLSearchParams({
     grant_type: "client_credentials",
-    client_id: config.federationClientId ?? "",
+    client_id: setup.clientId,
     scope: SCOPES[scope],
     client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
     client_assertion: subjectToken,
   });
-  // An unconfigured coordinate arrives as an empty string (not undefined), so
-  // fall back with `||`: an empty tenant would otherwise build the
-  // protocol-relative `//oauth2/v2.0/token`, which resolves to the host
-  // "oauth2". `organizations` is Microsoft Entra's multi-tenant segment.
-  const tenant = config.federationTenant || "organizations";
-  const exchange = await fetch(`${config.federationEndpoint || ""}/${tenant}/oauth2/v2.0/token`, {
+  const exchange = await fetch(`${setup.endpoint}/${setup.tenant}/oauth2/v2.0/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -99,23 +145,13 @@ function baseFor(config: PortalConfig, scope: CloudScope): string {
 
 // authorizedFetch reaches a real Azure path at the configured cloud coordinate
 // for the given scope, attaching a scope-specific federated credential when the
-// portal is wired to federation.
-//
-// Federation needs both halves of its configuration: an identity provider to
-// read the operator's assertion from (identityEndpoint) and a cloud identity to
-// federate that assertion into (federationClientId — the user-assigned managed
-// identity the federated identity credential is registered on). With both, every
-// call carries a token. With neither — a local or test instance — the portal
-// runs unauthenticated. With one but not the other, federation is not configured,
-// so the portal sends no token and the cloud decides: real Azure answers 401,
-// the simulator answers as it does any unauthenticated read. There is no
-// simulator-versus-cloud branch; the two are distinguished only by the portal's
-// own configuration.
+// portal is configured to federate (see resolveFederation).
 export async function authorizedFetch(path: string, scope: CloudScope = "arm", init: RequestInit = {}): Promise<Response> {
   const config = await portalConfig();
+  const setup = resolveFederation(config);
   const headers = new Headers(init.headers);
-  if (config.identityEndpoint && config.federationClientId) {
-    headers.set("Authorization", `Bearer ${await federatedToken(config, scope)}`);
+  if (setup) {
+    headers.set("Authorization", `Bearer ${await federatedToken(setup, scope)}`);
   }
   return fetch(`${baseFor(config, scope)}${path}`, { ...init, headers, credentials: "include" });
 }
