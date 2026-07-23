@@ -122,7 +122,6 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerIAM(srv)
 	registerOAuth2(srv)
 	registerSTS(srv)
-	registerFederationBroker(srv)
 	registerComputeMetadata(srv)
 
 	// Dashboard summary endpoints for UI

@@ -95,6 +95,16 @@ If the sim needs to be reachable somewhere a real client reaches a cloud host (e
 
 **Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md), [agent/README.md](agent/README.md), [backends/README.md](backends/README.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
+### A simulator console UI differs from a real-cloud console ONLY in coordinates
+
+The same rule governs the simulator **console UIs**. The distinction that makes it work: **the console's Shauth authentication layer is the *console's own*, not the *simulator's*** — it is co-served with the console today and deployable with the console against a real cloud. The **cloud data plane** — how the console reaches cloud resources and cloud credentials — is the only thing that touches the cloud, and it must run **identically against the simulator and the real cloud**, reading **only real cloud APIs**, differing **only in coordinates** (the endpoint base URL(s) it points at). There must be **no `if sim` / `if real` branch, no sim-only endpoint on the data plane, and no fallback of any kind** (a fallback hides bugs and leaves dead or functionally dead code). A console that reads a sockerless-invented endpoint the real cloud does not serve — an `/sim/v1/*` dashboard route, or an `/auth/cloud-token` credential broker baked into the sim — is coupling the data plane to the simulator; pointing that same console at the real cloud would then require a special path — forbidden.
+
+- **Data plane — cloud resources:** the console reads the cloud's real resource APIs (e.g. Cloud Run `GET /v2/.../jobs`) at a configured base URL that is the console's own origin when embedded in the sim and the real cloud host otherwise. Never a `/sim/v1/*` endpoint.
+- **Data plane — cloud credentials:** the console federates the operator's Shauth assertion into cloud credentials through the **cloud's own federation primitive** — Google Cloud Workforce Identity Federation (`POST {sts}/v1/token`), AWS `AssumeRoleWithWebIdentity`, Microsoft Entra → Azure Resource Manager token — at a configured coordinate. The workforce pool / role / federation resource is provisioned the way an administrator provisions it (Terraform / the real API), and its identifier reaches the console as a coordinate; never a sim-side auto-provisioning hook. Never a sim-specific credential broker.
+- **Authentication (Shauth SSO) — the console's own layer:** the console is its own OpenID Connect relying party (server-side session, front- and back-channel logout, the `data-shauth-*` marker contract). This layer belongs to the console and is unchanged by which cloud the data plane points at; it hands the SPA the operator's assertion, which the SPA then feeds to the cloud's real federation endpoint. It is not part of the simulator and is not a data-plane coupling.
+
+The sim implementing a real cloud auth/federation API (STS token exchange, `AssumeRoleWithWebIdentity`) is correct — that is *the cloud*, at the sim's coordinate. A sockerless endpoint the cloud never offers, on the data plane, is not.
+
 ## All synthetic behavior is a bug
 
 Any fake, synthetic, hardcoded, or placeholder behavior in backends is a **bug**, not a feature or acceptable shortcut. No exceptions. Examples:

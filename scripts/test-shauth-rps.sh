@@ -169,17 +169,37 @@ start_simulator() {
   SIM_UI_SESSION_SECRET="$session_secret" \
   SIM_UI_INSECURE_COOKIES=true \
   APPLICATION_RELEASE_REVISION="$6" \
+  SOCKERLESS_CONSOLE_FEDERATION_AUDIENCE="${7:-}" \
     "$binary" >"$log_file" 2>&1 &
   pids+=("$!")
 }
 
+# The console federates the signed-in operator through a workforce pool provider
+# that trusts Shauth. An administrator provisions that provider through the real
+# Identity and Access Management API; the harness stands in for the
+# administrator, and the provider's resource name is the coordinate the console
+# federates against.
+gcp_workforce_provider="//iam.googleapis.com/locations/global/workforcePools/sockerless-console/providers/sso"
+provision_gcp_workforce_provider() {
+  local base=http://localhost:29320
+  curl --silent --show-error --fail -o /dev/null -X POST \
+    "$base/v1/locations/global/workforcePools?workforcePoolId=sockerless-console" \
+    -H 'Content-Type: application/json' \
+    -d '{"displayName":"Sockerless Console","parent":"organizations/sockerless"}'
+  curl --silent --show-error --fail -o /dev/null -X POST \
+    "$base/v1/locations/global/workforcePools/sockerless-console/providers?workforcePoolProviderId=sso" \
+    -H 'Content-Type: application/json' \
+    -d '{"displayName":"Shauth","oidc":{"issuerUri":"http://localhost:8080","clientId":"sockerless-gcp"},"attributeMapping":{"google.subject":"assertion.sub"}}'
+}
+
 start_simulator "$repo_root/simulators/aws/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision"
-start_simulator "$repo_root/simulators/gcp/simulator-gcp" 29320 sockerless-gcp "$gcp_client_secret" "$work_dir/gcp.log" "$source_revision"
+start_simulator "$repo_root/simulators/gcp/simulator-gcp" 29320 sockerless-gcp "$gcp_client_secret" "$work_dir/gcp.log" "$source_revision" "$gcp_workforce_provider"
 start_simulator "$repo_root/simulators/azure/simulator-azure" 29330 sockerless-azure "$azure_client_secret" "$work_dir/azure.log" "$source_revision"
 
 wait_for_url http://localhost:29090/healthz "Sockerless Admin"
 wait_for_url http://localhost:29310/health "AWS simulator"
 wait_for_url http://localhost:29320/health "Google Cloud simulator"
+provision_gcp_workforce_provider
 wait_for_url http://localhost:29330/health "Microsoft Azure simulator"
 
 assert_anonymous_validation() {

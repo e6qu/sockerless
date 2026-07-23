@@ -520,3 +520,38 @@ func TestOperatorAssertionBrokersTheSignedInIDToken(t *testing.T) {
 		t.Fatal("OperatorAssertion federated a session that has no ID token")
 	}
 }
+
+func TestFederationSubjectExposesTheAssertionToTheConsole(t *testing.T) {
+	auth, err := New(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	anon := httptest.NewRecorder()
+	auth.federationSubject(anon, httptest.NewRequest(http.MethodGet, FederationSubjectPath, nil))
+	if anon.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous federation-subject = %d, want 401", anon.Code)
+	}
+
+	expires := time.Now().Add(time.Hour).Unix()
+	session := browserSession{ID: "fed-session", Subject: "operator", Expires: expires}
+	value, err := auth.sign(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.store.put(session.ID, sessionRecord{Subject: session.Subject, RawIDToken: "the-shauth-assertion", Expires: expires})
+
+	request := httptest.NewRequest(http.MethodGet, FederationSubjectPath, nil)
+	request.AddCookie(&http.Cookie{Name: auth.config.CookieName, Value: value})
+	recorder := httptest.NewRecorder()
+	auth.federationSubject(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("authenticated federation-subject = %d, want 200", recorder.Code)
+	}
+	if recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("federation-subject must not be cached: %q", recorder.Header().Get("Cache-Control"))
+	}
+	if !strings.Contains(recorder.Body.String(), `"subject_token":"the-shauth-assertion"`) {
+		t.Fatalf("federation-subject omitted the assertion: %s", recorder.Body.String())
+	}
+}

@@ -4,6 +4,37 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-23 — Made the Google Cloud console reach the cloud only through real APIs and coordinates
+
+The console had federated the operator through `/auth/cloud-token`, an endpoint
+the simulator served and the real cloud does not — coupling the data plane to
+the simulator, so the same console pointed at real Google Cloud would have
+needed a simulator-versus-cloud branch. The console now reaches the cloud
+exactly as it would reach the real thing, differing only in coordinates.
+
+The console's Shauth authentication is the console's own layer, not the
+simulator's. It stays server-side — session, front- and back-channel logout,
+the marker contract — and exposes the operator's assertion to the browser at
+`/auth/federation-subject`. The browser federates that assertion at the cloud's
+real Security Token Service (`POST /v1/token`) and calls the real cloud APIs
+with the result. The Security Token Service endpoint, the cloud API base, and
+the workforce pool provider the console federates through are coordinates the
+console reads from its configuration; empty means its own origin, where the
+simulator serves them, and a real deployment points them at Google Cloud.
+
+The simulator-served credential broker and its sim-side workforce-provider
+auto-provisioning were deleted. The provider is provisioned the way an
+administrator provisions it — through the real Identity and Access Management
+API — by the relying-party harness standing in for the administrator, and its
+resource name reaches the console as a coordinate.
+
+The relying-party suite reads the assertion from the console's auth layer,
+exchanges it at the real Security Token Service with a live Shauth identity, and
+drives the signed-in console through a real Cloud Run API read over that
+federation. Login, logout, and the marker contract are unchanged, so the same
+suite proves no regression. The rule is written in AGENTS.md: a simulator
+console UI differs from a real-cloud console only in coordinates.
+
 ## 2026-07-23 — Read the real Cloud Run API from the Google Cloud console, over Shauth federation
 
 The simulator consoles looked like their clouds but read data through

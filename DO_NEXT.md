@@ -12,15 +12,17 @@ The real pinned Shauth, PostgreSQL, Ory Hydra, freshly compiled relying parties,
 
 ## Remaining Work
 
-The Google Cloud console now reads the real Cloud Run Admin API over Shauth
-federation, with the Security Token Service token exchange and the credential
-broker in place (BUG-2635, BUG-2625). The same pattern extends next to the
-remaining Google Cloud resources — Cloud Run functions, Artifact Registry, Cloud
-Storage, and Logging — reading their real APIs and deleting their `/sim/v1/*`
-endpoints. After Google Cloud, the AWS slice federates through
-`AssumeRoleWithWebIdentity` with browser-side Signature Version 4, and the Azure
-slice through Entra into an Azure Resource Manager token. Endpoint credential
-enforcement across the simulators remains BUG-2625.
+The Google Cloud console reaches the cloud only through real APIs at configured
+coordinates — no simulator-served endpoint on the data plane, the Shauth auth
+layer kept server-side as the console's own (BUG-2635, the rule in AGENTS.md).
+The remaining Google Cloud resources — Cloud Run functions, Artifact Registry,
+Cloud Storage, and Logging — follow this same coordinate-only pattern next:
+each reads its real API (Cloud Functions v2, Artifact Registry, Cloud Storage
+JSON, Cloud Logging `entries:list`) through `authorizedFetch`, gains a detail
+page, and drops its `/sim/v1/*` endpoint. After Google Cloud, the AWS console
+federates through `AssumeRoleWithWebIdentity` with browser-side Signature
+Version 4, and the Azure console through Entra into an Azure Resource Manager
+token. Endpoint credential enforcement across the simulators remains BUG-2625.
 
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.
