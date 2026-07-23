@@ -1,54 +1,56 @@
+import { Link } from "react-router";
 import { useSimSummary, useSimHealth } from "@sockerless/ui-core/hooks";
-import {
-  InlineError,
-  MetricsCard,
-  PageHeading,
-  Spinner,
-  StatusBadge,
-} from "@sockerless/ui-core/components";
+import { GcpPageHeader, GcpStatus } from "../console/GcpConsole.js";
+
+const RESOURCES = [
+  { label: "Cloud Run jobs", key: "cloudrun_jobs", to: "/ui/cloudrun" },
+  { label: "Cloud Run functions", key: "functions", to: "/ui/functions" },
+  { label: "Artifact Registry repositories", key: "ar_repos", to: "/ui/ar" },
+  { label: "Cloud Storage buckets", key: "gcs_buckets", to: "/ui/gcs" },
+  { label: "Log entries", key: "log_entries", to: "/ui/logging" },
+] as const;
 
 export function OverviewPage() {
   const health = useSimHealth();
   const summary = useSimSummary();
+  const services: Record<string, number> = summary.data?.services ?? {};
 
-  if (health.isLoading || summary.isLoading) return <Spinner label="loading" />;
-  // A failed summary/health fetch must not render an all-zeros "healthy" board.
-  if (health.isError || summary.isError) {
-    return (
-      <InlineError
-        title="Failed to load simulator overview"
-        detail={String(summary.error ?? health.error)}
-      />
-    );
-  }
-
-  const services = summary.data?.services ?? {};
-  const isOk = health.data?.status === "ok";
+  // A failed fetch must not render an all-zeros board that reads as healthy.
+  const failed = health.isError || summary.isError;
+  const loading = health.isLoading || summary.isLoading;
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeading
-        kicker="gcp · simulator"
-        title={<>Overview</>}
-        meta="Service-by-service resource counts."
-        actions={<StatusBadge status={isOk ? "running" : "error"} />}
+    <>
+      <GcpPageHeader
+        title="Overview"
+        description="Resources across this project."
+        onRefresh={() => { void health.refetch(); void summary.refetch(); }}
+        refreshing={health.isFetching || summary.isFetching}
       />
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        <MetricsCard
-          title="Cloud Run Jobs"
-          value={services.cloudrun_jobs ?? 0}
-        />
-        <MetricsCard
-          title="Cloud Functions"
-          value={services.functions ?? 0}
-        />
-        <MetricsCard
-          title="AR Repositories"
-          value={services.ar_repos ?? 0}
-        />
-        <MetricsCard title="GCS Buckets" value={services.gcs_buckets ?? 0} />
-        <MetricsCard title="Log Entries" value={services.log_entries ?? 0} />
+      <div style={{ marginBottom: 16 }}>
+        {failed ? (
+          <GcpStatus status="Unavailable" kind="error" />
+        ) : loading ? (
+          <GcpStatus status="Loading" kind="warning" />
+        ) : (
+          <GcpStatus status={health.data?.status === "ok" ? "All services operating normally" : "Unavailable"} />
+        )}
       </div>
-    </div>
+      {failed ? (
+        <div className="gc-message gc-message-error" role="alert">
+          <strong>Couldn't load the project overview.</strong>{" "}
+          {String(summary.error ?? health.error)}
+        </div>
+      ) : (
+        <div className="gc-cards">
+          {RESOURCES.map((resource) => (
+            <div className="gc-card" key={resource.key}>
+              <h2>{resource.label}</h2>
+              <Link to={resource.to}>{loading ? "—" : (services[resource.key] ?? 0)}</Link>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }

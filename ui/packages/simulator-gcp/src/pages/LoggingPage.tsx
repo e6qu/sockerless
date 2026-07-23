@@ -1,32 +1,34 @@
-import { type ColumnDef } from "@tanstack/react-table";
-import {
-  ResourceListPage,
-  StatusBadge,
-} from "@sockerless/ui-core/components";
+import { GcpResourceTable, GcpStatus, type GcpColumn } from "../console/index.js";
+import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchLogEntries, type LogEntry } from "../api.js";
 
-const columns: ColumnDef<LogEntry, unknown>[] = [
-  { accessorKey: "timestamp", header: "Timestamp" },
-  {
-    accessorKey: "severity",
-    header: "Severity",
-    cell: ({ getValue }) => <StatusBadge status={getValue<string>()} />,
-  },
-  { accessorKey: "logName", header: "Log Name" },
-  { accessorKey: "textPayload", header: "Message" },
+// Cloud Logging omits severity when it is the default; the console reads that
+// as DEFAULT rather than blank.
+const severityOf = (row: LogEntry) => row.severity ?? "DEFAULT";
+
+const columns: GcpColumn<LogEntry>[] = [
+  { id: "timestamp", header: "Timestamp", cell: (row) => formatTimestamp(row.timestamp), value: (row) => row.timestamp },
+  { id: "severity", header: "Severity", cell: (row) => <GcpStatus status={severityOf(row)} />, value: severityOf },
+  { id: "logName", header: "Log name", cell: (row) => shortName(row.logName), value: (row) => row.logName },
+  { id: "message", header: "Summary", cell: (row) => row.textPayload ?? "", value: (row) => row.textPayload ?? "" },
 ];
 
 export function LoggingPage() {
   return (
-    <ResourceListPage<LogEntry>
-      kicker="gcp · simulator · logging"
-      title={<>Cloud Logging</>}
-      countNoun="entry"
+    <GcpResourceTable<LogEntry>
+      title="Logs Explorer"
+      description="Search, filter, and inspect log entries across the project."
       columns={columns}
       queryKey={["log-entries"]}
       queryFn={fetchLogEntries}
-      filterPlaceholder="Filter entries…"
-      emptyMessage="No log entries tracked."
+      filterPlaceholder="Filter entries"
+      resourceNoun="log entries"
+      empty={{
+        headline: "No log entries match this query",
+        description: "Entries written across the project appear here as it runs.",
+        primaryLabel: "Refresh",
+      }}
+      rowKey={(row) => `${row.timestamp}|${row.logName}|${row.textPayload ?? ""}`}
     />
   );
 }

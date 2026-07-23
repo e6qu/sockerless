@@ -88,7 +88,8 @@ against the other two.
    and Essentials-style resource properties. Done.
 3. **Google Cloud simulator console parity.** Light header with its project
    chip and central search, inline text actions beside the page title, the
-   filter chip with column settings, and the illustrated empty state.
+   filter chip with column settings, and the illustrated empty state. Done —
+   all three simulator interfaces now present as their own cloud's console.
 
 Every interface carries a light and a dark theme, a theme control in the top
 right of the header where each console keeps its own, and text that meets WCAG

@@ -1,5 +1,8 @@
 @import "tailwindcss";
 @import "@sockerless/ui-core/styles";
+/* The console shell owns the whole viewport; see console/tokens.css. */
+@import "./console/tokens.css";
+@import "./console/console.css";
 
 /* Per-app accent — see ui/packages/core/src/styles/tokens.css for the
  * full token surface this overrides. */

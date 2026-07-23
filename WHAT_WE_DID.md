@@ -4,6 +4,41 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-23 — Gave the Google Cloud simulator the Google Cloud console's interface
+
+The last of the three simulator interfaces now presents as its own cloud's
+console, so an operator who knows any of AWS, Azure, or Google Cloud recognises
+the simulator for that cloud.
+
+The reference was the real Cloud Run Jobs page, captured from the console
+itself: a light global header with a project chip and a wide central search, a
+product navigation whose active item is a filled pill, inline text actions
+beside the page title rather than a button group, a refresh pinned at the
+right, a description sentence beneath the title, and a filter chip above a
+table whose headers carry inline help. Empty states pair a dashed-cloud
+illustration with a headline, an explanation, and the side effect of the
+primary action, matching what the console shows when a resource has none.
+
+Tables keep their column headers while loading, empty, or failed, so what the
+resource is described by stays readable when there are no rows to infer it
+from. Cloud Logging omits severity when it is the default, and the console
+reads that as DEFAULT rather than a blank cell.
+
+Both themes are carried, with the control in the top right. Contrast was
+measured against the surfaces the browser actually paints rather than assumed
+from the palette, and a test holds every enabled text role at or above the
+4.5:1 WCAG AA requires — disabled controls excluded, since the requirement
+exempts them and the console greys them deliberately. The link blue was moved
+one step darker so a text action clears AA on white; it had measured 4.27:1.
+The test names the role and the ratio when a colour regresses.
+
+The header sizes to its contents and establishes a stacking context, and a
+test asserts that every control it holds lies inside it — the property whose
+absence let a click reach the breadcrumbs on the AWS console. Status is matched
+on whole words, since a substring test reports success for failure states. The
+table is built in the console's idiom rather than from a generic table library,
+which the package no longer depends on.
+
 ## 2026-07-22 — Gave the Azure simulator the Azure portal's interface
 
 The second of the three simulator interfaces now presents as its own cloud's
