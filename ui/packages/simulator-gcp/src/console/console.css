@@ -42,23 +42,34 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
   color: var(--gc-header-fg);
   border-bottom: 1px solid var(--gc-header-border);
 }
-.gc-header-left { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
-.gc-hamburger { font-size: 16px; color: var(--gc-fg-secondary); }
-.gc-wordmark { font-size: 18px; font-weight: 400; color: var(--gc-fg); white-space: nowrap; }
+.gc-header-left { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.gc-wordmark { font-size: 22px; font-weight: 400; color: var(--gc-fg); white-space: nowrap; margin-left: 4px; }
 .gc-project-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border: 1px solid var(--gc-border);
   border-radius: 999px;
-  padding: 4px 14px;
-  font-size: 13px;
+  padding: 6px 16px;
+  margin-left: 8px;
+  font-size: 14px;
   color: var(--gc-fg);
   white-space: nowrap;
 }
-.gc-project-dot { color: var(--gc-primary); font-size: 12px; }
-.gc-header-search { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; background: var(--gc-surface-alt); border-radius: var(--gc-radius); padding: 0 12px; max-width: 720px; }
-.gc-search-icon { color: var(--gc-fg-secondary); font-size: 16px; }
+.gc-project-dot { width: 12px; height: 12px; border-radius: 3px; background: var(--gc-primary); display: inline-block; }
+.gc-header-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  background: #eef3fb;
+  border-radius: 999px;
+  padding: 0 16px;
+  max-width: 720px;
+  margin: 0 auto;
+  height: 40px;
+}
 .gc-header-search input {
   flex: 1;
   border: 0;
@@ -71,16 +82,20 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 }
 .gc-header-search input:focus-visible { outline: none; }
 .gc-header-search:focus-within { outline: 2px solid var(--gc-primary); outline-offset: 1px; }
-.gc-header-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; min-width: 0; }
+.gc-header-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; min-width: 0; }
 .gc-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid transparent;
   border-radius: 50%;
   background: transparent;
   color: var(--gc-fg-secondary);
   font: inherit;
-  font-size: 16px;
   line-height: 1;
-  padding: 6px 8px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
   cursor: pointer;
 }
 .gc-icon-button:hover { background: var(--gc-surface-alt); }
@@ -101,13 +116,16 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
   font-size: 17px;
   color: var(--gc-fg);
 }
-.gc-product-glyph { color: var(--gc-primary); }
 .gc-product-nav ul { list-style: none; margin: 0; padding: 0; }
-.gc-product-nav li { padding: 0 8px; }
+/* The active pill is anchored to the left edge and rounded only on its right,
+ * so it reads as attached to the rail rather than floating. */
+.gc-product-nav li { padding: 0 8px 0 0; }
 .gc-nav-link {
-  display: block;
-  padding: 8px 16px;
-  margin: 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 12px 9px 24px;
+  margin: 1px 0;
   border-radius: 0 999px 999px 0;
   font-size: 14px;
   color: var(--gc-fg);
@@ -119,6 +137,58 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
   color: var(--gc-nav-active-fg);
   font-weight: 500;
 }
+.gc-nav-link-active svg { color: var(--gc-nav-active-fg); }
+.gc-nav-footer { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--gc-border-subtle); }
+
+/* Account control -------------------------------------------------------- */
+.gc-account { position: relative; }
+.gc-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--gc-primary);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  overflow: hidden;
+  padding: 0;
+}
+.gc-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.gc-avatar-anonymous { background: transparent; color: var(--gc-fg-secondary); }
+.gc-avatar-large { width: 64px; height: 64px; font-size: 26px; }
+.gc-account-menu {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  width: 300px;
+  background: var(--gc-surface);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  padding: 20px;
+  z-index: 20;
+}
+.gc-account-identity { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+.gc-account-name { margin: 0; font-size: 15px; font-weight: 500; color: var(--gc-fg); }
+.gc-account-email { margin: 2px 0 0; font-size: 13px; color: var(--gc-fg-secondary); }
+.gc-account-signout { display: flex; justify-content: center; }
+.gc-account-signout button {
+  border: 1px solid var(--gc-border);
+  border-radius: 999px;
+  background: var(--gc-surface);
+  color: var(--gc-link);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 24px;
+  cursor: pointer;
+}
+.gc-account-signout button:hover { background: var(--gc-surface-alt); }
 
 /* Working area ----------------------------------------------------------- */
 .gc-main { padding: 16px 24px 48px; min-width: 0; }
@@ -219,6 +289,24 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 .gc-empty-headline { margin: 0; font-size: 20px; font-weight: 400; color: var(--gc-fg); font-family: var(--gc-font-display); }
 .gc-empty-description { margin: 8px auto 0; font-size: 14px; max-width: 520px; }
 .gc-empty-sideeffect { margin: 16px 0 0; font-size: 13px; color: var(--gc-fg-secondary); }
+.gc-empty-description a { color: var(--gc-link); text-decoration: none; }
+.gc-empty-description a:hover { text-decoration: underline; }
+.gc-empty-actions { margin-top: 24px; display: flex; align-items: center; justify-content: center; gap: 20px; }
+.gc-empty-quickstart { color: var(--gc-link); text-decoration: none; font-size: 14px; }
+.gc-empty-quickstart:hover { text-decoration: underline; }
+.gc-button-primary {
+  border: 0;
+  border-radius: 4px;
+  background: var(--gc-primary);
+  color: var(--gc-primary-fg);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 24px;
+  cursor: pointer;
+}
+.gc-button-primary:hover:not(:disabled) { background: var(--gc-primary-hover); }
+.gc-button-primary:disabled { opacity: 0.55; cursor: default; }
 
 /* Pagination ------------------------------------------------------------- */
 .gc-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 0; font-size: 13px; color: var(--gc-fg-secondary); }

@@ -20,7 +20,7 @@ export function GCSBucketsPage() {
     <GcpResourceTable<GCSBucket>
       title="Cloud Storage"
       description="Buckets hold your objects — durable, scalable storage for any amount of data."
-      actions={[{ label: "Create bucket", glyph: "+", primary: true, disabled: true }]}
+      actions={[{ label: "Create bucket", icon: "add", primary: true, disabled: true }]}
       columns={columns}
       queryKey={["gcs-buckets-real"]}
       queryFn={fetchGCSBuckets}

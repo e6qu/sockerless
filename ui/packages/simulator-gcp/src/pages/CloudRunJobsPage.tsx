@@ -31,7 +31,7 @@ export function CloudRunJobsPage() {
     <GcpResourceTable<CloudRunJob>
       title="Cloud Run jobs"
       description="A job executes tasks to completion. Jobs are ideal for batch processing and scheduled workloads."
-      actions={[{ label: "Create job", glyph: "+", primary: true, disabled: true }]}
+      actions={[{ label: "Create job", icon: "add", primary: true, disabled: true }]}
       columns={columns}
       queryKey={["cloudrun-jobs-real"]}
       queryFn={fetchCloudRunJobsReal}

@@ -20,7 +20,7 @@ export function CloudFunctionsPage() {
     <GcpResourceTable<CloudFunction>
       title="Cloud Run functions"
       description="Run your code in response to events without provisioning or managing servers."
-      actions={[{ label: "Create function", glyph: "+", primary: true, disabled: true }]}
+      actions={[{ label: "Create function", icon: "add", primary: true, disabled: true }]}
       columns={columns}
       queryKey={["cloud-functions-real"]}
       queryFn={fetchCloudFunctions}
