@@ -34,8 +34,8 @@ github.com/aws/aws-sdk-go-v2/service/cloudfront v1.67.0 h1:im/ncpA+Jk0vM65L/PCts
 github.com/aws/aws-sdk-go-v2/service/cloudfront v1.67.0/go.mod h1:qoIp6DWjzOuSXA1htGaDv8E2Olj0O3TYPikdjfv2wKc=
 github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.58.0 h1:0emgCpX7x4s80lZbktnRJBdLxs8LRgpKRDVORrNSz+o=
 github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.58.0/go.mod h1:Fe4hZhPz2Pd5Ip9F/x5F+qVZVwkhm9CL+FdvrDOwQWE=
-github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.64.0 h1:WX6dBJ6ms8p1UWv5RBOM8gFWgg+C9nHTvdlVTMlUFNs=
-github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.64.0/go.mod h1:t3drm8DC/zlLUm3MvhkgD4Me6U6EJjzO+ZhcBzWxkcc=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.65.0 h1:mthzbb+JegG3ij6kCilO/tPPVT+ohq0dA/mc3kHFHDo=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.65.0/go.mod h1:t3drm8DC/zlLUm3MvhkgD4Me6U6EJjzO+ZhcBzWxkcc=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.80.0 h1:8bwR4D8tjjCCJDyTQVNExR8/YwcM1j0gfcg+kZBDzug=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.80.0/go.mod h1:xTMcupQaB0rAXM3U+uf3UhleUEte+24wFd3BQsDlFQ8=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.0 h1:4mGiPTLg423pABafpNbcBDyhSYh9H/APArFwKgtvJrs=
@@ -52,8 +52,8 @@ github.com/aws/aws-sdk-go-v2/service/efs v1.44.0 h1:tJ3xPQGtLvvKq4oJ4j4teeRHOg45
 github.com/aws/aws-sdk-go-v2/service/efs v1.44.0/go.mod h1:Nyb6xjF/Vvm3xXuJziS4k/MlJjb45adQj2CoPwLbb0E=
 github.com/aws/aws-sdk-go-v2/service/elasticache v1.56.0 h1:KwkgsVklj6heo6xV3Go+KNbGtJGv80+u7lnU7Mw3R64=
 github.com/aws/aws-sdk-go-v2/service/elasticache v1.56.0/go.mod h1:jNvxVh9nmK+pamcs+77YWzwFdDK/HuUNLqisJw++0Nk=
-github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.58.0 h1:1mcvOmggj5Z+1KtAKNr2t+JhKcEK2GWv6olsWZHGAbc=
-github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.58.0/go.mod h1:8oLCSyyky75OpQ8Lo72GuoJXbeaEb1R8+dHgQOgWKaI=
+github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.58.1 h1:4KFrMyyOVeXiP4wiDaeevlV73qemxrMY1qN/pmW6My8=
+github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.58.1/go.mod h1:8oLCSyyky75OpQ8Lo72GuoJXbeaEb1R8+dHgQOgWKaI=
 github.com/aws/aws-sdk-go-v2/service/eventbridge v1.48.0 h1:yELHfWewimb2tn3G1VzB9vV0m1gfIg6l7SUJegUwdOM=
 github.com/aws/aws-sdk-go-v2/service/eventbridge v1.48.0/go.mod h1:omTuHWtb4F9qY54sIyduQW899SSbvO6t7rgO6KiLn90=
 github.com/aws/aws-sdk-go-v2/service/glue v1.149.0 h1:GXr9D1hxV67bt+Wwes8ROI4Tr16bLjz/05kXJ9+lV1I=
@@ -80,8 +80,8 @@ github.com/aws/aws-sdk-go-v2/service/organizations v1.53.0 h1:hhqxOJHJnE1tpM4mdB
 github.com/aws/aws-sdk-go-v2/service/organizations v1.53.0/go.mod h1:WgSFAx/LWEGO1Fs40g9h7F1gl5Bez6HawtlrNRDHBoA=
 github.com/aws/aws-sdk-go-v2/service/rds v1.123.0 h1:RZFP5elGZ7WRYuLScbx41DPUQaWfYadpywZij9z9p8U=
 github.com/aws/aws-sdk-go-v2/service/rds v1.123.0/go.mod h1:3SltwJWYlbf00Rh02s42VpyHl+YMk34UA3+R/zb76dw=
-github.com/aws/aws-sdk-go-v2/service/route53 v1.65.0 h1:qPRps/PMjvSZGijfow1IcKhSkaGEK2H2xE2u4jqjsEE=
-github.com/aws/aws-sdk-go-v2/service/route53 v1.65.0/go.mod h1:kg30QdUv8hG6jifkHp+F8448US9y9a+6xS2l5F8aa38=
+github.com/aws/aws-sdk-go-v2/service/route53 v1.65.1 h1:BM6bZKxYFRAWBJIXL7M5JaQA0kGqfoP0ziNB2PkkG8E=
+github.com/aws/aws-sdk-go-v2/service/route53 v1.65.1/go.mod h1:kg30QdUv8hG6jifkHp+F8448US9y9a+6xS2l5F8aa38=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0 h1:7QZWVJZWzHivHWIa+5TELLaBBkbuoj0GPwQtMlJ0sqk=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0/go.mod h1:fcvq5L7dK+5cQFicEJwpI6e6Wn8NY2i6yT5wRLYVc7s=
 github.com/aws/aws-sdk-go-v2/service/scheduler v1.20.0 h1:IuqEJTV2nR+2f9O5Rk0AvYmvc0aFc3wZ0biKCq3sRd0=

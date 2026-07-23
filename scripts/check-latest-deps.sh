@@ -101,7 +101,11 @@ while IFS= read -r tf; do
   while IFS='|' read -r name source ver_constraint; do
     [[ -z "$source" ]] && continue
     latest=$(curl -fsSL "https://registry.terraform.io/v1/providers/${source}" 2>/dev/null | jq -r '.version' || echo "")
-    if [[ -z "$latest" || "$latest" == "null" ]]; then continue; fi
+    if [[ -z "$latest" || "$latest" == "null" ]]; then
+      echo "  FAIL  $tf: $name ($source) latest version could not be determined from the Terraform registry"
+      fail=$((fail + 1))
+      continue
+    fi
     constraint_major=$(echo "$ver_constraint" | sed -E 's/[^0-9]*([0-9]+).*/\1/')
     latest_major=$(echo "$latest" | sed -E 's/^([0-9]+).*/\1/')
     if [[ "$constraint_major" != "$latest_major" ]]; then
@@ -114,6 +118,13 @@ done < <(git ls-files 'versions.tf' '*/versions.tf' | sort)
 # 3. GitHub Actions ---------------------------------------------------
 echo
 echo "=== GitHub Actions freshness ==="
+# Unauthenticated requests to the GitHub API are rate limited, and a throttled
+# reply looks exactly like "no tags". Use whichever credential is already
+# present rather than reporting every action as current.
+gh_token=${GITHUB_TOKEN:-${GH_TOKEN:-}}
+if [[ -z "$gh_token" ]] && command -v gh >/dev/null 2>&1; then
+  gh_token=$(gh auth token 2>/dev/null || true)
+fi
 if [[ -d .github/workflows ]]; then
   actions=$(
     while IFS= read -r workflow_file; do
@@ -135,10 +146,19 @@ if [[ -d .github/workflows ]]; then
     [[ -z "$action_ref" ]] && continue
     repo=${action_ref%@*}
     pinned=${action_ref#*@}
-    tags=$(curl -fsSL "https://api.github.com/repos/${repo}/tags?per_page=100" 2>/dev/null | jq -r '.[].name' || true)
-    if [[ -z "$tags" ]]; then continue; fi
+    tags=$(curl -fsSL ${gh_token:+-H "Authorization: Bearer $gh_token"} \
+      "https://api.github.com/repos/${repo}/tags?per_page=100" 2>/dev/null | jq -r '.[].name' || true)
+    if [[ -z "$tags" ]]; then
+      echo "  FAIL  $file: $repo tags could not be read (set GITHUB_TOKEN, or authenticate the gh CLI; unauthenticated requests are rate limited)"
+      fail=$((fail + 1))
+      continue
+    fi
     latest=$(printf '%s\n' "$tags" | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' | sort -V | tail -1 || true)
-    if [[ -z "$latest" ]]; then continue; fi
+    if [[ -z "$latest" ]]; then
+      echo "  FAIL  $file: $repo publishes no semantic tag to compare $pinned against"
+      fail=$((fail + 1))
+      continue
+    fi
     if [[ "$pinned" != "$latest" ]]; then
       echo "  FAIL  $file: $repo pinned $pinned (latest $latest)"
       fail=$((fail + 1))

@@ -17,7 +17,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/budgets v1.46.0
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.67.0
 	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.58.0
-	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.64.0
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.65.0
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.80.0
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.0
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.61.0
@@ -26,7 +26,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.89.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.44.0
 	github.com/aws/aws-sdk-go-v2/service/elasticache v1.56.0
-	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.58.0
+	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.58.1
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.48.0
 	github.com/aws/aws-sdk-go-v2/service/glue v1.149.0
 	github.com/aws/aws-sdk-go-v2/service/iam v1.56.0
@@ -35,7 +35,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.100.0
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.53.0
 	github.com/aws/aws-sdk-go-v2/service/rds v1.123.0
-	github.com/aws/aws-sdk-go-v2/service/route53 v1.65.0
+	github.com/aws/aws-sdk-go-v2/service/route53 v1.65.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0
 	github.com/aws/aws-sdk-go-v2/service/scheduler v1.20.0
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.44.0

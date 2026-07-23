@@ -4,6 +4,40 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-22 — Gave the Azure simulator the Azure portal's interface
+
+The second of the three simulator interfaces now presents as its own cloud's
+console. Microsoft publishes an annotated diagram of the portal shell, and the
+simulator follows it: the blue global header with a wide central search, a
+breadcrumb, a resource title carrying the resource type and the directory it
+belongs to, a horizontal command bar of icon actions with unavailable commands
+greyed rather than hidden, and a service menu with its own search and
+collapsible groups. A search narrows the menu to what matched, opening a group
+the operator had collapsed rather than hiding the match inside it.
+
+Every resource pane leads with Essentials, the portal's two-column key/value
+grid, before its table. Resource tables carry per-column sorting, selection,
+filtering, and pagination, and keep their column headers while loading, empty,
+or failed, so what the resource is described by stays readable when there are
+no rows to infer it from.
+
+Essentials states only what the query returned. An earlier draft asserted a
+constant "Available" beside every resource, which would have reported health
+the simulator had never been asked for.
+
+Both themes are carried, with the control in the top right. Contrast was
+measured against the surfaces the browser actually paints rather than assumed
+from the palette, and a test holds every text role at or above the 4.5:1 that
+WCAG AA requires — the tightest is 4.53:1, white on the portal's own header
+blue, which leaves little room to drift. That test fails, naming the role and
+the ratio, when a colour regresses.
+
+The header sizes to its contents and establishes a stacking context, and a
+test asserts that every control it holds lies inside it. On the AWS console a
+fixed-height header left the sign-out control drawn outside the header box
+where the bar below covered it, and clicks aimed at it reached the breadcrumbs
+instead. The same shape of bug is now checked for here rather than waited for.
+
 ## 2026-07-22 — Reclaimed the microVM workspaces that filled the runner volume
 
 The `sim (aws sdk)` job began with 89 GB free after its own cleanup and still
