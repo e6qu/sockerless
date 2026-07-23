@@ -169,7 +169,7 @@ func spannerReadAll[T any](t *testing.T, it *spanner.RowIterator) []T {
 // admin SDK so the gRPC data plane has a real schema to execute against.
 func spannerProvision(t *testing.T, ctx context.Context, project, instance, dbID string, ddl []string) {
 	t.Helper()
-	svc, err := spanneradmin.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithoutAuthentication())
+	svc, err := spanneradmin.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	op, err := svc.Projects.Instances.Create("projects/"+project, &spanneradmin.CreateInstanceRequest{

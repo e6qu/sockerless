@@ -20,13 +20,19 @@ import (
 // IAMTempCred binds a temporary (ASIA…) access key to the principal it
 // represents: an assumed role (RoleName set) or a user session (UserName set).
 type IAMTempCred struct {
-	AccessKeyID  string
-	UserName     string // set for GetSessionToken (the caller's user)
-	RoleName     string // set for AssumeRole / AssumeRoleWithWebIdentity
-	PrincipalArn string // the caller-facing ARN (assumed-role/… or user/…)
-	Expiration   string
-	MFA          bool   // the session was authenticated with MFA
-	CreatedAt    string // RFC3339, for aws:MultiFactorAuthAge
+	AccessKeyID string
+	// SecretAccessKey and SessionToken are the credential material the caller
+	// signs subsequent requests with. They are stored so the SigV4
+	// authentication gate can verify a request signed with this temporary
+	// credential (ASIA…) and confirm the presented X-Amz-Security-Token.
+	SecretAccessKey string
+	SessionToken    string
+	UserName        string // set for GetSessionToken (the caller's user)
+	RoleName        string // set for AssumeRole / AssumeRoleWithWebIdentity
+	PrincipalArn    string // the caller-facing ARN (assumed-role/… or user/…)
+	Expiration      string
+	MFA             bool   // the session was authenticated with MFA
+	CreatedAt       string // RFC3339, for aws:MultiFactorAuthAge
 }
 
 // stsRequestMFA reports whether the request presented an MFA device + code,
@@ -131,7 +137,8 @@ func handleSTSAssumeRole(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
 	assumedArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", awsAccountID(), role.RoleName, sessionName)
 	iamTempCreds.Put(akid, IAMTempCred{
-		AccessKeyID: akid, RoleName: role.RoleName, PrincipalArn: assumedArn,
+		AccessKeyID: akid, SecretAccessKey: secret, SessionToken: token,
+		RoleName: role.RoleName, PrincipalArn: assumedArn,
 		Expiration: exp.Format(time.RFC3339),
 		MFA:        stsRequestMFA(r), CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	})
@@ -178,7 +185,7 @@ func handleSTSAssumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Request) 
 	akid, secret, token := stsMintTempCred()
 	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
 	assumedArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", awsAccountID(), role.RoleName, sessionName)
-	iamTempCreds.Put(akid, IAMTempCred{AccessKeyID: akid, RoleName: role.RoleName, PrincipalArn: assumedArn, Expiration: exp.Format(time.RFC3339)})
+	iamTempCreds.Put(akid, IAMTempCred{AccessKeyID: akid, SecretAccessKey: secret, SessionToken: token, RoleName: role.RoleName, PrincipalArn: assumedArn, Expiration: exp.Format(time.RFC3339)})
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<AssumeRoleWithWebIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
   <AssumeRoleWithWebIdentityResult>
@@ -196,8 +203,9 @@ func handleSTSGetSessionToken(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
 	// Bind the session token to the caller's user (if registered) so it inherits
 	// the user's policies under enforcement.
-	tc := IAMTempCred{AccessKeyID: akid, Expiration: exp.Format(time.RFC3339),
-		MFA: stsRequestMFA(r), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	tc := IAMTempCred{AccessKeyID: akid, SecretAccessKey: secret, SessionToken: token,
+		Expiration: exp.Format(time.RFC3339),
+		MFA:        stsRequestMFA(r), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if _, _, userName, ok := iamPrincipalForAccessKey(iamAccessKeyIDFromRequest(r)); ok && userName != "" {
 		if u, uok := iamUsers.Get(userName); uok {
 			tc.UserName = userName
@@ -226,7 +234,7 @@ func handleSTSGetFederationToken(w http.ResponseWriter, r *http.Request) {
 	fedArn := fmt.Sprintf("arn:aws:sts::%s:federated-user/%s", awsAccountID(), name)
 	fedUserID := awsAccountID() + ":" + name
 	iamTempCreds.Put(akid, IAMTempCred{
-		AccessKeyID: akid, PrincipalArn: fedArn,
+		AccessKeyID: akid, SecretAccessKey: secret, SessionToken: token, PrincipalArn: fedArn,
 		Expiration: exp.Format(time.RFC3339), CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	w.Header().Set("Content-Type", "text/xml")
@@ -264,7 +272,8 @@ func handleSTSAssumeRoleWithSAML(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
 	assumedArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", awsAccountID(), role.RoleName, sessionName)
 	iamTempCreds.Put(akid, IAMTempCred{
-		AccessKeyID: akid, RoleName: role.RoleName, PrincipalArn: assumedArn,
+		AccessKeyID: akid, SecretAccessKey: secret, SessionToken: token,
+		RoleName: role.RoleName, PrincipalArn: assumedArn,
 		Expiration: exp.Format(time.RFC3339), CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	w.Header().Set("Content-Type", "text/xml")
@@ -313,7 +322,7 @@ func handleSTSGetDelegatedAccessToken(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
 	principal := fmt.Sprintf("arn:aws:iam::%s:user/simulator", awsAccountID())
 	iamTempCreds.Put(akid, IAMTempCred{
-		AccessKeyID: akid, PrincipalArn: principal,
+		AccessKeyID: akid, SecretAccessKey: secret, SessionToken: token, PrincipalArn: principal,
 		Expiration: exp.Format(time.RFC3339), CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	w.Header().Set("Content-Type", "text/xml")
@@ -340,7 +349,7 @@ func handleSTSAssumeRoot(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
 	rootArn := fmt.Sprintf("arn:aws:iam::%s:root", target)
 	iamTempCreds.Put(akid, IAMTempCred{
-		AccessKeyID: akid, PrincipalArn: rootArn,
+		AccessKeyID: akid, SecretAccessKey: secret, SessionToken: token, PrincipalArn: rootArn,
 		Expiration: exp.Format(time.RFC3339), CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	w.Header().Set("Content-Type", "text/xml")

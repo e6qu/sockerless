@@ -112,6 +112,7 @@ func queryReq(action string, form url.Values) *http.Request {
 	form.Set("Action", action)
 	req := httptest.NewRequest("POST", "/", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	signSeedControlPlane(req)
 	return req
 }
 
@@ -119,6 +120,7 @@ func jsonTargetReq(target, body string) *http.Request {
 	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
 	req.Header.Set("X-Amz-Target", target)
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	signSeedControlPlane(req)
 	return req
 }
 

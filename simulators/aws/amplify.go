@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -1268,7 +1269,7 @@ func amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, artifactID, fileN
 		BranchName: branch,
 		JobId:      jobID,
 		Key:        key,
-		URL:        amplifyPresignedS3URLBase(urlBase, key),
+		URL:        amplifyPresignedS3URLBase(urlBase, key, http.MethodGet),
 	})
 }
 
@@ -1328,17 +1329,46 @@ func amplifyURLBase(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-// amplifyPresignedS3URLBase mints a presigned-shape URL into the sim's own
-// S3 data plane; the same URL services both the GET (artifact download) and
-// PUT (deployment upload) sides because the sim's S3 object routes don't
-// gate on the signature query params.
-func amplifyPresignedS3URLBase(urlBase, key string) string {
-	return fmt.Sprintf("%s/%s/%s?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600",
-		urlBase, amplifyArtifactBucketName(), key)
+// amplifyPresignedS3URLBase mints a real SigV4 query-signed ("presigned") URL
+// into the sim's own S3 data plane. It is signed with the seed admin
+// credential the S3 SigV4 authentication gate verifies against, so the URL
+// authenticates exactly as a presigned URL minted by real AWS Amplify does.
+// A SigV4 presigned URL commits to a single HTTP method, so method selects
+// GET (artifact / log downloads) or PUT (deployment uploads).
+func amplifyPresignedS3URLBase(urlBase, key, method string) string {
+	host := urlBase
+	if u, err := url.Parse(urlBase); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	path := "/" + amplifyArtifactBucketName() + "/" + key
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	dateStamp := now.Format("20060102")
+	cred := credScope{accessKeyID: seedAdminAccessKey, date: dateStamp, region: "us-east-1", service: "s3"}
+
+	q := url.Values{}
+	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	q.Set("X-Amz-Credential", seedAdminAccessKey+"/"+dateStamp+"/us-east-1/s3/aws4_request")
+	q.Set("X-Amz-Date", amzDate)
+	q.Set("X-Amz-Expires", "3600")
+	q.Set("X-Amz-SignedHeaders", "host")
+
+	// Canonical request the same shape sigv4VerifyPresigned rebuilds: the
+	// signed-header set is host only, and the payload is unsigned.
+	canonReq := strings.Join([]string{
+		method,
+		awsURIEncode(path, false),
+		sigv4CanonicalQuery(q, true),
+		"host:" + host + "\n",
+		"host",
+		"UNSIGNED-PAYLOAD",
+	}, "\n")
+	q.Set("X-Amz-Signature", sigv4Signature(seedAdminSecretKey, cred, amzDate, canonReq))
+	return urlBase + path + "?" + q.Encode()
 }
 
-func amplifyPresignedS3URL(r *http.Request, key string) string {
-	return amplifyPresignedS3URLBase(amplifyURLBase(r), key)
+func amplifyPresignedS3URL(r *http.Request, key, method string) string {
+	return amplifyPresignedS3URLBase(amplifyURLBase(r), key, method)
 }
 
 func amplifyJobForRequest(r *http.Request) (amplifyStoredJob, bool) {
@@ -1513,7 +1543,7 @@ func handleAmplifyGenerateAccessLogs(w http.ResponseWriter, r *http.Request) {
 	key := "accesslogs/" + appID + "/" + req.DomainName + "/" + strconv.FormatInt(time.Now().UTC().UnixNano(), 10) + ".log"
 	amplifyPutS3Object(key, "text/plain", []byte("date time x-edge-location sc-bytes c-ip cs-method cs-host cs-uri-stem sc-status\n"))
 	amplifyWriteJSON(w, http.StatusOK, map[string]string{
-		"logUrl": amplifyPresignedS3URL(r, key),
+		"logUrl": amplifyPresignedS3URL(r, key, http.MethodGet),
 	})
 }
 
@@ -1570,13 +1600,13 @@ func handleAmplifyCreateDeployment(w http.ResponseWriter, r *http.Request) {
 	for name := range req.FileMap {
 		key := keyBase + "/files/" + name
 		dep.FileKeys[name] = key
-		fileUploadUrls[name] = amplifyPresignedS3URL(r, key)
+		fileUploadUrls[name] = amplifyPresignedS3URL(r, key, http.MethodPut)
 	}
 	amplifyDeployments.Put(jobID, dep)
 	amplifyWriteJSON(w, http.StatusOK, map[string]any{
 		"jobId":          jobID,
 		"fileUploadUrls": fileUploadUrls,
-		"zipUploadUrl":   amplifyPresignedS3URL(r, dep.ZipKey),
+		"zipUploadUrl":   amplifyPresignedS3URL(r, dep.ZipKey, http.MethodPut),
 	})
 }
 

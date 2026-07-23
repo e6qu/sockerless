@@ -182,12 +182,30 @@ start_simulator() {
 gcp_workforce_provider="//iam.googleapis.com/locations/global/workforcePools/sockerless-console/providers/sso"
 provision_gcp_workforce_provider() {
   local base=http://localhost:29320
+  # The Google Cloud simulator enforces OAuth2 bearer authentication on its
+  # Identity and Access Management data plane exactly as real Google does: a
+  # request without a valid access token is rejected with 401 UNAUTHENTICATED.
+  # The administrator provisioning below therefore obtains an access token from
+  # the simulator's token endpoint — the exempt minter a real client also uses
+  # to acquire a credential — and presents it as a bearer, differing from real
+  # Google only in the endpoint coordinate.
+  local token
+  token=$(curl --silent --show-error --fail -X POST "$base/token" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode 'grant_type=client_credentials' \
+    --data-urlencode 'scope=https://www.googleapis.com/auth/cloud-platform' | jq -r '.access_token')
+  [[ -n $token && $token != null ]] || {
+    echo "Google Cloud simulator issued no access token for provisioning" >&2
+    return 1
+  }
   curl --silent --show-error --fail -o /dev/null -X POST \
     "$base/v1/locations/global/workforcePools?workforcePoolId=sockerless-console" \
+    -H "Authorization: Bearer $token" \
     -H 'Content-Type: application/json' \
     -d '{"displayName":"Sockerless Console","parent":"organizations/sockerless"}'
   curl --silent --show-error --fail -o /dev/null -X POST \
     "$base/v1/locations/global/workforcePools/sockerless-console/providers?workforcePoolProviderId=sso" \
+    -H "Authorization: Bearer $token" \
     -H 'Content-Type: application/json' \
     -d '{"displayName":"Shauth","oidc":{"issuerUri":"http://localhost:8080","clientId":"sockerless-gcp"},"attributeMapping":{"google.subject":"assertion.sub"}}'
 }
@@ -196,31 +214,69 @@ provision_gcp_workforce_provider() {
 # Shauth and a role that trusts the provider — the federation an administrator
 # provisions. The role ARN is the coordinate the console assumes.
 aws_federation_role="arn:aws:iam::123456789012:role/console-federation-role"
+
+# The AWS simulator enforces SigV4 on its control plane exactly as real AWS
+# does: a request that does not carry a valid AWS4-HMAC-SHA256 signature over
+# the request is rejected before any identity is trusted. The administrator
+# provisioning below therefore signs every call the way a real admin client
+# (aws CLI / SDK) does. The RPS CI job carries no aws CLI, so the signature is
+# computed here from bash + openssl against the simulator's seeded bootstrap
+# administrator credential (access-key/secret = test/test, region us-east-1),
+# the same well-known coordinate the SDK/CLI/Terraform test surfaces configure.
+aws_admin_access_key="test"
+aws_admin_secret_key="test"
+aws_sigv4_region="us-east-1"
+aws_sigv4_service=iam
+
+# urlenc percent-encodes a form value per RFC 3986 so the exact body bytes are
+# both what curl sends and what the signature is computed over.
+urlenc() { jq -rn --arg v "$1" '$v|@uri'; }
+
+# hex_sha256 and hmac_hex are the two openssl primitives SigV4 needs. hmac_hex
+# takes a hex-encoded key so the HMAC-SHA256 derivation chain can thread each
+# intermediate key to the next without shell-hostile binary in a variable.
+hex_sha256() { printf '%s' "$1" | openssl dgst -sha256 | sed -E 's/^.*=[[:space:]]*//'; }
+hmac_hex() { printf '%s' "$2" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$1" | sed -E 's/^.*=[[:space:]]*//'; }
+
+# aws_sigv4_post signs an already-form-encoded body with SigV4 and POSTs it to
+# the AWS simulator's control-plane endpoint, matching the canonical request the
+# simulator (and real AWS) reconstruct: method POST, canonical URI "/", empty
+# canonical query, the four signed headers below, and the SHA-256 of the body as
+# the declared payload hash. The signing key is derived from the bootstrap
+# admin's secret through the AWS4 → date → region → iam → aws4_request HMAC chain.
+aws_sigv4_post() {
+  local body=$1
+  local host=localhost:29310
+  local amzdate datestamp payload_hash signed_headers canonical_request scope string_to_sign
+  amzdate=$(date -u +%Y%m%dT%H%M%SZ)
+  datestamp=$(date -u +%Y%m%d)
+  payload_hash=$(hex_sha256 "$body")
+  signed_headers="content-type;host;x-amz-content-sha256;x-amz-date"
+  canonical_request=$(printf 'POST\n/\n\ncontent-type:application/x-www-form-urlencoded\nhost:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n\n%s\n%s' \
+    "$host" "$payload_hash" "$amzdate" "$signed_headers" "$payload_hash")
+  scope="$datestamp/$aws_sigv4_region/$aws_sigv4_service/aws4_request"
+  string_to_sign=$(printf 'AWS4-HMAC-SHA256\n%s\n%s\n%s' "$amzdate" "$scope" "$(hex_sha256 "$canonical_request")")
+  local k_date k_region k_service k_signing signature
+  k_date=$(printf '%s' "$datestamp" | openssl dgst -sha256 -hmac "AWS4$aws_admin_secret_key" | sed -E 's/^.*=[[:space:]]*//')
+  k_region=$(hmac_hex "$k_date" "$aws_sigv4_region")
+  k_service=$(hmac_hex "$k_region" "$aws_sigv4_service")
+  k_signing=$(hmac_hex "$k_service" "aws4_request")
+  signature=$(hmac_hex "$k_signing" "$string_to_sign")
+  curl --silent --show-error --fail -o /dev/null -X POST "http://$host/" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    -H "X-Amz-Date: $amzdate" \
+    -H "X-Amz-Content-Sha256: $payload_hash" \
+    -H "Authorization: AWS4-HMAC-SHA256 Credential=$aws_admin_access_key/$scope, SignedHeaders=$signed_headers, Signature=$signature" \
+    --data "$body"
+}
+
 provision_aws_federation() {
-  local base=http://localhost:29310
-  curl --silent --show-error --fail -o /dev/null -X POST "$base/" \
-    -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode "Action=CreateOpenIDConnectProvider" \
-    --data-urlencode "Version=2010-05-08" \
-    --data-urlencode "Url=http://localhost:8080" \
-    --data-urlencode "ClientIDList.member.1=sockerless-aws" \
-    --data-urlencode "ThumbprintList.member.1=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  curl --silent --show-error --fail -o /dev/null -X POST "$base/" \
-    -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode "Action=CreateRole" \
-    --data-urlencode "Version=2010-05-08" \
-    --data-urlencode "RoleName=console-federation-role" \
-    --data-urlencode 'AssumeRolePolicyDocument={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/localhost:8080"},"Action":"sts:AssumeRoleWithWebIdentity"}]}'
+  aws_sigv4_post "Action=CreateOpenIDConnectProvider&Version=2010-05-08&Url=$(urlenc http://localhost:8080)&ClientIDList.member.1=sockerless-aws&ThumbprintList.member.1=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  aws_sigv4_post "Action=CreateRole&Version=2010-05-08&RoleName=console-federation-role&AssumeRolePolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/localhost:8080"},"Action":"sts:AssumeRoleWithWebIdentity"}]}')"
   # The console reads across services, so the administrator grants the role the
   # read access it needs; without it, the simulator's IAM enforcement denies the
   # federated calls, exactly as real AWS would.
-  curl --silent --show-error --fail -o /dev/null -X POST "$base/" \
-    -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode "Action=PutRolePolicy" \
-    --data-urlencode "Version=2010-05-08" \
-    --data-urlencode "RoleName=console-federation-role" \
-    --data-urlencode "PolicyName=console-read" \
-    --data-urlencode 'PolicyDocument={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecs:*","lambda:*","ecr:*","s3:*","logs:*"],"Resource":"*"}]}'
+  aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=console-federation-role&PolicyName=console-read&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecs:*","lambda:*","ecr:*","s3:*","logs:*"],"Resource":"*"}]}')"
 }
 
 start_simulator "$repo_root/simulators/aws/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision" "$aws_federation_role"

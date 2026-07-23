@@ -192,6 +192,16 @@ func registerS3(srv *sim.Server) {
 // with a registered restricted key, or a bucket policy that denies, is blocked.
 func s3Enforced(opName func(*http.Request, []byte) string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Authenticate the SigV4 signature first. A request that presents no
+		// credential (sigv4NoCredential) is anonymous — allowed through so a
+		// bucket/object policy granting Principal:"*" still serves public
+		// reads; a present-but-invalid signature is rejected. The object body
+		// is never read here (nil): S3 clients always declare the payload hash
+		// in x-amz-content-sha256, so large uploads are not buffered.
+		if _, serr := sigv4Verify(r, nil); serr != nil {
+			sigv4WriteS3Error(w, r, serr)
+			return
+		}
 		if op := opName(r, nil); op != "" {
 			if !iamEnforceREST(w, r, "s3:"+op, s3RequestResourceARN(r), s3WriteIAMDeny) {
 				return

@@ -63,7 +63,7 @@ func TestContainerAppsApps_CLI_CreateGetDelete(t *testing.T) {
 		"/resourceGroups/"+resourceGroup+
 		"/providers/Microsoft.App/containerApps/cli-test-app?api-version="+acaAPIVersion, nil)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", "Bearer "+armBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()

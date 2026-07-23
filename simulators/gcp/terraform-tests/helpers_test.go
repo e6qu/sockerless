@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -31,7 +32,37 @@ var (
 	grpcEndpoint string
 	caCertFile   string
 	tfEndpoint   string
+	// accessToken is a real simulator-minted OAuth2 access token the terraform
+	// google provider presents to the data plane; set once in TestMain.
+	accessToken string
 )
+
+// mintSimAccessToken fetches an access token from the simulator's OAuth2 token
+// endpoint — the same JWT-bearer grant a real terraform google provider obtains
+// — so provider requests authenticate against the data plane exactly as they
+// would against Google, differing only in the endpoint coordinate.
+func mintSimAccessToken(base string) (string, error) {
+	resp, err := http.PostForm(base+"/token", url.Values{
+		"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
+	})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+	}
+	var body struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	if body.AccessToken == "" {
+		return "", fmt.Errorf("token endpoint returned an empty access token")
+	}
+	return body.AccessToken, nil
+}
 
 func TestMain(m *testing.M) {
 	noProxy := mergeNoProxy(os.Getenv("NO_PROXY"),
@@ -91,6 +122,17 @@ func TestMain(m *testing.M) {
 	if err := waitForHealth(baseURL + "/health"); err != nil {
 		simCmd.Process.Kill()
 		log.Fatalf("Simulator did not become healthy: %v", err)
+	}
+
+	// The data plane verifies the bearer on every request, so the terraform
+	// google provider must present a token the simulator signed. Mint one from
+	// the simulator's own token endpoint (reachable directly over plain HTTP
+	// even when the provider talks through the HTTPS gateway).
+	var tokenErr error
+	accessToken, tokenErr = mintSimAccessToken(baseURL)
+	if tokenErr != nil {
+		simCmd.Process.Kill()
+		log.Fatalf("Failed to mint simulator access token: %v", tokenErr)
 	}
 
 	if os.Getenv("SOCKERLESS_TF_HTTPS_GATEWAY") == "1" {
@@ -183,6 +225,7 @@ func terraformCmd(args ...string) *exec.Cmd {
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("BIGTABLE_EMULATOR_HOST=%s", grpcEndpoint),
 		fmt.Sprintf("TF_VAR_endpoint=%s", tfEndpoint),
+		fmt.Sprintf("TF_VAR_access_token=%s", accessToken),
 	)
 	if caCertFile != "" {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SSL_CERT_FILE=%s", caCertFile))

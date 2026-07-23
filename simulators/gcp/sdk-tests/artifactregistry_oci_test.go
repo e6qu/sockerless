@@ -14,7 +14,7 @@ import (
 func TestArtifactRegistryDockerHubRemoteRepositorySDKAndOCI(t *testing.T) {
 	service, err := artifactregistry.NewService(ctx,
 		option.WithEndpoint(baseURL+"/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 

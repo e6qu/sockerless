@@ -25,7 +25,7 @@ func TestContainerApps_CreateJob(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/aca-rg?api-version=2023-07-01",
 		strings.NewReader(rgBody))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, err := http.DefaultClient.Do(rgReq)
 	require.NoError(t, err)
 	rgResp.Body.Close()
@@ -53,7 +53,7 @@ func TestContainerApps_CreateJob(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/aca-rg/providers/Microsoft.App/jobs/test-job?api-version=2024-03-01",
 		strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestContainerApps_StartJobInjectsLogs(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/aca-log-rg?api-version=2023-07-01",
 		strings.NewReader(rgBody))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, err := http.DefaultClient.Do(rgReq)
 	require.NoError(t, err)
 	rgResp.Body.Close()
@@ -98,7 +98,7 @@ func TestContainerApps_StartJobInjectsLogs(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/aca-log-rg/providers/Microsoft.App/jobs/log-test-job?api-version=2024-03-01",
 		strings.NewReader(string(body)))
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createReq.Header.Set("Authorization", simARMBearer)
 	createResp, err := http.DefaultClient.Do(createReq)
 	require.NoError(t, err)
 	createResp.Body.Close()
@@ -108,7 +108,7 @@ func TestContainerApps_StartJobInjectsLogs(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/aca-log-rg/providers/Microsoft.App/jobs/log-test-job/start?api-version=2024-03-01",
 		strings.NewReader("{}"))
 	startReq.Header.Set("Content-Type", "application/json")
-	startReq.Header.Set("Authorization", "Bearer fake-token")
+	startReq.Header.Set("Authorization", simARMBearer)
 	startResp, err := http.DefaultClient.Do(startReq)
 	require.NoError(t, err)
 	startResp.Body.Close()
@@ -148,7 +148,7 @@ func TestContainerApps_MultiContainerJobSharesLocalhost(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
 		strings.NewReader(rgBody))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, err := http.DefaultClient.Do(rgReq)
 	require.NoError(t, err)
 	rgResp.Body.Close()
@@ -182,7 +182,7 @@ func TestContainerApps_MultiContainerJobSharesLocalhost(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
 		strings.NewReader(string(body)))
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createReq.Header.Set("Authorization", simARMBearer)
 	createResp, err := http.DefaultClient.Do(createReq)
 	require.NoError(t, err)
 	createResp.Body.Close()
@@ -191,7 +191,7 @@ func TestContainerApps_MultiContainerJobSharesLocalhost(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"/start?api-version=2024-03-01",
 		strings.NewReader("{}"))
 	startReq.Header.Set("Content-Type", "application/json")
-	startReq.Header.Set("Authorization", "Bearer fake-token")
+	startReq.Header.Set("Authorization", simARMBearer)
 	startResp, err := http.DefaultClient.Do(startReq)
 	require.NoError(t, err)
 	startResp.Body.Close()
@@ -223,7 +223,7 @@ func acaCreateJob(t *testing.T, rg, jobName string) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
 		strings.NewReader(rgBody))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, err := http.DefaultClient.Do(rgReq)
 	require.NoError(t, err)
 	rgResp.Body.Close()
@@ -247,7 +247,7 @@ func acaCreateJob(t *testing.T, rg, jobName string) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
 		strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
@@ -261,7 +261,7 @@ func acaStartExecution(t *testing.T, rg, jobName string) string {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"/start?api-version=2024-03-01",
 		strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -297,7 +297,7 @@ func acaGetExecution(t *testing.T, rg, jobName, execName string) map[string]any 
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"/executions/"+execName+"?api-version=2024-03-01",
 		nil)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -339,7 +339,7 @@ func TestContainerApps_ExecutionStoppedState(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/status-rg/providers/Microsoft.App/jobs/stop-job/executions/"+execName+"/stop?api-version=2024-03-01",
 		strings.NewReader("{}"))
 	stopReq.Header.Set("Content-Type", "application/json")
-	stopReq.Header.Set("Authorization", "Bearer fake-token")
+	stopReq.Header.Set("Authorization", simARMBearer)
 	stopResp, err := http.DefaultClient.Do(stopReq)
 	require.NoError(t, err)
 	stopResp.Body.Close()
@@ -366,7 +366,7 @@ func acaCreateJobWithImageAndCommand(t *testing.T, rg, jobName, image string, cm
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
 		strings.NewReader(rgBody))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, err := http.DefaultClient.Do(rgReq)
 	require.NoError(t, err)
 	rgResp.Body.Close()
@@ -393,7 +393,7 @@ func acaCreateJobWithImageAndCommand(t *testing.T, rg, jobName, image string, cm
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
 		strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
@@ -468,7 +468,7 @@ func TestContainerApps_GetJob(t *testing.T) {
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/aca-rg/providers/Microsoft.App/jobs/test-job?api-version=2024-03-01",
 		nil)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -491,7 +491,7 @@ func ensureRG(t *testing.T, rg string) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
 		strings.NewReader(rgBody))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, err := http.DefaultClient.Do(rgReq)
 	require.NoError(t, err)
 	rgResp.Body.Close()
@@ -728,7 +728,7 @@ func TestContainerApps_StopNonExistentExecution(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/stop-err-job/executions/nonexistent/stop?api-version=2024-03-01",
 		strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()

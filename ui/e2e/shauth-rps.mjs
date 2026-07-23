@@ -269,15 +269,34 @@ async function assertFederatedAzureToken(context, app) {
   const claims = JSON.parse(Buffer.from(subjectToken.split(".")[1], "base64url").toString("utf8"));
   const audience = Array.isArray(claims.aud) ? claims.aud[0] : claims.aud;
 
+  // The Azure simulator enforces bearer authentication on its Azure Resource
+  // Manager plane exactly as real ARM does: a request without a token whose
+  // `aud` is the management audience is rejected with 401. The administrator
+  // provisioning below therefore acquires an ARM token through a client
+  // credentials grant — the same flow a real admin client (az login as a service
+  // principal, azidentity) uses — and presents it on every ARM write. The token
+  // endpoint is exempt because it is how a client obtains the credential.
+  const adminTokenResponse = await context.request.post(`${origin}/organizations/oauth2/v2.0/token`, {
+    form: {
+      grant_type: "client_credentials",
+      client_id: "console-provisioning-admin",
+      scope: "https://management.azure.com/.default",
+    },
+  });
+  assert.equal(adminTokenResponse.status(), 200, `${app.name} admin ARM token request returned ${adminTokenResponse.status()}`);
+  const { access_token: adminToken } = await adminTokenResponse.json();
+  assert.ok(adminToken, `${app.name} issued no admin ARM token to provision with`);
+  const armAuth = { Authorization: `Bearer ${adminToken}` };
+
   const rgResponse = await context.request.put(
     `${origin}/subscriptions/${sub}/resourcegroups/${rg}?api-version=2021-04-01`,
-    { data: { location: "eastus" } },
+    { headers: armAuth, data: { location: "eastus" } },
   );
   assert.ok(rgResponse.ok(), `${app.name} resource group create returned ${rgResponse.status()}`);
 
   const identityResponse = await context.request.put(
     `${origin}/subscriptions/${sub}/resourceGroups/${rg}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${identityName}?api-version=2024-11-30`,
-    { data: { location: "eastus" } },
+    { headers: armAuth, data: { location: "eastus" } },
   );
   assert.ok(identityResponse.ok(), `${app.name} managed identity create returned ${identityResponse.status()}`);
   const { properties: identity } = await identityResponse.json();
@@ -285,7 +304,7 @@ async function assertFederatedAzureToken(context, app) {
 
   const ficResponse = await context.request.put(
     `${origin}/subscriptions/${sub}/resourceGroups/${rg}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${identityName}/federatedIdentityCredentials/console-fic?api-version=2024-11-30`,
-    { data: { properties: { issuer: claims.iss, subject: claims.sub, audiences: [audience] } } },
+    { headers: armAuth, data: { properties: { issuer: claims.iss, subject: claims.sub, audiences: [audience] } } },
   );
   assert.ok(ficResponse.ok(), `${app.name} federated identity credential create returned ${ficResponse.status()}`);
 

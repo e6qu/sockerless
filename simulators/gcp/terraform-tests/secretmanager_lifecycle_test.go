@@ -43,6 +43,7 @@ func terraformCmdInDir(dir string, args ...string) *exec.Cmd {
 	cmd.Env = append(os.Environ(),
 		"BIGTABLE_EMULATOR_HOST="+grpcEndpoint,
 		"TF_VAR_endpoint="+tfEndpoint,
+		"TF_VAR_access_token="+accessToken,
 	)
 	if caCertFile != "" {
 		cmd.Env = append(cmd.Env, "SSL_CERT_FILE="+caCertFile)

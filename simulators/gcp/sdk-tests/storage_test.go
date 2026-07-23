@@ -18,10 +18,12 @@ import (
 
 func storageClient(t *testing.T) *storage.Client {
 	t.Helper()
-	// Use STORAGE_EMULATOR_HOST for proper download URL construction
+	// Use STORAGE_EMULATOR_HOST for proper download URL construction, and a
+	// real simulator-minted token so the client authenticates against the data
+	// plane the way it does against Google.
 	host := strings.TrimPrefix(baseURL, "http://")
 	t.Setenv("STORAGE_EMULATOR_HOST", host)
-	client, err := storage.NewClient(ctx)
+	client, err := storage.NewClient(ctx, option.WithHTTPClient(simAuthHTTPClient()))
 	require.NoError(t, err)
 	return client
 }
@@ -106,7 +108,7 @@ func TestGCS_JSONAPIObjectGetAltMedia(t *testing.T) {
 
 	svc, err := storageapi.NewService(ctx,
 		option.WithEndpoint(baseURL+"/storage/v1/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	resp, err := svc.Objects.Get("json-api-media-bucket", "workspace/exec.tar.gz").Download()

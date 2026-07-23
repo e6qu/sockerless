@@ -14,7 +14,7 @@ func bqService(t *testing.T) *bigquery.Service {
 	t.Helper()
 	svc, err := bigquery.NewService(ctx,
 		option.WithEndpoint(baseURL+"/bigquery/v2/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc
@@ -175,7 +175,7 @@ func TestBQCoverage_TabledataAndJobs(t *testing.T) {
 func TestFSCoverage_CreateUpdateDeleteBatchWrite(t *testing.T) {
 	svc, err := firestore.NewService(ctx,
 		option.WithEndpoint(baseURL+"/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 

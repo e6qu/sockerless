@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -77,9 +78,14 @@ func TestMain(m *testing.M) {
 	simCmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort))
 	simCmd.Stdout = os.Stdout
 	simCmd.Stderr = os.Stderr
+	// Own process group so the whole simulator subtree is reaped with one
+	// kill(-pgid) — including on Ctrl-C / the go-test hard-timeout SIGQUIT,
+	// which aborts the binary without running the post-m.Run() cleanup below.
+	simCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := simCmd.Start(); err != nil {
 		log.Fatalf("Failed to start simulator: %v", err)
 	}
+	reapSubprocessesOnSignal()
 
 	baseURL = fmt.Sprintf("http://127.0.0.1:%d", simPort)
 	tfEndpoint = baseURL
@@ -124,6 +130,8 @@ func TestMain(m *testing.M) {
 		)
 		gatewayCmd.Stdout = os.Stdout
 		gatewayCmd.Stderr = os.Stderr
+		// Own process group, reaped the same way as the simulator.
+		gatewayCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := gatewayCmd.Start(); err != nil {
 			simCmd.Process.Kill()
 			log.Fatalf("Failed to start HTTPS gateway: %v", err)
@@ -144,13 +152,41 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
-	if gatewayCmd != nil {
-		gatewayCmd.Process.Kill()
-		gatewayCmd.Wait()
-	}
-	simCmd.Process.Kill()
-	simCmd.Wait()
+	reapGroup(gatewayCmd)
+	reapGroup(simCmd)
 	os.Exit(code)
+}
+
+// reapGroup SIGKILLs the whole process group of a Setpgid'd subprocess and
+// reaps it. Safe on a nil / not-yet-started command.
+func reapGroup(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	_ = cmd.Wait()
+}
+
+// reapSubprocessesOnSignal kills the simulator and HTTPS gateway process groups
+// when the test binary is aborted by Ctrl-C or the go-test hard-timeout
+// SIGQUIT. The normal-exit cleanup after m.Run() does not run on those paths,
+// so without this the subprocesses would orphan.
+func reapSubprocessesOnSignal() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		sig := <-ch
+		if gatewayCmd != nil && gatewayCmd.Process != nil {
+			_ = syscall.Kill(-gatewayCmd.Process.Pid, syscall.SIGKILL)
+		}
+		if simCmd != nil && simCmd.Process != nil {
+			_ = syscall.Kill(-simCmd.Process.Pid, syscall.SIGKILL)
+		}
+		// Restore default disposition and re-deliver so the exit status
+		// reflects the terminating signal.
+		signal.Reset(sig.(syscall.Signal))
+		_ = syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
+	}()
 }
 
 func waitForHealth(url string) error {

@@ -2,15 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -124,7 +118,7 @@ func federateWorkforceSubject(ctx context.Context, providerName, subjectToken st
 	now := time.Now()
 	expires := now.Add(time.Hour)
 	principal := fmt.Sprintf("%s/subject/%s", workforcePoolFromProvider(providerName), subject)
-	return mintFederatedAccessToken(principal, now, expires), int(time.Until(expires).Seconds()), "", nil
+	return signAccessToken(principal, now, expires), int(time.Until(expires).Seconds()), "", nil
 }
 
 // workforceProviderFromAudience turns the STS audience — the workforce pool
@@ -236,40 +230,9 @@ func mapWorkforceSubject(oidcConfig map[string]any, claims map[string]any, defau
 	return defaultSubject
 }
 
-// Federated access tokens the Security Token Service issues. Real Google signs
-// these with rotated keys the resource services trust; the simulator signs with
-// a per-process key its own resource endpoints verify, so a federated token
-// this endpoint mints is the only kind those endpoints accept.
-var (
-	federatedTokenKey     []byte
-	federatedTokenKeyOnce sync.Once
-)
-
-func federatedTokenSignKey() []byte {
-	federatedTokenKeyOnce.Do(func() {
-		federatedTokenKey = make([]byte, 32)
-		_, _ = rand.Read(federatedTokenKey)
-	})
-	return federatedTokenKey
-}
-
-// mintFederatedAccessToken issues a real-shape JWT access token naming the
-// federated workforce principal, signed with the simulator's federation key.
-func mintFederatedAccessToken(principal string, issuedAt, expiresAt time.Time) string {
-	headerJSON, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
-	payloadJSON, _ := json.Marshal(map[string]any{
-		"iss":   "https://sts.googleapis.com",
-		"sub":   principal,
-		"aud":   "https://iam.googleapis.com",
-		"iat":   issuedAt.Unix(),
-		"exp":   expiresAt.Unix(),
-		"scope": "https://www.googleapis.com/auth/cloud-platform",
-	})
-	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
-	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
-	signingInput := headerB64 + "." + payloadB64
-	mac := hmac.New(sha256.New, federatedTokenSignKey())
-	mac.Write([]byte(signingInput))
-	sigB64 := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return signingInput + "." + sigB64
-}
+// Federated access tokens the Security Token Service issues are signed with the
+// simulator's shared access-token key (see signAccessToken), so a token this
+// endpoint mints is verified by the data-plane bearer middleware exactly like a
+// service-account or metadata token. Real Google signs opaque federated tokens
+// its resource services validate internally; the simulator plays the same role
+// with a token it both issues and verifies.

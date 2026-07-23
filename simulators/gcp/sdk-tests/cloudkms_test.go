@@ -23,7 +23,7 @@ func kmsService(t *testing.T) *cloudkms.Service {
 	t.Helper()
 	svc, err := cloudkms.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

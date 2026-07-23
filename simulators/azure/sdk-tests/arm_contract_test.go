@@ -16,7 +16,7 @@ func TestAzureARMRequiresAPIVersion(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups",
 		nil)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestAzureARMListResponsesUseEmptyArrays(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/containerApps?api-version=2024-03-01",
 		nil)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)

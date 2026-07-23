@@ -375,6 +375,11 @@ func (ecsDesiredCountController) Apply(target AppScalableTarget, newCount int) b
 		return false
 	}
 	svc.DesiredCount = newCount
+	// The modeled service reaches steady state synchronously, so runningCount
+	// tracks the new desiredCount (pendingCount stays zero) — matching
+	// UpdateService, which keeps them in lockstep.
+	svc.RunningCount = newCount
+	svc.PendingCount = 0
 	now := float64(time.Now().Unix())
 	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
 	ecsServices.Put(key, svc)

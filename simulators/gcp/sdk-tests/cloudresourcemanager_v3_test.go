@@ -28,7 +28,7 @@ func crmV3Service(t *testing.T) *crm.Service {
 	t.Helper()
 	svc, err := crm.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

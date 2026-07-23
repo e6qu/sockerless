@@ -162,7 +162,7 @@ func TestIdentity_CreateOrUpdateStatusCodes(t *testing.T) {
 	put := func() int {
 		req, _ := http.NewRequestWithContext(ctx, "PUT", url, strings.NewReader(`{"location":"eastus"}`))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer fake-token")
+		req.Header.Set("Authorization", simARMBearer)
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		resp.Body.Close()

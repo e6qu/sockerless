@@ -4,6 +4,54 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-23 — Made the simulators verify credentials, and fixed the ECS harness
+
+The simulators accepted unverified caller-controlled credentials (BUG-2625, P0):
+AWS derived identity from the cleartext `Credential=` access-key id and never
+checked the SigV4 `Signature`; Google Cloud and Azure trusted arbitrary bearer
+content (GCP had no data-plane auth at all; Azure verified a bearer only on its
+UserInfo endpoint). All three now verify the way the real clouds do.
+
+- **AWS** recomputes the SigV4 signature (canonical request, key derivation,
+  constant-time compare) at the awsjson/query control plane and S3, looking up
+  the secret for the presented long-term (`AKIA`) or temporary (`ASIA`) key —
+  temporary-credential secrets and session tokens are now persisted, and a
+  bootstrap account credential (`test`/`test`, the coordinate every client
+  already signs with) is seeded so an account can act before it mints its own
+  keys. Failures return `SignatureDoesNotMatch` / `InvalidClientTokenId` /
+  `MissingAuthenticationToken`. `AssumeRoleWithWebIdentity`/SAML, presigned
+  URLs, and S3 public reads stay exempt. Enforcement also exposed and fixed a
+  synthetic-behavior bug: the Amplify handler had minted a fake presigned S3 URL
+  with no signature (BUG-2636).
+- **Google Cloud** consolidated its access-token minters onto one process-stable
+  RS256 key, published a JWKS, and added a data-plane middleware verifying the
+  bearer's signature, issuer, audience, and expiry (`UNAUTHENTICATED`
+  otherwise). **Azure** reused its RS256 verifier, added the missing audience
+  check, and wired it as an ARM data-plane middleware (`invalid_token`
+  otherwise). Both exempt their token minters, discovery/JWKS, metadata/IMDS,
+  health, and OCI registries.
+
+Because the simulators now enforce, every consumer that had relied on them not
+checking was made faithful: the SDK/CLI/Terraform suites fetch a real token or
+sign with the seed; the sockerless backends dropped their `WithoutAuthentication`
+(GCP) and `fakeCredential` (Azure) fakes for a real GCE metadata token source
+and `DefaultAzureCredential` — differing from the real cloud only in
+coordinates; the relying-party suite signs its AWS IAM provisioning and bearer-
+authenticates its GCP and Azure provisioning; and the console browser e2e, which
+reaches the enforcing simulator without an identity provider, moved its
+reads-real-data assertions to the authenticated relying-party path.
+
+Separately, the AWS ECS Terraform harness left subprocesses running past its
+deadline (BUG-2569, P1): the ECS *service* model launched real Docker containers
+to satisfy `DesiredCount`, and no-command images (`alpine`/`busybox`) crash-
+looped forever so the service never reached steady state and containers leaked.
+The service is now a control-plane state machine that reaches
+`runningCount==desiredCount` with a COMPLETED deployment synchronously (real
+workloads run through `RunTask`, which nothing changed), and the `internal/tfsim`
+harness gained the process-group + deadline-watchdog reaper the main harness
+already had. `TestStackProductionShape` converges and terminates with zero
+leaked containers or processes.
+
 ## 2026-07-23 — Completed the Microsoft Azure portal on both fidelity axes
 
 The Azure portal got the same treatment the Google Cloud and AWS consoles did,

@@ -37,6 +37,7 @@ func armReq(t *testing.T, method, path string, body string) *http.Response {
 	req, err := http.NewRequest(method, baseURL+path, br)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
@@ -50,6 +51,7 @@ func waitAzureAsyncOperation(t *testing.T, opURL string) {
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, opURL, nil)
 		require.NoError(t, err)
+		req.Header.Set("Authorization", simARMBearer)
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		body, _ := io.ReadAll(resp.Body)

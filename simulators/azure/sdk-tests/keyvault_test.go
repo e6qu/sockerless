@@ -24,7 +24,7 @@ func TestKeyVault_ARM_CRUD(t *testing.T) {
 		req, _ := http.NewRequest("DELETE",
 			baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.KeyVault/vaults/"+vaultName+"?api-version=2024-04-01-preview",
 			nil)
-		req.Header.Set("Authorization", "Bearer fake-token")
+		req.Header.Set("Authorization", simARMBearer)
 		http.DefaultClient.Do(req)
 	}()
 
@@ -43,7 +43,7 @@ func TestKeyVault_ARM_CRUD(t *testing.T) {
 	req, _ := http.NewRequest("PUT",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.KeyVault/vaults/"+vaultName+"?api-version=2024-04-01-preview",
 		strings.NewReader(string(data)))
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestKeyVault_ARM_CRUD(t *testing.T) {
 	getReq, _ := http.NewRequest("GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.KeyVault/vaults/"+vaultName+"?api-version=2024-04-01-preview",
 		nil)
-	getReq.Header.Set("Authorization", "Bearer fake-token")
+	getReq.Header.Set("Authorization", simARMBearer)
 	getResp, err := http.DefaultClient.Do(getReq)
 	require.NoError(t, err)
 	defer getResp.Body.Close()
@@ -87,7 +87,7 @@ func TestKeyVault_ARMPatchAccessPolicyAdvertisedEndpointAndDeletedVault(t *testi
 		},
 	})
 	createReq, _ := http.NewRequest("PUT", vaultURL, strings.NewReader(string(createBody)))
-	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createReq.Header.Set("Authorization", simARMBearer)
 	createReq.Header.Set("Content-Type", "application/json")
 	createResp, err := http.DefaultClient.Do(createReq)
 	require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestKeyVault_ARMPatchAccessPolicyAdvertisedEndpointAndDeletedVault(t *testi
 
 	patchBody := `{"tags":{"env":"sdk"},"properties":{"enableRbacAuthorization":true}}`
 	patchReq, _ := http.NewRequest("PATCH", vaultURL, strings.NewReader(patchBody))
-	patchReq.Header.Set("Authorization", "Bearer fake-token")
+	patchReq.Header.Set("Authorization", simARMBearer)
 	patchReq.Header.Set("Content-Type", "application/json")
 	patchResp, err := http.DefaultClient.Do(patchReq)
 	require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestKeyVault_ARMPatchAccessPolicyAdvertisedEndpointAndDeletedVault(t *testi
 	apReq, _ := http.NewRequest("PUT",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.KeyVault/vaults/"+vaultName+"/accessPolicies/add?api-version=2024-11-01",
 		strings.NewReader(accessPolicyBody))
-	apReq.Header.Set("Authorization", "Bearer fake-token")
+	apReq.Header.Set("Authorization", simARMBearer)
 	apReq.Header.Set("Content-Type", "application/json")
 	apResp, err := http.DefaultClient.Do(apReq)
 	require.NoError(t, err)
@@ -125,7 +125,7 @@ func TestKeyVault_ARMPatchAccessPolicyAdvertisedEndpointAndDeletedVault(t *testi
 	require.Len(t, apProps["accessPolicies"].([]any), 1)
 
 	deleteReq, _ := http.NewRequest("DELETE", vaultURL, nil)
-	deleteReq.Header.Set("Authorization", "Bearer fake-token")
+	deleteReq.Header.Set("Authorization", simARMBearer)
 	deleteResp, err := http.DefaultClient.Do(deleteReq)
 	require.NoError(t, err)
 	deleteResp.Body.Close()
@@ -134,7 +134,7 @@ func TestKeyVault_ARMPatchAccessPolicyAdvertisedEndpointAndDeletedVault(t *testi
 	deletedReq, _ := http.NewRequest("GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/providers/Microsoft.KeyVault/locations/eastus/deletedVaults/"+vaultName+"?api-version=2024-11-01",
 		nil)
-	deletedReq.Header.Set("Authorization", "Bearer fake-token")
+	deletedReq.Header.Set("Authorization", simARMBearer)
 	deletedResp, err := http.DefaultClient.Do(deletedReq)
 	require.NoError(t, err)
 	defer deletedResp.Body.Close()
@@ -146,7 +146,7 @@ func TestKeyVault_ARMPatchAccessPolicyAdvertisedEndpointAndDeletedVault(t *testi
 	purgeReq, _ := http.NewRequest("POST",
 		baseURL+"/subscriptions/"+subscriptionID+"/providers/Microsoft.KeyVault/locations/eastus/deletedVaults/"+vaultName+"/purge?api-version=2024-11-01",
 		nil)
-	purgeReq.Header.Set("Authorization", "Bearer fake-token")
+	purgeReq.Header.Set("Authorization", simARMBearer)
 	purgeResp, err := http.DefaultClient.Do(purgeReq)
 	require.NoError(t, err)
 	purgeResp.Body.Close()
@@ -154,7 +154,9 @@ func TestKeyVault_ARMPatchAccessPolicyAdvertisedEndpointAndDeletedVault(t *testi
 	require.NotEmpty(t, purgeResp.Header.Get("Location"))
 	// GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}/purge/operation
 	// is the documented Location-based long-running-operation completion route.
-	purgePollResp, err := http.Get(purgeResp.Header.Get("Location"))
+	purgePollReq, _ := http.NewRequest("GET", purgeResp.Header.Get("Location"), nil)
+	purgePollReq.Header.Set("Authorization", simARMBearer)
+	purgePollResp, err := http.DefaultClient.Do(purgePollReq)
 	require.NoError(t, err)
 	purgePollResp.Body.Close()
 	require.Equal(t, http.StatusOK, purgePollResp.StatusCode)
@@ -172,7 +174,7 @@ func TestKeyVault_DataPlane_SetGetDelete(t *testing.T) {
 		req, _ := http.NewRequest("DELETE",
 			baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.KeyVault/vaults/"+vaultName+"?api-version=2024-04-01-preview",
 			nil)
-		req.Header.Set("Authorization", "Bearer fake-token")
+		req.Header.Set("Authorization", simARMBearer)
 		http.DefaultClient.Do(req)
 	}()
 
@@ -185,7 +187,7 @@ func TestKeyVault_DataPlane_SetGetDelete(t *testing.T) {
 	createReq, _ := http.NewRequest("PUT",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.KeyVault/vaults/"+vaultName+"?api-version=2024-04-01-preview",
 		strings.NewReader(string(createBody)))
-	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createReq.Header.Set("Authorization", simARMBearer)
 	createReq.Header.Set("Content-Type", "application/json")
 	createResp, err := http.DefaultClient.Do(createReq)
 	require.NoError(t, err)
@@ -203,7 +205,7 @@ func TestKeyVault_DataPlane_SetGetDelete(t *testing.T) {
 	setReq, _ := http.NewRequest("PUT",
 		baseURL+"/secrets/db-password?api-version=7.4",
 		strings.NewReader(string(setBody)))
-	setReq.Header.Set("Authorization", "Bearer fake-token")
+	setReq.Header.Set("Authorization", simARMBearer)
 	setReq.Header.Set("Content-Type", "application/json")
 	setReq.Host = dataPlaneHost
 	setResp, err := http.DefaultClient.Do(setReq)
@@ -214,7 +216,7 @@ func TestKeyVault_DataPlane_SetGetDelete(t *testing.T) {
 	// GET secret back.
 	getReq, _ := http.NewRequest("GET",
 		baseURL+"/secrets/db-password?api-version=7.4", nil)
-	getReq.Header.Set("Authorization", "Bearer fake-token")
+	getReq.Header.Set("Authorization", simARMBearer)
 	getReq.Host = dataPlaneHost
 	getResp, err := http.DefaultClient.Do(getReq)
 	require.NoError(t, err)
@@ -228,7 +230,7 @@ func TestKeyVault_DataPlane_SetGetDelete(t *testing.T) {
 	// DELETE secret.
 	delReq, _ := http.NewRequest("DELETE",
 		baseURL+"/secrets/db-password?api-version=7.4", nil)
-	delReq.Header.Set("Authorization", "Bearer fake-token")
+	delReq.Header.Set("Authorization", simARMBearer)
 	delReq.Host = dataPlaneHost
 	delResp, err := http.DefaultClient.Do(delReq)
 	require.NoError(t, err)

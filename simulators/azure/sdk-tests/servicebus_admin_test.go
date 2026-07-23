@@ -28,7 +28,7 @@ func TestServiceBusARM_AdvertisedEndpointAndConnectionStrings(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.ServiceBus/namespaces/"+namespace+"?api-version=2022-10-01-preview",
 		strings.NewReader(`{"location":"eastus","sku":{"name":"Standard","tier":"Standard"}}`))
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createReq.Header.Set("Authorization", simARMBearer)
 	createResp, err := http.DefaultClient.Do(createReq)
 	require.NoError(t, err)
 	defer createResp.Body.Close()
@@ -42,7 +42,7 @@ func TestServiceBusARM_AdvertisedEndpointAndConnectionStrings(t *testing.T) {
 	keysReq, _ := http.NewRequestWithContext(ctx, "POST",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.ServiceBus/namespaces/"+namespace+"/authorizationRules/RootManageSharedAccessKey/listKeys?api-version=2022-10-01-preview",
 		nil)
-	keysReq.Header.Set("Authorization", "Bearer fake-token")
+	keysReq.Header.Set("Authorization", simARMBearer)
 	keysResp, err := http.DefaultClient.Do(keysReq)
 	require.NoError(t, err)
 	defer keysResp.Body.Close()

@@ -33,7 +33,7 @@ func TestDNS_CrossJobResolution(t *testing.T) {
 	// Docker network).
 	dnsSvc, err := dns.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 
@@ -50,7 +50,7 @@ func TestDNS_CrossJobResolution(t *testing.T) {
 	// can inspect them + exec into them during the test.
 	jobsClient, err := run.NewJobsRESTClient(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { jobsClient.Close() })

@@ -25,6 +25,7 @@ func ssmAWSJSON(t *testing.T, action string, in, out any) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 	req.Header.Set("X-Amz-Target", "AmazonSSM."+action)
+	signRawSigV4(t, req, "ssm", body)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()

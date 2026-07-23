@@ -370,12 +370,16 @@ func registerIAM(srv *sim.Server) {
 		}
 		switch action {
 		case "generateAccessToken":
-			// Real expiry is RFC3339Nano with timezone offset; the SDK
-			// parses it with time.Parse(time.RFC3339).
-			expireTime := time.Now().UTC().Add(1 * time.Hour).Format(time.RFC3339)
+			// The token is signed with the simulator's access-token key (see
+			// signAccessToken) so the data-plane bearer middleware accepts it,
+			// naming the impersonated service account as its subject. Real
+			// expiry is RFC3339Nano with timezone offset; the SDK parses it
+			// with time.Parse(time.RFC3339).
+			now := time.Now()
+			expires := now.Add(1 * time.Hour)
 			sim.WriteJSON(w, http.StatusOK, map[string]any{
-				"accessToken": "ya29.sim-" + generateUUID(),
-				"expireTime":  expireTime,
+				"accessToken": signAccessToken(email, now, expires),
+				"expireTime":  expires.UTC().Format(time.RFC3339),
 			})
 		case "generateIdToken":
 			// Body: { audience, includeEmail, delegates }. Response: { token }.

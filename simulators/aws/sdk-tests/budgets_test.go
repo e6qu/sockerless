@@ -165,6 +165,7 @@ func TestBudgetsCreateBudgetDerivesAccountId(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 	req.Header.Set("X-Amz-Target", "AWSBudgetServiceGateway.CreateBudget")
+	signRawSigV4JSON(t, req, "budgets", reqBody)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -208,6 +209,7 @@ func TestBudgetsDescribeAndDeleteDeriveAccountId(t *testing.T) {
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 		req.Header.Set("X-Amz-Target", "AWSBudgetServiceGateway."+target)
+		signRawSigV4JSON(t, req, "budgets", body)
 		return req
 	}
 

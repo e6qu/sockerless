@@ -244,6 +244,7 @@ func TestSFNDescribeStateMachineOmitsTags(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
 	req.Header.Set("X-Amz-Target", "AWSStepFunctions.DescribeStateMachine")
+	signRawSigV4JSON(t, req, "states", body)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()

@@ -19,7 +19,7 @@ func newCloudFunctionsV2Service(t *testing.T) *cloudfunctions.Service {
 	t.Helper()
 	svc, err := cloudfunctions.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

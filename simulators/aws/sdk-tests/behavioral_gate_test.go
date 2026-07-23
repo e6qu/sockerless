@@ -302,9 +302,11 @@ func TestBehavioralGate_Route53DNS_ResolvesRecord(t *testing.T) {
 	require.True(t, found, "record set must be visible via ListResourceRecordSets")
 }
 
-// TestBehavioralGate_ECSServiceScheduler_ReconcilesDesiredCount asserts that
-// CreateService with DesiredCount > 0 eventually has running tasks.
-func TestBehavioralGate_ECSServiceScheduler_ReconcilesDesiredCount(t *testing.T) {
+// TestBehavioralGate_ECSService_ConvergesRunningCount asserts that a service
+// created with DesiredCount > 0 reports runningCount == desiredCount — the
+// modeled control-plane steady state (reached synchronously, no background
+// scheduler launching containers).
+func TestBehavioralGate_ECSService_ConvergesRunningCount(t *testing.T) {
 	ecsC := ecsClient()
 
 	cluster := "bg-scheduler-cluster"
@@ -337,7 +339,7 @@ func TestBehavioralGate_ECSServiceScheduler_ReconcilesDesiredCount(t *testing.T)
 		require.NoError(t, err)
 		require.Len(t, out.Services, 1)
 		return out.Services[0].RunningCount == 2
-	}, 60*time.Second, 2*time.Second, "scheduler must reconcile RunningCount to DesiredCount")
+	}, 60*time.Second, 2*time.Second, "service must report runningCount == desiredCount")
 }
 
 // TestBehavioralGate_CloudWatchLogs_MetricFilterPublishesMetric asserts that a

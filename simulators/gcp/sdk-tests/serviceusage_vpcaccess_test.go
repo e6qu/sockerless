@@ -14,7 +14,7 @@ func serviceUsageService(t *testing.T) *serviceusage.Service {
 	t.Helper()
 	svc, err := serviceusage.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc
@@ -24,7 +24,7 @@ func vpcAccessService(t *testing.T) *vpcaccess.Service {
 	t.Helper()
 	svc, err := vpcaccess.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

@@ -16,7 +16,7 @@ import (
 func TestBigQuery_DatasetTableQueryLifecycle(t *testing.T) {
 	svc, err := bigquery.NewService(ctx,
 		option.WithEndpoint(baseURL+"/bigquery/v2/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 
@@ -66,7 +66,7 @@ func TestBigQuery_DatasetTableQueryLifecycle(t *testing.T) {
 func TestFirestore_DocumentCommitBatchGetRunQuery(t *testing.T) {
 	svc, err := firestore.NewService(ctx,
 		option.WithEndpoint(baseURL+"/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 

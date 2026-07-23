@@ -13,7 +13,10 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -71,12 +74,17 @@ func Start(t *testing.T, configDir string) *Env {
 	cmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	// Own process group so the whole simulator subtree can be reaped with one
+	// kill(-pgid): by t.Cleanup on the normal path, by the deadline watchdog
+	// just before a hard timeout, and by the signal reaper on Ctrl-C / SIGQUIT.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start simulator: %v", err)
 	}
+	trackForReaping(cmd)
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		reapProcessGroup(cmd)
+		untrackForReaping(cmd)
 	})
 
 	env := &Env{
@@ -93,7 +101,28 @@ func Start(t *testing.T, configDir string) *Env {
 	if os.Getenv("SOCKERLESS_TF_HTTPS_GATEWAY") == "1" {
 		startHTTPSGateway(t, env, stateDir, simDir, port)
 	}
+	env.armDeadlineReaper(t)
 	return env
+}
+
+// armDeadlineReaper reaps the simulator (and HTTPS gateway) process groups a
+// few seconds before the test's own deadline. go test's hard timeout aborts the
+// binary without running t.Cleanup, so without this the subprocesses would
+// orphan past the run; firing early reaps them while there is still time.
+func (e *Env) armDeadlineReaper(t *testing.T) {
+	dl, ok := t.Deadline()
+	if !ok {
+		return
+	}
+	d := time.Until(dl) - 15*time.Second
+	if d <= 0 {
+		return
+	}
+	timer := time.AfterFunc(d, func() {
+		reapProcessGroup(e.gatewayCmd)
+		reapProcessGroup(e.cmd)
+	})
+	t.Cleanup(func() { timer.Stop() })
 }
 
 func (e *Env) Terraform(t *testing.T, args ...string) []byte {
@@ -109,6 +138,10 @@ func (e *Env) Terraform(t *testing.T, args ...string) []byte {
 	}
 	cmd := exec.Command("terraform", args...)
 	cmd.Dir = e.dir
+	// Own process group so a stuck terraform (and the provider-plugin
+	// grandchildren it spawns) can be reaped with one kill(-pgid) instead of
+	// orphaning a spinning process tree past the test deadline.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(), "TF_VAR_endpoint="+e.Endpoint)
 	if e.CACertFile != "" {
 		cmd.Env = append(cmd.Env, "SSL_CERT_FILE="+e.CACertFile)
@@ -119,13 +152,113 @@ func (e *Env) Terraform(t *testing.T, args ...string) []byte {
 	if v := os.Getenv("TF_LOG_PATH"); v != "" {
 		cmd.Env = append(cmd.Env, "TF_LOG_PATH="+v)
 	}
+
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
 	start := time.Now()
-	out, err := cmd.CombinedOutput()
-	t.Logf("terraform %v duration=%s", args, time.Since(start).Round(time.Millisecond))
-	if err != nil {
-		t.Fatalf("terraform %v failed: %v\n%s", args, err, out)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("terraform %v: failed to start: %v", args, err)
 	}
-	return out
+	killGroup := func() {
+		if cmd.Process != nil {
+			// Negative pid targets the whole process group (Setpgid'd tree).
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
+	// Safety net for the pass/fail/panic paths; the watchdog below covers the
+	// hard-timeout path that t.Cleanup does not run on.
+	t.Cleanup(killGroup)
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	// Fire ~20s before the test deadline so the tree is reaped and the command
+	// fails diagnosably rather than being orphaned by the hard SIGQUIT timeout.
+	var watchdog <-chan time.Time
+	if dl, ok := t.Deadline(); ok {
+		if d := time.Until(dl) - 20*time.Second; d > 0 {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			watchdog = timer.C
+		}
+	}
+
+	select {
+	case err := <-done:
+		t.Logf("terraform %v duration=%s", args, time.Since(start).Round(time.Millisecond))
+		if err != nil {
+			t.Fatalf("terraform %v failed: %v\n%s", args, err, buf.Bytes())
+		}
+		return buf.Bytes()
+	case <-watchdog:
+		killGroup()
+		<-done // reap the killed process so no zombie/orphan remains
+		t.Fatalf("terraform %v timed out near the test deadline (process group killed to avoid orphans)\n%s",
+			args, buf.Bytes())
+		return nil
+	}
+}
+
+// reapProcessGroup SIGKILLs the whole process group of cmd (started Setpgid, so
+// it leads its own group) and reaps it, leaving no orphan or zombie. Safe to
+// call more than once and on a nil / not-yet-started command.
+func reapProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	_ = cmd.Wait()
+}
+
+var (
+	reaperMu   sync.Mutex
+	reaperCmds []*exec.Cmd
+	reaperOnce sync.Once
+)
+
+// trackForReaping registers a Setpgid'd subprocess so the signal reaper can
+// kill its process group if the test binary is aborted by Ctrl-C or the
+// go-test hard-timeout SIGQUIT — neither of which runs t.Cleanup.
+func trackForReaping(cmd *exec.Cmd) {
+	reaperMu.Lock()
+	reaperCmds = append(reaperCmds, cmd)
+	reaperMu.Unlock()
+	reaperOnce.Do(installSignalReaper)
+}
+
+func untrackForReaping(cmd *exec.Cmd) {
+	reaperMu.Lock()
+	for i, c := range reaperCmds {
+		if c == cmd {
+			reaperCmds = append(reaperCmds[:i], reaperCmds[i+1:]...)
+			break
+		}
+	}
+	reaperMu.Unlock()
+}
+
+func installSignalReaper() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		sig := <-ch
+		reaperMu.Lock()
+		for _, c := range reaperCmds {
+			if c != nil && c.Process != nil {
+				_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+			}
+		}
+		reaperMu.Unlock()
+		// Restore default disposition and re-deliver so the exit status
+		// reflects the terminating signal. The channel only carries the
+		// syscall signals registered above.
+		if s, ok := sig.(syscall.Signal); ok {
+			signal.Reset(s)
+			_ = syscall.Kill(syscall.Getpid(), s)
+		}
+	}()
 }
 
 func (e *Env) AWSJSON(t *testing.T, target string, in, out any) {
@@ -203,12 +336,15 @@ func startHTTPSGateway(t *testing.T, env *Env, stateDir, simDir string, simPort 
 	)
 	env.gatewayCmd.Stdout = os.Stdout
 	env.gatewayCmd.Stderr = os.Stderr
+	// Own process group, reaped the same way as the simulator (see Start).
+	env.gatewayCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := env.gatewayCmd.Start(); err != nil {
 		t.Fatalf("start HTTPS gateway: %v", err)
 	}
+	trackForReaping(env.gatewayCmd)
 	t.Cleanup(func() {
-		_ = env.gatewayCmd.Process.Kill()
-		_ = env.gatewayCmd.Wait()
+		reapProcessGroup(env.gatewayCmd)
+		untrackForReaping(env.gatewayCmd)
 	})
 
 	env.Endpoint = fmt.Sprintf("https://localhost:%d", gatewayPort)

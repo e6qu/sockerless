@@ -19,7 +19,7 @@ func eventarcClient(t *testing.T) *eventarc.Client {
 	t.Helper()
 	client, err := eventarc.NewRESTClient(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })

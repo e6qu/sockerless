@@ -421,6 +421,7 @@ func TestSDK_ContainerAppsApps_PatchMergesNotReplaces(t *testing.T) {
 	req, err := http.NewRequest("PATCH", patchURL, strings.NewReader(patchBody))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", simARMBearer)
 	patchResp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	patchBytes, _ := io.ReadAll(patchResp.Body)

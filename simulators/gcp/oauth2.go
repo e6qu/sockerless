@@ -24,32 +24,21 @@ import (
 // subsequent requests.
 //
 // The sim's role: accept the POST, return a real-shape token response.
-// The access_token is issued as a real-shape JWT (header.payload.signature
-// base64url segments) so SDKs that parse the token before using it
-// (cloudbuild.NewRESTClient does) accept the response. The JWT's HMAC
-// signature uses a per-process random key — the sim doesn't validate
-// inbound tokens; the signature is real-shape but unverifiable by
-// downstream consumers, which is fine because the sim's audience
-// handlers (e.g. /v2-functions-invoke/, /v1/projects/.../builds) don't
-// validate inbound tokens either. Real production routes through
-// oauth2.googleapis.com whose tokens ARE validated by Google's
-// audience services; the sim plays the same role from the SDK's
-// perspective without the validation cost.
+// The access_token is a JWT the simulator signs with its own access-token
+// key (see signAccessToken); the data-plane bearer middleware verifies
+// against that same key, so a token minted here is accepted on subsequent
+// requests and an unverifiable one is rejected. Real production routes
+// through oauth2.googleapis.com whose opaque tokens Google validates
+// internally; the sim plays the same role with a token it both issues and
+// verifies.
 func registerOAuth2(srv *sim.Server) {
-	// One signing key per simulator process. Real production uses
-	// Google's signing infrastructure with rotated keys; the sim is
-	// process-scoped because a sim restart issues fresh tokens
-	// regardless.
-	signKey := make([]byte, 32)
-	_, _ = rand.Read(signKey)
-
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		now := time.Now()
 		expires := now.Add(1 * time.Hour)
 
-		token := mintSimJWT(signKey, "sockerless-sim", "sockerless-sim", now, expires)
-		idToken := mintSimJWT(signKey, "sockerless-sim", "sockerless-sim", now, expires)
+		token := signAccessToken("sockerless-sim", now, expires)
+		idToken := mintSimIdToken(idTokenSignKey(), "sockerless-sim", "sockerless-sim", false, now, expires)
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"access_token": token,
@@ -105,34 +94,6 @@ func mintSimIdToken(signKey []byte, email, audience string, includeEmail bool, i
 		claims["email_verified"] = true
 	}
 	payloadJSON, _ := json.Marshal(claims)
-	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
-	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
-	signingInput := headerB64 + "." + payloadB64
-	mac := hmac.New(sha256.New, signKey)
-	mac.Write([]byte(signingInput))
-	sigB64 := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return signingInput + "." + sigB64
-}
-
-// mintSimJWT produces a real-shape JWT (`header.payload.signature`)
-// signed with HS256 against the sim's per-process key. Real Google
-// JWTs use RS256 with rotated keys; HS256 is sufficient here because
-// the sim doesn't verify inbound tokens — the only requirement is
-// that SDKs that parse the token (the cloudbuild SDK does) accept
-// the structure.
-func mintSimJWT(signKey []byte, issuer, subject string, issuedAt, expiresAt time.Time) string {
-	headerJSON, _ := json.Marshal(map[string]string{
-		"alg": "HS256",
-		"typ": "JWT",
-	})
-	payloadJSON, _ := json.Marshal(map[string]any{
-		"iss":   issuer,
-		"sub":   subject,
-		"aud":   "https://oauth2.googleapis.com/token",
-		"iat":   issuedAt.Unix(),
-		"exp":   expiresAt.Unix(),
-		"scope": "https://www.googleapis.com/auth/cloud-platform",
-	})
 	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
 	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
 	signingInput := headerB64 + "." + payloadB64

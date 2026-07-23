@@ -19,7 +19,7 @@ func iamService(t *testing.T) *iam.Service {
 	t.Helper()
 	svc, err := iam.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc
@@ -122,7 +122,7 @@ func iamCredentialsService(t *testing.T) *iamcredentials.Service {
 	t.Helper()
 	svc, err := iamcredentials.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc
@@ -333,7 +333,7 @@ func crmService(t *testing.T) *cloudresourcemanager.Service {
 	t.Helper()
 	svc, err := cloudresourcemanager.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

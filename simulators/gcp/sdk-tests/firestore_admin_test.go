@@ -16,7 +16,7 @@ func newFSAdminClient(t *testing.T) *admin.FirestoreAdminClient {
 	t.Helper()
 	c, err := admin.NewFirestoreAdminRESTClient(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	if err != nil {
 		t.Fatalf("NewFirestoreAdminRESTClient: %v", err)

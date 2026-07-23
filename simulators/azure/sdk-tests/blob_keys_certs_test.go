@@ -182,7 +182,7 @@ func kvReq(t *testing.T, method, vault, path string, body []byte) *http.Response
 	req, err := http.NewRequest(method, baseURL+path, br)
 	require.NoError(t, err)
 	req.Host = vault + ".vault.localhost"
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -271,7 +271,7 @@ func TestKeyVault_AuthChallenge(t *testing.T) {
 		strings.NewReader(`{"location":"eastus","properties":{"tenantId":"t","sku":{"name":"standard"}}}`))
 	require.NoError(t, err)
 	armReq.Header.Set("Content-Type", "application/json")
-	armReq.Header.Set("Authorization", "Bearer fake-token")
+	armReq.Header.Set("Authorization", simARMBearer)
 	armResp, err := http.DefaultClient.Do(armReq)
 	require.NoError(t, err)
 	armResp.Body.Close()
@@ -301,7 +301,7 @@ func TestKeyVault_AuthChallenge(t *testing.T) {
 	require.NoError(t, err)
 	req2.Host = vault + ".vault.localhost"
 	req2.Header.Set("Content-Type", "application/json")
-	req2.Header.Set("Authorization", "Bearer fake-token")
+	req2.Header.Set("Authorization", simARMBearer)
 	resp2, err := http.DefaultClient.Do(req2)
 	require.NoError(t, err)
 	defer resp2.Body.Close()

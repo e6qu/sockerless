@@ -13,7 +13,7 @@ func sqlAdminService(t *testing.T) *sqladmin.Service {
 	t.Helper()
 	svc, err := sqladmin.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

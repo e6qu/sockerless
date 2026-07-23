@@ -10,6 +10,8 @@ import (
 	"cloud.google.com/go/logging/logadmin"
 	run "cloud.google.com/go/run/apiv2"
 	"cloud.google.com/go/storage"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -61,9 +63,28 @@ func urlHost(rawURL string) (string, error) {
 }
 
 func newGCPClientsWithEndpoint(ctx context.Context, project, endpointURL, logAdminEndpoint string) (*GCPClients, error) {
+	// The REST data plane (Cloud Run Functions, Cloud Run, Storage,
+	// Artifact Registry, Cloud Build) verifies an OAuth2 bearer on every
+	// request — exactly as the real Google APIs do. The faithful way to
+	// obtain that bearer is the same one a workload uses on real GCE: the
+	// GCE metadata server issues a token for the runtime service account.
+	// `GCE_METADATA_HOST` is Google's own coordinate for pointing the
+	// metadata client at a non-default host; setting it to the sim host
+	// (derived from the endpoint URL — the sim serves `/computeMetadata/*`
+	// on the same port) makes `google.ComputeTokenSource` fetch a real,
+	// sim-signed token. The construction below is identical to the
+	// real-cloud path in mechanism (a GCE metadata token source); only the
+	// metadata + API coordinates differ. `ComputeTokenSource` short-circuits
+	// on `metadata.OnGCE()`, which returns true once `GCE_METADATA_HOST` is
+	// set, so set it before creating any client.
+	if host, err := urlHost(endpointURL); err == nil {
+		_ = os.Setenv("GCE_METADATA_HOST", host)
+	}
+	tokenSource := google.ComputeTokenSource("")
+
 	opts := []option.ClientOption{
 		option.WithEndpoint(endpointURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(tokenSource),
 	}
 
 	functionsClient, err := functions.NewFunctionRESTClient(ctx, opts...)
@@ -77,6 +98,15 @@ func newGCPClientsWithEndpoint(ctx context.Context, project, endpointURL, logAdm
 		return nil, err
 	}
 
+	// Cloud Logging admin is a gRPC data plane. The simulator's gRPC
+	// server (SIM_GCP_GRPC_PORT) is a plain `grpc.NewServer()` with no
+	// auth interceptor — unlike the HTTP mux it does not enforce a bearer
+	// — so the faithful client for it uses an insecure channel and no
+	// token (gRPC refuses per-RPC OAuth credentials over an insecure
+	// transport anyway). Against real Cloud Logging this same client
+	// construction goes through newGCPClientsDefault, which dials TLS with
+	// ADC. The difference is purely the transport/endpoint coordinate the
+	// sim's gRPC plane exposes.
 	logAdminOpts := []option.ClientOption{
 		option.WithEndpoint(logAdminEndpoint),
 		option.WithoutAuthentication(),
@@ -90,8 +120,16 @@ func newGCPClientsWithEndpoint(ctx context.Context, project, endpointURL, logAdm
 	}
 
 	// Storage client honours STORAGE_EMULATOR_HOST, not option.WithEndpoint —
-	// same fix as Cloud Run's gcp.go so the JSON-API path is used.
-	storageOpts := []option.ClientOption{option.WithoutAuthentication()}
+	// same fix as Cloud Run's gcp.go so the JSON-API path is used. In
+	// emulator mode the client hard-forces WithoutAuthentication, so the
+	// bearer cannot be supplied via a token source (it conflicts and fails
+	// construction). Instead hand it an *http.Client whose transport
+	// injects the same GCE-metadata bearer the REST clients present, so it
+	// authenticates against the enforcing sim while still routing emulator
+	// JSON paths.
+	storageOpts := []option.ClientOption{
+		option.WithHTTPClient(oauth2.NewClient(ctx, tokenSource)),
+	}
 	if host, err := urlHost(endpointURL); err == nil {
 		_ = os.Setenv("STORAGE_EMULATOR_HOST", host)
 	}

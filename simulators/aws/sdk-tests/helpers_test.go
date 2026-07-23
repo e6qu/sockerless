@@ -2,6 +2,8 @@ package aws_sdk_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -15,8 +17,34 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 )
+
+// signRawSigV4 signs a hand-built HTTP request with SigV4 using the seed
+// credential every SDK/CLI/Terraform client already signs with (test/test,
+// us-east-1). Raw requests that hit a SigV4-gated chokepoint (the awsJson /
+// awsQuery control plane at POST /, and the S3 REST data plane) must present a
+// valid signature exactly as the real cloud front end requires; this is the
+// same signature the aws-sdk-go-v2 client computes for those requests. Set
+// every signed header on req before calling. payloadHash is the hex SHA-256 of
+// the body (see signRawSigV4JSON) or a streaming sentinel such as
+// "STREAMING-AWS4-HMAC-SHA256-PAYLOAD".
+func signRawSigV4(t *testing.T, req *http.Request, service, payloadHash string) {
+	t.Helper()
+	creds := aws.Credentials{AccessKeyID: "test", SecretAccessKey: "test"}
+	if err := v4.NewSigner().SignHTTP(ctx, creds, req, payloadHash, service, "us-east-1", time.Now()); err != nil {
+		t.Fatalf("SigV4 sign (%s): %v", service, err)
+	}
+}
+
+// signRawSigV4JSON signs a control-plane request whose payload hash is the
+// SHA-256 of body — the shape awsJson/awsQuery clients sign.
+func signRawSigV4JSON(t *testing.T, req *http.Request, service string, body []byte) {
+	t.Helper()
+	sum := sha256.Sum256(body)
+	signRawSigV4(t, req, service, hex.EncodeToString(sum[:]))
+}
 
 var (
 	baseURL                string

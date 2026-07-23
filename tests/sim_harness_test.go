@@ -215,6 +215,20 @@ func startBackend(binaryPath string, info simBackendInfo, simURL string) (*simPr
 
 	// Build environment: start with current env, add endpoint URL and extra env
 	env := append(os.Environ(), "SOCKERLESS_ENDPOINT_URL="+simURL)
+	if info.Cloud == "azure" {
+		// Inject the App Service / Container Apps managed-identity
+		// coordinate the same way the real Azure platform injects it into
+		// an ACA app / Functions app container. DefaultAzureCredential (used
+		// by both azure backends against real Azure and the simulator) reads
+		// IDENTITY_ENDPOINT + IDENTITY_HEADER and performs a real managed-
+		// identity token acquisition against it — here the simulator's
+		// /msi/token endpoint, which mints a real, verifiable ARM bearer.
+		// Only the coordinate value differs from real Azure.
+		env = append(env,
+			"IDENTITY_ENDPOINT="+simURL+"/msi/token",
+			"IDENTITY_HEADER=sim-identity-header",
+		)
+	}
 	for k, v := range info.ExtraEnv {
 		env = append(env, k+"="+v)
 	}
