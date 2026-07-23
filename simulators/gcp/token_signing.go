@@ -136,6 +136,57 @@ func signIdentityToken(subject, audience string, issuedAt, expiresAt time.Time) 
 	})
 }
 
+// signInvokeIDToken issues the RS256 ID token the OAuth2 token endpoint returns
+// for a service-account JWT-bearer grant that requested one (a workload minting
+// the bearer it will present when invoking a Cloud Run / Cloud Functions
+// service). It differs from signIdentityToken — the GCE metadata identity
+// bearer — in its `aud` shape: the golang.org/x/oauth2 service-account flow
+// decodes the returned id_token with a string-typed `aud` (an array fails its
+// jws.Decode), so this token carries the single simulator resource-server
+// audience the data-plane bearer middleware verifies, rather than the dual
+// [target, simulator] audience the metadata path can carry because that token
+// is passed through unparsed. The subject/email is the workload
+// service-account email.
+func signInvokeIDToken(subject string, issuedAt, expiresAt time.Time) string {
+	return signWithAccessKey(map[string]any{
+		"iss":            simAccessTokenIssuer,
+		"aud":            simAccessTokenAudience,
+		"azp":            subject,
+		"sub":            subject,
+		"email":          subject,
+		"email_verified": true,
+		"iat":            issuedAt.Unix(),
+		"exp":            expiresAt.Unix(),
+	})
+}
+
+// signServiceAccountIDToken issues the RS256 ID token the IAM Credentials
+// `serviceAccounts:generateIdToken` API returns for a service account. Real
+// Google returns an RS256 JWT whose single `aud` claim is the caller-requested
+// audience (the receiving service's URL) and which carries `email` /
+// `email_verified` only when includeEmail is set; the simulator matches that
+// shape and signs with the same key its data-plane middleware and JWKS use.
+// Unlike signIdentityToken — the workload-invoke bearer, which additionally
+// names the simulator's own resource-server audience so the bearer middleware
+// accepts it — this token mirrors the impersonation API's faithful
+// single-audience wire shape, which callers pre-decode rather than present to
+// the middleware.
+func signServiceAccountIDToken(subject, audience string, includeEmail bool, issuedAt, expiresAt time.Time) string {
+	claims := map[string]any{
+		"iss": "https://accounts.google.com",
+		"aud": audience,
+		"azp": subject,
+		"sub": subject,
+		"iat": issuedAt.Unix(),
+		"exp": expiresAt.Unix(),
+	}
+	if includeEmail {
+		claims["email"] = subject
+		claims["email_verified"] = true
+	}
+	return signWithAccessKey(claims)
+}
+
 // verifyAccessToken checks that a bearer token is one the simulator minted:
 // a well-formed RS256 JWT, signed by the simulator's key, carrying the
 // simulator's issuer and audience, and unexpired. It returns a descriptive

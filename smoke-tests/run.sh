@@ -141,6 +141,12 @@ case "$BACKEND_TYPE" in
         SIM_PID=$!
         wait_for_url "http://127.0.0.1:4568/health"
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4568"
+        # The simulator now verifies ARM bearers, so the backend federates via
+        # DefaultAzureCredential's App Service managed-identity source; the
+        # platform's IDENTITY_ENDPOINT/IDENTITY_HEADER coordinates point it at the
+        # simulator's exempt /msi/token minter, exactly as against real Azure.
+        export IDENTITY_ENDPOINT="http://127.0.0.1:4568/msi/token"
+        export IDENTITY_HEADER="sim-identity-header"
         export SOCKERLESS_ACA_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000001"
         export SOCKERLESS_ACA_RESOURCE_GROUP="sim-rg"
         export SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="default"

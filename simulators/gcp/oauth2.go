@@ -1,104 +1,92 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
-	"sync"
+	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
 
 // registerOAuth2 wires the minimal OAuth2 token endpoint that
-// service-account JWT-bearer flows hit when minting access tokens.
+// service-account JWT-bearer flows hit when minting access and ID tokens.
 //
-// Real flow: SDK constructs a JWT signed with the SA's private key,
+// Real flow: the SDK constructs a JWT signed with the SA's private key and
 // POSTs it to `https://oauth2.googleapis.com/token` with
-// `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, gets back
-// `{"access_token":"...","expires_in":3600,"token_type":"Bearer"}`,
-// then sends the access token as `Authorization: Bearer ...` on
-// subsequent requests.
+// `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`. For an access
+// token it gets back `{"access_token":"...","token_type":"Bearer",...}`; when
+// the assertion carries a `target_audience` claim (the workload requesting an
+// ID token for a downstream Cloud Run / Cloud Functions invoke) Google also
+// returns an RS256 `id_token` whose `aud` is that target audience. The workload
+// then presents whichever token as `Authorization: Bearer ...`.
 //
-// The sim's role: accept the POST, return a real-shape token response.
-// The access_token is a JWT the simulator signs with its own access-token
-// key (see signAccessToken); the data-plane bearer middleware verifies
-// against that same key, so a token minted here is accepted on subsequent
-// requests and an unverifiable one is rejected. Real production routes
-// through oauth2.googleapis.com whose opaque tokens Google validates
-// internally; the sim plays the same role with a token it both issues and
-// verifies.
+// The sim's role: accept the POST and return a real-shape token response. Both
+// the access token and the ID token are RS256 JWTs the simulator signs with its
+// own access-token key (see signAccessToken / signIdentityToken); the
+// data-plane bearer middleware verifies against that same key, so a token
+// minted here is accepted on subsequent requests and an unverifiable one is
+// rejected. Real production routes through oauth2.googleapis.com whose tokens
+// Google validates internally; the sim plays the same role with tokens it both
+// issues and verifies.
 func registerOAuth2(srv *sim.Server) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		now := time.Now()
 		expires := now.Add(1 * time.Hour)
 
-		token := signAccessToken("sockerless-sim", now, expires)
-		idToken := mintSimIdToken(idTokenSignKey(), "sockerless-sim", "sockerless-sim", false, now, expires)
+		// The principal (service-account email) and requested ID-token
+		// audience come from the JWT-bearer assertion. Test surfaces that
+		// only need an access token POST a bare grant_type with no
+		// assertion, in which case the sim mints an access token for the
+		// default principal and returns no ID token — matching real Google,
+		// which returns an id_token only when target_audience is requested.
+		principal, targetAudience := serviceAccountAssertionClaims(r.Form.Get("assertion"))
+		if principal == "" {
+			principal = "sockerless-sim"
+		}
 
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"access_token": token,
+		resp := map[string]any{
+			"access_token": signAccessToken(principal, now, expires),
 			"expires_in":   int(time.Until(expires).Seconds()),
 			"token_type":   "Bearer",
-			"id_token":     idToken,
-		})
+		}
+		if targetAudience != "" {
+			resp["id_token"] = signInvokeIDToken(principal, now, expires)
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	}
 	srv.HandleFunc("POST /token", handler)
 	srv.HandleFunc("POST /oauth2/v4/token", handler)
 }
 
-// idTokenKey is the per-process HMAC key shared by every ID token the
-// sim mints (oauth2 endpoint id_token + iamcredentials.generateIdToken).
-// Real Google rotates the signing key; the sim is process-scoped so a
-// restart issues fresh tokens regardless.
-var (
-	idTokenKey     []byte
-	idTokenKeyOnce sync.Once
-)
-
-func idTokenSignKey() []byte {
-	idTokenKeyOnce.Do(func() {
-		idTokenKey = make([]byte, 32)
-		_, _ = rand.Read(idTokenKey)
-	})
-	return idTokenKey
-}
-
-// mintSimIdToken mints a real-shape Google ID token JWT for the given
-// service-account email + audience. Used by iamcredentials.generateIdToken
-// (`POST .../serviceAccounts/{email}:generateIdToken`). Audience is the
-// target service URL the caller will invoke with this token. `email`
-// claim is set when the caller requests includeEmail=true (matches real
-// GCP behaviour). Signature is HS256 against the sim's per-process key
-// — the sim's audience handlers don't validate, but SDKs that pre-decode
-// the token expect a parseable structure.
-func mintSimIdToken(signKey []byte, email, audience string, includeEmail bool, issuedAt, expiresAt time.Time) string {
-	headerJSON, _ := json.Marshal(map[string]string{
-		"alg": "HS256",
-		"typ": "JWT",
-	})
-	claims := map[string]any{
-		"iss": "https://accounts.google.com",
-		"sub": email,
-		"aud": audience,
-		"iat": issuedAt.Unix(),
-		"exp": expiresAt.Unix(),
-		"azp": email,
+// serviceAccountAssertionClaims decodes the `iss` (service-account email) and
+// `target_audience` claims from a service-account JWT-bearer assertion. The
+// golang.org/x/oauth2 service-account ID-token flow signs an assertion whose
+// payload carries `target_audience` = the URL the workload will invoke, and the
+// token endpoint mints an ID token for that audience. Both returns are empty
+// when the request carries no assertion (a plain access-token grant) or the
+// assertion is not a decodable JWT, in which case the caller mints an access
+// token for the default principal and no ID token.
+func serviceAccountAssertionClaims(assertion string) (principal, targetAudience string) {
+	if assertion == "" {
+		return "", ""
 	}
-	if includeEmail {
-		claims["email"] = email
-		claims["email_verified"] = true
+	parts := strings.Split(assertion, ".")
+	if len(parts) != 3 {
+		return "", ""
 	}
-	payloadJSON, _ := json.Marshal(claims)
-	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
-	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
-	signingInput := headerB64 + "." + payloadB64
-	mac := hmac.New(sha256.New, signKey)
-	mac.Write([]byte(signingInput))
-	sigB64 := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return signingInput + "." + sigB64
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", ""
+	}
+	var claims struct {
+		Iss            string `json:"iss"`
+		TargetAudience string `json:"target_audience"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", ""
+	}
+	return claims.Iss, claims.TargetAudience
 }
