@@ -30,6 +30,7 @@ try {
     if (app.name === "Sockerless Admin") await assertAdministratorMutation(context);
     if (app.name === "Sockerless Google Cloud simulator") await assertFederatedCloudToken(context, page, app);
     if (app.name === "Sockerless AWS simulator") await assertFederatedAwsCredentials(context, page, app);
+    if (app.name === "Sockerless Microsoft Azure simulator") await assertFederatedAzureToken(context, app);
     await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
     await context.close();
@@ -241,6 +242,66 @@ async function assertFederatedCloudToken(context, page, app) {
     0,
     `${app.name} console failed to read the real Cloud Run API over federation`,
   );
+}
+
+// assertFederatedAzureToken proves the Azure portal federates the signed-in
+// operator's real Shauth assertion into an Azure Resource Manager token the way
+// it reaches Azure: an administrator registers a user-assigned managed identity
+// and a federated identity credential trusting the operator's issuer, subject,
+// and audience, and Microsoft Entra exchanges the assertion for a token. The
+// exchange is the security-critical, novel path; the portal's real Azure
+// Resource Manager reads over that token are covered by the Playwright suite,
+// which seeds resources through the same APIs and asserts they render.
+async function assertFederatedAzureToken(context, app) {
+  const origin = new URL(app.launch).origin;
+  const sub = "00000000-0000-0000-0000-000000000001";
+  const rg = "console-federation-rg";
+  const identityName = "console-identity";
+
+  const subjectResponse = await context.request.get(`${origin}/auth/federation-subject`);
+  assert.equal(subjectResponse.status(), 200, `${app.name} auth layer did not expose the operator assertion`);
+  const { subject_token: subjectToken } = await subjectResponse.json();
+  assert.ok(subjectToken, `${app.name} exposed no operator assertion to federate`);
+
+  // The federated identity credential pins the operator's own issuer, subject,
+  // and audience, so read them from the assertion the way an administrator reads
+  // them off a real token before registering the trust.
+  const claims = JSON.parse(Buffer.from(subjectToken.split(".")[1], "base64url").toString("utf8"));
+  const audience = Array.isArray(claims.aud) ? claims.aud[0] : claims.aud;
+
+  const rgResponse = await context.request.put(
+    `${origin}/subscriptions/${sub}/resourcegroups/${rg}?api-version=2021-04-01`,
+    { data: { location: "eastus" } },
+  );
+  assert.ok(rgResponse.ok(), `${app.name} resource group create returned ${rgResponse.status()}`);
+
+  const identityResponse = await context.request.put(
+    `${origin}/subscriptions/${sub}/resourceGroups/${rg}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${identityName}?api-version=2024-11-30`,
+    { data: { location: "eastus" } },
+  );
+  assert.ok(identityResponse.ok(), `${app.name} managed identity create returned ${identityResponse.status()}`);
+  const { properties: identity } = await identityResponse.json();
+  assert.ok(identity?.clientId, `${app.name} managed identity has no client id`);
+
+  const ficResponse = await context.request.put(
+    `${origin}/subscriptions/${sub}/resourceGroups/${rg}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${identityName}/federatedIdentityCredentials/console-fic?api-version=2024-11-30`,
+    { data: { properties: { issuer: claims.iss, subject: claims.sub, audiences: [audience] } } },
+  );
+  assert.ok(ficResponse.ok(), `${app.name} federated identity credential create returned ${ficResponse.status()}`);
+
+  const exchange = await context.request.post(`${origin}/organizations/oauth2/v2.0/token`, {
+    form: {
+      grant_type: "client_credentials",
+      client_id: identity.clientId,
+      scope: "https://management.azure.com/.default",
+      client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      client_assertion: subjectToken,
+    },
+  });
+  assert.equal(exchange.status(), 200, `${app.name} Microsoft Entra token exchange returned ${exchange.status()}`);
+  const token = await exchange.json();
+  assert.ok(token.access_token, `${app.name} exchange issued no federated token`);
+  assert.equal(token.token_type, "Bearer", `${app.name} federated token was not a bearer token`);
 }
 
 async function assertAdministratorMutation(context) {

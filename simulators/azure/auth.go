@@ -436,6 +436,13 @@ func handleAzureToken(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 
+	// Workload Identity Federation: a client_credentials request carrying a
+	// JWT-bearer client_assertion is exchanged against the client's federated
+	// identity credentials rather than authenticated with a secret.
+	if handleAzureFederatedClientCredentials(w, r, tenantId, clientID) {
+		return
+	}
+
 	audience, err := azureTokenAudienceFromRequest(r)
 	if err != nil {
 		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
