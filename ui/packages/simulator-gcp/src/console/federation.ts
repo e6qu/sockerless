@@ -3,7 +3,7 @@
 // assertion into a cloud credential through the cloud's own Security Token
 // Service, then calls the real API paths with it. Only the coordinates — the
 // endpoint base URLs and the federation audience — change between the simulator
-// and the real cloud; there is no simulator-versus-cloud branch and no
+// and the real cloud. There is no simulator-versus-cloud branch and no
 // simulator-served credential broker.
 //
 // Whether a credential is attached is a real deployment condition, not a
