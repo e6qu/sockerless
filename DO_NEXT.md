@@ -12,17 +12,23 @@ The real pinned Shauth, PostgreSQL, Ory Hydra, freshly compiled relying parties,
 
 ## Remaining Work
 
-The Google Cloud console now reads real cloud APIs over the console's own
-server-side Shauth federation (BUG-2635) *and* has been rebuilt to the
-console's real visual language, verified side-by-side against the live console
-with tokens read from its computed styles. The method is recorded so it is not
-repeated from memory: compare against the live reference, extract ground-truth
-tokens, vendor the open assets (Material Symbols SVG, Roboto), pin structural
-proxies, report honestly. The AWS and Azure consoles get the same rigor next —
-both the real-API federation (AWS `AssumeRoleWithWebIdentity` + browser
-Signature Version 4; Azure Entra → ARM token) and a visual pass against their
-live consoles, where their fonts and icons are largely proprietary and so stay
-honest approximations. Endpoint credential enforcement remains BUG-2625.
+The Google Cloud and Amazon Web Services consoles now read real cloud APIs
+over each console's own server-side Shauth federation (BUG-2635) *and* have
+been rebuilt to their real visual language, verified side-by-side against the
+live console with tokens read from its computed styles. The AWS console
+exchanged the operator's Shauth id_token through `AssumeRoleWithWebIdentity`
+(the simulator verifies the web identity token against its registered IAM
+OpenID Connect provider) and signed every read with browser Signature
+Version 4 — the same client code and identifiers as the real cloud, differing
+only in coordinates — and was rebuilt to the Cloudscape Design System (Open
+Sans, the action blue, rounded containers, the header search + tool cluster,
+inline-SVG icons). The method is recorded so it is not repeated from memory:
+compare against the live reference, extract ground-truth tokens, vendor the
+open assets (Material Symbols SVG + Roboto for GCP; Open Sans for AWS), pin
+structural proxies, report honestly. The Azure console gets the same rigor
+next — real-API federation (Azure Entra → ARM token) and a visual pass against
+the live Azure portal, whose font and icons are largely proprietary and so
+stay honest approximations. Endpoint credential enforcement remains BUG-2625.
 
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.

@@ -1,0 +1,7 @@
+/* Open Sans (SIL Open Font License) — the typeface Cloudscape, the AWS console's
+ * design system, uses. Vendored as a latin woff2 subset served from the
+ * console's own origin. The AWS console's own face is Amazon Ember, which is not
+ * redistributable; Open Sans is Cloudscape's own open face and stands in for it. */
+@font-face { font-family: "Open Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("./fonts/opensans-400.woff2") format("woff2"); }
+@font-face { font-family: "Open Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("./fonts/opensans-600.woff2") format("woff2"); }
+@font-face { font-family: "Open Sans"; font-style: normal; font-weight: 700; font-display: swap; src: url("./fonts/opensans-700.woff2") format("woff2"); }

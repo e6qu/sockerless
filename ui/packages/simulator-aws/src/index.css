@@ -3,6 +3,7 @@
 /* The AWS console appearance. Imported after the shared styles so this
  * simulator presents as the AWS Management Console rather than as the generic
  * shell the other simulators share. */
+@import "./console/fonts.css";
 @import "./console/tokens.css";
 @import "./console/console.css";
 

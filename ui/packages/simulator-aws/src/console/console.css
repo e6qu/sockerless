@@ -45,10 +45,54 @@ body:has(.aws) { background: var(--aws-layout-bg); }
   background: var(--aws-header-bg);
   color: var(--aws-header-fg);
 }
-.aws-header-left, .aws-header-right { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.aws-header-left, .aws-header-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .aws-logo { font-weight: 700; letter-spacing: 0.02em; font-size: 18px; }
 .aws-header-title { font-size: 14px; font-weight: 700; }
-.aws-header-region { font-size: 12px; color: #d1d5db; }
+.aws-header-region { font-size: 12px; color: #d1d5db; white-space: nowrap; }
+
+/* The console's global search sits between the service menu and the account
+ * cluster, growing to fill the header the way the real console's does. */
+.aws-header-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  max-width: 640px;
+  min-width: 0;
+  padding: 0 10px;
+  height: 28px;
+  border-radius: var(--aws-radius-control);
+  background: rgba(255, 255, 255, 0.12);
+  color: #d1d5db;
+}
+.aws-header-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.aws-header-search input::placeholder { color: #a4aab5; }
+
+/* Icon-only header controls: notifications, settings, support, theme. */
+.aws-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--aws-radius-control);
+  background: transparent;
+  color: var(--aws-header-fg);
+  cursor: pointer;
+}
+.aws-icon-button:hover { background: var(--aws-header-hover); }
+.aws-icon-button:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }
 
 /* Breadcrumbs ------------------------------------------------------------ */
 .aws-breadcrumbs { padding: 8px 24px; background: var(--aws-layout-bg); }
@@ -135,18 +179,48 @@ body:has(.aws) { background: var(--aws-layout-bg); }
   padding: 12px 16px;
   border-bottom: 1px solid var(--aws-border-subtle);
 }
-.aws-input {
+/* The filter is a Cloudscape text field: a bordered box with a leading search
+ * glyph, the input filling the rest. */
+.aws-table-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 1;
   max-width: 480px;
+  padding: 6px 12px;
   border: 1px solid var(--aws-border);
   border-radius: var(--aws-radius-control);
-  padding: 6px 12px;
+  background: var(--aws-surface);
+  color: var(--aws-fg-secondary);
+}
+.aws-table-filter:focus-within { outline: 2px solid var(--aws-primary); outline-offset: 0; border-color: var(--aws-primary); }
+.aws-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
   font: inherit;
   color: var(--aws-fg);
-  background: var(--aws-surface);
+  background: transparent;
+  outline: none;
 }
-.aws-input:focus-visible { outline: 2px solid var(--aws-primary); outline-offset: 0; border-color: var(--aws-primary); }
-.aws-pagination { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--aws-fg-secondary); }
+/* Refresh sits beside the filter; pagination is pushed to the far edge. */
+.aws-table-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--aws-border);
+  border-radius: var(--aws-radius-control);
+  background: var(--aws-surface);
+  color: var(--aws-fg-secondary);
+  cursor: pointer;
+}
+.aws-table-refresh:hover:not(:disabled) { background: var(--aws-surface-alt); color: var(--aws-fg); }
+.aws-table-refresh:disabled { color: var(--aws-fg-disabled); cursor: default; }
+.aws-table-refresh:focus-visible { outline: 2px solid var(--aws-primary); outline-offset: 0; }
+.aws-pagination { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13px; color: var(--aws-fg-secondary); }
 .aws-pagination button {
   border: 0; background: transparent; font: inherit; font-size: 16px;
   color: var(--aws-link); cursor: pointer; padding: 0 6px; border-radius: 4px;
@@ -200,26 +274,6 @@ body:has(.aws) { background: var(--aws-layout-bg); }
   .aws-body { grid-template-columns: minmax(0, 1fr); }
   .aws-sidenav { min-height: 0; border-right: 0; border-bottom: 1px solid var(--aws-border-subtle); }
 }
-
-/* Theme control, in the header where the console keeps it. */
-.aws-theme-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid transparent;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--aws-header-fg);
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-}
-.aws-theme-toggle:hover { background: var(--aws-header-hover); }
-/* A visible focus ring on the dark header needs its own colour; the link blue
- * does not carry enough contrast against it. */
-.aws-theme-toggle:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }
 
 /* Every interactive control shows where focus is, which keyboard and
  * screen-magnifier users depend on. */

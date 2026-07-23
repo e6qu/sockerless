@@ -4,6 +4,41 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-23 — Completed the Amazon Web Services console on both fidelity axes
+
+The AWS console got the same treatment the Google Cloud console did, in one
+branch covering both axes: real cloud data and the real visual language.
+
+Data: the console reads the real AWS APIs — Amazon ECS, AWS Lambda, Amazon
+ECR, Amazon S3, and Amazon CloudWatch Logs — over the console's own
+server-side Shauth federation, replacing an invented `/sim/v1/*` dashboard
+endpoint that was deleted. The operator's Shauth id_token is exchanged through
+`AssumeRoleWithWebIdentity` against a registered IAM OpenID Connect provider;
+the simulator now verifies the web identity token against that provider's
+issuer, audience, and RS256 signature and reports the token's real subject
+(it previously returned a hardcoded one). Each read is signed in the browser
+with Signature Version 4 over the returned session credentials using Web
+Crypto — the same client code and identifiers a real client uses against AWS,
+differing only in the endpoint and federation coordinates, with no
+sim-aware branch. ECS tasks are enumerated the way the real console shows
+them: list clusters, then per-cluster list and describe. The relying-party
+suite exercises the whole path with a live Shauth identity and a role carrying
+a read policy, so an unpermitted role reads as the real 403 rather than silent
+empties.
+
+Visual: the console was rebuilt to the Cloudscape Design System, graded
+side-by-side against the live reference with tokens read from its computed
+styles rather than from memory. Open Sans — Cloudscape's own console font,
+since Amazon Ember is proprietary and is approximated, said plainly — is
+vendored as a woff2 subset; Cloudscape's action blue and rounded containers
+are applied from the design system's own values; the dark navigation header
+carries a global search field and a tool cluster (notifications, settings,
+support, theme); and a Cloudscape-style inline-SVG icon set (SIL OFL / drawn
+in-repo, self-contained) sits on the status pills and the table's
+search-prefixed filter and refresh control. The browser suite pins the font,
+the action blue, the container radius, and the header and table controls
+structurally so the AWS look cannot regress unseen.
+
 ## 2026-07-23 — Rebuilt the Google Cloud console to the console's real visual language
 
 The console recognisably evoked Google Cloud but sat far below what was
