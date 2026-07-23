@@ -1,9 +1,18 @@
+import { Link } from "react-router";
 import { GcpResourceTable, type GcpColumn } from "../console/index.js";
-import { shortName } from "../console/format.js";
+import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchGCSBuckets, type GCSBucket } from "../api.js";
 
 const columns: GcpColumn<GCSBucket>[] = [
-  { id: "name", header: "Name", cell: (row) => shortName(row.name), value: (row) => shortName(row.name) },
+  {
+    id: "name",
+    header: "Name",
+    cell: (row) => <Link className="gc-cell-link" to={`/ui/gcs/${shortName(row.name)}`}>{shortName(row.name)}</Link>,
+    value: (row) => shortName(row.name),
+  },
+  { id: "location", header: "Location", cell: (row) => row.location ?? "—", value: (row) => row.location ?? "" },
+  { id: "storageClass", header: "Storage class", cell: (row) => row.storageClass ?? "—", value: (row) => row.storageClass ?? "" },
+  { id: "timeCreated", header: "Created", cell: (row) => formatTimestamp(row.timeCreated ?? ""), value: (row) => row.timeCreated ?? "" },
 ];
 
 export function GCSBucketsPage() {
@@ -13,7 +22,7 @@ export function GCSBucketsPage() {
       description="Buckets hold your objects — durable, scalable storage for any amount of data."
       actions={[{ label: "Create bucket", glyph: "+", primary: true, disabled: true }]}
       columns={columns}
-      queryKey={["gcs-buckets"]}
+      queryKey={["gcs-buckets-real"]}
       queryFn={fetchGCSBuckets}
       filterPlaceholder="Filter buckets"
       resourceNoun="buckets"

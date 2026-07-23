@@ -135,6 +135,8 @@ export function GcpStatus({ status, kind: explicitKind }: { status: string; kind
   // further.
   const words = status.toLowerCase().split(/[^a-z]+/).filter(Boolean);
   const has = (...candidates: string[]) => candidates.some((candidate) => words.includes(candidate));
+  // The failure and warning sets cover both resource states and Cloud Logging
+  // severities, so a log entry's severity reads the same way a resource's does.
   const derived: GcpStatusKind = has(
     "unavailable",
     "stopped",
@@ -144,9 +146,12 @@ export function GcpStatus({ status, kind: explicitKind }: { status: string; kind
     "deleting",
     "inactive",
     "unknown",
+    "critical",
+    "alert",
+    "emergency",
   )
     ? "error"
-    : has("pending", "provisioning", "creating", "deploying", "updating")
+    : has("pending", "provisioning", "creating", "deploying", "updating", "warning")
       ? "warning"
       : has("running", "active", "available", "succeeded", "success", "ok", "healthy", "ready", "enabled")
         ? "success"

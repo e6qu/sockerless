@@ -340,9 +340,6 @@ func stopCloudRunJobProcesses(p *cloudRunJobProcesses) {
 	}
 }
 
-// Package-level stores for dashboard access.
-var crjJobs sim.Store[Job]
-
 // crOperations holds long-running Operation records so the SDK can
 // `GetOperation` against the LRO returned by Create/Run/Delete, matching
 // real Cloud Run. Unknown ops 404 instead of synthetic done=true.
@@ -352,7 +349,6 @@ func registerCloudRunJobs(srv *sim.Server) {
 	jobs := sim.MakeStore[Job](srv.DB(), "crj_jobs")
 	executions := sim.MakeStore[Execution](srv.DB(), "crj_executions")
 	tasks := sim.MakeStore[Task](srv.DB(), "crj_tasks")
-	crjJobs = jobs
 	if crOperations == nil {
 		crOperations = sim.MakeStore[Operation](srv.DB(), "operations")
 	}

@@ -110,12 +110,8 @@ func functionCPUResources(fn storedFunction) *ResourceRequirements {
 	return &ResourceRequirements{Limits: map[string]string{"cpu": cpu}}
 }
 
-// Package-level store for dashboard access.
-var gcfFunctions sim.Store[storedFunction]
-
 func registerCloudFunctions(srv *sim.Server) {
 	functions := sim.MakeStore[storedFunction](srv.DB(), "gcf_functions")
-	gcfFunctions = functions
 
 	// Create function
 	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/functions", func(w http.ResponseWriter, r *http.Request) {

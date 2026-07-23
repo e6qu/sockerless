@@ -1,52 +1,63 @@
 import { Link } from "react-router";
-import { useSimSummary, useSimHealth } from "@sockerless/ui-core/hooks";
+import { useQueries } from "@tanstack/react-query";
 import { GcpPageHeader, GcpStatus } from "../console/GcpConsole.js";
+import {
+  fetchCloudRunJobsReal,
+  fetchCloudFunctions,
+  fetchARRepos,
+  fetchGCSBuckets,
+  fetchLogEntries,
+} from "../api.js";
 
+// The overview counts each resource from its real cloud API — the same list
+// the resource page reads — rather than a sockerless-invented summary endpoint.
 const RESOURCES = [
-  { label: "Cloud Run jobs", key: "cloudrun_jobs", to: "/ui/cloudrun" },
-  { label: "Cloud Run functions", key: "functions", to: "/ui/functions" },
-  { label: "Artifact Registry repositories", key: "ar_repos", to: "/ui/ar" },
-  { label: "Cloud Storage buckets", key: "gcs_buckets", to: "/ui/gcs" },
-  { label: "Log entries", key: "log_entries", to: "/ui/logging" },
+  { label: "Cloud Run jobs", to: "/ui/cloudrun", queryKey: ["cloudrun-jobs-real"], queryFn: fetchCloudRunJobsReal },
+  { label: "Cloud Run functions", to: "/ui/functions", queryKey: ["cloud-functions-real"], queryFn: fetchCloudFunctions },
+  { label: "Artifact Registry repositories", to: "/ui/ar", queryKey: ["ar-repos-real"], queryFn: fetchARRepos },
+  { label: "Cloud Storage buckets", to: "/ui/gcs", queryKey: ["gcs-buckets-real"], queryFn: fetchGCSBuckets },
+  { label: "Log entries", to: "/ui/logging", queryKey: ["log-entries-real"], queryFn: fetchLogEntries },
 ] as const;
 
 export function OverviewPage() {
-  const health = useSimHealth();
-  const summary = useSimSummary();
-  const services: Record<string, number> = summary.data?.services ?? {};
+  const results = useQueries({
+    queries: RESOURCES.map((resource) => ({ queryKey: resource.queryKey, queryFn: resource.queryFn })),
+  });
 
-  // A failed fetch must not render an all-zeros board that reads as healthy.
-  const failed = health.isError || summary.isError;
-  const loading = health.isLoading || summary.isLoading;
+  const failed = results.some((result) => result.isError);
+  const loading = results.some((result) => result.isLoading);
+  const refetching = results.some((result) => result.isFetching);
 
   return (
     <>
       <GcpPageHeader
         title="Overview"
         description="Resources across this project."
-        onRefresh={() => { void health.refetch(); void summary.refetch(); }}
-        refreshing={health.isFetching || summary.isFetching}
+        onRefresh={() => results.forEach((result) => void result.refetch())}
+        refreshing={refetching}
       />
       <div style={{ marginBottom: 16 }}>
+        {/* A failed read must not render an all-zeros board that reads as
+         * healthy; status reflects whether the real APIs answered. */}
         {failed ? (
           <GcpStatus status="Unavailable" kind="error" />
         ) : loading ? (
           <GcpStatus status="Loading" kind="warning" />
         ) : (
-          <GcpStatus status={health.data?.status === "ok" ? "All services operating normally" : "Unavailable"} />
+          <GcpStatus status="All services responding" />
         )}
       </div>
       {failed ? (
         <div className="gc-message gc-message-error" role="alert">
           <strong>Couldn't load the project overview.</strong>{" "}
-          {String(summary.error ?? health.error)}
+          {String(results.find((result) => result.error)?.error)}
         </div>
       ) : (
         <div className="gc-cards">
-          {RESOURCES.map((resource) => (
-            <div className="gc-card" key={resource.key}>
+          {RESOURCES.map((resource, index) => (
+            <div className="gc-card" key={resource.label}>
               <h2>{resource.label}</h2>
-              <Link to={resource.to}>{loading ? "—" : (services[resource.key] ?? 0)}</Link>
+              <Link to={resource.to}>{loading ? "—" : (results[index].data?.length ?? 0)}</Link>
             </div>
           ))}
         </div>

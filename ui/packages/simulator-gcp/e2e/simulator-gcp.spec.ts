@@ -217,3 +217,61 @@ test.describe("Cloud Run jobs read the real API", () => {
     await expect(page.getByRole("columnheader", { name: "Name", exact: true })).toBeVisible();
   });
 });
+
+test.describe("The remaining resources read their real APIs", () => {
+  const project = "sockerless";
+  const region = "us-central1";
+
+  test("lists a Cloud Storage bucket created through the real API and opens its detail", async ({ page }) => {
+    const name = `console-bucket-${Date.now()}`;
+    const created = await page.request.post(`/storage/v1/b?project=${project}`, {
+      data: { name, location: "US-CENTRAL1", storageClass: "STANDARD" },
+    });
+    expect(created.ok(), `creating bucket: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/gcs");
+    const row = page.getByRole("link", { name, exact: true });
+    await expect(row).toBeVisible();
+    await row.click();
+    await expect(page).toHaveURL(new RegExp(`/ui/gcs/${name}$`));
+    await expect(page.getByRole("heading", { name })).toBeVisible();
+    await expect(page.getByText("Storage class")).toBeVisible();
+  });
+
+  test("lists an Artifact Registry repository created through the real API and opens its detail", async ({ page }) => {
+    const id = `console-repo-${Date.now()}`;
+    const created = await page.request.post(
+      `/v1/projects/${project}/locations/${region}/repositories?repositoryId=${id}`,
+      { data: { format: "DOCKER", mode: "STANDARD_REPOSITORY" } },
+    );
+    expect(created.ok(), `creating repository: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/ar");
+    const row = page.getByRole("link", { name: id, exact: true });
+    await expect(row).toBeVisible();
+    await row.click();
+    await expect(page).toHaveURL(new RegExp(`/ui/ar/${id}$`));
+    await expect(page.getByRole("heading", { name: id })).toBeVisible();
+    await expect(page.getByText("Format")).toBeVisible();
+  });
+
+  test("shows a log entry written through the real Cloud Logging API", async ({ page }) => {
+    const message = `console-log-${Date.now()}`;
+    const written = await page.request.post(`/v2/entries:write`, {
+      data: {
+        entries: [
+          {
+            logName: `projects/${project}/logs/console-test`,
+            resource: { type: "global" },
+            severity: "WARNING",
+            textPayload: message,
+          },
+        ],
+      },
+    });
+    expect(written.ok(), `writing log entry: HTTP ${written.status()}`).toBeTruthy();
+
+    await page.goto("/ui/logging");
+    await expect(page.getByText(message)).toBeVisible();
+  });
+});

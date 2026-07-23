@@ -3,7 +3,7 @@ import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchLogEntries, type LogEntry } from "../api.js";
 
 // Cloud Logging omits severity when it is the default; the console reads that
-// as DEFAULT rather than blank.
+// as DEFAULT rather than a blank cell.
 const severityOf = (row: LogEntry) => row.severity ?? "DEFAULT";
 
 const columns: GcpColumn<LogEntry>[] = [
@@ -19,7 +19,7 @@ export function LoggingPage() {
       title="Logs Explorer"
       description="Search, filter, and inspect log entries across the project."
       columns={columns}
-      queryKey={["log-entries"]}
+      queryKey={["log-entries-real"]}
       queryFn={fetchLogEntries}
       filterPlaceholder="Filter entries"
       resourceNoun="log entries"
