@@ -23,8 +23,14 @@ describe("AzureStatus", () => {
     expect(container.querySelector(".az-status-error")).not.toBeNull();
   });
 
-  it("carries a glyph so the meaning does not rest on colour alone", () => {
+  it("carries a shape so the meaning does not rest on colour alone", () => {
     const { container } = render(<AzureStatus status="Available" />);
-    expect(container.textContent).toContain("✔");
+    // A distinct icon per state — a screen reader ignores it (aria-hidden) and
+    // reads the word, while a sighted user reads the shape.
+    const success = container.querySelector("svg[aria-hidden] path");
+    expect(success).not.toBeNull();
+    // The success and error shapes differ, so state is legible without colour.
+    const error = render(<AzureStatus status="Unavailable" />).container.querySelector("svg[aria-hidden] path");
+    expect(success?.getAttribute("d")).not.toBe(error?.getAttribute("d"));
   });
 });

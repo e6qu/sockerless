@@ -4,6 +4,41 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-23 — Completed the Microsoft Azure portal on both fidelity axes
+
+The Azure portal got the same treatment the Google Cloud and AWS consoles did,
+completing the set: every simulator console now reads only real cloud APIs, and
+no `/sim/v1/*` dashboard endpoint remains on any of them.
+
+Data: the portal reads the real Azure Resource Manager APIs — Azure Container
+Apps jobs, Azure Functions sites, Azure Container Registry, and Azure Storage
+accounts — enumerating subscriptions and listing each provider across them, plus
+Azure Monitor's Log Analytics query API (a distinct host and token audience from
+Azure Resource Manager, reached by listing Log Analytics workspaces and running a
+Kusto query against each). The invented `/sim/v1/*` dashboard endpoint is
+deleted. The operator's Shauth assertion is exchanged through **Microsoft Entra
+Workload Identity Federation** — the `client_credentials` grant with a JWT-bearer
+`client_assertion` — against a registered federated identity credential; the
+simulator now verifies the assertion against the identity's credential issuer,
+subject, audience, and RS256 signature (via `go-oidc` + `go-jose`) and issues an
+Azure token, where it previously issued one to any client_credentials request.
+This is the same client code and identifiers a real client uses against Azure,
+differing only in the endpoint, tenant, and identity coordinates, with no
+sim-aware branch. The relying-party suite proves the whole path with a live
+Shauth operator token: an administrator registers a managed identity and a
+federated identity credential trusting the operator's own issuer, subject, and
+audience, and Microsoft Entra exchanges the operator's assertion for an Azure
+Resource Manager token.
+
+Visual: the portal was already built to the Azure portal's layout — the blue
+header, the "Microsoft Azure" wordmark, the command bar, the Essentials strip,
+and the grouped service menu. It got a **Fluent-style inline-SVG icon set**
+(approximating Fluent UI System Icons, MIT, drawn in-repo and self-contained) on
+the command bar, the status pills, the service-menu and Essentials chevrons, the
+header search, and the theme control, replacing the placeholder Unicode glyphs.
+The browser suite pins the header blue and the command, status, and search icons
+structurally so the Azure look cannot regress unseen.
+
 ## 2026-07-23 — Completed the Amazon Web Services console on both fidelity axes
 
 The AWS console got the same treatment the Google Cloud console did, in one

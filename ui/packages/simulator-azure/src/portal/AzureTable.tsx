@@ -74,11 +74,11 @@ export function AzureResourceTable<T>({
     <>
       <AzureCommandBar
         commands={[
-          { label: "Refresh", glyph: "↻", onSelect: () => void refetch(), disabled: isFetching },
-          { label: "Delete", glyph: "⌦", disabled: selected.size === 0 },
-          { label: "Assign tags", glyph: "◫", disabled: selected.size === 0 },
-          { label: "Export to CSV", glyph: "⇩", disabled: rows.length === 0 },
-          { label: "Feedback", glyph: "☺" },
+          { label: "Refresh", icon: "refresh", onSelect: () => void refetch(), disabled: isFetching },
+          { label: "Delete", icon: "delete", disabled: selected.size === 0 },
+          { label: "Assign tags", icon: "tag", disabled: selected.size === 0 },
+          { label: "Export to CSV", icon: "download", disabled: rows.length === 0 },
+          { label: "Feedback", icon: "feedback" },
         ]}
       />
       <div className="az-main">

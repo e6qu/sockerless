@@ -263,15 +263,27 @@ func (s *Server) ListenAndServe() error {
 // and the UI stays reachable at /ui/ directly.
 func (s *Server) RegisterUI(fsys fs.FS) {
 	identityEndpoint, logoutEndpoint := "", ""
+	federationSubject := ""
 	if s.uiAuth.Enabled() {
 		identityEndpoint, logoutEndpoint = uiauth.SessionPath, uiauth.LogoutPath
+		federationSubject = uiauth.FederationSubjectPath
 		s.uiAuth.Register(s.mux)
 	}
 	configHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		// Cloud data-plane coordinates. Empty means the console's own origin
+		// (the simulator); a deployment against real Azure sets them to Azure
+		// Resource Manager, Microsoft Entra, and the operator's identity. The
+		// console federates and reads real APIs identically either way.
 		WriteJSON(w, http.StatusOK, map[string]string{
-			"identityEndpoint": identityEndpoint,
-			"logoutEndpoint":   logoutEndpoint,
+			"identityEndpoint":   identityEndpoint,
+			"logoutEndpoint":     logoutEndpoint,
+			"cloudApiEndpoint":   os.Getenv("SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT"),
+			"logsApiEndpoint":    os.Getenv("SOCKERLESS_CONSOLE_LOGS_API_ENDPOINT"),
+			"federationEndpoint": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT"),
+			"federationTenant":   os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_TENANT"),
+			"federationClientId": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_CLIENT_ID"),
+			"federationSubject":  federationSubject,
 		})
 	})
 	s.mux.Handle("GET /ui/config.json", s.uiAuth.Protect(configHandler))

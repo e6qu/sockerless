@@ -72,6 +72,74 @@ test.describe("Azure portal shell", () => {
   });
 });
 
+// These pin the ground-truth values of the Azure portal's visual language — the
+// header blue and the Fluent-style command, status, and filter icons — so a
+// regression away from the Azure look fails here rather than being judged by eye.
+test.describe("Fluent visual fidelity", () => {
+  test("paints the header in the Azure portal blue", async ({ page }) => {
+    await page.goto("/ui/");
+    const color = await page.locator(".az-header").evaluate((node) => getComputedStyle(node).backgroundColor);
+    // #0078d4, the Azure portal header blue.
+    expect(color).toBe("rgb(0, 120, 212)");
+  });
+
+  test("draws the command bar and its controls with Fluent-style icons", async ({ page }) => {
+    await page.goto("/ui/container-apps");
+    // Every command carries a real icon rather than a text glyph.
+    const commands = page.getByRole("toolbar", { name: "Commands" }).getByRole("button");
+    const count = await commands.count();
+    expect(count).toBeGreaterThan(0);
+    for (let index = 0; index < count; index += 1) {
+      await expect(commands.nth(index).locator("svg")).toHaveCount(1);
+    }
+    // The header search carries a magnifier icon.
+    await expect(page.locator(".az-header-search svg")).toHaveCount(1);
+  });
+});
+
+test.describe("The portal reads the real Azure APIs", () => {
+  // Seeds resources through the real Azure Resource Manager APIs the portal
+  // reads, so the assertions prove live resources render rather than a fixture.
+  // The simulator accepts the calls unauthenticated; the portal federates them,
+  // which the relying-party suite exercises with a live identity.
+  const SUB = "00000000-0000-0000-0000-000000000001";
+
+  async function putResourceGroup(page: import("@playwright/test").Page, rg: string) {
+    const created = await page.request.put(`/subscriptions/${SUB}/resourcegroups/${rg}?api-version=2021-04-01`, {
+      data: { location: "eastus" },
+    });
+    expect(created.ok(), `creating resource group: HTTP ${created.status()}`).toBeTruthy();
+  }
+
+  test("lists a container registry created through the real API", async ({ page }) => {
+    const rg = `portal-acr-rg-${Date.now()}`;
+    const name = `portalacr${Date.now()}`;
+    await putResourceGroup(page, rg);
+    const created = await page.request.put(
+      `/subscriptions/${SUB}/resourceGroups/${rg}/providers/Microsoft.ContainerRegistry/registries/${name}?api-version=2023-07-01`,
+      { data: { location: "eastus", sku: { name: "Basic" } } },
+    );
+    expect(created.ok(), `creating registry: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/acr");
+    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+  });
+
+  test("lists a storage account created through the real API", async ({ page }) => {
+    const rg = `portal-sa-rg-${Date.now()}`;
+    const name = `portalsa${Date.now()}`.slice(0, 24);
+    await putResourceGroup(page, rg);
+    const created = await page.request.put(
+      `/subscriptions/${SUB}/resourceGroups/${rg}/providers/Microsoft.Storage/storageAccounts/${name}?api-version=2023-01-01`,
+      { data: { location: "eastus", sku: { name: "Standard_LRS" }, kind: "StorageV2" } },
+    );
+    expect(created.ok(), `creating storage account: HTTP ${created.status()}`).toBeTruthy();
+
+    await page.goto("/ui/storage");
+    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+  });
+});
+
 test.describe("Service menu", () => {
   test("groups services and collapses a group without losing the others", async ({ page }) => {
     await page.goto("/ui/");

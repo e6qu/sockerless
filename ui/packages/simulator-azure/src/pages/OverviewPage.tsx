@@ -1,31 +1,42 @@
 import { Link } from "react-router";
-import { useSimSummary, useSimHealth } from "@sockerless/ui-core/hooks";
+import { useQueries } from "@tanstack/react-query";
 import { AzureEssentials, AzureStatus } from "../portal/index.js";
 import { AzureCommandBar } from "../portal/AzurePortal.js";
+import {
+  fetchContainerAppJobs,
+  fetchFunctionSites,
+  fetchACRRegistries,
+  fetchStorageAccounts,
+  fetchMonitorLogs,
+} from "../api.js";
 
+// The overview counts the real resources by reading the same Azure APIs each
+// service page reads, so the board reflects the subscription rather than a
+// separate summary endpoint.
 const RESOURCES = [
-  { label: "Container Apps jobs", key: "container_app_jobs", to: "/ui/container-apps" },
-  { label: "Function Apps", key: "function_sites", to: "/ui/functions" },
-  { label: "Container registries", key: "acr_registries", to: "/ui/acr" },
-  { label: "Storage accounts", key: "storage_accounts", to: "/ui/storage" },
-  { label: "Log entries", key: "monitor_logs", to: "/ui/monitor" },
+  { label: "Container Apps jobs", to: "/ui/container-apps", queryKey: ["ca-jobs"], queryFn: fetchContainerAppJobs },
+  { label: "Function Apps", to: "/ui/functions", queryKey: ["fn-sites"], queryFn: fetchFunctionSites },
+  { label: "Container registries", to: "/ui/acr", queryKey: ["acr-registries"], queryFn: fetchACRRegistries },
+  { label: "Storage accounts", to: "/ui/storage", queryKey: ["storage-accounts"], queryFn: fetchStorageAccounts },
+  { label: "Log entries", to: "/ui/monitor", queryKey: ["monitor-logs"], queryFn: fetchMonitorLogs },
 ] as const;
 
 export function OverviewPage() {
-  const health = useSimHealth();
-  const summary = useSimSummary();
-  const services: Record<string, number> = summary.data?.services ?? {};
+  const results = useQueries({
+    queries: RESOURCES.map((resource) => ({ queryKey: resource.queryKey, queryFn: resource.queryFn })),
+  });
 
-  // A failed fetch must not render an all-zeros board that reads as healthy.
-  const failed = health.isError || summary.isError;
-  const loading = health.isLoading || summary.isLoading;
+  // A failed read must not render an all-zeros board that reads as healthy.
+  const failed = results.some((result) => result.isError);
+  const loading = results.some((result) => result.isLoading);
+  const firstError = results.find((result) => result.isError)?.error;
 
   return (
     <>
       <AzureCommandBar
         commands={[
-          { label: "Refresh", glyph: "↻", onSelect: () => { void health.refetch(); void summary.refetch(); } },
-          { label: "Feedback", glyph: "☺" },
+          { label: "Refresh", icon: "refresh", onSelect: () => results.forEach((result) => void result.refetch()) },
+          { label: "Feedback", icon: "feedback" },
         ]}
       />
       <div className="az-main">
@@ -40,7 +51,7 @@ export function OverviewPage() {
               ) : loading ? (
                 <AzureStatus status="Loading" kind="warning" />
               ) : (
-                <AzureStatus status={health.data?.status === "ok" ? "Available" : "Unavailable"} />
+                <AzureStatus status="Available" />
               ),
             },
             { label: "Resource types", value: String(RESOURCES.length) },
@@ -49,14 +60,14 @@ export function OverviewPage() {
         {failed ? (
           <div className="az-message az-message-error" role="alert">
             <strong>Could not load the subscription overview.</strong>{" "}
-            {String(summary.error ?? health.error)}
+            {firstError instanceof Error ? firstError.message : "The portal could not reach Azure."}
           </div>
         ) : (
           <div className="az-cards">
-            {RESOURCES.map((resource) => (
-              <div className="az-card" key={resource.key}>
+            {RESOURCES.map((resource, index) => (
+              <div className="az-card" key={resource.label}>
                 <h2>{resource.label}</h2>
-                <Link to={resource.to}>{loading ? "—" : (services[resource.key] ?? 0)}</Link>
+                <Link to={resource.to}>{loading ? "—" : (results[index].data?.length ?? 0)}</Link>
               </div>
             ))}
           </div>

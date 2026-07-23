@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink } from "react-router";
+import { AzureIcon, type AzureIconName } from "./icons.js";
 
 export interface ServiceMenuItem {
   label: string;
@@ -15,7 +16,7 @@ export interface ServiceMenuGroup {
  *  than hidden, so the set of things a resource supports stays visible. */
 export interface PortalCommand {
   label: string;
-  glyph: string;
+  icon: AzureIconName;
   onSelect?: () => void;
   disabled?: boolean;
 }
@@ -28,7 +29,7 @@ function AzureThemeToggle() {
   const label = dark ? "Switch to light theme" : "Switch to dark theme";
   return (
     <button type="button" className="az-icon-button" onClick={() => setDark((on) => !on)} aria-label={label} title={label}>
-      <span aria-hidden>{dark ? "☀" : "☾"}</span>
+      <AzureIcon name={dark ? "sun" : "moon"} size={18} />
     </button>
   );
 }
@@ -37,10 +38,13 @@ export function AzureHeader({ account }: { account: ReactNode }) {
   return (
     <header className="az-header">
       <div className="az-header-brand">
-        <span className="az-hamburger" aria-hidden>☰</span>
+        <button type="button" className="az-hamburger" aria-label="Show portal menu">
+          <AzureIcon name="menu" size={18} />
+        </button>
         <span className="az-wordmark">Microsoft Azure</span>
       </div>
       <div className="az-header-search">
+        <AzureIcon name="search" size={16} />
         <input
           type="search"
           aria-label="Search resources, services, and docs"
@@ -98,7 +102,7 @@ export function AzureCommandBar({ commands }: { commands: PortalCommand[] }) {
           onClick={command.onSelect}
           disabled={command.disabled}
         >
-          <span aria-hidden className="az-command-glyph">{command.glyph}</span>
+          <span className="az-command-glyph"><AzureIcon name={command.icon} size={16} /></span>
           {command.label}
         </button>
       ))}
@@ -158,7 +162,7 @@ export function AzureServiceMenu({ groups, flat }: { groups: ServiceMenuGroup[];
                 })
               }
             >
-              <span aria-hidden className="az-chevron">{open ? "⌄" : "›"}</span>
+              <span className="az-chevron"><AzureIcon name={open ? "chevron_down" : "chevron_right"} size={14} /></span>
               {group.label}
             </button>
             {open ? (
@@ -195,7 +199,7 @@ export function AzureEssentials({ properties }: { properties: EssentialsProperty
   return (
     <section className="az-essentials" aria-label="Essentials">
       <button type="button" className="az-essentials-toggle" aria-expanded={open} onClick={() => setOpen((on) => !on)}>
-        <span aria-hidden className="az-chevron">{open ? "⌄" : "›"}</span>
+        <span className="az-chevron"><AzureIcon name={open ? "chevron_down" : "chevron_right"} size={14} /></span>
         Essentials
       </button>
       {open ? (
@@ -240,10 +244,17 @@ export function AzureStatus({ status, kind: explicitKind }: { status: string; ki
         ? "success"
         : "inactive";
   const kind = explicitKind ?? derived;
-  const glyph = kind === "success" ? "✔" : kind === "error" ? "✖" : kind === "warning" ? "⧗" : "•";
+  const iconName: AzureIconName =
+    kind === "success"
+      ? "status_success"
+      : kind === "error"
+        ? "status_error"
+        : kind === "warning"
+          ? "status_warning"
+          : "status_inactive";
   return (
     <span className={`az-status az-status-${kind}`}>
-      <span aria-hidden>{glyph}</span>
+      <AzureIcon name={iconName} size={15} />
       {status}
     </span>
   );

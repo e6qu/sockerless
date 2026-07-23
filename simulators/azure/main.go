@@ -157,9 +157,6 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	// Entra identity seeding and Microsoft Graph delegated endpoints
 	registerEntra(srv)
 
-	// Dashboard summary endpoints for UI
-	registerDashboard(srv)
-
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)
 
