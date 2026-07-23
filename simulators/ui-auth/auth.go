@@ -30,6 +30,7 @@ const (
 	LoginPath              = "/auth/oidc/login"
 	CallbackPath           = "/auth/oidc/callback"
 	SessionPath            = "/auth/session"
+	FederationSubjectPath  = "/auth/federation-subject"
 	LogoutPath             = "/auth/logout"
 	FrontchannelLogoutPath = "/auth/oidc/frontchannel-logout"
 	BackchannelLogoutPath  = "/auth/oidc/backchannel-logout"
@@ -145,6 +146,7 @@ func (a *Auth) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+LoginPath, a.login)
 	mux.HandleFunc("GET "+CallbackPath, a.callback)
 	mux.HandleFunc("GET "+SessionPath, a.session)
+	mux.HandleFunc("GET "+FederationSubjectPath, a.federationSubject)
 	mux.HandleFunc("POST "+LogoutPath, a.logout)
 	mux.HandleFunc("GET "+FrontchannelLogoutPath, a.frontchannelLogout)
 	mux.HandleFunc("POST "+BackchannelLogoutPath, a.backchannelLogout)
@@ -322,6 +324,27 @@ func (a *Auth) session(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true, "sub": session.Subject, "name": session.Name,
 		"email": session.Email, "picture": session.Picture, "role": session.Role,
+	})
+}
+
+// federationSubject returns the operator's OpenID Connect assertion for the
+// current session so the console can federate it into cloud credentials through
+// the cloud's own federation endpoint, the way a Workforce Identity Federation
+// client holds its subject token. This belongs to the console's authentication
+// layer, not to any cloud API; the console reaches the cloud only afterwards,
+// with the credential the federation returns. It is not cached, and it requires
+// a signed-in operator.
+func (a *Auth) federationSubject(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	assertion, issuer, audience, ok := a.OperatorAssertion(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"authenticated": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"subject_token": assertion,
+		"issuer":        issuer,
+		"audience":      audience,
 	})
 }
 

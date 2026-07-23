@@ -168,15 +168,6 @@ func (s *Server) HandleUIFunc(pattern string, handler http.HandlerFunc) {
 	s.Handle(pattern, s.uiAuth.Protect(handler))
 }
 
-// OperatorAssertion returns the OpenID Connect ID token the signed-in operator
-// authenticated with for the session bound to r, with the issuer and audience
-// it was issued under. The console backend brokers this into short-lived cloud
-// credentials; the raw assertion never leaves the server. It reports false when
-// no operator session is present.
-func (s *Server) OperatorAssertion(r *http.Request) (assertion, issuer, audience string, ok bool) {
-	return s.uiAuth.OperatorAssertion(r)
-}
-
 // RoutePatterns returns every pattern registered through Handle /
 // HandleFunc, in registration order.
 func (s *Server) RoutePatterns() []string {
@@ -282,6 +273,17 @@ func (s *Server) RegisterUI(fsys fs.FS) {
 		WriteJSON(w, http.StatusOK, map[string]string{
 			"identityEndpoint": identityEndpoint,
 			"logoutEndpoint":   logoutEndpoint,
+			// Cloud data-plane coordinates. Empty means the console's own
+			// origin, which is where the simulator serves the real cloud APIs
+			// and its Security Token Service; a deployment against the real
+			// cloud points these at the real cloud hosts. The federation
+			// audience is the workforce pool provider the console federates
+			// through, provisioned the administrator's way and supplied as a
+			// coordinate — never invented by the simulator.
+			"cloudApiEndpoint":   os.Getenv("SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT"),
+			"federationEndpoint": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT"),
+			"federationAudience": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_AUDIENCE"),
+			"federationSubject":  federationSubjectEndpoint(s.uiAuth.Enabled()),
 		})
 	})
 	s.mux.Handle("GET /ui/config.json", s.uiAuth.Protect(configHandler))
@@ -292,6 +294,16 @@ func (s *Server) RegisterUI(fsys fs.FS) {
 		})
 	}
 	s.logger.Info().Msg("UI registered at /ui/")
+}
+
+// federationSubjectEndpoint reports where the console reads the operator's
+// assertion when authentication is enabled — the console's own auth layer, not
+// a cloud API. It is empty when no identity provider is configured.
+func federationSubjectEndpoint(authEnabled bool) string {
+	if !authEnabled {
+		return ""
+	}
+	return uiauth.FederationSubjectPath
 }
 
 // spaHandler serves a single-page application from the given filesystem.

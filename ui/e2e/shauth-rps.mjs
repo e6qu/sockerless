@@ -28,7 +28,7 @@ try {
     await waitForApplication(page, app);
     await assertIdentity(page, context, app);
     if (app.name === "Sockerless Admin") await assertAdministratorMutation(context);
-    if (app.name === "Sockerless Google Cloud simulator") await assertFederatedCloudToken(context, app);
+    if (app.name === "Sockerless Google Cloud simulator") await assertFederatedCloudToken(context, page, app);
     await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
     await context.close();
@@ -164,19 +164,44 @@ async function assertDeveloperCannotAccessAdmin() {
   }
 }
 
-// assertFederatedCloudToken proves the console's credential broker federates
-// the signed-in operator's real Shauth assertion into a cloud access token
-// through the Security Token Service — the same path the console takes before
-// reading a real Google Cloud API. The assertion is verified against Shauth's
-// own discovery and key set, so a token here means the whole federation works
-// end to end with a live identity, not a fixture.
-async function assertFederatedCloudToken(context, app) {
+// assertFederatedCloudToken proves the console federates the signed-in
+// operator's real Shauth assertion into a cloud access token the way it reaches
+// the real cloud: it reads the assertion from the console's own auth layer, then
+// exchanges it at the cloud's real Security Token Service — no simulator-served
+// broker. The assertion is verified against Shauth's own discovery and key set,
+// so a token here means the whole federation works end to end with a live
+// identity, differing from the real cloud only in coordinates.
+async function assertFederatedCloudToken(context, page, app) {
   const origin = new URL(app.launch).origin;
-  const response = await context.request.get(`${origin}/auth/cloud-token`);
-  assert.equal(response.status(), 200, `${app.name} credential broker returned ${response.status()}`);
-  const token = await response.json();
-  assert.ok(token.access_token, `${app.name} credential broker issued no federated token`);
+
+  const subjectResponse = await context.request.get(`${origin}/auth/federation-subject`);
+  assert.equal(subjectResponse.status(), 200, `${app.name} auth layer did not expose the operator assertion`);
+  const { subject_token: subjectToken } = await subjectResponse.json();
+  assert.ok(subjectToken, `${app.name} exposed no operator assertion to federate`);
+
+  const exchange = await context.request.post(`${origin}/v1/token`, {
+    form: {
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      audience: "//iam.googleapis.com/locations/global/workforcePools/sockerless-console/providers/sso",
+      subject_token: subjectToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+      requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+    },
+  });
+  assert.equal(exchange.status(), 200, `${app.name} Security Token Service exchange returned ${exchange.status()}`);
+  const token = await exchange.json();
+  assert.ok(token.access_token, `${app.name} exchange issued no federated token`);
   assert.equal(token.token_type, "Bearer", `${app.name} federated token was not a bearer token`);
+
+  // The signed-in console reads a real cloud API through that federation; a load
+  // error would mean the SPA's federation path is broken.
+  await page.goto(`${origin}/ui/cloudrun`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Cloud Run jobs" }).waitFor({ state: "visible" });
+  assert.equal(
+    await page.getByText("Couldn't load").count(),
+    0,
+    `${app.name} console failed to read the real Cloud Run API over federation`,
+  );
 }
 
 async function assertAdministratorMutation(context) {
