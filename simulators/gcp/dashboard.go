@@ -8,7 +8,6 @@ import (
 
 func registerDashboard(srv *sim.Server) {
 	srv.HandleUIFunc("GET /sim/v1/summary", handleDashboardSummary)
-	srv.HandleUIFunc("GET /sim/v1/cloudrun/jobs", handleDashboardCloudRunJobs)
 	srv.HandleUIFunc("GET /sim/v1/functions", handleDashboardFunctions)
 	srv.HandleUIFunc("GET /sim/v1/ar/repositories", handleDashboardARRepos)
 	srv.HandleUIFunc("GET /sim/v1/gcs/buckets", handleDashboardGCSBuckets)
@@ -26,26 +25,6 @@ func handleDashboardSummary(w http.ResponseWriter, _ *http.Request) {
 			"log_entries":   logEntries.Len(),
 		},
 	})
-}
-
-func handleDashboardCloudRunJobs(w http.ResponseWriter, _ *http.Request) {
-	type jobSummary struct {
-		Name           string `json:"name"`
-		CreateTime     string `json:"createTime"`
-		ExecutionCount int32  `json:"executionCount"`
-		LaunchStage    string `json:"launchStage"`
-	}
-	jobs := crjJobs.List()
-	out := make([]jobSummary, len(jobs))
-	for i, j := range jobs {
-		out[i] = jobSummary{
-			Name:           j.Name,
-			CreateTime:     j.CreateTime,
-			ExecutionCount: j.ExecutionCount,
-			LaunchStage:    string(j.LaunchStage),
-		}
-	}
-	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleDashboardFunctions(w http.ResponseWriter, _ *http.Request) {

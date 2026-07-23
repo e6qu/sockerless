@@ -28,6 +28,7 @@ try {
     await waitForApplication(page, app);
     await assertIdentity(page, context, app);
     if (app.name === "Sockerless Admin") await assertAdministratorMutation(context);
+    if (app.name === "Sockerless Google Cloud simulator") await assertFederatedCloudToken(context, app);
     await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
     await context.close();
@@ -161,6 +162,21 @@ async function assertDeveloperCannotAccessAdmin() {
   } finally {
     await context.close();
   }
+}
+
+// assertFederatedCloudToken proves the console's credential broker federates
+// the signed-in operator's real Shauth assertion into a cloud access token
+// through the Security Token Service — the same path the console takes before
+// reading a real Google Cloud API. The assertion is verified against Shauth's
+// own discovery and key set, so a token here means the whole federation works
+// end to end with a live identity, not a fixture.
+async function assertFederatedCloudToken(context, app) {
+  const origin = new URL(app.launch).origin;
+  const response = await context.request.get(`${origin}/auth/cloud-token`);
+  assert.equal(response.status(), 200, `${app.name} credential broker returned ${response.status()}`);
+  const token = await response.json();
+  assert.ok(token.access_token, `${app.name} credential broker issued no federated token`);
+  assert.equal(token.token_type, "Bearer", `${app.name} federated token was not a bearer token`);
 }
 
 async function assertAdministratorMutation(context) {
