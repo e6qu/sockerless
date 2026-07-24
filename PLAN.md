@@ -28,11 +28,12 @@ The next fidelity work stayed evidence-driven: deterministic Amazon Elastic Cont
 
 ## Active Branch Priorities
 
-1. Preserved the exact Shauth browser contract in the real PostgreSQL, Ory Hydra, compiled relying-party, and Chromium matrix.
-2. Kept every ordinary workflow job within the enforced 15-minute ceiling without narrowing test coverage.
-3. Kept production builds and releases incapable of silently omitting embedded web interfaces.
-4. Kept nightly fuzzing bounded, complete across discovered targets, and truthful about missing modules, failures, and crashers.
-5. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+1. Closed the skip-if-absent gate hole: `scripts/check-no-tool-absent-skips.sh` rejected the TestMain-level `LookPath → os.Exit(0)` and print-then-skip shapes beyond `t.Skip`, exempting genuine platform/kernel-capability gates, and every remaining tool-absent skip resolved to install-in-TestMain (Google Cloud CLI) or fail-loud against CI-provided tools (`az`, `docker` guards removed as vestigial, `session-manager-plugin`, `git`, `gcloud`, `nsenter`).
+2. Preserved the exact Shauth browser contract in the real PostgreSQL, Ory Hydra, compiled relying-party, and Chromium matrix.
+3. Kept every ordinary workflow job within the enforced 15-minute ceiling without narrowing test coverage.
+4. Kept production builds and releases incapable of silently omitting embedded web interfaces.
+5. Kept nightly fuzzing bounded, complete across discovered targets, and truthful about missing modules, failures, and crashers.
+6. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
@@ -135,14 +136,67 @@ One slice per cloud, one pull request each:
    remaining Google Cloud resources (functions, Artifact Registry, Cloud
    Storage, Logging) follow the same pattern next.
 2. **Amazon Web Services — real ECS/Lambda API** via
-   `AssumeRoleWithWebIdentity` and browser-side Signature Version 4.
+   `AssumeRoleWithWebIdentity` and browser-side Signature Version 4. Done.
 3. **Microsoft Azure — real ARM API** via Entra federation into an ARM bearer
-   token.
+   token. Done — no `/sim/v1/*` dashboard route remains on any console.
 
 Each slice deletes its cloud's `/sim/v1/*` routes only once the real path is
 proven, keeps the resource detail pages the real Get APIs make possible, and
 carries the SDK, CLI, and Terraform coverage the simulator testing contract
 requires for every new endpoint.
+
+## Console Self-Service: Credentials, Accounts, Login, Deployment
+
+Shauth SSO sits on top of — never replaces — cloud-faithful authentication: a
+user signs into Shauth once, the console federates that identity through each
+cloud's own primitive, and everything past federation is the real cloud wire
+contract. On that foundation, the consoles become self-service: a
+Shauth-authenticated user mints the cloud credentials their vendor CLI needs
+and manages the accounts and projects those credentials live in, exactly as
+the real consoles allow. Four phases, one branch and pull request each, in
+this order.
+
+1. **Credential-minting console pages.** Each console gains its cloud's real
+   credential page, driven by the operator's federated credentials calling the
+   cloud's real APIs — never a console-only endpoint: AWS Identity and Access
+   Management users with the "Create access key" flow (the Security
+   credentials page); Google Cloud service accounts with key creation and the
+   one-time `privateKeyData` JSON download; Microsoft Entra ID app
+   registrations with client-secret creation (the Certificates & secrets
+   blade). Each page shows the exact vendor-CLI usage for the minted material
+   (`aws configure`, `gcloud auth activate-service-account`,
+   `az login --service-principal`). The backing simulator APIs exist and the
+   enforcing data planes already accept minted credentials on all three clouds
+   (the Signature Version 4 verifier resolves IAM access keys; the Google
+   OAuth 2.0 token endpoint accepts the service-account JWT-bearer flow; the
+   Entra token endpoint accepts `client_secret_post`/`client_secret_basic`),
+   so this phase is console UI plus browser-suite coverage only.
+2. **Account and project management.** Two new simulator slices with the
+   mandatory SDK, CLI, and Terraform tests: Google Cloud Resource Manager
+   (`projects.create`/`list`/`delete`) and the Azure `Microsoft.Subscription`
+   alias API (subscription creation). Console pages on top: AWS Organizations
+   account list/create (the Organizations slice already exists), the Google
+   Cloud project picker with New Project and project management as the real
+   console header offers, and Azure subscription list/create. Privilege comes
+   from real cloud authorization on the federated principal — Shauth roles map
+   to differently-privileged cloud principals through the federation resources
+   (role trust policy, workforce pool, federated identity credential), never a
+   bespoke sockerless permission check.
+3. **`sockerless login`.** The packaged terminal analog of
+   `aws configure sso` / `gcloud auth login` / `az login`: browser sign-in to
+   Shauth via a localhost callback, the per-cloud federation exchange, and the
+   resulting real cloud credentials written to the vendor tools' standard
+   locations (`~/.aws/credentials`, Application Default Credentials, the az
+   token cache) so unmodified vendor CLIs and SDKs work against the deployed
+   simulators.
+4. **Deployment and provisioning recipe.** Committed infrastructure that hosts
+   Sockerless Admin, the three simulators, and a Shauth instance at persistent
+   origins: each console registered as a Shauth OpenID Connect client with its
+   real redirect URI, the federation resources provisioned via Terraform or
+   the real APIs, and a live-origin smoke test that signs in via Shauth and
+   reads each console's data plane. The multi-architecture images already
+   published are the artifacts; the coordinates and orchestration are the
+   deliverable.
 
 ## Standing Work
 
