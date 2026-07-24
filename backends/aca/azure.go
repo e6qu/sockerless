@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
@@ -21,12 +19,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 )
-
-type fakeCredential struct{}
-
-func (f *fakeCredential) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcore.AccessToken, error) {
-	return azcore.AccessToken{Token: "fake-token", ExpiresOn: time.Now().Add(time.Hour)}, nil
-}
 
 // AzureClients holds all Azure SDK clients.
 type AzureClients struct {
@@ -93,7 +85,19 @@ func NewAzureClients(subscriptionID string, endpointURL string) (*AzureClients, 
 }
 
 func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*AzureClients, error) {
-	cred := &fakeCredential{}
+	// Same credential as the real-cloud path (DefaultAzureCredential). The
+	// only difference between talking to a custom ARM endpoint and to real
+	// Azure is coordinates: the endpoint URL(s) below, plus the auth
+	// coordinates DefaultAzureCredential reads from the environment
+	// (IDENTITY_ENDPOINT/IDENTITY_HEADER for the App Service / Container
+	// Apps managed identity, AZURE_* for a service principal). Inside a real
+	// ACA app the platform injects those; against a custom endpoint the
+	// operator/harness injects the equivalent coordinate pointing at that
+	// endpoint's token authority. There is no sim-only credential.
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return nil, err
+	}
 	opts := &arm.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Cloud: cloud.Configuration{
@@ -108,6 +112,10 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 					},
 				},
 			},
+			// Permit sending the bearer token to a plaintext-HTTP ARM
+			// endpoint. This relaxes only the resource-request TLS check;
+			// the token itself is a real, verifiable token minted by the
+			// authority DefaultAzureCredential authenticates against.
 			InsecureAllowCredentialWithHTTP: true,
 		},
 	}

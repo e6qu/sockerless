@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +28,17 @@ var (
 
 	subscriptionID = "00000000-0000-0000-0000-000000000001"
 	resourceGroup  = "cli-test-rg"
+
+	// armBearer is a real, simulator-minted Azure Resource Manager access token,
+	// acquired once in TestMain via the OAuth2 client_credentials grant. The az
+	// CLI does not auto-attach a bearer to plain http endpoints, so azRest sends
+	// this token through az rest's --headers flag on every ARM control-plane
+	// call and the simulator's bearer verification accepts it.
+	armBearer string
+
+	// simTenantID matches the tenant the SDK and Terraform harnesses use so all
+	// three acquire tokens from the same /{tenant}/oauth2/v2.0/token route.
+	simTenantID = "11111111-1111-1111-1111-111111111111"
 )
 
 func TestMain(m *testing.M) {
@@ -85,6 +98,13 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Simulator did not become healthy: %v", err)
 	}
 
+	token, err := fetchSimARMBearer()
+	if err != nil {
+		simCmd.Process.Kill()
+		log.Fatalf("Failed to acquire simulator ARM bearer token: %v", err)
+	}
+	armBearer = token
+
 	// Create tmp dir
 	tmpDir, _ = filepath.Abs("tmp")
 	os.MkdirAll(tmpDir, 0755)
@@ -121,6 +141,40 @@ func waitForHealth(url string) error {
 	return fmt.Errorf("timeout waiting for %s", url)
 }
 
+// fetchSimARMBearer performs an OAuth2 client_credentials grant against the
+// simulator's token endpoint — the same request a real Azure AD service
+// principal makes — and returns the minted ARM access token.
+func fetchSimARMBearer() (string, error) {
+	form := neturl.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {"test-client-id"},
+		"client_secret": {"test-client-secret"},
+		"scope":         {"https://management.azure.com/.default"},
+	}
+	resp, err := http.PostForm(baseURL+"/"+simTenantID+"/oauth2/v2.0/token", form)
+	if err != nil {
+		return "", fmt.Errorf("acquire simulator access token: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read simulator token response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("simulator token endpoint returned %d: %s", resp.StatusCode, body)
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("parse simulator token response: %w", err)
+	}
+	if out.AccessToken == "" {
+		return "", fmt.Errorf("simulator token response carried no access_token: %s", body)
+	}
+	return out.AccessToken, nil
+}
+
 // azRest creates an "az rest" command with config isolation.
 // Uses az rest to bypass cloud registration issues with HTTP endpoints.
 // Extra args are appended verbatim — used by callers that need --headers.
@@ -129,6 +183,14 @@ func azRest(method, url, body string, extra ...string) *exec.Cmd {
 	if body != "" {
 		args = append(args, "--body", body)
 	}
+	// Attach the ARM bearer token unless the caller manages its own request
+	// headers. Callers that pass --headers are Host-routed data-plane requests
+	// (Event Grid topic publish, Function invoke) that do not authenticate with
+	// an ARM bearer; ARM control-plane calls pass no extra headers and receive
+	// the token here so the simulator's bearer verification accepts them.
+	if !hasHeadersFlag(extra) {
+		args = append(args, "--headers", "Authorization=Bearer "+armBearer)
+	}
 	args = append(args, extra...)
 	cmd := exec.Command("az", args...)
 	cmd.Env = append(os.Environ(),
@@ -136,6 +198,18 @@ func azRest(method, url, body string, extra ...string) *exec.Cmd {
 		"AZURE_CORE_NO_COLOR=1",
 	)
 	return cmd
+}
+
+// hasHeadersFlag reports whether the caller already supplies its own az rest
+// --headers set (a Host-routed data-plane call), so azRest leaves header
+// management to the caller instead of injecting the ARM bearer.
+func hasHeadersFlag(extra []string) bool {
+	for _, a := range extra {
+		if a == "--headers" {
+			return true
+		}
+	}
+	return false
 }
 
 // armURL constructs the full ARM resource URL

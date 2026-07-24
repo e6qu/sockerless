@@ -18,7 +18,7 @@ import (
 func azureDeleteSite(rg, name string) {
 	url := baseURL + "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.Web/sites/" + name + "?api-version=2023-12-01"
 	req, _ := http.NewRequest("DELETE", url, nil)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	if err == nil {
 		resp.Body.Close()
@@ -42,7 +42,7 @@ func azureCreateSiteWithImage(t *testing.T, rg, name string, command []string, i
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
 		strings.NewReader(rgBody))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, err := http.DefaultClient.Do(rgReq)
 	require.NoError(t, err)
 	rgResp.Body.Close()
@@ -73,7 +73,7 @@ func azureCreateSiteWithImage(t *testing.T, rg, name string, command []string, i
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Web/sites/"+name+"?api-version=2023-12-01",
 		strings.NewReader(string(siteBody)))
 	siteReq.Header.Set("Content-Type", "application/json")
-	siteReq.Header.Set("Authorization", "Bearer fake-token")
+	siteReq.Header.Set("Authorization", simARMBearer)
 	siteResp, err := http.DefaultClient.Do(siteReq)
 	require.NoError(t, err)
 	siteResp.Body.Close()
@@ -224,7 +224,7 @@ func TestAzureFunctions_DefaultHostNameReachability(t *testing.T) {
 	getReq, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Web/sites/"+name+"?api-version=2023-12-01",
 		nil)
-	getReq.Header.Set("Authorization", "Bearer fake-token")
+	getReq.Header.Set("Authorization", simARMBearer)
 	getResp, err := http.DefaultClient.Do(getReq)
 	require.NoError(t, err)
 	defer getResp.Body.Close()

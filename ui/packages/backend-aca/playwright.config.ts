@@ -38,6 +38,13 @@ export default defineConfig({
       SOCKERLESS_ACA_STORAGE_ACCOUNT: "sockerlesse2e",
       SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE: "sockerless-e2e",
       SOCKERLESS_CALLBACK_URL: `ws://127.0.0.1:${PORT}/v1/aca/reverse`,
+      // Managed-identity coordinate the real Azure platform injects into an
+      // ACA app container. The backend's DefaultAzureCredential reads these to
+      // acquire a real ARM bearer from the simulator's /msi/token endpoint —
+      // the same code path used against real Azure; only the coordinate value
+      // differs. Without it the ARM control plane (now bearer-enforced) 401s.
+      IDENTITY_ENDPOINT: `http://127.0.0.1:${SIMULATOR_PORT}/msi/token`,
+      IDENTITY_HEADER: "sim-identity-header",
     },
     port: PORT,
     reuseExistingServer: false,

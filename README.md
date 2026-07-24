@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-363.5k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
-[![TypeScript](https://img.shields.io/badge/TypeScript-17.9k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-212.8k_lines-brightgreen)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-364.7k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-17.8k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-214.3k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-45-informational)](#module-sizes)
 
@@ -110,12 +110,12 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 **Go**
 
 ![core](https://img.shields.io/badge/core-19.8k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-170.6k-00ADD8)
-![sim/azure](https://img.shields.io/badge/sim%2Fazure-50.9k-00ADD8)
-![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-49.9k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-171.1k-00ADD8)
+![sim/azure](https://img.shields.io/badge/sim%2Fazure-51.1k-00ADD8)
+![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-50.2k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.9k-5BC0DE)
-![cloudrun](https://img.shields.io/badge/cloudrun-6.5k-5BC0DE)
+![cloudrun](https://img.shields.io/badge/cloudrun-6.6k-5BC0DE)
 ![aca](https://img.shields.io/badge/aca-5.8k-5BC0DE)
 ![docker](https://img.shields.io/badge/docker-2.7k-5BC0DE)
 ![agent](https://img.shields.io/badge/agent-7.1k-5BC0DE)

@@ -91,12 +91,14 @@ func TestConformance_StorageAccountWritableProperties(t *testing.T) {
 		`"properties":{"allowBlobPublicAccess":false,"accessTier":"Cool","minimumTlsVersion":"TLS1_2"}}`
 	putReq, _ := http.NewRequestWithContext(ctx, "PUT", base, strings.NewReader(putBody))
 	putReq.Header.Set("Content-Type", "application/json")
+	putReq.Header.Set("Authorization", simARMBearer)
 	putResp, err := http.DefaultClient.Do(putReq)
 	require.NoError(t, err)
 	putResp.Body.Close()
 	require.Equal(t, http.StatusOK, putResp.StatusCode)
 
 	getReq, _ := http.NewRequestWithContext(ctx, "GET", base, nil)
+	getReq.Header.Set("Authorization", simARMBearer)
 	getResp, err := http.DefaultClient.Do(getReq)
 	require.NoError(t, err)
 	body := armBody(t, getResp)
@@ -522,6 +524,7 @@ func TestConformance_StorageBlobServicesPut(t *testing.T) {
 	putAcct, _ := http.NewRequestWithContext(ctx, "PUT", acctBase,
 		strings.NewReader(`{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"},"properties":{}}`))
 	putAcct.Header.Set("Content-Type", "application/json")
+	putAcct.Header.Set("Authorization", simARMBearer)
 	putAcctResp, err := http.DefaultClient.Do(putAcct)
 	require.NoError(t, err)
 	putAcctResp.Body.Close()
@@ -532,12 +535,14 @@ func TestConformance_StorageBlobServicesPut(t *testing.T) {
 	putSvc, _ := http.NewRequestWithContext(ctx, "PUT", svcBase,
 		strings.NewReader(`{"properties":{"isVersioningEnabled":true,"deleteRetentionPolicy":{"enabled":true,"days":5}}}`))
 	putSvc.Header.Set("Content-Type", "application/json")
+	putSvc.Header.Set("Authorization", simARMBearer)
 	putSvcResp, err := http.DefaultClient.Do(putSvc)
 	require.NoError(t, err)
 	putSvcResp.Body.Close()
 	require.Equal(t, http.StatusOK, putSvcResp.StatusCode)
 
 	getSvc, _ := http.NewRequestWithContext(ctx, "GET", svcBase, nil)
+	getSvc.Header.Set("Authorization", simARMBearer)
 	getResp, err := http.DefaultClient.Do(getSvc)
 	require.NoError(t, err)
 	body := armBody(t, getResp)
@@ -600,6 +605,7 @@ func TestConformance_EventGridGetTopicPure(t *testing.T) {
 	getEndpoint := func(hostHeader string) string {
 		req, err := http.NewRequestWithContext(ctx, "GET", baseURL+base+"?api-version=2025-01-01", nil)
 		require.NoError(t, err)
+		req.Header.Set("Authorization", simARMBearer)
 		if hostHeader != "" {
 			req.Host = hostHeader
 		}

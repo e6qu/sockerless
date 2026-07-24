@@ -93,6 +93,13 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	// interception, so provider endpoint joins and OAuth/OpenID routes keep
 	// their Azure-compatible behavior.
 	srv.WrapHandler(AzureARMAPIVersionMiddleware)
+	// Bearer verification runs just outside the api-version check so an
+	// unauthenticated ARM request gets ARM's 401 before any 400 for a missing
+	// api-version, and just inside path cleanup so it sees the collapsed
+	// /subscriptions path. AzureAuthMiddleware wraps it, so the OAuth/OpenID
+	// endpoints are handled and returned before reaching it and never need a
+	// bearer.
+	srv.WrapHandler(AzureBearerVerificationMiddleware)
 	// Clean double slashes in request paths. The azurerm v3 provider (via
 	// go-azure-sdk) appends a trailing slash to the resourceManager endpoint,
 	// producing paths like //subscriptions/... Go's default mux would 301

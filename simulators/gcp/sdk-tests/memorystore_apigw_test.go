@@ -14,7 +14,7 @@ func redisService(t *testing.T) *redis.Service {
 	t.Helper()
 	svc, err := redis.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc
@@ -24,7 +24,7 @@ func apigatewayService(t *testing.T) *apigateway.Service {
 	t.Helper()
 	svc, err := apigateway.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

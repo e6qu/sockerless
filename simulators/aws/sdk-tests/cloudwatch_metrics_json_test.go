@@ -24,6 +24,7 @@ func TestCloudWatch_AwsJsonMetrics(t *testing.T) {
 		require.NoError(t, err)
 		req.Header.Set("X-Amz-Target", "GraniteServiceVersion20100801."+op)
 		req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+		signRawSigV4JSON(t, req, "monitoring", raw)
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()

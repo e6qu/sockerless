@@ -22,7 +22,7 @@ func newRunV1(t *testing.T) *run.APIService {
 	t.Helper()
 	svc, err := run.NewService(context.Background(),
 		option.WithEndpoint(baseURL+"/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

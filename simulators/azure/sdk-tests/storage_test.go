@@ -24,7 +24,7 @@ func TestStorage_CreateAccount(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/storage-rg?api-version=2023-07-01",
 		strings.NewReader(rgBody))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, _ := http.DefaultClient.Do(rgReq)
 	rgResp.Body.Close()
 
@@ -42,7 +42,7 @@ func TestStorage_CreateAccount(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/storage-rg/providers/Microsoft.Storage/storageAccounts/teststorage?api-version=2023-05-01",
 		strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -54,7 +54,7 @@ func TestStorage_GetAccount(t *testing.T) {
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/storage-rg/providers/Microsoft.Storage/storageAccounts/teststorage?api-version=2023-05-01",
 		nil)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestStorage_ARMPatchAdvertisedEndpointsAndResourceEnumeration(t *testing.T)
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Storage/storageAccounts/"+accountName+"?api-version=2023-05-01",
 		strings.NewReader(createBody))
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createReq.Header.Set("Authorization", simARMBearer)
 	createResp, err := http.DefaultClient.Do(createReq)
 	require.NoError(t, err)
 	createResp.Body.Close()
@@ -147,7 +147,7 @@ func TestStorage_ARMPatchAdvertisedEndpointsAndResourceEnumeration(t *testing.T)
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Storage/storageAccounts/"+accountName+"?api-version=2023-05-01",
 		strings.NewReader(patchBody))
 	patchReq.Header.Set("Content-Type", "application/json")
-	patchReq.Header.Set("Authorization", "Bearer fake-token")
+	patchReq.Header.Set("Authorization", simARMBearer)
 	patchResp, err := http.DefaultClient.Do(patchReq)
 	require.NoError(t, err)
 	defer patchResp.Body.Close()
@@ -168,7 +168,7 @@ func TestStorage_ARMPatchAdvertisedEndpointsAndResourceEnumeration(t *testing.T)
 
 	listRGReq, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups?api-version=2021-04-01", nil)
-	listRGReq.Header.Set("Authorization", "Bearer fake-token")
+	listRGReq.Header.Set("Authorization", simARMBearer)
 	listRGResp, err := http.DefaultClient.Do(listRGReq)
 	require.NoError(t, err)
 	defer listRGResp.Body.Close()
@@ -181,7 +181,7 @@ func TestStorage_ARMPatchAdvertisedEndpointsAndResourceEnumeration(t *testing.T)
 
 	resourcesReq, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/resources?api-version=2021-04-01", nil)
-	resourcesReq.Header.Set("Authorization", "Bearer fake-token")
+	resourcesReq.Header.Set("Authorization", simARMBearer)
 	resourcesResp, err := http.DefaultClient.Do(resourcesReq)
 	require.NoError(t, err)
 	defer resourcesResp.Body.Close()
@@ -219,7 +219,7 @@ func createStorageAccount(t *testing.T, rg, accountName string) {
 		strings.NewReader(createBody))
 	require.NoError(t, err)
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createReq.Header.Set("Authorization", simARMBearer)
 	createResp, err := http.DefaultClient.Do(createReq)
 	require.NoError(t, err)
 	defer createResp.Body.Close()
@@ -232,7 +232,7 @@ func listStorageKeys(t *testing.T, rg, accountName string) []storageListKey {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Storage/storageAccounts/"+accountName+"/listKeys?api-version=2023-05-01",
 		nil)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()

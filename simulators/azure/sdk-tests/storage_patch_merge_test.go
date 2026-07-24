@@ -31,7 +31,7 @@ func TestStorageAccount_PatchMergesProperties(t *testing.T) {
 	// PATCH only allowBlobPublicAccess → false; accessTier must be preserved.
 	req, _ := http.NewRequestWithContext(ctx, "PATCH", base, strings.NewReader(`{"properties":{"allowBlobPublicAccess":false}}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
@@ -39,7 +39,7 @@ func TestStorageAccount_PatchMergesProperties(t *testing.T) {
 
 	// GET and assert the merge.
 	gr, _ := http.NewRequestWithContext(ctx, "GET", base, nil)
-	gr.Header.Set("Authorization", "Bearer fake-token")
+	gr.Header.Set("Authorization", simARMBearer)
 	gresp, err := http.DefaultClient.Do(gr)
 	require.NoError(t, err)
 	body, _ := io.ReadAll(gresp.Body)

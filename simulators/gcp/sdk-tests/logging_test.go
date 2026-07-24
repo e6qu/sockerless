@@ -213,7 +213,7 @@ func loggingRESTService(t *testing.T) *loggingrpc.Service {
 	t.Helper()
 	svc, err := loggingrpc.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

@@ -122,7 +122,7 @@ func armPUT(t *testing.T, path, body string) {
 	t.Helper()
 	req, _ := http.NewRequest("PUT", baseURL+path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", "Bearer "+armBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -134,7 +134,7 @@ func armPOST(t *testing.T, path, body string) {
 	t.Helper()
 	req, _ := http.NewRequest("POST", baseURL+path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", "Bearer "+armBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -145,7 +145,7 @@ func armPOST(t *testing.T, path, body string) {
 func armDELETE(t *testing.T, path string) {
 	t.Helper()
 	req, _ := http.NewRequest("DELETE", baseURL+path, nil)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", "Bearer "+armBearer)
 	resp, _ := http.DefaultClient.Do(req)
 	if resp != nil {
 		resp.Body.Close()

@@ -3,13 +3,14 @@ module github.com/sockerless/simulator-gcp
 go 1.25.8
 
 require (
-	cloud.google.com/go/bigtable v1.50.0
+	cloud.google.com/go/bigtable v1.51.0
 	cloud.google.com/go/iam v1.12.0
 	cloud.google.com/go/kms v1.32.0
 	cloud.google.com/go/logging v1.19.0
 	cloud.google.com/go/longrunning v1.2.0
 	cloud.google.com/go/pubsub v1.51.0
 	cloud.google.com/go/secretmanager v1.21.0
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/sockerless/simulator v0.0.0
 	github.com/sockerless/simulator-realexec v0.0.0
@@ -31,7 +32,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
-	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.7.0 // indirect

@@ -128,10 +128,8 @@ func TestWrapLegacyExec_NonNetConn_ReturnsError(t *testing.T) {
 }
 
 // fakeReader / fakeWriter / errClosingPipe satisfy io.Reader /
-// io.Writer / io.Closer for the non-Conn-ReadWriter test above. Naming
-// `fakeXxx` mirrors the in-tree convention from `aca/azure.go`'s
-// `fakeCredential` (test-only — this never appears in a production
-// path).
+// io.Writer / io.Closer for the non-Conn-ReadWriter test above. These are
+// test-only doubles — no production code path substitutes them.
 type fakeReader struct{}
 
 func (fakeReader) Read(_ []byte) (int, error) { return 0, errors.New("fakeReader") }

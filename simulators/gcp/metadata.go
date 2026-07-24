@@ -141,21 +141,36 @@ func registerComputeMetadata(srv *sim.Server) {
 	})
 
 	// /computeMetadata/v1/instance/service-accounts/{sa}/token
-	// Bearer access token. Mints a sim token; the sim's gating endpoints
-	// do not verify the token signature today (matches the sim's
-	// existing fakeCredential pattern for ARM).
+	// Bearer access token. Mints a token signed with the simulator's
+	// access-token key (see signAccessToken) so the data-plane bearer
+	// middleware verifies it exactly like an OAuth2 or federated token —
+	// the metadata server is the workload's real path to a usable token.
 	srv.HandleFunc("GET /computeMetadata/v1/instance/service-accounts/{sa}/token", func(w http.ResponseWriter, r *http.Request) {
 		if !mustFlavor(w, r) {
 			return
 		}
+		sa := sim.PathParam(r, "sa")
+		if sa == "default" {
+			sa = fmt.Sprintf("default@%s.iam.gserviceaccount.com", defaultMetadataProject(r))
+		}
+		now := time.Now()
+		expires := now.Add(time.Hour)
 		// Real GCE returns JSON: {access_token,expires_in,token_type}.
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"access_token":"sim-access-token","expires_in":%d,"token_type":"Bearer"}`, 3599)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"access_token": signAccessToken(sa, now, expires),
+			"expires_in":   int(time.Until(expires).Seconds()),
+			"token_type":   "Bearer",
+		})
 	})
 
 	// /computeMetadata/v1/instance/service-accounts/{sa}/identity?audience=...
-	// ID token. Delegates to the existing mintSimIdToken helper used by
-	// iamcredentials.generateIdToken (so the JWT shape round-trips).
+	// Identity token. A workload reads this to obtain the bearer it presents
+	// when invoking a sibling Cloud Run / Cloud Functions service (the
+	// google.golang.org/api/idtoken compute source fetches it verbatim). The
+	// token is signed with the simulator's access-token key (see
+	// signIdentityToken) so the invoked endpoint's data-plane bearer
+	// middleware verifies it exactly like an OAuth2 or federated token — the
+	// same consolidation the sibling `token` endpoint uses.
 	srv.HandleFunc("GET /computeMetadata/v1/instance/service-accounts/{sa}/identity", func(w http.ResponseWriter, r *http.Request) {
 		if !mustFlavor(w, r) {
 			return
@@ -171,7 +186,7 @@ func registerComputeMetadata(srv *sim.Server) {
 		}
 		now := time.Now()
 		expires := now.Add(time.Hour)
-		token := mintSimIdToken(idTokenSignKey(), sa, audience, true, now, expires)
+		token := signIdentityToken(sa, audience, now, expires)
 		w.Header().Set("Content-Type", "application/text")
 		_, _ = w.Write([]byte(token))
 	})

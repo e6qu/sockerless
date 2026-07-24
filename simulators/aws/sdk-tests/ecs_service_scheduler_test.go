@@ -1,9 +1,7 @@
 package aws_sdk_test
 
 import (
-	"fmt"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -12,11 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestECS_ServiceScheduler_ReconcilesDesiredCount exercises the background
-// ECS service scheduler: a service with DesiredCount=2 converges to two
-// RUNNING tasks, the scheduler replaces a manually stopped task, and a
-// scale-to-zero drains every task.
-func TestECS_ServiceScheduler_ReconcilesDesiredCount(t *testing.T) {
+// TestECS_Service_ControlPlaneConvergence exercises the ECS service control-plane
+// state machine: the modeled service reaches runningCount == desiredCount with a
+// COMPLETED primary deployment synchronously (no background scheduler launches
+// ephemeral containers), scale up/down through UpdateService tracks desiredCount,
+// scale-to-zero settles runningCount to 0, and DeleteService drains to INACTIVE.
+func TestECS_Service_ControlPlaneConvergence(t *testing.T) {
 	c := ecsClient()
 	cluster := "sched-cluster"
 	_, err := c.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
@@ -46,42 +45,45 @@ func TestECS_ServiceScheduler_ReconcilesDesiredCount(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, createOut.Service)
-	// Immediately after CreateService the scheduler has not yet placed tasks;
-	// RunningCount must reflect that — never an assumed DesiredCount.
-	assert.EqualValues(t, 0, createOut.Service.RunningCount,
-		"RunningCount must be 0 immediately after create, before the scheduler places tasks")
+	assert.EqualValues(t, 2, createOut.Service.DesiredCount)
+	// The modeled service reaches steady state synchronously.
+	assert.EqualValues(t, 2, createOut.Service.RunningCount,
+		"CreateService must reach runningCount == desiredCount as a modeled control-plane state")
+	assert.EqualValues(t, 0, createOut.Service.PendingCount)
+	require.NotEmpty(t, createOut.Service.Deployments, "service must have a PRIMARY deployment")
+	assert.Equal(t, "COMPLETED", string(createOut.Service.Deployments[0].RolloutState),
+		"the primary deployment must report COMPLETED")
+	assert.EqualValues(t, 2, createOut.Service.Deployments[0].RunningCount,
+		"the primary deployment's runningCount must track desiredCount")
 
-	// Poll: scheduler must reach DesiredCount == 2 RUNNING tasks.
-	runningArns := waitForRunningTaskCount(t, c, cluster, "sched-svc", 2, 60*time.Second)
-	require.Len(t, runningArns, 2, "scheduler must place 2 RUNNING tasks for DesiredCount=2")
-
-	// DescribeServices must now report runningCount == desiredCount.
+	// DescribeServices returns the same converged snapshot.
 	descSvc, err := c.DescribeServices(ctx, &ecs.DescribeServicesInput{
 		Cluster: aws.String(cluster), Services: []string{"sched-svc"},
 	})
 	require.NoError(t, err)
 	require.Len(t, descSvc.Services, 1)
 	assert.EqualValues(t, 2, descSvc.Services[0].RunningCount,
-		"DescribeServices runningCount must track the scheduler-placed task set")
+		"DescribeServices runningCount must equal desiredCount")
 	assert.EqualValues(t, 2, descSvc.Services[0].DesiredCount)
+	assert.Equal(t, "ACTIVE", aws.ToString(descSvc.Services[0].Status))
 
-	// Stop one task manually. The scheduler must replace it on the next tick.
-	stopped := runningArns[0]
-	_, err = c.StopTask(ctx, &ecs.StopTaskInput{
-		Cluster: aws.String(cluster), Task: aws.String(stopped), Reason: aws.String("test: manual stop"),
+	// Scale up to 3 via UpdateService: runningCount tracks the new desiredCount.
+	updOut, err := c.UpdateService(ctx, &ecs.UpdateServiceInput{
+		Cluster: aws.String(cluster), Service: aws.String("sched-svc"), DesiredCount: aws.Int32(3),
 	})
 	require.NoError(t, err)
+	assert.EqualValues(t, 3, updOut.Service.DesiredCount)
+	assert.EqualValues(t, 3, updOut.Service.RunningCount,
+		"UpdateService must keep runningCount in lockstep with desiredCount")
 
-	// After replacement, 2 RUNNING tasks must again be present. The replaced
-	// task may differ from the original.
-	_ = waitForRunningTaskCount(t, c, cluster, "sched-svc", 2, 60*time.Second)
-
-	// Scale to zero. Scheduler must drain every task for the service.
-	_, err = c.UpdateService(ctx, &ecs.UpdateServiceInput{
+	// Scale to zero: runningCount settles to 0.
+	updOut, err = c.UpdateService(ctx, &ecs.UpdateServiceInput{
 		Cluster: aws.String(cluster), Service: aws.String("sched-svc"), DesiredCount: aws.Int32(0),
 	})
 	require.NoError(t, err)
-	_ = waitForRunningTaskCount(t, c, cluster, "sched-svc", 0, 60*time.Second)
+	assert.EqualValues(t, 0, updOut.Service.DesiredCount)
+	assert.EqualValues(t, 0, updOut.Service.RunningCount,
+		"scale-to-zero must drop runningCount to 0")
 
 	descSvc, err = c.DescribeServices(ctx, &ecs.DescribeServicesInput{
 		Cluster: aws.String(cluster), Services: []string{"sched-svc"},
@@ -90,63 +92,13 @@ func TestECS_ServiceScheduler_ReconcilesDesiredCount(t *testing.T) {
 	require.Len(t, descSvc.Services, 1)
 	assert.EqualValues(t, 0, descSvc.Services[0].RunningCount,
 		"DescribeServices runningCount must be 0 after DesiredCount scale-to-zero")
-}
 
-// waitForRunningTaskCount polls ListTasks (desired=RUNNING, scoped to the
-// service via the startedBy tag) until exactly n tasks are RUNNING for the
-// service, returning their ARNs. Fails the test on timeout.
-func waitForRunningTaskCount(t *testing.T, c *ecs.Client, cluster, service string, n int, timeout time.Duration) []string {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	var lastArns []string
-	for time.Now().Before(deadline) {
-		listOut, err := c.ListTasks(ctx, &ecs.ListTasksInput{
-			Cluster:       aws.String(cluster),
-			DesiredStatus: ecstypes.DesiredStatusRunning,
-			StartedBy:     aws.String("ecs-svc/" + service),
-		})
-		if err == nil {
-			lastArns = listOut.TaskArns
-			if runningTaskCount(t, c, cluster, listOut.TaskArns) == n {
-				return listOut.TaskArns
-			}
-		}
-		time.Sleep(1 * time.Second)
-	}
-	if len(lastArns) == 0 {
-		t.Fatalf("timed out waiting for %d RUNNING tasks for service %s (none observed)", n, service)
-	} else {
-		// Describe the last observed set for diagnostics.
-		descOut, _ := c.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-			Cluster: aws.String(cluster), Tasks: lastArns,
-		})
-		statuses := make([]string, 0, len(descOut.Tasks))
-		for _, tk := range descOut.Tasks {
-			statuses = append(statuses, fmt.Sprintf("%s=%s",
-				aws.ToString(tk.TaskArn), aws.ToString(tk.LastStatus)))
-		}
-		t.Fatalf("timed out waiting for %d RUNNING tasks for service %s; last observed: %v",
-			n, service, statuses)
-	}
-	return lastArns
-}
-
-// runningTaskCount describes the listed task ARNs and counts those whose
-// LastStatus is RUNNING.
-func runningTaskCount(t *testing.T, c *ecs.Client, cluster string, arns []string) int {
-	t.Helper()
-	if len(arns) == 0 {
-		return 0
-	}
-	descOut, err := c.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-		Cluster: aws.String(cluster), Tasks: arns,
+	// DeleteService settles the service to INACTIVE.
+	delOut, err := c.DeleteService(ctx, &ecs.DeleteServiceInput{
+		Cluster: aws.String(cluster), Service: aws.String("sched-svc"), Force: aws.Bool(true),
 	})
 	require.NoError(t, err)
-	count := 0
-	for _, tk := range descOut.Tasks {
-		if aws.ToString(tk.LastStatus) == "RUNNING" {
-			count++
-		}
-	}
-	return count
+	require.NotNil(t, delOut.Service)
+	assert.Equal(t, "INACTIVE", aws.ToString(delOut.Service.Status),
+		"DeleteService must settle the service to INACTIVE")
 }

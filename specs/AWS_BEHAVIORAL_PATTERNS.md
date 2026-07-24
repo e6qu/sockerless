@@ -30,7 +30,6 @@ Allowed classifications:
 | ------- | -------------- | ----------- | -------------------- |
 | `cloudwatch-alarm-evaluator` | background-evaluator | `simulators/aws/cloudwatch_alarm_evaluator.go` | `simulators/aws/sdk-tests/behavioral_gate_test.go` |
 | `application-autoscaling-evaluator` | background-evaluator | `simulators/aws/application_autoscaling_eval.go` | `simulators/aws/sdk-tests/behavioral_gate_test.go` |
-| `ecs-service-scheduler` | background-evaluator | `simulators/aws/ecs_service_scheduler.go` | `simulators/aws/sdk-tests/behavioral_gate_test.go` |
 | `eventbridge-scheduler-firing` | background-evaluator | `simulators/aws/scheduler_firing.go` | `simulators/aws/sdk-tests/scheduler_test.go` |
 | `route53-dns-server` | listener | `simulators/aws/route53_dns.go` | `simulators/aws/sdk-tests/behavioral_gate_test.go` |
 | `cloudwatch-logs-metric-filter` | dispatch | `simulators/aws/cloudwatch_logs_ops.go` | `simulators/aws/sdk-tests/behavioral_gate_test.go` |

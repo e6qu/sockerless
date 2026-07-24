@@ -2,8 +2,11 @@ package tfsim
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +16,11 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -71,12 +78,17 @@ func Start(t *testing.T, configDir string) *Env {
 	cmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	// Own process group so the whole simulator subtree can be reaped with one
+	// kill(-pgid): by t.Cleanup on the normal path, by the deadline watchdog
+	// just before a hard timeout, and by the signal reaper on Ctrl-C / SIGQUIT.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start simulator: %v", err)
 	}
+	trackForReaping(cmd)
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		reapProcessGroup(cmd)
+		untrackForReaping(cmd)
 	})
 
 	env := &Env{
@@ -93,7 +105,28 @@ func Start(t *testing.T, configDir string) *Env {
 	if os.Getenv("SOCKERLESS_TF_HTTPS_GATEWAY") == "1" {
 		startHTTPSGateway(t, env, stateDir, simDir, port)
 	}
+	env.armDeadlineReaper(t)
 	return env
+}
+
+// armDeadlineReaper reaps the simulator (and HTTPS gateway) process groups a
+// few seconds before the test's own deadline. go test's hard timeout aborts the
+// binary without running t.Cleanup, so without this the subprocesses would
+// orphan past the run; firing early reaps them while there is still time.
+func (e *Env) armDeadlineReaper(t *testing.T) {
+	dl, ok := t.Deadline()
+	if !ok {
+		return
+	}
+	d := time.Until(dl) - 15*time.Second
+	if d <= 0 {
+		return
+	}
+	timer := time.AfterFunc(d, func() {
+		reapProcessGroup(e.gatewayCmd)
+		reapProcessGroup(e.cmd)
+	})
+	t.Cleanup(func() { timer.Stop() })
 }
 
 func (e *Env) Terraform(t *testing.T, args ...string) []byte {
@@ -109,6 +142,10 @@ func (e *Env) Terraform(t *testing.T, args ...string) []byte {
 	}
 	cmd := exec.Command("terraform", args...)
 	cmd.Dir = e.dir
+	// Own process group so a stuck terraform (and the provider-plugin
+	// grandchildren it spawns) can be reaped with one kill(-pgid) instead of
+	// orphaning a spinning process tree past the test deadline.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(), "TF_VAR_endpoint="+e.Endpoint)
 	if e.CACertFile != "" {
 		cmd.Env = append(cmd.Env, "SSL_CERT_FILE="+e.CACertFile)
@@ -119,16 +156,116 @@ func (e *Env) Terraform(t *testing.T, args ...string) []byte {
 	if v := os.Getenv("TF_LOG_PATH"); v != "" {
 		cmd.Env = append(cmd.Env, "TF_LOG_PATH="+v)
 	}
+
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
 	start := time.Now()
-	out, err := cmd.CombinedOutput()
-	t.Logf("terraform %v duration=%s", args, time.Since(start).Round(time.Millisecond))
-	if err != nil {
-		t.Fatalf("terraform %v failed: %v\n%s", args, err, out)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("terraform %v: failed to start: %v", args, err)
 	}
-	return out
+	killGroup := func() {
+		if cmd.Process != nil {
+			// Negative pid targets the whole process group (Setpgid'd tree).
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
+	// Safety net for the pass/fail/panic paths; the watchdog below covers the
+	// hard-timeout path that t.Cleanup does not run on.
+	t.Cleanup(killGroup)
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	// Fire ~20s before the test deadline so the tree is reaped and the command
+	// fails diagnosably rather than being orphaned by the hard SIGQUIT timeout.
+	var watchdog <-chan time.Time
+	if dl, ok := t.Deadline(); ok {
+		if d := time.Until(dl) - 20*time.Second; d > 0 {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			watchdog = timer.C
+		}
+	}
+
+	select {
+	case err := <-done:
+		t.Logf("terraform %v duration=%s", args, time.Since(start).Round(time.Millisecond))
+		if err != nil {
+			t.Fatalf("terraform %v failed: %v\n%s", args, err, buf.Bytes())
+		}
+		return buf.Bytes()
+	case <-watchdog:
+		killGroup()
+		<-done // reap the killed process so no zombie/orphan remains
+		t.Fatalf("terraform %v timed out near the test deadline (process group killed to avoid orphans)\n%s",
+			args, buf.Bytes())
+		return nil
+	}
 }
 
-func (e *Env) AWSJSON(t *testing.T, target string, in, out any) {
+// reapProcessGroup SIGKILLs the whole process group of cmd (started Setpgid, so
+// it leads its own group) and reaps it, leaving no orphan or zombie. Safe to
+// call more than once and on a nil / not-yet-started command.
+func reapProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	_ = cmd.Wait()
+}
+
+var (
+	reaperMu   sync.Mutex
+	reaperCmds []*exec.Cmd
+	reaperOnce sync.Once
+)
+
+// trackForReaping registers a Setpgid'd subprocess so the signal reaper can
+// kill its process group if the test binary is aborted by Ctrl-C or the
+// go-test hard-timeout SIGQUIT — neither of which runs t.Cleanup.
+func trackForReaping(cmd *exec.Cmd) {
+	reaperMu.Lock()
+	reaperCmds = append(reaperCmds, cmd)
+	reaperMu.Unlock()
+	reaperOnce.Do(installSignalReaper)
+}
+
+func untrackForReaping(cmd *exec.Cmd) {
+	reaperMu.Lock()
+	for i, c := range reaperCmds {
+		if c == cmd {
+			reaperCmds = append(reaperCmds[:i], reaperCmds[i+1:]...)
+			break
+		}
+	}
+	reaperMu.Unlock()
+}
+
+func installSignalReaper() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		sig := <-ch
+		reaperMu.Lock()
+		for _, c := range reaperCmds {
+			if c != nil && c.Process != nil {
+				_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+			}
+		}
+		reaperMu.Unlock()
+		// Restore default disposition and re-deliver so the exit status
+		// reflects the terminating signal. The channel only carries the
+		// syscall signals registered above.
+		if s, ok := sig.(syscall.Signal); ok {
+			signal.Reset(s)
+			_ = syscall.Kill(syscall.Getpid(), s)
+		}
+	}()
+}
+
+func (e *Env) AWSJSON(t *testing.T, service, target string, in, out any) {
 	t.Helper()
 	body, err := json.Marshal(in)
 	if err != nil {
@@ -140,6 +277,7 @@ func (e *Env) AWSJSON(t *testing.T, target string, in, out any) {
 	}
 	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 	req.Header.Set("X-Amz-Target", target)
+	signSimSigV4(req, service, body)
 	resp, err := e.Client.Do(req)
 	if err != nil {
 		t.Fatalf("post %s: %v", target, err)
@@ -157,9 +295,16 @@ func (e *Env) AWSJSON(t *testing.T, target string, in, out any) {
 	}
 }
 
-func (e *Env) AWSQuery(t *testing.T, values url.Values) {
+func (e *Env) AWSQuery(t *testing.T, service string, values url.Values) {
 	t.Helper()
-	resp, err := e.Client.PostForm(e.Endpoint+"/", values)
+	body := []byte(values.Encode())
+	req, err := http.NewRequest(http.MethodPost, e.Endpoint+"/", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build query action %s: %v", values.Get("Action"), err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	signSimSigV4(req, service, body)
+	resp, err := e.Client.Do(req)
 	if err != nil {
 		t.Fatalf("post query action %s: %v", values.Get("Action"), err)
 	}
@@ -169,6 +314,48 @@ func (e *Env) AWSQuery(t *testing.T, values url.Values) {
 		_, _ = b.ReadFrom(resp.Body)
 		t.Fatalf("query action %s status=%d body=%s", values.Get("Action"), resp.StatusCode, b.String())
 	}
+}
+
+// signSimSigV4 signs a request to the simulator with Signature Version 4 using
+// the simulator's seeded bootstrap credential (test/test, us-east-1) — the same
+// coordinate the Terraform provider and the SDK/CLI test surfaces sign with.
+// The simulator verifies the signature exactly as real AWS does, so setup calls
+// that seed fixtures must be signed just like the provider's own requests.
+func signSimSigV4(req *http.Request, service string, payload []byte) {
+	const akid, secret, region = "test", "test", "us-east-1"
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	dateStamp := now.Format("20060102")
+	payloadHash := sha256Hex(payload)
+	host := req.URL.Host
+	req.Header.Set("Host", host)
+	req.Header.Set("X-Amz-Date", amzDate)
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
+
+	const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date"
+	canonicalHeaders := fmt.Sprintf("content-type:%s\nhost:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n",
+		req.Header.Get("Content-Type"), host, payloadHash, amzDate)
+	canonicalRequest := strings.Join([]string{req.Method, req.URL.Path, "", canonicalHeaders, signedHeaders, payloadHash}, "\n")
+	scope := dateStamp + "/" + region + "/" + service + "/aws4_request"
+	stringToSign := strings.Join([]string{"AWS4-HMAC-SHA256", amzDate, scope, sha256Hex([]byte(canonicalRequest))}, "\n")
+	kDate := hmacSHA256([]byte("AWS4"+secret), dateStamp)
+	kRegion := hmacSHA256(kDate, region)
+	kService := hmacSHA256(kRegion, service)
+	kSigning := hmacSHA256(kService, "aws4_request")
+	signature := hex.EncodeToString(hmacSHA256(kSigning, stringToSign))
+	req.Header.Set("Authorization", fmt.Sprintf(
+		"AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s", akid, scope, signedHeaders, signature))
+}
+
+func hmacSHA256(key []byte, data string) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte(data))
+	return h.Sum(nil)
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func startHTTPSGateway(t *testing.T, env *Env, stateDir, simDir string, simPort int) {
@@ -203,12 +390,15 @@ func startHTTPSGateway(t *testing.T, env *Env, stateDir, simDir string, simPort 
 	)
 	env.gatewayCmd.Stdout = os.Stdout
 	env.gatewayCmd.Stderr = os.Stderr
+	// Own process group, reaped the same way as the simulator (see Start).
+	env.gatewayCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := env.gatewayCmd.Start(); err != nil {
 		t.Fatalf("start HTTPS gateway: %v", err)
 	}
+	trackForReaping(env.gatewayCmd)
 	t.Cleanup(func() {
-		_ = env.gatewayCmd.Process.Kill()
-		_ = env.gatewayCmd.Wait()
+		reapProcessGroup(env.gatewayCmd)
+		untrackForReaping(env.gatewayCmd)
 	})
 
 	env.Endpoint = fmt.Sprintf("https://localhost:%d", gatewayPort)

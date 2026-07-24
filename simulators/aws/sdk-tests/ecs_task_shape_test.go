@@ -56,6 +56,7 @@ func TestECS_TaskWireShapeOmitsNetworkConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	httpReq.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.DescribeTasks")
 	httpReq.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	signRawSigV4JSON(t, httpReq, "ecs", rawReq)
 	resp, err := http.DefaultClient.Do(httpReq)
 	require.NoError(t, err)
 	defer resp.Body.Close()

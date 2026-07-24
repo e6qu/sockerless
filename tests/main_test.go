@@ -1,8 +1,10 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -118,13 +120,25 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	fmt.Println("AWS simulator ready")
 
 	// Create ECS cluster in simulator
-	clusterBody := `{"clusterName":"sim-cluster"}`
-	req, _ := http.NewRequest("POST", simURL+"/", strings.NewReader(clusterBody))
+	clusterBody := []byte(`{"clusterName":"sim-cluster"}`)
+	req, _ := http.NewRequest("POST", simURL+"/", bytes.NewReader(clusterBody))
 	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 	req.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.CreateCluster")
+	if err := signAWSControlPlane(req, clusterBody, "ecs"); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to sign CreateCluster request: %v\n", err)
+		simCmd.Process.Kill()
+		os.Exit(1)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create ECS cluster: %v\n", err)
+		simCmd.Process.Kill()
+		os.Exit(1)
+	}
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		fmt.Fprintf(os.Stderr, "failed to create ECS cluster: status %d: %s\n", resp.StatusCode, respBody)
 		simCmd.Process.Kill()
 		os.Exit(1)
 	}

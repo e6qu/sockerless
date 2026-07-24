@@ -15,7 +15,7 @@ func newFunctionsClient(t *testing.T) *functions.FunctionClient {
 	t.Helper()
 	client, err := functions.NewFunctionRESTClient(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })

@@ -6,12 +6,15 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +28,19 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 )
+
+// simTenantID is the tenant the simulator presents; the token endpoint accepts
+// any tenant in the path, and this value matches the identifier the Terraform
+// and CLI harnesses use so all three clients acquire tokens from the same
+// /{tenant}/oauth2/v2.0/token route.
+const simTenantID = "11111111-1111-1111-1111-111111111111"
+
+// simARMBearer is a real, simulator-minted Azure Resource Manager access token
+// in "Bearer <jwt>" form, acquired once in TestMain through the OAuth2
+// client_credentials grant. Direct HTTP tests — those that build requests by
+// hand rather than through an SDK client's credential — send it as their
+// Authorization header so the simulator's ARM bearer verification accepts them.
+var simARMBearer string
 
 var (
 	baseURL            string
@@ -40,8 +56,56 @@ var (
 
 type fakeCredential struct{}
 
-func (f *fakeCredential) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcore.AccessToken, error) {
-	return azcore.AccessToken{Token: "fake-token", ExpiresOn: time.Now().Add(time.Hour)}, nil
+// GetToken acquires a real access token from the simulator's token endpoint via
+// the client_credentials grant, honoring the resource the SDK asks for. The
+// returned token is a genuine RS256 JWT the simulator signed and can verify, so
+// SDK-driven requests exercise the real acquire-then-authorize path against the
+// ARM plane rather than a static placeholder string.
+func (f *fakeCredential) GetToken(_ context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	scope := strings.Join(opts.Scopes, " ")
+	if scope == "" {
+		scope = "https://management.azure.com/.default"
+	}
+	token, expiry, err := fetchSimAccessToken(scope)
+	if err != nil {
+		return azcore.AccessToken{}, err
+	}
+	return azcore.AccessToken{Token: token, ExpiresOn: expiry}, nil
+}
+
+// fetchSimAccessToken performs an OAuth2 client_credentials grant against the
+// simulator's token endpoint — the same request a real Azure AD service
+// principal makes — and returns the minted access token and its expiry.
+func fetchSimAccessToken(scope string) (string, time.Time, error) {
+	form := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {"test-client-id"},
+		"client_secret": {"test-client-secret"},
+		"scope":         {scope},
+	}
+	resp, err := http.PostForm(baseURL+"/"+simTenantID+"/oauth2/v2.0/token", form)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("acquire simulator access token: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("read simulator token response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", time.Time{}, fmt.Errorf("simulator token endpoint returned %d: %s", resp.StatusCode, body)
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", time.Time{}, fmt.Errorf("parse simulator token response: %w", err)
+	}
+	if out.AccessToken == "" {
+		return "", time.Time{}, fmt.Errorf("simulator token response carried no access_token: %s", body)
+	}
+	return out.AccessToken, time.Now().Add(time.Duration(out.ExpiresIn) * time.Second), nil
 }
 
 func clientOpts() *arm.ClientOptions {
@@ -131,6 +195,13 @@ func TestMain(m *testing.M) {
 		simCmd.Process.Kill()
 		log.Fatalf("Simulator did not become healthy: %v", err)
 	}
+
+	token, _, err := fetchSimAccessToken("https://management.azure.com/.default")
+	if err != nil {
+		simCmd.Process.Kill()
+		log.Fatalf("Failed to acquire simulator ARM bearer token: %v", err)
+	}
+	simARMBearer = "Bearer " + token
 
 	code := m.Run()
 	simCmd.Process.Kill()

@@ -177,6 +177,13 @@ var allowedNonSpecGCPRoutes = map[string]string{
 	// own Discovery rather than any resource service's document.
 	"POST /v1/token": "Security Token Service token exchange (sts.googleapis.com)",
 
+	// OpenID Connect discovery + JSON Web Key Set publishing the simulator's
+	// access-token signing key — the well-known material a resource server uses
+	// to verify tokens, served at the standard OIDC well-known paths rather than
+	// any service Discovery document.
+	"GET /.well-known/openid-configuration": "OpenID Connect discovery for the simulator's access-token signing key",
+	"GET /.well-known/jwks.json":            "JSON Web Key Set for the simulator's access-token signing key",
+
 	// GCS XML API / signed-URL data plane: requests address the object
 	// directly under the bucket host/path. Real surface (XML API),
 	// described by the XML API docs rather than the JSON Discovery doc.

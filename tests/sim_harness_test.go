@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"os"
@@ -215,6 +216,20 @@ func startBackend(binaryPath string, info simBackendInfo, simURL string) (*simPr
 
 	// Build environment: start with current env, add endpoint URL and extra env
 	env := append(os.Environ(), "SOCKERLESS_ENDPOINT_URL="+simURL)
+	if info.Cloud == "azure" {
+		// Inject the App Service / Container Apps managed-identity
+		// coordinate the same way the real Azure platform injects it into
+		// an ACA app / Functions app container. DefaultAzureCredential (used
+		// by both azure backends against real Azure and the simulator) reads
+		// IDENTITY_ENDPOINT + IDENTITY_HEADER and performs a real managed-
+		// identity token acquisition against it — here the simulator's
+		// /msi/token endpoint, which mints a real, verifiable ARM bearer.
+		// Only the coordinate value differs from real Azure.
+		env = append(env,
+			"IDENTITY_ENDPOINT="+simURL+"/msi/token",
+			"IDENTITY_HEADER=sim-identity-header",
+		)
+	}
 	for k, v := range info.ExtraEnv {
 		env = append(env, k+"="+v)
 	}
@@ -247,10 +262,13 @@ func setupAWSSimulator(simURL string, backendNames []string) error {
 		if name == "ecs" {
 			// Create the ECS cluster
 			clusterName := info.ExtraEnv["SOCKERLESS_ECS_CLUSTER"]
-			body := fmt.Sprintf(`{"clusterName":"%s"}`, clusterName)
-			req, _ := http.NewRequest("POST", simURL+"/", strings.NewReader(body))
+			body := []byte(fmt.Sprintf(`{"clusterName":"%s"}`, clusterName))
+			req, _ := http.NewRequest("POST", simURL+"/", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 			req.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.CreateCluster")
+			if err := signAWSControlPlane(req, body, "ecs"); err != nil {
+				return fmt.Errorf("failed to sign CreateCluster request: %w", err)
+			}
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				return fmt.Errorf("failed to create ECS cluster: %w", err)

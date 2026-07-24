@@ -14,7 +14,7 @@ func dnsService(t *testing.T) *dns.Service {
 	t.Helper()
 	svc, err := dns.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

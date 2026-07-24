@@ -80,8 +80,8 @@ github.com/aws/aws-sdk-go-v2/service/organizations v1.53.0 h1:hhqxOJHJnE1tpM4mdB
 github.com/aws/aws-sdk-go-v2/service/organizations v1.53.0/go.mod h1:WgSFAx/LWEGO1Fs40g9h7F1gl5Bez6HawtlrNRDHBoA=
 github.com/aws/aws-sdk-go-v2/service/rds v1.123.0 h1:RZFP5elGZ7WRYuLScbx41DPUQaWfYadpywZij9z9p8U=
 github.com/aws/aws-sdk-go-v2/service/rds v1.123.0/go.mod h1:3SltwJWYlbf00Rh02s42VpyHl+YMk34UA3+R/zb76dw=
-github.com/aws/aws-sdk-go-v2/service/route53 v1.65.1 h1:BM6bZKxYFRAWBJIXL7M5JaQA0kGqfoP0ziNB2PkkG8E=
-github.com/aws/aws-sdk-go-v2/service/route53 v1.65.1/go.mod h1:kg30QdUv8hG6jifkHp+F8448US9y9a+6xS2l5F8aa38=
+github.com/aws/aws-sdk-go-v2/service/route53 v1.65.2 h1:/6WibgFHIQnBuP0PtWnz7NZ6DZ0/mN9ua5kruz7UXMA=
+github.com/aws/aws-sdk-go-v2/service/route53 v1.65.2/go.mod h1:kg30QdUv8hG6jifkHp+F8448US9y9a+6xS2l5F8aa38=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0 h1:7QZWVJZWzHivHWIa+5TELLaBBkbuoj0GPwQtMlJ0sqk=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0/go.mod h1:fcvq5L7dK+5cQFicEJwpI6e6Wn8NY2i6yT5wRLYVc7s=
 github.com/aws/aws-sdk-go-v2/service/scheduler v1.20.0 h1:IuqEJTV2nR+2f9O5Rk0AvYmvc0aFc3wZ0biKCq3sRd0=

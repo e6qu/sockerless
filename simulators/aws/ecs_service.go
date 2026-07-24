@@ -15,10 +15,14 @@ import (
 // long-lived Fargate services (the common case; RunTask alone covers only
 // one-shot tasks) and `aws_ecs_cluster_capacity_providers` for the cluster's
 // capacity-provider config. The sim models the service as a control-plane
-// object: it reaches ACTIVE with runningCount == desiredCount and a COMPLETED
-// primary deployment, so create/update/delete and Describe/List round-trip.
-// Real task placement/scheduling stays reserved for the container runtimes —
-// Terraform only needs the control-plane state machine.
+// object: on create/update it reaches ACTIVE with runningCount == desiredCount
+// and a COMPLETED primary deployment as a modeled state machine, so
+// create/update/delete and Describe/List round-trip deterministically. Real
+// container execution stays reserved for RunTask (the path the ECS backend and
+// one-shot tests drive); the service state machine never launches ephemeral
+// Docker containers to satisfy DesiredCount — doing so crash-loops no-command
+// images (they exit immediately, get relaunched every tick) and leaks
+// containers without ever holding a stable runningCount.
 
 // ECSService is a control-plane model of an ECS service. Config blocks the sim
 // doesn't interpret (network/load-balancer/registry config) are held as raw
@@ -391,7 +395,7 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 		ClusterArn:                    cluster.ClusterArn,
 		TaskDefinition:                req.TaskDefinition,
 		DesiredCount:                  desired,
-		RunningCount:                  0,
+		RunningCount:                  desired,
 		PendingCount:                  0,
 		Status:                        "ACTIVE",
 		LaunchType:                    req.LaunchType,
@@ -479,11 +483,10 @@ func handleECSDescribeServices(w http.ResponseWriter, r *http.Request) {
 	for _, ref := range req.Services {
 		name := ecsServiceNameFromRef(ref)
 		if svc, ok := ecsServices.Get(ecsServiceKey(clusterName, name)); ok {
-			// RunningCount/PendingCount are derived from the live task set so
-			// DescribeServices is always consistent with DescribeTasks, even
-			// when the asynchronous scheduler has not yet refreshed the cached
-			// counts stored on the service object.
-			svc = ecsServiceWithLiveCounts(svc)
+			// RunningCount/PendingCount are the modeled control-plane counts set
+			// at create/update (runningCount == desiredCount, pendingCount == 0);
+			// the service reaches steady state synchronously, so DescribeServices
+			// returns the stored snapshot verbatim.
 			services = append(services, svc)
 		} else {
 			failures = append(failures, map[string]string{
@@ -706,6 +709,11 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 	if req.VpcLatticeConfigurations != nil {
 		svc.VpcLatticeConfigurations = req.VpcLatticeConfigurations
 	}
+	// The modeled service reaches steady state synchronously: runningCount
+	// tracks desiredCount, pendingCount is zero, and the primary deployment is
+	// COMPLETED. No background scheduler launches tasks to converge these.
+	svc.RunningCount = svc.DesiredCount
+	svc.PendingCount = 0
 	now := float64(time.Now().Unix())
 	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
 	ecsServices.Put(key, svc)

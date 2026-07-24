@@ -164,7 +164,7 @@ func putARMJSON(t *testing.T, path, body string) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, baseURL+path, strings.NewReader(body))
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)

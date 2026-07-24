@@ -13,7 +13,7 @@ func computeService(t *testing.T) *compute.Service {
 	t.Helper()
 	svc, err := compute.NewService(ctx,
 		option.WithEndpoint(baseURL+"/compute/v1/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

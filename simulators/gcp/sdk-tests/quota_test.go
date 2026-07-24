@@ -72,7 +72,7 @@ func TestSDK_RegionalCPUQuota_RejectsCloudRunDeployOverBudget(t *testing.T) {
 
 	client, err := run.NewServicesRESTClient(ctx,
 		option.WithEndpoint(url),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSourceFor(url)),
 	)
 	require.NoError(t, err)
 	defer client.Close()
@@ -121,7 +121,7 @@ func TestSDK_RegionalCPUQuota_PartitionedByRegion(t *testing.T) {
 
 	client, err := run.NewServicesRESTClient(ctx,
 		option.WithEndpoint(url),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSourceFor(url)),
 	)
 	require.NoError(t, err)
 	defer client.Close()
@@ -167,7 +167,7 @@ func TestSDK_RegionalCPUQuota_RejectsCloudFunctionsDeploy(t *testing.T) {
 
 	fnClient, err := functions.NewFunctionRESTClient(ctx,
 		option.WithEndpoint(url),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSourceFor(url)),
 	)
 	require.NoError(t, err)
 	defer fnClient.Close()

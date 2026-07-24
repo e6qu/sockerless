@@ -75,7 +75,7 @@ func storageService(t *testing.T) *storageapi.Service {
 	t.Helper()
 	svc, err := storageapi.NewService(ctx,
 		option.WithEndpoint(baseURL+"/storage/v1/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

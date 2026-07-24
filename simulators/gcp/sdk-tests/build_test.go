@@ -224,7 +224,7 @@ func cloudbuildService(t *testing.T) *cloudbuild.Service {
 	t.Helper()
 	svc, err := cloudbuild.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

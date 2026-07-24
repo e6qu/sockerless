@@ -73,6 +73,52 @@ func registerIAMUsers(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("AttachUserPolicy", handleIAMAttachUserPolicy)
 	r.Register("DetachUserPolicy", handleIAMDetachUserPolicy)
 	r.Register("ListAttachedUserPolicies", handleIAMListAttachedUserPolicies)
+
+	seedRootAdminCredential()
+}
+
+// Bootstrap administrator credential. A real AWS account is created with a root
+// credential already able to act; the simulator provisions an equivalent
+// well-known administrator so a client has a credential to sign its first
+// request with (creating any further IAM key itself requires an existing signed
+// caller — the chicken-and-egg the SigV4 gate would otherwise deadlock on).
+//
+// The access-key/secret pair is the long-standing "test"/"test" coordinate the
+// SDK, CLI, and Terraform test surfaces already configure (AWS_ACCESS_KEY_ID),
+// so the credential clients present is the credential the simulator verifies
+// against — the "differ only in coordinates" rule, with real SigV4 crypto in
+// between. It carries an inline AdministratorAccess policy so it authorizes
+// every action, matching an account administrator.
+const (
+	seedAdminUserName  = "sockerless-sim-admin"
+	seedAdminAccessKey = "test"
+	seedAdminSecretKey = "test"
+)
+
+func seedRootAdminCredential() {
+	if _, ok := iamAccessKeys.Get(seedAdminAccessKey); ok {
+		return // already provisioned (persistent store across restarts)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	iamUsers.Put(seedAdminUserName, IAMUser{
+		UserName:   seedAdminUserName,
+		UserId:     "AIDAROOTSIMADMIN00000",
+		Arn:        iamUserArn(seedAdminUserName, "/"),
+		Path:       "/",
+		CreateDate: now,
+	})
+	iamUserPolicies.Put(seedAdminUserName+"/AdministratorAccess", IAMUserPolicy{
+		UserName:       seedAdminUserName,
+		PolicyName:     "AdministratorAccess",
+		PolicyDocument: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}`,
+	})
+	iamAccessKeys.Put(seedAdminAccessKey, IAMAccessKey{
+		AccessKeyId:     seedAdminAccessKey,
+		SecretAccessKey: seedAdminSecretKey,
+		UserName:        seedAdminUserName,
+		Status:          "Active",
+		CreateDate:      now,
+	})
 }
 
 func iamUserArn(name, path string) string {

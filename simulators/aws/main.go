@@ -169,9 +169,17 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		rec := &cloudTrailStatusRecorder{ResponseWriter: w}
+		// SigV4 authentication: verify the request signature against the
+		// presented principal's stored secret before any identity is trusted.
+		// Runs before authorization so a forged Credential= can never reach
+		// the policy evaluator. Web-identity / SAML assume-role calls are
+		// unsigned by design and exempt.
+		if !sigv4EnforceControlPlane(rec, r, body) {
+			return
+		}
 		// Call-time IAM enforcement: deny before dispatch when the caller's
-		// registered credential lacks the action (#657). No-op for unsigned /
-		// unregistered (test) credentials.
+		// registered credential lacks the action. Runs after authentication,
+		// so the resolved principal is one the caller proved possession of.
 		if !iamEnforce(rec, r) {
 			return
 		}

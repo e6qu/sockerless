@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -370,18 +371,24 @@ func registerIAM(srv *sim.Server) {
 		}
 		switch action {
 		case "generateAccessToken":
-			// Real expiry is RFC3339Nano with timezone offset; the SDK
-			// parses it with time.Parse(time.RFC3339).
-			expireTime := time.Now().UTC().Add(1 * time.Hour).Format(time.RFC3339)
+			// The token is signed with the simulator's access-token key (see
+			// signAccessToken) so the data-plane bearer middleware accepts it,
+			// naming the impersonated service account as its subject. Real
+			// expiry is RFC3339Nano with timezone offset; the SDK parses it
+			// with time.Parse(time.RFC3339).
+			now := time.Now()
+			expires := now.Add(1 * time.Hour)
 			sim.WriteJSON(w, http.StatusOK, map[string]any{
-				"accessToken": "ya29.sim-" + generateUUID(),
-				"expireTime":  expireTime,
+				"accessToken": signAccessToken(email, now, expires),
+				"expireTime":  expires.UTC().Format(time.RFC3339),
 			})
 		case "generateIdToken":
 			// Body: { audience, includeEmail, delegates }. Response: { token }.
-			// Mint a real-shape JWT whose `aud` claim equals the request's
-			// audience so SDKs that pre-decode the token (rare in test
-			// paths, common in cross-Service auth chains) accept it.
+			// Mint a real-shape RS256 JWT whose `aud` claim equals the
+			// request's audience so SDKs that pre-decode the token (rare in
+			// test paths, common in cross-Service auth chains) accept it, and
+			// so its signature verifies against the simulator's published JWKS
+			// exactly as a real Google ID token verifies against Google's.
 			var req struct {
 				Audience     string   `json:"audience"`
 				IncludeEmail bool     `json:"includeEmail"`
@@ -397,7 +404,7 @@ func registerIAM(srv *sim.Server) {
 			}
 			now := time.Now()
 			expires := now.Add(1 * time.Hour)
-			token := mintSimIdToken(idTokenSignKey(), email, req.Audience, req.IncludeEmail, now, expires)
+			token := signServiceAccountIDToken(email, req.Audience, req.IncludeEmail, now, expires)
 			sim.WriteJSON(w, http.StatusOK, map[string]any{
 				"token": token,
 			})
@@ -1528,6 +1535,25 @@ func crmNamespaced(parent, shortName string) string {
 	return id + "/" + shortName
 }
 
+// saSignHMACKey is the per-process HMAC key backing the representative
+// signBlob / signJwt signatures. Real GCP signs those with the service
+// account's system-managed RS256 key; the sim has no modeled SA private key,
+// so it emits a deterministic HMAC over the input against this key. A restart
+// rotates it, which is acceptable because clients only round-trip the signature
+// rather than verify it against Google's public certs.
+var (
+	saSignHMACKey     []byte
+	saSignHMACKeyOnce sync.Once
+)
+
+func saSignKey() []byte {
+	saSignHMACKeyOnce.Do(func() {
+		saSignHMACKey = make([]byte, 32)
+		_, _ = rand.Read(saSignHMACKey)
+	})
+	return saSignHMACKey
+}
+
 // simSAHMAC produces a deterministic representative signature for the
 // iamcredentials signBlob / signJwt operations. Real GCP signs with the
 // service account's system-managed RS256 key; the sim has no modeled SA
@@ -1536,7 +1562,7 @@ func crmNamespaced(parent, shortName string) string {
 // (they never verify it against Google's public certs), so the
 // representative signature is sufficient and is documented as such.
 func simSAHMAC(input []byte) []byte {
-	mac := hmac.New(sha256.New, idTokenSignKey())
+	mac := hmac.New(sha256.New, saSignKey())
 	mac.Write(input)
 	return mac.Sum(nil)
 }

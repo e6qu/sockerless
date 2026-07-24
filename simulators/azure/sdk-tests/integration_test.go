@@ -21,7 +21,7 @@ func TestIntegration_ACAJobLifecycle(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
 		strings.NewReader(`{"location":"eastus"}`))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, err := http.DefaultClient.Do(rgReq)
 	require.NoError(t, err)
 	rgResp.Body.Close()
@@ -48,7 +48,7 @@ func TestIntegration_ACAJobLifecycle(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"/executions/"+execName+"/stop?api-version=2024-03-01",
 		strings.NewReader("{}"))
 	stopReq.Header.Set("Content-Type", "application/json")
-	stopReq.Header.Set("Authorization", "Bearer fake-token")
+	stopReq.Header.Set("Authorization", simARMBearer)
 	stopResp, err := http.DefaultClient.Do(stopReq)
 	require.NoError(t, err)
 	stopResp.Body.Close()
@@ -64,7 +64,7 @@ func TestIntegration_ACAJobLifecycle(t *testing.T) {
 	delReq, _ := http.NewRequestWithContext(ctx, "DELETE",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
 		nil)
-	delReq.Header.Set("Authorization", "Bearer fake-token")
+	delReq.Header.Set("Authorization", simARMBearer)
 	delResp, err := http.DefaultClient.Do(delReq)
 	require.NoError(t, err)
 	delResp.Body.Close()
@@ -74,7 +74,7 @@ func TestIntegration_ACAJobLifecycle(t *testing.T) {
 	getReq, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
 		nil)
-	getReq.Header.Set("Authorization", "Bearer fake-token")
+	getReq.Header.Set("Authorization", simARMBearer)
 	getResp, err := http.DefaultClient.Do(getReq)
 	require.NoError(t, err)
 	getResp.Body.Close()
@@ -90,7 +90,7 @@ func TestIntegration_AzureFunctionsLifecycle(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
 		strings.NewReader(`{"location":"eastus"}`))
 	rgReq.Header.Set("Content-Type", "application/json")
-	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgReq.Header.Set("Authorization", simARMBearer)
 	rgResp, err := http.DefaultClient.Do(rgReq)
 	require.NoError(t, err)
 	rgResp.Body.Close()
@@ -108,7 +108,7 @@ func TestIntegration_AzureFunctionsLifecycle(t *testing.T) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Web/sites/"+siteName+"?api-version=2023-12-01",
 		strings.NewReader(string(siteBody)))
 	siteReq.Header.Set("Content-Type", "application/json")
-	siteReq.Header.Set("Authorization", "Bearer fake-token")
+	siteReq.Header.Set("Authorization", simARMBearer)
 	siteResp, err := http.DefaultClient.Do(siteReq)
 	require.NoError(t, err)
 	defer siteResp.Body.Close()
@@ -146,7 +146,7 @@ func TestIntegration_AzureFunctionsLifecycle(t *testing.T) {
 	delReq, _ := http.NewRequestWithContext(ctx, "DELETE",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Web/sites/"+siteName+"?api-version=2023-12-01",
 		nil)
-	delReq.Header.Set("Authorization", "Bearer fake-token")
+	delReq.Header.Set("Authorization", simARMBearer)
 	delResp, err := http.DefaultClient.Do(delReq)
 	require.NoError(t, err)
 	delResp.Body.Close()
@@ -156,7 +156,7 @@ func TestIntegration_AzureFunctionsLifecycle(t *testing.T) {
 	getReq, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Web/sites/"+siteName+"?api-version=2023-12-01",
 		nil)
-	getReq.Header.Set("Authorization", "Bearer fake-token")
+	getReq.Header.Set("Authorization", simARMBearer)
 	getResp, err := http.DefaultClient.Do(getReq)
 	require.NoError(t, err)
 	getResp.Body.Close()

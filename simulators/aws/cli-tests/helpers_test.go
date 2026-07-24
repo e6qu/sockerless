@@ -2,6 +2,9 @@ package aws_cli_test
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,10 +14,107 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 )
+
+// signRawSigV4 signs a hand-built HTTP request with SigV4 using the seed
+// credential every CLI/SDK/Terraform client already signs with (test/test,
+// us-east-1). Raw requests that reach a SigV4-gated chokepoint — the awsJson /
+// awsQuery control plane at POST / — must carry a valid signature exactly as
+// the real AWS front end requires. The cli-tests module intentionally has no
+// aws-sdk-go-v2 dependency, so this signs with the standard library the same
+// way a real client (and the simulator's own verifier) does. Set every signed
+// header on req before calling.
+func signRawSigV4(t *testing.T, req *http.Request, service string, body []byte) {
+	t.Helper()
+	const (
+		akid   = "test"
+		secret = "test"
+		region = "us-east-1"
+	)
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	dateStamp := now.Format("20060102")
+	payloadHash := sha256Hex(body)
+
+	host := req.Host
+	if host == "" {
+		host = req.URL.Host
+	}
+	req.Header.Set("X-Amz-Date", amzDate)
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
+
+	signed := []string{"host", "x-amz-content-sha256", "x-amz-date"}
+	if req.Header.Get("X-Amz-Target") != "" {
+		signed = append(signed, "x-amz-target")
+	}
+	sort.Strings(signed)
+
+	headerValue := func(name string) string {
+		switch name {
+		case "host":
+			return host
+		case "x-amz-content-sha256":
+			return payloadHash
+		case "x-amz-date":
+			return amzDate
+		case "x-amz-target":
+			return req.Header.Get("X-Amz-Target")
+		default:
+			return req.Header.Get(name)
+		}
+	}
+	var canonHeaders strings.Builder
+	for _, h := range signed {
+		canonHeaders.WriteString(h + ":" + headerValue(h) + "\n")
+	}
+	signedHeaders := strings.Join(signed, ";")
+
+	path := req.URL.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	canonicalRequest := strings.Join([]string{
+		req.Method,
+		path,
+		req.URL.RawQuery,
+		canonHeaders.String(),
+		signedHeaders,
+		payloadHash,
+	}, "\n")
+
+	scope := dateStamp + "/" + region + "/" + service + "/aws4_request"
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		amzDate,
+		scope,
+		sha256Hex([]byte(canonicalRequest)),
+	}, "\n")
+
+	kDate := hmacSHA256([]byte("AWS4"+secret), dateStamp)
+	kRegion := hmacSHA256(kDate, region)
+	kService := hmacSHA256(kRegion, service)
+	kSigning := hmacSHA256(kService, "aws4_request")
+	signature := hex.EncodeToString(hmacSHA256(kSigning, stringToSign))
+
+	req.Header.Set("Authorization", fmt.Sprintf(
+		"AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		akid, scope, signedHeaders, signature))
+}
+
+func hmacSHA256(key []byte, data string) []byte {
+	m := hmac.New(sha256.New, key)
+	m.Write([]byte(data))
+	return m.Sum(nil)
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
 
 var (
 	baseURL                string

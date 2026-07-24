@@ -12,7 +12,7 @@ import (
 
 func arAdminService(t *testing.T) *artifactregistry.Service {
 	t.Helper()
-	svc, err := artifactregistry.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := artifactregistry.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	return svc
 }

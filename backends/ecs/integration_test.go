@@ -158,11 +158,17 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		executionRoleARN = "arn:aws:iam::000000000000:role/sim"
 		cpuArch = "ARM64"
 
-		// Create ECS cluster in simulator (sim fixture).
-		body := fmt.Sprintf(`{"clusterName":"%s"}`, cluster)
-		req, _ := http.NewRequest("POST", simURL+"/", strings.NewReader(body))
+		// Create ECS cluster in simulator (sim fixture). This is a direct
+		// control-plane call to the AWS simulator, so it is signed with SigV4
+		// exactly as the ECS backend's SDK client signs — same seeded bootstrap
+		// credential, differing only in the endpoint coordinate.
+		body := []byte(fmt.Sprintf(`{"clusterName":"%s"}`, cluster))
+		req, _ := http.NewRequest("POST", simURL+"/", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 		req.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.CreateCluster")
+		if err := signAWSControlPlane(req, body, "ecs"); err != nil {
+			failClean("ERROR: sign sim ECS CreateCluster: %v\n", err)
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			failClean("ERROR: create sim ECS cluster: %v\n", err)

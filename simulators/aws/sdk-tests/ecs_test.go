@@ -98,8 +98,10 @@ func TestECS_ServiceLifecycle(t *testing.T) {
 	require.NotNil(t, createOut.Service)
 	assert.Equal(t, "ACTIVE", aws.ToString(createOut.Service.Status))
 	assert.EqualValues(t, 2, createOut.Service.DesiredCount)
-	// RunningCount converges asynchronously via the service scheduler; see
-	// TestECS_ServiceScheduler for the full reconciliation flow.
+	// The modeled service reaches steady state synchronously; RunningCount
+	// tracks DesiredCount. See TestECS_Service_ControlPlaneConvergence for the
+	// full state-machine flow.
+	assert.EqualValues(t, 2, createOut.Service.RunningCount)
 	assert.Contains(t, aws.ToString(createOut.Service.ServiceArn), ":service/"+cluster+"/control-plane")
 	require.NotEmpty(t, createOut.Service.Deployments, "service must have a PRIMARY deployment")
 	assert.Equal(t, "COMPLETED", string(createOut.Service.Deployments[0].RolloutState))
@@ -116,13 +118,14 @@ func TestECS_ServiceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listOut.ServiceArns, 1)
 
-	// UpdateService — scale to 3. The scheduler converges RUNNING tasks
-	// asynchronously; DesiredCount is the synchronous read-back here.
+	// UpdateService — scale to 3. RunningCount tracks DesiredCount in lockstep
+	// as the modeled control-plane steady state.
 	updOut, err := c.UpdateService(ctx, &ecs.UpdateServiceInput{
 		Cluster: aws.String(cluster), Service: aws.String("control-plane"), DesiredCount: aws.Int32(3),
 	})
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, updOut.Service.DesiredCount)
+	assert.EqualValues(t, 3, updOut.Service.RunningCount)
 
 	// DeleteService — must settle to INACTIVE.
 	delOut, err := c.DeleteService(ctx, &ecs.DeleteServiceInput{

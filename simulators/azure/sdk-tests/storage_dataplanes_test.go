@@ -228,6 +228,10 @@ func pathStyleStorageReq(t *testing.T, method, prefix, path string, body []byte,
 	}
 	req, err := http.NewRequest(method, baseURL+prefix+path, br)
 	require.NoError(t, err)
+	// Carry the ARM bearer so a request that deliberately targets an ARM path
+	// (the ARM-prefix-exclusion case) reaches the ARM handler; path-style
+	// storage data-plane requests route by their own scheme and ignore it.
+	req.Header.Set("Authorization", simARMBearer)
 	if _, set := headers["x-ms-version"]; !set {
 		req.Header.Set("x-ms-version", "2023-11-03")
 	}

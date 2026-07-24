@@ -63,10 +63,12 @@ func TestS3_AWSChunkedPutObject_RoundTrip(t *testing.T) {
 	req.Header.Set("Content-Encoding", "aws-chunked")
 	req.Header.Set("x-amz-content-sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
 	req.Header.Set("x-amz-decoded-content-length", fmt.Sprintf("%d", len(payload)))
-	// Sim's auth middleware is passthrough; any Authorization header
-	// is accepted. Use the canonical shape so the request looks like
-	// a real SDK-emitted one in logs.
-	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20260523/us-east-1/s3/aws4_request, SignedHeaders=host, Signature="+sig)
+	// Sign the seed SigV4 signature the S3 authentication gate verifies. The
+	// per-chunk signatures inside the body remain placeholders — the sim
+	// authenticates only the request (seed) signature, exactly as the real
+	// S3 front end does for a streaming upload. The declared payload hash is
+	// the streaming sentinel, so the framed body is not hashed.
+	signRawSigV4(t, req, "s3", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)

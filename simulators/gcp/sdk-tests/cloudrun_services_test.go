@@ -29,7 +29,7 @@ func TestCloudRunServices_RunV1ClientRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	svc, err := run.NewService(ctx,
 		option.WithEndpoint(baseURL+"/"),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +30,38 @@ var (
 
 	project  = "test-project"
 	location = "us-central1"
+
+	// accessToken is a real simulator-minted OAuth2 access token the CLIs
+	// present to the data plane; set once in TestMain.
+	accessToken string
 )
+
+// mintSimAccessToken fetches an access token from the simulator's OAuth2 token
+// endpoint — the same JWT-bearer grant a real gcloud invocation uses — so CLI
+// commands authenticate against the data plane exactly as they would against
+// Google, differing only in the endpoint coordinate.
+func mintSimAccessToken(base string) (string, error) {
+	resp, err := http.PostForm(base+"/token", url.Values{
+		"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
+	})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+	}
+	var body struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	if body.AccessToken == "" {
+		return "", fmt.Errorf("token endpoint returned an empty access token")
+	}
+	return body.AccessToken, nil
+}
 
 func TestMain(m *testing.M) {
 	// Check if gcloud CLI is installed
@@ -91,6 +123,17 @@ func TestMain(m *testing.M) {
 	if err := waitForHealth(baseURL + "/health"); err != nil {
 		simCmd.Process.Kill()
 		log.Fatalf("Simulator did not become healthy: %v", err)
+	}
+
+	// Mint a real access token from the simulator's OAuth2 token endpoint. The
+	// data plane verifies the bearer on every request, so the gcloud CLI must
+	// present a token the simulator signed — the same credential a real gcloud
+	// invocation carries, obtained from the configured endpoint coordinate.
+	var tokenErr error
+	accessToken, tokenErr = mintSimAccessToken(baseURL)
+	if tokenErr != nil {
+		simCmd.Process.Kill()
+		log.Fatalf("Failed to mint simulator access token: %v", tokenErr)
 	}
 
 	// Create tmp dir
@@ -166,7 +209,7 @@ func gcloudCLI(args ...string) *exec.Cmd {
 	cmd := exec.Command("gcloud", args...)
 	cmd.Env = append(os.Environ(),
 		"CLOUDSDK_CONFIG="+filepath.Join(tmpDir, "gcloud-config"),
-		"CLOUDSDK_AUTH_ACCESS_TOKEN=fake-gcp-token",
+		"CLOUDSDK_AUTH_ACCESS_TOKEN="+accessToken,
 		"CLOUDSDK_CORE_PROJECT="+project,
 		"CLOUDSDK_CORE_DISABLE_PROMPTS=1",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_DNS="+baseURL+"/",
@@ -212,7 +255,11 @@ func httpDo(method, url string, body string) (*http.Response, error) {
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Authorization", "Bearer fake-gcp-token")
+	// The data plane verifies an OAuth2 access token on every request, so these
+	// raw HTTP calls must present the same real, simulator-minted token the
+	// gcloud CLI carries via CLOUDSDK_AUTH_ACCESS_TOKEN — differing from a real
+	// Google request only in the endpoint coordinate and the token source.
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	return http.DefaultClient.Do(req)
 }
 

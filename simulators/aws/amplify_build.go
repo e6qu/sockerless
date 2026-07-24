@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -178,7 +179,7 @@ func (l *amplifyStepLog) Text() string {
 func amplifyStoreStepLog(urlBase, appID, branch, jobID, step string, log *amplifyStepLog) string {
 	key := "logs/" + appID + "/" + branch + "/" + jobID + "/" + step + ".log"
 	amplifyPutS3Object(key, "text/plain", []byte(log.Text()))
-	return amplifyPresignedS3URLBase(urlBase, key)
+	return amplifyPresignedS3URLBase(urlBase, key, http.MethodGet)
 }
 
 // amplifyUpdateJobStep mutates one step of a stored job. Steps that already

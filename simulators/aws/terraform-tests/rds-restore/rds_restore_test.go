@@ -32,7 +32,7 @@ func TestRDSRestoreTerraform(t *testing.T) {
 
 func seedSnapshot(t *testing.T, env *tfsim.Env) {
 	t.Helper()
-	env.AWSQuery(t, url.Values{
+	env.AWSQuery(t, "rds", url.Values{
 		"Action":               {"CreateDBInstance"},
 		"Version":              {"2014-10-31"},
 		"DBInstanceIdentifier": {"tf-rds-restore-source"},
@@ -45,19 +45,19 @@ func seedSnapshot(t *testing.T, env *tfsim.Env) {
 		"SkipFinalSnapshot":    {"true"},
 		"ApplyImmediately":     {"true"},
 	})
-	env.AWSQuery(t, url.Values{
+	env.AWSQuery(t, "rds", url.Values{
 		"Action":               {"CreateDBSnapshot"},
 		"Version":              {"2014-10-31"},
 		"DBInstanceIdentifier": {"tf-rds-restore-source"},
 		"DBSnapshotIdentifier": {"tf-rds-snapshot-source"},
 	})
 	t.Cleanup(func() {
-		env.AWSQuery(t, url.Values{
+		env.AWSQuery(t, "rds", url.Values{
 			"Action":               {"DeleteDBSnapshot"},
 			"Version":              {"2014-10-31"},
 			"DBSnapshotIdentifier": {"tf-rds-snapshot-source"},
 		})
-		env.AWSQuery(t, url.Values{
+		env.AWSQuery(t, "rds", url.Values{
 			"Action":               {"DeleteDBInstance"},
 			"Version":              {"2014-10-31"},
 			"DBInstanceIdentifier": {"tf-rds-restore-source"},

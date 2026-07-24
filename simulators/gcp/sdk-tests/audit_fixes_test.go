@@ -25,7 +25,7 @@ func requireGoogleErrCode(t *testing.T, err error, code int) {
 // must honor updateMask and preserve unmentioned fields (DocumentRef.Update /
 // Set MergeAll) instead of replacing the whole document.
 func TestFirestore_UpdateMaskPreservesFields(t *testing.T) {
-	svc, err := firestore.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := firestore.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	parent := "projects/test-project/databases/(default)"

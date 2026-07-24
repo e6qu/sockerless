@@ -146,7 +146,7 @@ func doPUT(t *testing.T, url, body string) string {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, "PUT", url, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -159,7 +159,7 @@ func doPOST(t *testing.T, url, body string) string {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -171,7 +171,7 @@ func doPOST(t *testing.T, url, body string) string {
 func doDELETE(t *testing.T, url string) {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, "DELETE", url, nil)
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, _ := http.DefaultClient.Do(req)
 	if resp != nil {
 		resp.Body.Close()

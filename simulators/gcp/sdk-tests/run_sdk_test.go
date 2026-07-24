@@ -21,7 +21,7 @@ func newJobsClient(t *testing.T) *run.JobsClient {
 	t.Helper()
 	client, err := run.NewJobsRESTClient(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
@@ -32,7 +32,7 @@ func newExecutionsClient(t *testing.T) *run.ExecutionsClient {
 	t.Helper()
 	client, err := run.NewExecutionsRESTClient(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })

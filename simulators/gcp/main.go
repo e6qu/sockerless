@@ -58,6 +58,14 @@ func main() {
 		log.Fatalf("simulator startup: %v", err)
 	}
 
+	// Enforce data-plane authentication on the served surface: every request
+	// carries a valid OAuth2 access token the simulator itself minted, verified
+	// against the simulator's signing key, unless it targets an exempt surface
+	// (token minters, OpenID Connect discovery/JWKS, health, GCE metadata, the
+	// console, or the OCI registry). Applied here so it is the outermost wrap on
+	// the final handler chain.
+	srv.WrapHandler(bearerAuthMiddleware)
+
 	// Start gRPC server for Cloud Logging
 	grpcPort := grpcPortFromConfig(cfg.ListenAddr)
 	if p := os.Getenv("SIM_GCP_GRPC_PORT"); p != "" {
@@ -77,6 +85,13 @@ func main() {
 func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	srv, err := sim.NewServer(cfg)
 	if err != nil {
+		return nil, err
+	}
+
+	// Generate the process-stable key every access-token minter signs with and
+	// the data-plane bearer middleware verifies against. Fails loud rather than
+	// serving unverifiable tokens.
+	if err := initAccessTokenSigner(); err != nil {
 		return nil, err
 	}
 
@@ -123,6 +138,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerOAuth2(srv)
 	registerSTS(srv)
 	registerComputeMetadata(srv)
+	registerTokenDiscovery(srv)
 
 	// Dashboard summary endpoints for UI
 

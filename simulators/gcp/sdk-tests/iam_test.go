@@ -19,7 +19,7 @@ func iamService(t *testing.T) *iam.Service {
 	t.Helper()
 	svc, err := iam.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc
@@ -122,7 +122,7 @@ func iamCredentialsService(t *testing.T) *iamcredentials.Service {
 	t.Helper()
 	svc, err := iamcredentials.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc
@@ -131,9 +131,10 @@ func iamCredentialsService(t *testing.T) *iamcredentials.Service {
 // TestIAMCredentials_GenerateIdToken — Access driver's id-token category.
 // Cross-Service auth chains call generateIdToken with a target audience
 // (the receiving service's URL); the mint returns a JWT whose `aud`
-// claim equals that audience. The sim signs with HS256 against a per-
-// process key so SDKs that pre-decode the token accept its structure;
-// downstream sim handlers don't validate the signature.
+// claim equals that audience. The sim signs an RS256 token with the same
+// key its published JWKS advertises, matching a real Google ID token, so
+// SDKs that pre-decode the token accept its structure and a verifier can
+// check its signature.
 func TestIAMCredentials_GenerateIdToken(t *testing.T) {
 	iamSvc := iamService(t)
 	credSvc := iamCredentialsService(t)
@@ -158,6 +159,16 @@ func TestIAMCredentials_GenerateIdToken(t *testing.T) {
 	// JWT has 3 base64url segments; the middle is the claims set.
 	parts := strings.Split(resp.Token, ".")
 	require.Len(t, parts, 3, "ID token must be a 3-segment JWT")
+
+	// Real Google ID tokens are RS256, verifiable against Google's JWKS; the
+	// sim matches, signing with the key its /.well-known/jwks.json advertises.
+	header, err := base64.RawURLEncoding.DecodeString(parts[0])
+	require.NoError(t, err)
+	var hdr struct {
+		Alg string `json:"alg"`
+	}
+	require.NoError(t, json.Unmarshal(header, &hdr))
+	assert.Equal(t, "RS256", hdr.Alg, "ID token must be RS256, not HS256")
 
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	require.NoError(t, err)
@@ -333,7 +344,7 @@ func crmService(t *testing.T) *cloudresourcemanager.Service {
 	t.Helper()
 	svc, err := cloudresourcemanager.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

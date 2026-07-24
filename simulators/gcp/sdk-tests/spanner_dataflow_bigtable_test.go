@@ -13,7 +13,7 @@ import (
 )
 
 func TestSpanner_InstanceDatabaseSessionSDK(t *testing.T) {
-	svc, err := spanner.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithoutAuthentication())
+	svc, err := spanner.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	op, err := svc.Projects.Instances.Create("projects/test-project", &spanner.CreateInstanceRequest{
@@ -71,7 +71,7 @@ func TestSpanner_InstanceDatabaseSessionSDK(t *testing.T) {
 }
 
 func TestSpanner_InstanceConfigSDK(t *testing.T) {
-	svc, err := spanner.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithoutAuthentication())
+	svc, err := spanner.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	const parent = "projects/test-project"
@@ -149,7 +149,7 @@ func TestSpanner_InstanceConfigSDK(t *testing.T) {
 }
 
 func TestSpanner_ScansListSDK(t *testing.T) {
-	svc, err := spanner.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithoutAuthentication())
+	svc, err := spanner.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	resp, err := svc.Scans.List("scans").Do()
@@ -158,7 +158,7 @@ func TestSpanner_ScansListSDK(t *testing.T) {
 }
 
 func TestDataflow_RegionalJobSDK(t *testing.T) {
-	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	job, err := svc.Projects.Locations.Jobs.Create("test-project", "us-central1", &dataflow.Job{
@@ -203,7 +203,7 @@ func TestDataflow_RegionalJobSDK(t *testing.T) {
 }
 
 func TestDataflow_GlobalJobSDK(t *testing.T) {
-	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	job, err := svc.Projects.Jobs.Create("global-df-project", &dataflow.Job{
@@ -228,7 +228,7 @@ func TestDataflow_GlobalJobSDK(t *testing.T) {
 }
 
 func TestDataflow_SnapshotsSDK(t *testing.T) {
-	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	job, err := svc.Projects.Locations.Jobs.Create("snap-project", "us-east1", &dataflow.Job{
@@ -271,7 +271,7 @@ func TestDataflow_SnapshotsSDK(t *testing.T) {
 }
 
 func TestDataflow_TemplatesSDK(t *testing.T) {
-	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	// Classic template launch (regional) → a Job inside LaunchTemplateResponse.
@@ -307,7 +307,7 @@ func TestDataflow_TemplatesSDK(t *testing.T) {
 }
 
 func TestBigtable_InstanceClusterTableSDK(t *testing.T) {
-	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	op, err := svc.Projects.Instances.Create("projects/test-project", &bigtableadmin.CreateInstanceRequest{
@@ -361,7 +361,7 @@ func TestBigtable_InstanceClusterTableSDK(t *testing.T) {
 // logical & materialized views, and locations / operations — via the official
 // bigtableadmin/v2 SDK against the simulator.
 func TestBigtable_AdminSurfaceSDK(t *testing.T) {
-	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	const project = "projects/bt-admin"

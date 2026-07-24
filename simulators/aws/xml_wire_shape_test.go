@@ -60,6 +60,7 @@ func TestEC2DescribeInstanceTypesVCpuInfoCasing(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/", strings.NewReader("Action=DescribeInstanceTypes&Version=2016-11-15"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	signSeedControlPlane(req)
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
 	if rr.Code != 200 {

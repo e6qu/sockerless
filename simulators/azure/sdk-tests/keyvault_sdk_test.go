@@ -108,7 +108,7 @@ func createKVViaARM(t *testing.T, rg, vault string) {
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+
 			"/providers/Microsoft.KeyVault/vaults/"+vault+"?api-version=2024-04-01-preview",
 		strings.NewReader(string(createBody)))
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func createKVViaARM(t *testing.T, rg, vault string) {
 			baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+
 				"/providers/Microsoft.KeyVault/vaults/"+vault+"?api-version=2024-04-01-preview",
 			nil)
-		del.Header.Set("Authorization", "Bearer fake-token")
+		del.Header.Set("Authorization", simARMBearer)
 		resp, _ := http.DefaultClient.Do(del)
 		if resp != nil {
 			resp.Body.Close()
@@ -476,7 +476,7 @@ func kvGET(t *testing.T, host, path string) (int, []byte) {
 	t.Helper()
 	req, _ := http.NewRequest("GET", baseURL+path, nil)
 	req.Host = host
-	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("Authorization", simARMBearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -506,7 +506,7 @@ func TestKV_ListSecrets_Pagination(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"value": "val"})
 		req, _ := http.NewRequest("PUT", baseURL+"/secrets/"+name+"?api-version=7.4", bytes.NewReader(body))
 		req.Host = host
-		req.Header.Set("Authorization", "Bearer fake-token")
+		req.Header.Set("Authorization", simARMBearer)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
@@ -544,7 +544,7 @@ func TestKV_ListKeys_Pagination(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"kty": "RSA", "key_size": 2048})
 		req, _ := http.NewRequest("POST", baseURL+"/keys/"+name+"/create?api-version=7.4", bytes.NewReader(body))
 		req.Host = host
-		req.Header.Set("Authorization", "Bearer fake-token")
+		req.Header.Set("Authorization", simARMBearer)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)

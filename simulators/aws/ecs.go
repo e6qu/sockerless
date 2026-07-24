@@ -412,10 +412,6 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	ecsTasks = sim.MakeStore[ECSTask](srv.DB(), "ecs_tasks")
 	ecsRevisions = make(map[string]int)
 
-	// Start the background service scheduler that reconciles each ACTIVE
-	// service's RUNNING task set against its DesiredCount. Idempotent.
-	startECSScheduler()
-
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateCluster", handleECSCreateCluster)
 	r.Register("AmazonEC2ContainerServiceV20141113.DescribeClusters", handleECSDescribeClusters)
 	r.Register("AmazonEC2ContainerServiceV20141113.UpdateCluster", handleECSUpdateCluster)

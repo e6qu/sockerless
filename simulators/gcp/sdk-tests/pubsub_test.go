@@ -14,7 +14,7 @@ func pubsubService(t *testing.T) *pubsub.Service {
 	t.Helper()
 	svc, err := pubsub.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

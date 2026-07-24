@@ -15,7 +15,7 @@ func secretManagerService(t *testing.T) *secretmanager.Service {
 	t.Helper()
 	svc, err := secretmanager.NewService(ctx,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	require.NoError(t, err)
 	return svc

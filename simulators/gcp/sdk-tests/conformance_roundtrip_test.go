@@ -44,7 +44,7 @@ import (
 // drives the canonical client a consumer would use.
 
 func TestConformance_DNSManagedZoneLabelsRoundTrip(t *testing.T) {
-	svc, err := dns.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := dns.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	created, err := svc.ManagedZones.Create("conformance-project", &dns.ManagedZone{
@@ -66,7 +66,7 @@ func TestConformance_DNSManagedZoneLabelsRoundTrip(t *testing.T) {
 }
 
 func TestConformance_BigQueryTablePartitioningRoundTrip(t *testing.T) {
-	svc, err := bigquery.NewService(ctx, option.WithEndpoint(baseURL+"/bigquery/v2/"), option.WithoutAuthentication())
+	svc, err := bigquery.NewService(ctx, option.WithEndpoint(baseURL+"/bigquery/v2/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	proj := "conformance-project"
 
@@ -100,7 +100,7 @@ func TestConformance_BigQueryTablePartitioningRoundTrip(t *testing.T) {
 }
 
 func TestConformance_PubSubTopicSchemaSettingsRoundTrip(t *testing.T) {
-	svc, err := pubsub.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := pubsub.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	name := "projects/conformance-project/topics/conf-schema-topic"
 
@@ -124,7 +124,7 @@ func TestConformance_PubSubTopicSchemaSettingsRoundTrip(t *testing.T) {
 }
 
 func TestConformance_EventarcTriggerChannelRoundTrip(t *testing.T) {
-	client, err := eventarc.NewRESTClient(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	client, err := eventarc.NewRESTClient(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 
@@ -165,7 +165,7 @@ func TestConformance_EventarcTriggerChannelRoundTrip(t *testing.T) {
 }
 
 func TestConformance_ArtifactRegistryRepoLabelsRoundTrip(t *testing.T) {
-	svc, err := artifactregistry.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := artifactregistry.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	parent := "projects/conformance-project/locations/us-central1"
 	name := parent + "/repositories/conf-labels-repo"
@@ -192,7 +192,7 @@ func TestConformance_ArtifactRegistryRepoLabelsRoundTrip(t *testing.T) {
 }
 
 func TestConformance_SecretManagerAnnotationsRoundTrip(t *testing.T) {
-	svc, err := secretmanager.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := secretmanager.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	parent := "projects/conformance-project"
 	secretID := "conf-annotations-secret"
@@ -223,7 +223,7 @@ func TestConformance_SecretManagerAnnotationsRoundTrip(t *testing.T) {
 }
 
 func TestConformance_IAMBindingConditionRoundTrip(t *testing.T) {
-	svc, err := cloudresourcemanager.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := cloudresourcemanager.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	project := "conformance-iam-condition-project"
 
@@ -250,7 +250,7 @@ func TestConformance_IAMBindingConditionRoundTrip(t *testing.T) {
 }
 
 func TestConformance_LoggingMetricValueExtractorRoundTrip(t *testing.T) {
-	svc, err := logging.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := logging.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	parent := "projects/conformance-project"
 
@@ -296,7 +296,7 @@ func requireGoogleErr(t *testing.T, err error, code int, gcpStatus string) {
 // like real GCP, instead of silently overwriting. backendServices.insert does
 // not touch the network fabric, so the case runs without a real-exec host.
 func TestConformance_ComputeDuplicateInsertConflict(t *testing.T) {
-	svc, err := compute.NewService(ctx, option.WithEndpoint(baseURL+"/compute/v1/"), option.WithoutAuthentication())
+	svc, err := compute.NewService(ctx, option.WithEndpoint(baseURL+"/compute/v1/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	const project = "conformance-project"
 
@@ -313,7 +313,7 @@ func TestConformance_ComputeDuplicateInsertConflict(t *testing.T) {
 // created metadata-only Compute resource (healthCheck) returns 404 NOT_FOUND
 // like real GCP, instead of a synthesized DONE operation.
 func TestConformance_ComputeDeleteMissingNotFound(t *testing.T) {
-	svc, err := compute.NewService(ctx, option.WithEndpoint(baseURL+"/compute/v1/"), option.WithoutAuthentication())
+	svc, err := compute.NewService(ctx, option.WithEndpoint(baseURL+"/compute/v1/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	_, err = svc.HealthChecks.Delete("conformance-project", "conf-never-created-hc").Context(ctx).Do()
@@ -323,7 +323,7 @@ func TestConformance_ComputeDeleteMissingNotFound(t *testing.T) {
 // TestConformance_PubSubDuplicateTopicConflict pins that creating a topic twice
 // returns 409 ALREADY_EXISTS like real Pub/Sub instead of overwriting.
 func TestConformance_PubSubDuplicateTopicConflict(t *testing.T) {
-	svc, err := pubsub.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := pubsub.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	name := "projects/conformance-project/topics/conf-dup-topic"
 
@@ -338,7 +338,7 @@ func TestConformance_PubSubDuplicateTopicConflict(t *testing.T) {
 // TestConformance_PubSubDuplicateSubscriptionConflict pins the same contract
 // for subscriptions.
 func TestConformance_PubSubDuplicateSubscriptionConflict(t *testing.T) {
-	svc, err := pubsub.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := pubsub.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	topic := "projects/conformance-project/topics/conf-dup-sub-topic"
 	sub := "projects/conformance-project/subscriptions/conf-dup-sub"
@@ -359,7 +359,7 @@ func TestConformance_PubSubDuplicateSubscriptionConflict(t *testing.T) {
 // CreateTrigger with the same triggerId returns ALREADY_EXISTS. The eventarc
 // gRPC client surfaces the 409 as codes.AlreadyExists.
 func TestConformance_EventarcDuplicateTriggerConflict(t *testing.T) {
-	client, err := eventarc.NewRESTClient(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	client, err := eventarc.NewRESTClient(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 
@@ -408,7 +408,7 @@ func TestConformance_EventarcDuplicateTriggerConflict(t *testing.T) {
 // TestConformance_LoggingDeleteMissingSinkNotFound pins that deleting a
 // never-created log sink returns 404 NOT_FOUND like real Cloud Logging.
 func TestConformance_LoggingDeleteMissingSinkNotFound(t *testing.T) {
-	svc, err := logging.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := logging.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	_, err = svc.Projects.Sinks.Delete("projects/conformance-project/sinks/conf-never-created-sink").Do()
@@ -419,7 +419,7 @@ func TestConformance_LoggingDeleteMissingSinkNotFound(t *testing.T) {
 // contract: a setIamPolicy carrying a stale etag is rejected with 409 ABORTED
 // so the caller re-reads and retries.
 func TestConformance_IAMSetPolicyStaleEtagAborted(t *testing.T) {
-	svc, err := cloudresourcemanager.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := cloudresourcemanager.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	project := "conformance-iam-etag-project"
 
@@ -455,7 +455,7 @@ func TestConformance_IAMSetPolicyStaleEtagAborted(t *testing.T) {
 // "pageSize" — a param the Compute SDK never sends — so every list returned the
 // full set on page 1 with no nextPageToken.
 func TestConformance_ComputeListPaginatesByMaxResults(t *testing.T) {
-	svc, err := compute.NewService(ctx, option.WithEndpoint(baseURL+"/compute/v1/"), option.WithoutAuthentication())
+	svc, err := compute.NewService(ctx, option.WithEndpoint(baseURL+"/compute/v1/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	const project = "conf-compute-pagination"
 
@@ -490,7 +490,7 @@ func TestConformance_ComputeListPaginatesByMaxResults(t *testing.T) {
 // pageToken and stamps the dns#resourceRecordSetsListResponse kind. Before the
 // fix the handler ignored both params and emitted no nextPageToken.
 func TestConformance_DNSRecordSetsPaginate(t *testing.T) {
-	svc, err := dns.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := dns.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	const project = "conf-dns-pagination"
 	const zone = "conf-pag-zone"
@@ -531,7 +531,7 @@ func TestConformance_DNSRecordSetsPaginate(t *testing.T) {
 // pageSize + emits a nextPageToken. The REST iterator's InternalFetch exposes a
 // single page and its follow-on token directly.
 func TestConformance_EventarcTriggersPaginate(t *testing.T) {
-	client, err := eventarc.NewRESTClient(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	client, err := eventarc.NewRESTClient(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 
@@ -580,7 +580,7 @@ func TestConformance_EventarcTriggersPaginate(t *testing.T) {
 // TestConformance_DataflowJobsPaginate pins that ListJobs honors pageSize +
 // pageToken and emits a nextPageToken.
 func TestConformance_DataflowJobsPaginate(t *testing.T) {
-	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	const project = "conf-dataflow-pagination"
 	const location = "us-central1"
@@ -611,7 +611,7 @@ func TestConformance_DataflowJobsPaginate(t *testing.T) {
 // TestConformance_LoggingEntriesPaginate pins that entries:list honors pageSize +
 // pageToken and emits a nextPageToken so a caller can walk every page.
 func TestConformance_LoggingEntriesPaginate(t *testing.T) {
-	svc, err := logging.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := logging.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	const logName = "projects/conf-logging-pagination/logs/conf-pag-log"
 
@@ -650,7 +650,7 @@ func TestConformance_LoggingEntriesPaginate(t *testing.T) {
 // TestConformance_BigQueryDatasetsPaginate pins that datasets.list honors
 // maxResults + pageToken and emits a nextPageToken.
 func TestConformance_BigQueryDatasetsPaginate(t *testing.T) {
-	svc, err := bigquery.NewService(ctx, option.WithEndpoint(baseURL+"/bigquery/v2/"), option.WithoutAuthentication())
+	svc, err := bigquery.NewService(ctx, option.WithEndpoint(baseURL+"/bigquery/v2/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	const project = "conf-bq-pagination"
 
@@ -677,7 +677,7 @@ func TestConformance_BigQueryDatasetsPaginate(t *testing.T) {
 // pageSize + pageToken and that runQuery honors limit, offset, and the
 // LESS_THAN / GREATER_THAN comparison operators (not only EQUAL).
 func TestConformance_FirestoreListAndQueryPagination(t *testing.T) {
-	svc, err := firestore.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := firestore.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	const db = "projects/conf-firestore-pagination/databases/(default)"
 	const collPath = db + "/documents/conf-pag-users"
@@ -818,7 +818,7 @@ func TestConformance_GCSObjectUpdateMetadata(t *testing.T) {
 }
 
 func TestConformance_SpannerInstanceUpdateNodeCount(t *testing.T) {
-	svc, err := spanner.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithoutAuthentication())
+	svc, err := spanner.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	const project = "conf-spanner-project"
@@ -853,7 +853,7 @@ func TestConformance_SpannerInstanceUpdateNodeCount(t *testing.T) {
 }
 
 func TestConformance_KMSCreateAndToggleCryptoKeyVersion(t *testing.T) {
-	svc, err := cloudkms.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := cloudkms.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	const project = "conf-kms-project"
@@ -906,7 +906,7 @@ func TestConformance_KMSCreateAndToggleCryptoKeyVersion(t *testing.T) {
 }
 
 func TestConformance_CloudBuildListBuilds(t *testing.T) {
-	svc, err := cloudbuild.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := cloudbuild.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	const project = "conf-cb-list-project"
@@ -927,7 +927,7 @@ func TestConformance_CloudBuildListBuilds(t *testing.T) {
 }
 
 func TestConformance_BigtableModifyColumnFamilies(t *testing.T) {
-	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	const project = "conf-bt-project"
@@ -970,7 +970,7 @@ func TestConformance_BigtableModifyColumnFamilies(t *testing.T) {
 }
 
 func TestConformance_BigtableInstanceAndClusterUpdate(t *testing.T) {
-	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	const project = "conf-bt-upd-project"
@@ -1006,7 +1006,7 @@ func TestConformance_BigtableInstanceAndClusterUpdate(t *testing.T) {
 }
 
 func TestConformance_MemorystoreRedisPatchUpdateMask(t *testing.T) {
-	svc, err := redis.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := redis.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	const project = "conf-redis-project"
@@ -1033,7 +1033,7 @@ func TestConformance_MemorystoreRedisPatchUpdateMask(t *testing.T) {
 }
 
 func TestConformance_CloudSQLPatchMergesSettings(t *testing.T) {
-	svc, err := sqladmin.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	svc, err := sqladmin.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 
 	const project = "conf-sql-project"
@@ -1069,7 +1069,7 @@ func TestConformance_CloudSQLPatchMergesSettings(t *testing.T) {
 
 func TestConformance_CloudFunctionsUpdateAndGenerateUploadUrl(t *testing.T) {
 	client, err := functions.NewFunctionRESTClient(ctx,
-		option.WithEndpoint(baseURL), option.WithoutAuthentication())
+		option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 

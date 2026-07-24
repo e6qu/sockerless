@@ -24,7 +24,7 @@ import (
 
 func newWorkerPoolsClient(t *testing.T) *run.WorkerPoolsClient {
 	t.Helper()
-	client, err := run.NewWorkerPoolsRESTClient(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	client, err := run.NewWorkerPoolsRESTClient(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 	return client
@@ -32,7 +32,7 @@ func newWorkerPoolsClient(t *testing.T) *run.WorkerPoolsClient {
 
 func newInstancesClient(t *testing.T) *run.InstancesClient {
 	t.Helper()
-	client, err := run.NewInstancesRESTClient(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	client, err := run.NewInstancesRESTClient(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 	return client
@@ -40,7 +40,7 @@ func newInstancesClient(t *testing.T) *run.InstancesClient {
 
 func newTasksClient(t *testing.T) *run.TasksClient {
 	t.Helper()
-	client, err := run.NewTasksRESTClient(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	client, err := run.NewTasksRESTClient(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 	return client

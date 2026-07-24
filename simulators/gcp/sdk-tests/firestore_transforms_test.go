@@ -19,7 +19,7 @@ func newFSClient(t *testing.T, project string) *firestore.Client {
 	t.Helper()
 	c, err := firestore.NewRESTClient(ctx, project,
 		option.WithEndpoint(baseURL),
-		option.WithoutAuthentication(),
+		option.WithTokenSource(simTokenSource()),
 	)
 	if err != nil {
 		t.Fatalf("NewRESTClient: %v", err)
