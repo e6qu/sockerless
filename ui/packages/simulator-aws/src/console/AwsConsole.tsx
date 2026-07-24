@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { NavLink } from "react-router";
 import { useTheme } from "@sockerless/ui-core/hooks";
 import { AwsIcon } from "./icons.js";
@@ -152,6 +152,76 @@ export function AwsButton({
 
 export function AwsContainer({ children }: { children: ReactNode }) {
   return <section className="aws-container">{children}</section>;
+}
+
+/**
+ * A Cloudscape-style modal dialog. When `onDismiss` is provided the dialog can
+ * be dismissed from its close control and the overlay; when it is omitted the
+ * dialog closes only through its own footer actions — the shape a one-time
+ * disclosure needs, where an accidental dismissal would lose material the
+ * operator can never see again.
+ */
+export function AwsModal({
+  title,
+  onDismiss,
+  footer,
+  children,
+}: {
+  title: string;
+  onDismiss?: () => void;
+  footer: ReactNode;
+  children: ReactNode;
+}) {
+  const titleId = useId();
+  return (
+    <div className="aws-modal-overlay" role="presentation" onClick={onDismiss}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="aws-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="aws-modal-header">
+          <h2 id={titleId}>{title}</h2>
+          {onDismiss && (
+            <button type="button" className="aws-modal-close" aria-label="Close" onClick={onDismiss}>
+              <AwsIcon name="close" size={16} />
+            </button>
+          )}
+        </div>
+        <div className="aws-modal-content">{children}</div>
+        <div className="aws-modal-footer">{footer}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Copy-to-clipboard with spoken and visible feedback, the control Cloudscape
+ * places beside every credential and identifier. Failure is announced rather
+ * than swallowed: an operator who believes a secret is on the clipboard when it
+ * is not will paste something else into a credentials file.
+ */
+export function AwsCopyButton({ value, label }: { value: string; label: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  return (
+    <button
+      type="button"
+      className="aws-copy"
+      aria-label={label}
+      title={label}
+      onClick={() => {
+        navigator.clipboard.writeText(value).then(
+          () => setState("copied"),
+          () => setState("failed"),
+        );
+      }}
+    >
+      <AwsIcon name="copy" size={14} />
+      <span role="status">{state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy"}</span>
+    </button>
+  );
 }
 
 /**

@@ -6,6 +6,7 @@ const SERVICES = [
   { path: "/ui/ecr", nav: "Elastic Container Registry", title: "Repositories", columns: ["Repository name", "URI"] },
   { path: "/ui/s3", nav: "Simple Storage Service", title: "Buckets", columns: ["Name", "Creation date"] },
   { path: "/ui/logs", nav: "CloudWatch Logs", title: "Log groups", columns: ["Log group", "Retention"] },
+  { path: "/ui/iam", nav: "Identity and Access Management", title: "Users", columns: ["User name", "ARN"] },
 ];
 
 test.describe("AWS console shell", () => {
@@ -15,7 +16,13 @@ test.describe("AWS console shell", () => {
     await expect(page.locator(".aws-header")).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toBeVisible();
     const nav = page.getByRole("navigation", { name: "Service" });
-    for (const group of ["Dashboard", "Compute", "Storage and registry", "Management"]) {
+    for (const group of [
+      "Dashboard",
+      "Compute",
+      "Storage and registry",
+      "Management",
+      "Security, identity, and compliance",
+    ]) {
       await expect(nav.getByText(group, { exact: true })).toBeVisible();
     }
   });
@@ -136,7 +143,7 @@ test.describe("Overview", () => {
   test("states the Region alongside the resource counts", async ({ page }) => {
     await page.goto("/ui/");
     await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
-    await expect(page.getByText("eu-west-1").first()).toBeVisible();
+    await expect(page.getByText("us-east-1").first()).toBeVisible();
   });
 });
 
@@ -151,6 +158,45 @@ for (const service of SERVICES) {
     });
   });
 }
+
+// The Users page's credential-minting affordances are part of the shell — the
+// header actions and the create dialog render before (and regardless of) any
+// cloud read, so they are assertable here without an identity provider. The
+// authenticated mint→configure→signed-read loop belongs to the Shauth
+// relying-party suite.
+test.describe("Identity and Access Management credential minting", () => {
+  test("offers Create user and opens the create dialog", async ({ page }) => {
+    await page.goto("/ui/iam");
+    const create = page.getByTestId("iam-create-user");
+    await expect(create).toBeVisible();
+    await expect(page.getByTestId("iam-delete-user")).toBeDisabled();
+    await create.click();
+    const dialog = page.getByRole("dialog", { name: "Create user" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId("iam-user-name-input")).toBeVisible();
+    // An empty or invalid user name must not be submittable.
+    await expect(dialog.getByTestId("iam-create-user-submit")).toBeDisabled();
+    await dialog.getByTestId("iam-user-name-input").fill("cli-operator");
+    await expect(dialog.getByTestId("iam-create-user-submit")).toBeEnabled();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
+  test("routes to a user's Security credentials page with the access-key table and Create access key", async ({
+    page,
+  }) => {
+    await page.goto("/ui/iam/users/cli-operator");
+    await expect(page.getByRole("heading", { name: "cli-operator" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Access keys" })).toBeVisible();
+    for (const column of ["Access key ID", "Status", "Created"]) {
+      await expect(page.getByRole("columnheader", { name: column })).toBeVisible();
+    }
+    await expect(page.getByTestId("iam-create-access-key")).toBeVisible();
+    const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+    await expect(crumbs).toContainText("Identity and Access Management");
+    await expect(crumbs).toContainText("cli-operator");
+  });
+});
 
 test.describe("Navigation", () => {
   test("reaches every service from the side navigation and updates the breadcrumb", async ({ page }) => {

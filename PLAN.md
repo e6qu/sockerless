@@ -165,12 +165,17 @@ this order.
    registrations with client-secret creation (the Certificates & secrets
    blade). Each page shows the exact vendor-CLI usage for the minted material
    (`aws configure`, `gcloud auth activate-service-account`,
-   `az login --service-principal`). The backing simulator APIs exist and the
-   enforcing data planes already accept minted credentials on all three clouds
-   (the Signature Version 4 verifier resolves IAM access keys; the Google
-   OAuth 2.0 token endpoint accepts the service-account JWT-bearer flow; the
-   Entra token endpoint accepts `client_secret_post`/`client_secret_basic`),
-   so this phase is console UI plus browser-suite coverage only.
+   `az login --service-principal`). Done — and the phase turned out to be more
+   than UI: proving the loops end to end surfaced that the Google OAuth 2.0
+   token endpoint never verified assertion signatures (minted keys' public
+   halves are now registered, verified, and revocable) and that the Microsoft
+   Entra v2.0 token endpoint validated no client secret (directory-registered
+   applications now carry hashed password credentials that
+   `client_credentials` verifies with real AADSTS failures); the invented
+   `/sim/v1/entra/users` seed routes were deleted for Graph provisioning. CLI
+   tests prove each minted credential authenticates the vendor CLI, and the
+   Shauth relying-party browser matrix mints on all three consoles with
+   one-time disclosure asserted.
 2. **Account and project management.** Two new simulator slices with the
    mandatory SDK, CLI, and Terraform tests: Google Cloud Resource Manager
    (`projects.create`/`list`/`delete`) and the Azure `Microsoft.Subscription`

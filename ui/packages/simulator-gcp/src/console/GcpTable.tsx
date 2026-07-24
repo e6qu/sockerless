@@ -19,6 +19,8 @@ export interface GcpEmptyState {
   /** The console names the side effect of the primary action. */
   sideEffect?: string;
   primaryLabel: string;
+  /** Wired on pages whose create flow exists; absent, the button is inert. */
+  onPrimary?: () => void;
 }
 
 export interface GcpResourceTableProps<T> {
@@ -198,7 +200,14 @@ export function GcpResourceTable<T>({
                     </p>
                     {empty.sideEffect ? <p className="gc-empty-sideeffect">{empty.sideEffect}</p> : null}
                     <div className="gc-empty-actions">
-                      <button type="button" className="gc-button-primary" disabled>{empty.primaryLabel}</button>
+                      <button
+                        type="button"
+                        className="gc-button-primary"
+                        disabled={!empty.onPrimary}
+                        onClick={empty.onPrimary}
+                      >
+                        {empty.primaryLabel}
+                      </button>
                       <a href="#" className="gc-empty-quickstart" onClick={(event) => event.preventDefault()}>Take the quickstart</a>
                     </div>
                   </div>

@@ -30,25 +30,61 @@ const MENU_GROUPS: ServiceMenuGroup[] = [
     ],
   },
   { label: "Monitoring", items: [{ label: "Logs", to: "/ui/monitor" }] },
+  {
+    label: "Microsoft Entra ID",
+    items: [{ label: "App registrations", to: "/ui/entra/app-registrations" }],
+  },
 ];
 
-const PANE: Record<string, { crumb: string; title: string; kind: string }> = {
+interface Pane {
+  crumb: string;
+  title: string;
+  kind: string;
+  /** An intermediate breadcrumb for panes nested under a listing blade. */
+  parent?: { label: string; to: string };
+}
+
+const PANE: Record<string, Pane> = {
   "/ui/": { crumb: "Overview", title: "Simulator", kind: "Subscription" },
   "/ui/container-apps": { crumb: "Container Apps", title: "Container Apps", kind: "Container Apps job" },
   "/ui/functions": { crumb: "Function Apps", title: "Function Apps", kind: "Function App" },
   "/ui/acr": { crumb: "Container registries", title: "Container registries", kind: "Container registry" },
   "/ui/storage": { crumb: "Storage accounts", title: "Storage accounts", kind: "Storage account" },
   "/ui/monitor": { crumb: "Logs", title: "Logs", kind: "Log Analytics workspace" },
+  "/ui/entra/app-registrations": {
+    crumb: "App registrations",
+    title: "App registrations",
+    kind: "Microsoft Entra ID",
+  },
 };
+
+function paneFor(pathname: string): Pane {
+  const exact = PANE[pathname];
+  if (exact) return exact;
+  if (pathname.startsWith("/ui/entra/app-registrations/")) {
+    return {
+      crumb: "Certificates & secrets",
+      title: "App registration",
+      kind: "Microsoft Entra ID",
+      parent: { label: "App registrations", to: "/ui/entra/app-registrations" },
+    };
+  }
+  return PANE["/ui/"];
+}
 
 function PortalFrame({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
-  const pane = PANE[pathname] ?? PANE["/ui/"];
+  const pane = paneFor(pathname);
+  const trail = [
+    { label: "Home", to: "/ui/" },
+    ...(pane.parent ? [{ label: pane.parent.label, to: pane.parent.to }] : []),
+    { label: pane.crumb },
+  ];
   return (
     <div className="azure">
       <a href="#main-content" className="sl-skip-link">Skip to main content</a>
       <AzureHeader account={<OperatorAccount />} />
-      <AzureBreadcrumbs trail={[{ label: "Home", to: "/ui/" }, { label: pane.crumb }]} />
+      <AzureBreadcrumbs trail={trail} />
       <div className="az-body">
         <AzureResourceTitle name={pane.title} kind={pane.kind} directory="Simulator" />
         <AzureServiceMenu flat={FLAT_ITEMS} groups={MENU_GROUPS} />

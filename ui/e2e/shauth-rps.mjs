@@ -28,9 +28,18 @@ try {
     await waitForApplication(page, app);
     await assertIdentity(page, context, app);
     if (app.name === "Sockerless Admin") await assertAdministratorMutation(context);
-    if (app.name === "Sockerless Google Cloud simulator") await assertFederatedCloudToken(context, page, app);
-    if (app.name === "Sockerless AWS simulator") await assertFederatedAwsCredentials(context, page, app);
-    if (app.name === "Sockerless Microsoft Azure simulator") await assertFederatedAzureToken(context, app);
+    if (app.name === "Sockerless Google Cloud simulator") {
+      await assertFederatedCloudToken(context, page, app);
+      await assertMintedServiceAccountKey(page, app);
+    }
+    if (app.name === "Sockerless AWS simulator") {
+      await assertFederatedAwsCredentials(context, page, app);
+      await assertMintedIAMAccessKey(page, app);
+    }
+    if (app.name === "Sockerless Microsoft Azure simulator") {
+      await assertFederatedAzureToken(context, app);
+      await assertMintedEntraClientSecret(page, app);
+    }
     await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
     await context.close();
@@ -321,6 +330,98 @@ async function assertFederatedAzureToken(context, app) {
   const token = await exchange.json();
   assert.ok(token.access_token, `${app.name} exchange issued no federated token`);
   assert.equal(token.token_type, "Bearer", `${app.name} federated token was not a bearer token`);
+}
+
+// The three assertMinted* flows prove the credential-minting console pages
+// end to end from the operator's seat: the signed-in operator drives the real
+// console UI, which calls the cloud's real credential APIs over the federated
+// session, and the one-time secret disclosure behaves exactly as the real
+// console's (shown once, gone after dismissal/reload). Whether the minted
+// material then authenticates the vendor CLI is proven by the simulator
+// CLI-test suites — this suite proves the console can mint it.
+
+async function assertMintedIAMAccessKey(page, app) {
+  const origin = new URL(app.launch).origin;
+  const userName = `rps-minted-${Date.now() % 1_000_000}`;
+
+  await page.goto(`${origin}/ui/iam`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("iam-create-user").click();
+  await page.getByTestId("iam-user-name-input").fill(userName);
+  await page.getByTestId("iam-create-user-submit").click();
+  await page.getByRole("link", { name: userName }).click();
+
+  await page.getByTestId("iam-create-access-key").click();
+  await page.getByTestId("iam-create-access-key-submit").click();
+  const keyId = (await page.getByTestId("iam-access-key-id").innerText()).trim();
+  assert.match(keyId, /^AKIA/, `${app.name} minted access key id did not have the AKIA prefix`);
+  await page.getByRole("button", { name: "Show" }).click();
+  const secret = (await page.getByTestId("iam-secret-access-key").innerText()).trim();
+  assert.ok(secret.length >= 30, `${app.name} revealed no secret access key`);
+  await page.getByTestId("iam-cli-usage").waitFor({ state: "visible" });
+  await page.getByTestId("iam-access-key-done").click();
+  assert.equal(
+    await page.getByText(secret).count(),
+    0,
+    `${app.name} secret access key remained visible after the one-time dialog closed`,
+  );
+}
+
+async function assertMintedServiceAccountKey(page, app) {
+  const origin = new URL(app.launch).origin;
+  const accountId = `rps-minted-${Date.now() % 1_000_000}`;
+
+  await page.goto(`${origin}/ui/serviceaccounts`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Create service account" }).first().click();
+  await page.getByTestId("sa-create-name").fill(accountId);
+  await page.getByTestId("sa-create-submit").click();
+  await page.locator(`[data-testid^="sa-row-${accountId}"]`).click();
+
+  await page.getByTestId("sa-keys-add").click();
+  await page.getByTestId("sa-key-create-submit").click();
+  await page.getByTestId("sa-key-minted-dialog").waitFor({ state: "visible" });
+  const filename = (await page.getByTestId("sa-key-filename").innerText()).trim();
+  assert.match(filename, /\.json$/, `${app.name} minted key filename was not a JSON key file`);
+  const href = await page.getByTestId("sa-key-download").getAttribute("href");
+  assert.ok(href?.startsWith("data:"), `${app.name} minted key download was not a self-contained data URI`);
+  await page.getByTestId("sa-key-cli").waitFor({ state: "visible" });
+  await page.getByTestId("sa-key-minted-done").click();
+  assert.equal(
+    await page.getByTestId("sa-key-download").count(),
+    0,
+    `${app.name} private key download remained available after the one-time dialog closed`,
+  );
+}
+
+async function assertMintedEntraClientSecret(page, app) {
+  const origin = new URL(app.launch).origin;
+  const appName = `rps-minted-${Date.now() % 1_000_000}`;
+
+  await page.goto(`${origin}/ui/entra/app-registrations`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "New registration" }).click();
+  await page.getByTestId("entra-app-name-input").fill(appName);
+  await page.getByTestId("entra-register-submit").click();
+
+  const clientId = (await page.getByTestId("entra-app-client-id").innerText()).trim();
+  assert.match(
+    clientId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    `${app.name} registration exposed no application (client) ID`,
+  );
+  await page.getByTestId("entra-new-client-secret").click();
+  await page.getByTestId("entra-secret-description").fill("rps-proof");
+  await page.getByTestId("entra-secret-add").click();
+  const secret = (await page.getByTestId("entra-secret-value").innerText()).trim();
+  assert.ok(secret.length >= 20, `${app.name} minted client secret was empty`);
+  await page.getByTestId("entra-secret-notice").waitFor({ state: "visible" });
+  await page.getByTestId("entra-cli-usage").waitFor({ state: "visible" });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  assert.equal(
+    await page.getByText(secret).count(),
+    0,
+    `${app.name} client secret was still readable after leaving the blade`,
+  );
+  await page.getByTestId("entra-secret-hint").first().waitFor({ state: "visible" });
 }
 
 async function assertAdministratorMutation(context) {

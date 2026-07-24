@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import { useQueries } from "@tanstack/react-query";
 import { AwsContainer, AwsPageHeader, AwsStatus } from "../console/index.js";
+import { REGION } from "../console/federation.js";
 import {
   fetchECSTasks,
   fetchLambdaFunctions,
@@ -63,7 +64,7 @@ export function OverviewPage() {
         <AwsContainer>
           <div className="aws-metric">
             <div className="aws-metric-label">Region</div>
-            <div style={{ marginTop: 4 }}>eu-west-1</div>
+            <div style={{ marginTop: 4 }}>{REGION}</div>
             <div className="aws-metric-label" style={{ marginTop: 12 }}>Service health</div>
             <div style={{ marginTop: 4 }}>
               <AwsStatus status="Operating normally" kind="success" />

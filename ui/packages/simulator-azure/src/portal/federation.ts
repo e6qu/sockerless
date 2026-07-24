@@ -21,6 +21,9 @@ interface PortalConfig {
   // Resource Manager (api.loganalytics.io vs management.azure.com), reached with
   // its own token audience. Empty means the portal's own origin.
   logsApiEndpoint?: string;
+  // Microsoft Graph is likewise its own host (graph.microsoft.com) with its
+  // own token audience. Empty means the portal's own origin.
+  graphApiEndpoint?: string;
   federationEndpoint?: string;
   federationTenant?: string;
   federationClientId?: string;
@@ -28,14 +31,15 @@ interface PortalConfig {
   federationSubject?: string;
 }
 
-// Azure Resource Manager and Log Analytics are separate resources, each reached
-// with a token scoped to it. Real Azure issues an ARM token and a Log Analytics
-// token from the same federated assertion; the simulator does the same.
-export type CloudScope = "arm" | "logs";
+// Azure Resource Manager, Log Analytics, and Microsoft Graph are separate
+// resources, each reached with a token scoped to it. Real Azure issues each
+// from the same federated assertion; the simulator does the same.
+export type CloudScope = "arm" | "logs" | "graph";
 
 const SCOPES: Record<CloudScope, string> = {
   arm: "https://management.azure.com/.default",
   logs: "https://api.loganalytics.io/.default",
+  graph: "https://graph.microsoft.com/.default",
 };
 
 let configPromise: Promise<PortalConfig> | null = null;
@@ -150,7 +154,17 @@ async function federatedToken(setup: FederationSetup, scope: CloudScope): Promis
 }
 
 function baseFor(config: PortalConfig, scope: CloudScope): string {
-  return (scope === "logs" ? config.logsApiEndpoint : config.cloudApiEndpoint) ?? "";
+  if (scope === "logs") return config.logsApiEndpoint ?? "";
+  if (scope === "graph") return config.graphApiEndpoint ?? "";
+  return config.cloudApiEndpoint ?? "";
+}
+
+// directoryTenantId is the Microsoft Entra tenant the portal federates into —
+// the value `az login --service-principal --tenant …` takes. Null when the
+// portal runs without federation configured.
+export async function directoryTenantId(): Promise<string | null> {
+  const config = await portalConfig();
+  return config.federationTenant ?? null;
 }
 
 // authorizedFetch reaches a real Azure path at the configured cloud coordinate

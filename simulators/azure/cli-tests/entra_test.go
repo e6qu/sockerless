@@ -349,36 +349,15 @@ func TestMSI_TokenIsSignedJWT(t *testing.T) {
 	assert.NotEmpty(t, claims["tid"])
 }
 
-// TestEntra_IDTokenGroupsViaAuthCodeFlow provisions a user+group via standard Graph
-// endpoints, seeds that user as the sim-active user via the auth code flow's
-// auto-issue mechanism, then verifies the id_token carries groups from the
-// membership store. The auth code flow uses the sim-active user; ROPC is the
-// standard non-interactive path when a specific user is needed.
+// TestEntra_IDTokenGroupsViaAuthCodeFlow provisions a user + group via the
+// standard Microsoft Graph endpoints, then runs the authorization-code flow
+// with login_hint binding the grant to that user — the mechanism real Azure AD
+// uses to resolve the account a silent authorize request signs in — and
+// verifies the id_token carries the groups claim from the membership store.
 func TestEntra_IDTokenGroupsViaAuthCodeFlow(t *testing.T) {
 	groupID := createEntraGroup(t, "CLI-AuthCode-Group")
-	// Seed via sim path so auth code flow (which uses active user) picks up this user.
-	// This tests that inline Groups on the sim-seed path still work alongside the
-	// standard membership store.
-	seedBody := fmt.Sprintf(`{
-		"sub": "cli-authcode-sub",
-		"preferredUsername": "authcode@example.com",
-		"name": "AuthCode User",
-		"groups": [{"id": %q, "displayName": "CLI-AuthCode-Group"}]
-	}`, groupID)
-	req, err := http.NewRequest(http.MethodPut, baseURL+"/sim/v1/entra/users/cli-authcode-oid", bytes.NewBufferString(seedBody))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	t.Cleanup(func() {
-		r, _ := http.NewRequest(http.MethodDelete, baseURL+"/sim/v1/entra/users/cli-authcode-oid", nil)
-		cr, _ := http.DefaultClient.Do(r)
-		if cr != nil {
-			cr.Body.Close()
-		}
-	})
+	userID := createEntraUser(t, "AuthCode User", "authcode@example.com")
+	addEntraGroupMember(t, groupID, userID)
 
 	tenant := "cli-idtoken-tenant-ac"
 	clientID := "cli-idtoken-client-ac"
@@ -391,6 +370,7 @@ func TestEntra_IDTokenGroupsViaAuthCodeFlow(t *testing.T) {
 		"response_type":         {"code"},
 		"redirect_uri":          {redirectURI},
 		"scope":                 {"openid profile email"},
+		"login_hint":            {"authcode@example.com"},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
 	}.Encode())
@@ -429,10 +409,139 @@ func TestEntra_IDTokenGroupsViaAuthCodeFlow(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(payloadJSON, &payload))
 
-	assert.Equal(t, "cli-authcode-oid", payload["oid"])
+	assert.Equal(t, userID, payload["oid"])
 	groupsRaw, ok := payload["groups"]
 	require.True(t, ok, "id_token must contain groups claim")
 	groups, ok := groupsRaw.([]any)
 	require.True(t, ok)
 	assert.Contains(t, groups, groupID)
+}
+
+// createEntraApplicationWithSP registers an application plus its service
+// principal via the standard Microsoft Graph endpoints — what the Azure portal
+// does when an app registration is created — and returns the application's
+// object ID and appId (the OAuth2 client_id).
+func createEntraApplicationWithSP(t *testing.T, displayName string) (objectID, appID string) {
+	t.Helper()
+	appBody, _ := json.Marshal(map[string]any{"displayName": displayName, "signInAudience": "AzureADMyOrg"})
+	appReq, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/applications", bytes.NewReader(appBody))
+	require.NoError(t, err)
+	appReq.Header.Set("Content-Type", "application/json")
+	appResp, err := http.DefaultClient.Do(appReq)
+	require.NoError(t, err)
+	defer appResp.Body.Close()
+	require.Equal(t, http.StatusCreated, appResp.StatusCode)
+	var app struct {
+		ID    string `json:"id"`
+		AppID string `json:"appId"`
+	}
+	require.NoError(t, json.NewDecoder(appResp.Body).Decode(&app))
+	require.NotEmpty(t, app.AppID)
+	t.Cleanup(func() {
+		r, _ := http.NewRequest(http.MethodDelete, baseURL+"/v1.0/applications/"+app.ID, nil)
+		cr, _ := http.DefaultClient.Do(r)
+		if cr != nil {
+			cr.Body.Close()
+		}
+	})
+
+	spBody, _ := json.Marshal(map[string]any{"appId": app.AppID})
+	spReq, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/servicePrincipals", bytes.NewReader(spBody))
+	require.NoError(t, err)
+	spReq.Header.Set("Content-Type", "application/json")
+	spResp, err := http.DefaultClient.Do(spReq)
+	require.NoError(t, err)
+	defer spResp.Body.Close()
+	require.Equal(t, http.StatusCreated, spResp.StatusCode)
+	var sp struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.NewDecoder(spResp.Body).Decode(&sp))
+	t.Cleanup(func() {
+		r, _ := http.NewRequest(http.MethodDelete, baseURL+"/v1.0/servicePrincipals/"+sp.ID, nil)
+		cr, _ := http.DefaultClient.Do(r)
+		if cr != nil {
+			cr.Body.Close()
+		}
+	})
+	return app.ID, app.AppID
+}
+
+// TestEntra_AppRegistrationSecretAuthenticatesAzRest mints a client secret on
+// an app registration (POST /v1.0/applications/{appObjectId}/addPassword — the
+// Certificates & secrets blade's call), acquires an Azure Resource Manager
+// token through the OAuth2 client_credentials grant with that appId + secret,
+// and drives the az CLI against the ARM control plane with it. A wrong secret
+// is rejected with invalid_client, and a removed secret stops authenticating
+// (POST /v1.0/applications/{appObjectId}/removePassword).
+func TestEntra_AppRegistrationSecretAuthenticatesAzRest(t *testing.T) {
+	objectID, appID := createEntraApplicationWithSP(t, "CLI-Secret-App")
+
+	credBody, _ := json.Marshal(map[string]any{
+		"passwordCredential": map[string]any{"displayName": "cli secret"},
+	})
+	credReq, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/applications/"+objectID+"/addPassword", bytes.NewReader(credBody))
+	require.NoError(t, err)
+	credReq.Header.Set("Content-Type", "application/json")
+	credResp, err := http.DefaultClient.Do(credReq)
+	require.NoError(t, err)
+	defer credResp.Body.Close()
+	require.Equal(t, http.StatusOK, credResp.StatusCode)
+	var cred struct {
+		KeyID      string `json:"keyId"`
+		SecretText string `json:"secretText"`
+	}
+	require.NoError(t, json.NewDecoder(credResp.Body).Decode(&cred))
+	require.NotEmpty(t, cred.SecretText)
+
+	// The exact client_credentials request `az login --service-principal`
+	// sends: client_id + client_secret + the ARM .default scope.
+	tokenFor := func(secret string) (*http.Response, map[string]any) {
+		resp, err := http.PostForm(baseURL+"/"+simTenantID+"/oauth2/v2.0/token", url.Values{
+			"grant_type":    {"client_credentials"},
+			"client_id":     {appID},
+			"client_secret": {secret},
+			"scope":         {"https://management.azure.com/.default"},
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		return resp, body
+	}
+
+	resp, body := tokenFor(cred.SecretText)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "minted secret must authenticate: %v", body)
+	accessToken, _ := body["access_token"].(string)
+	require.NotEmpty(t, accessToken)
+
+	// The az CLI reads the ARM control plane with the minted-credential token.
+	out := runCLI(t, azRest("GET",
+		fmt.Sprintf("%s/subscriptions/%s/resourcegroups?api-version=2021-04-01", baseURL, subscriptionID),
+		"", "--headers", "Authorization=Bearer "+accessToken))
+	var groups struct {
+		Value []struct {
+			Name string `json:"name"`
+		} `json:"value"`
+	}
+	parseJSON(t, out, &groups)
+
+	// A wrong secret is rejected as invalid_client.
+	badResp, badBody := tokenFor("wrong-secret")
+	assert.Equal(t, http.StatusUnauthorized, badResp.StatusCode)
+	assert.Equal(t, "invalid_client", badBody["error"])
+
+	// Removing the credential revokes it.
+	removeBody, _ := json.Marshal(map[string]any{"keyId": cred.KeyID})
+	removeReq, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/applications/"+objectID+"/removePassword", bytes.NewReader(removeBody))
+	require.NoError(t, err)
+	removeReq.Header.Set("Content-Type", "application/json")
+	removeResp, err := http.DefaultClient.Do(removeReq)
+	require.NoError(t, err)
+	removeResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, removeResp.StatusCode)
+
+	revokedResp, revokedBody := tokenFor(cred.SecretText)
+	assert.Equal(t, http.StatusUnauthorized, revokedResp.StatusCode)
+	assert.Equal(t, "invalid_client", revokedBody["error"])
 }

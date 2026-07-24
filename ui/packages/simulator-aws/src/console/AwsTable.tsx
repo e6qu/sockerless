@@ -11,6 +11,16 @@ export interface AwsColumn<T> {
   value: (row: T) => string;
 }
 
+/** What a page's own header actions get to act on: the currently selected rows,
+ * plus the levers a mutation needs afterwards — clearing a selection that no
+ * longer exists and refetching the rows it changed. */
+export interface AwsTableActions<T> {
+  selected: T[];
+  clearSelection: () => void;
+  refetch: () => void;
+  isFetching: boolean;
+}
+
 export interface AwsResourceTableProps<T> {
   title: string;
   breadcrumbLabel: string;
@@ -23,6 +33,9 @@ export interface AwsResourceTableProps<T> {
   emptyTitle: string;
   emptyDescription: string;
   rowKey: (row: T) => string;
+  /** Page-specific header actions. Without it the header carries the standard
+   * selection-aware controls. */
+  actions?: (context: AwsTableActions<T>) => ReactNode;
 }
 
 const PAGE_SIZE = 10;
@@ -37,6 +50,7 @@ export function AwsResourceTable<T>({
   emptyTitle,
   emptyDescription,
   rowKey,
+  actions,
 }: AwsResourceTableProps<T>) {
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({ queryKey, queryFn });
   const [filter, setFilter] = useState("");
@@ -88,13 +102,22 @@ export function AwsResourceTable<T>({
         count={data?.length}
         description={description}
         actions={
-          <>
-            <AwsButton disabled={selected.size !== 1}>View details</AwsButton>
-            <AwsButton disabled={selected.size === 0}>Delete</AwsButton>
-            <AwsButton onClick={() => void refetch()} disabled={isFetching}>
-              {isFetching ? "Refreshing…" : "Refresh"}
-            </AwsButton>
-          </>
+          actions ? (
+            actions({
+              selected: (data ?? []).filter((row) => selected.has(rowKey(row))),
+              clearSelection: () => setSelected(new Set()),
+              refetch: () => void refetch(),
+              isFetching,
+            })
+          ) : (
+            <>
+              <AwsButton disabled={selected.size !== 1}>View details</AwsButton>
+              <AwsButton disabled={selected.size === 0}>Delete</AwsButton>
+              <AwsButton onClick={() => void refetch()} disabled={isFetching}>
+                {isFetching ? "Refreshing…" : "Refresh"}
+              </AwsButton>
+            </>
+          )
         }
       />
       <AwsContainer>

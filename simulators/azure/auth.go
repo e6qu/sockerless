@@ -48,7 +48,7 @@ type azureAuthCode struct {
 	CodeChallengeMethod string
 	// UserOID binds the code to a directory user when the authorize request
 	// carried a login_hint; empty means the grant mints tokens for the
-	// process-global active sim user.
+	// directory's built-in default identity.
 	UserOID   string
 	ExpiresAt time.Time
 }
@@ -443,6 +443,16 @@ func handleAzureToken(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 
+	// A client_id registered as an application in the directory is a real
+	// confidential client: its client_secret must validate against the app
+	// registration's password credentials, exactly as Microsoft Entra
+	// validates the client_credentials grant. Client IDs the directory holds
+	// no application for keep the sim's implicit-client behavior below.
+	if app, ok := entraFindApplicationByAppID(clientID); ok {
+		handleAzureRegisteredAppClientCredentials(w, r, tenantId, app)
+		return
+	}
+
 	audience, err := azureTokenAudienceFromRequest(r)
 	if err != nil {
 		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
@@ -472,7 +482,7 @@ func handleAzureToken(w http.ResponseWriter, r *http.Request, path string) {
 // §2.3 forbids using more than one client authentication method per request.
 func azureTokenClientID(r *http.Request) (string, error) {
 	formClientID := strings.TrimSpace(r.Form.Get("client_id"))
-	basicClientID, hasBasic, err := azureBasicAuthClientID(r)
+	basicClientID, _, hasBasic, err := azureBasicAuthClient(r)
 	if err != nil {
 		return "", err
 	}
@@ -485,40 +495,119 @@ func azureTokenClientID(r *http.Request) (string, error) {
 	return basicClientID, nil
 }
 
-// azureBasicAuthClientID extracts the client_id from an HTTP Basic
-// Authorization header. The components are form-urlencoded before base64
+// azureTokenClientSecret resolves the client_secret the request presents,
+// from whichever of the two client-authentication mechanisms carries it.
+func azureTokenClientSecret(r *http.Request) (string, error) {
+	_, basicSecret, hasBasic, err := azureBasicAuthClient(r)
+	if err != nil {
+		return "", err
+	}
+	if hasBasic {
+		return basicSecret, nil
+	}
+	return strings.TrimSpace(r.Form.Get("client_secret")), nil
+}
+
+// azureBasicAuthClient extracts the client_id and client_secret from an HTTP
+// Basic Authorization header. The components are form-urlencoded before base64
 // per RFC 6749 §2.3.1, so they are unescaped here; the raw value is kept when
 // unescaping fails because common clients (MSAL, Auth.js) send unreserved
 // characters without encoding them.
-func azureBasicAuthClientID(r *http.Request) (string, bool, error) {
+func azureBasicAuthClient(r *http.Request) (clientID, clientSecret string, has bool, err error) {
 	const prefix = "Basic "
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, prefix) {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(auth[len(prefix):]))
 	if err != nil {
-		return "", false, fmt.Errorf("decode Basic authorization header: %v", err)
+		return "", "", false, fmt.Errorf("decode Basic authorization header: %v", err)
 	}
-	clientID, _, found := strings.Cut(string(raw), ":")
+	clientID, clientSecret, found := strings.Cut(string(raw), ":")
 	if !found {
-		return "", false, fmt.Errorf("basic authorization header must decode to client_id:client_secret")
+		return "", "", false, fmt.Errorf("basic authorization header must decode to client_id:client_secret")
 	}
 	if unescaped, err := url.QueryUnescape(clientID); err == nil {
 		clientID = unescaped
 	}
-	if clientID == "" {
-		return "", false, fmt.Errorf("basic authorization header carries an empty client_id")
+	if unescaped, err := url.QueryUnescape(clientSecret); err == nil {
+		clientSecret = unescaped
 	}
-	return clientID, true, nil
+	if clientID == "" {
+		return "", "", false, fmt.Errorf("basic authorization header carries an empty client_id")
+	}
+	return clientID, clientSecret, true, nil
+}
+
+// handleAzureRegisteredAppClientCredentials serves the client_credentials
+// grant for a client_id the directory holds an application registration for.
+// Real Microsoft Entra authenticates the client against the app registration's
+// password credentials, requires a service principal materializing the
+// application in the tenant, and issues an app-only token whose oid and sub
+// are the service principal's object ID.
+func handleAzureRegisteredAppClientCredentials(w http.ResponseWriter, r *http.Request, tenantID string, app EntraApplication) {
+	secret, err := azureTokenClientSecret(r)
+	if err != nil {
+		azureOAuthError(w, "invalid_request", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if secret == "" {
+		azureOAuthError(w, "invalid_client",
+			fmt.Sprintf("AADSTS7000218: The request body must contain the following parameter: 'client_secret' or 'client_assertion'. Application: %s.", app.AppID),
+			http.StatusUnauthorized)
+		return
+	}
+	if !entraClientSecretMatches(app, secret) {
+		azureOAuthError(w, "invalid_client",
+			fmt.Sprintf("AADSTS7000215: Invalid client secret provided. Ensure the secret being sent in the request is the client secret value, not the client secret ID, for a secret added to app %q.", app.AppID),
+			http.StatusUnauthorized)
+		return
+	}
+	sp, ok := entraFindServicePrincipalByAppID(app.AppID)
+	if !ok {
+		azureOAuthError(w, "unauthorized_client",
+			fmt.Sprintf("AADSTS700016: Application with identifier '%s' was not found in the directory. A service principal must exist for the application in this tenant (POST /v1.0/servicePrincipals).", app.AppID),
+			http.StatusBadRequest)
+		return
+	}
+	audience, err := azureTokenAudienceFromRequest(r)
+	if err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	now := time.Now()
+	token, err := mintAzureSimSignedJWT(map[string]any{
+		"tid":   tenantID,
+		"oid":   sp.ID,
+		"sub":   sp.ID,
+		"aud":   audience,
+		"iss":   fmt.Sprintf("https://sts.windows.net/%s/", tenantID),
+		"iat":   now.Unix(),
+		"exp":   now.Add(time.Hour).Unix(),
+		"nbf":   now.Unix(),
+		"ver":   "1.0",
+		"appid": app.AppID,
+		"idtyp": "app",
+	})
+	if err != nil {
+		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"access_token":   token,
+		"token_type":     "Bearer",
+		"expires_in":     3600,
+		"ext_expires_in": 3600,
+	})
 }
 
 // azureGrantUser resolves the directory user a grant mints tokens for. An
 // empty oid means the grant is not bound to a user (no login_hint on the
-// authorize request) and the process-global active sim user applies.
+// authorize request) and the directory's built-in default identity applies.
 func azureGrantUser(oid string) (EntraUser, error) {
 	if oid == "" {
-		return getEntraSimActiveUser(), nil
+		return entraDefaultUser, nil
 	}
 	if u, ok := entraUsersStore.Get(oid); ok {
 		return u, nil
@@ -761,7 +850,7 @@ func azureScopeIsOIDC(scope string) bool {
 }
 
 // mintAzureSimJWTForUser produces a real-shape Azure AD access token JWT for
-// a specific user. mintAzureSimJWT uses the current sim-active user.
+// a specific user. mintAzureSimJWT uses the directory's default identity.
 func mintAzureSimJWTForUser(u EntraUser, tenantId, audience string, issuedAt, expiresAt time.Time) (string, error) {
 	return mintAzureSimSignedJWT(map[string]any{
 		"tid":   tenantId,
@@ -778,12 +867,11 @@ func mintAzureSimJWTForUser(u EntraUser, tenantId, audience string, issuedAt, ex
 }
 
 func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (string, error) {
-	return mintAzureSimJWTForUser(getEntraSimActiveUser(), tenantId, audience, issuedAt, expiresAt)
+	return mintAzureSimJWTForUser(entraDefaultUser, tenantId, audience, issuedAt, expiresAt)
 }
 
 // mintAzureSimIDTokenForUser produces a real-shape Azure AD id_token for a
-// specific user. Groups are populated from both the inline sim-seed Groups
-// field and the standard membership store.
+// specific user. Groups are resolved from the directory's membership store.
 func mintAzureSimIDTokenForUser(u EntraUser, tenantID, clientID, nonce, scope, issuer string, issuedAt, expiresAt time.Time) (string, error) {
 	email := u.Email
 	if email == "" {
@@ -805,18 +893,14 @@ func mintAzureSimIDTokenForUser(u EntraUser, tenantID, clientID, nonce, scope, i
 		"preferred_username": u.PreferredUsername,
 	}
 
-	// Collect group IDs from both provisioning paths.
-	groupIDSet := map[string]bool{}
-	for _, g := range u.Groups {
-		groupIDSet[g.ID] = true
-	}
 	memberships := entraGroupMembershipStore.Filter(func(m entraGroupMembership) bool {
 		return m.UserID == u.OID
 	})
-	for _, m := range memberships {
-		groupIDSet[m.GroupID] = true
-	}
-	if len(groupIDSet) > 0 {
+	if len(memberships) > 0 {
+		groupIDSet := map[string]bool{}
+		for _, m := range memberships {
+			groupIDSet[m.GroupID] = true
+		}
 		groupIDs := make([]string, 0, len(groupIDSet))
 		for id := range groupIDSet {
 			groupIDs = append(groupIDs, id)

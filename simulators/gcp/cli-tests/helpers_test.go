@@ -304,6 +304,23 @@ func gcloudCLI(args ...string) *exec.Cmd {
 	return cmd
 }
 
+// gcloudSAActivatedCLI creates a gcloud command bound to an isolated config
+// dir and carrying no pre-minted access token, so the credentials stored in
+// that config — the service account activated from a minted key file — are
+// what authenticate. The simulator coordinates come from the config's own
+// properties, which the test sets with the same `gcloud config set` commands
+// the GCP console's post-mint CLI panel prints (api_endpoint_overrides/iam
+// and auth/token_host) — proving that printed usage verbatim.
+func gcloudSAActivatedCLI(configDir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("gcloud", args...)
+	cmd.Env = append(os.Environ(),
+		"CLOUDSDK_CONFIG="+configDir,
+		"CLOUDSDK_CORE_PROJECT="+project,
+		"CLOUDSDK_CORE_DISABLE_PROMPTS=1",
+	)
+	return cmd
+}
+
 // httpDo performs a direct HTTP request to the simulator REST API.
 // Used when gcloud commands don't support endpoint overrides well.
 func httpDo(method, url string, body string) (*http.Response, error) {

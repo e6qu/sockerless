@@ -343,6 +343,78 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
   outline-offset: 2px;
 }
 
+/* Dialogs ----------------------------------------------------------------- */
+.gc-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(32, 33, 36, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.gc-dialog {
+  background: var(--gc-surface);
+  color: var(--gc-fg);
+  border-radius: var(--gc-radius);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  padding: 24px;
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+}
+.gc-dialog-title { margin: 0 0 16px; font-size: 18px; font-weight: 500; font-family: var(--gc-font-display); }
+.gc-dialog-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.gc-dialog p { font-size: 14px; }
+
+/* Forms ------------------------------------------------------------------- */
+.gc-field { display: block; margin: 0 0 16px; font-size: 13px; color: var(--gc-fg-secondary); }
+.gc-field input,
+.gc-field textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--gc-fg);
+  background: var(--gc-surface);
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius-control);
+  padding: 8px 10px;
+}
+.gc-field-hint { margin: 4px 0 0; font-size: 12px; }
+.gc-derived-email { font-size: 13px; color: var(--gc-fg-secondary); margin: 0 0 16px; overflow-wrap: anywhere; }
+.gc-radio { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; font-size: 14px; color: var(--gc-fg); }
+.gc-radio input { margin-top: 3px; }
+.gc-radio-note { font-size: 12px; color: var(--gc-fg-secondary); }
+.gc-button-text {
+  border: 0;
+  background: transparent;
+  color: var(--gc-link);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: var(--gc-radius-control);
+  cursor: pointer;
+}
+.gc-button-text:hover { background: var(--gc-surface-alt); }
+.gc-button-text:disabled { color: var(--gc-fg-disabled); cursor: default; background: transparent; }
+
+/* Inline code / CLI usage -------------------------------------------------- */
+.gc-code {
+  background: var(--gc-surface-alt);
+  border-radius: var(--gc-radius-control);
+  padding: 12px;
+  font-family: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 8px 0 0;
+  color: var(--gc-fg);
+}
+
 /* Resource detail pages ---------------------------------------------------- */
 .gc-detail-back { margin-bottom: 8px; font-size: 13px; }
 .gc-detail-back a { color: var(--gc-link); text-decoration: none; }

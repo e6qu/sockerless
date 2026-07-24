@@ -4,6 +4,55 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-24 — Consoles mint real CLI credentials for Shauth-authenticated users
+
+Phase 1 of the Console Self-Service roadmap: each simulator console gained its
+cloud's real credential pages, driven by the operator's federated credentials
+calling the cloud's real APIs — never a console-only endpoint.
+
+- **AWS**: an IAM Users page and a per-user Security-credentials page (AWS
+  Identity and Access Management `CreateUser`/`CreateAccessKey`/`ListAccessKeys`
+  /`DeleteAccessKey`/`UpdateAccessKey` over the AWS Query protocol, SigV4-signed
+  browser-side with the federated temporary credentials). "Create access key"
+  reproduced the real console's one-time disclosure — the secret is viewable
+  exactly once, masked behind Show/Hide, with the exact `aws configure` values
+  and an endpoint-scoped `aws sts get-caller-identity` verification command. A
+  CLI test proved the loop: a key minted via `aws iam create-access-key`
+  authenticated `aws sts get-caller-identity` (returning the minted user's ARN)
+  and a wrong secret failed with `SignatureDoesNotMatch`. The header/Overview
+  Region badges now render the same Region every SigV4 signature scopes to.
+- **Google Cloud**: Service Accounts list/create/delete and a Keys tab
+  (`serviceAccounts`/`keys` IAM APIs over the federated bearer) with the real
+  console's one-time JSON key download (`privateKeyData` decoded to
+  `<project>-<keyid>.json`, unrecoverable afterwards) and a gcloud usage panel
+  proven verbatim by a CLI test (`gcloud auth activate-service-account` with a
+  minted key authenticates; a tampered key fails with `invalid_grant`). Fixing
+  the end-to-end loop surfaced that the simulator's token endpoint **never
+  verified assertion signatures** and discarded every minted key's public half:
+  keys.create now registers the public key, deletion revokes it, and the OAuth
+  2.0 token endpoint verifies the RS256 signature, expiry, and account state
+  exactly as Google does — the backend harnesses' self-keypair helpers were
+  deleted and moved to the real mint flow.
+- **Microsoft Azure**: App registrations and Certificates & secrets blades
+  (Microsoft Graph `applications`/`servicePrincipals` routes with a
+  Graph-scoped federated token). The real portal mints secrets on the
+  application object, so the simulator gained faithful Graph
+  `applications/{id}/addPassword`/`removePassword` (secretText returned exactly
+  once, SHA-256 verifier stored). Tracing validation found the v2.0 token
+  endpoint **checked no client secret at all**; `client_credentials` for
+  directory-registered applications now validates the secret and returns real
+  AADSTS error shapes, proven by SDK and az-CLI tests (mint → ARM read; wrong
+  and revoked secrets rejected). The sockerless-invented `/sim/v1/entra/users`
+  routes and the `entraActiveOID` global were deleted; consumers migrated to
+  Graph `POST /v1.0/users` provisioning and `login_hint` binding.
+
+The Shauth relying-party browser matrix gained a minting flow per console: the
+signed-in operator drives each console's real UI to mint a credential and the
+one-time disclosure semantics are asserted (secret gone after dismissal or
+reload). BUG-2637 (inert default table actions), BUG-2638 (`serviceAccounts.create`
+overwrite instead of 409), and BUG-2639 (implicit grant for unregistered client
+ids) were filed with fix shapes for the surfaced follow-ups.
+
 ## 2026-07-24 — Closed the skip-if-absent gate hole and swept the last tool-absent skips
 
 `scripts/check-no-tool-absent-skips.sh` only rejected `t.Skip`/`t.Skipf` lines, so

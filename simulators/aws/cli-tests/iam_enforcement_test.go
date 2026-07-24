@@ -82,6 +82,60 @@ func TestIAM_UserLifecycleAndEnforcementCLI(t *testing.T) {
 	runCLI(t, awsCLI("iam", "delete-access-key", "--user-name", user, "--access-key-id", ck.AccessKey.AccessKeyId))
 }
 
+// TestIAM_MintedKeyCallerIdentityAndWrongSecretCLI proves the credential-minting
+// loop the console's Security credentials page drives, over the plain aws CLI:
+// create a user, mint an access key with `aws iam create-access-key`, sign a
+// call with the minted pair (`aws sts get-caller-identity` — the verification
+// command the console shows), and confirm the caller identity is the minted
+// user. The same access key ID presented with a wrong secret is rejected by the
+// Signature Version 4 verifier with SignatureDoesNotMatch.
+func TestIAM_MintedKeyCallerIdentityAndWrongSecretCLI(t *testing.T) {
+	user := "cli-minted-operator"
+	created := runCLI(t, awsCLI("iam", "create-user", "--user-name", user, "--output", "json"))
+	t.Cleanup(func() { _ = awsCLI("iam", "delete-user", "--user-name", user).Run() })
+	var cu struct {
+		User struct {
+			Arn string `json:"Arn"`
+		} `json:"User"`
+	}
+	parseJSON(t, created, &cu)
+	if cu.User.Arn == "" {
+		t.Fatalf("create-user returned no ARN: %s", created)
+	}
+
+	out := runCLI(t, awsCLI("iam", "create-access-key", "--user-name", user, "--output", "json"))
+	var ck struct {
+		AccessKey struct {
+			AccessKeyId     string `json:"AccessKeyId"`
+			SecretAccessKey string `json:"SecretAccessKey"`
+		} `json:"AccessKey"`
+	}
+	parseJSON(t, out, &ck)
+	if ck.AccessKey.AccessKeyId == "" || ck.AccessKey.SecretAccessKey == "" {
+		t.Fatalf("create-access-key returned incomplete credential material: %s", out)
+	}
+	t.Cleanup(func() {
+		_ = awsCLI("iam", "delete-access-key", "--user-name", user, "--access-key-id", ck.AccessKey.AccessKeyId).Run()
+	})
+
+	whoami := awsCLI("sts", "get-caller-identity", "--output", "json")
+	whoami.Env = withCreds(whoami.Env, ck.AccessKey.AccessKeyId, ck.AccessKey.SecretAccessKey)
+	var identity struct {
+		Arn string `json:"Arn"`
+	}
+	parseJSON(t, runCLI(t, whoami), &identity)
+	if identity.Arn != cu.User.Arn {
+		t.Fatalf("get-caller-identity as the minted key returned %q, want the minted user's ARN %q", identity.Arn, cu.User.Arn)
+	}
+
+	wrong := awsCLI("sts", "get-caller-identity")
+	wrong.Env = withCreds(wrong.Env, ck.AccessKey.AccessKeyId, "wrong-secret-0000000000000000000000000000")
+	deny := runCLIExpectError(t, wrong)
+	if !strings.Contains(deny, "SignatureDoesNotMatch") {
+		t.Fatalf("get-caller-identity with a wrong secret expected SignatureDoesNotMatch; got: %s", deny)
+	}
+}
+
 // withCreds replaces the AWS credential env entries so the CLI call is signed
 // with the given (restricted) access key.
 func withCreds(env []string, akid, secret string) []string {

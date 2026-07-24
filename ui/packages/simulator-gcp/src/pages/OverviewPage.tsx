@@ -6,6 +6,7 @@ import {
   fetchCloudFunctions,
   fetchARRepos,
   fetchGCSBuckets,
+  fetchServiceAccounts,
   fetchLogEntries,
 } from "../api.js";
 
@@ -16,6 +17,7 @@ const RESOURCES = [
   { label: "Cloud Run functions", to: "/ui/functions", queryKey: ["cloud-functions-real"], queryFn: fetchCloudFunctions },
   { label: "Artifact Registry repositories", to: "/ui/ar", queryKey: ["ar-repos-real"], queryFn: fetchARRepos },
   { label: "Cloud Storage buckets", to: "/ui/gcs", queryKey: ["gcs-buckets-real"], queryFn: fetchGCSBuckets },
+  { label: "Service accounts", to: "/ui/serviceaccounts", queryKey: ["iam-service-accounts"], queryFn: fetchServiceAccounts },
   { label: "Log entries", to: "/ui/logging", queryKey: ["log-entries-real"], queryFn: fetchLogEntries },
 ] as const;
 
