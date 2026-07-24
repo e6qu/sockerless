@@ -4,6 +4,26 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-24 — Gated required-check drift so a job rename can't stall the merge queue
+
+Splitting the AWS CLI groups into shards once renamed their jobs while `main`'s
+required-status-check list still demanded the old contexts, which could never
+report again — so every pull request stalled as pending (BUG-2633). The list was
+corrected then, but nothing prevented a recurrence.
+
+`.github/required-status-checks.txt` is now a version-controlled manifest of the
+required contexts, and `scripts/check-required-status-checks.sh` — wired into
+pre-commit and the `build-gates` CI job — enumerates every check name any
+workflow in `.github/workflows/*.yml` can emit, rendering each job's `name:`
+template over its matrix (handling the inline-list, block-list, and `include:`
+matrix forms), and fails when a required context is no longer emittable. So a
+matrix job rename now fails the pull request that causes it, with the manifest as
+the reviewable bridge to the branch-protection update. A maintainer-run
+`--verify-branch-protection` mode reconciles the manifest against live branch
+protection (failing loudly rather than skipping when admin credentials are
+absent). The manifest matched all 39 current required contexts, and a negative
+test confirmed the gate flags a renamed shard.
+
 ## 2026-07-23 — Made the simulators verify credentials, and fixed the ECS harness
 
 The simulators accepted unverified caller-controlled credentials (BUG-2625, P0):
