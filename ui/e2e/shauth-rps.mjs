@@ -485,7 +485,12 @@ function monitor(page, allowedDocumentStatuses = new Set()) {
   page.on("pageerror", (error) => failures.push(`page error: ${error.message}`));
   page.on("requestfailed", (request) => {
     const reason = request.failure()?.errorText ?? "unknown error";
-    if (request.isNavigationRequest() && reason === "net::ERR_ABORTED") return;
+    // ERR_ABORTED is Chromium's cancellation code, not a network failure: a
+    // navigation tearing down the document cancels the page's in-flight reads,
+    // which is healthy single-page-application behavior, and the suite's
+    // gotos race those reads nondeterministically. Real failures — refused
+    // connections, DNS errors, error documents, page errors — stay flagged.
+    if (reason === "net::ERR_ABORTED") return;
     failures.push(`request failed (${reason}): ${new URL(request.url()).origin}${new URL(request.url()).pathname}`);
   });
   page.on("response", (response) => {

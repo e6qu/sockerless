@@ -404,6 +404,11 @@ jobs:
           path: ~/.cache/sockerless/firecracker-ci
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install real-execution tools
+        # Firecracker and the netns toolchain back the Amazon EC2 real-execution
+        # tests, which all live in the compute shard ('^Test[E]'); the other
+        # shards skip this install so apt/network variance can't erode their
+        # 15-minute budget.
+        if: matrix.suite == 'compute'
         run: |
           bash scripts/ci-apt-update.sh
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
