@@ -6,6 +6,7 @@ const SERVICES = [
   { path: "/ui/ecr", nav: "Elastic Container Registry", title: "Repositories", columns: ["Repository name", "URI"] },
   { path: "/ui/s3", nav: "Simple Storage Service", title: "Buckets", columns: ["Name", "Creation date"] },
   { path: "/ui/logs", nav: "CloudWatch Logs", title: "Log groups", columns: ["Log group", "Retention"] },
+  { path: "/ui/organizations", nav: "AWS Organizations", title: "AWS accounts", columns: ["Account name", "Account ID", "Email"] },
   { path: "/ui/iam", nav: "Identity and Access Management", title: "Users", columns: ["User name", "ARN"] },
 ];
 
@@ -20,7 +21,7 @@ test.describe("AWS console shell", () => {
       "Dashboard",
       "Compute",
       "Storage and registry",
-      "Management",
+      "Management & Governance",
       "Security, identity, and compliance",
     ]) {
       await expect(nav.getByText(group, { exact: true })).toBeVisible();
@@ -195,6 +196,44 @@ test.describe("Identity and Access Management credential minting", () => {
     const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
     await expect(crumbs).toContainText("Identity and Access Management");
     await expect(crumbs).toContainText("cli-operator");
+  });
+});
+
+// The Organizations page's account-management affordances are part of the
+// shell — the header actions and the Add an AWS account dialog render before
+// (and regardless of) any cloud read. The authenticated
+// CreateAccount→DescribeCreateAccountStatus→ListAccounts loop belongs to the
+// Shauth relying-party suite.
+test.describe("AWS Organizations account management", () => {
+  test("offers Add an AWS account and opens the add dialog", async ({ page }) => {
+    await page.goto("/ui/organizations");
+    await expect(page.getByTestId("org-accounts-table")).toBeVisible();
+    await expect(page.getByTestId("org-remove-account")).toBeDisabled();
+    await expect(page.getByTestId("org-close-account")).toBeDisabled();
+    const add = page.getByTestId("org-add-account");
+    await expect(add).toBeVisible();
+    await add.click();
+    const dialog = page.getByRole("dialog", { name: "Add an AWS account" });
+    await expect(dialog).toBeVisible();
+    // Neither field alone is enough: CreateAccount requires the account name
+    // and the owner email, so the submit stays disabled until both are valid.
+    await expect(dialog.getByTestId("org-add-account-submit")).toBeDisabled();
+    await dialog.getByTestId("org-account-name-input").fill("Sandbox");
+    await expect(dialog.getByTestId("org-add-account-submit")).toBeDisabled();
+    await dialog.getByTestId("org-account-email-input").fill("sandbox@sim.invalid");
+    await expect(dialog.getByTestId("org-add-account-submit")).toBeEnabled();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
+  test("routes to an account's detail page with the Organizations breadcrumb", async ({ page }) => {
+    await page.goto("/ui/organizations/accounts/123456789012");
+    await expect(page.getByRole("heading", { name: "123456789012" })).toBeVisible();
+    await expect(page.getByTestId("org-remove-account")).toBeVisible();
+    await expect(page.getByTestId("org-close-account")).toBeVisible();
+    const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+    await expect(crumbs).toContainText("AWS Organizations");
+    await expect(crumbs).toContainText("123456789012");
   });
 });
 

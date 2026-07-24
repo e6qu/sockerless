@@ -552,53 +552,9 @@ func registerIAM(srv *sim.Server) {
 		})
 	})
 
-	// Project IAM - getIamPolicy / setIamPolicy
-	srv.HandleFunc("POST /v1/projects/{projectAction}", func(w http.ResponseWriter, r *http.Request) {
-		projectAction := sim.PathParam(r, "projectAction")
-		project, action, _ := strings.Cut(projectAction, ":")
-
-		switch action {
-		case "getIamPolicy":
-			policy, ok := projectPolicies.Get(project)
-			if !ok {
-				policy = IAMPolicy{
-					Bindings: []IAMBinding{},
-					Etag:     gcpPolicyETag(),
-					Version:  1,
-				}
-				// Persist the synthesized default so its etag is stable across
-				// reads — the optimistic-concurrency check on setIamPolicy
-				// validates against the etag a prior getIamPolicy returned.
-				projectPolicies.Put(project, policy)
-			}
-			sim.WriteJSON(w, http.StatusOK, policy)
-		case "setIamPolicy":
-			var req struct {
-				Policy IAMPolicy `json:"policy"`
-			}
-			if err := sim.ReadJSON(r, &req); err != nil {
-				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
-				return
-			}
-
-			if err := validateIAMMembers(req.Policy.Bindings); err != nil {
-				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
-				return
-			}
-			current, present := projectPolicies.Get(project)
-			if gcpIAMETagConflict(w, req.Policy.Etag, current.Etag, present) {
-				return
-			}
-			req.Policy.Etag = gcpPolicyETag()
-			if req.Policy.Version == 0 {
-				req.Policy.Version = 1
-			}
-			projectPolicies.Put(project, req.Policy)
-			sim.WriteJSON(w, http.StatusOK, req.Policy)
-		default:
-			http.NotFound(w, r)
-		}
-	})
+	// The v1 project colon-verbs (IAM triple + undelete) are mounted in
+	// cloudresourcemanager.go; they resolve the project and address the
+	// same per-project policy the v3 verbs use.
 
 	// Catch-all AIP-141 IAM dispatcher (Artifact Registry + any
 	// resource not handled by a more-specific verb dispatcher).
@@ -828,25 +784,61 @@ type CRMTagHold struct {
 	CreateTime string `json:"createTime,omitempty"`
 }
 
+// Fully-qualified Any types of the per-verb Cloud Resource Manager v3
+// operation-metadata messages. The GAPIC clients unmarshal the metadata
+// against their registered proto types, so an invented type name fails the
+// client-side resolve — each operation must carry the verb's real message.
+const (
+	crmMetaCreateProject              = "type.googleapis.com/google.cloud.resourcemanager.v3.CreateProjectMetadata"
+	crmMetaUpdateProject              = "type.googleapis.com/google.cloud.resourcemanager.v3.UpdateProjectMetadata"
+	crmMetaDeleteProject              = "type.googleapis.com/google.cloud.resourcemanager.v3.DeleteProjectMetadata"
+	crmMetaMoveProject                = "type.googleapis.com/google.cloud.resourcemanager.v3.MoveProjectMetadata"
+	crmMetaUndeleteProject            = "type.googleapis.com/google.cloud.resourcemanager.v3.UndeleteProjectMetadata"
+	crmMetaCreateFolder               = "type.googleapis.com/google.cloud.resourcemanager.v3.CreateFolderMetadata"
+	crmMetaUpdateFolder               = "type.googleapis.com/google.cloud.resourcemanager.v3.UpdateFolderMetadata"
+	crmMetaDeleteFolder               = "type.googleapis.com/google.cloud.resourcemanager.v3.DeleteFolderMetadata"
+	crmMetaMoveFolder                 = "type.googleapis.com/google.cloud.resourcemanager.v3.MoveFolderMetadata"
+	crmMetaUndeleteFolder             = "type.googleapis.com/google.cloud.resourcemanager.v3.UndeleteFolderMetadata"
+	crmMetaCreateTagKey               = "type.googleapis.com/google.cloud.resourcemanager.v3.CreateTagKeyMetadata"
+	crmMetaUpdateTagKey               = "type.googleapis.com/google.cloud.resourcemanager.v3.UpdateTagKeyMetadata"
+	crmMetaDeleteTagKey               = "type.googleapis.com/google.cloud.resourcemanager.v3.DeleteTagKeyMetadata"
+	crmMetaCreateTagValue             = "type.googleapis.com/google.cloud.resourcemanager.v3.CreateTagValueMetadata"
+	crmMetaUpdateTagValue             = "type.googleapis.com/google.cloud.resourcemanager.v3.UpdateTagValueMetadata"
+	crmMetaDeleteTagValue             = "type.googleapis.com/google.cloud.resourcemanager.v3.DeleteTagValueMetadata"
+	crmMetaCreateTagHold              = "type.googleapis.com/google.cloud.resourcemanager.v3.CreateTagHoldMetadata"
+	crmMetaDeleteTagHold              = "type.googleapis.com/google.cloud.resourcemanager.v3.DeleteTagHoldMetadata"
+	crmMetaCreateTagBinding           = "type.googleapis.com/google.cloud.resourcemanager.v3.CreateTagBindingMetadata"
+	crmMetaDeleteTagBinding           = "type.googleapis.com/google.cloud.resourcemanager.v3.DeleteTagBindingMetadata"
+	crmMetaUpdateCapability           = "type.googleapis.com/google.cloud.resourcemanager.v3.UpdateCapabilityMetadata"
+	crmMetaUpdateTagBindingCollection = "type.googleapis.com/google.cloud.resourcemanager.v3.UpdateTagBindingCollectionMetadata"
+)
+
 // crmLRO builds a settled (done=true) long-running Operation whose response
-// embeds the supplied resource. The Cloud Resource Manager LRO mutations
-// (project/folder/tagKey/tagValue create/patch/delete/move/undelete) return
-// an Operation; the sim settles it synchronously, matching how every other
-// IAM-admin collection in this file resolves its LROs.
-func crmLRO(resource any, typeName string) Operation {
+// embeds the supplied resource and whose metadata carries the verb's real
+// per-operation metadata message type. The Cloud Resource Manager LRO
+// mutations (project/folder/tagKey/tagValue create/patch/delete/move/
+// undelete) return an Operation; the sim settles it synchronously, matching
+// how every other IAM-admin collection in this file resolves its LROs. The
+// operation is persisted so a client resuming it by name
+// (GET /v3/operations/{op}, the path the resourcemanager GAPIC LRO poller
+// uses) reads the same record.
+func crmLRO(resource any, typeName, metadataType string) Operation {
 	resp := map[string]any{}
 	b, _ := json.Marshal(resource)
 	_ = json.Unmarshal(b, &resp)
 	resp["@type"] = typeName
-	return Operation{
-		Name: "operations/" + generateUUID(),
+	op := Operation{
+		Name: "operations/cp." + gcpNumericID(19),
 		Metadata: map[string]any{
-			"@type":      "type.googleapis.com/google.cloud.resourcemanager.v3.OperationMetadata",
-			"createTime": nowTimestamp(),
+			"@type": metadataType,
 		},
 		Done:     true,
 		Response: resp,
 	}
+	if crOperations != nil {
+		crOperations.Put(op.Name, op)
+	}
+	return op
 }
 
 // crmEtag mints an etag for a Cloud Resource Manager resource.
@@ -872,12 +864,19 @@ func crmIamVerb(w http.ResponseWriter, r *http.Request, store sim.Store[IAMPolic
 }
 
 // registerCRMv3 mounts the Cloud Resource Manager v3 resource-hierarchy and
-// tagging surface plus the legacy v1 GetProject the sim's terraform paths use.
-// Every collection is a real CRUD store; mutating ops that the API models as
-// long-running return a settled Operation, and IAM verbs reuse the shared
-// policy store.
+// tagging surface plus the Cloud Resource Manager v1 projects surface
+// (cloudresourcemanager.go) that gcloud's `projects` commands and
+// terraform-provider-google's google_project resource speak. Every collection
+// is a real CRUD store; mutating ops that the API models as long-running
+// return a settled Operation, and IAM verbs reuse the shared policy store.
 func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[IAMPolicy]) {
+	if crOperations == nil {
+		crOperations = sim.MakeStore[Operation](srv.DB(), "operations")
+	}
 	projects := sim.MakeStore[CRMProject](srv.DB(), "crm_projects")
+	crmProjects = projects
+	crmEnsureDefaultProject()
+	registerCloudResourceManagerV1(srv, projectPolicies)
 	folders := sim.MakeStore[CRMFolder](srv.DB(), "crm_folders")
 	liens := sim.MakeStore[CRMLien](srv.DB(), "crm_liens")
 	tagKeys := sim.MakeStore[CRMTagKey](srv.DB(), "crm_tag_keys")
@@ -894,43 +893,24 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		typeEmpty    = "type.googleapis.com/google.protobuf.Empty"
 	)
 
-	// getOrSeedProject returns the stored project, synthesizing an ACTIVE row
-	// for a project ID the sim hasn't seen — the terraform/SDK paths read a
-	// project the harness assumes already exists in the org.
-	getOrSeedProject := func(projectID string) CRMProject {
-		name := "projects/" + projectID
-		p, ok := projects.Get(name)
-		if ok {
-			return p
-		}
-		p = CRMProject{
-			Name:       name,
-			ProjectId:  projectID,
-			State:      "ACTIVE",
-			Parent:     "organizations/123456789012",
-			CreateTime: nowTimestamp(),
-			Etag:       crmEtag(),
-		}
-		projects.Put(name, p)
-		return p
-	}
-
-	// ---- Cloud Resource Manager v1 GetProject (legacy) -------------------
-	// google_project_service verifies a project exists via the v1 read.
+	// ---- Cloud Resource Manager v1 GetProject --------------------------
+	// gcloud projects describe and google_project's terraform Read speak
+	// the v1 read. A project the sim has never seen is a real 403 — the
+	// API never discloses whether an inaccessible project exists.
 	srv.HandleFunc("GET /v1/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
-		p := getOrSeedProject(sim.PathParam(r, "project"))
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"projectNumber":  "123456789012",
-			"projectId":      p.ProjectId,
-			"lifecycleState": "ACTIVE",
-			"name":           p.DisplayName,
-		})
+		p, ok := crmResolveProject(sim.PathParam(r, "project"))
+		if !ok {
+			crmProjectPermissionDenied(w)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, crmV1Project(p))
 	})
 
 	// ---- projects (v3) ---------------------------------------------------
 	srv.HandleFunc("GET /v3/projects:search", func(w http.ResponseWriter, r *http.Request) {
-		rows := projects.Filter(func(CRMProject) bool { return true })
-		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		query := r.URL.Query().Get("query")
+		rows := projects.Filter(func(p CRMProject) bool { return crmSearchMatch(p, query) })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].ProjectId < rows[j].ProjectId })
 		page, next, ok := paginateList(w, r, rows)
 		if !ok {
 			return
@@ -942,9 +922,19 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 	srv.HandleFunc("GET /v3/projects", func(w http.ResponseWriter, r *http.Request) {
+		// v3 ListProjects requires a parent and returns only ACTIVE
+		// projects unless showDeleted is set; project-wide discovery is
+		// SearchProjects' job.
 		parent := r.URL.Query().Get("parent")
-		rows := projects.Filter(func(p CRMProject) bool { return parent == "" || p.Parent == parent })
-		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		if parent == "" {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Request contains an invalid argument.")
+			return
+		}
+		showDeleted := r.URL.Query().Get("showDeleted") == "true"
+		rows := projects.Filter(func(p CRMProject) bool {
+			return p.Parent == parent && (showDeleted || p.State == "ACTIVE")
+		})
+		sort.Slice(rows, func(i, j int) bool { return rows[i].ProjectId < rows[j].ProjectId })
 		page, next, ok := paginateList(w, r, rows)
 		if !ok {
 			return
@@ -961,12 +951,16 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
-		if req.ProjectId == "" {
-			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "projectId is required")
+		if err := crmValidateProjectID(req.ProjectId); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+			return
+		}
+		if _, exists := projects.Get(req.ProjectId); exists {
+			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "Requested entity already exists")
 			return
 		}
 		p := CRMProject{
-			Name:        "projects/" + req.ProjectId,
+			Name:        "projects/" + gcpNumericID(12),
 			Parent:      req.Parent,
 			ProjectId:   req.ProjectId,
 			State:       "ACTIVE",
@@ -976,14 +970,23 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			UpdateTime:  nowTimestamp(),
 			Etag:        crmEtag(),
 		}
-		projects.Put(p.Name, p)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+		projects.Put(p.ProjectId, p)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject, crmMetaCreateProject))
 	})
 	srv.HandleFunc("GET /v3/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
-		sim.WriteJSON(w, http.StatusOK, getOrSeedProject(sim.PathParam(r, "project")))
+		p, ok := crmResolveProject(sim.PathParam(r, "project"))
+		if !ok {
+			crmProjectPermissionDenied(w)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, p)
 	})
 	srv.HandleFunc("PATCH /v3/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
-		p := getOrSeedProject(sim.PathParam(r, "project"))
+		p, ok := crmResolveProject(sim.PathParam(r, "project"))
+		if !ok {
+			crmProjectPermissionDenied(w)
+			return
+		}
 		var req CRMProject
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
@@ -999,24 +1002,46 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		}
 		p.UpdateTime = nowTimestamp()
 		p.Etag = crmEtag()
-		projects.Put(p.Name, p)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+		projects.Put(p.ProjectId, p)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject, crmMetaUpdateProject))
 	})
 	srv.HandleFunc("DELETE /v3/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
-		p := getOrSeedProject(sim.PathParam(r, "project"))
+		p, ok := crmResolveProject(sim.PathParam(r, "project"))
+		if !ok {
+			crmProjectPermissionDenied(w)
+			return
+		}
+		// Real DeleteProject soft-deletes: the project enters
+		// DELETE_REQUESTED (30-day pending deletion) and only an ACTIVE
+		// project may be deleted.
+		if p.State != "ACTIVE" {
+			sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Project \"%s\" has lifecycle state %s; delete requires ACTIVE", p.ProjectId, p.State)
+			return
+		}
 		p.State = "DELETE_REQUESTED"
+		p.DeleteTime = nowTimestamp()
 		p.UpdateTime = nowTimestamp()
-		projects.Put(p.Name, p)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+		projects.Put(p.ProjectId, p)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject, crmMetaDeleteProject))
 	})
 	// projects colon-verbs: move / undelete / IAM triple.
 	srv.HandleFunc("POST /v3/projects/{projectAction}", func(w http.ResponseWriter, r *http.Request) {
 		idAction := sim.PathParam(r, "projectAction")
-		if crmIamVerb(w, r, projectPolicies, idAction, "project") {
+		id, action, found := strings.Cut(idAction, ":")
+		if !found {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported project action %q", idAction)
 			return
 		}
-		id, action, _ := strings.Cut(idAction, ":")
-		p := getOrSeedProject(id)
+		p, ok := crmResolveProject(id)
+		if !ok {
+			crmProjectPermissionDenied(w)
+			return
+		}
+		// Normalize a project-number reference to the project ID before
+		// the IAM verbs so both spellings address one policy.
+		if crmIamVerb(w, r, projectPolicies, p.ProjectId+":"+action, "project") {
+			return
+		}
 		switch action {
 		case "move":
 			var req struct {
@@ -1025,13 +1050,18 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			_ = sim.ReadJSON(r, &req)
 			p.Parent = req.DestinationParent
 			p.UpdateTime = nowTimestamp()
-			projects.Put(p.Name, p)
-			sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+			projects.Put(p.ProjectId, p)
+			sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject, crmMetaMoveProject))
 		case "undelete":
+			if p.State != "DELETE_REQUESTED" {
+				sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Project \"%s\" has lifecycle state %s; undelete requires DELETE_REQUESTED", p.ProjectId, p.State)
+				return
+			}
 			p.State = "ACTIVE"
+			p.DeleteTime = ""
 			p.UpdateTime = nowTimestamp()
-			projects.Put(p.Name, p)
-			sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+			projects.Put(p.ProjectId, p)
+			sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject, crmMetaUndeleteProject))
 		default:
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported project action %q", action)
 		}
@@ -1081,7 +1111,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			Etag:        crmEtag(),
 		}
 		folders.Put(f.Name, f)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder, crmMetaCreateFolder))
 	})
 	srv.HandleFunc("GET /v3/folders/{folder}", func(w http.ResponseWriter, r *http.Request) {
 		f, ok := folders.Get("folders/" + sim.PathParam(r, "folder"))
@@ -1109,7 +1139,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		f.UpdateTime = nowTimestamp()
 		f.Etag = crmEtag()
 		folders.Put(name, f)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder, crmMetaUpdateFolder))
 	})
 	srv.HandleFunc("DELETE /v3/folders/{folder}", func(w http.ResponseWriter, r *http.Request) {
 		name := "folders/" + sim.PathParam(r, "folder")
@@ -1121,7 +1151,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		f.State = "DELETE_REQUESTED"
 		f.UpdateTime = nowTimestamp()
 		folders.Put(name, f)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder, crmMetaDeleteFolder))
 	})
 	srv.HandleFunc("POST /v3/folders/{folderAction}", func(w http.ResponseWriter, r *http.Request) {
 		idAction := sim.PathParam(r, "folderAction")
@@ -1144,12 +1174,12 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			f.Parent = req.DestinationParent
 			f.UpdateTime = nowTimestamp()
 			folders.Put(name, f)
-			sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+			sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder, crmMetaMoveFolder))
 		case "undelete":
 			f.State = "ACTIVE"
 			f.UpdateTime = nowTimestamp()
 			folders.Put(name, f)
-			sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+			sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder, crmMetaUndeleteFolder))
 		default:
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported folder action %q", action)
 		}
@@ -1233,15 +1263,9 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
 
-	// ---- operations (v3) -------------------------------------------------
-	srv.HandleFunc("GET /v3/operations/{op}", func(w http.ResponseWriter, r *http.Request) {
-		// CRM LROs settle synchronously, so a follow-up poll returns a
-		// done operation with an empty response envelope.
-		sim.WriteJSON(w, http.StatusOK, Operation{
-			Name: "operations/" + sim.PathParam(r, "op"),
-			Done: true,
-		})
-	})
+	// The v3 operations.get read lives in cloudresourcemanager.go
+	// (crmGetOperation) — every CRM LRO is persisted, so a poll returns
+	// the stored record and an unknown name is a real NOT_FOUND.
 
 	// ---- tagKeys (v3) ----------------------------------------------------
 	srv.HandleFunc("GET /v3/tagKeys/namespaced", func(w http.ResponseWriter, r *http.Request) {
@@ -1287,7 +1311,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			Etag:               crmEtag(),
 		}
 		tagKeys.Put(k.Name, k)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(k, typeTagKey))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(k, typeTagKey, crmMetaCreateTagKey))
 	})
 	srv.HandleFunc("GET /v3/tagKeys/{key}", func(w http.ResponseWriter, r *http.Request) {
 		k, ok := tagKeys.Get("tagKeys/" + sim.PathParam(r, "key"))
@@ -1316,7 +1340,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		k.UpdateTime = nowTimestamp()
 		k.Etag = crmEtag()
 		tagKeys.Put(name, k)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(k, typeTagKey))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(k, typeTagKey, crmMetaUpdateTagKey))
 	})
 	srv.HandleFunc("DELETE /v3/tagKeys/{key}", func(w http.ResponseWriter, r *http.Request) {
 		name := "tagKeys/" + sim.PathParam(r, "key")
@@ -1326,7 +1350,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			return
 		}
 		tagKeys.Delete(name)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(k, typeTagKey))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(k, typeTagKey, crmMetaDeleteTagKey))
 	})
 	srv.HandleFunc("POST /v3/tagKeys/{keyAction}", func(w http.ResponseWriter, r *http.Request) {
 		if crmIamVerb(w, r, resourcePolicies, sim.PathParam(r, "keyAction"), "tagKey") {
@@ -1377,7 +1401,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			Etag:           crmEtag(),
 		}
 		tagValues.Put(v.Name, v)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(v, typeTagValue))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(v, typeTagValue, crmMetaCreateTagValue))
 	})
 	srv.HandleFunc("GET /v3/tagValues/{val}", func(w http.ResponseWriter, r *http.Request) {
 		v, ok := tagValues.Get("tagValues/" + sim.PathParam(r, "val"))
@@ -1406,7 +1430,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		v.UpdateTime = nowTimestamp()
 		v.Etag = crmEtag()
 		tagValues.Put(name, v)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(v, typeTagValue))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(v, typeTagValue, crmMetaUpdateTagValue))
 	})
 	srv.HandleFunc("DELETE /v3/tagValues/{val}", func(w http.ResponseWriter, r *http.Request) {
 		name := "tagValues/" + sim.PathParam(r, "val")
@@ -1416,7 +1440,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			return
 		}
 		tagValues.Delete(name)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(v, typeTagValue))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(v, typeTagValue, crmMetaDeleteTagValue))
 	})
 	// tagValues tagHolds list/create live under tagValues/{val}/tagHolds.
 	srv.HandleFunc("GET /v3/tagValues/{val}/tagHolds", func(w http.ResponseWriter, r *http.Request) {
@@ -1447,7 +1471,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			CreateTime: nowTimestamp(),
 		}
 		tagHolds.Put(h.Name, h)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(h, typeTagHold))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(h, typeTagHold, crmMetaCreateTagHold))
 	})
 	srv.HandleFunc("DELETE /v3/tagValues/{val}/tagHolds/{hold}", func(w http.ResponseWriter, r *http.Request) {
 		name := "tagValues/" + sim.PathParam(r, "val") + "/tagHolds/" + sim.PathParam(r, "hold")
@@ -1456,7 +1480,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			return
 		}
 		tagHolds.Delete(name)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(map[string]any{}, typeEmpty))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(map[string]any{}, typeEmpty, crmMetaDeleteTagHold))
 	})
 	srv.HandleFunc("POST /v3/tagValues/{valAction}", func(w http.ResponseWriter, r *http.Request) {
 		if crmIamVerb(w, r, resourcePolicies, sim.PathParam(r, "valAction"), "tagValue") {
@@ -1479,7 +1503,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			TagValueNamespacedName: req.TagValueNamespacedName,
 		}
 		tagBindings.Put(b.Name, b)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(b, typeTagBind))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(b, typeTagBind, crmMetaCreateTagBinding))
 	})
 	srv.HandleFunc("GET /v3/tagBindings", func(w http.ResponseWriter, r *http.Request) {
 		parent := r.URL.Query().Get("parent")
@@ -1498,7 +1522,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 	srv.HandleFunc("DELETE /v3/tagBindings/{binding...}", func(w http.ResponseWriter, r *http.Request) {
 		name := "tagBindings/" + sim.PathParam(r, "binding")
 		tagBindings.Delete(name)
-		sim.WriteJSON(w, http.StatusOK, crmLRO(map[string]any{}, typeEmpty))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(map[string]any{}, typeEmpty, crmMetaDeleteTagBinding))
 	})
 
 	// ---- effectiveTags (v3) ---------------------------------------------
@@ -1525,7 +1549,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			"name":  "folders/" + sim.PathParam(r, "folder") + "/capabilities/" + sim.PathParam(r, "capability"),
 			"value": req.Value,
 		}
-		sim.WriteJSON(w, http.StatusOK, crmLRO(cap, "type.googleapis.com/google.cloud.resourcemanager.v3.Capability"))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(cap, "type.googleapis.com/google.cloud.resourcemanager.v3.Capability", crmMetaUpdateCapability))
 	})
 
 	// ---- locations.tagBindingCollections (v3) ---------------------------
@@ -1552,7 +1576,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			"tags":             req.Tags,
 			"etag":             crmEtag(),
 		}
-		sim.WriteJSON(w, http.StatusOK, crmLRO(coll, "type.googleapis.com/google.cloud.resourcemanager.v3.TagBindingCollection"))
+		sim.WriteJSON(w, http.StatusOK, crmLRO(coll, "type.googleapis.com/google.cloud.resourcemanager.v3.TagBindingCollection", crmMetaUpdateTagBindingCollection))
 	})
 	srv.HandleFunc("GET /v3/locations/{location}/effectiveTagBindingCollections/{collection}", func(w http.ResponseWriter, r *http.Request) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{

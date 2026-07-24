@@ -1,6 +1,7 @@
 import { GcpResourceTable, GcpStatus, type GcpColumn } from "../console/index.js";
 import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchLogEntries, type LogEntry } from "../api.js";
+import { useProject } from "../console/project.js";
 
 // Cloud Logging omits severity when it is the default; the console reads that
 // as DEFAULT rather than a blank cell.
@@ -14,13 +15,14 @@ const columns: GcpColumn<LogEntry>[] = [
 ];
 
 export function LoggingPage() {
+  const { project } = useProject();
   return (
     <GcpResourceTable<LogEntry>
       title="Logs Explorer"
       description="Search, filter, and inspect log entries across the project."
       columns={columns}
-      queryKey={["log-entries-real"]}
-      queryFn={fetchLogEntries}
+      queryKey={["log-entries-real", project]}
+      queryFn={() => fetchLogEntries(project)}
       filterPlaceholder="Filter entries"
       resourceNoun="log entries"
       empty={{

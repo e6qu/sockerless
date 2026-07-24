@@ -46,6 +46,14 @@ provider "google" {
   # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
   iam_beta_custom_endpoint = "${var.endpoint}/v1/"
 
+  # google_project speaks the Cloud Resource Manager v1 wire (create +
+  # operation wait + read + delete) and reads Cloud Billing's
+  # projects.getBillingInfo on every Read — the handwritten cloudbilling
+  # client honors cloud_billing_custom_endpoint (NOT billing_custom_endpoint,
+  # which routes the Billing Budgets product).
+  resource_manager_custom_endpoint = "${var.endpoint}/v1/"
+  cloud_billing_custom_endpoint    = "${var.endpoint}/v1/"
+
 }
 
 provider "google-beta" {
@@ -691,6 +699,21 @@ resource "google_service_account" "tf_sa" {
   display_name = "tf-test runner service account"
 }
 
+# Project lifecycle via the Cloud Resource Manager v1 wire: create returns an
+# operation the provider waits on (GET /v1/operations/{op}), Read is the v1
+# GetProject plus Cloud Billing's getBillingInfo, and destroy performs the
+# real soft-delete (deletion_policy = "DELETE").
+resource "google_project" "tf_project" {
+  name            = "TF Test Project"
+  project_id      = "tf-created-project"
+  org_id          = "123456789012"
+  deletion_policy = "DELETE"
+
+  labels = {
+    env = "tf-test"
+  }
+}
+
 
 # ---------- Outputs (cross-resource invariants) ----------
 
@@ -864,4 +887,12 @@ output "bigtable_instance_id" {
 
 output "bigtable_table_id" {
   value = google_bigtable_table.tf_bigtable_table.id
+}
+
+output "project_id" {
+  value = google_project.tf_project.project_id
+}
+
+output "project_number" {
+  value = google_project.tf_project.number
 }

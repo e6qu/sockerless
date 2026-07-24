@@ -191,7 +191,12 @@ this order.
    from real cloud authorization on the federated principal — Shauth roles map
    to differently-privileged cloud principals through the federation resources
    (role trust policy, workforce pool, federated identity credential), never a
-   bespoke sockerless permission check.
+   bespoke sockerless permission check. Done — and the Google Cloud slice
+   replaced a faked partial v3 surface (projects synthesized on sight,
+   synthetic operations) with the real contract; the Azure subscription
+   Terraform coverage runs as its own `tf (azure subscription)` shard because
+   the provider's fixed settle delays don't fit the shared azure stack's
+   budget.
 3. **`sockerless login`.** The packaged terminal analog of
    `aws configure sso` / `gcloud auth login` / `az login`: browser sign-in to
    Shauth via a localhost callback, the per-cloud federation exchange, and the

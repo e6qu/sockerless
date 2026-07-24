@@ -1,6 +1,11 @@
 import { test, expect } from "@playwright/test";
 
 const SERVICES = [
+  {
+    path: "/ui/subscriptions",
+    menu: "Subscriptions",
+    columns: ["Subscription name", "Subscription ID", "Status"],
+  },
   { path: "/ui/container-apps", menu: "Container Apps", columns: ["Name", "Resource group", "Type"] },
   { path: "/ui/functions", menu: "Function Apps", columns: ["Name", "Resource group", "App kind"] },
   { path: "/ui/acr", menu: "Container registries", columns: ["Name", "Login server"] },
@@ -106,7 +111,7 @@ test.describe("Service menu", () => {
   test("groups services and collapses a group without losing the others", async ({ page }) => {
     await page.goto("/ui/");
     const menu = page.getByRole("navigation", { name: "Service" });
-    for (const group of ["Compute", "Storage and registry", "Monitoring", "Microsoft Entra ID"]) {
+    for (const group of ["General", "Compute", "Storage and registry", "Monitoring", "Microsoft Entra ID"]) {
       await expect(menu.getByRole("button", { name: group })).toBeVisible();
     }
     await expect(menu.getByRole("link", { name: "Container Apps" })).toBeVisible();
@@ -149,6 +154,39 @@ for (const service of SERVICES) {
     });
   });
 }
+
+test.describe("Subscriptions", () => {
+  test("offers Add with the create-subscription form driving the alias API", async ({ page }) => {
+    await page.goto("/ui/subscriptions");
+    await expect(page.getByTestId("subs-table")).toBeVisible();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.getByTestId("subs-create-form")).toBeVisible();
+    await expect(page.getByTestId("subs-create-name")).toBeVisible();
+    // The billing scope is prefilled with an enrollment-account coordinate;
+    // the submit stays disabled until the subscription has a name.
+    await expect(page.getByTestId("subs-create-scope")).toHaveValue(/billingAccounts/);
+    await expect(page.getByTestId("subs-create-submit")).toBeDisabled();
+    await page.getByTestId("subs-create-name").fill("Structural Test Subscription");
+    await expect(page.getByTestId("subs-create-submit")).toBeEnabled();
+  });
+
+  test("keeps the subscription detail blade's lifecycle commands visible but gated", async ({ page }) => {
+    await page.goto("/ui/subscriptions/00000000-0000-0000-0000-000000000001");
+    const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+    await expect(crumbs).toContainText("Subscriptions");
+    await expect(crumbs).toContainText("Subscription");
+    await expect(page.getByTestId("subs-detail")).toBeVisible();
+    // This lightweight suite has no identity provider, so the portal reaches
+    // the enforcing simulator unauthenticated: the detail read surfaces its
+    // error loudly and both lifecycle commands stay greyed rather than hidden.
+    await expect(page.getByTestId("subs-cancel")).toBeVisible();
+    await expect(page.getByTestId("subs-enable")).toBeVisible();
+    await expect(page.getByTestId("subs-cancel")).toBeDisabled();
+    await expect(page.getByTestId("subs-enable")).toBeDisabled();
+    await expect(page.getByTestId("subs-detail-error")).toBeVisible();
+    await expect(page.getByTestId("subs-detail-error")).toContainText("HTTP 401");
+  });
+});
 
 test.describe("Microsoft Entra ID: App registrations", () => {
   test("offers New registration and the credential blade structure", async ({ page }) => {

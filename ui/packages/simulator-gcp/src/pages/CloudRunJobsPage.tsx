@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { GcpResourceTable, GcpStatus, type GcpColumn } from "../console/index.js";
 import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchCloudRunJobsReal, type CloudRunJob } from "../api.js";
+import { useProject } from "../console/project.js";
 
 // The real Job resource reports readiness through its terminal condition; the
 // console reads that rather than inventing a status field.
@@ -27,14 +28,15 @@ const columns: GcpColumn<CloudRunJob>[] = [
 ];
 
 export function CloudRunJobsPage() {
+  const { project } = useProject();
   return (
     <GcpResourceTable<CloudRunJob>
       title="Cloud Run jobs"
       description="A job executes tasks to completion. Jobs are ideal for batch processing and scheduled workloads."
       actions={[{ label: "Create job", icon: "add", primary: true, disabled: true }]}
       columns={columns}
-      queryKey={["cloudrun-jobs-real"]}
-      queryFn={fetchCloudRunJobsReal}
+      queryKey={["cloudrun-jobs-real", project]}
+      queryFn={() => fetchCloudRunJobsReal(project)}
       filterPlaceholder="Filter jobs"
       resourceNoun="jobs"
       empty={{

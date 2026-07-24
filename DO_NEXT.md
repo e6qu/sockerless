@@ -72,13 +72,17 @@ public keys) and the Entra token endpoint (client secrets validated for
 registered applications), and deleted the invented `/sim/v1/entra/users`
 routes.
 
-Next per the roadmap: phase 2 — account and project management (two new
-simulator slices with SDK/CLI/Terraform tests: Google Cloud Resource Manager
-`projects.create/list/delete` and the Azure `Microsoft.Subscription` alias
-API; console pages for AWS Organizations accounts, the Google Cloud project
-picker with New Project, and Azure subscriptions) — then `sockerless login`,
-then the deployment and provisioning recipe (which also carries BUG-2640, the
-Azure server-side federation broker + CORS work). Filed follow-ups with fix
+Phase 2 shipped: account and project management — the Google Cloud Resource
+Manager slice (replacing a faked partial v3 surface) with the console's real
+project picker, the Azure Microsoft.Subscription alias API with the portal
+Subscriptions blade (its Terraform coverage as the `tf (azure subscription)`
+shard), and the AWS Organizations console page — all with SDK/CLI/Terraform
+coverage and the relying-party matrix driving the AWS and Google Cloud browser
+flows. Next per the roadmap: phase 3 — `sockerless login` (browser Shauth
+sign-in via a localhost callback, the per-cloud federation exchange, real
+cloud credentials written to the vendor tools' standard locations) — then
+phase 4, the deployment and provisioning recipe (which also carries BUG-2640,
+the Azure server-side federation broker + CORS work). Filed follow-ups with fix
 shapes: BUG-2637 (inert default AwsTable actions), BUG-2638 (GCP
 `serviceAccounts.create` overwrite vs 409), BUG-2639 (Entra implicit grant for
 unregistered client ids), BUG-2640 (Azure portal federation deployability).

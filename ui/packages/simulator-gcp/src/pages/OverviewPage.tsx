@@ -9,6 +9,7 @@ import {
   fetchServiceAccounts,
   fetchLogEntries,
 } from "../api.js";
+import { useProject } from "../console/project.js";
 
 // The overview counts each resource from its real cloud API — the same list
 // the resource page reads — rather than a sockerless-invented summary endpoint.
@@ -22,8 +23,12 @@ const RESOURCES = [
 ] as const;
 
 export function OverviewPage() {
+  const { project } = useProject();
   const results = useQueries({
-    queries: RESOURCES.map((resource) => ({ queryKey: resource.queryKey, queryFn: resource.queryFn })),
+    queries: RESOURCES.map((resource) => ({
+      queryKey: [...resource.queryKey, project],
+      queryFn: () => resource.queryFn(project),
+    })),
   });
 
   const failed = results.some((result) => result.isError);

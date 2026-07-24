@@ -6,6 +6,7 @@ const SERVICES = [
   { path: "/ui/ar", nav: "Artifact Registry", title: "Artifact Registry", columns: ["Name", "Format", "Created"] },
   { path: "/ui/gcs", nav: "Cloud Storage", title: "Cloud Storage", columns: ["Name"] },
   { path: "/ui/serviceaccounts", nav: "Service accounts", title: "Service accounts", columns: ["Email", "Status", "Name", "Description", "Actions"] },
+  { path: "/ui/projects", nav: "Manage resources", title: "Manage resources", columns: ["Name", "ID", "Number", "State", "Created", "Actions"] },
   { path: "/ui/logging", nav: "Logs Explorer", title: "Logs Explorer", columns: ["Timestamp", "Severity", "Log name"] },
 ];
 
@@ -71,6 +72,45 @@ test.describe("Google Cloud console shell", () => {
     await page.keyboard.press("Tab");
     await expect(page.locator(".sl-skip-link")).toBeFocused();
     await expect(page.locator("#main-content")).toHaveCount(1);
+  });
+});
+
+test.describe("Project picker", () => {
+  // The lightweight suite has no identity provider, so the dialog's project
+  // list reaches the enforcing simulator unauthenticated and reports the
+  // API's own error; the selected-project chip, the dialog, and the New
+  // project form are the console's own and must render regardless. The
+  // authenticated list/create/switch flows are proven in the relying-party
+  // suite (ui/e2e/shauth-rps.mjs).
+  test("names the selected project on the chip and opens the project dialog", async ({ page }) => {
+    await page.goto("/ui/");
+    const chip = page.getByTestId("project-picker");
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText("sockerless");
+    await chip.click();
+    await expect(page.getByTestId("project-dialog")).toBeVisible();
+    await expect(page.getByLabel("Search projects and folders")).toBeVisible();
+    await expect(page.getByTestId("project-manage-link")).toBeVisible();
+  });
+
+  test("offers the New project form with a derived, validated project ID", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByTestId("project-picker").click();
+    await page.getByTestId("project-create-open").click();
+    const name = page.getByTestId("project-create-name");
+    await expect(name).toBeVisible();
+    await expect(page.getByTestId("project-create-submit")).toBeDisabled();
+    await name.fill("Console Test Project");
+    await expect(page.getByTestId("project-create-id")).toHaveValue("console-test-project");
+    await expect(page.getByTestId("project-create-submit")).toBeEnabled();
+  });
+
+  test("navigates to Manage resources from the dialog", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByTestId("project-picker").click();
+    await page.getByTestId("project-manage-link").click();
+    await expect(page).toHaveURL(/\/ui\/projects$/);
+    await expect(page.getByRole("heading", { name: "Manage resources" })).toBeVisible();
   });
 });
 

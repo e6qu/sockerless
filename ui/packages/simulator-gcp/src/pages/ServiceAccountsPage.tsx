@@ -4,14 +4,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { GcpResourceTable, GcpStatus, type GcpColumn } from "../console/index.js";
 import { GcpDialog } from "../console/GcpDialog.js";
 import {
-  CONSOLE_PROJECT,
   createServiceAccount,
   deleteServiceAccount,
   fetchServiceAccounts,
   type ServiceAccount,
 } from "../api.js";
+import { useProject } from "../console/project.js";
 
-export const SERVICE_ACCOUNTS_QUERY_KEY = ["iam-service-accounts"];
+export const serviceAccountsQueryKey = (project: string) => ["iam-service-accounts", project];
 
 function accountStatus(account: ServiceAccount): string {
   return account.disabled ? "Disabled" : "Enabled";
@@ -39,18 +39,19 @@ export function CreateServiceAccountDialog({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const { project } = useProject();
   const [displayName, setDisplayName] = useState("");
   const [accountId, setAccountId] = useState("");
   const [accountIdEdited, setAccountIdEdited] = useState(false);
   const [description, setDescription] = useState("");
 
   const create = useMutation({
-    mutationFn: () => createServiceAccount(accountId, displayName, description),
+    mutationFn: () => createServiceAccount(project, accountId, displayName, description),
     onSuccess: onCreated,
   });
 
   const idValid = ACCOUNT_ID_PATTERN.test(accountId);
-  const email = `${accountId || "<id>"}@${CONSOLE_PROJECT}.iam.gserviceaccount.com`;
+  const email = `${accountId || "<id>"}@${project}.iam.gserviceaccount.com`;
 
   return (
     <GcpDialog title="Create service account" testId="sa-create-dialog">
@@ -123,8 +124,9 @@ function DeleteServiceAccountDialog({
   onClose: () => void;
   onDeleted: () => void;
 }) {
+  const { project } = useProject();
   const remove = useMutation({
-    mutationFn: () => deleteServiceAccount(email),
+    mutationFn: () => deleteServiceAccount(project, email),
     onSuccess: onDeleted,
   });
   return (
@@ -156,11 +158,12 @@ function DeleteServiceAccountDialog({
 }
 
 export function ServiceAccountsPage() {
+  const { project } = useProject();
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: SERVICE_ACCOUNTS_QUERY_KEY });
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: serviceAccountsQueryKey(project) });
 
   const columns: GcpColumn<ServiceAccount>[] = [
     {
@@ -208,11 +211,11 @@ export function ServiceAccountsPage() {
     <>
       <GcpResourceTable<ServiceAccount>
         title="Service accounts"
-        description={`Service accounts for project "${CONSOLE_PROJECT}". A service account represents a non-human identity; keys created for it authenticate the Google Cloud CLI and SDKs.`}
+        description={`Service accounts for project "${project}". A service account represents a non-human identity; keys created for it authenticate the Google Cloud CLI and SDKs.`}
         actions={[{ label: "Create service account", icon: "add", primary: true, onSelect: () => setCreating(true) }]}
         columns={columns}
-        queryKey={SERVICE_ACCOUNTS_QUERY_KEY}
-        queryFn={fetchServiceAccounts}
+        queryKey={serviceAccountsQueryKey(project)}
+        queryFn={() => fetchServiceAccounts(project)}
         filterPlaceholder="Filter service accounts"
         resourceNoun="service accounts"
         empty={{

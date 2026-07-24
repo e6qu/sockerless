@@ -1833,6 +1833,7 @@ Same OneAPI format as Log Analytics:
 | Function Invocation (data) | - | - | `{app}.azurewebsites.net` |
 | Application Insights Query | - | `v1` (path) | `api.applicationinsights.io` |
 | Application Insights Metrics | - | `v1` (path) | `api.applicationinsights.io` |
+| Subscription aliases + cancel/rename/enable | Microsoft.Subscription | `2021-10-01` | `management.azure.com` |
 
 ## Appendix B: Simulator Implementation Notes
 

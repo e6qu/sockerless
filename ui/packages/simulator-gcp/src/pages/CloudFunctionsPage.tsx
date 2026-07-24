@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { GcpResourceTable, GcpStatus, type GcpColumn } from "../console/index.js";
 import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchCloudFunctions, type CloudFunction } from "../api.js";
+import { useProject } from "../console/project.js";
 
 const columns: GcpColumn<CloudFunction>[] = [
   {
@@ -16,14 +17,15 @@ const columns: GcpColumn<CloudFunction>[] = [
 ];
 
 export function CloudFunctionsPage() {
+  const { project } = useProject();
   return (
     <GcpResourceTable<CloudFunction>
       title="Cloud Run functions"
       description="Run your code in response to events without provisioning or managing servers."
       actions={[{ label: "Create function", icon: "add", primary: true, disabled: true }]}
       columns={columns}
-      queryKey={["cloud-functions-real"]}
-      queryFn={fetchCloudFunctions}
+      queryKey={["cloud-functions-real", project]}
+      queryFn={() => fetchCloudFunctions(project)}
       filterPlaceholder="Filter functions"
       resourceNoun="functions"
       empty={{

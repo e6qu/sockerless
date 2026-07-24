@@ -66,7 +66,7 @@ Legend:
 | `azure-servicebus-data-plane` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/servicebus_dataplane_test.go` |
 | `azure-storage` | direct | direct | direct | `simulators/azure/sdk-tests/storage_test.go`; `simulators/azure/cli-tests/blob_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-storage-data-plane` | direct | direct | direct | `simulators/azure/sdk-tests/storage_dataplanes_test.go`; `simulators/azure/cli-tests/blob_test.go`; `simulators/azure/terraform-tests/main.tf` |
-| `azure-subscription` | direct | direct | not applicable | `simulators/azure/sdk-tests/integration_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go` |
+| `azure-subscription` | direct | direct | direct | `simulators/azure/sdk-tests/integration_test.go`; `simulators/azure/sdk-tests/subscription_alias_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go`; `simulators/azure/cli-tests/subscription_alias_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-entra` | direct | direct | not applicable | `simulators/azure/sdk-tests/entra_test.go`; `simulators/azure/cli-tests/entra_test.go` |
 | `azure-private-dns` | direct | direct | direct | `simulators/azure/sdk-tests/dns_private_test.go`; `simulators/azure/cli-tests/dns_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `gcp-apigateway` | direct | direct | direct | `simulators/gcp/sdk-tests/memorystore_apigw_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
@@ -76,6 +76,7 @@ Legend:
 | `gcp-cloudbuild` | direct | direct | direct | `simulators/gcp/sdk-tests/build_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudfunctions` | direct | direct | direct | `simulators/gcp/sdk-tests/functions_sdk_test.go`; `simulators/gcp/cli-tests/functions_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudkms` | direct | direct | direct | `simulators/gcp/sdk-tests/cloudkms_test.go`; `simulators/gcp/cli-tests/cloudkms_test.go`; `simulators/gcp/terraform-tests/fixtures/kms-lifecycle/main.tf` |
+| `gcp-cloudresourcemanager` | direct | direct | direct | `simulators/gcp/sdk-tests/resourcemanager_projects_test.go`; `simulators/gcp/sdk-tests/cloudresourcemanager_v3_test.go`; `simulators/gcp/cli-tests/projects_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudrun` | direct | direct | direct | `simulators/gcp/sdk-tests/run_sdk_test.go`; `simulators/gcp/cli-tests/run_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-compute` | direct | direct | direct | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_disks_test.go`; `simulators/gcp/cli-tests/compute_instances_test.go`; `simulators/gcp/cli-tests/compute_nat_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-compute_loadbalancing` | direct | direct | direct | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_loadbalancing_test.go`; `simulators/gcp/terraform-tests/main.tf` |

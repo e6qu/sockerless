@@ -20,6 +20,9 @@ interface ArmResource {
 // serves these list operations at.
 const API_VERSION = {
   subscriptions: "2022-12-01",
+  // Microsoft.Subscription — the alias (subscription creation) API and the
+  // cancel/rename/enable subscription actions.
+  subscriptionAliases: "2021-10-01",
   jobs: "2024-03-01",
   sites: "2023-12-01",
   registries: "2023-07-01",
@@ -35,6 +38,129 @@ export async function subscriptionIds(): Promise<string[]> {
   );
   return (list.value ?? []).map((s) => s.subscriptionId ?? "").filter(Boolean);
 }
+
+// --- Subscriptions blade: Azure Resource Manager subscriptions + the
+// Microsoft.Subscription alias API (programmatic subscription creation) ---
+
+export interface Subscription {
+  id: string;
+  subscriptionId: string;
+  displayName: string;
+  state: string;
+}
+
+interface ArmSubscription {
+  id?: string;
+  subscriptionId?: string;
+  displayName?: string;
+  state?: string;
+}
+
+function subscriptionOf(sub: ArmSubscription): Subscription {
+  return {
+    id: sub.id ?? "",
+    subscriptionId: sub.subscriptionId ?? "",
+    displayName: sub.displayName ?? "",
+    state: sub.state ?? "",
+  };
+}
+
+// armSend writes to an Azure Resource Manager path and surfaces ARM's own
+// error message rather than masking it.
+async function armSend(path: string, init: RequestInit = {}): Promise<Response> {
+  const response = await authorizedFetch(path, "arm", init);
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body = (await response.json()) as { error?: { message?: string } };
+      detail = body.error?.message ?? "";
+    } catch {
+      // A non-JSON error body keeps the HTTP status as the message.
+    }
+    throw new Error(`${path} returned HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+  }
+  return response;
+}
+
+export const fetchSubscriptions = async (): Promise<Subscription[]> => {
+  const list = await authorizedJSON<ArmList<ArmSubscription>>(
+    `/subscriptions?api-version=${API_VERSION.subscriptions}`,
+  );
+  return (list.value ?? []).map(subscriptionOf);
+};
+
+export const fetchSubscription = async (subscriptionId: string): Promise<Subscription> =>
+  subscriptionOf(
+    await authorizedJSON<ArmSubscription>(
+      `/subscriptions/${subscriptionId}?api-version=${API_VERSION.subscriptions}`,
+    ),
+  );
+
+export interface SubscriptionAlias {
+  name: string;
+  subscriptionId: string;
+  provisioningState: string;
+}
+
+interface ArmSubscriptionAlias {
+  name?: string;
+  properties?: { subscriptionId?: string; provisioningState?: string };
+}
+
+function subscriptionAliasOf(alias: ArmSubscriptionAlias): SubscriptionAlias {
+  return {
+    name: alias.name ?? "",
+    subscriptionId: alias.properties?.subscriptionId ?? "",
+    provisioningState: alias.properties?.provisioningState ?? "",
+  };
+}
+
+// createSubscriptionAlias drives the real subscription-creation flow the way
+// the real portal (and `az account alias create`) does: a PUT on the
+// Microsoft.Subscription alias with the display name, workload, and billing
+// scope. The response reports provisioningState "Accepted" until the
+// subscription materializes; getSubscriptionAlias is the poll.
+export const createSubscriptionAlias = async (
+  displayName: string,
+  billingScope: string,
+): Promise<SubscriptionAlias> => {
+  const aliasName = crypto.randomUUID();
+  const response = await armSend(
+    `/providers/Microsoft.Subscription/aliases/${aliasName}?api-version=${API_VERSION.subscriptionAliases}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        properties: { displayName, workload: "Production", billingScope },
+      }),
+    },
+  );
+  return subscriptionAliasOf((await response.json()) as ArmSubscriptionAlias);
+};
+
+export const getSubscriptionAlias = async (aliasName: string): Promise<SubscriptionAlias> =>
+  subscriptionAliasOf(
+    await authorizedJSON<ArmSubscriptionAlias>(
+      `/providers/Microsoft.Subscription/aliases/${aliasName}?api-version=${API_VERSION.subscriptionAliases}`,
+    ),
+  );
+
+// cancelSubscription / enableSubscription are the real Microsoft.Subscription
+// actions: a cancelled subscription becomes Disabled (it is never deleted —
+// Azure has no subscription-delete API) and can be re-enabled.
+export const cancelSubscription = async (subscriptionId: string): Promise<void> => {
+  await armSend(
+    `/subscriptions/${subscriptionId}/providers/Microsoft.Subscription/cancel?api-version=${API_VERSION.subscriptionAliases}`,
+    { method: "POST" },
+  );
+};
+
+export const enableSubscription = async (subscriptionId: string): Promise<void> => {
+  await armSend(
+    `/subscriptions/${subscriptionId}/providers/Microsoft.Subscription/enable?api-version=${API_VERSION.subscriptionAliases}`,
+    { method: "POST" },
+  );
+};
 
 async function listAcrossSubscriptions<T extends ArmResource>(provider: string, apiVersion: string): Promise<T[]> {
   const subs = await subscriptionIds();

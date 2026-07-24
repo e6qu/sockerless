@@ -225,7 +225,8 @@ func TestConformance_SecretManagerAnnotationsRoundTrip(t *testing.T) {
 func TestConformance_IAMBindingConditionRoundTrip(t *testing.T) {
 	svc, err := cloudresourcemanager.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
-	project := "conformance-iam-condition-project"
+	project := "conf-iam-condition-project"
+	ensureV1Project(t, svc, project)
 
 	_, err = svc.Projects.SetIamPolicy(project, &cloudresourcemanager.SetIamPolicyRequest{
 		Policy: &cloudresourcemanager.Policy{
@@ -422,6 +423,7 @@ func TestConformance_IAMSetPolicyStaleEtagAborted(t *testing.T) {
 	svc, err := cloudresourcemanager.NewService(ctx, option.WithEndpoint(baseURL), option.WithTokenSource(simTokenSource()))
 	require.NoError(t, err)
 	project := "conformance-iam-etag-project"
+	ensureV1Project(t, svc, project)
 
 	// Read the current policy to learn its etag.
 	got, err := svc.Projects.GetIamPolicy(project, &cloudresourcemanager.GetIamPolicyRequest{}).Do()

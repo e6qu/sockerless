@@ -278,7 +278,7 @@ provision_aws_federation() {
   # role that access; without it, the simulator's IAM enforcement denies the
   # federated calls, exactly as real AWS would deny an operator role that was
   # never authorized for the IAM console.
-  aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=console-federation-role&PolicyName=console-access&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecs:*","lambda:*","ecr:*","s3:*","logs:*","iam:*"],"Resource":"*"}]}')"
+  aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=console-federation-role&PolicyName=console-access&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecs:*","lambda:*","ecr:*","s3:*","logs:*","iam:*","organizations:*"],"Resource":"*"}]}')"
 }
 
 start_simulator "$repo_root/simulators/aws/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision" "$aws_federation_role"

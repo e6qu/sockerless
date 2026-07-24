@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ServiceAccountKeysTable } from "../pages/ServiceAccountDetailPage.js";
 import { ServiceAccountKeyMintedDialog, gcloudUsage } from "../pages/ServiceAccountKeyMintedDialog.js";
 import { CreateServiceAccountDialog } from "../pages/ServiceAccountsPage.js";
+import { ProjectProvider } from "../console/project.js";
 
 // Without vitest globals, Testing Library's automatic between-test cleanup
 // never registers; unmount explicitly so screen queries see one render.
@@ -130,7 +131,9 @@ describe("CreateServiceAccountDialog", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     return render(
       <QueryClientProvider client={queryClient}>
-        <CreateServiceAccountDialog onClose={() => {}} onCreated={() => {}} />
+        <ProjectProvider>
+          <CreateServiceAccountDialog onClose={() => {}} onCreated={() => {}} />
+        </ProjectProvider>
       </QueryClientProvider>,
     );
   }

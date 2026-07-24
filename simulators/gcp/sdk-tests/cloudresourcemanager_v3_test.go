@@ -102,6 +102,11 @@ func TestResourceManagerV3_ProjectIAM(t *testing.T) {
 	svc := crmV3Service(t)
 	const name = "projects/crm-iam-proj"
 
+	// IAM verbs address an existing project; a missing one is a real 403.
+	cop, err := svc.Projects.Create(&crm.Project{ProjectId: "crm-iam-proj"}).Do()
+	require.NoError(t, err)
+	require.True(t, cop.Done)
+
 	set, err := svc.Projects.SetIamPolicy(name, &crm.SetIamPolicyRequest{
 		Policy: &crm.Policy{
 			Bindings: []*crm.Binding{{

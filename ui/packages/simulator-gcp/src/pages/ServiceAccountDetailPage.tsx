@@ -7,7 +7,6 @@ import { formatTimestamp } from "../console/format.js";
 import { serviceAccountKeyId } from "../console/keyfile.js";
 import { cloudEndpoint } from "../console/federation.js";
 import {
-  CONSOLE_PROJECT,
   createServiceAccountKey,
   deleteServiceAccountKey,
   fetchServiceAccount,
@@ -15,6 +14,7 @@ import {
   type ServiceAccountKey,
 } from "../api.js";
 import { ServiceAccountKeyMintedDialog } from "./ServiceAccountKeyMintedDialog.js";
+import { useProject } from "../console/project.js";
 
 // ServiceAccountKeysTable is the Keys tab's table, presentational so the
 // key-list rendering is testable apart from the queries that feed it.
@@ -179,14 +179,15 @@ function DeleteKeyDialog({
 
 export function ServiceAccountDetailPage() {
   const { email = "" } = useParams();
+  const { project } = useProject();
   const queryClient = useQueryClient();
   const [creatingKey, setCreatingKey] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [mintedKey, setMintedKey] = useState<ServiceAccountKey | null>(null);
 
-  const account = useQuery({ queryKey: ["iam-service-account", email], queryFn: () => fetchServiceAccount(email) });
-  const keysQueryKey = ["iam-service-account-keys", email];
-  const keys = useQuery({ queryKey: keysQueryKey, queryFn: () => fetchServiceAccountKeys(email) });
+  const account = useQuery({ queryKey: ["iam-service-account", project, email], queryFn: () => fetchServiceAccount(project, email) });
+  const keysQueryKey = ["iam-service-account-keys", project, email];
+  const keys = useQuery({ queryKey: keysQueryKey, queryFn: () => fetchServiceAccountKeys(project, email) });
   // The coordinate the CLI panel names — resolved from the console's own
   // config, the same coordinate every API call on this page already used.
   const endpoint = useQuery({ queryKey: ["cloud-endpoint"], queryFn: cloudEndpoint, staleTime: Number.POSITIVE_INFINITY });
@@ -194,7 +195,7 @@ export function ServiceAccountDetailPage() {
   const refreshKeys = () => void queryClient.invalidateQueries({ queryKey: keysQueryKey });
 
   const createKey = useMutation({
-    mutationFn: () => createServiceAccountKey(email),
+    mutationFn: () => createServiceAccountKey(project, email),
     onSuccess: (key) => {
       setCreatingKey(false);
       setMintedKey(key);
@@ -202,7 +203,7 @@ export function ServiceAccountDetailPage() {
     },
   });
   const deleteKey = useMutation({
-    mutationFn: (keyId: string) => deleteServiceAccountKey(email, keyId),
+    mutationFn: (keyId: string) => deleteServiceAccountKey(project, email, keyId),
     onSuccess: () => {
       setDeletingKey(null);
       refreshKeys();
@@ -314,7 +315,7 @@ export function ServiceAccountDetailPage() {
       ) : null}
       {mintedKey ? (
         <ServiceAccountKeyMintedDialog
-          project={CONSOLE_PROJECT}
+          project={project}
           saKey={mintedKey}
           endpoint={endpoint.data ?? window.location.origin}
           onClose={() => setMintedKey(null)}

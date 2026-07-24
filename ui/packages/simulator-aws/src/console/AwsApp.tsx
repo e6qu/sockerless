@@ -25,7 +25,13 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Simple Storage Service", to: "/ui/s3" },
     ],
   },
-  { label: "Management", items: [{ label: "CloudWatch Logs", to: "/ui/logs" }] },
+  {
+    label: "Management & Governance",
+    items: [
+      { label: "CloudWatch Logs", to: "/ui/logs" },
+      { label: "AWS Organizations", to: "/ui/organizations" },
+    ],
+  },
   {
     label: "Security, identity, and compliance",
     items: [{ label: "Identity and Access Management", to: "/ui/iam" }],
@@ -39,19 +45,28 @@ const CRUMBS: Record<string, string> = {
   "/ui/ecr": "Elastic Container Registry",
   "/ui/s3": "Simple Storage Service",
   "/ui/logs": "CloudWatch Logs",
+  "/ui/organizations": "AWS Organizations",
   "/ui/iam": "Identity and Access Management",
 };
 
 const IAM_USER_PREFIX = "/ui/iam/users/";
+const ORG_ACCOUNT_PREFIX = "/ui/organizations/accounts/";
 
 function crumbTrail(pathname: string): { label: string; to?: string }[] {
-  // The IAM user detail page nests under the service the way the real console
-  // breadcrumbs it: IAM > Users > <user name>.
+  // Detail pages nest under their service the way the real console breadcrumbs
+  // them: IAM > Users > <user name>, AWS Organizations > <account id>.
   if (pathname.startsWith(IAM_USER_PREFIX)) {
     return [
       { label: "Simulator", to: "/ui/" },
       { label: "Identity and Access Management", to: "/ui/iam" },
       { label: decodeURIComponent(pathname.slice(IAM_USER_PREFIX.length)) },
+    ];
+  }
+  if (pathname.startsWith(ORG_ACCOUNT_PREFIX)) {
+    return [
+      { label: "Simulator", to: "/ui/" },
+      { label: "AWS Organizations", to: "/ui/organizations" },
+      { label: decodeURIComponent(pathname.slice(ORG_ACCOUNT_PREFIX.length)) },
     ];
   }
   return [

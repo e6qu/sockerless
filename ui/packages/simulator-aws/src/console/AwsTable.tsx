@@ -36,6 +36,11 @@ export interface AwsResourceTableProps<T> {
   /** Page-specific header actions. Without it the header carries the standard
    * selection-aware controls. */
   actions?: (context: AwsTableActions<T>) => ReactNode;
+  /** Automation hooks: a stable id on the table element, one per data row, and
+   * one on the load-failure flash, for suites that drive the page. */
+  tableTestId?: string;
+  rowTestId?: (row: T) => string;
+  errorTestId?: string;
 }
 
 const PAGE_SIZE = 10;
@@ -51,6 +56,9 @@ export function AwsResourceTable<T>({
   emptyDescription,
   rowKey,
   actions,
+  tableTestId,
+  rowTestId,
+  errorTestId,
 }: AwsResourceTableProps<T>) {
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({ queryKey, queryFn });
   const [filter, setFilter] = useState("");
@@ -160,7 +168,7 @@ export function AwsResourceTable<T>({
          * operator can still see what the resource is described by while it is
          * loading, empty, or failed. Replacing the whole table with a message
          * takes that away exactly when it is most useful. */}
-        <table className="aws-table">
+        <table className="aws-table" data-testid={tableTestId}>
           <thead>
             <tr>
               <th className="aws-table-select">
@@ -198,7 +206,7 @@ export function AwsResourceTable<T>({
             {isError ? (
               <tr>
                 <td className="aws-table-state" colSpan={columns.length + 1}>
-                  <div className="aws-flash aws-flash-error" role="alert">
+                  <div className="aws-flash aws-flash-error" role="alert" data-testid={errorTestId}>
                     <strong>Could not load {title.toLowerCase()}.</strong>{" "}
                     {error instanceof Error ? error.message : "The simulator did not respond."}
                   </div>
@@ -223,7 +231,7 @@ export function AwsResourceTable<T>({
               visible.map((row) => {
                 const id = rowKey(row);
                 return (
-                  <tr key={id} className={selected.has(id) ? "aws-row-selected" : undefined}>
+                  <tr key={id} className={selected.has(id) ? "aws-row-selected" : undefined} data-testid={rowTestId?.(row)}>
                     <td className="aws-table-select">
                       <input
                         type="checkbox"

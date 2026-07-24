@@ -42,22 +42,28 @@ import (
 //   - Microsoft.Web/serverfarms + sites (Function App)
 //   - Microsoft.Web/sites/networkConfig/virtualNetwork (App Service regional
 //     VNet "swift" integration) + a Microsoft.Web/serverFarms-delegated subnet
+//
+// The Microsoft.Subscription alias slice runs separately in
+// TestTerraformSubscriptionApplyDestroy (its own CI shard): each
+// azurerm_subscription create and cancel sits through the provider's fixed
+// StateChangeConf settle delays, too slow for this stack's CI budget.
 func TestTerraformApplyDestroy(t *testing.T) {
 	requireTerraformNetworkHost(t)
-	cleanTerraformWorkspace(t)
-	out, err := runTimed(t, "terraform init", terraformCmd("init"))
+	dir := tfStackDir()
+	cleanTerraformWorkspace(t, dir)
+	out, err := runTimed(t, "terraform init", terraformCmd(dir, "init"))
 	require.NoError(t, err, "terraform init failed:\n%s", out)
 
-	out, err = runTimed(t, "terraform apply", terraformCmd("apply", "-auto-approve"))
+	out, err = runTimed(t, "terraform apply", terraformCmd(dir, "apply", "-auto-approve"))
 	require.NoError(t, err, "terraform apply failed:\n%s", out)
 
 	// Idempotency: a second plan must show no drift. -detailed-exitcode makes
 	// terraform exit 2 (non-zero) on any drift, which runTimed surfaces as an
 	// error — so a clean plan (exit 0) is the only pass.
-	out, err = runTimed(t, "terraform plan", terraformCmd("plan", "-detailed-exitcode"))
+	out, err = runTimed(t, "terraform plan", terraformCmd(dir, "plan", "-detailed-exitcode"))
 	require.NoError(t, err, "terraform plan showed drift after apply (not idempotent):\n%s", out)
 
-	outputs := readOutputs(t)
+	outputs := readOutputs(t, dir)
 
 	rgID := outputs.must(t, "resource_group_id")
 	require.True(t, strings.HasSuffix(rgID, "/resourceGroups/tf-test-rg"),
@@ -282,7 +288,7 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmAPIMSub, "/service/tf-azrm-apim/subscriptions/",
 		"APIM subscription id must include the service+subscription path; got %s", azrmAPIMSub)
 
-	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve"))
+	out, err = runTimed(t, "terraform destroy", terraformCmd(dir, "destroy", "-auto-approve"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
 }
 
@@ -293,9 +299,8 @@ func requireTerraformNetworkHost(t *testing.T) {
 	}
 }
 
-func cleanTerraformWorkspace(t *testing.T) {
+func cleanTerraformWorkspace(t *testing.T, dir string) {
 	t.Helper()
-	dir := filepath.Dir(mustAbs("main.tf"))
 	for _, name := range []string{
 		".terraform",
 		".terraform.lock.hcl",
@@ -324,9 +329,9 @@ func (o tfOutputs) must(t *testing.T, key string) string {
 	return s
 }
 
-func readOutputs(t *testing.T) tfOutputs {
+func readOutputs(t *testing.T, dir string) tfOutputs {
 	t.Helper()
-	out, err := terraformCmd("output", "-json").CombinedOutput()
+	out, err := terraformCmd(dir, "output", "-json").CombinedOutput()
 	require.NoError(t, err, "terraform output failed:\n%s", out)
 	var outputs tfOutputs
 	require.NoError(t, json.Unmarshal(out, &outputs))

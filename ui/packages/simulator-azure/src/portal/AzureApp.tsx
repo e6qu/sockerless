@@ -16,6 +16,10 @@ const FLAT_ITEMS: ServiceMenuItem[] = [{ label: "Overview", to: "/ui/" }];
 
 const MENU_GROUPS: ServiceMenuGroup[] = [
   {
+    label: "General",
+    items: [{ label: "Subscriptions", to: "/ui/subscriptions" }],
+  },
+  {
     label: "Compute",
     items: [
       { label: "Container Apps", to: "/ui/container-apps" },
@@ -46,6 +50,7 @@ interface Pane {
 
 const PANE: Record<string, Pane> = {
   "/ui/": { crumb: "Overview", title: "Simulator", kind: "Subscription" },
+  "/ui/subscriptions": { crumb: "Subscriptions", title: "Subscriptions", kind: "Subscription" },
   "/ui/container-apps": { crumb: "Container Apps", title: "Container Apps", kind: "Container Apps job" },
   "/ui/functions": { crumb: "Function Apps", title: "Function Apps", kind: "Function App" },
   "/ui/acr": { crumb: "Container registries", title: "Container registries", kind: "Container registry" },
@@ -61,6 +66,14 @@ const PANE: Record<string, Pane> = {
 function paneFor(pathname: string): Pane {
   const exact = PANE[pathname];
   if (exact) return exact;
+  if (pathname.startsWith("/ui/subscriptions/")) {
+    return {
+      crumb: "Subscription",
+      title: "Subscription",
+      kind: "Subscription",
+      parent: { label: "Subscriptions", to: "/ui/subscriptions" },
+    };
+  }
   if (pathname.startsWith("/ui/entra/app-registrations/")) {
     return {
       crumb: "Certificates & secrets",
