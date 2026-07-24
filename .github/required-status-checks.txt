@@ -16,8 +16,21 @@
 #
 # One context name per line, sorted. Lines starting with `#` and blank lines are
 # ignored.
+
 At most one PR open
 Branch rebased on origin/main
+browser (Shauth relying parties)
+browser (admin)
+browser (backend-aca)
+browser (backend-azf)
+browser (backend-cloudrun)
+browser (backend-docker)
+browser (backend-ecs)
+browser (backend-gcf)
+browser (backend-lambda)
+browser (simulator-aws)
+browser (simulator-azure)
+browser (simulator-gcp)
 build-amd64
 build-arm64
 build-gates
