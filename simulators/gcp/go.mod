@@ -5,7 +5,7 @@ go 1.25.8
 require (
 	cloud.google.com/go/bigtable v1.51.0
 	cloud.google.com/go/iam v1.12.0
-	cloud.google.com/go/kms v1.32.0
+	cloud.google.com/go/kms v1.33.0
 	cloud.google.com/go/logging v1.19.0
 	cloud.google.com/go/longrunning v1.2.0
 	cloud.google.com/go/pubsub v1.51.0
