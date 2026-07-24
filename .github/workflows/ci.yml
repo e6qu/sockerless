@@ -371,7 +371,7 @@ jobs:
 
   sim-aws-sdk:
     # The AWS SDK suite outgrew a single 15-minute job (the full run reached
-    # the ceiling on runner-speed variance), so it fans out across three shards
+    # the ceiling on runner-speed variance), so it fans out across four shards
     # the way the AWS CLI suite does. Shard regexes use the character-class form
     # ('^Test[...]') rather than the CLI shards' alternation form
     # ('^Test(...)') so each suite's coverage gate reads only its own shard
@@ -388,8 +388,10 @@ jobs:
             run: '^Test[E]'
           - suite: data
             run: '^Test[D]'
-          - suite: services
-            run: '^Test[^DE]'
+          - suite: services-a-m
+            run: '^Test[A-CF-M]'
+          - suite: services-n-z
+            run: '^Test[N-Z]'
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
@@ -409,7 +411,7 @@ jobs:
       - name: Run AWS module unit tests
         # The module unit tests are shard-independent; one shard carries them
         # so they run exactly once per workflow.
-        if: matrix.suite == 'services'
+        if: matrix.suite == 'services-n-z'
         run: cd simulators/aws && GOWORK=off make unit-test
         timeout-minutes: 3
         env:

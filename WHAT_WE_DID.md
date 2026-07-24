@@ -67,14 +67,15 @@ BUG-2638 (`serviceAccounts.create` overwrite instead of 409), and BUG-2639
 (implicit grant for unregistered client ids) were filed with fix shapes.
 
 The `sim (aws sdk)` job — chronically within two minutes of the enforced
-15-minute ceiling — hit it on runner variance and was split into three shards
-(`compute` = `^Test[E]`, `data` = `^Test[D]`, `services` = `^Test[^DE]`),
+15-minute ceiling — hit it on runner variance and was split into four shards
+(`compute` = `^Test[E]`, `data` = `^Test[D]`, `services-a-m` = `^Test[A-CF-M]`,
+`services-n-z` = `^Test[N-Z]`),
 mirroring the AWS CLI shards: shard regexes use the character-class form so
 each suite's coverage gate reads only its own shard set,
 `scripts/check-sdk-shard-coverage.sh` (pre-commit) asserts all 1152 SDK tests
 match exactly one shard, the DynamoDB Local oracle pull rides the data shard
-and the module unit tests the services shard, and
-`.github/required-status-checks.txt` carries the three new contexts (branch
+and the module unit tests the services-n-z shard, and
+`.github/required-status-checks.txt` carries the four new contexts (branch
 protection must swap `sim (aws sdk)` for them when this merges).
 
 ## 2026-07-24 — Closed the skip-if-absent gate hole and swept the last tool-absent skips
