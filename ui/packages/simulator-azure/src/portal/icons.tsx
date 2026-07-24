@@ -16,6 +16,7 @@ const PATHS: Record<string, string> = {
   feedback:
     "M4 3.5h12a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 16 13.5H8l-3.5 3v-3H4A1.5 1.5 0 0 1 2.5 12V5A1.5 1.5 0 0 1 4 3.5Z",
   add: "M10 4v12M4 10h12",
+  copy: "M7 3h6.5A1.5 1.5 0 0 1 15 4.5V13M5.5 6H12a1.5 1.5 0 0 1 1.5 1.5V16A1.5 1.5 0 0 1 12 17.5H5.5A1.5 1.5 0 0 1 4 16V7.5A1.5 1.5 0 0 1 5.5 6Z",
   chevron_down: "M5 7.5 10 12l5-4.5",
   chevron_right: "M7.5 5 12 10l-4.5 5",
   sort: "M6 4v12M6 16 3.5 13M6 16l2.5-3M14 16V4M14 4l-2.5 3M14 4l2.5 3",
@@ -35,6 +36,7 @@ const STROKE = new Set([
   "search",
   "download",
   "add",
+  "copy",
   "chevron_down",
   "chevron_right",
   "sort",

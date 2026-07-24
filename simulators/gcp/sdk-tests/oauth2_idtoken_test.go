@@ -1,12 +1,8 @@
 package gcp_sdk_test
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"net/http"
 	"os"
 	"strings"
@@ -14,36 +10,42 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/iam/v1"
 	"google.golang.org/api/idtoken"
 	"google.golang.org/api/option"
 )
 
-// writeServiceAccountJSON stages a real-shape service-account credentials file
-// with a real RSA keypair whose `token_uri` points at the simulator's OAuth2
-// token endpoint — the same credential shape a Cloud Run / Cloud Functions
-// backend runs with (GOOGLE_APPLICATION_CREDENTIALS). The
+// writeServiceAccountJSON stages the service-account credentials file a Cloud
+// Run / Cloud Functions backend runs with (GOOGLE_APPLICATION_CREDENTIALS) the
+// way an operator provisions it: a service account created through the real
+// IAM API and a key minted with CreateServiceAccountKey, whose decoded
+// privateKeyData IS the credential file. The token endpoint verifies
+// assertions against the account's registered keys, so a self-generated
+// keypair would be rejected — only the minted file works, exactly as against
+// Google. The file's `token_uri` is repointed at the simulator's token
+// endpoint: the coordinate, the only thing that changes. The
 // google.golang.org/api/idtoken service-account flow signs a JWT-bearer
-// assertion with this key, POSTs it to `token_uri`, and reads back the
+// assertion with the minted key, POSTs it to `token_uri`, and reads back the
 // `id_token`.
 func writeServiceAccountJSON(t *testing.T) string {
 	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	svc := iamService(t)
+	sa, err := svc.Projects.ServiceAccounts.Create("projects/test-project",
+		&iam.CreateServiceAccountRequest{
+			AccountId:      "sockerless-runner",
+			ServiceAccount: &iam.ServiceAccount{DisplayName: "Sockerless runner"},
+		}).Do()
 	require.NoError(t, err)
-	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	key, err := svc.Projects.ServiceAccounts.Keys.Create(sa.Name,
+		&iam.CreateServiceAccountKeyRequest{}).Do()
 	require.NoError(t, err)
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 
-	sa := map[string]string{
-		"type":            "service_account",
-		"project_id":      "test-project",
-		"private_key_id":  "sim-key",
-		"private_key":     string(keyPEM),
-		"client_email":    "sockerless-runner@test-project.iam.gserviceaccount.com",
-		"client_id":       "111111111111111111111",
-		"token_uri":       baseURL + "/token",
-		"universe_domain": "googleapis.com",
-	}
-	body, err := json.Marshal(sa)
+	raw, err := base64.StdEncoding.DecodeString(key.PrivateKeyData)
+	require.NoError(t, err)
+	var keyFile map[string]any
+	require.NoError(t, json.Unmarshal(raw, &keyFile))
+	keyFile["token_uri"] = baseURL + "/token"
+	body, err := json.Marshal(keyFile)
 	require.NoError(t, err)
 
 	f, err := os.CreateTemp(t.TempDir(), "sa-*.json")

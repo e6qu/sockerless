@@ -1,8 +1,14 @@
 package gcp_cli_test
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -177,4 +183,103 @@ func TestIAMServiceAccountDisableEnableUpdateCLI(t *testing.T) {
 	}
 	parseJSONObject(t, out, &updated)
 	assert.Equal(t, "Renamed Toggle SA", updated.DisplayName)
+}
+
+// TestIAMServiceAccountKeysActivateCLI proves the console's credential loop
+// with the vendor CLI end to end: create a service account, mint a key with
+// `gcloud iam service-accounts keys create` (which writes the decoded
+// credential file — the same file the console's one-time download saves),
+// activate it with `gcloud auth activate-service-account --key-file`, and
+// make an authenticated IAM call over the resulting credentials, with
+// auth/token_host pointing the JWT-bearer exchange at the simulator. This is
+// exactly the usage the console's post-mint CLI panel prints. A key file whose
+// private key was swapped for one the IAM API never registered is rejected by
+// the token endpoint with invalid_grant.
+func TestIAMServiceAccountKeysActivateCLI(t *testing.T) {
+	const accountID = "cli-keys-sa"
+	email := accountID + "@" + project + ".iam.gserviceaccount.com"
+
+	runCLI(t, gcloudCLI("iam", "service-accounts", "create", accountID,
+		"--display-name=CLI Keys SA", "--format=json"))
+
+	// Mint a key; gcloud decodes privateKeyData and writes the credential file.
+	keyFile := filepath.Join(tmpDir, "cli-keys-sa.json")
+	runCLI(t, gcloudCLI("iam", "service-accounts", "keys", "create", keyFile,
+		"--iam-account="+email, "--format=json"))
+	keyBytes, err := os.ReadFile(keyFile)
+	require.NoError(t, err)
+	var keyJSON map[string]any
+	require.NoError(t, json.Unmarshal(keyBytes, &keyJSON))
+	require.Equal(t, "service_account", keyJSON["type"])
+	require.Equal(t, email, keyJSON["client_email"])
+	require.NotEmpty(t, keyJSON["private_key"])
+	keyID, _ := keyJSON["private_key_id"].(string)
+	require.NotEmpty(t, keyID)
+
+	// keys list shows the minted key.
+	out := runCLI(t, gcloudCLI("iam", "service-accounts", "keys", "list",
+		"--iam-account="+email, "--format=json"))
+	jsonStart := strings.Index(out, "[")
+	require.NotEqual(t, -1, jsonStart, "keys list output not a JSON array: %s", out)
+	var listed []struct {
+		Name string `json:"name"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out[jsonStart:]), &listed), "output: %s", out)
+	found := false
+	for _, k := range listed {
+		if strings.HasSuffix(k.Name, "/"+keyID) {
+			found = true
+		}
+	}
+	require.True(t, found, "minted key must appear in keys list")
+
+	// Activate the minted key in an isolated gcloud config (so the activated
+	// account cannot leak into the shared config other tests use) and make an
+	// authenticated call with it. auth/token_host routes the credential's
+	// JWT-bearer exchange to the simulator — the coordinate, nothing else.
+	saConfig := filepath.Join(tmpDir, "gcloud-sa-config")
+	runCLI(t, gcloudSAActivatedCLI(saConfig, "config", "set", "api_endpoint_overrides/iam", baseURL+"/"))
+	runCLI(t, gcloudSAActivatedCLI(saConfig, "config", "set", "auth/token_host", baseURL+"/token"))
+	runCLI(t, gcloudSAActivatedCLI(saConfig, "auth", "activate-service-account", "--key-file="+keyFile))
+	out = runCLI(t, gcloudSAActivatedCLI(saConfig, "iam", "service-accounts", "list", "--format=json"))
+	require.Contains(t, out, email, "authenticated list over the activated key must include the account")
+
+	// Swap the private key for one the IAM API never registered; the token
+	// endpoint must reject the assertion, so the authenticated call fails
+	// with the real endpoint's invalid_grant.
+	tamperedPEM := generateUnregisteredKeyPEM(t)
+	keyJSON["private_key"] = tamperedPEM
+	tamperedBytes, err := json.Marshal(keyJSON)
+	require.NoError(t, err)
+	tamperedFile := filepath.Join(tmpDir, "cli-keys-sa-tampered.json")
+	require.NoError(t, os.WriteFile(tamperedFile, tamperedBytes, 0o600))
+
+	tamperedConfig := filepath.Join(tmpDir, "gcloud-sa-config-tampered")
+	runCLI(t, gcloudSAActivatedCLI(tamperedConfig, "config", "set", "api_endpoint_overrides/iam", baseURL+"/"))
+	runCLI(t, gcloudSAActivatedCLI(tamperedConfig, "config", "set", "auth/token_host", baseURL+"/token"))
+	// gcloud verifies the credential by minting during activation; whether it
+	// fails there or on the first API call, the failure must be the token
+	// endpoint's invalid_grant.
+	activateOut, activateErr := gcloudSAActivatedCLI(tamperedConfig,
+		"auth", "activate-service-account", "--key-file="+tamperedFile).CombinedOutput()
+	if activateErr == nil {
+		listOut, listErr := gcloudSAActivatedCLI(tamperedConfig,
+			"iam", "service-accounts", "list", "--format=json").CombinedOutput()
+		require.Error(t, listErr, "a tampered key must not authenticate: %s", listOut)
+		assert.Contains(t, string(listOut), "invalid_grant")
+	} else {
+		assert.Contains(t, string(activateOut), "invalid_grant")
+	}
+}
+
+// generateUnregisteredKeyPEM returns a PKCS#8 PEM private key that no IAM
+// CreateServiceAccountKey call ever registered — signing material for the
+// tampered-credential rejection path.
+func generateUnregisteredKeyPEM(t *testing.T) string {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	require.NoError(t, err)
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }

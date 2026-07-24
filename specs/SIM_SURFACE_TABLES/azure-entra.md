@@ -1,6 +1,6 @@
 # Sim surface — azure-entra
 
-Surface registered in `simulators/azure/entra.go` and `simulators/azure/auth.go`. Covers Microsoft Entra ID (Azure AD) identity: group and user provisioning via Microsoft Graph, group membership, delegated read (`/me/memberOf`), and token grants including ROPC. The OIDC discovery and token endpoints are registered via `AzureAuthMiddleware` in `auth.go`; Graph routes are registered in `registerEntra`.
+Surface registered in `simulators/azure/entra.go` and `simulators/azure/auth.go`. Covers Microsoft Entra ID (Azure AD) identity: group, user, application, and service-principal provisioning via Microsoft Graph, group membership, client-secret credentials (`addPassword`/`removePassword`), delegated read (`/me/memberOf`), and token grants including ROPC and secret-validated `client_credentials`. The OIDC discovery and token endpoints are registered via `AzureAuthMiddleware` in `auth.go`; Graph routes are registered in `registerEntra`.
 
 ## Status legend
 
@@ -34,25 +34,36 @@ Surface registered in `simulators/azure/entra.go` and `simulators/azure/auth.go`
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `GET /v1.0/me/memberOf` | ✓ `simulators/azure/entra.go:317::handleGraphMemberOf` | ✓ (direct; see coverage matrix) | n/a | n/a | returns groups from both membership store and sim-seed path |
-| `GET /v1.0/me/transitiveMemberOf` | ✓ `simulators/azure/entra.go:318::handleGraphMemberOf` | ✓ (direct; see coverage matrix) | n/a | n/a | |
+| `GET /v1.0/me/memberOf` | ✓ `simulators/azure/entra.go::handleGraphMemberOf` | ✓ (direct; see coverage matrix) | n/a | n/a | user resolved from the bearer token's oid; 401 without a bearer |
+| `GET /v1.0/me/transitiveMemberOf` | ✓ `simulators/azure/entra.go::handleGraphMemberOf` | ✓ (direct; see coverage matrix) | n/a | n/a | |
+
+### Microsoft Graph — applications + service principals
+
+| Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
+|---|---|---|---|---|---|
+| `POST /v1.0/applications` | ✓ `simulators/azure/entra.go::registerEntraApplications` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `GET /v1.0/applications` | ✓ `simulators/azure/entra.go::registerEntraApplications` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `GET /v1.0/applications/{appObjectId}` | ✓ `simulators/azure/entra.go::registerEntraApplications` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `PATCH /v1.0/applications/{appObjectId}` | ✓ `simulators/azure/entra.go::registerEntraApplications` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `DELETE /v1.0/applications/{appObjectId}` | ✓ `simulators/azure/entra.go::registerEntraApplications` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `POST /v1.0/applications/{appObjectId}/addPassword` | ✓ `simulators/azure/entra.go::registerEntraApplications` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | secretText returned exactly once; the v2.0 `client_credentials` grant validates these credentials |
+| `POST /v1.0/applications/{appObjectId}/removePassword` | ✓ `simulators/azure/entra.go::registerEntraApplications` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `POST /v1.0/servicePrincipals` | ✓ `simulators/azure/entra.go::registerEntraServicePrincipals` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `GET /v1.0/servicePrincipals` | ✓ `simulators/azure/entra.go::registerEntraServicePrincipals` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | `$filter=appId eq '…'` supported |
+| `GET /v1.0/servicePrincipals/{spId}` | ✓ `simulators/azure/entra.go::registerEntraServicePrincipals` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `PATCH /v1.0/servicePrincipals/{spId}` | ✓ `simulators/azure/entra.go::registerEntraServicePrincipals` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `DELETE /v1.0/servicePrincipals/{spId}` | ✓ `simulators/azure/entra.go::registerEntraServicePrincipals` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
+| `POST /v1.0/servicePrincipals/{spId}/addPassword` | ✓ `simulators/azure/entra.go::registerEntraServicePrincipals` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | secretText returned exactly once |
+| `POST /v1.0/servicePrincipals/{spId}/removePassword` | ✓ `simulators/azure/entra.go::registerEntraServicePrincipals` | ✓ (direct; see coverage matrix) | ✗ BUG-1345 | n/a | |
 
 ### Token grants (registered via AzureAuthMiddleware in auth.go)
 
 | Grant type | sim handler | sdk-test | tf-test | notes |
 |---|---|---|---|---|
 | `grant_type=authorization_code` (PKCE) | ✓ `simulators/azure/auth.go::handleAzureAuthorizationCodeToken` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | |
-| `grant_type=client_credentials` | ✓ `simulators/azure/auth.go::handleAzureToken` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | |
+| `grant_type=client_credentials` | ✓ `simulators/azure/auth.go::handleAzureToken` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | a client_id registered as a Graph application validates its `client_secret` against the app registration's password credentials (`handleAzureRegisteredAppClientCredentials`) and mints an app-only token for the service principal; unregistered client_ids keep the sim's implicit-client grant |
 | `grant_type=refresh_token` | ✓ `simulators/azure/auth.go::handleAzureRefreshToken` | ✓ (direct; see coverage matrix) | n/a | |
 | `grant_type=password` (ROPC) | ✓ `simulators/azure/auth.go::handleAzureROPC` | ✓ (direct; see coverage matrix) | n/a | looks up user by `userPrincipalName`; 400 for unknown user |
-
-### Sim-internal seed (non-standard; no real Azure equivalent)
-
-| Op (verb + path) | sim handler | notes |
-|---|---|---|
-| `PUT /sim/v1/entra/users/{oid}` | ✓ `simulators/azure/entra.go:121::func` | backward-compat seed path; standard provisioning via Graph is preferred |
-| `GET /sim/v1/entra/users/{oid}` | ✓ `simulators/azure/entra.go:139::func` | |
-| `DELETE /sim/v1/entra/users/{oid}` | ✓ `simulators/azure/entra.go:144::func` | |
 
 ## Coverage status
 
@@ -60,5 +71,5 @@ Surface registered in `simulators/azure/entra.go` and `simulators/azure/auth.go`
 - Terraform (`azuread` provider) is blocked by BUG-1345: `hashicorp/terraform-provider-azuread` has no supported way to redirect Graph API calls to a custom endpoint. Upstream feature request: https://github.com/hashicorp/terraform-provider-azuread/issues/1837.
 
 <!-- HAND-WRITTEN BEGIN -->
-PRs #389 and #393 built the Entra identity surface. PR #389 added the sim-seed path (`/sim/v1/entra/users`) and `GET /v1.0/me/memberOf`. PR #393 replaced the seed path with standard Microsoft Graph provisioning (`POST /v1.0/groups`, `POST /v1.0/users`, `POST /v1.0/groups/{id}/members/$ref` and their GET/DELETE counterparts) and added ROPC (`grant_type=password`). SDK tests: `simulators/azure/sdk-tests/entra_test.go`. CLI tests: `simulators/azure/cli-tests/entra_test.go`.
+The Entra surface is entirely standard Microsoft Graph: user/group/application/service-principal provisioning, membership, credential minting, and `/me` reads resolved from the bearer token's oid claim. There are no sockerless-invented seed routes and no process-global "active user": grants that carry no `login_hint` mint tokens for the directory's fixed built-in identity, and tests bind grants to specific users via `login_hint` (authorization code) or `username` (ROPC). App-registration client secrets minted via `POST /v1.0/applications/{appObjectId}/addPassword` are validated by the v2.0 `client_credentials` grant (SHA-256 stored verifier), which issues app-only tokens for the application's service principal. SDK tests: `simulators/azure/sdk-tests/entra_test.go`. CLI tests: `simulators/azure/cli-tests/entra_test.go`.
 <!-- HAND-WRITTEN END -->

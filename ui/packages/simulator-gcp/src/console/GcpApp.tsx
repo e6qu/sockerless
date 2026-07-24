@@ -13,6 +13,7 @@ const NAV_ITEMS: GcpNavItem[] = [
   { label: "Cloud Run functions", to: "/ui/functions", icon: "function" },
   { label: "Artifact Registry", to: "/ui/ar", icon: "inventory_2" },
   { label: "Cloud Storage", to: "/ui/gcs", icon: "database" },
+  { label: "Service accounts", to: "/ui/serviceaccounts", icon: "manage_accounts" },
   { label: "Logs Explorer", to: "/ui/logging", icon: "monitoring" },
 ];
 

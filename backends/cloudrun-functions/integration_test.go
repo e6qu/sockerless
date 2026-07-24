@@ -10,11 +10,8 @@ package gcf
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -309,12 +306,14 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 			os.Exit(1)
 		}
 
-		// Stage a fake SA JSON pointing at the sim's token endpoint.
-		step("staging fake SA JSON")
+		// Provision the backend's SA credential through the real IAM API
+		// (create account + mint key) so the sim's token endpoint accepts
+		// the JWT-bearer assertions the backend signs with it.
+		step("minting SA JSON via the IAM API")
 		var saErr error
-		saJSONPath, saErr = writeFakeServiceAccountJSON(simURL + "/token")
+		saJSONPath, saErr = mintServiceAccountJSON(simURL, project, "sockerless-runner")
 		if saErr != nil {
-			fmt.Fprintf(os.Stderr, "failed to stage fake SA JSON: %v\n", saErr)
+			fmt.Fprintf(os.Stderr, "failed to mint SA JSON: %v\n", saErr)
 			cleanup()
 			os.Exit(1)
 		}
@@ -964,51 +963,81 @@ func filterBuildEnv(env []string, extra ...string) []string {
 	return append(filtered, extra...)
 }
 
-// writeFakeServiceAccountJSON generates a fresh RSA keypair and writes
-// a valid service-account JSON to a temp file, returning the path.
+// mintServiceAccountJSON provisions the backend's service-account credential
+// the way an operator does against real Google Cloud: it creates the service
+// account through the real IAM API and mints a key with
+// CreateServiceAccountKey, whose decoded privateKeyData IS the credential
+// file. The sim's token endpoint verifies JWT-bearer assertions against the
+// keys that API registered, so only a minted file authenticates — a
+// self-generated keypair is rejected with invalid_grant, exactly as against
+// Google.
 //
-// `idtoken.NewClient` (called by the gcf backend's `invokeFunction`)
-// signs JWTs locally with this key — no network call to GCP is made.
-//
-// `cloudbuild.NewRESTClient` (called by gcpcommon.NewGCPBuildService)
-// uses the SA's `token_uri` to mint OAuth2 access tokens for the
-// authenticated REST client. Tests point `token_uri` at the sim's
-// /token endpoint (registered by `simulators/gcp/oauth2.go`) so the
-// SDK fetches tokens from the sim instead of `oauth2.googleapis.com`.
-//
-// The SA JSON shape is real (parseable by Google's auth library); the
-// JWT and access-token responses are real wire-shape. The sim doesn't
-// validate the JWT — it isn't an emulator gating the API; it just
-// responds with the wire shape the SDK expects so the SDK proceeds to
-// the actual API call.
-func writeFakeServiceAccountJSON(tokenURI string) (string, error) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+// `idtoken.NewClient` (called by the gcf backend's `invokeFunction`) and
+// `cloudbuild.NewRESTClient` (called by gcpcommon.NewGCPBuildService) sign
+// JWT-bearer assertions with the minted key and exchange them at the file's
+// `token_uri`, which is repointed at the sim's /token endpoint — the
+// coordinate, the only edit a sim-pointed client makes.
+func mintServiceAccountJSON(simURL, project, accountID string) (string, error) {
+	bearer, err := mintProvisioningAccessToken(simURL)
 	if err != nil {
-		return "", fmt.Errorf("generate RSA keypair: %w", err)
+		return "", err
 	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		return "", fmt.Errorf("marshal private key PKCS8: %w", err)
+	post := func(path string, payload any) (map[string]any, error) {
+		reqBody, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequest(http.MethodPost, simURL+path, bytes.NewReader(reqBody))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("POST %s returned %d: %s", path, resp.StatusCode, data)
+		}
+		var out map[string]any
+		if err := json.Unmarshal(data, &out); err != nil {
+			return nil, fmt.Errorf("decode POST %s response: %w", path, err)
+		}
+		return out, nil
 	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
 
-	sa := map[string]string{
-		"type":                        "service_account",
-		"project_id":                  "sockerless-test",
-		"private_key_id":              "sim-key",
-		"private_key":                 string(keyPEM),
-		"client_email":                "sockerless-runner@sockerless-test.iam.gserviceaccount.com",
-		"client_id":                   "111111111111111111111",
-		"auth_uri":                    "https://accounts.google.com/o/oauth2/auth",
-		"token_uri":                   tokenURI,
-		"auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-		"client_x509_cert_url":        "https://www.googleapis.com/robot/v1/metadata/x509/sockerless-runner@sockerless-test.iam.gserviceaccount.com",
-		"universe_domain":             "googleapis.com",
+	if _, err := post("/v1/projects/"+project+"/serviceAccounts", map[string]any{"accountId": accountID}); err != nil {
+		return "", fmt.Errorf("create service account: %w", err)
 	}
-	body, err := json.Marshal(sa)
+	email := accountID + "@" + project + ".iam.gserviceaccount.com"
+	key, err := post("/v1/projects/"+project+"/serviceAccounts/"+email+"/keys", map[string]any{})
+	if err != nil {
+		return "", fmt.Errorf("create service account key: %w", err)
+	}
+	privateKeyData, _ := key["privateKeyData"].(string)
+	if privateKeyData == "" {
+		return "", fmt.Errorf("CreateServiceAccountKey returned no privateKeyData")
+	}
+	raw, err := base64.StdEncoding.DecodeString(privateKeyData)
+	if err != nil {
+		return "", fmt.Errorf("decode privateKeyData: %w", err)
+	}
+	var keyFile map[string]any
+	if err := json.Unmarshal(raw, &keyFile); err != nil {
+		return "", fmt.Errorf("decode credential file: %w", err)
+	}
+	keyFile["token_uri"] = simURL + "/token"
+	body, err := json.Marshal(keyFile)
 	if err != nil {
 		return "", fmt.Errorf("marshal SA JSON: %w", err)
 	}
+
 	f, err := os.CreateTemp("", "sockerless-sim-sa-*.json")
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
@@ -1021,6 +1050,32 @@ func writeFakeServiceAccountJSON(tokenURI string) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// mintProvisioningAccessToken fetches an access token from the sim's OAuth2
+// token endpoint — the bearer the provisioning calls above present, the same
+// way a real operator's tooling authenticates to the IAM API.
+func mintProvisioningAccessToken(simURL string) (string, error) {
+	resp, err := http.PostForm(simURL+"/token", map[string][]string{
+		"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
+	})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+	}
+	var body struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	if body.AccessToken == "" {
+		return "", fmt.Errorf("token endpoint returned an empty access token")
+	}
+	return body.AccessToken, nil
 }
 
 func dockerImageExists(ref string) bool {

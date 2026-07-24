@@ -5,6 +5,7 @@ const SERVICES = [
   { path: "/ui/functions", nav: "Cloud Run functions", title: "Cloud Run functions", columns: ["Name", "State", "Environment"] },
   { path: "/ui/ar", nav: "Artifact Registry", title: "Artifact Registry", columns: ["Name", "Format", "Created"] },
   { path: "/ui/gcs", nav: "Cloud Storage", title: "Cloud Storage", columns: ["Name"] },
+  { path: "/ui/serviceaccounts", nav: "Service accounts", title: "Service accounts", columns: ["Email", "Status", "Name", "Description", "Actions"] },
   { path: "/ui/logging", nav: "Logs Explorer", title: "Logs Explorer", columns: ["Timestamp", "Severity", "Log name"] },
 ];
 

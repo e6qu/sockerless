@@ -9,6 +9,8 @@ import { LambdaFunctionsPage } from "./pages/LambdaFunctionsPage.js";
 import { ECRReposPage } from "./pages/ECRReposPage.js";
 import { S3BucketsPage } from "./pages/S3BucketsPage.js";
 import { LogGroupsPage } from "./pages/LogGroupsPage.js";
+import { IAMUsersPage } from "./pages/IAMUsersPage.js";
+import { IAMUserSecurityCredentialsPage } from "./pages/IAMUserSecurityCredentialsPage.js";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -25,6 +27,8 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/ecr" element={<ECRReposPage />} />
         <Route path="/ui/s3" element={<S3BucketsPage />} />
         <Route path="/ui/logs" element={<LogGroupsPage />} />
+        <Route path="/ui/iam" element={<IAMUsersPage />} />
+        <Route path="/ui/iam/users/:userName" element={<IAMUserSecurityCredentialsPage />} />
       </AwsApp>
     </QueryClientProvider>
   </StrictMode>,

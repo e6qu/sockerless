@@ -4,6 +4,80 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-24 — Consoles mint real CLI credentials for Shauth-authenticated users
+
+Phase 1 of the Console Self-Service roadmap: each simulator console gained its
+cloud's real credential pages, driven by the operator's federated credentials
+calling the cloud's real APIs — never a console-only endpoint.
+
+- **AWS**: an IAM Users page and a per-user Security-credentials page (AWS
+  Identity and Access Management `CreateUser`/`CreateAccessKey`/`ListAccessKeys`
+  /`DeleteAccessKey`/`UpdateAccessKey` over the AWS Query protocol, SigV4-signed
+  browser-side with the federated temporary credentials). "Create access key"
+  reproduced the real console's one-time disclosure — the secret is viewable
+  exactly once, masked behind Show/Hide, with the exact `aws configure` values
+  and an endpoint-scoped `aws sts get-caller-identity` verification command. A
+  CLI test proved the loop: a key minted via `aws iam create-access-key`
+  authenticated `aws sts get-caller-identity` (returning the minted user's ARN)
+  and a wrong secret failed with `SignatureDoesNotMatch`. The header/Overview
+  Region badges now render the same Region every SigV4 signature scopes to.
+- **Google Cloud**: Service Accounts list/create/delete and a Keys tab
+  (`serviceAccounts`/`keys` IAM APIs over the federated bearer) with the real
+  console's one-time JSON key download (`privateKeyData` decoded to
+  `<project>-<keyid>.json`, unrecoverable afterwards) and a gcloud usage panel
+  proven verbatim by a CLI test (`gcloud auth activate-service-account` with a
+  minted key authenticates; a tampered key fails with `invalid_grant`). Fixing
+  the end-to-end loop surfaced that the simulator's token endpoint **never
+  verified assertion signatures** and discarded every minted key's public half:
+  keys.create now registers the public key, deletion revokes it, and the OAuth
+  2.0 token endpoint verifies the RS256 signature, expiry, and account state
+  exactly as Google does — the backend harnesses' self-keypair helpers were
+  deleted and moved to the real mint flow.
+- **Microsoft Azure**: App registrations and Certificates & secrets blades
+  (Microsoft Graph `applications`/`servicePrincipals` routes with a
+  Graph-scoped federated token). The real portal mints secrets on the
+  application object, so the simulator gained faithful Graph
+  `applications/{id}/addPassword`/`removePassword` (secretText returned exactly
+  once, SHA-256 verifier stored). Tracing validation found the v2.0 token
+  endpoint **checked no client secret at all**; `client_credentials` for
+  directory-registered applications now validates the secret and returns real
+  AADSTS error shapes, proven by SDK and az-CLI tests (mint → ARM read; wrong
+  and revoked secrets rejected). The sockerless-invented `/sim/v1/entra/users`
+  routes and the `entraActiveOID` global were deleted; consumers migrated to
+  Graph `POST /v1.0/users` provisioning and `login_hint` binding.
+
+The Shauth relying-party browser matrix gained minting flows for the AWS and
+Google Cloud consoles: the signed-in operator drives the real UI to mint a
+credential over the federated session, and the one-time disclosure semantics
+are asserted (secret gone after dismissal). Getting those flows green surfaced
+two environment defects the suite had been silently missing: the harness's
+console federation role lacked `iam:*` (the simulator's IAM enforcement
+correctly denied the minting pages, exactly as real AWS denies an operator
+role never authorized for the IAM console), and full-page navigations in the
+new flows aborted the prior page's in-flight reads (the flows now navigate
+through the console's own navigation, as an operator does). The Azure portal
+got no browser-driven minting flow: its browser-side Workload Identity
+Federation exchange is same-origin-only (real Microsoft Entra serves no CORS
+for `client_credentials`), and the relying-party environment cannot provision
+the portal's managed identity before console start — filed as BUG-2640 with
+the deployment-phase fix shape (server-side federation broker + faithful CORS
++ separate console/cloud processes); Entra minting itself is proven end to end
+by the Azure SDK and az CLI suites. BUG-2637 (inert default table actions),
+BUG-2638 (`serviceAccounts.create` overwrite instead of 409), and BUG-2639
+(implicit grant for unregistered client ids) were filed with fix shapes.
+
+The `sim (aws sdk)` job — chronically within two minutes of the enforced
+15-minute ceiling — hit it on runner variance and was split into four shards
+(`compute` = `^Test[E]`, `data` = `^Test[D]`, `services-a-m` = `^Test[A-CF-M]`,
+`services-n-z` = `^Test[N-Z]`),
+mirroring the AWS CLI shards: shard regexes use the character-class form so
+each suite's coverage gate reads only its own shard set,
+`scripts/check-sdk-shard-coverage.sh` (pre-commit) asserts all 1152 SDK tests
+match exactly one shard, the DynamoDB Local oracle pull rides the data shard
+and the module unit tests the services-n-z shard, and
+`.github/required-status-checks.txt` carries the four new contexts (branch
+protection must swap `sim (aws sdk)` for them when this merges).
+
 ## 2026-07-24 — Closed the skip-if-absent gate hole and swept the last tool-absent skips
 
 `scripts/check-no-tool-absent-skips.sh` only rejected `t.Skip`/`t.Skipf` lines, so

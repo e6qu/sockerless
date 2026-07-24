@@ -6,6 +6,11 @@ const SERVICES = [
   { path: "/ui/acr", menu: "Container registries", columns: ["Name", "Login server"] },
   { path: "/ui/storage", menu: "Storage accounts", columns: ["Name", "Kind"] },
   { path: "/ui/monitor", menu: "Logs", columns: ["Time generated", "Source", "Message"] },
+  {
+    path: "/ui/entra/app-registrations",
+    menu: "App registrations",
+    columns: ["Display name", "Application (client) ID", "Object ID"],
+  },
 ];
 
 test.describe("Azure portal shell", () => {
@@ -101,7 +106,7 @@ test.describe("Service menu", () => {
   test("groups services and collapses a group without losing the others", async ({ page }) => {
     await page.goto("/ui/");
     const menu = page.getByRole("navigation", { name: "Service" });
-    for (const group of ["Compute", "Storage and registry", "Monitoring"]) {
+    for (const group of ["Compute", "Storage and registry", "Monitoring", "Microsoft Entra ID"]) {
       await expect(menu.getByRole("button", { name: group })).toBeVisible();
     }
     await expect(menu.getByRole("link", { name: "Container Apps" })).toBeVisible();
@@ -144,6 +149,27 @@ for (const service of SERVICES) {
     });
   });
 }
+
+test.describe("Microsoft Entra ID: App registrations", () => {
+  test("offers New registration and the credential blade structure", async ({ page }) => {
+    await page.goto("/ui/entra/app-registrations");
+    await expect(page.getByRole("button", { name: "New registration" })).toBeVisible();
+    await page.getByRole("button", { name: "New registration" }).click();
+    await expect(page.getByTestId("entra-app-name-input")).toBeVisible();
+    // The submit stays disabled until the application has a name.
+    await expect(page.getByTestId("entra-register-submit")).toBeDisabled();
+  });
+
+  test("surfaces a loud error for an app registration Microsoft Graph does not know", async ({ page }) => {
+    await page.goto("/ui/entra/app-registrations/00000000-dead-beef-0000-000000000000");
+    // The blade's breadcrumb keeps the way back to the listing.
+    const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+    await expect(crumbs).toContainText("App registrations");
+    await expect(crumbs).toContainText("Certificates & secrets");
+    await expect(page.getByTestId("entra-app-error")).toBeVisible();
+    await expect(page.getByTestId("entra-app-error")).toContainText("HTTP 404");
+  });
+});
 
 test.describe("Navigation", () => {
   test("reaches every service from the menu and updates the breadcrumb", async ({ page }) => {

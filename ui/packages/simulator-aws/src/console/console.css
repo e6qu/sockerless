@@ -262,6 +262,113 @@ body:has(.aws) { background: var(--aws-layout-bg); }
   background: color-mix(in srgb, var(--aws-status-error) 10%, transparent);
   color: var(--aws-status-error);
 }
+.aws-flash-warning {
+  background: color-mix(in srgb, var(--aws-status-warning) 12%, transparent);
+  color: var(--aws-fg);
+  border-left: 4px solid var(--aws-status-warning);
+}
+
+/* Modal ------------------------------------------------------------------ */
+.aws-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 20, 26, 0.6);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 16px;
+  overflow-y: auto;
+  z-index: 100;
+}
+.aws-modal {
+  background: var(--aws-surface);
+  color: var(--aws-fg);
+  border-radius: 16px;
+  border: 1px solid var(--aws-border-subtle);
+  width: min(640px, 100%);
+  box-shadow: 0 4px 20px rgba(0, 7, 22, 0.35);
+}
+.aws-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--aws-border-subtle);
+}
+.aws-modal-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
+.aws-modal-close {
+  border: 0;
+  background: none;
+  color: var(--aws-fg-secondary);
+  cursor: pointer;
+  padding: 4px;
+  display: inline-flex;
+}
+.aws-modal-close:hover { color: var(--aws-fg); }
+.aws-modal-content { padding: 16px 20px; font-size: 14px; }
+.aws-modal-content > * + * { margin-top: 12px; }
+.aws-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--aws-border-subtle);
+}
+
+/* Credential display ----------------------------------------------------- */
+.aws-key-value { display: grid; gap: 4px; }
+.aws-key-value dt { font-size: 12px; font-weight: 700; color: var(--aws-fg-secondary); }
+.aws-key-value dd {
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.aws-key-value code, .aws-code code { font-family: Monaco, Menlo, Consolas, monospace; font-size: 13px; }
+.aws-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  color: var(--aws-link);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.aws-copy:hover { text-decoration: underline; }
+.aws-reveal {
+  border: 0;
+  background: none;
+  color: var(--aws-link);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.aws-reveal:hover { text-decoration: underline; }
+.aws-code {
+  background: var(--aws-surface-alt);
+  border: 1px solid var(--aws-border-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+}
+.aws-code pre { margin: 0; white-space: pre; }
+.aws-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.aws-code-header .aws-code-title { font-size: 12px; font-weight: 700; color: var(--aws-fg-secondary); }
+
+/* Detail-page summary ---------------------------------------------------- */
+.aws-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; padding: 16px; }
+.aws-summary dt { font-size: 12px; font-weight: 700; color: var(--aws-fg-secondary); }
+.aws-summary dd { margin: 4px 0 0; font-size: 14px; overflow-wrap: anywhere; }
 
 /* Overview --------------------------------------------------------------- */
 .aws-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }

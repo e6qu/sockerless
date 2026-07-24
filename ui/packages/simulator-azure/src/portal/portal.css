@@ -262,6 +262,63 @@ body:has(.azure) { background: var(--az-layout-bg); }
 .az-empty strong { display: block; color: var(--az-fg); font-size: 14px; margin-bottom: 4px; }
 .az-message { padding: 12px; font-size: 13px; }
 .az-message-error { color: var(--az-status-error); }
+.az-message-warning {
+  color: var(--az-fg);
+  background: var(--az-surface);
+  border: 1px solid var(--az-status-warning);
+  border-left-width: 4px;
+  border-radius: var(--az-radius);
+  margin: 8px 0;
+}
+
+/* Blades (App registrations: Certificates & secrets, CLI usage) ----------- */
+.az-blade-section { margin-top: 20px; }
+.az-blade-section h2 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+.az-blade-hint { font-size: 13px; color: var(--az-fg-secondary); margin: 0 0 10px; max-width: 72ch; }
+.az-code {
+  background: var(--az-surface);
+  border: 1px solid var(--az-border-subtle);
+  border-radius: var(--az-radius);
+  padding: 12px;
+  font-size: 12px;
+  overflow-x: auto;
+  color: var(--az-fg);
+}
+.az-secret-value { display: inline-flex; align-items: center; gap: 6px; }
+.az-secret-value code { overflow-wrap: anywhere; }
+.az-copy { color: var(--az-link); }
+
+/* Inline forms (New registration, Add a client secret) -------------------- */
+.az-form {
+  background: var(--az-surface);
+  border: 1px solid var(--az-border-subtle);
+  border-radius: var(--az-radius);
+  padding: 14px 16px;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 480px;
+}
+.az-form h2, .az-form h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.az-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--az-fg); }
+.az-form-actions { display: flex; gap: 8px; }
+.az-button,
+.az-button-primary {
+  border-radius: 2px;
+  padding: 5px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--az-border-subtle);
+  background: var(--az-surface);
+  color: var(--az-fg);
+}
+.az-button-primary {
+  background: var(--az-accent);
+  border-color: var(--az-accent);
+  color: #ffffff;
+}
+.az-button-primary:disabled { opacity: 0.5; cursor: default; }
 
 .az-status { display: inline-flex; align-items: center; gap: 6px; }
 .az-status-success { color: var(--az-status-success); }

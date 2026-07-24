@@ -1,4 +1,4 @@
-import { authorizedJSON, authorizedJSONPost } from "./console/federation.js";
+import { authorizedJSON, authorizedJSONDelete, authorizedJSONPost } from "./console/federation.js";
 
 // The console reads one project and region at a time, the way the real console
 // shows the selected project and region. These are the console's coordinates; a
@@ -136,6 +136,62 @@ export const fetchGCSBuckets = async (): Promise<GCSBucket[]> =>
 
 export const fetchGCSBucket = (name: string): Promise<GCSBucket> =>
   authorizedJSON<GCSBucket>(`/storage/v1/b/${name}`);
+
+// The real IAM ServiceAccount resource (iam.googleapis.com v1), as the API
+// returns it.
+export interface ServiceAccount {
+  name: string;
+  projectId?: string;
+  uniqueId?: string;
+  email: string;
+  displayName?: string;
+  description?: string;
+  disabled?: boolean;
+}
+
+// The real IAM ServiceAccountKey resource. privateKeyData — the base64-encoded
+// credential file — is returned by the API on create only, never on get/list.
+export interface ServiceAccountKey {
+  name: string;
+  keyAlgorithm?: string;
+  validAfterTime?: string;
+  validBeforeTime?: string;
+  keyType?: string;
+  privateKeyData?: string;
+  privateKeyType?: string;
+}
+
+const serviceAccountsParent = `/v1/projects/${CONSOLE_PROJECT}/serviceAccounts`;
+
+export const fetchServiceAccounts = async (): Promise<ServiceAccount[]> =>
+  (await authorizedJSON<{ accounts?: ServiceAccount[] }>(serviceAccountsParent)).accounts ?? [];
+
+export const fetchServiceAccount = (email: string): Promise<ServiceAccount> =>
+  authorizedJSON<ServiceAccount>(`${serviceAccountsParent}/${email}`);
+
+// serviceAccounts.create — the wire body is { accountId, serviceAccount }.
+export const createServiceAccount = (
+  accountId: string,
+  displayName: string,
+  description: string,
+): Promise<ServiceAccount> =>
+  authorizedJSONPost<ServiceAccount>(serviceAccountsParent, {
+    accountId,
+    serviceAccount: { displayName, description },
+  });
+
+export const deleteServiceAccount = (email: string): Promise<unknown> =>
+  authorizedJSONDelete(`${serviceAccountsParent}/${email}`);
+
+export const fetchServiceAccountKeys = async (email: string): Promise<ServiceAccountKey[]> =>
+  (await authorizedJSON<{ keys?: ServiceAccountKey[] }>(`${serviceAccountsParent}/${email}/keys`)).keys ?? [];
+
+// serviceAccounts.keys.create — the one response that carries privateKeyData.
+export const createServiceAccountKey = (email: string): Promise<ServiceAccountKey> =>
+  authorizedJSONPost<ServiceAccountKey>(`${serviceAccountsParent}/${email}/keys`, {});
+
+export const deleteServiceAccountKey = (email: string, keyId: string): Promise<unknown> =>
+  authorizedJSONDelete(`${serviceAccountsParent}/${email}/keys/${keyId}`);
 
 // Cloud Logging lists entries by POST, filtered to the project's logs.
 export const fetchLogEntries = async (): Promise<LogEntry[]> =>

@@ -275,7 +275,7 @@ func TestAzureAuthorize_LoginHintBindsUser(t *testing.T) {
 		}
 	})
 
-	t.Run("without login_hint the active user applies", func(t *testing.T) {
+	t.Run("without login_hint the default directory identity applies", func(t *testing.T) {
 		code := oidcAuthorizeCode(t, srv, tenant, url.Values{
 			"client_id":     {"hint-client"},
 			"redirect_uri":  {"http://localhost:9400/cb"},
@@ -292,8 +292,8 @@ func TestAzureAuthorize_LoginHintBindsUser(t *testing.T) {
 			t.Fatalf("token status = %d, want 200: %v", status, body)
 		}
 		idClaims := oidcJWTClaims(t, body["id_token"].(string))
-		if want := getEntraSimActiveUser().OID; idClaims["oid"] != want {
-			t.Errorf("id_token oid = %v, want active user %s", idClaims["oid"], want)
+		if want := entraDefaultUser.OID; idClaims["oid"] != want {
+			t.Errorf("id_token oid = %v, want default identity %s", idClaims["oid"], want)
 		}
 	})
 

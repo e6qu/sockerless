@@ -79,9 +79,32 @@ type GCPServiceAccountKey struct {
 	PrivateKeyType  string `json:"privateKeyType,omitempty"` // only on Create response
 }
 
+// GCPServiceAccountKeyMaterial holds the public half of a user-managed
+// service-account key, keyed by the key's full resource name. It never appears
+// on the wire: it exists so the OAuth2 token endpoint can verify a JWT-bearer
+// assertion against the service account's registered public keys, the way real
+// Google verifies an assertion before minting a token for it.
+type GCPServiceAccountKeyMaterial struct {
+	Name         string `json:"name"`
+	PublicKeyPEM string `json:"publicKeyPem"`
+}
+
+// iamServiceAccounts and iamSAKeyPublics expose the service-account and
+// key-material stores to the OAuth2 token endpoint (registered separately in
+// oauth2.go), which resolves a JWT-bearer assertion's issuer to a registered
+// account and verifies the assertion signature against that account's keys.
+// Both are assigned once in registerIAM.
+var (
+	iamServiceAccounts sim.Store[GCPServiceAccount]
+	iamSAKeyPublics    sim.Store[GCPServiceAccountKeyMaterial]
+)
+
 func registerIAM(srv *sim.Server) {
 	serviceAccounts := sim.MakeStore[GCPServiceAccount](srv.DB(), "iam_service_accounts")
 	saKeys := sim.MakeStore[GCPServiceAccountKey](srv.DB(), "iam_sa_keys")
+	saKeyPublics := sim.MakeStore[GCPServiceAccountKeyMaterial](srv.DB(), "iam_sa_key_publics")
+	iamServiceAccounts = serviceAccounts
+	iamSAKeyPublics = saKeyPublics
 	projectPolicies := sim.MakeStore[IAMPolicy](srv.DB(), "iam_project_policies")
 	gcpResourcePolicies = sim.MakeStore[IAMPolicy](srv.DB(), "iam_resource_policies")
 	resourcePolicies := gcpResourcePolicies
@@ -222,13 +245,23 @@ func registerIAM(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, sa)
 	})
 
-	// Delete service account
+	// Delete service account. A service account's keys cannot outlive it —
+	// real GCP invalidates them with the account — so its key rows and the
+	// registered public halves go with it, and a later account created under
+	// the same email starts with no keys.
 	srv.HandleFunc("DELETE /v1/projects/{project}/serviceAccounts/{email}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		email := sim.PathParam(r, "email")
 		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
 
 		serviceAccounts.Delete(name)
+		keyPrefix := name + "/keys/"
+		for _, key := range saKeys.Filter(func(k GCPServiceAccountKey) bool {
+			return strings.HasPrefix(k.Name, keyPrefix)
+		}) {
+			saKeys.Delete(key.Name)
+			saKeyPublics.Delete(key.Name)
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
 
@@ -260,12 +293,15 @@ func registerIAM(srv *sim.Server) {
 		// Generate the key material before persisting metadata: if generation
 		// fails, the store must not retain a key that never had private-key
 		// material (a subsequent Get would return a phantom key).
-		privateKeyData, err := gcpMakeSAKeyJSON(project, keyID, email, sa.UniqueId, key.ValidAfterTime, key.ValidBeforeTime)
+		privateKeyData, publicKeyPEM, err := gcpMakeSAKeyJSON(project, keyID, email, sa.UniqueId)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "generate key: %v", err)
 			return
 		}
 		saKeys.Put(keyName, key)
+		// Register the public half so the OAuth2 token endpoint can verify
+		// JWT-bearer assertions signed with this key, as real Google does.
+		saKeyPublics.Put(keyName, GCPServiceAccountKeyMaterial{Name: keyName, PublicKeyPEM: publicKeyPEM})
 
 		resp := key
 		resp.PrivateKeyData = privateKeyData
@@ -320,6 +356,9 @@ func registerIAM(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "key %s not found", keyID)
 			return
 		}
+		// A deleted key is revoked: the token endpoint stops accepting
+		// assertions signed with it, exactly as real Google does.
+		saKeyPublics.Delete(keyName)
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
 
@@ -332,9 +371,11 @@ func registerIAM(srv *sim.Server) {
 	// scoped tokens against the workload-identity-federated SA. The
 	// Access driver's `id-token` category calls generateIdToken for
 	// cross-Service impersonation flows where the runner SA mints an
-	// ID token for a different audience SA. The simulator returns
-	// real-shape responses without validating the signature on the
-	// resulting tokens — sim audience handlers don't validate either.
+	// ID token for a different audience SA. The minted tokens are signed
+	// with the simulator's access-token key and verified by the data-plane
+	// bearer middleware; the impersonation authorization itself (real GCP's
+	// iam.serviceAccounts.getAccessToken permission check) is not modeled —
+	// the caller is already an authenticated bearer.
 	srv.HandleFunc("POST /v1/projects/{project}/serviceAccounts/{emailAction}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		emailAction := sim.PathParam(r, "emailAction")
@@ -2077,19 +2118,26 @@ func gcpNumericID(digits int) string {
 	return string(out)
 }
 
-// gcpMakeSAKeyJSON generates a real RSA-2048 key pair and returns it encoded
-// as a base64 GCP service-account JSON credential file — matching the exact
-// shape real GCP returns for CreateServiceAccountKey.
-func gcpMakeSAKeyJSON(project, keyID, email, clientID, validAfter, validBefore string) (string, error) {
+// gcpMakeSAKeyJSON generates a real RSA-2048 key pair and returns the private
+// half encoded as a base64 GCP service-account JSON credential file — matching
+// the exact shape real GCP returns for CreateServiceAccountKey — together with
+// the public half as a PEM-encoded PKIX public key, which the caller registers
+// so the OAuth2 token endpoint can verify assertions signed with this key.
+func gcpMakeSAKeyJSON(project, keyID, email, clientID string) (privateKeyData, publicKeyPEM string, err error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return "", fmt.Errorf("generate RSA key: %w", err)
+		return "", "", fmt.Errorf("generate RSA key: %w", err)
 	}
 	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
-		return "", fmt.Errorf("marshal private key: %w", err)
+		return "", "", fmt.Errorf("marshal private key: %w", err)
 	}
 	privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
+	pubDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		return "", "", fmt.Errorf("marshal public key: %w", err)
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
 
 	payload := map[string]string{
 		"type":                        "service_account",
@@ -2106,9 +2154,9 @@ func gcpMakeSAKeyJSON(project, keyID, email, clientID, validAfter, validBefore s
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal JSON key: %w", err)
+		return "", "", fmt.Errorf("marshal JSON key: %w", err)
 	}
-	return base64.StdEncoding.EncodeToString(data), nil
+	return base64.StdEncoding.EncodeToString(data), string(pubPEM), nil
 }
 
 // iamLROs holds the long-running operations the IAM admin surface returns for

@@ -210,7 +210,9 @@ func AzurePathNormalizationMiddleware(next http.Handler) http.Handler {
 	//       case-insensitive on these so any client casing reaches
 	//       the same handler.
 	replacements := map[string]string{
-		"/resourcegroups/":           "/resourceGroups/",
+		// No trailing slash: the segment also ends the path in the SDK's
+		// list-resource-groups URL (GET /subscriptions/{id}/resourcegroups).
+		"/resourcegroups":            "/resourceGroups",
 		"/microsoft.cache/redis":     "/Microsoft.Cache/Redis",
 		"/microsoft.cache":           "/Microsoft.Cache",
 		"/microsoft.servicebus":      "/Microsoft.ServiceBus",

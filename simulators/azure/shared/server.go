@@ -280,6 +280,7 @@ func (s *Server) RegisterUI(fsys fs.FS) {
 			"logoutEndpoint":     logoutEndpoint,
 			"cloudApiEndpoint":   os.Getenv("SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT"),
 			"logsApiEndpoint":    os.Getenv("SOCKERLESS_CONSOLE_LOGS_API_ENDPOINT"),
+			"graphApiEndpoint":   os.Getenv("SOCKERLESS_CONSOLE_GRAPH_API_ENDPOINT"),
 			"federationEndpoint": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT"),
 			"federationTenant":   os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_TENANT"),
 			"federationClientId": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_CLIENT_ID"),

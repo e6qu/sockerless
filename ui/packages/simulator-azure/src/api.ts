@@ -1,4 +1,4 @@
-import { authorizedJSON, authorizedJSONPost } from "./portal/federation.js";
+import { authorizedFetch, authorizedJSON, authorizedJSONPost } from "./portal/federation.js";
 
 // The portal reads the real Azure Resource Manager and Azure Monitor APIs over
 // federated, Microsoft Entra-issued credentials, rendering the true resource
@@ -29,7 +29,7 @@ const API_VERSION = {
 
 // Azure resources live under subscriptions; the portal enumerates them the way
 // the real portal does before listing a provider's resources across them.
-async function subscriptionIds(): Promise<string[]> {
+export async function subscriptionIds(): Promise<string[]> {
   const list = await authorizedJSON<ArmList<{ subscriptionId?: string }>>(
     `/subscriptions?api-version=${API_VERSION.subscriptions}`,
   );
@@ -169,4 +169,137 @@ export const fetchMonitorLogs = async (): Promise<MonitorLogRow[]> => {
     if (rows.length >= 100) break;
   }
   return rows.slice(0, 100);
+};
+
+// --- Microsoft Entra ID: App registrations (Microsoft Graph) ---
+//
+// The App registrations blade reads and writes the real Microsoft Graph
+// application + service-principal surface (graph.microsoft.com's /v1.0 paths at
+// the configured Graph coordinate) with a Graph-scoped federated token — the
+// same requests the real Azure portal issues.
+
+export interface ClientSecretMetadata {
+  keyId: string;
+  displayName: string;
+  hint: string;
+  startDateTime: string;
+  endDateTime: string;
+}
+
+// MintedClientSecret is the addPassword response: the only place Microsoft
+// Graph ever returns the secretText.
+export interface MintedClientSecret extends ClientSecretMetadata {
+  secretText: string;
+}
+
+export interface AppRegistration {
+  id: string;
+  appId: string;
+  displayName: string;
+  signInAudience: string;
+  passwordCredentials: ClientSecretMetadata[];
+}
+
+interface GraphApplication {
+  id?: string;
+  appId?: string;
+  displayName?: string;
+  signInAudience?: string;
+  passwordCredentials?: Partial<ClientSecretMetadata>[];
+}
+
+function appRegistrationOf(app: GraphApplication): AppRegistration {
+  return {
+    id: app.id ?? "",
+    appId: app.appId ?? "",
+    displayName: app.displayName ?? "",
+    signInAudience: app.signInAudience ?? "",
+    passwordCredentials: (app.passwordCredentials ?? []).map((credential) => ({
+      keyId: credential.keyId ?? "",
+      displayName: credential.displayName ?? "",
+      hint: credential.hint ?? "",
+      startDateTime: credential.startDateTime ?? "",
+      endDateTime: credential.endDateTime ?? "",
+    })),
+  };
+}
+
+// graphSend writes to a Microsoft Graph path and surfaces Graph's own error
+// message rather than masking it.
+async function graphSend(path: string, init: RequestInit): Promise<Response> {
+  const response = await authorizedFetch(path, "graph", init);
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body = (await response.json()) as { error?: { message?: string } };
+      detail = body.error?.message ?? "";
+    } catch {
+      // A non-JSON error body keeps the HTTP status as the message.
+    }
+    throw new Error(`${path} returned HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+  }
+  return response;
+}
+
+export const fetchAppRegistrations = async (): Promise<AppRegistration[]> => {
+  const list = await authorizedJSON<{ value?: GraphApplication[] }>("/v1.0/applications", "graph");
+  return (list.value ?? []).map(appRegistrationOf);
+};
+
+export const fetchAppRegistration = async (objectId: string): Promise<AppRegistration> =>
+  appRegistrationOf(await authorizedJSON<GraphApplication>(`/v1.0/applications/${objectId}`, "graph"));
+
+// createAppRegistration provisions what the real portal's "New registration"
+// provisions: the application object plus the service principal that
+// materializes it in the tenant — the principal the client_credentials grant
+// issues app-only tokens for.
+export const createAppRegistration = async (displayName: string): Promise<AppRegistration> => {
+  const created = await graphSend("/v1.0/applications", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ displayName, signInAudience: "AzureADMyOrg" }),
+  });
+  const app = appRegistrationOf((await created.json()) as GraphApplication);
+  await graphSend("/v1.0/servicePrincipals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ appId: app.appId }),
+  });
+  return app;
+};
+
+export const deleteAppRegistration = async (objectId: string): Promise<void> => {
+  await graphSend(`/v1.0/applications/${objectId}`, { method: "DELETE" });
+};
+
+// addClientSecret mints a client secret on the application object — Microsoft
+// Graph's addPassword, the call behind the Certificates & secrets blade. The
+// response is the one time Graph returns the secretText.
+export const addClientSecret = async (
+  objectId: string,
+  displayName: string,
+  endDateTime: string,
+): Promise<MintedClientSecret> => {
+  const response = await graphSend(`/v1.0/applications/${objectId}/addPassword`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ passwordCredential: { displayName, endDateTime } }),
+  });
+  const credential = (await response.json()) as Partial<MintedClientSecret>;
+  return {
+    keyId: credential.keyId ?? "",
+    displayName: credential.displayName ?? "",
+    hint: credential.hint ?? "",
+    startDateTime: credential.startDateTime ?? "",
+    endDateTime: credential.endDateTime ?? "",
+    secretText: credential.secretText ?? "",
+  };
+};
+
+export const removeClientSecret = async (objectId: string, keyId: string): Promise<void> => {
+  await graphSend(`/v1.0/applications/${objectId}/removePassword`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keyId }),
+  });
 };

@@ -13,7 +13,10 @@ import { signedFetch, type AwsCredentials } from "./sigv4.js";
 // with no identity provider — a local or test instance — reads unsigned, the
 // mode the account control reports.
 
-const REGION = "us-east-1";
+// The single Region this console operates in: every SigV4 signature scopes to
+// it, and the header/Overview badges display it, so the UI can never show a
+// Region other than the one requests are actually signed for.
+export const REGION = "us-east-1";
 
 interface ConsoleConfig {
   identityEndpoint?: string;
@@ -129,6 +132,33 @@ export async function awsJson<T>(service: string, target: string, input: Record<
     throw new Error(`${target} returned HTTP ${response.status}`);
   }
   return (await response.json()) as T;
+}
+
+// awsQuery calls an AWS Query protocol operation — the protocol AWS Identity
+// and Access Management (IAM) and the Security Token Service speak: a
+// form-encoded POST of Action and Version, answered in XML. A failure carries
+// the protocol's ErrorResponse Code and Message, so the operator reads the real
+// service error rather than a bare status code.
+export async function awsQuery(
+  service: string,
+  version: string,
+  action: string,
+  params: Record<string, string> = {},
+): Promise<Document> {
+  const response = await awsFetch({
+    service,
+    method: "POST",
+    path: "/",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ Action: action, Version: version, ...params }).toString(),
+  });
+  const xml = new DOMParser().parseFromString(await response.text(), "text/xml");
+  if (!response.ok) {
+    const code = xmlText(xml, "Code");
+    const message = xmlText(xml, "Message");
+    throw new Error(code ? `${action}: ${code}: ${message}` : `${action} returned HTTP ${response.status}`);
+  }
+  return xml;
 }
 
 // awsRestJson calls an AWS REST-JSON GET operation (Lambda's list surface).

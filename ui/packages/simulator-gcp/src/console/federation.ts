@@ -108,3 +108,22 @@ export async function authorizedJSONPost<T>(path: string, body: unknown): Promis
   }
   return (await response.json()) as T;
 }
+
+// authorizedJSONDelete deletes a real Google Cloud API resource, raising the
+// API's own error rather than masking it.
+export async function authorizedJSONDelete<T>(path: string): Promise<T> {
+  const response = await authorizedFetch(path, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`${path} returned HTTP ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+// cloudEndpoint resolves the cloud data-plane coordinate the console is
+// configured for — the console's own origin when embedded in the simulator,
+// the real cloud host otherwise. Surfaced so pages that print vendor-CLI
+// usage name the same coordinate every console API call already uses.
+export async function cloudEndpoint(): Promise<string> {
+  const config = await consoleConfig();
+  return config.cloudApiEndpoint || window.location.origin;
+}

@@ -1,4 +1,4 @@
-import { awsJson, awsRestJson, awsRestXml } from "./console/federation.js";
+import { awsJson, awsQuery, awsRestJson, awsRestXml } from "./console/federation.js";
 
 // The console reads the real AWS APIs — ECS, Lambda, ECR, S3, and CloudWatch
 // Logs — over federated, SigV4-signed requests, rendering the true resource
@@ -141,6 +141,103 @@ interface CWLogGroupEntry {
   retentionInDays?: number;
   storedBytes?: number;
 }
+
+// AWS Identity and Access Management (IAM) — the query protocol (Action +
+// Version=2010-05-08, form-encoded, XML responses), the same wire the aws CLI
+// signs. The console drives it with the operator's federated credentials, so
+// minting a user and an access key here is the same call an administrator's
+// CLI would make.
+
+const IAM_VERSION = "2010-05-08";
+
+const elementText = (parent: Element | Document, tag: string): string =>
+  parent.getElementsByTagName(tag)[0]?.textContent ?? "";
+
+export interface IAMUserSummary {
+  userName: string;
+  userId: string;
+  arn: string;
+  path: string;
+  createDate: string;
+}
+
+const iamUserFromElement = (element: Element): IAMUserSummary => ({
+  userName: elementText(element, "UserName"),
+  userId: elementText(element, "UserId"),
+  arn: elementText(element, "Arn"),
+  path: elementText(element, "Path"),
+  createDate: elementText(element, "CreateDate"),
+});
+
+export const fetchIAMUsers = async (): Promise<IAMUserSummary[]> => {
+  const xml = await awsQuery("iam", IAM_VERSION, "ListUsers");
+  return Array.from(xml.getElementsByTagName("member")).map(iamUserFromElement);
+};
+
+export const fetchIAMUser = async (userName: string): Promise<IAMUserSummary> => {
+  const xml = await awsQuery("iam", IAM_VERSION, "GetUser", { UserName: userName });
+  const user = xml.getElementsByTagName("User")[0];
+  if (!user) throw new Error(`GetUser returned no User element for ${userName}`);
+  return iamUserFromElement(user);
+};
+
+export const createIAMUser = async (userName: string): Promise<void> => {
+  await awsQuery("iam", IAM_VERSION, "CreateUser", { UserName: userName });
+};
+
+export const deleteIAMUser = async (userName: string): Promise<void> => {
+  await awsQuery("iam", IAM_VERSION, "DeleteUser", { UserName: userName });
+};
+
+export interface IAMAccessKeyMetadata {
+  accessKeyId: string;
+  status: string;
+  createDate: string;
+}
+
+// ListAccessKeys returns metadata only — never the secret. The secret exists
+// exactly once, in the CreateAccessKey response.
+export const fetchIAMAccessKeys = async (userName: string): Promise<IAMAccessKeyMetadata[]> => {
+  const xml = await awsQuery("iam", IAM_VERSION, "ListAccessKeys", { UserName: userName });
+  return Array.from(xml.getElementsByTagName("member")).map((member) => ({
+    accessKeyId: elementText(member, "AccessKeyId"),
+    status: elementText(member, "Status"),
+    createDate: elementText(member, "CreateDate"),
+  }));
+};
+
+export interface IAMCreatedAccessKey {
+  accessKeyId: string;
+  secretAccessKey: string;
+}
+
+export const createIAMAccessKey = async (userName: string): Promise<IAMCreatedAccessKey> => {
+  const xml = await awsQuery("iam", IAM_VERSION, "CreateAccessKey", { UserName: userName });
+  const created = {
+    accessKeyId: elementText(xml, "AccessKeyId"),
+    secretAccessKey: elementText(xml, "SecretAccessKey"),
+  };
+  if (!created.accessKeyId || !created.secretAccessKey) {
+    throw new Error("CreateAccessKey returned no credential material");
+  }
+  return created;
+};
+
+export const deleteIAMAccessKey = async (userName: string, accessKeyId: string): Promise<void> => {
+  await awsQuery("iam", IAM_VERSION, "DeleteAccessKey", { UserName: userName, AccessKeyId: accessKeyId });
+};
+
+export const updateIAMAccessKeyStatus = async (
+  userName: string,
+  accessKeyId: string,
+  status: "Active" | "Inactive",
+): Promise<void> => {
+  await awsQuery("iam", IAM_VERSION, "UpdateAccessKey", {
+    UserName: userName,
+    AccessKeyId: accessKeyId,
+    Status: status,
+  });
+};
 
 export const fetchCWLogGroups = async (): Promise<CWLogGroup[]> => {
   const described = await awsJson<{ logGroups?: CWLogGroupEntry[] }>("logs", "Logs_20140328.DescribeLogGroups", {});

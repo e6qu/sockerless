@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2636 filed - 2616 fixed - 4 open - 16 false positives.**
+**2640 filed - 2616 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,10 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2640 | P2 | Azure portal federation deployability | browser-side exchange is same-origin-only | The Azure portal's Workload Identity Federation exchange ran browser-side (`client_credentials` + JWT-bearer assertion from the SPA), which real Microsoft Entra serves no CORS for — so the portal only federates when co-served with its cloud, and the Shauth relying-party environment (which never provisioned a portal managed identity, a generated client id needed as console start-time configuration) cannot exercise the portal's data plane or minting blades in a browser at all. Fix shape: move the exchange into the console's server-side federation broker (the ui-auth session already holds the assertion), provision the portal's identity + federated identity credential as an administrator, add faithful Azure Resource Manager/Microsoft Graph CORS for the separately-deployed console, and run the console and cloud as separate processes in the relying-party harness — the deployment-recipe phase's architecture. |
+| 2639 | P2 | Azure simulator Entra fidelity | permissive grant kept for unmigrated harnesses | The v2.0 `client_credentials` grant validated client secrets only for client ids registered as Microsoft Entra applications; unregistered client ids still received implicit tokens, where real Azure AD rejects unknown clients with `unauthorized_client` AADSTS700016. Fix shape: provision app registrations (+ secrets) in every SDK/CLI/Terraform helper and backend harness, then delete the implicit grant. |
+| 2638 | P3 | GCP simulator IAM fidelity | missing conflict semantics | `serviceAccounts.create` silently overwrote an existing service account, where real Google Cloud IAM returns 409 `ALREADY_EXISTS`. Fix shape: return 409 on duplicate email, move the Cloud Run / Cloud Run Functions backend harnesses (which re-provision `sockerless-runner` against persistent simulators) to get-or-create, add SDK/CLI coverage for the conflict. |
+| 2637 | P3 | AWS console interface | enabled controls without behavior | `AwsTable`'s default "View details" and "Delete" header actions rendered enabled but had no handler on the Amazon ECS, AWS Lambda, Amazon ECR, Amazon S3, and CloudWatch Logs pages. Fix shape: wire real per-page behavior through the table's `actions` render prop (added with the IAM pages) or drop the affordance where the cloud API offers no such action. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |

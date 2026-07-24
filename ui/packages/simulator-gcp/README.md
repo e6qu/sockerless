@@ -1,17 +1,18 @@
 # @sockerless/ui-simulator-gcp
 
-GCP Simulator dashboard. A `<SimulatorApp title="GCP Simulator" />` shell from `@sockerless/ui-core` with per-service pages under `src/pages/`, routed in `src/main.tsx` (React Router 7).
+Google Cloud console for the GCP simulator: the console shell (header, product navigation, account control) under `src/console/`, with per-service pages under `src/pages/`, routed in `src/main.tsx` (React Router 7).
 
 ## Pages
 
 - `/ui/` — overview
 - `/ui/cloudrun` — Cloud Run jobs
-- `/ui/functions` — Cloud Functions
+- `/ui/functions` — Cloud Run functions
 - `/ui/ar` — Artifact Registry
-- `/ui/gcs` — GCS buckets
-- `/ui/logging` — Cloud Logging
+- `/ui/gcs` — Cloud Storage buckets
+- `/ui/serviceaccounts` — IAM service accounts: create/delete accounts, mint and revoke keys, with the real console's one-time key download and post-mint `gcloud` usage
+- `/ui/logging` — Logs Explorer
 
-Pages fetch the simulator's `/sim/*` UI endpoints via `src/api.ts`; the shell polls `/health` through the core simulator hooks.
+Pages read the real Google Cloud APIs at the console's configured cloud coordinate via `src/api.ts`: every call is authenticated with the operator's Shauth assertion federated through the Security Token Service token exchange (`src/console/federation.ts`), differing from the real cloud only in coordinates.
 
 ## Embedding
 

@@ -2,11 +2,18 @@ package azure_sdk_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -355,6 +362,9 @@ func TestEntra_GraphTransitiveMemberOf(t *testing.T) {
 //   PATCH /v1.0/servicePrincipals/{spId}
 //   DELETE /v1.0/servicePrincipals/{spId}
 //   POST /v1.0/servicePrincipals/{spId}/addPassword
+//   POST /v1.0/servicePrincipals/{spId}/removePassword
+//   POST /v1.0/applications/{appObjectId}/addPassword
+//   POST /v1.0/applications/{appObjectId}/removePassword
 //   PATCH /v1.0/users/{userId}
 
 func createGraphApplication(t *testing.T, displayName string) (objectID, appID string) {
@@ -525,6 +535,173 @@ func TestEntra_ServicePrincipalAddPassword(t *testing.T) {
 	require.Len(t, got.PasswordCredentials, 1)
 	assert.Equal(t, cred.KeyID, got.PasswordCredentials[0].KeyID)
 	assert.Empty(t, got.PasswordCredentials[0].SecretText, "secretText must not be returned on read")
+
+	// removePassword deletes the credential; a second removal of the same
+	// keyId is a 404, matching real Graph.
+	remove := func() *http.Response {
+		body, _ := json.Marshal(map[string]any{"keyId": cred.KeyID})
+		req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/servicePrincipals/"+spID+"/removePassword", bytes.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		return resp
+	}
+	require.Equal(t, http.StatusNoContent, remove().StatusCode)
+	require.Equal(t, http.StatusNotFound, remove().StatusCode)
+}
+
+// addApplicationPassword mints a client secret on the application object —
+// POST /v1.0/applications/{appObjectId}/addPassword, the request behind the
+// real portal's Certificates & secrets blade.
+func addApplicationPassword(t *testing.T, appObjectID, displayName string) (keyID, secretText, hint string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"passwordCredential": map[string]any{"displayName": displayName},
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/applications/"+appObjectID+"/addPassword", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var cred struct {
+		KeyID      string `json:"keyId"`
+		SecretText string `json:"secretText"`
+		Hint       string `json:"hint"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&cred))
+	require.NotEmpty(t, cred.KeyID)
+	require.NotEmpty(t, cred.SecretText, "addPassword must return the generated secretText exactly once")
+	return cred.KeyID, cred.SecretText, cred.Hint
+}
+
+// TestEntra_ApplicationClientSecretEndToEnd walks the credential-minting path
+// the portal's App registrations blade drives: register an application and its
+// service principal, mint a client secret on the application object, then
+// authenticate the OAuth2 client_credentials grant with appId + secretText and
+// read the ARM control plane through the Azure SDK with the issued token. A
+// wrong secret and a removed secret are rejected with invalid_client.
+func TestEntra_ApplicationClientSecretEndToEnd(t *testing.T) {
+	objectID, appID := createGraphApplication(t, "SDK-CC-App")
+	spID := createGraphServicePrincipal(t, appID, "SDK-CC-App")
+
+	keyID, secretText, hint := addApplicationPassword(t, objectID, "sdk secret")
+	assert.Equal(t, secretText[:3], hint, "hint must be the first three characters of the secret")
+
+	// The application read lists the credential's metadata with the hint, and
+	// never the secretText.
+	getResp, err := http.Get(baseURL + "/v1.0/applications/" + objectID)
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	var gotApp struct {
+		PasswordCredentials []struct {
+			KeyID      string `json:"keyId"`
+			Hint       string `json:"hint"`
+			SecretText string `json:"secretText"`
+		} `json:"passwordCredentials"`
+	}
+	require.NoError(t, json.NewDecoder(getResp.Body).Decode(&gotApp))
+	require.Len(t, gotApp.PasswordCredentials, 1)
+	assert.Equal(t, keyID, gotApp.PasswordCredentials[0].KeyID)
+	assert.Equal(t, hint, gotApp.PasswordCredentials[0].Hint)
+	assert.Empty(t, gotApp.PasswordCredentials[0].SecretText, "secretText must not be returned on read")
+
+	// The v2.0 client_credentials grant — the request an SDK or
+	// `az login --service-principal` sends — validates the minted secret and
+	// issues an app-only token for the service principal.
+	tokenFor := func(secret string) (int, map[string]any) {
+		resp, err := http.PostForm(baseURL+"/"+simTenantID+"/oauth2/v2.0/token", url.Values{
+			"grant_type":    {"client_credentials"},
+			"client_id":     {appID},
+			"client_secret": {secret},
+			"scope":         {"https://management.azure.com/.default"},
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		return resp.StatusCode, body
+	}
+	status, body := tokenFor(secretText)
+	require.Equal(t, http.StatusOK, status, "minted secret must authenticate: %v", body)
+	accessToken, _ := body["access_token"].(string)
+	require.NotEmpty(t, accessToken)
+	claims := decodeJWTClaims(t, accessToken)
+	assert.Equal(t, appID, claims["appid"])
+	assert.Equal(t, spID, claims["oid"], "app-only token must speak for the service principal")
+	assert.Equal(t, "app", claims["idtyp"])
+
+	// The Azure SDK's client-credentials flow end-to-end: the credential runs
+	// the same client_credentials grant azidentity's ClientSecretCredential
+	// sends (issued directly because azidentity refuses a non-https authority
+	// host and the simulator listens on plain http), and the ARM client reads
+	// the control plane with the issued token — the enforcing bearer
+	// middleware accepts the credential.
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID,
+		&appSecretCredential{clientID: appID, clientSecret: secretText}, clientOpts())
+	require.NoError(t, err)
+	pager := rgClient.NewListPager(nil)
+	_, err = pager.NextPage(ctx)
+	require.NoError(t, err, "ARM must accept the token minted from the app registration's client secret")
+
+	// A wrong secret is rejected as invalid_client.
+	badStatus, badBody := tokenFor("wrong-secret")
+	assert.Equal(t, http.StatusUnauthorized, badStatus)
+	assert.Equal(t, "invalid_client", badBody["error"])
+
+	// removePassword revokes the credential.
+	removeBody, _ := json.Marshal(map[string]any{"keyId": keyID})
+	removeReq, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/applications/"+objectID+"/removePassword", bytes.NewReader(removeBody))
+	require.NoError(t, err)
+	removeReq.Header.Set("Content-Type", "application/json")
+	removeResp, err := http.DefaultClient.Do(removeReq)
+	require.NoError(t, err)
+	removeResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, removeResp.StatusCode)
+
+	revokedStatus, revokedBody := tokenFor(secretText)
+	assert.Equal(t, http.StatusUnauthorized, revokedStatus)
+	assert.Equal(t, "invalid_client", revokedBody["error"])
+}
+
+// appSecretCredential implements azcore.TokenCredential by running the OAuth2
+// client_credentials grant with an app registration's appId + client secret —
+// the same wire request azidentity's ClientSecretCredential sends, issued
+// directly because azidentity refuses a non-https authority host and the
+// simulator listens on plain http.
+type appSecretCredential struct {
+	clientID     string
+	clientSecret string
+}
+
+func (c *appSecretCredential) GetToken(_ context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	scope := strings.Join(opts.Scopes, " ")
+	resp, err := http.PostForm(baseURL+"/"+simTenantID+"/oauth2/v2.0/token", url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {c.clientID},
+		"client_secret": {c.clientSecret},
+		"scope":         {scope},
+	})
+	if err != nil {
+		return azcore.AccessToken{}, fmt.Errorf("acquire token with client secret: %w", err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+		Error       string `json:"error"`
+		Description string `json:"error_description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return azcore.AccessToken{}, fmt.Errorf("parse token response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK || body.AccessToken == "" {
+		return azcore.AccessToken{}, fmt.Errorf("token endpoint returned %d: %s %s", resp.StatusCode, body.Error, body.Description)
+	}
+	return azcore.AccessToken{Token: body.AccessToken, ExpiresOn: time.Now().Add(time.Duration(body.ExpiresIn) * time.Second)}, nil
 }
 
 func TestEntra_UserPatch(t *testing.T) {

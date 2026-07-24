@@ -9,6 +9,8 @@ import { AzureFunctionsPage } from "./pages/AzureFunctionsPage.js";
 import { ACRRegistriesPage } from "./pages/ACRRegistriesPage.js";
 import { StorageAccountsPage } from "./pages/StorageAccountsPage.js";
 import { MonitorPage } from "./pages/MonitorPage.js";
+import { AppRegistrationsPage } from "./pages/AppRegistrationsPage.js";
+import { AppRegistrationDetailPage } from "./pages/AppRegistrationDetailPage.js";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -30,6 +32,8 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/acr" element={<ACRRegistriesPage />} />
         <Route path="/ui/storage" element={<StorageAccountsPage />} />
         <Route path="/ui/monitor" element={<MonitorPage />} />
+        <Route path="/ui/entra/app-registrations" element={<AppRegistrationsPage />} />
+        <Route path="/ui/entra/app-registrations/:objectId" element={<AppRegistrationDetailPage />} />
       </AzureApp>
     </QueryClientProvider>
   </StrictMode>,
