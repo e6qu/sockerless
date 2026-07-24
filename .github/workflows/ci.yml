@@ -371,8 +371,8 @@ jobs:
 
   sim-aws-sdk:
     # The AWS SDK suite outgrew a single 15-minute job (the full run reached
-    # the ceiling on runner-speed variance), so it fans out across shards the
-    # way the AWS CLI suite does. Shard regexes use the character-class form
+    # the ceiling on runner-speed variance), so it fans out across three shards
+    # the way the AWS CLI suite does. Shard regexes use the character-class form
     # ('^Test[...]') rather than the CLI shards' alternation form
     # ('^Test(...)') so each suite's coverage gate reads only its own shard
     # set; scripts/check-sdk-shard-coverage.sh asserts every SDK test matches
@@ -384,8 +384,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - suite: compute-data
-            run: '^Test[DE]'
+          - suite: compute
+            run: '^Test[E]'
+          - suite: data
+            run: '^Test[D]'
           - suite: services
             run: '^Test[^DE]'
     steps:
@@ -439,8 +441,8 @@ jobs:
       # checks the local image store before pulling). DynamoDB Local is the
       # reference oracle for the TestDynamoDB_DifferentialVsLocal sweep.
       - name: Pull DynamoDB Local (differential oracle)
-        # TestDynamoDB_DifferentialVsLocal lives in the compute-data shard.
-        if: matrix.suite == 'compute-data'
+        # TestDynamoDB_DifferentialVsLocal lives in the data shard.
+        if: matrix.suite == 'data'
         run: docker pull amazon/dynamodb-local:latest
         timeout-minutes: 4
       - name: Run AWS SDK tests
