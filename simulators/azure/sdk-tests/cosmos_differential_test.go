@@ -446,9 +446,6 @@ func cosmosCanonValue(v any) any {
 
 func startCosmosEmulator(t *testing.T) (endpoint string, stop func()) {
 	t.Helper()
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not available; skipping Cosmos emulator differential test")
-	}
 	const image = "mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview"
 	if exec.Command("docker", "image", "inspect", image).Run() != nil {
 		// Do not pull a ~GB image inline; CI pre-pulls it. Skip with diagnostics.

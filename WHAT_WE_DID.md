@@ -4,6 +4,35 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-24 — Closed the skip-if-absent gate hole and swept the last tool-absent skips
+
+`scripts/check-no-tool-absent-skips.sh` only rejected `t.Skip`/`t.Skipf` lines, so
+a TestMain-level `exec.LookPath(tool)` → `fmt.Println("… not found, skipping")` →
+`os.Exit(0)` evaded it silently — which is how the Google Cloud and Azure CLI
+suites came to skip themselves whenever `gcloud`/`az` were absent. The gate now
+also rejects (2) a `fmt.Print*`/`log.Print*` line carrying a tool-absent phrase
+and (3) a bare `os.Exit(0)` within a few lines of a `LookPath(` in the same hunk,
+and it exempts skips that self-identify as platform/kernel-capability gates
+(`runtime.GOOS`, `CAP_NET_ADMIN`, "requires a Linux host") so a legitimate GOOS
+gate whose message happens to say "not available" is not a false positive.
+
+Every remaining tool-absent skip was resolved to install-or-fail-loud:
+- The Google Cloud CLI suite installs a pinned Google Cloud CLI release into a
+  temp dir when `gcloud` is absent (mirroring the AWS suite's
+  `installLatestAWSCLI`); the Azure CLI suite fails loud with an actionable
+  message — the `az` Python application has no clean cross-platform TestMain
+  install — each replacing its `os.Exit(0)` skip.
+- The six `t.Skip("docker CLI not available")` guards in the AWS ECS VPC-networking
+  CLI tests and the one in the Azure Cosmos differential test were vestigial:
+  their TestMains already `docker build` images and `log.Fatalf` without Docker,
+  so Docker is guaranteed present before any test runs. They were removed; the
+  Linux + CAP_NET_ADMIN netns capability gates stayed.
+- The `session-manager-plugin` (AWS ECS execute-command), `git` (AWS Amplify),
+  `gcloud` (Google Cloud Firestore differential), and `nsenter` (realexec
+  external-namespace round-trip) skips became `t.Fatal`. Each is a tool the
+  relevant CI job already provides, so CI stayed green while a local run without
+  it now fails loud with an actionable message instead of skipping unseen.
+
 ## 2026-07-24 — Gated required-check drift so a job rename can't stall the merge queue
 
 Splitting the AWS CLI groups into shards once renamed their jobs while `main`'s

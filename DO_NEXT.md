@@ -45,12 +45,17 @@ workflows can emit and fails the pull request when a required context in
 `.github/required-status-checks.txt` is no longer emittable, so a matrix job
 rename can no longer silently stall the merge queue.
 
+The skip-if-absent sweep is complete: `scripts/check-no-tool-absent-skips.sh` now
+catches the `LookPath → os.Exit(0)` and print-then-skip shapes (exempting genuine
+platform/capability gates), the GCP `exec.LookPath("gcloud") → os.Exit(0)` skip
+and its Azure counterpart became install-or-fail-loud, and the remaining
+`docker`/`session-manager-plugin`/`git`/`gcloud`/`nsenter` tool-absent skips were
+removed (vestigial) or made `t.Fatal` against CI-provided tools.
+
 Still open, all externally gated: BUG-2523 and BUG-2441 (Bleephub product/UI, in
 the separate bleephub repository), BUG-1345 (AzureAD Terraform provider,
 upstream-blocked), and BUG-1075 (live-cloud validation, needs real cloud
-credentials). A follow-up worth filing: the GCP cli-tests `exec.LookPath("gcloud")`
-→ `os.Exit(0)` skip-if-absent surfaced during the credential-enforcement sweep
-violates the no-skip rule.
+credentials).
 
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.

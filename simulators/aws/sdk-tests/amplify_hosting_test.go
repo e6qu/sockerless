@@ -232,7 +232,7 @@ func amplifyServeGitRepo(t *testing.T, branch string, files map[string]string) s
 	t.Helper()
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
-		t.Skipf("git not found in PATH: %v", err)
+		t.Fatalf("git is required to serve the Amplify source repository; install git: %v", err)
 	}
 	root := t.TempDir()
 	workDir := filepath.Join(root, "work")
