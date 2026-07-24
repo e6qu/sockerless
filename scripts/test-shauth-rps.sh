@@ -273,10 +273,12 @@ aws_sigv4_post() {
 provision_aws_federation() {
   aws_sigv4_post "Action=CreateOpenIDConnectProvider&Version=2010-05-08&Url=$(urlenc http://localhost:8080)&ClientIDList.member.1=sockerless-aws&ThumbprintList.member.1=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   aws_sigv4_post "Action=CreateRole&Version=2010-05-08&RoleName=console-federation-role&AssumeRolePolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/localhost:8080"},"Action":"sts:AssumeRoleWithWebIdentity"}]}')"
-  # The console reads across services, so the administrator grants the role the
-  # read access it needs; without it, the simulator's IAM enforcement denies the
-  # federated calls, exactly as real AWS would.
-  aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=console-federation-role&PolicyName=console-read&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecs:*","lambda:*","ecr:*","s3:*","logs:*"],"Resource":"*"}]}')"
+  # The console reads across services and administers IAM users and access
+  # keys from its credential-minting pages, so the administrator grants the
+  # role that access; without it, the simulator's IAM enforcement denies the
+  # federated calls, exactly as real AWS would deny an operator role that was
+  # never authorized for the IAM console.
+  aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=console-federation-role&PolicyName=console-access&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecs:*","lambda:*","ecr:*","s3:*","logs:*","iam:*"],"Resource":"*"}]}')"
 }
 
 start_simulator "$repo_root/simulators/aws/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision" "$aws_federation_role"

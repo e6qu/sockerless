@@ -46,12 +46,25 @@ calling the cloud's real APIs — never a console-only endpoint.
   routes and the `entraActiveOID` global were deleted; consumers migrated to
   Graph `POST /v1.0/users` provisioning and `login_hint` binding.
 
-The Shauth relying-party browser matrix gained a minting flow per console: the
-signed-in operator drives each console's real UI to mint a credential and the
-one-time disclosure semantics are asserted (secret gone after dismissal or
-reload). BUG-2637 (inert default table actions), BUG-2638 (`serviceAccounts.create`
-overwrite instead of 409), and BUG-2639 (implicit grant for unregistered client
-ids) were filed with fix shapes for the surfaced follow-ups.
+The Shauth relying-party browser matrix gained minting flows for the AWS and
+Google Cloud consoles: the signed-in operator drives the real UI to mint a
+credential over the federated session, and the one-time disclosure semantics
+are asserted (secret gone after dismissal). Getting those flows green surfaced
+two environment defects the suite had been silently missing: the harness's
+console federation role lacked `iam:*` (the simulator's IAM enforcement
+correctly denied the minting pages, exactly as real AWS denies an operator
+role never authorized for the IAM console), and full-page navigations in the
+new flows aborted the prior page's in-flight reads (the flows now navigate
+through the console's own navigation, as an operator does). The Azure portal
+got no browser-driven minting flow: its browser-side Workload Identity
+Federation exchange is same-origin-only (real Microsoft Entra serves no CORS
+for `client_credentials`), and the relying-party environment cannot provision
+the portal's managed identity before console start — filed as BUG-2640 with
+the deployment-phase fix shape (server-side federation broker + faithful CORS
++ separate console/cloud processes); Entra minting itself is proven end to end
+by the Azure SDK and az CLI suites. BUG-2637 (inert default table actions),
+BUG-2638 (`serviceAccounts.create` overwrite instead of 409), and BUG-2639
+(implicit grant for unregistered client ids) were filed with fix shapes.
 
 ## 2026-07-24 — Closed the skip-if-absent gate hole and swept the last tool-absent skips
 

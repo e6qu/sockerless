@@ -62,20 +62,26 @@ Self-Service") shipped: all three consoles mint real CLI credentials for
 Shauth-authenticated operators (AWS IAM access keys, Google Cloud
 service-account key JSON, Microsoft Entra client secrets) over federated
 credentials and real cloud APIs, with CLI tests proving each minted credential
-authenticates the vendor CLI and the Shauth relying-party matrix driving each
-console's minting UI. Proving the loops also hardened the GCP token endpoint
-(assertion signatures now verified against registered, revocable public keys)
-and the Entra token endpoint (client secrets validated for registered
-applications), and deleted the invented `/sim/v1/entra/users` routes.
+authenticates the vendor CLI and the Shauth relying-party matrix driving the
+AWS and Google Cloud minting UIs (the Azure browser flow is staged into the
+deployment phase as BUG-2640 — the portal's browser-side federation exchange
+is same-origin-only, so the separately-deployed shape needs the server-side
+broker and faithful CORS). Proving the loops also hardened the GCP token
+endpoint (assertion signatures now verified against registered, revocable
+public keys) and the Entra token endpoint (client secrets validated for
+registered applications), and deleted the invented `/sim/v1/entra/users`
+routes.
 
 Next per the roadmap: phase 2 — account and project management (two new
 simulator slices with SDK/CLI/Terraform tests: Google Cloud Resource Manager
 `projects.create/list/delete` and the Azure `Microsoft.Subscription` alias
 API; console pages for AWS Organizations accounts, the Google Cloud project
 picker with New Project, and Azure subscriptions) — then `sockerless login`,
-then the deployment and provisioning recipe. Filed follow-ups with fix shapes:
-BUG-2637 (inert default AwsTable actions), BUG-2638 (GCP `serviceAccounts.create`
-overwrite vs 409), BUG-2639 (Entra implicit grant for unregistered client ids).
+then the deployment and provisioning recipe (which also carries BUG-2640, the
+Azure server-side federation broker + CORS work). Filed follow-ups with fix
+shapes: BUG-2637 (inert default AwsTable actions), BUG-2638 (GCP
+`serviceAccounts.create` overwrite vs 409), BUG-2639 (Entra implicit grant for
+unregistered client ids), BUG-2640 (Azure portal federation deployability).
 
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.
