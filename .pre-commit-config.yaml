@@ -1,3 +1,10 @@
+# Hooks without an explicit `stages:` would otherwise run in EVERY installed
+# stage — re-executing the whole always_run suite (Go tests, UI tests) a second
+# time during the commit-msg stage of each commit, with file-scoped hooks
+# misleadingly reporting "no files to check". Scope the default to pre-commit;
+# hooks that belong elsewhere declare their stage explicitly.
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
