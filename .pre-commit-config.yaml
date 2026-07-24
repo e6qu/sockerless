@@ -144,6 +144,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: required-status-checks
+        name: Required status checks stay emittable (no merge-queue drift)
+        entry: bash scripts/check-required-status-checks.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: go-test-core
         name: Go test (core)
         entry: bash -c 'cd backends/core && go test ./... -count=1 -timeout 120s'

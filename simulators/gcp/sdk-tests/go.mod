@@ -9,7 +9,7 @@ require (
 	cloud.google.com/go/firestore v1.24.0
 	cloud.google.com/go/functions v1.25.0
 	cloud.google.com/go/iam v1.12.0
-	cloud.google.com/go/kms v1.32.0
+	cloud.google.com/go/kms v1.33.0
 	cloud.google.com/go/logging v1.19.0
 	cloud.google.com/go/run v1.22.0
 	cloud.google.com/go/secretmanager v1.21.0

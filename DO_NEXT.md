@@ -39,11 +39,18 @@ console fidelity work is live-cloud (BUG-1075): exercising each console's
 federation and reads against the real cloud, where the proprietary fonts and
 icons (Amazon Ember, Segoe UI) stay honest approximations.
 
-Still open: BUG-2633 (a repository gate that compares every workflow `name:`
-against the required-check list), BUG-2523 and BUG-2441 (Bleephub product/UI, in
+BUG-2633 closed: a repository gate (`scripts/check-required-status-checks.sh`,
+pre-commit + the `build-gates` CI job) now enumerates every check name the
+workflows can emit and fails the pull request when a required context in
+`.github/required-status-checks.txt` is no longer emittable, so a matrix job
+rename can no longer silently stall the merge queue.
+
+Still open, all externally gated: BUG-2523 and BUG-2441 (Bleephub product/UI, in
 the separate bleephub repository), BUG-1345 (AzureAD Terraform provider,
 upstream-blocked), and BUG-1075 (live-cloud validation, needs real cloud
-credentials).
+credentials). A follow-up worth filing: the GCP cli-tests `exec.LookPath("gcloud")`
+→ `os.Exit(0)` skip-if-absent surfaced during the credential-enforcement sweep
+violates the no-skip rule.
 
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.

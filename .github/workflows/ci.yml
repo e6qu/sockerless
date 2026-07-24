@@ -743,6 +743,9 @@ jobs:
       - name: Check simulator SDK/CLI/Terraform coverage matrix
         run: bash scripts/check-simulator-coverage-matrix.sh
         timeout-minutes: 5
+      - name: Required status checks stay emittable
+        run: bash scripts/check-required-status-checks.sh
+        timeout-minutes: 5
 
   build-amd64:
     runs-on: ubuntu-latest
