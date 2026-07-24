@@ -370,9 +370,24 @@ jobs:
         run: bash scripts/check-spec-violations.sh ${{ matrix.cloud }} "$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl"
 
   sim-aws-sdk:
-    name: sim (aws sdk)
+    # The AWS SDK suite outgrew a single 15-minute job (the full run reached
+    # the ceiling on runner-speed variance), so it fans out across shards the
+    # way the AWS CLI suite does. Shard regexes use the character-class form
+    # ('^Test[...]') rather than the CLI shards' alternation form
+    # ('^Test(...)') so each suite's coverage gate reads only its own shard
+    # set; scripts/check-sdk-shard-coverage.sh asserts every SDK test matches
+    # exactly one shard.
+    name: sim (aws sdk ${{ matrix.suite }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: compute-data
+            run: '^Test[DE]'
+          - suite: services
+            run: '^Test[^DE]'
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
@@ -390,6 +405,9 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Run AWS module unit tests
+        # The module unit tests are shard-independent; one shard carries them
+        # so they run exactly once per workflow.
+        if: matrix.suite == 'services'
         run: cd simulators/aws && GOWORK=off make unit-test
         timeout-minutes: 3
         env:
@@ -421,6 +439,8 @@ jobs:
       # checks the local image store before pulling). DynamoDB Local is the
       # reference oracle for the TestDynamoDB_DifferentialVsLocal sweep.
       - name: Pull DynamoDB Local (differential oracle)
+        # TestDynamoDB_DifferentialVsLocal lives in the compute-data shard.
+        if: matrix.suite == 'compute-data'
         run: docker pull amazon/dynamodb-local:latest
         timeout-minutes: 4
       - name: Run AWS SDK tests
@@ -445,7 +465,7 @@ jobs:
             SOCKERLESS_AWS_SIMULATOR_BINARY="$GITHUB_WORKSPACE/simulators/aws/simulator-aws" \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/aws" \
-            /tmp/aws-sdk-tests.test -test.v -test.count=1 -test.timeout=600s > "$log" 2>&1 &
+            /tmp/aws-sdk-tests.test -test.v -test.count=1 -test.timeout=600s -test.run "$SHARD_RUN" > "$log" 2>&1 &
           test_pid=$!
           while kill -0 "$test_pid" 2>/dev/null; do
             log_mb=$(( $(stat -c %s "$log" 2>/dev/null || echo 0) / 1048576 ))
@@ -473,7 +493,8 @@ jobs:
         timeout-minutes: 12
         env:
           GOWORK: "off"
-      - name: Spec-shape ratchet (aws sdk)
+          SHARD_RUN: ${{ matrix.run }}
+      - name: Spec-shape ratchet (aws sdk ${{ matrix.suite }})
         run: bash scripts/check-spec-violations.sh aws "$RUNNER_TEMP/aws-spec-violations.jsonl"
 
   sim-aws-cli:
