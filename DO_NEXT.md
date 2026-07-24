@@ -57,6 +57,16 @@ the separate bleephub repository), BUG-1345 (AzureAD Terraform provider,
 upstream-blocked), and BUG-1075 (live-cloud validation, needs real cloud
 credentials).
 
+The next planned work is the console self-service roadmap in [PLAN.md](PLAN.md)
+§ "Console Self-Service" — four phases, one PR each, starting with the
+credential-minting console pages (AWS IAM access keys, Google Cloud
+service-account key JSON, Microsoft Entra client secrets; the backing simulator
+APIs exist and the enforcing data planes already accept minted credentials, so
+phase 1 is console UI plus browser-suite coverage), then account/project
+management (two new simulator slices: Google Cloud Resource Manager projects
+and the Azure `Microsoft.Subscription` alias API), then `sockerless login`,
+then the deployment and provisioning recipe.
+
 1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
 2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.
 3. The merged revision needed immutable Admin and simulator images published and deployed in the shared development environment, followed by the same exact browser matrix against the live origins.
