@@ -24,7 +24,7 @@ func TestExternalNamespaceNICRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if _, err := exec.LookPath("nsenter"); err != nil {
-		t.Skip("nsenter not available")
+		t.Fatalf("nsenter (util-linux) is required for the external-namespace NIC round-trip: %v", err)
 	}
 
 	prefix := shortPrefix()

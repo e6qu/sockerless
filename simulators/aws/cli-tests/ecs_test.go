@@ -278,7 +278,7 @@ func TestECS_CLI_RunTaskContainerOverrideEnvironment(t *testing.T) {
 
 func TestECS_CLI_ExecuteCommandRejectedWhenNotEnabled(t *testing.T) {
 	if _, err := exec.LookPath("session-manager-plugin"); err != nil {
-		t.Skip("session-manager-plugin is required because aws ecs execute-command checks it before calling the API")
+		t.Fatalf("session-manager-plugin is required because aws ecs execute-command checks it before calling the API; install it (the CI job installs the .deb): %v", err)
 	}
 
 	subnetID := createCLIECSTestSubnet(t, 145)

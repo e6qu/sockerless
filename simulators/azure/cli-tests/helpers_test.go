@@ -42,10 +42,18 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	// Check if az CLI is installed
+	// The Azure CLI (az) is a large Python application with no clean, self-
+	// contained, cross-platform tarball we can drop into PATH from TestMain the
+	// way the AWS CLI bundle or the Google Cloud CLI tarball allow — a faithful
+	// install needs a platform package manager (brew/apt/dnf) or a Python
+	// environment (pip install azure-cli), none of which is a deterministic
+	// TestMain-time install across both linux and darwin. AGENTS.md § "No skip-
+	// if-absent tests" sanctions failing loud as the fallback when a clean
+	// install is not feasible, so require az to be present and fail with an
+	// actionable message instead of silently skipping. CI installs the Azure
+	// CLI, so CI stays green.
 	if _, err := exec.LookPath("az"); err != nil {
-		fmt.Println("az CLI not found, skipping CLI tests")
-		os.Exit(0)
+		log.Fatalf("az CLI is required for the Azure CLI tests; install the Azure CLI (https://aka.ms/azure-cli): %v", err)
 	}
 
 	// Build simulator

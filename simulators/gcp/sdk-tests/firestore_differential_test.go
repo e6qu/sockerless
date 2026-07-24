@@ -227,12 +227,12 @@ func fsCanonValue(v any) any {
 
 // startFirestoreEmulator launches Google's Firestore emulator via gcloud (the
 // gcp CI job installs gcloud + the cloud-firestore-emulator component; the runner
-// ships a JRE). It skips when gcloud is unavailable, and fails loud if gcloud is
-// present but the emulator can't start.
+// ships a JRE). It fails loud when gcloud is unavailable — a required tool the
+// CI provides, never a silent skip — and when the emulator can't start.
 func startFirestoreEmulator(t *testing.T) (host string, stop func()) {
 	t.Helper()
 	if _, err := exec.LookPath("gcloud"); err != nil {
-		t.Skip("gcloud not available; skipping Firestore emulator differential test")
+		t.Fatalf("gcloud is required for the Firestore emulator differential test; install the Google Cloud CLI, the cloud-firestore-emulator component, and a JRE (the gcp CI job provides all three): %v", err)
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

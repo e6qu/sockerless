@@ -25,9 +25,6 @@ const vpcServerScript = "mkdir -p /www && echo ok > /www/index.html && httpd -f 
 // privateIPv4Address is the container's REAL eth0 address, reachable from
 // another task in the same VPC and isolated from a task in a different VPC.
 func TestECSVPCNetworking(t *testing.T) {
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI not available")
-	}
 	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
 
 	octetA := unusedDockerVPCOctet(t, 120, nil)
@@ -70,9 +67,6 @@ func TestECSVPCNetworking(t *testing.T) {
 }
 
 func TestECSManagedEBSAwsvpcReachability(t *testing.T) {
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI not available")
-	}
 	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
 
 	octet := unusedDockerVPCOctet(t, 150, nil)
@@ -412,9 +406,6 @@ func rmDockerNetworks(names ...string) {
 // terraform destroy/apply cycle: once the task and subnet are gone, DeleteVpc
 // removes the real backing fabric so a new VPC can reuse the same CIDR.
 func TestECSVPCDeleteVpcAllowsCIDRReuse(t *testing.T) {
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI not available")
-	}
 	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
 
 	q("ecs", "create-cluster", "--cluster-name", "default", "--query", "cluster.clusterName", "--output", "text")
@@ -452,9 +443,6 @@ func TestECSVPCDeleteVpcAllowsCIDRReuse(t *testing.T) {
 // tasks that get the SAME real ENI IP, with no remapping and full isolation.
 // Netns-tier only (the Docker-network tier can't host overlapping bridges).
 func TestECSVPCOverlappingCIDR(t *testing.T) {
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI not available")
-	}
 	if !ecsNetnsTierActive() {
 		t.Skip("overlapping VPC CIDRs require the netns fabric (Linux + CAP_NET_ADMIN)")
 	}
@@ -498,9 +486,6 @@ func TestECSVPCOverlappingCIDR(t *testing.T) {
 }
 
 func TestECSVPCNetnsTaskMetadataLinkLocal(t *testing.T) {
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI not available")
-	}
 	if !ecsNetnsTierActive() {
 		t.Skip("link-local task metadata DNAT requires the netns fabric (Linux + CAP_NET_ADMIN)")
 	}
@@ -533,9 +518,6 @@ func TestECSVPCNetnsTaskMetadataLinkLocal(t *testing.T) {
 }
 
 func TestECSVPCNetnsRouteTableEgress(t *testing.T) {
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI not available")
-	}
 	if !ecsNetnsTierActive() {
 		t.Skip("route-table egress enforcement requires the netns fabric (Linux + CAP_NET_ADMIN)")
 	}

@@ -64,10 +64,16 @@ func mintSimAccessToken(base string) (string, error) {
 }
 
 func TestMain(m *testing.M) {
-	// Check if gcloud CLI is installed
-	if _, err := exec.LookPath("gcloud"); err != nil {
-		fmt.Println("gcloud CLI not found, skipping CLI tests")
-		os.Exit(0)
+	// Use the host gcloud when present; otherwise install a pinned Google Cloud
+	// CLI release into a temp dir so the suite runs unconditionally instead of
+	// skipping. Mirrors the AWS cli-tests install-or-fail approach — a required
+	// tool is installed by the harness, never skipped when absent.
+	gcloudPath, err := exec.LookPath("gcloud")
+	if err != nil {
+		gcloudPath = installGcloudCLI()
+	}
+	if out, err := exec.Command(gcloudPath, "version").CombinedOutput(); err != nil {
+		log.Fatalf("gcloud CLI is not runnable after setup: %v\n%s", err, out)
 	}
 
 	// Build simulator
@@ -186,6 +192,63 @@ func installCBT(binDir string) {
 	if _, err := os.Stat(cbtPath); err != nil {
 		log.Fatalf("go install cbt reported success but %s is missing: %v\n%s", cbtPath, err, buf.String())
 	}
+}
+
+// installGcloudCLI downloads a pinned Google Cloud CLI release, extracts it into
+// a temp dir, prepends its bin directory to PATH, and returns the gcloud binary
+// path. Called from TestMain when gcloud is absent (a fresh checkout, a CI image
+// without it) so the CLI suite runs instead of skipping — the same install-or-
+// fail contract the AWS cli-tests use for the aws CLI. Fatals loudly if the
+// install itself fails; never a skip, never a fallback.
+func installGcloudCLI() string {
+	// Pinned Google Cloud CLI release. The versioned archive keeps the install
+	// deterministic across runs; bump this constant to move to a newer release.
+	const version = "500.0.0"
+
+	var arch string
+	switch runtime.GOARCH {
+	case "amd64":
+		arch = "x86_64"
+	case "arm64":
+		arch = "arm"
+	default:
+		log.Fatalf("Unsupported architecture for automatic gcloud install: %s", runtime.GOARCH)
+	}
+
+	var osName string
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		osName = runtime.GOOS
+	default:
+		log.Fatalf("Unsupported OS for automatic gcloud install: %s", runtime.GOOS)
+	}
+
+	binDir, err := os.MkdirTemp("", "sockerless-gcloud-cli-*")
+	if err != nil {
+		log.Fatalf("Failed to create gcloud CLI install dir: %v", err)
+	}
+
+	archive := fmt.Sprintf("google-cloud-cli-%s-%s-%s.tar.gz", version, osName, arch)
+	dlURL := "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/" + archive
+	tarball := filepath.Join(binDir, archive)
+	if out, err := exec.Command("curl", "-fsSL", "-o", tarball, dlURL).CombinedOutput(); err != nil {
+		log.Fatalf("Failed to download gcloud CLI (%s): %v\n%s", dlURL, err, out)
+	}
+	if out, err := exec.Command("tar", "-xzf", tarball, "-C", binDir).CombinedOutput(); err != nil {
+		log.Fatalf("Failed to extract gcloud CLI: %v\n%s", err, out)
+	}
+
+	// The archive extracts to google-cloud-sdk/ with the launcher at bin/gcloud;
+	// the bundled Python interpreter makes bin/gcloud runnable without running
+	// install.sh.
+	gcloudBin := filepath.Join(binDir, "google-cloud-sdk", "bin", "gcloud")
+	if _, err := os.Stat(gcloudBin); err != nil {
+		log.Fatalf("gcloud binary not found after install at %s: %v", gcloudBin, err)
+	}
+
+	// Prepend to PATH so gcloudCLI() picks it up.
+	os.Setenv("PATH", filepath.Dir(gcloudBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return gcloudBin
 }
 
 func waitForHealth(url string) error {
