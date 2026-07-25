@@ -386,6 +386,51 @@ func TestEC2_RunInstancesHonorsMaxCount(t *testing.T) {
 	}
 }
 
+// TestEC2_RunInstancesClientTokenReplayReportsLaunchState proves a retried
+// RunInstances (same ClientToken — the AWS SDK auto-generates one) replays the
+// original launch response: the instance is still reported "pending" even after
+// the control plane has transitioned it to "running". A replay that re-read the
+// live state instead raced that transition and could report "running".
+func TestEC2_RunInstancesClientTokenReplayReportsLaunchState(t *testing.T) {
+	client := ec2Client()
+	vpcOut, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.68.0.0/16")})
+	require.NoError(t, err)
+	subnetOut, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:     vpcOut.Vpc.VpcId,
+		CidrBlock: aws.String("10.68.1.0/24"),
+	})
+	require.NoError(t, err)
+
+	token := "replay-token-run-instances"
+	input := &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-replay1234"),
+		InstanceType: types.InstanceTypeT3Micro,
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+		SubnetId:     subnetOut.Subnet.SubnetId,
+		ClientToken:  aws.String(token),
+	}
+	first, err := client.RunInstances(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, first.Instances, 1)
+	require.Equal(t, types.InstanceStateNamePending, first.Instances[0].State.Name)
+	instanceID := aws.ToString(first.Instances[0].InstanceId)
+
+	// Let the control plane transition the instance to running.
+	waitForEC2InstanceState(t, client, instanceID, types.InstanceStateNameRunning)
+
+	// The idempotent retry replays the original launch response: still pending,
+	// same instance id and reservation.
+	replay, err := client.RunInstances(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, replay.Instances, 1)
+	assert.Equal(t, instanceID, aws.ToString(replay.Instances[0].InstanceId))
+	assert.Equal(t, types.InstanceStateNamePending, replay.Instances[0].State.Name)
+
+	_, err = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{instanceID}})
+	require.NoError(t, err)
+}
+
 func TestEC2_EBSSnapshotCompletesWithoutVPCSDK(t *testing.T) {
 	client := ec2Client()
 
