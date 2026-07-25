@@ -25,51 +25,54 @@ func registerLambdaExtras2(srv *sim.Server) {
 	lambdaResource := cloudTrailRESTResource("AWS::Lambda::Function", "name", "arn")
 
 	// Function event-invoke config (async invoke retry/age/destinations).
-	mux.HandleFunc("PUT /2019-09-25/functions/{name}/event-invoke-config", cloudTrailRecordedREST("PutFunctionEventInvokeConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaPutFunctionEventInvokeConfig))
-	mux.HandleFunc("GET /2019-09-25/functions/{name}/event-invoke-config", cloudTrailRecordedREST("GetFunctionEventInvokeConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaGetFunctionEventInvokeConfig))
-	mux.HandleFunc("POST /2019-09-25/functions/{name}/event-invoke-config", cloudTrailRecordedREST("UpdateFunctionEventInvokeConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaUpdateFunctionEventInvokeConfig))
-	mux.HandleFunc("DELETE /2019-09-25/functions/{name}/event-invoke-config", cloudTrailRecordedREST("DeleteFunctionEventInvokeConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaDeleteFunctionEventInvokeConfig))
-	mux.HandleFunc("GET /2019-09-25/functions/{name}/event-invoke-config/list", cloudTrailRecordedREST("ListFunctionEventInvokeConfigs", "lambda.amazonaws.com", lambdaResource, handleLambdaListFunctionEventInvokeConfigs))
+	mux.HandleFunc("PUT /2019-09-25/functions/{name}/event-invoke-config", cloudTrailRecordedREST("PutFunctionEventInvokeConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("PutFunctionEventInvokeConfig", lambdaFunctionResourceARN, handleLambdaPutFunctionEventInvokeConfig)))
+	mux.HandleFunc("GET /2019-09-25/functions/{name}/event-invoke-config", cloudTrailRecordedREST("GetFunctionEventInvokeConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("GetFunctionEventInvokeConfig", lambdaFunctionResourceARN, handleLambdaGetFunctionEventInvokeConfig)))
+	mux.HandleFunc("POST /2019-09-25/functions/{name}/event-invoke-config", cloudTrailRecordedREST("UpdateFunctionEventInvokeConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("UpdateFunctionEventInvokeConfig", lambdaFunctionResourceARN, handleLambdaUpdateFunctionEventInvokeConfig)))
+	mux.HandleFunc("DELETE /2019-09-25/functions/{name}/event-invoke-config", cloudTrailRecordedREST("DeleteFunctionEventInvokeConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("DeleteFunctionEventInvokeConfig", lambdaFunctionResourceARN, handleLambdaDeleteFunctionEventInvokeConfig)))
+	mux.HandleFunc("GET /2019-09-25/functions/{name}/event-invoke-config/list", cloudTrailRecordedREST("ListFunctionEventInvokeConfigs", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("ListFunctionEventInvokeConfigs", lambdaFunctionResourceARN, handleLambdaListFunctionEventInvokeConfigs)))
 
 	// Provisioned concurrency config (per qualifier).
-	mux.HandleFunc("PUT /2019-09-30/functions/{name}/provisioned-concurrency", cloudTrailRecordedREST("PutProvisionedConcurrencyConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaPutProvisionedConcurrencyConfig))
-	mux.HandleFunc("GET /2019-09-30/functions/{name}/provisioned-concurrency", cloudTrailRecordedREST("GetProvisionedConcurrencyConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaGetProvisionedConcurrencyConfig))
-	mux.HandleFunc("DELETE /2019-09-30/functions/{name}/provisioned-concurrency", cloudTrailRecordedREST("DeleteProvisionedConcurrencyConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaDeleteProvisionedConcurrencyConfig))
-	// ListProvisionedConcurrencyConfigs shares the base path keyed on ?List=ALL;
-	// the SDK serializes that query param. Go's ServeMux ignores the query when
-	// matching, so a distinct registration would collide with GET above. The
-	// GET handler dispatches on the List selector instead; register the op name
-	// so it lands in the conformance REST registry.
+	mux.HandleFunc("PUT /2019-09-30/functions/{name}/provisioned-concurrency", cloudTrailRecordedREST("PutProvisionedConcurrencyConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("PutProvisionedConcurrencyConfig", lambdaFunctionResourceARN, handleLambdaPutProvisionedConcurrencyConfig)))
+	mux.HandleFunc("GET /2019-09-30/functions/{name}/provisioned-concurrency", cloudTrailRecordedRESTDynamic(func(r *http.Request, _ []byte) string { return lambdaProvisionedConcurrencyOpName(r) }, "lambda.amazonaws.com", lambdaResource, lambdaEnforcedDynamic(lambdaProvisionedConcurrencyOpName, lambdaFunctionResourceARN, handleLambdaGetProvisionedConcurrencyConfig)))
+	mux.HandleFunc("DELETE /2019-09-30/functions/{name}/provisioned-concurrency", cloudTrailRecordedREST("DeleteProvisionedConcurrencyConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("DeleteProvisionedConcurrencyConfig", lambdaFunctionResourceARN, handleLambdaDeleteProvisionedConcurrencyConfig)))
+	// GetProvisionedConcurrencyConfig and ListProvisionedConcurrencyConfigs
+	// share the base path keyed on ?List=ALL; the SDK serializes that query
+	// param. Go's ServeMux ignores the query when matching, so a distinct
+	// registration would collide with GET above. The GET handler (wrapped by
+	// cloudTrailRecordedRESTDynamic + lambdaEnforcedDynamic above) dispatches
+	// on the List selector instead; register both op names so they land in
+	// the conformance REST registry.
+	restRegisterOp("lambda.amazonaws.com", "GetProvisionedConcurrencyConfig")
 	restRegisterOp("lambda.amazonaws.com", "ListProvisionedConcurrencyConfigs")
 
 	// Account-level code-signing configs.
-	mux.HandleFunc("POST /2020-04-22/code-signing-configs", cloudTrailRecordedREST("CreateCodeSigningConfig", "lambda.amazonaws.com", nil, handleLambdaCreateCodeSigningConfig))
-	mux.HandleFunc("GET /2020-04-22/code-signing-configs", cloudTrailRecordedREST("ListCodeSigningConfigs", "lambda.amazonaws.com", nil, handleLambdaListCodeSigningConfigs))
-	mux.HandleFunc("GET /2020-04-22/code-signing-configs/{arn...}", cloudTrailRecordedREST("GetCodeSigningConfig", "lambda.amazonaws.com", nil, handleLambdaGetCodeSigningConfig))
-	mux.HandleFunc("PUT /2020-04-22/code-signing-configs/{arn...}", cloudTrailRecordedREST("UpdateCodeSigningConfig", "lambda.amazonaws.com", nil, handleLambdaUpdateCodeSigningConfig))
-	mux.HandleFunc("DELETE /2020-04-22/code-signing-configs/{arn...}", cloudTrailRecordedREST("DeleteCodeSigningConfig", "lambda.amazonaws.com", nil, handleLambdaDeleteCodeSigningConfig))
+	mux.HandleFunc("POST /2020-04-22/code-signing-configs", cloudTrailRecordedREST("CreateCodeSigningConfig", "lambda.amazonaws.com", nil, lambdaEnforced("CreateCodeSigningConfig", nil, handleLambdaCreateCodeSigningConfig)))
+	mux.HandleFunc("GET /2020-04-22/code-signing-configs", cloudTrailRecordedREST("ListCodeSigningConfigs", "lambda.amazonaws.com", nil, lambdaEnforced("ListCodeSigningConfigs", nil, handleLambdaListCodeSigningConfigs)))
+	mux.HandleFunc("GET /2020-04-22/code-signing-configs/{arn...}", cloudTrailRecordedREST("GetCodeSigningConfig", "lambda.amazonaws.com", nil, lambdaEnforced("GetCodeSigningConfig", nil, handleLambdaGetCodeSigningConfig)))
+	mux.HandleFunc("PUT /2020-04-22/code-signing-configs/{arn...}", cloudTrailRecordedREST("UpdateCodeSigningConfig", "lambda.amazonaws.com", nil, lambdaEnforced("UpdateCodeSigningConfig", nil, handleLambdaUpdateCodeSigningConfig)))
+	mux.HandleFunc("DELETE /2020-04-22/code-signing-configs/{arn...}", cloudTrailRecordedREST("DeleteCodeSigningConfig", "lambda.amazonaws.com", nil, lambdaEnforced("DeleteCodeSigningConfig", nil, handleLambdaDeleteCodeSigningConfig)))
 
 	// Per-function code-signing config attachment.
-	mux.HandleFunc("PUT /2020-06-30/functions/{name}/code-signing-config", cloudTrailRecordedREST("PutFunctionCodeSigningConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaPutFunctionCodeSigningConfig))
-	mux.HandleFunc("GET /2020-06-30/functions/{name}/code-signing-config", cloudTrailRecordedREST("GetFunctionCodeSigningConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaGetFunctionCodeSigningConfig))
-	mux.HandleFunc("DELETE /2020-06-30/functions/{name}/code-signing-config", cloudTrailRecordedREST("DeleteFunctionCodeSigningConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaDeleteFunctionCodeSigningConfig))
+	mux.HandleFunc("PUT /2020-06-30/functions/{name}/code-signing-config", cloudTrailRecordedREST("PutFunctionCodeSigningConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("PutFunctionCodeSigningConfig", lambdaFunctionResourceARN, handleLambdaPutFunctionCodeSigningConfig)))
+	mux.HandleFunc("GET /2020-06-30/functions/{name}/code-signing-config", cloudTrailRecordedREST("GetFunctionCodeSigningConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("GetFunctionCodeSigningConfig", lambdaFunctionResourceARN, handleLambdaGetFunctionCodeSigningConfig)))
+	mux.HandleFunc("DELETE /2020-06-30/functions/{name}/code-signing-config", cloudTrailRecordedREST("DeleteFunctionCodeSigningConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("DeleteFunctionCodeSigningConfig", lambdaFunctionResourceARN, handleLambdaDeleteFunctionCodeSigningConfig)))
 
 	// Runtime-management config.
-	mux.HandleFunc("GET /2021-07-20/functions/{name}/runtime-management-config", cloudTrailRecordedREST("GetRuntimeManagementConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaGetRuntimeManagementConfig))
-	mux.HandleFunc("PUT /2021-07-20/functions/{name}/runtime-management-config", cloudTrailRecordedREST("PutRuntimeManagementConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaPutRuntimeManagementConfig))
+	mux.HandleFunc("GET /2021-07-20/functions/{name}/runtime-management-config", cloudTrailRecordedREST("GetRuntimeManagementConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("GetRuntimeManagementConfig", lambdaFunctionResourceARN, handleLambdaGetRuntimeManagementConfig)))
+	mux.HandleFunc("PUT /2021-07-20/functions/{name}/runtime-management-config", cloudTrailRecordedREST("PutRuntimeManagementConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("PutRuntimeManagementConfig", lambdaFunctionResourceARN, handleLambdaPutRuntimeManagementConfig)))
 
 	// Account settings.
-	mux.HandleFunc("GET /2016-08-19/account-settings", cloudTrailRecordedREST("GetAccountSettings", "lambda.amazonaws.com", nil, handleLambdaGetAccountSettings))
-	mux.HandleFunc("GET /2016-08-19/account-settings/", cloudTrailRecordedREST("GetAccountSettings", "lambda.amazonaws.com", nil, handleLambdaGetAccountSettings))
+	mux.HandleFunc("GET /2016-08-19/account-settings", cloudTrailRecordedREST("GetAccountSettings", "lambda.amazonaws.com", nil, lambdaEnforced("GetAccountSettings", nil, handleLambdaGetAccountSettings)))
+	mux.HandleFunc("GET /2016-08-19/account-settings/", cloudTrailRecordedREST("GetAccountSettings", "lambda.amazonaws.com", nil, lambdaEnforced("GetAccountSettings", nil, handleLambdaGetAccountSettings)))
 
 	// Function recursion config.
-	mux.HandleFunc("GET /2024-08-31/functions/{name}/recursion-config", cloudTrailRecordedREST("GetFunctionRecursionConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaGetFunctionRecursionConfig))
-	mux.HandleFunc("PUT /2024-08-31/functions/{name}/recursion-config", cloudTrailRecordedREST("PutFunctionRecursionConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaPutFunctionRecursionConfig))
+	mux.HandleFunc("GET /2024-08-31/functions/{name}/recursion-config", cloudTrailRecordedREST("GetFunctionRecursionConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("GetFunctionRecursionConfig", lambdaFunctionResourceARN, handleLambdaGetFunctionRecursionConfig)))
+	mux.HandleFunc("PUT /2024-08-31/functions/{name}/recursion-config", cloudTrailRecordedREST("PutFunctionRecursionConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("PutFunctionRecursionConfig", lambdaFunctionResourceARN, handleLambdaPutFunctionRecursionConfig)))
 
 	// Layer-version permissions.
-	mux.HandleFunc("POST /2018-10-31/layers/{layer}/versions/{version}/policy", cloudTrailRecordedREST("AddLayerVersionPermission", "lambda.amazonaws.com", nil, handleLambdaAddLayerVersionPermission))
-	mux.HandleFunc("GET /2018-10-31/layers/{layer}/versions/{version}/policy", cloudTrailRecordedREST("GetLayerVersionPolicy", "lambda.amazonaws.com", nil, handleLambdaGetLayerVersionPolicy))
-	mux.HandleFunc("DELETE /2018-10-31/layers/{layer}/versions/{version}/policy/{statement}", cloudTrailRecordedREST("RemoveLayerVersionPermission", "lambda.amazonaws.com", nil, handleLambdaRemoveLayerVersionPermission))
+	mux.HandleFunc("POST /2018-10-31/layers/{layer}/versions/{version}/policy", cloudTrailRecordedREST("AddLayerVersionPermission", "lambda.amazonaws.com", nil, lambdaEnforced("AddLayerVersionPermission", nil, handleLambdaAddLayerVersionPermission)))
+	mux.HandleFunc("GET /2018-10-31/layers/{layer}/versions/{version}/policy", cloudTrailRecordedREST("GetLayerVersionPolicy", "lambda.amazonaws.com", nil, lambdaEnforced("GetLayerVersionPolicy", nil, handleLambdaGetLayerVersionPolicy)))
+	mux.HandleFunc("DELETE /2018-10-31/layers/{layer}/versions/{version}/policy/{statement}", cloudTrailRecordedREST("RemoveLayerVersionPermission", "lambda.amazonaws.com", nil, lambdaEnforced("RemoveLayerVersionPermission", nil, handleLambdaRemoveLayerVersionPermission)))
 }
 
 // ---------------------------------------------------------------------------

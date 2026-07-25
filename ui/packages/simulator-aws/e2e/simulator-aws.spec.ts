@@ -237,6 +237,40 @@ test.describe("AWS Organizations account management", () => {
   });
 });
 
+// The Amazon ECS, AWS Lambda, Amazon ECR, Amazon S3, and CloudWatch Logs
+// pages used to render AwsTable's default "View details" and "Delete" header
+// actions — enabled, but with no handler wired (BUG-2637). Each page now
+// passes its own `actions`, so those inert defaults never render; the real
+// action (Stop for ECS tasks, Delete elsewhere) takes their place, disabled
+// until a row is selected. Like the IAM and Organizations header-action
+// checks above, this is assertable without an identity provider — reading
+// zero rows still renders the header controls. The authenticated
+// select→confirm→mutate loop belongs to the Shauth relying-party suite.
+test.describe("Resource header actions", () => {
+  const cases = [
+    { path: "/ui/ecs", testId: "ecs-stop-task", label: "Stop" },
+    { path: "/ui/lambda", testId: "lambda-delete-function", label: "Delete" },
+    { path: "/ui/ecr", testId: "ecr-delete-repo", label: "Delete" },
+    { path: "/ui/s3", testId: "s3-delete-bucket", label: "Delete" },
+    { path: "/ui/logs", testId: "logs-delete-log-group", label: "Delete" },
+  ];
+
+  for (const { path, testId, label } of cases) {
+    test(`${path} wires a real, initially-disabled ${label} action and renders no inert default`, async ({ page }) => {
+      await page.goto(path);
+      const action = page.getByTestId(testId);
+      await expect(action).toBeVisible();
+      await expect(action).toHaveText(label);
+      await expect(action).toBeDisabled();
+      // The AwsTable default header actions this replaced.
+      await expect(page.getByRole("button", { name: "View details" })).toHaveCount(0);
+      if (label !== "Delete") {
+        await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+      }
+    });
+  }
+});
+
 test.describe("Navigation", () => {
   test("reaches every service from the side navigation and updates the breadcrumb", async ({ page }) => {
     await page.goto("/ui/");

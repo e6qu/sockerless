@@ -198,7 +198,7 @@ func s3Enforced(opName func(*http.Request, []byte) string, h http.HandlerFunc) h
 		// reads; a present-but-invalid signature is rejected. The object body
 		// is never read here (nil): S3 clients always declare the payload hash
 		// in x-amz-content-sha256, so large uploads are not buffered.
-		if _, serr := sigv4Verify(r, nil); serr != nil {
+		if _, serr := sigv4VerifyS3(r, nil); serr != nil {
 			sigv4WriteS3Error(w, r, serr)
 			return
 		}

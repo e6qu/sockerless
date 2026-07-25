@@ -4,6 +4,40 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-25 — Closed the console/simulator fidelity follow-ups the roadmap surfaced
+
+Three fidelity gaps filed during the Console Self-Service phases, resolved
+together:
+
+- **AWS console (BUG-2637)**: `AwsTable`'s default "View details"/"Delete"
+  header actions rendered enabled but did nothing on the Amazon ECS, AWS
+  Lambda, Amazon ECR, Amazon S3, and CloudWatch Logs pages. Each page now
+  passes the `actions` render prop so the inert defaults no longer render:
+  "View details" was dropped (these resources have no detail view), and a real
+  Stop/Delete was wired over the federated Signature Version 4 path (ECS
+  StopTask; Lambda, ECR, S3, and CloudWatch Logs deletes) with a confirm
+  dialog and the real cloud error surfaced.
+- **Google Cloud simulator (BUG-2638)**: `serviceAccounts.create` silently
+  overwrote an existing service account; it now returns Google Cloud IAM's real
+  409 `ALREADY_EXISTS`. The Cloud Run and Cloud Run Functions backend harnesses
+  that re-provision `sockerless-runner` against a persistent simulator moved to
+  get-or-create, and SDK + CLI tests cover the conflict.
+- **AWS simulator (BUG-2642)**, found by the Boy Scout check while fixing the
+  console actions: AWS Lambda's REST API surface bypassed SigV4/IAM enforcement
+  entirely — an unauthenticated call returned data, a hole in the credential
+  enforcement contract. A `lambdaEnforced` wrapper (mirroring `s3Enforced`) now
+  verifies the Signature Version 4 signature and evaluates the real `lambda:`
+  IAM action on every control-plane route, returning Lambda's REST-JSON auth
+  error shape; the `/2018-06-01/runtime/...` container-polling routes stay
+  unenforced, so function execution is unaffected — proven by the invoke suite
+  plus a new unsigned/wrong-secret deny test.
+
+BUG-2639 (the Azure v2.0 implicit grant for unregistered client ids) stayed
+open as a deliberate interim state: removing it is a mass migration of every
+Azure test harness to provisioned app registrations, better done as its own
+considered change.
+
+
 ## 2026-07-25 — Deployment recipe, and the Azure portal federates for real
 
 Phase 4 of the Console Self-Service roadmap: the deployment and provisioning

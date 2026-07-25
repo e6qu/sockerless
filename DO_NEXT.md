@@ -96,6 +96,8 @@ since phase 1. All four phases (credential minting; account/project/
 subscription management; `sockerless login`; deployment + Azure federation)
 have merged or are in flight.
 
+The console/simulator fidelity follow-ups filed during the roadmap were closed (BUG-2637 AWS console table actions, BUG-2638 GCP serviceAccounts 409, and BUG-2642 — the Lambda SigV4/IAM enforcement gap found while fixing them). BUG-2639 (Azure implicit grant for unregistered client ids) stayed open as a deliberate interim state — its fix is a mass migration of every Azure harness to provisioned app registrations.
+
 No roadmap phase remains queued. Candidate next work: the staged live-cloud
 validation backlog (BUG-1075), the deployment recipe's real-registry/GHCR
 publish path, or new console surfaces as the product grows — pick with the

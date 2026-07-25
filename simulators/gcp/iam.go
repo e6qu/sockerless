@@ -141,6 +141,12 @@ func registerIAM(srv *sim.Server) {
 		email := fmt.Sprintf("%s@%s.iam.gserviceaccount.com", req.AccountId, project)
 		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
 
+		if _, exists := serviceAccounts.Get(name); exists {
+			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS",
+				"Service account %s already exists within project projects/%s.", req.AccountId, project)
+			return
+		}
+
 		sa := GCPServiceAccount{
 			Name:        name,
 			ProjectId:   project,

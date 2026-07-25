@@ -78,7 +78,11 @@ func TestLambda_FunctionConfigurationOmitsCodeAndTags(t *testing.T) {
 	}
 
 	rawReq := []byte(`{"FunctionName":"raw-shape-fn","Role":"arn:aws:iam::123456789012:role/test-role","Runtime":"nodejs20.x","Handler":"index.handler","Code":{"ZipFile":"zip-bytes"},"Tags":{"env":"raw"}}`)
-	resp, err := http.Post(baseURL+"/2015-03-31/functions", "application/json", bytes.NewReader(rawReq))
+	rawPostReq, err := http.NewRequest(http.MethodPost, baseURL+"/2015-03-31/functions", bytes.NewReader(rawReq))
+	require.NoError(t, err)
+	rawPostReq.Header.Set("Content-Type", "application/json")
+	signRawSigV4JSON(t, rawPostReq, "lambda", rawReq)
+	resp, err := http.DefaultClient.Do(rawPostReq)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
@@ -88,7 +92,10 @@ func TestLambda_FunctionConfigurationOmitsCodeAndTags(t *testing.T) {
 	assert.NotContains(t, string(body), `"Tags"`)
 	assert.NotContains(t, string(body), "zip-bytes")
 
-	getResp, err := http.Get(baseURL + "/2015-03-31/functions/raw-shape-fn")
+	rawGetReq, err := http.NewRequest(http.MethodGet, baseURL+"/2015-03-31/functions/raw-shape-fn", nil)
+	require.NoError(t, err)
+	signRawSigV4(t, rawGetReq, "lambda", emptySHA256)
+	getResp, err := http.DefaultClient.Do(rawGetReq)
 	require.NoError(t, err)
 	defer getResp.Body.Close()
 	getBody, err := io.ReadAll(getResp.Body)

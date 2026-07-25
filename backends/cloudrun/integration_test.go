@@ -859,11 +859,41 @@ func mintServiceAccountKeyJSONCloudrun(simURL, project, accountID string) ([]byt
 		}
 		return out, nil
 	}
-
-	if _, err := post("/v1/projects/"+project+"/serviceAccounts", map[string]any{"accountId": accountID}); err != nil {
-		return nil, fmt.Errorf("create service account: %w", err)
+	// getServiceAccount reports whether the account already exists, mirroring
+	// how a real idempotent provisioning client (e.g. Terraform) reads before
+	// writing rather than treating IAM's 409 ALREADY_EXISTS as fatal.
+	getServiceAccount := func(email string) (bool, error) {
+		req, err := http.NewRequest(http.MethodGet, simURL+"/v1/projects/"+project+"/serviceAccounts/"+email, nil)
+		if err != nil {
+			return false, err
+		}
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false, err
+		}
+		defer resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusOK:
+			return true, nil
+		case http.StatusNotFound:
+			return false, nil
+		default:
+			data, _ := io.ReadAll(resp.Body)
+			return false, fmt.Errorf("GET service account returned %d: %s", resp.StatusCode, data)
+		}
 	}
+
 	email := accountID + "@" + project + ".iam.gserviceaccount.com"
+	exists, err := getServiceAccount(email)
+	if err != nil {
+		return nil, fmt.Errorf("get service account: %w", err)
+	}
+	if !exists {
+		if _, err := post("/v1/projects/"+project+"/serviceAccounts", map[string]any{"accountId": accountID}); err != nil {
+			return nil, fmt.Errorf("create service account: %w", err)
+		}
+	}
 	key, err := post("/v1/projects/"+project+"/serviceAccounts/"+email+"/keys", map[string]any{})
 	if err != nil {
 		return nil, fmt.Errorf("create service account key: %w", err)

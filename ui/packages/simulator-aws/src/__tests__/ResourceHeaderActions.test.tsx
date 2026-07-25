@@ -1,0 +1,321 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ECSTasksPage, isStoppable } from "../pages/ECSTasksPage.js";
+import { LambdaFunctionsPage } from "../pages/LambdaFunctionsPage.js";
+import { ECRReposPage } from "../pages/ECRReposPage.js";
+import { S3BucketsPage } from "../pages/S3BucketsPage.js";
+import { LogGroupsPage } from "../pages/LogGroupsPage.js";
+import type { ECSTask } from "../api.js";
+
+/**
+ * The Amazon ECS, AWS Lambda, Amazon ECR, Amazon S3, and CloudWatch Logs
+ * pages used to render an enabled "View details" and "Delete" header action
+ * with no handler — a fake affordance (BUG-2637). Each page now passes
+ * AwsTable its own `actions`, so the defaults never render, and the real
+ * action goes out over the same federated wire the reads use. These tests
+ * drive the full read → select → confirm → mutate round trip against a
+ * mocked federated fetch, the way ContainersPage.test.tsx drives admin's
+ * mutation flows, rather than reaching into the mutation internals.
+ */
+
+const mockFetch = vi.fn();
+globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+afterEach(() => {
+  cleanup();
+  mockFetch.mockReset();
+});
+
+function jsonResponse(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+}
+
+function noContent(status = 204): Response {
+  return new Response(null, { status });
+}
+
+function xmlResponse(xml: string, status = 200): Response {
+  return new Response(xml, { status, headers: { "content-type": "application/xml" } });
+}
+
+function xmlError(code: string, message: string, status: number): Response {
+  return xmlResponse(`<Error><Code>${code}</Code><Message>${message}</Message></Error>`, status);
+}
+
+function targetOf(init: RequestInit | undefined): string {
+  return new Headers(init?.headers).get("x-amz-target") ?? "";
+}
+
+async function bodyOf(init: RequestInit | undefined): Promise<string> {
+  return typeof init?.body === "string" ? init.body : "";
+}
+
+type Rule = { when: (url: string, init?: RequestInit) => boolean; respond: (init?: RequestInit) => Response };
+
+function installFetch(rules: Rule[]) {
+  mockFetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url === "/ui/config.json") return jsonResponse({});
+    const rule = rules.find((candidate) => candidate.when(url, init));
+    if (!rule) throw new Error(`unhandled fetch: ${init?.method ?? "GET"} ${url}`);
+    return rule.respond(init);
+  });
+}
+
+function renderWithQuery(ui: React.ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
+describe("isStoppable", () => {
+  const base: ECSTask = {
+    taskArn: "arn:aws:ecs:us-east-1:123456789012:task/default/abc",
+    status: "RUNNING",
+    clusterArn: "arn:aws:ecs:us-east-1:123456789012:cluster/default",
+    launchType: "FARGATE",
+    cpu: "256",
+    memory: "512",
+  };
+
+  it("allows stopping a running or pending task", () => {
+    expect(isStoppable({ ...base, status: "RUNNING" })).toBe(true);
+    expect(isStoppable({ ...base, status: "PENDING" })).toBe(true);
+    expect(isStoppable({ ...base, status: "PROVISIONING" })).toBe(true);
+  });
+
+  it("refuses a task that is already stopped or tearing down", () => {
+    expect(isStoppable({ ...base, status: "STOPPED" })).toBe(false);
+    expect(isStoppable({ ...base, status: "DEPROVISIONING" })).toBe(false);
+  });
+});
+
+describe("ECSTasksPage", () => {
+  const clusterArn = "arn:aws:ecs:us-east-1:123456789012:cluster/default";
+  const taskArn = "arn:aws:ecs:us-east-1:123456789012:task/default/abc123";
+
+  function installList() {
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerServiceV20141113.ListClusters",
+        respond: () => jsonResponse({ clusterArns: [clusterArn] }),
+      },
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerServiceV20141113.ListTasks",
+        respond: () => jsonResponse({ taskArns: [taskArn] }),
+      },
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerServiceV20141113.DescribeTasks",
+        respond: () =>
+          jsonResponse({
+            tasks: [{ taskArn, lastStatus: "RUNNING", clusterArn, launchType: "FARGATE", cpu: "256", memory: "512" }],
+          }),
+      },
+    ]);
+  }
+
+  it("renders no default View details or Delete, and disables Stop with nothing selected", async () => {
+    installList();
+    renderWithQuery(<ECSTasksPage />);
+    await screen.findByText(taskArn);
+    expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect((screen.getByTestId("ecs-stop-task") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("stops the selected task through the real StopTask operation", async () => {
+    let stopCalled: { url: string; init?: RequestInit } | null = null;
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerServiceV20141113.ListClusters",
+        respond: () => jsonResponse({ clusterArns: [clusterArn] }),
+      },
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerServiceV20141113.ListTasks",
+        respond: () => jsonResponse({ taskArns: [taskArn] }),
+      },
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerServiceV20141113.DescribeTasks",
+        respond: () =>
+          jsonResponse({
+            tasks: [{ taskArn, lastStatus: "RUNNING", clusterArn, launchType: "FARGATE", cpu: "256", memory: "512" }],
+          }),
+      },
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerServiceV20141113.StopTask",
+        respond: (init) => {
+          stopCalled = { url: "/", init };
+          return jsonResponse({ task: { taskArn, lastStatus: "STOPPED", clusterArn } });
+        },
+      },
+    ]);
+    renderWithQuery(<ECSTasksPage />);
+    await screen.findByText(taskArn);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${taskArn}` }));
+    fireEvent.click(screen.getByTestId("ecs-stop-task"));
+    const dialog = await screen.findByRole("dialog", { name: "Stop this task?" });
+    fireEvent.click(within(dialog).getByTestId("ecs-stop-task-confirm"));
+
+    await waitFor(() => expect(stopCalled).not.toBeNull());
+    const sent = JSON.parse(await bodyOf(stopCalled!.init)) as { cluster: string; task: string };
+    expect(sent.cluster).toBe(clusterArn);
+    expect(sent.task).toBe(taskArn);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("LambdaFunctionsPage", () => {
+  const functionName = "my-function";
+
+  it("deletes the selected function through the real DELETE /2015-03-31/functions/{name}", async () => {
+    let deleteCalled: string | null = null;
+    installFetch([
+      {
+        when: (url, init) => url === "/2015-03-31/functions" && (init?.method ?? "GET") === "GET",
+        respond: () =>
+          jsonResponse({
+            Functions: [
+              {
+                FunctionName: functionName,
+                Runtime: "nodejs20.x",
+                State: "Active",
+                MemorySize: 128,
+                Timeout: 3,
+                LastModified: "2026-01-01T00:00:00.000+0000",
+              },
+            ],
+          }),
+      },
+      {
+        when: (url, init) => url === `/2015-03-31/functions/${functionName}` && init?.method === "DELETE",
+        respond: (init) => {
+          deleteCalled = init?.method ?? "";
+          return noContent();
+        },
+      },
+    ]);
+    renderWithQuery(<LambdaFunctionsPage />);
+    await screen.findByText(functionName);
+    expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${functionName}` }));
+    fireEvent.click(screen.getByTestId("lambda-delete-function"));
+    const dialog = await screen.findByRole("dialog", { name: `Delete ${functionName}?` });
+    fireEvent.click(within(dialog).getByTestId("lambda-delete-function-confirm"));
+
+    await waitFor(() => expect(deleteCalled).toBe("DELETE"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("ECRReposPage", () => {
+  const repoName = "my-repo";
+
+  it("deletes the selected repository through DeleteRepository with force", async () => {
+    let sentBody: string | null = null;
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerRegistry_V20150921.DescribeRepositories",
+        respond: () =>
+          jsonResponse({
+            repositories: [
+              {
+                repositoryName: repoName,
+                repositoryUri: `123456789012.dkr.ecr.us-east-1.amazonaws.com/${repoName}`,
+                createdAt: 1750000000,
+              },
+            ],
+          }),
+      },
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerRegistry_V20150921.DeleteRepository",
+        respond: (init) => {
+          sentBody = typeof init?.body === "string" ? init.body : null;
+          return jsonResponse({ repository: { repositoryName: repoName } });
+        },
+      },
+    ]);
+    renderWithQuery(<ECRReposPage />);
+    await screen.findByText(repoName);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${repoName}` }));
+    fireEvent.click(screen.getByTestId("ecr-delete-repo"));
+    const dialog = await screen.findByRole("dialog", { name: `Delete ${repoName}?` });
+    fireEvent.click(within(dialog).getByTestId("ecr-delete-repo-confirm"));
+
+    await waitFor(() => expect(sentBody).not.toBeNull());
+    const sent = JSON.parse(sentBody!) as { repositoryName: string; force: boolean };
+    expect(sent.repositoryName).toBe(repoName);
+    expect(sent.force).toBe(true);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("S3BucketsPage", () => {
+  const bucketName = "my-bucket";
+
+  it("surfaces S3's BucketNotEmpty error rather than closing the dialog", async () => {
+    installFetch([
+      {
+        when: (url, init) => url === "/" && (init?.method ?? "GET") === "GET",
+        respond: () =>
+          xmlResponse(
+            `<ListAllMyBucketsResult><Buckets><Bucket><Name>${bucketName}</Name><CreationDate>2026-01-01T00:00:00.000Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>`,
+          ),
+      },
+      {
+        when: (url, init) => url === `/${bucketName}` && init?.method === "DELETE",
+        respond: () => xmlError("BucketNotEmpty", "The bucket you tried to delete is not empty", 409),
+      },
+    ]);
+    renderWithQuery(<S3BucketsPage />);
+    await screen.findByText(bucketName);
+    expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${bucketName}` }));
+    fireEvent.click(screen.getByTestId("s3-delete-bucket"));
+    const dialog = await screen.findByRole("dialog", { name: `Delete ${bucketName}?` });
+    fireEvent.click(within(dialog).getByTestId("s3-delete-bucket-confirm"));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain("BucketNotEmpty");
+    // The failed delete never dismisses the confirmation.
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+});
+
+describe("LogGroupsPage", () => {
+  const logGroupName = "/ecs/my-task";
+
+  it("deletes the selected log group through the real DeleteLogGroup operation", async () => {
+    let sentBody: string | null = null;
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "Logs_20140328.DescribeLogGroups",
+        respond: () =>
+          jsonResponse({
+            logGroups: [{ logGroupName, creationTime: 1750000000000, retentionInDays: 14, storedBytes: 2048 }],
+          }),
+      },
+      {
+        when: (_url, init) => targetOf(init) === "Logs_20140328.DeleteLogGroup",
+        respond: (init) => {
+          sentBody = typeof init?.body === "string" ? init.body : null;
+          return jsonResponse({});
+        },
+      },
+    ]);
+    renderWithQuery(<LogGroupsPage />);
+    await screen.findByText(logGroupName);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${logGroupName}` }));
+    fireEvent.click(screen.getByTestId("logs-delete-log-group"));
+    const dialog = await screen.findByRole("dialog", { name: `Delete ${logGroupName}?` });
+    fireEvent.click(within(dialog).getByTestId("logs-delete-log-group-confirm"));
+
+    await waitFor(() => expect(sentBody).not.toBeNull());
+    expect(JSON.parse(sentBody!)).toEqual({ logGroupName });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});

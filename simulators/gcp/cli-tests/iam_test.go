@@ -96,6 +96,31 @@ func TestIAMCustomRoleLifecycleCLI(t *testing.T) {
 	require.False(t, revived.Deleted, "undelete clears the deleted flag")
 }
 
+// TestIAMServiceAccountCreateDuplicateCLI pins that creating a second service
+// account with an accountId already in use within the project fails with real
+// IAM's 409 ALREADY_EXISTS, instead of gcloud silently reporting success over
+// a silently overwritten account.
+func TestIAMServiceAccountCreateDuplicateCLI(t *testing.T) {
+	const accountID = "cli-dup-sa"
+	email := accountID + "@" + project + ".iam.gserviceaccount.com"
+
+	runCLI(t, gcloudCLI("iam", "service-accounts", "create", accountID,
+		"--display-name=Original", "--format=json"))
+
+	out, err := gcloudCLI("iam", "service-accounts", "create", accountID,
+		"--display-name=Duplicate", "--format=json").CombinedOutput()
+	require.Error(t, err, "duplicate service-accounts create must fail: %s", out)
+	assert.Contains(t, string(out), "already exists", "gcloud must report the real IAM conflict")
+
+	// The rejected duplicate must not have overwritten the existing account.
+	descOut := runCLI(t, gcloudCLI("iam", "service-accounts", "describe", email, "--format=json"))
+	var described struct {
+		DisplayName string `json:"displayName"`
+	}
+	parseJSONObject(t, descOut, &described)
+	assert.Equal(t, "Original", described.DisplayName, "duplicate create must not overwrite the existing account")
+}
+
 // TestIAMServiceAccountAsResourceIAMCLI exercises get-iam-policy +
 // add-iam-policy-binding on a service account (the SA-as-resource IAM triple),
 // plus :testIamPermissions directly against the wire path.
