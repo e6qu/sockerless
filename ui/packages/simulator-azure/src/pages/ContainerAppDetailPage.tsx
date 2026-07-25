@@ -1,6 +1,8 @@
 import { useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AzureCommandBar, AzureEssentials, AzureStatus } from "../portal/AzurePortal.js";
+import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Text } from "@fluentui/react-components";
+import { AzureCommandBar, AzureEssentials, AzureStatus, AzureErrorMessage, AzureEmptyState } from "../portal/AzurePortal.js";
+import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
 import {
   fetchContainerAppJob,
@@ -72,14 +74,12 @@ export function ContainerAppDetailPage() {
       />
       <div className="az-main" data-testid="ca-job-detail">
         {job.isError ? (
-          <div className="az-message az-message-error" role="alert" data-testid="ca-job-error">
+          <AzureErrorMessage testid="ca-job-error">
             <strong>Could not load this Container Apps job.</strong>{" "}
             {job.error instanceof Error ? job.error.message : "Azure Resource Manager did not respond."}
-          </div>
+          </AzureErrorMessage>
         ) : job.isLoading || !job.data ? (
-          <div className="az-empty" role="status">
-            Loading the job…
-          </div>
+          <AzureEmptyState title="Loading the job…" loading />
         ) : (
           <>
             <AzureEssentials
@@ -97,100 +97,81 @@ export function ContainerAppDetailPage() {
             />
 
             {mutationError ? (
-              <div className="az-message az-message-error" role="alert" data-testid="ca-job-action-error">
+              <AzureErrorMessage testid="ca-job-action-error">
                 <strong>The job operation failed.</strong>{" "}
                 {mutationError instanceof Error ? mutationError.message : "Azure Resource Manager did not respond."}
-              </div>
+              </AzureErrorMessage>
             ) : null}
 
             <section className="az-blade-section" aria-label="Containers">
-              <h2>Containers</h2>
-              <table className="az-table" data-testid="ca-job-containers">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Image</th>
-                    <th>Command</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Text as="h2" weight="semibold" block>
+                Containers
+              </Text>
+              <Table aria-label="Containers" size="small" data-testid="ca-job-containers">
+                <TableHeader>
+                  <TableRow>
+                    <TableHeaderCell>Name</TableHeaderCell>
+                    <TableHeaderCell>Image</TableHeaderCell>
+                    <TableHeaderCell>Command</TableHeaderCell>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {job.data.containers.length === 0 ? (
-                    <tr>
-                      <td className="az-table-state" colSpan={3}>
-                        <div className="az-empty">
-                          <strong>This job's template has no containers.</strong>
-                        </div>
-                      </td>
-                    </tr>
+                    <AzureTableEmptyRow colSpan={3} title="This job's template has no containers." />
                   ) : (
                     job.data.containers.map((container) => (
-                      <tr key={container.name}>
-                        <td>{container.name}</td>
-                        <td>
+                      <TableRow key={container.name}>
+                        <TableCell>{container.name}</TableCell>
+                        <TableCell>
                           <code>{container.image}</code>
-                        </td>
-                        <td>
+                        </TableCell>
+                        <TableCell>
                           <code>{[...container.command, ...container.args].join(" ") || "—"}</code>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ))
                   )}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </section>
 
             <section className="az-blade-section" aria-label="Execution history">
-              <h2>Execution history</h2>
-              <table className="az-table" data-testid="ca-job-executions">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Status</th>
-                    <th>Start time</th>
-                    <th>End time</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Text as="h2" weight="semibold" block>
+                Execution history
+              </Text>
+              <Table aria-label="Execution history" size="small" data-testid="ca-job-executions">
+                <TableHeader>
+                  <TableRow>
+                    <TableHeaderCell>Name</TableHeaderCell>
+                    <TableHeaderCell>Status</TableHeaderCell>
+                    <TableHeaderCell>Start time</TableHeaderCell>
+                    <TableHeaderCell>End time</TableHeaderCell>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {executions.isError ? (
-                    <tr>
-                      <td className="az-table-state" colSpan={4}>
-                        <div className="az-message az-message-error" role="alert">
-                          <strong>Could not load executions.</strong>{" "}
-                          {executions.error instanceof Error ? executions.error.message : "Azure Resource Manager did not respond."}
-                        </div>
-                      </td>
-                    </tr>
+                    <AzureTableErrorRow colSpan={4}>
+                      <strong>Could not load executions.</strong>{" "}
+                      {executions.error instanceof Error ? executions.error.message : "Azure Resource Manager did not respond."}
+                    </AzureTableErrorRow>
                   ) : executions.isLoading ? (
-                    <tr>
-                      <td className="az-table-state" colSpan={4}>
-                        <div className="az-empty" role="status">
-                          Loading executions…
-                        </div>
-                      </td>
-                    </tr>
+                    <AzureTableLoadingRow colSpan={4} label="Loading executions…" />
                   ) : (executions.data ?? []).length === 0 ? (
-                    <tr>
-                      <td className="az-table-state" colSpan={4}>
-                        <div className="az-empty">
-                          <strong>No executions yet</strong>
-                          <p>Runs of this job appear here.</p>
-                        </div>
-                      </td>
-                    </tr>
+                    <AzureTableEmptyRow colSpan={4} title="No executions yet" description="Runs of this job appear here." />
                   ) : (
                     (executions.data ?? []).map((execution) => (
-                      <tr key={execution.name}>
-                        <td>{execution.name}</td>
-                        <td>
+                      <TableRow key={execution.name}>
+                        <TableCell>{execution.name}</TableCell>
+                        <TableCell>
                           <AzureStatus status={execution.status || "Unknown"} />
-                        </td>
-                        <td>{execution.startTime || "—"}</td>
-                        <td>{execution.endTime || "—"}</td>
-                      </tr>
+                        </TableCell>
+                        <TableCell>{execution.startTime || "—"}</TableCell>
+                        <TableCell>{execution.endTime || "—"}</TableCell>
+                      </TableRow>
                     ))
                   )}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </section>
           </>
         )}

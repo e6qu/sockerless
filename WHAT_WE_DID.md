@@ -4,6 +4,53 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — Azure portal adopts the real Fluent component library
+
+Mirroring the AWS console's Cloudscape migration, the Azure simulator portal
+(ui/packages/simulator-azure) moved from its hand-built Fluent *approximation*
+to the real `@fluentui/react-components` (Fluent UI v9 / Fluent 2 — the system
+the real Azure portal is built on). React 19 compatibility was spike-verified
+first (Fluent's peer range explicitly includes React 19).
+
+The whole portal renders through genuine Fluent now: a `FluentProvider` whose
+theme switches between light and dark via the shared `useTheme` hook, plus
+`Toolbar`, `Popover` (the header Cloud Shell/Notifications/Help disclosures),
+`Breadcrumb`, `Badge`, `Accordion` (Essentials + service-menu groups), `Table`
+(all list and sub-resource tables, hand-composed from `TableRow`/
+`TableSelectionCell` to keep the accessible per-row selection names), `Field`/
+`Input`/`Select`/`Button` (every form), `MessageBar`, `Spinner`, and real Fluent
+System Icons (`@fluentui/react-icons`) replacing the hand-drawn SVGs. The
+server-side federation broker + ARM/Graph data plane (federation.ts/api.ts) were
+untouched — only rendering changed.
+
+The portal's signature header blue is the iconic Azure `#0078d4` (and its
+classic hover/pressed shades) in both themes, applied by overriding Fluent's
+brand-background tokens on the theme rather than accepting Fluent's stock brand
+`#0f6cbd` — so the migration to real Fluent did not cost the one most
+recognizable Azure colour. Light and dark both render at WCAG AA.
+
+The migration also fixed real defects it surfaced: a `Spinner` with no
+accessible name (caught by axe) and the focus-indicator expectations updated to
+Fluent's real mechanism (`data-fui-focus-visible` + underline, since Fluent
+zeroes the outline). A jsdom test-environment race (Fluent's tabster scheduling
+a MutationObserver after teardown) was fixed with `afterEach(cleanup)` plus a
+defensive `NodeFilter` polyfill in the vitest setup.
+
+Verified end to end: typecheck/knip clean; 34 vitest; 53 Playwright (axe
+zero-violations, both themes, across list/detail/not-supported/popover
+surfaces); the Shauth relying-party matrix green — the Azure federated flow
+(sign-in → federation broker → Entra client-secret minting → the authenticated
+Container Apps job detail render) works through the real Fluent DOM, with every
+RPS-critical data-testid preserved so the matrix needed no changes.
+
+Bundle delta: dist ~384 KB → ~793 KB (112→227 KB gzip), ~2.1x — the real cost of
+Fluent's Griffel CSS-in-JS runtime, tabster, and the `@fluentui/react-*`
+subpackages, proportionally smaller than the AWS Cloudscape jump (~4.3x). Both
+the AWS (Cloudscape) and Azure (Fluent) consoles now run on their real design
+systems; Google Cloud stays hand-built (no official Google console component
+library).
+
+
 ## 2026-07-26 — AWS console adopts the real Cloudscape component library
 
 The AWS simulator console (ui/packages/simulator-aws) moved from its hand-built
