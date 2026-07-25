@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { BrowserRouter, Routes, useLocation } from "react-router";
 import { ErrorBoundary, OperatorAccount } from "@sockerless/ui-core/components";
+import { SERVICE_CATALOG, catalogItemForPath } from "../catalog.js";
 import {
   AzureBreadcrumbs,
   AzureHeader,
@@ -11,34 +12,16 @@ import {
 } from "./AzurePortal.js";
 
 /** The portal opens a resource on the items that apply to any resource, then
- *  groups the rest. The simulator's menu follows the same shape. */
+ *  groups the rest. The simulator's menu follows the same shape. The groups
+ *  themselves come from the service catalog — the real Azure "All services"
+ *  categories, carrying every service this simulator implements and a
+ *  faithful representative set of the ones it doesn't (see catalog.ts). */
 const FLAT_ITEMS: ServiceMenuItem[] = [{ label: "Overview", to: "/ui/" }];
 
-const MENU_GROUPS: ServiceMenuGroup[] = [
-  {
-    label: "General",
-    items: [{ label: "Subscriptions", to: "/ui/subscriptions" }],
-  },
-  {
-    label: "Compute",
-    items: [
-      { label: "Container Apps", to: "/ui/container-apps" },
-      { label: "Function Apps", to: "/ui/functions" },
-    ],
-  },
-  {
-    label: "Storage and registry",
-    items: [
-      { label: "Container registries", to: "/ui/acr" },
-      { label: "Storage accounts", to: "/ui/storage" },
-    ],
-  },
-  { label: "Monitoring", items: [{ label: "Logs", to: "/ui/monitor" }] },
-  {
-    label: "Microsoft Entra ID",
-    items: [{ label: "App registrations", to: "/ui/entra/app-registrations" }],
-  },
-];
+const MENU_GROUPS: ServiceMenuGroup[] = SERVICE_CATALOG.map((group) => ({
+  label: group.label,
+  items: group.items.map((item) => ({ label: item.label, to: item.to, supported: item.supported })),
+}));
 
 interface Pane {
   crumb: string;
@@ -81,6 +64,11 @@ function paneFor(pathname: string): Pane {
       kind: "Microsoft Entra ID",
       parent: { label: "App registrations", to: "/ui/entra/app-registrations" },
     };
+  }
+  if (pathname.startsWith("/ui/not-supported/")) {
+    const item = catalogItemForPath(pathname);
+    const label = item?.label ?? "Service";
+    return { crumb: label, title: label, kind: item?.kind ?? "Service" };
   }
   return PANE["/ui/"];
 }

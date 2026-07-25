@@ -50,7 +50,7 @@ body:has(.azure) { background: var(--az-layout-bg); }
   border-radius: var(--az-radius);
   padding: 5px 10px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--az-text-caption);
   color: var(--az-fg);
   background: var(--az-surface);
 }
@@ -71,7 +71,7 @@ body:has(.azure) { background: var(--az-layout-bg); }
 
 /* Breadcrumbs ------------------------------------------------------------ */
 .az-breadcrumbs { padding: 8px 16px; background: var(--az-surface); border-bottom: 1px solid var(--az-border-subtle); }
-.az-breadcrumbs ol { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.az-breadcrumbs ol { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; font-size: var(--az-text-caption); line-height: var(--az-line-caption); }
 .az-breadcrumbs li + li::before { content: ">"; margin-right: 6px; color: var(--az-fg-secondary); }
 .az-breadcrumbs a { color: var(--az-link); text-decoration: none; }
 .az-breadcrumbs a:hover { text-decoration: underline; }
@@ -81,8 +81,8 @@ body:has(.azure) { background: var(--az-layout-bg); }
 .az-body { display: grid; grid-template-columns: 260px minmax(0, 1fr); align-items: start; background: var(--az-surface); }
 
 .az-resource-title { padding: 12px 20px 4px; grid-column: 1 / -1; background: var(--az-surface); }
-.az-resource-title h1 { margin: 0; font-size: 20px; font-weight: 600; }
-.az-resource-title p { margin: 2px 0 0; font-size: 12px; color: var(--az-fg-secondary); display: flex; gap: 12px; }
+.az-resource-title h1 { margin: 0; font-size: var(--az-text-subtitle1); line-height: var(--az-line-subtitle1); font-weight: 600; }
+.az-resource-title p { margin: 2px 0 0; font-size: var(--az-text-caption); line-height: var(--az-line-caption); color: var(--az-fg-secondary); display: flex; gap: 12px; }
 .az-directory { border-left: 1px solid var(--az-border-subtle); padding-left: 12px; }
 
 /* Command bar ------------------------------------------------------------ */
@@ -106,13 +106,13 @@ body:has(.azure) { background: var(--az-layout-bg); }
   background: transparent;
   color: var(--az-link);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--az-text-caption);
   padding: 4px 8px;
   cursor: pointer;
 }
 .az-command:hover:not(:disabled) { background: var(--az-surface-alt); }
 .az-command:disabled { color: var(--az-fg-disabled); cursor: default; }
-.az-command-glyph { font-size: 13px; }
+.az-command-glyph { font-size: var(--az-text-caption); }
 
 /* Service menu ----------------------------------------------------------- */
 .az-service-menu {
@@ -128,15 +128,19 @@ body:has(.azure) { background: var(--az-layout-bg); }
   border-radius: var(--az-radius);
   padding: 4px 8px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--az-text-caption);
   color: var(--az-fg);
   background: var(--az-surface);
 }
 .az-service-menu ul { list-style: none; margin: 0; padding: 0; }
 .az-service-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 6px 12px 6px 20px;
-  font-size: 13px;
+  font-size: var(--az-text-caption);
+  line-height: var(--az-line-caption);
   color: var(--az-fg);
   text-decoration: none;
   border-left: 3px solid transparent;
@@ -147,6 +151,32 @@ body:has(.azure) { background: var(--az-layout-bg); }
   border-left-color: var(--az-accent);
   font-weight: 600;
 }
+.az-service-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* An unsupported service stays a real, keyboard-reachable link — it just
+ * carries the badge below and a quieter label, never a lower-contrast one:
+ * --az-fg-secondary still clears WCAG AA on its own. */
+.az-service-link-unsupported .az-service-label { color: var(--az-fg-secondary); }
+
+/* The "Not supported" pill: an icon plus the word itself, never colour
+ * alone, marking a real Azure service this simulator does not implement —
+ * used in the service menu and on the not-implemented page's Essentials. */
+.az-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.az-badge-unsupported {
+  color: var(--az-status-warning);
+  background: var(--az-badge-bg);
+  border: 1px solid var(--az-badge-border);
+}
 .az-service-group { margin-top: 4px; }
 .az-service-group-toggle {
   display: flex;
@@ -156,7 +186,7 @@ body:has(.azure) { background: var(--az-layout-bg); }
   border: 0;
   background: transparent;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--az-text-caption);
   color: var(--az-fg);
   text-align: left;
   padding: 6px 12px;
@@ -178,7 +208,7 @@ body:has(.azure) { background: var(--az-layout-bg); }
   border: 0;
   background: transparent;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--az-text-caption);
   font-weight: 600;
   color: var(--az-fg);
   padding: 4px 0;
@@ -197,7 +227,7 @@ body:has(.azure) { background: var(--az-layout-bg); }
 @media (max-width: 900px) {
   .az-essentials-grid { grid-template-columns: minmax(0, 1fr); }
 }
-.az-essentials-pair { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 8px; font-size: 13px; }
+.az-essentials-pair { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 8px; font-size: var(--az-text-caption); line-height: var(--az-line-caption); }
 .az-essentials-pair dt { color: var(--az-fg-secondary); }
 .az-essentials-pair dd { margin: 0; color: var(--az-fg); overflow-wrap: anywhere; }
 .az-essentials-pair dd::before { content: ": "; color: var(--az-fg-secondary); }
@@ -208,7 +238,7 @@ body:has(.azure) { background: var(--az-layout-bg); }
   border: 0;
   background: transparent;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--az-text-caption);
   color: var(--az-fg-secondary);
   padding: 6px 0;
   border-bottom: 2px solid transparent;
@@ -225,19 +255,19 @@ body:has(.azure) { background: var(--az-layout-bg); }
   border-radius: var(--az-radius);
   padding: 5px 10px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--az-text-caption);
   color: var(--az-fg);
   background: var(--az-surface);
 }
 .az-input:focus-visible { outline: 2px solid var(--az-accent); outline-offset: 0; border-color: var(--az-accent); }
-.az-pagination { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--az-fg-secondary); }
+.az-pagination { display: flex; align-items: center; gap: 8px; font-size: var(--az-text-caption); color: var(--az-fg-secondary); }
 .az-pagination button {
   border: 0; background: transparent; font: inherit; font-size: 15px;
   color: var(--az-link); cursor: pointer; padding: 0 6px;
 }
 .az-pagination button:disabled { color: var(--az-fg-disabled); cursor: default; }
 
-.az-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.az-table { width: 100%; border-collapse: collapse; font-size: var(--az-text-caption); }
 .az-table th, .az-table td {
   text-align: left;
   padding: 8px 12px;
@@ -260,7 +290,7 @@ body:has(.azure) { background: var(--az-layout-bg); }
 /* States ----------------------------------------------------------------- */
 .az-empty { padding: 36px 12px; text-align: center; color: var(--az-fg-secondary); }
 .az-empty strong { display: block; color: var(--az-fg); font-size: 14px; margin-bottom: 4px; }
-.az-message { padding: 12px; font-size: 13px; }
+.az-message { padding: 12px; font-size: var(--az-text-caption); }
 .az-message-error { color: var(--az-status-error); }
 .az-message-warning {
   color: var(--az-fg);
@@ -273,8 +303,8 @@ body:has(.azure) { background: var(--az-layout-bg); }
 
 /* Blades (App registrations: Certificates & secrets, CLI usage) ----------- */
 .az-blade-section { margin-top: 20px; }
-.az-blade-section h2 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
-.az-blade-hint { font-size: 13px; color: var(--az-fg-secondary); margin: 0 0 10px; max-width: 72ch; }
+.az-blade-section h2 { font-size: var(--az-text-subtitle2); line-height: var(--az-line-subtitle2); font-weight: 600; margin: 0 0 6px; }
+.az-blade-hint { font-size: var(--az-text-caption); color: var(--az-fg-secondary); margin: 0 0 10px; max-width: 72ch; }
 .az-code {
   background: var(--az-surface);
   border: 1px solid var(--az-border-subtle);
@@ -301,14 +331,14 @@ body:has(.azure) { background: var(--az-layout-bg); }
   max-width: 480px;
 }
 .az-form h2, .az-form h3 { margin: 0; font-size: 14px; font-weight: 600; }
-.az-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--az-fg); }
-.az-form-status { margin: 0; font-size: 13px; color: var(--az-fg-secondary); }
+.az-form label { display: flex; flex-direction: column; gap: 4px; font-size: var(--az-text-caption); color: var(--az-fg); }
+.az-form-status { margin: 0; font-size: var(--az-text-caption); color: var(--az-fg-secondary); }
 .az-form-actions { display: flex; gap: 8px; }
 .az-button,
 .az-button-primary {
-  border-radius: 2px;
+  border-radius: var(--az-radius);
   padding: 5px 14px;
-  font-size: 13px;
+  font-size: var(--az-text-caption);
   cursor: pointer;
   border: 1px solid var(--az-border-subtle);
   background: var(--az-surface);
@@ -335,7 +365,7 @@ body:has(.azure) { background: var(--az-layout-bg); }
   border-radius: var(--az-radius);
   padding: 14px 16px;
 }
-.az-card h2 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.az-card h2 { margin: 0 0 6px; font-size: var(--az-text-caption); font-weight: 600; }
 .az-card a { font-size: 26px; color: var(--az-link); text-decoration: none; }
 .az-card a:hover { text-decoration: underline; }
 

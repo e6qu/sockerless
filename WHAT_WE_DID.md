@@ -4,6 +4,52 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-25 — Simulator console parity pass 1: faithful shells, not-supported pills, light/dark, a11y
+
+A first parity pass raising all three simulator consoles toward their real
+cloud consoles' design languages, grounded in the published design systems
+(not memory — the ground truth came from the real token sources), with the
+rendered output verified in a browser in both light and dark.
+
+- **AWS console → Cloudscape.** Token values read directly from the real
+  `@cloudscape-design/design-tokens` package (light and dark), correcting a
+  wrong link colour from a prior attempt (`#0972d3` → the real `#006ce0` /
+  `#42b4ff` dark). A faithful service navigation lists nine of AWS's real
+  "All services" groups; the seven supported services link to their pages and
+  ~22 commonly-expected unsupported ones (EC2, RDS, EKS, VPC, …) carry an
+  accessible "Not supported" pill and route to an honest not-implemented page.
+- **Google Cloud console → Material 3.** A Material navigation drawer lists
+  eleven real product groups with the supported/unsupported split (~25 not-
+  supported chips); the theme moved onto the shared Light/Dark/Same-as-device
+  hook (it previously neither persisted nor honoured the system preference);
+  dialogs gained Escape/scrim/focus-return.
+- **Azure portal → Fluent 2.** Token values read from the real `@fluentui/tokens`
+  source, replacing Fabric-era neutrals with true Fluent 2 neutrals; the header
+  blue was already Fluent's `colorBrandBackground` `#0078d4`. A service menu
+  lists ten real groups (~16 not-supported badges).
+
+Across all three: light and dark both render correctly with WCAG 2.1 AA
+contrast measured against the actually-painted surfaces in a real browser
+(every sampled text pair exceeded AA in both modes — AWS 17.3/11.1, GCP on
+`#f0f5fe`/`#202124`, Azure 15.5/14.6); landmark roles, `aria-current`, focus
+traps on dialogs, and keyboard operability were added or verified; the
+not-supported affordance is conveyed non-visually (an explicit link aria-label
+"<service>, not supported in this simulator" on every cloud, never colour
+alone); and each package's Playwright suite gained not-supported, light/dark,
+contrast, and axe-core (zero-violation) coverage. All real API wiring
+(federated reads/mutations, the project picker, the Azure federation broker)
+was preserved untouched.
+
+This is an honest **pass 1**, not literal 100% parity: the shells are
+hand-built approximations of the real component libraries (not the vendored
+`@cloudscape-design/components` / `@fluentui/react-components`), icons are
+hand-drawn in each system's style rather than the proprietary icon sets, and
+per-product colour logos and some header affordances (Azure Cloud Shell/
+notifications) are deliberately not replicated. Group ordering and the exact
+service catalogue were built from each console's public IA, not authenticated
+screenshots.
+
+
 ## 2026-07-25 — Azure `client_credentials` rejects unregistered clients
 
 BUG-2639, the last actionable fidelity gap from the Console Self-Service

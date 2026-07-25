@@ -140,6 +140,87 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 .gc-nav-link-active svg { color: var(--gc-nav-active-fg); }
 .gc-nav-footer { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--gc-border-subtle); }
 
+/* Navigation drawer -------------------------------------------------------
+ * The hamburger opens the full Google Cloud product catalog, grouped the way
+ * the real console's navigation drawer groups it (Material 3's navigation
+ * drawer: a scrollable list of sections, each with a small-caps headline,
+ * separated by a divider). Supported products are ordinary nav links;
+ * unsupported ones carry the NotSupportedChip and route to a short honest
+ * explanation instead of being silently omitted. */
+.gc-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(32, 33, 36, 0.5);
+  display: flex;
+  z-index: 100;
+}
+.gc-drawer {
+  width: min(320px, 90vw);
+  height: 100%;
+  background: var(--gc-surface);
+  color: var(--gc-fg);
+  overflow-y: auto;
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.25);
+}
+.gc-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 8px 10px 20px;
+  position: sticky;
+  top: 0;
+  background: var(--gc-surface);
+  border-bottom: 1px solid var(--gc-border-subtle);
+}
+.gc-drawer-title { font-size: 16px; font-weight: 500; font-family: var(--gc-font-display); }
+.gc-drawer-note { font-size: 12.5px; color: var(--gc-fg-secondary); margin: 12px 20px; }
+.gc-drawer-group { padding: 8px 0; border-top: 1px solid var(--gc-border-subtle); }
+.gc-drawer-group:first-of-type { border-top: 0; }
+.gc-drawer-group-label {
+  margin: 4px 20px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gc-fg-secondary);
+}
+.gc-drawer-group ul { list-style: none; margin: 0; padding: 0; }
+.gc-drawer-link {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 20px;
+  color: var(--gc-fg);
+  text-decoration: none;
+  font-size: 14px;
+}
+.gc-drawer-link:hover { background: var(--gc-surface-alt); }
+.gc-drawer-link-active { background: var(--gc-nav-active-bg); color: var(--gc-nav-active-fg); font-weight: 500; }
+.gc-drawer-link-active svg { color: var(--gc-nav-active-fg); }
+.gc-drawer-link-unsupported { color: var(--gc-fg-secondary); }
+.gc-drawer-link-unsupported svg { color: var(--gc-fg-disabled); }
+
+/* Chips -------------------------------------------------------------------
+ * A filled-tonal Material 3 chip. Meaning is carried by its text and
+ * aria-label, never colour alone, so it reads the same to a screen-reader
+ * user, a low-vision user, and a sighted one. */
+.gc-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.gc-chip-unsupported {
+  background: var(--gc-surface-alt);
+  color: var(--gc-fg-secondary);
+  border: 1px solid var(--gc-border-subtle);
+}
+
 /* Account control -------------------------------------------------------- */
 .gc-account { position: relative; }
 .gc-avatar {
@@ -487,3 +568,4 @@ button.gc-project-chip:hover { background: var(--gc-surface-alt); }
 }
 @keyframes gc-picker-spin { to { transform: rotate(360deg); } }
 a.gc-button-text { text-decoration: none; display: inline-flex; align-items: center; }
+a.gc-button-primary { text-decoration: none; display: inline-flex; align-items: center; }

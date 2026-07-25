@@ -34,7 +34,7 @@ export function DeleteProjectDialog({
     onSuccess: onDeleted,
   });
   return (
-    <GcpDialog title="Shut down project?" testId="project-delete-dialog">
+    <GcpDialog title="Shut down project?" testId="project-delete-dialog" onClose={onClose}>
       <p>
         Shutting down <strong>{project.displayName || project.projectId}</strong> ({project.projectId})
         schedules it for deletion: it stops serving immediately and is pending deletion for 30 days,

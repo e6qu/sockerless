@@ -13,6 +13,7 @@ import { IAMUsersPage } from "./pages/IAMUsersPage.js";
 import { IAMUserSecurityCredentialsPage } from "./pages/IAMUserSecurityCredentialsPage.js";
 import { OrganizationsPage } from "./pages/OrganizationsPage.js";
 import { OrgAccountDetailPage } from "./pages/OrgAccountDetailPage.js";
+import { NotSupportedServicePage } from "./pages/NotSupportedServicePage.js";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -33,6 +34,7 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/organizations/accounts/:accountId" element={<OrgAccountDetailPage />} />
         <Route path="/ui/iam" element={<IAMUsersPage />} />
         <Route path="/ui/iam/users/:userName" element={<IAMUserSecurityCredentialsPage />} />
+        <Route path="/ui/not-supported/:service" element={<NotSupportedServicePage />} />
       </AwsApp>
     </QueryClientProvider>
   </StrictMode>,

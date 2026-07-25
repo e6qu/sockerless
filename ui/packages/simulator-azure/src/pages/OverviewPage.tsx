@@ -58,7 +58,7 @@ export function OverviewPage() {
           ]}
         />
         {failed ? (
-          <div className="az-message az-message-error" role="alert">
+          <div className="az-message az-message-error" role="alert" data-testid="overview-error">
             <strong>Could not load the subscription overview.</strong>{" "}
             {firstError instanceof Error ? firstError.message : "The portal could not reach Azure."}
           </div>

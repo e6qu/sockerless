@@ -190,7 +190,7 @@ export function ProjectPickerDialog({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <GcpDialog title={view === "list" ? "Select a project" : "New project"} testId="project-dialog">
+    <GcpDialog title={view === "list" ? "Select a project" : "New project"} testId="project-dialog" onClose={onClose}>
       {view === "list" ? (
         <>
           <div className="gc-picker-toolbar">

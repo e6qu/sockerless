@@ -95,7 +95,7 @@ function CreateKeyDialog({
   onClose: () => void;
 }) {
   return (
-    <GcpDialog title={`Create private key for "${email}"`} testId="sa-key-create-dialog">
+    <GcpDialog title={`Create private key for "${email}"`} testId="sa-key-create-dialog" onClose={onClose}>
       <p>
         Downloads a file that contains the private key. Store the file securely because this key
         can't be recovered if lost.
@@ -151,7 +151,7 @@ function DeleteKeyDialog({
   onClose: () => void;
 }) {
   return (
-    <GcpDialog title="Delete service account key?" testId="sa-key-delete-dialog">
+    <GcpDialog title="Delete service account key?" testId="sa-key-delete-dialog" onClose={onClose}>
       <p>
         Deleting key <strong>{keyId}</strong> immediately revokes it: credentials signed with it
         stop being exchanged for tokens. This cannot be undone.

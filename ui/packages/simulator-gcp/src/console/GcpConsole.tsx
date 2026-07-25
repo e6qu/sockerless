@@ -1,6 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { NavLink } from "react-router";
+import { useTheme } from "@sockerless/ui-core/hooks";
 import { Icon, type IconName } from "./icons.js";
+import { GcpNavDrawer } from "./GcpNavDrawer.js";
 
 export interface GcpNavItem {
   label: string;
@@ -8,26 +10,43 @@ export interface GcpNavItem {
   icon: IconName;
 }
 
+// The console's own theme control resolves the same way the real console's
+// Light/Dark/Same-as-device setting does: an explicit prior choice
+// (localStorage) wins, otherwise the OS's prefers-color-scheme is honoured,
+// and only absent both does the console fall back to its own default — light,
+// matching Google Cloud's light-first shell (see useTheme's resolution
+// order). The toggle flips between the two explicit choices; there is no
+// third "system" state to switch back to once chosen, matching the AWS and
+// Azure consoles' own toggles.
 function GcpThemeToggle() {
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-  }, [dark]);
+  const { theme, toggle } = useTheme("light");
+  const dark = theme === "dark";
   const label = dark ? "Switch to light theme" : "Switch to dark theme";
   return (
-    <button type="button" className="gc-icon-button" onClick={() => setDark((on) => !on)} aria-label={label} title={label}>
+    <button type="button" className="gc-icon-button" onClick={toggle} aria-label={label} title={label}>
       <Icon name={dark ? "light_mode" : "dark_mode"} />
     </button>
   );
 }
 
 export function GcpHeader({ picker, account }: { picker: ReactNode; account: ReactNode }) {
+  const [navOpen, setNavOpen] = useState(false);
+  const menuRef = useRef<HTMLButtonElement>(null);
   return (
     <header className="gc-header">
       <div className="gc-header-left">
-        <button type="button" className="gc-icon-button" aria-label="Main menu">
+        <button
+          ref={menuRef}
+          type="button"
+          className="gc-icon-button"
+          aria-label="Main menu"
+          aria-haspopup="dialog"
+          aria-expanded={navOpen}
+          onClick={() => setNavOpen(true)}
+        >
           <Icon name="menu" />
         </button>
+        <GcpNavDrawer open={navOpen} onClose={() => setNavOpen(false)} triggerRef={menuRef} />
         <span className="gc-wordmark">Google Cloud</span>
         {picker}
       </div>

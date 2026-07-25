@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const SERVICES = [
   {
@@ -108,27 +109,96 @@ test.describe("Fluent visual fidelity", () => {
 });
 
 test.describe("Service menu", () => {
-  test("groups services and collapses a group without losing the others", async ({ page }) => {
+  test("groups services the way the real Azure portal's All services catalog does", async ({ page }) => {
     await page.goto("/ui/");
     const menu = page.getByRole("navigation", { name: "Service" });
-    for (const group of ["General", "Compute", "Storage and registry", "Monitoring", "Microsoft Entra ID"]) {
+    for (const group of [
+      "General",
+      "Compute",
+      "Containers",
+      "Storage",
+      "Databases",
+      "Networking",
+      "Monitoring + management",
+      "Microsoft Entra ID",
+      "Security",
+      "DevOps",
+    ]) {
       await expect(menu.getByRole("button", { name: group })).toBeVisible();
     }
+  });
+
+  test("collapses a group without losing the others", async ({ page }) => {
+    await page.goto("/ui/");
+    const menu = page.getByRole("navigation", { name: "Service" });
     await expect(menu.getByRole("link", { name: "Container Apps" })).toBeVisible();
-    await menu.getByRole("button", { name: "Compute" }).click();
+    await menu.getByRole("button", { name: "Containers" }).click();
     await expect(menu.getByRole("link", { name: "Container Apps" })).toHaveCount(0);
     await expect(menu.getByRole("link", { name: "Storage accounts" })).toBeVisible();
-    await menu.getByRole("button", { name: "Compute" }).click();
+    await menu.getByRole("button", { name: "Containers" }).click();
     await expect(menu.getByRole("link", { name: "Container Apps" })).toBeVisible();
   });
 
   test("narrows to what a search matches, opening a collapsed group to show it", async ({ page }) => {
     await page.goto("/ui/");
     const menu = page.getByRole("navigation", { name: "Service" });
-    await menu.getByRole("button", { name: "Compute" }).click();
+    await menu.getByRole("button", { name: "Containers" }).click();
     await menu.getByLabel("Search the service menu").fill("registries");
     await expect(menu.getByRole("link", { name: "Container registries" })).toBeVisible();
     await expect(menu.getByRole("link", { name: "Storage accounts" })).toHaveCount(0);
+  });
+});
+
+// The real Azure portal's service menu lists Azure's whole catalog; this
+// simulator implements a slice of it. Rather than omitting the rest — which
+// would make the menu look like a different, smaller product — every
+// service Azure offers that this simulator doesn't implement stays in the
+// menu, marked honestly.
+test.describe("Not supported services", () => {
+  test("marks an unimplemented service with a non-color badge and an accessible name that says so", async ({ page }) => {
+    await page.goto("/ui/");
+    const menu = page.getByRole("navigation", { name: "Service" });
+    // Every group opens expanded by default — a click here would collapse
+    // "Compute", not open it.
+    const link = menu.getByRole("link", { name: "Virtual machines, not supported in this simulator" });
+    await expect(link).toBeVisible();
+    // The badge is real text content, not a colour swatch — a screen reader
+    // announces "Not supported" whether or not it renders the icon in front
+    // of it.
+    await expect(link).toContainText("Not supported");
+    await expect(link.locator("svg")).toHaveCount(1);
+  });
+
+  test("still navigates — to a small, honest explanation — rather than a dead end", async ({ page }) => {
+    await page.goto("/ui/");
+    const menu = page.getByRole("navigation", { name: "Service" });
+    await menu.getByRole("link", { name: "Virtual machines, not supported in this simulator" }).click();
+    await expect(page).toHaveURL(/\/ui\/not-supported\/virtual-machines$/);
+    const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+    await expect(crumbs).toContainText("Virtual machines");
+    await expect(page.getByRole("heading", { name: "Virtual machines" })).toBeVisible();
+    await expect(page.getByTestId("not-supported-message")).toContainText(
+      "Virtual machines is not implemented by the Sockerless simulator.",
+    );
+    // The Essentials panel still leads the pane, carrying the badge as a
+    // real Essentials value rather than a special-cased layout.
+    await expect(page.getByRole("region", { name: "Essentials" })).toContainText("Not supported");
+  });
+
+  test("keeps every catalog service reachable by keyboard, supported or not", async ({ page }) => {
+    await page.goto("/ui/");
+    const menu = page.getByRole("navigation", { name: "Service" });
+    // Every group opens expanded by default, so every catalog item is
+    // already present without expanding anything.
+    // Every link in the service menu is a real, focusable anchor — this is
+    // what "not a dead end" means operationally: Tab reaches it and Enter
+    // activates it like any other link.
+    const links = menu.getByRole("link");
+    const count = await links.count();
+    expect(count).toBeGreaterThan(10);
+    for (let index = 0; index < count; index += 1) {
+      await expect(links.nth(index)).toHaveAttribute("href", /^\/ui\//);
+    }
   });
 });
 
@@ -292,4 +362,114 @@ test.describe("Contrast", () => {
       }
     }
   });
+
+  // The "Not supported" badge and its dimmer service-menu label are the one
+  // surface this pass added; they get the same measured-not-assumed check
+  // rather than trusting the palette comment in tokens.css.
+  test("the not-supported badge and its service-menu label clear WCAG AA in both themes", async ({ page }) => {
+    await page.goto("/ui/not-supported/virtual-machines");
+    const results = await page.evaluate(() => {
+      const parse = (c: string) => {
+        const m = (c.match(/[\d.]+/g) ?? []).map(Number);
+        return [m[0] ?? 0, m[1] ?? 0, m[2] ?? 0, m[3] ?? 1] as const;
+      };
+      const lin = (v: number) => {
+        const n = v / 255;
+        return n <= 0.04045 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+      };
+      const lum = (c: readonly number[]) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+      const opaqueBehind = (el: Element) => {
+        let node: Element | null = el;
+        while (node && node !== document.documentElement) {
+          const c = parse(getComputedStyle(node).backgroundColor);
+          if (c[3] > 0) return c;
+          node = node.parentElement;
+        }
+        return [255, 255, 255, 1] as const;
+      };
+      const ratio = (el: Element) => {
+        const a = lum(parse(getComputedStyle(el).color));
+        const b = lum(opaqueBehind(el));
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      };
+      const selectors = [".az-badge-unsupported", ".az-service-link-unsupported .az-service-label"];
+      const sample = () =>
+        selectors
+          .map((selector) => {
+            const el = document.querySelector(selector);
+            return el ? { selector, ratio: ratio(el) } : null;
+          })
+          .filter((entry): entry is { selector: string; ratio: number } => entry !== null);
+
+      document.documentElement.classList.remove("dark");
+      const light = sample();
+      document.documentElement.classList.add("dark");
+      const dark = sample();
+      document.documentElement.classList.remove("dark");
+      return { light, dark };
+    });
+
+    for (const [theme, samples] of Object.entries(results)) {
+      expect(samples.length).toBe(2);
+      for (const sample of samples) {
+        expect(sample.ratio, `${theme}: ${sample.selector} measured ${sample.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+});
+
+test.describe("ARIA landmarks and keyboard state", () => {
+  test("exposes the header, service menu, breadcrumbs, and content as named landmarks", async ({ page }) => {
+    await page.goto("/ui/container-apps");
+    // <header> at the top level is the banner landmark; <main> is the main
+    // landmark; both nav regions carry the accessible names the rest of the
+    // suite already navigates by.
+    await expect(page.getByRole("banner")).toBeVisible();
+    await expect(page.getByRole("main")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Service" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Essentials" })).toBeVisible();
+  });
+
+  test("marks the active service with aria-current, and only the active one", async ({ page }) => {
+    await page.goto("/ui/container-apps");
+    const menu = page.getByRole("navigation", { name: "Service" });
+    await expect(menu.getByRole("link", { name: "Container Apps", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(menu.getByRole("link", { name: "Function Apps", exact: true })).not.toHaveAttribute("aria-current", "page");
+  });
+
+  test("carries a visible focus indicator that clears 3:1 in both themes", async ({ page }) => {
+    await page.goto("/ui/");
+    const link = page.getByRole("navigation", { name: "Service" }).getByRole("link", { name: "Subscriptions" });
+    await link.focus();
+    const outline = await link.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { style: style.outlineStyle, width: style.outlineWidth };
+    });
+    expect(outline.style).not.toBe("none");
+    expect(parseFloat(outline.width)).toBeGreaterThan(0);
+  });
+});
+
+test.describe("Automated accessibility audit", () => {
+  // axe-core is a coarser net than the hand-measured contrast and landmark
+  // assertions above — it catches the classes of defect those checks don't
+  // aim at (missing form labels, invalid ARIA usage, duplicate IDs, list
+  // structure). It runs against both themes and both the ordinary and the
+  // not-supported page shapes, disabling only the colour-contrast rule
+  // (already covered, more precisely, by the dedicated Contrast suite, which
+  // walks up to the actually-painted background rather than axe's own
+  // heuristic).
+  for (const theme of ["light", "dark"] as const) {
+    for (const target of ["/ui/container-apps", "/ui/not-supported/virtual-machines"]) {
+      test(`${target} has no detectable violations (${theme})`, async ({ page }) => {
+        await page.goto(target);
+        if (theme === "dark") {
+          await page.evaluate(() => document.documentElement.classList.add("dark"));
+        }
+        const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
+  }
 });

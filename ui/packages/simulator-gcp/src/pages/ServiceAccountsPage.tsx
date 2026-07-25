@@ -54,7 +54,7 @@ export function CreateServiceAccountDialog({
   const email = `${accountId || "<id>"}@${project}.iam.gserviceaccount.com`;
 
   return (
-    <GcpDialog title="Create service account" testId="sa-create-dialog">
+    <GcpDialog title="Create service account" testId="sa-create-dialog" onClose={onClose}>
       <label className="gc-field">
         Service account name
         <input
@@ -130,7 +130,7 @@ function DeleteServiceAccountDialog({
     onSuccess: onDeleted,
   });
   return (
-    <GcpDialog title="Delete service account?" testId="sa-delete-dialog">
+    <GcpDialog title="Delete service account?" testId="sa-delete-dialog" onClose={onClose}>
       <p>
         Deleting <strong>{email}</strong> immediately revokes its keys. Applications using this
         service account lose access to your cloud resources.

@@ -1,7 +1,8 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { NavLink } from "react-router";
 import { useTheme } from "@sockerless/ui-core/hooks";
 import { AwsIcon } from "./icons.js";
+import type { NavGroup } from "./serviceCatalog.js";
 
 /**
  * The console shell: a dark global header, a breadcrumb trail, and a grouped
@@ -10,11 +11,7 @@ import { AwsIcon } from "./icons.js";
  * anything.
  */
 
-export interface NavGroup {
-  /** Section heading. Cloudscape groups services rather than listing them flat. */
-  label: string;
-  items: { label: string; to: string }[];
-}
+export type { NavGroup, NavService } from "./serviceCatalog.js";
 
 /**
  * The console keeps its theme control in the header, so this one lives there
@@ -32,11 +29,30 @@ function AwsThemeToggle() {
   );
 }
 
-export function AwsHeader({ region, account }: { region: string; account: ReactNode }) {
+export function AwsHeader({
+  region,
+  account,
+  navExpanded,
+  onToggleNav,
+  navId,
+}: {
+  region: string;
+  account: ReactNode;
+  navExpanded: boolean;
+  onToggleNav: () => void;
+  navId: string;
+}) {
   return (
     <header className="aws-header">
       <div className="aws-header-left">
-        <button type="button" className="aws-icon-button" aria-label="Open menu">
+        <button
+          type="button"
+          className="aws-icon-button"
+          aria-label={navExpanded ? "Close navigation" : "Open navigation"}
+          aria-expanded={navExpanded}
+          aria-controls={navId}
+          onClick={onToggleNav}
+        >
           <AwsIcon name="menu" size={16} />
         </button>
         <span className="aws-logo" aria-hidden>aws</span>
@@ -82,25 +98,58 @@ export function AwsBreadcrumbs({ trail }: { trail: { label: string; to?: string 
   );
 }
 
-export function AwsSideNavigation({ groups, serviceName }: { groups: NavGroup[]; serviceName: string }) {
+export function AwsSideNavigation({
+  groups,
+  serviceName,
+  id,
+  expanded,
+}: {
+  groups: NavGroup[];
+  serviceName: string;
+  id: string;
+  expanded: boolean;
+}) {
   return (
-    <nav aria-label="Service" className="aws-sidenav">
+    <nav aria-label="Service" className="aws-sidenav" id={id} data-collapsed={expanded ? undefined : "true"}>
       <div className="aws-sidenav-title">{serviceName}</div>
       {groups.map((group) => (
         <div className="aws-sidenav-group" key={group.label}>
           <div className="aws-sidenav-group-label">{group.label}</div>
           <ul>
-            {group.items.map((item) => (
-              <li key={item.to}>
-                <NavLink to={item.to} end={item.to === "/ui/"}>
-                  {({ isActive }) => (
-                    <span className={isActive ? "aws-sidenav-link aws-sidenav-link-active" : "aws-sidenav-link"}>
-                      {item.label}
-                    </span>
-                  )}
-                </NavLink>
-              </li>
-            ))}
+            {group.items.map((item) => {
+              const supported = item.supported !== false;
+              return (
+                <li key={item.to}>
+                  {/* react-router's NavLink sets aria-current="page" on the
+                   * rendered anchor automatically when the route matches, so
+                   * the current service is conveyed to assistive tech as well
+                   * as by the bold/underline treatment below. An unsupported
+                   * service's accessible name states that up front, in the
+                   * link itself, rather than relying on a screen reader
+                   * reaching the decorative pill inside it. */}
+                  <NavLink
+                    to={item.to}
+                    end={item.to === "/ui/"}
+                    aria-label={supported ? undefined : `${item.label}, not supported in this simulator`}
+                  >
+                    {({ isActive }) => (
+                      <span
+                        className={[
+                          "aws-sidenav-link",
+                          isActive && "aws-sidenav-link-active",
+                          !supported && "aws-sidenav-link-unsupported",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                      >
+                        <span className="aws-sidenav-link-label">{item.label}</span>
+                        {!supported && <AwsNotSupportedBadge serviceName={item.label} decorative />}
+                      </span>
+                    )}
+                  </NavLink>
+                </li>
+              );
+            })}
           </ul>
         </div>
       ))}
@@ -112,6 +161,12 @@ export function AwsSideNavigation({ groups, serviceName }: { groups: NavGroup[];
  * `Resources (count)` with an information link, the pattern every Cloudscape
  * list page uses. The count belongs beside the title rather than under it,
  * because that is how an operator confirms a filter did what they expected.
+ *
+ * Every page in this console renders exactly one of these, so it is also the
+ * one place that sets the browser tab's title — the real AWS console updates
+ * it per page (an operator with a dozen console tabs open depends on this to
+ * tell them apart), and a single console-wide "Simulator Console" title
+ * would not.
  */
 export function AwsPageHeader({
   title,
@@ -124,6 +179,9 @@ export function AwsPageHeader({
   description?: string;
   actions?: ReactNode;
 }) {
+  useEffect(() => {
+    document.title = `${title} - Simulator Console`;
+  }, [title]);
   return (
     <div className="aws-page-header">
       <div>
@@ -155,11 +213,66 @@ export function AwsContainer({ children }: { children: ReactNode }) {
 }
 
 /**
+ * A Cloudscape badge: a small pill that states a fact about the thing beside
+ * it. Cloudscape never encodes that fact in colour alone — the label itself
+ * carries the meaning — which is why every caller passes readable text, not
+ * an icon or a dot.
+ */
+export type AwsBadgeColor = "blue" | "green" | "red" | "grey";
+
+export function AwsBadge({
+  children,
+  color = "grey",
+  ...rest
+}: { children: ReactNode; color?: AwsBadgeColor } & React.HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span className={`aws-badge aws-badge-${color}`} {...rest}>
+      {children}
+    </span>
+  );
+}
+
+/**
+ * The pill the navigation and the "not supported" page use for a service
+ * sockerless has not implemented. In the side navigation the enclosing link
+ * already states "…, not supported in this simulator" as its own accessible
+ * name (see AwsSideNavigation), so the badge there is `decorative` — hidden
+ * from assistive tech to avoid announcing the same fact twice. Used on its
+ * own, on the "not supported" page itself, it carries its own accessible name
+ * naming the service.
+ */
+export function AwsNotSupportedBadge({
+  serviceName,
+  decorative = false,
+}: {
+  serviceName: string;
+  decorative?: boolean;
+}) {
+  return (
+    <AwsBadge
+      color="grey"
+      aria-hidden={decorative || undefined}
+      aria-label={decorative ? undefined : `${serviceName} is not supported in this simulator`}
+    >
+      Not supported
+    </AwsBadge>
+  );
+}
+
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
  * A Cloudscape-style modal dialog. When `onDismiss` is provided the dialog can
- * be dismissed from its close control and the overlay; when it is omitted the
- * dialog closes only through its own footer actions — the shape a one-time
- * disclosure needs, where an accidental dismissal would lose material the
- * operator can never see again.
+ * be dismissed from its close control, the overlay, or the Escape key; when it
+ * is omitted the dialog closes only through its own footer actions — the
+ * shape a one-time disclosure needs, where an accidental dismissal would lose
+ * material the operator can never see again.
+ *
+ * Focus moves into the dialog when it opens (a page-level `autoFocus` field
+ * takes priority; the dialog itself is the fallback), Tab is trapped inside
+ * it for as long as it is open, and focus returns to whatever opened it on
+ * close — the keyboard-operability contract every Cloudscape dialog holds.
  */
 export function AwsModal({
   title,
@@ -173,13 +286,66 @@ export function AwsModal({
   children: ReactNode;
 }) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+  // Captured during render, before this component's own children — including
+  // a page's autoFocus field — reach the DOM. useEffect runs after commit, by
+  // which point autoFocus has already moved document.activeElement onto the
+  // dialog's own input; capturing there would restore focus to the dialog's
+  // own field instead of what opened it.
+  const previouslyFocusedRef = useRef<HTMLElement | null>(
+    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
+  );
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    if (!dialog.contains(document.activeElement)) {
+      const focusable = dialog.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+      (focusable ?? dialog).focus();
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        if (!onDismissRef.current) return;
+        event.stopPropagation();
+        onDismissRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      if (focusables.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    dialog.addEventListener("keydown", onKeyDown);
+    return () => {
+      dialog.removeEventListener("keydown", onKeyDown);
+      previouslyFocusedRef.current?.focus?.();
+    };
+  }, []);
+
   return (
     <div className="aws-modal-overlay" role="presentation" onClick={onDismiss}>
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         className="aws-modal"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="aws-modal-header">

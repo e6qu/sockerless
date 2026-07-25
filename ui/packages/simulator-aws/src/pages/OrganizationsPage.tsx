@@ -436,7 +436,6 @@ export function OrganizationsPage() {
     <>
       <AwsResourceTable<OrgAccount>
         title="AWS accounts"
-        breadcrumbLabel="AWS accounts"
         description="The AWS accounts in your organization. Add an account to create a new member account in the organization's root."
         columns={columns}
         queryKey={["org-accounts"]}

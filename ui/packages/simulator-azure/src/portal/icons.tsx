@@ -28,6 +28,7 @@ const PATHS: Record<string, string> = {
   status_error: "M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Zm2.8 4.1L10 9.4 7.2 6.6 6.1 7.7 8.9 10.5l-2.8 2.8 1.1 1.1L10 11.6l2.8 2.8 1.1-1.1-2.8-2.8 2.8-2.8-1.1-1.1Z",
   status_warning: "M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Zm.9 4L10.7 11H9.3L9.1 6.5h1.8ZM10 12.2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z",
   status_inactive: "M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Zm0 6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z",
+  not_supported: "M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15ZM4.7 4.7l10.6 10.6",
 };
 
 // Which icons are drawn as strokes (line icons) rather than filled shapes.
@@ -43,6 +44,7 @@ const STROKE = new Set([
   "sort_up",
   "sort_down",
   "sun",
+  "not_supported",
 ]);
 
 export type AzureIconName = keyof typeof PATHS;

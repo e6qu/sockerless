@@ -1,71 +1,113 @@
-/* Microsoft Azure portal palette.
+/* Microsoft Azure portal palette, drawn from Fluent 2's real alias color
+ * tokens (@fluentui/tokens, packages/tokens/src/alias/{light,dark}Color.ts and
+ * global/colors.ts — the same package Fluent UI React ships) rather than
+ * approximated. Each value below is annotated with the Fluent 2 alias token
+ * it equals; the brand ramp (`brand[N]`) is Fluent's default Web brand
+ * variant, which is Azure's own blue — colorBrandBackground light is
+ * literally #0078d4, the header's colour, both in Fluent 2 and in the real
+ * portal.
  *
- * Values are taken from the portal's own surfaces rather than from a brand
- * sheet: the header blue, the white working pane over a tinted page, the
- * selected-item fill in the service menu, and the link blue that carries every
- * resource reference in the Essentials grid.
- *
- * Every foreground here was checked against the surface it sits on. The
- * lowest ratio in either theme is recorded beside it, against the 4.5:1 that
- * WCAG AA requires for body text. */
+ * Every foreground here was checked against the surface it sits on using the
+ * WCAG relative-luminance formula (the same one ui/e2e/simulator-azure.spec.ts
+ * runs against the rendered page). The ratio is recorded beside each value,
+ * against the 4.5:1 that WCAG AA requires for body text and 3:1 for
+ * non-text/UI indicators (focus rings, active-state borders). Two pairs run
+ * close to the floor rather than with headroom: the header wordmark in light
+ * mode (4.53:1, white on #0078d4) and command-bar/breadcrumb links in dark
+ * mode (4.83:1, brand[100] on the dark working-pane surface) — both verified,
+ * neither assumed. */
 
 .azure {
   --az-font: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
 
-  --az-header-bg: #0078d4;
-  --az-header-fg: #ffffff;          /* 4.59:1 on the header blue */
-  --az-header-hover: #106ebe;
+  /* Fluent 2 type ramp (fluent2.microsoft.design/typography): Segoe UI, a
+   * 4px-based size/line-height scale. Body 1 is the portal's base size;
+   * Caption 1 carries secondary/dense text (breadcrumbs, Essentials labels);
+   * Subtitle 1 is the resource-title heading. */
+  --az-text-caption: 12px;
+  --az-line-caption: 16px;
+  --az-text-body: 14px;
+  --az-line-body: 20px;
+  --az-text-subtitle2: 16px;
+  --az-line-subtitle2: 22px;
+  --az-text-subtitle1: 20px;
+  --az-line-subtitle1: 26px;
 
-  --az-layout-bg: #faf9f8;
-  --az-surface: #ffffff;
-  --az-surface-alt: #f3f2f1;
-  --az-surface-selected: #edebe9;
+  --az-header-bg: #0078d4;          /* colorBrandBackground = brand[80] */
+  --az-header-fg: #ffffff;          /* colorNeutralForegroundOnBrand — 4.53:1 on the header blue */
+  --az-header-hover: #106ebe;       /* colorBrandBackgroundHover = brand[70] */
 
-  --az-fg: #323130;                 /* 12.6:1 on white */
-  --az-fg-secondary: #605e5c;       /* 6.29:1 on white */
-  --az-fg-disabled: #a19f9d;
+  --az-layout-bg: #fafafa;          /* colorNeutralBackground2 = grey98 */
+  --az-surface: #ffffff;            /* colorNeutralBackground1 */
+  --az-surface-alt: #f5f5f5;        /* colorNeutralBackground3 = grey96 (also colorNeutralBackground1Hover) */
+  --az-surface-selected: #ebebeb;   /* colorNeutralBackground1Selected = grey92 */
 
-  --az-link: #0067b8;               /* 5.61:1 on white */
-  --az-link-hover: #004578;
+  --az-fg: #242424;                 /* colorNeutralForeground1 = grey14 — 15.5:1 on white */
+  --az-fg-secondary: #424242;       /* colorNeutralForeground2 = grey26 — 10.0:1 on white */
+  --az-fg-disabled: #bdbdbd;        /* colorNeutralForegroundDisabled = grey74 — disabled text is exempt from AA */
 
-  --az-border: #8a8886;
-  --az-border-subtle: #edebe9;
-  --az-accent: #0078d4;
+  --az-link: #106ebe;               /* colorBrandForegroundLink = brand[70] — 5.25:1 on white */
+  --az-link-hover: #005a9e;         /* colorBrandForegroundLinkHover = brand[60] */
 
-  --az-status-success: #107c10;     /* 4.99:1 on white */
-  --az-status-error: #a4262c;       /* 6.51:1 on white */
-  --az-status-warning: #797673;
-  --az-status-inactive: #605e5c;
+  --az-border: #616161;             /* colorNeutralStrokeAccessible = grey38 — 6.3:1, for control borders that carry meaning */
+  --az-border-subtle: #e0e0e0;      /* colorNeutralStroke2 = grey88, decorative dividers only */
+  --az-accent: #0078d4;             /* colorCompoundBrandStroke = brand[80] — 4.53:1 focus/active-indicator */
 
-  --az-radius: 2px;
+  --az-status-success: #0e700e;     /* colorStatusSuccessForeground1 (green.shade10) — 6.28:1 on white */
+  --az-status-error: #b10e1c;       /* colorStatusDangerForeground1 (cranberry.shade10) — 7.12:1 on white */
+  --az-status-warning: #bc4b09;     /* colorStatusWarningForeground1 (orange.shade20) — 5.06:1 on white */
+  --az-status-inactive: #616161;    /* colorNeutralForeground3 = grey38 — 6.3:1 on white */
+
+  /* The "Not supported" pill's fill and border — orange.tint60/tint40, the
+   * same family as --az-status-warning, so the badge reads as a warning tone
+   * without relying on --az-status-warning's text colour alone. */
+  --az-badge-bg: #fff9f5;
+  --az-badge-border: #fdcfb4;
+
+  --az-radius: 4px;                 /* Fluent 2's medium corner radius (borderRadiusMedium) */
 }
 
-/* The portal's dark theme keeps the same header and link roles over dark
- * surfaces. Foregrounds are lightened until each clears AA on the surface it
- * actually lands on, rather than reusing the light values at lower contrast. */
+/* Fluent 2's dark theme (packages/tokens/src/alias/darkColor.ts): the same
+ * grey ramp read from the dark end, and the same brand ramp read one to two
+ * steps lighter so it still clears AA on dark surfaces. The header keeps a
+ * brand-derived navy (colorBrandBackground2 = brand[20]) rather than the
+ * light theme's saturated blue — a large brand-blue field at full saturation
+ * fails contrast against itself in the dark palette the way it doesn't
+ * against white, so Fluent's own dark alias tokens step the brand ramp back
+ * for exactly this surface. */
 .dark .azure {
-  --az-header-bg: #0b2545;
-  --az-header-fg: #ffffff;          /* 14.9:1 on the dark header */
-  --az-header-hover: #14375e;
+  --az-header-bg: #002848;          /* colorBrandBackground2 (dark) = brand[20] */
+  --az-header-fg: #ffffff;          /* 15.0:1 on the dark header */
+  --az-header-hover: #004578;       /* colorBrandBackground2Hover (dark) = brand[40] */
 
-  --az-layout-bg: #1b1a19;
-  --az-surface: #252423;
-  --az-surface-alt: #323130;
-  --az-surface-selected: #3b3a39;
+  --az-layout-bg: #1f1f1f;          /* colorNeutralBackground2 (dark) = grey12 */
+  --az-surface: #292929;            /* colorNeutralBackground1 (dark) = grey16 */
+  --az-surface-alt: #3d3d3d;        /* colorNeutralBackground1Hover (dark) = grey24 — a hover state lightens in dark mode */
+  --az-surface-selected: #383838;   /* colorNeutralBackground1Selected (dark) = grey22 */
 
-  --az-fg: #f3f2f1;                 /* 14.2:1 on the working pane */
-  --az-fg-secondary: #c8c6c4;       /* 9.24:1 on the working pane */
-  --az-fg-disabled: #797775;
+  --az-fg: #ffffff;                 /* colorNeutralForeground1 (dark) — 14.6:1 on the working pane */
+  --az-fg-secondary: #d6d6d6;       /* colorNeutralForeground2 (dark) = grey84 — 10.0:1 on the working pane */
+  --az-fg-disabled: #5c5c5c;        /* colorNeutralForegroundDisabled (dark) = grey36 */
 
-  --az-link: #6cb8f6;               /* 7.19:1 on the working pane */
-  --az-link-hover: #8fcbff;
+  --az-link: #2899f5;               /* colorBrandForegroundLink (dark) = brand[100] — 4.83:1 on the working pane */
+  --az-link-hover: #3aa0f3;         /* colorBrandForegroundLinkHover (dark) = brand[110] */
 
-  --az-border: #605e5c;
-  --az-border-subtle: #3b3a39;
-  --az-accent: #2899f5;
+  --az-border: #adadad;             /* colorNeutralStrokeAccessible (dark) = grey68 — 6.5:1 */
+  --az-border-subtle: #525252;      /* colorNeutralStroke2 (dark) = grey32 */
+  --az-accent: #2899f5;             /* colorCompoundBrandStroke (dark) = brand[100] — 4.8:1 */
 
-  --az-status-success: #6bb700;     /* 8.42:1 on the working pane */
-  --az-status-error: #ff8c8c;       /* 7.61:1 on the working pane */
-  --az-status-warning: #c8c6c4;
-  --az-status-inactive: #c8c6c4;
+  /* The status ramp steps to tint40 rather than the alias generator's
+   * tint30/shade20 defaults: those default steps are tuned for Fluent's own
+   * paired colour+background badges (e.g. colorStatusDangerBackground1 is a
+   * matching dark red, not this portal's neutral card surface), and
+   * cranberry.tint30 (#dc626d) measures 4.16:1 against colorNeutralBackground1
+   * (dark) — short of AA. tint40 clears the working pane and its hover state
+   * with headroom while staying in the same hue family. */
+  --az-status-success: #9fd89f;     /* green.tint40 — 8.9:1 on the working pane */
+  --az-status-error: #eeacb2;       /* cranberry.tint40 — 7.7:1 on the working pane */
+  --az-status-warning: #fdcfb4;     /* orange.tint40 — >8:1 on the working pane */
+  --az-status-inactive: #adadad;    /* colorNeutralForeground3 (dark) = grey68 — 6.5:1 */
+
+  --az-badge-bg: #4a1e04;           /* orange.shade40 — 9.97:1 against --az-status-warning (dark) text */
+  --az-badge-border: #8a3707;       /* orange.shade30 */
 }
