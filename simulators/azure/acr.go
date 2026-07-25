@@ -163,7 +163,7 @@ func registerACR(srv *sim.Server) {
 			Sku:      sku,
 			Tags:     req.Tags,
 			Properties: RegistryProperties{
-				LoginServer:              strings.ToLower(name) + ".azurecr.io",
+				LoginServer:              azureACRLoginServer(r, strings.ToLower(name)),
 				ProvisioningState:        "Succeeded",
 				AdminUserEnabled:         req.Properties.AdminUserEnabled,
 				PublicNetworkAccess:      publicNetworkAccess,

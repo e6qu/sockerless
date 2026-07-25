@@ -16,6 +16,7 @@ type azureAdvertisedEndpointConfig struct {
 	KeyVault   string            `json:"keyVault,omitempty"`
 	ServiceBus string            `json:"serviceBus,omitempty"`
 	EventGrid  string            `json:"eventGrid,omitempty"`
+	ACR        string            `json:"acr,omitempty"`
 }
 
 var (
@@ -140,6 +141,25 @@ func azureEventGridEndpointURL(r *http.Request, topic string) string {
 		return azureEnsureTrailingSlash(azureApplyEndpointTemplate(tmpl, azureEndpointTemplateVars(r, topic, nil)))
 	}
 	return ""
+}
+
+// azureACRLoginServer returns the host Azure Container Registry's control
+// plane advertises as a registry's `loginServer` (a bare host, never a URL —
+// real ACR returns e.g. `myregistry.azurecr.io`, not a scheme-prefixed
+// value). Like the other data planes, the host is derived from the request
+// so a client reaches the simulator at the coordinate it just used for ARM,
+// unless an external gateway coordinate is configured.
+func azureACRLoginServer(r *http.Request, name string) string {
+	if cfg, err := azureAdvertisedEndpointConfigFromEnv(); err != nil {
+		panic(err)
+	} else if tmpl := strings.TrimSpace(cfg.ACR); tmpl != "" {
+		applied := azureApplyEndpointTemplate(tmpl, azureEndpointTemplateVars(r, name, nil))
+		if u, err := url.Parse(applied); err == nil && u.Host != "" {
+			return u.Host
+		}
+		return strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(applied, "https://"), "http://"), "/")
+	}
+	return azureEndpointHost(r, name, "azurecr")
 }
 
 func azureServiceBusConnectionEndpoint(r *http.Request, namespace string) string {

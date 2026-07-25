@@ -333,6 +333,7 @@ func azureGatewayDataPlaneEndpoints(port int) string {
 		KeyVault   string            `json:"keyVault,omitempty"`
 		ServiceBus string            `json:"serviceBus,omitempty"`
 		EventGrid  string            `json:"eventGrid,omitempty"`
+		ACR        string            `json:"acr,omitempty"`
 	}{
 		Storage: map[string]string{
 			"blob":  fmt.Sprintf("https://{account}.blob.%s/", host),
@@ -345,6 +346,7 @@ func azureGatewayDataPlaneEndpoints(port int) string {
 		KeyVault:   fmt.Sprintf("https://{vault}.vault.%s/", host),
 		ServiceBus: fmt.Sprintf("https://{namespace}.servicebus.%s/", host),
 		EventGrid:  fmt.Sprintf("https://{topic}.eventgrid.%s/api/events", host),
+		ACR:        fmt.Sprintf("https://{name}.azurecr.%s/", host),
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {

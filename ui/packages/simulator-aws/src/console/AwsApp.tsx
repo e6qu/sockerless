@@ -88,6 +88,7 @@ function ConsoleFrame({ children }: { children: ReactNode }) {
         navExpanded={navExpanded}
         onToggleNav={() => setNavExpanded((current) => !current)}
         navId={SIDENAV_ID}
+        services={NAV_GROUPS}
       />
       <AwsBreadcrumbs trail={crumbTrail(pathname)} />
       <div className="aws-body">

@@ -118,3 +118,24 @@ export function findNavService(slug: string): NavService | undefined {
   }
   return undefined;
 }
+
+/**
+ * Narrows the catalog to services whose name matches `query`, the way the
+ * real console's "Services" mega-menu search field narrows its grouped
+ * columns as an operator types. Matching is case-insensitive and by
+ * substring, on the service's real name only — never on the category label,
+ * since a match on "Containers" itself would keep every unrelated service in
+ * that category visible. A category with no matching service is dropped
+ * entirely rather than rendered empty. An empty (or all-whitespace) query
+ * returns every group and every item, unfiltered.
+ */
+export function filterNavGroups(groups: NavGroup[], query: string): NavGroup[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return groups;
+  return groups
+    .map((group) => ({
+      label: group.label,
+      items: group.items.filter((item) => item.label.toLowerCase().includes(needle)),
+    }))
+    .filter((group) => group.items.length > 0);
+}
