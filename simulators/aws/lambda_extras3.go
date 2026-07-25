@@ -37,43 +37,43 @@ func registerLambdaExtras3(srv *sim.Server) {
 	restRegisterOp("lambda.amazonaws.com", "ListLayers")
 
 	// Function configuration read + code update.
-	mux.HandleFunc("GET /2015-03-31/functions/{name}/configuration", cloudTrailRecordedREST("GetFunctionConfiguration", "lambda.amazonaws.com", lambdaResource, handleLambdaGetFunctionConfiguration))
-	mux.HandleFunc("PUT /2015-03-31/functions/{name}/code", cloudTrailRecordedREST("UpdateFunctionCode", "lambda.amazonaws.com", lambdaResource, handleLambdaUpdateFunctionCode))
+	mux.HandleFunc("GET /2015-03-31/functions/{name}/configuration", cloudTrailRecordedREST("GetFunctionConfiguration", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("GetFunctionConfiguration", lambdaFunctionResourceARN, handleLambdaGetFunctionConfiguration)))
+	mux.HandleFunc("PUT /2015-03-31/functions/{name}/code", cloudTrailRecordedREST("UpdateFunctionCode", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("UpdateFunctionCode", lambdaFunctionResourceARN, handleLambdaUpdateFunctionCode)))
 
 	// Per-function scaling config (2025-11-30).
-	mux.HandleFunc("GET /2025-11-30/functions/{name}/function-scaling-config", cloudTrailRecordedREST("GetFunctionScalingConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaGetFunctionScalingConfig))
-	mux.HandleFunc("PUT /2025-11-30/functions/{name}/function-scaling-config", cloudTrailRecordedREST("PutFunctionScalingConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaPutFunctionScalingConfig))
+	mux.HandleFunc("GET /2025-11-30/functions/{name}/function-scaling-config", cloudTrailRecordedREST("GetFunctionScalingConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("GetFunctionScalingConfig", lambdaFunctionResourceARN, handleLambdaGetFunctionScalingConfig)))
+	mux.HandleFunc("PUT /2025-11-30/functions/{name}/function-scaling-config", cloudTrailRecordedREST("PutFunctionScalingConfig", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("PutFunctionScalingConfig", lambdaFunctionResourceARN, handleLambdaPutFunctionScalingConfig)))
 
 	// Functions attached to a code-signing config.
 	// A CodeSigningConfig ARN has no slashes, so a single {arn} label captures
 	// it; a trailing {arn...} wildcard cannot precede the /functions suffix.
-	mux.HandleFunc("GET /2020-04-22/code-signing-configs/{arn}/functions", cloudTrailRecordedREST("ListFunctionsByCodeSigningConfig", "lambda.amazonaws.com", nil, handleLambdaListFunctionsByCodeSigningConfig))
+	mux.HandleFunc("GET /2020-04-22/code-signing-configs/{arn}/functions", cloudTrailRecordedREST("ListFunctionsByCodeSigningConfig", "lambda.amazonaws.com", nil, lambdaEnforced("ListFunctionsByCodeSigningConfig", nil, handleLambdaListFunctionsByCodeSigningConfig)))
 
 	// Capacity providers (2025-11-30).
-	mux.HandleFunc("POST /2025-11-30/capacity-providers", cloudTrailRecordedREST("CreateCapacityProvider", "lambda.amazonaws.com", nil, handleLambdaCreateCapacityProvider))
-	mux.HandleFunc("GET /2025-11-30/capacity-providers", cloudTrailRecordedREST("ListCapacityProviders", "lambda.amazonaws.com", nil, handleLambdaListCapacityProviders))
-	mux.HandleFunc("GET /2025-11-30/capacity-providers/{cpname}", cloudTrailRecordedREST("GetCapacityProvider", "lambda.amazonaws.com", nil, handleLambdaGetCapacityProvider))
-	mux.HandleFunc("PUT /2025-11-30/capacity-providers/{cpname}", cloudTrailRecordedREST("UpdateCapacityProvider", "lambda.amazonaws.com", nil, handleLambdaUpdateCapacityProvider))
-	mux.HandleFunc("DELETE /2025-11-30/capacity-providers/{cpname}", cloudTrailRecordedREST("DeleteCapacityProvider", "lambda.amazonaws.com", nil, handleLambdaDeleteCapacityProvider))
-	mux.HandleFunc("GET /2025-11-30/capacity-providers/{cpname}/function-versions", cloudTrailRecordedREST("ListFunctionVersionsByCapacityProvider", "lambda.amazonaws.com", nil, handleLambdaListFunctionVersionsByCapacityProvider))
+	mux.HandleFunc("POST /2025-11-30/capacity-providers", cloudTrailRecordedREST("CreateCapacityProvider", "lambda.amazonaws.com", nil, lambdaEnforced("CreateCapacityProvider", nil, handleLambdaCreateCapacityProvider)))
+	mux.HandleFunc("GET /2025-11-30/capacity-providers", cloudTrailRecordedREST("ListCapacityProviders", "lambda.amazonaws.com", nil, lambdaEnforced("ListCapacityProviders", nil, handleLambdaListCapacityProviders)))
+	mux.HandleFunc("GET /2025-11-30/capacity-providers/{cpname}", cloudTrailRecordedREST("GetCapacityProvider", "lambda.amazonaws.com", nil, lambdaEnforced("GetCapacityProvider", nil, handleLambdaGetCapacityProvider)))
+	mux.HandleFunc("PUT /2025-11-30/capacity-providers/{cpname}", cloudTrailRecordedREST("UpdateCapacityProvider", "lambda.amazonaws.com", nil, lambdaEnforced("UpdateCapacityProvider", nil, handleLambdaUpdateCapacityProvider)))
+	mux.HandleFunc("DELETE /2025-11-30/capacity-providers/{cpname}", cloudTrailRecordedREST("DeleteCapacityProvider", "lambda.amazonaws.com", nil, lambdaEnforced("DeleteCapacityProvider", nil, handleLambdaDeleteCapacityProvider)))
+	mux.HandleFunc("GET /2025-11-30/capacity-providers/{cpname}/function-versions", cloudTrailRecordedREST("ListFunctionVersionsByCapacityProvider", "lambda.amazonaws.com", nil, lambdaEnforced("ListFunctionVersionsByCapacityProvider", nil, handleLambdaListFunctionVersionsByCapacityProvider)))
 
 	// Legacy + streaming invoke entry points.
-	mux.HandleFunc("POST /2014-11-13/functions/{name}/invoke-async", cloudTrailRecordedREST("InvokeAsync", "lambda.amazonaws.com", lambdaResource, handleLambdaInvokeAsync))
-	mux.HandleFunc("POST /2021-11-15/functions/{name}/response-streaming-invocations", cloudTrailRecordedREST("InvokeWithResponseStream", "lambda.amazonaws.com", lambdaResource, handleLambdaInvokeWithResponseStream))
+	mux.HandleFunc("POST /2014-11-13/functions/{name}/invoke-async", cloudTrailRecordedREST("InvokeAsync", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("InvokeAsync", lambdaFunctionResourceARN, handleLambdaInvokeAsync)))
+	mux.HandleFunc("POST /2021-11-15/functions/{name}/response-streaming-invocations", cloudTrailRecordedREST("InvokeWithResponseStream", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("InvokeWithResponseStream", lambdaFunctionResourceARN, handleLambdaInvokeWithResponseStream)))
 
 	// Durable executions (2025-12-01). The DurableExecutionArn is a non-greedy
 	// restJson1 path label, so the SDK percent-encodes its embedded slashes
 	// (%2F); a single {arn} segment captures the whole arn and ServeMux still
 	// resolves the trailing /checkpoint|/history|/state|/stop literal suffix.
-	mux.HandleFunc("GET /2025-12-01/functions/{name}/durable-executions", cloudTrailRecordedREST("ListDurableExecutionsByFunction", "lambda.amazonaws.com", lambdaResource, handleLambdaListDurableExecutionsByFunction))
-	mux.HandleFunc("GET /2025-12-01/durable-executions/{arn}", cloudTrailRecordedREST("GetDurableExecution", "lambda.amazonaws.com", nil, handleLambdaGetDurableExecution))
-	mux.HandleFunc("POST /2025-12-01/durable-executions/{arn}/checkpoint", cloudTrailRecordedREST("CheckpointDurableExecution", "lambda.amazonaws.com", nil, handleLambdaCheckpointDurableExecution))
-	mux.HandleFunc("GET /2025-12-01/durable-executions/{arn}/history", cloudTrailRecordedREST("GetDurableExecutionHistory", "lambda.amazonaws.com", nil, handleLambdaGetDurableExecutionHistory))
-	mux.HandleFunc("GET /2025-12-01/durable-executions/{arn}/state", cloudTrailRecordedREST("GetDurableExecutionState", "lambda.amazonaws.com", nil, handleLambdaGetDurableExecutionState))
-	mux.HandleFunc("POST /2025-12-01/durable-executions/{arn}/stop", cloudTrailRecordedREST("StopDurableExecution", "lambda.amazonaws.com", nil, handleLambdaStopDurableExecution))
-	mux.HandleFunc("POST /2025-12-01/durable-execution-callbacks/{cbid}/succeed", cloudTrailRecordedREST("SendDurableExecutionCallbackSuccess", "lambda.amazonaws.com", nil, handleLambdaSendDurableCallbackSuccess))
-	mux.HandleFunc("POST /2025-12-01/durable-execution-callbacks/{cbid}/fail", cloudTrailRecordedREST("SendDurableExecutionCallbackFailure", "lambda.amazonaws.com", nil, handleLambdaSendDurableCallbackFailure))
-	mux.HandleFunc("POST /2025-12-01/durable-execution-callbacks/{cbid}/heartbeat", cloudTrailRecordedREST("SendDurableExecutionCallbackHeartbeat", "lambda.amazonaws.com", nil, handleLambdaSendDurableCallbackHeartbeat))
+	mux.HandleFunc("GET /2025-12-01/functions/{name}/durable-executions", cloudTrailRecordedREST("ListDurableExecutionsByFunction", "lambda.amazonaws.com", lambdaResource, lambdaEnforced("ListDurableExecutionsByFunction", lambdaFunctionResourceARN, handleLambdaListDurableExecutionsByFunction)))
+	mux.HandleFunc("GET /2025-12-01/durable-executions/{arn}", cloudTrailRecordedREST("GetDurableExecution", "lambda.amazonaws.com", nil, lambdaEnforced("GetDurableExecution", nil, handleLambdaGetDurableExecution)))
+	mux.HandleFunc("POST /2025-12-01/durable-executions/{arn}/checkpoint", cloudTrailRecordedREST("CheckpointDurableExecution", "lambda.amazonaws.com", nil, lambdaEnforced("CheckpointDurableExecution", nil, handleLambdaCheckpointDurableExecution)))
+	mux.HandleFunc("GET /2025-12-01/durable-executions/{arn}/history", cloudTrailRecordedREST("GetDurableExecutionHistory", "lambda.amazonaws.com", nil, lambdaEnforced("GetDurableExecutionHistory", nil, handleLambdaGetDurableExecutionHistory)))
+	mux.HandleFunc("GET /2025-12-01/durable-executions/{arn}/state", cloudTrailRecordedREST("GetDurableExecutionState", "lambda.amazonaws.com", nil, lambdaEnforced("GetDurableExecutionState", nil, handleLambdaGetDurableExecutionState)))
+	mux.HandleFunc("POST /2025-12-01/durable-executions/{arn}/stop", cloudTrailRecordedREST("StopDurableExecution", "lambda.amazonaws.com", nil, lambdaEnforced("StopDurableExecution", nil, handleLambdaStopDurableExecution)))
+	mux.HandleFunc("POST /2025-12-01/durable-execution-callbacks/{cbid}/succeed", cloudTrailRecordedREST("SendDurableExecutionCallbackSuccess", "lambda.amazonaws.com", nil, lambdaEnforced("SendDurableExecutionCallbackSuccess", nil, handleLambdaSendDurableCallbackSuccess)))
+	mux.HandleFunc("POST /2025-12-01/durable-execution-callbacks/{cbid}/fail", cloudTrailRecordedREST("SendDurableExecutionCallbackFailure", "lambda.amazonaws.com", nil, lambdaEnforced("SendDurableExecutionCallbackFailure", nil, handleLambdaSendDurableCallbackFailure)))
+	mux.HandleFunc("POST /2025-12-01/durable-execution-callbacks/{cbid}/heartbeat", cloudTrailRecordedREST("SendDurableExecutionCallbackHeartbeat", "lambda.amazonaws.com", nil, lambdaEnforced("SendDurableExecutionCallbackHeartbeat", nil, handleLambdaSendDurableCallbackHeartbeat)))
 }
 
 // ---------------------------------------------------------------------------

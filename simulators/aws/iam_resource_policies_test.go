@@ -76,13 +76,13 @@ func TestIAMResourcePolicy_LambdaPolicyMirror(t *testing.T) {
 	const fn = "policy-fn"
 
 	create := `{"FunctionName":"policy-fn","Role":"arn:aws:iam::000000000000:role/r","Code":{"ZipFile":"AA=="},"Handler":"h","Runtime":"go","PackageType":"Zip"}`
-	if rr := doReq(t, srv, httptest.NewRequest("POST", "/2015-03-31/functions", strings.NewReader(create))); rr.Code != http.StatusCreated {
+	if rr := doReq(t, srv, lambdaReq("POST", "/2015-03-31/functions", create)); rr.Code != http.StatusCreated {
 		t.Fatalf("CreateFunction: status %d body %s", rr.Code, rr.Body.String())
 	}
 	arn := lambdaArn(fn)
 
 	addPerm := `{"StatementId":"AllowInvoke","Action":"lambda:InvokeFunction","Principal":"events.amazonaws.com","SourceArn":"arn:aws:events:us-east-1:000000000000:rule/r"}`
-	if rr := doReq(t, srv, httptest.NewRequest("POST", "/2015-03-31/functions/"+fn+"/policy", strings.NewReader(addPerm))); rr.Code != http.StatusCreated {
+	if rr := doReq(t, srv, lambdaReq("POST", "/2015-03-31/functions/"+fn+"/policy", addPerm)); rr.Code != http.StatusCreated {
 		t.Fatalf("AddPermission: status %d body %s", rr.Code, rr.Body.String())
 	}
 
@@ -92,18 +92,18 @@ func TestIAMResourcePolicy_LambdaPolicyMirror(t *testing.T) {
 	}
 
 	// GetPolicy contains the statement.
-	if rr := doReq(t, srv, httptest.NewRequest("GET", "/2015-03-31/functions/"+fn+"/policy", nil)); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "AllowInvoke") {
+	if rr := doReq(t, srv, lambdaReq("GET", "/2015-03-31/functions/"+fn+"/policy", "")); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "AllowInvoke") {
 		t.Fatalf("GetPolicy: status %d body %s", rr.Code, rr.Body.String())
 	}
 
 	// RemovePermission empties the policy, so the mirror clears and GetPolicy 404s.
-	if rr := doReq(t, srv, httptest.NewRequest("DELETE", "/2015-03-31/functions/"+fn+"/policy/AllowInvoke", nil)); rr.Code != http.StatusNoContent {
+	if rr := doReq(t, srv, lambdaReq("DELETE", "/2015-03-31/functions/"+fn+"/policy/AllowInvoke", "")); rr.Code != http.StatusNoContent {
 		t.Fatalf("RemovePermission: status %d body %s", rr.Code, rr.Body.String())
 	}
 	if docs := iamResourcePolicyDocsForARN(arn); docs != nil {
 		t.Fatalf("resolver still returns a lambda policy after RemovePermission: %+v", docs)
 	}
-	if rr := doReq(t, srv, httptest.NewRequest("GET", "/2015-03-31/functions/"+fn+"/policy", nil)); rr.Code != http.StatusNotFound {
+	if rr := doReq(t, srv, lambdaReq("GET", "/2015-03-31/functions/"+fn+"/policy", "")); rr.Code != http.StatusNotFound {
 		t.Fatalf("GetPolicy after remove: status %d body %s", rr.Code, rr.Body.String())
 	}
 }
@@ -120,6 +120,21 @@ func jsonTargetReq(target, body string) *http.Request {
 	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
 	req.Header.Set("X-Amz-Target", target)
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	signSeedControlPlane(req)
+	return req
+}
+
+// lambdaReq builds a signed Lambda REST request. Lambda's control plane
+// (lambda_enforcement.go) authenticates every request the same way the
+// awsJson/awsQuery control plane does, so REST calls need the same seeded
+// administrator signature queryReq/jsonTargetReq attach for their protocols.
+func lambdaReq(method, path, body string) *http.Request {
+	var req *http.Request
+	if body == "" {
+		req = httptest.NewRequest(method, path, nil)
+	} else {
+		req = httptest.NewRequest(method, path, strings.NewReader(body))
+	}
 	signSeedControlPlane(req)
 	return req
 }

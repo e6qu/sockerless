@@ -31,7 +31,7 @@ func TestSigV4_KnownVector(t *testing.T) {
 
 	cred := credScope{accessKeyID: "AKIDEXAMPLE", date: "20150830", region: "us-east-1", service: "service"}
 	const emptyPayloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	canonReq := sigv4CanonicalRequest(r, []string{"host", "x-amz-date"}, "", emptyPayloadHash)
+	canonReq := sigv4CanonicalRequest(r, []string{"host", "x-amz-date"}, "", emptyPayloadHash, true)
 	if h := hexSHA256([]byte(canonReq)); h != "bb579772317eb040ac9ed261061d46c1f17a8133879d6129b6e1c25292927e63" {
 		t.Fatalf("canonical request hash mismatch: %s\ncanonical request:\n%s", h, canonReq)
 	}
@@ -57,7 +57,7 @@ func signForTest(r *http.Request, cred credScope, secret string, sessionToken st
 	if sessionToken != "" {
 		signed = append(signed, "x-amz-security-token")
 	}
-	canonReq := sigv4CanonicalRequest(r, signed, sigv4CanonicalQuery(r.URL.Query(), false), emptyPayloadHash)
+	canonReq := sigv4CanonicalRequest(r, signed, sigv4CanonicalQuery(r.URL.Query(), false), emptyPayloadHash, true)
 	sig := sigv4Signature(secret, cred, amzDate, canonReq)
 	scope := cred.accessKeyID + "/" + cred.date + "/" + cred.region + "/" + cred.service + "/aws4_request"
 	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+scope+
@@ -215,7 +215,7 @@ func TestSigV4_PresignedQuery(t *testing.T) {
 	q.Set("X-Amz-SignedHeaders", "host")
 	r := httptest.NewRequest("GET", "http://sim.local/bucket/object.txt?"+q.Encode(), nil)
 
-	canonReq := sigv4CanonicalRequest(r, []string{"host"}, sigv4CanonicalQuery(r.URL.Query(), true), "UNSIGNED-PAYLOAD")
+	canonReq := sigv4CanonicalRequest(r, []string{"host"}, sigv4CanonicalQuery(r.URL.Query(), true), "UNSIGNED-PAYLOAD", true)
 	sig := sigv4Signature("presign-secret", cred, amzDate, canonReq)
 
 	// Re-issue with the computed signature appended.

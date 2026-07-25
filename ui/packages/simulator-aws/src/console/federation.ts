@@ -134,6 +134,28 @@ export class AwsApiError extends Error {
   }
 }
 
+// Both awsjson1.1 (ECS, ECR, CloudWatch Logs, AWS Organizations, and Lambda's
+// REST-JSON error body) answer a failure as `{"__type": "...", "message":
+// "..."}` (or the REST-JSON services' capitalised `Message`). Shared so every
+// caller reports the same operation: code: message shape the AWS CLI does.
+function awsJsonErrorFromBody(text: string, operationLabel: string, status: number): AwsApiError {
+  let type = "";
+  let message = "";
+  try {
+    const parsed = JSON.parse(text) as { __type?: string; message?: string; Message?: string };
+    type = parsed.__type ?? "";
+    message = parsed.message ?? parsed.Message ?? "";
+  } catch {
+    // The body was not the protocol's JSON error shape (a proxy error page,
+    // an empty body); the HTTP status below is all the information there is.
+  }
+  const code = type.slice(type.lastIndexOf("#") + 1);
+  return new AwsApiError(
+    code ? `${operationLabel}: ${code}: ${message}` : `${operationLabel} returned HTTP ${status}`,
+    code,
+  );
+}
+
 // awsJson calls an AWS JSON (1.1) target operation and returns the parsed
 // result — the protocol ECS, ECR, CloudWatch Logs, and AWS Organizations
 // speak. A failure carries the protocol's `__type` error code (stripped of any
@@ -148,23 +170,8 @@ export async function awsJson<T>(service: string, target: string, input: Record<
     body: JSON.stringify(input),
   });
   if (!response.ok) {
-    const text = await response.text();
-    let type = "";
-    let message = "";
-    try {
-      const parsed = JSON.parse(text) as { __type?: string; message?: string; Message?: string };
-      type = parsed.__type ?? "";
-      message = parsed.message ?? parsed.Message ?? "";
-    } catch {
-      // The body was not the protocol's JSON error shape (a proxy error page,
-      // an empty body); the HTTP status below is all the information there is.
-    }
-    const code = type.slice(type.lastIndexOf("#") + 1);
     const operation = target.slice(target.lastIndexOf(".") + 1);
-    throw new AwsApiError(
-      code ? `${operation}: ${code}: ${message}` : `${target} returned HTTP ${response.status}`,
-      code,
-    );
+    throw awsJsonErrorFromBody(await response.text(), operation, response.status);
   }
   return (await response.json()) as T;
 }
@@ -205,6 +212,16 @@ export async function awsRestJson<T>(service: string, path: string): Promise<T> 
   return (await response.json()) as T;
 }
 
+// awsRestJsonDelete calls an AWS REST-JSON DELETE operation (Lambda's
+// DeleteFunction) that answers 204 No Content on success and the same
+// `{"__type", "message"}` error body as awsJson on failure.
+export async function awsRestJsonDelete(service: string, path: string): Promise<void> {
+  const response = await awsFetch({ service, method: "DELETE", path });
+  if (!response.ok) {
+    throw awsJsonErrorFromBody(await response.text(), `DELETE ${path}`, response.status);
+  }
+}
+
 // awsRestXml calls an AWS REST-XML GET operation (S3's ListBuckets) and returns
 // the parsed document.
 export async function awsRestXml(service: string, path: string): Promise<Document> {
@@ -213,4 +230,18 @@ export async function awsRestXml(service: string, path: string): Promise<Documen
     throw new Error(`${path} returned HTTP ${response.status}`);
   }
   return new DOMParser().parseFromString(await response.text(), "text/xml");
+}
+
+// awsRestXmlDelete calls an AWS REST-XML DELETE operation (S3's DeleteBucket)
+// that answers 204 No Content on success and S3's XML `<Error>` body — Code
+// and Message — on failure (BucketNotEmpty when objects remain, the same
+// condition the real console reports).
+export async function awsRestXmlDelete(service: string, path: string): Promise<void> {
+  const response = await awsFetch({ service, method: "DELETE", path });
+  if (!response.ok) {
+    const xml = new DOMParser().parseFromString(await response.text(), "text/xml");
+    const code = xmlText(xml, "Code");
+    const message = xmlText(xml, "Message");
+    throw new Error(code ? `${code}: ${message}` : `DELETE ${path} returned HTTP ${response.status}`);
+  }
 }

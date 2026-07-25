@@ -21,18 +21,31 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 )
 
+// emptySHA256 is the hex SHA-256 of an empty body — the payload hash for a
+// signed GET request with no body (Lambda's REST list/get operations).
+const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
 // signRawSigV4 signs a hand-built HTTP request with SigV4 using the seed
 // credential every SDK/CLI/Terraform client already signs with (test/test,
 // us-east-1). Raw requests that hit a SigV4-gated chokepoint (the awsJson /
-// awsQuery control plane at POST /, and the S3 REST data plane) must present a
-// valid signature exactly as the real cloud front end requires; this is the
-// same signature the aws-sdk-go-v2 client computes for those requests. Set
-// every signed header on req before calling. payloadHash is the hex SHA-256 of
-// the body (see signRawSigV4JSON) or a streaming sentinel such as
-// "STREAMING-AWS4-HMAC-SHA256-PAYLOAD".
+// awsQuery control plane at POST /, the S3 REST data plane, and Lambda's REST
+// control plane) must present a valid signature exactly as the real cloud
+// front end requires; this is the same signature the aws-sdk-go-v2 client
+// computes for those requests. Set every signed header on req before calling.
+// payloadHash is the hex SHA-256 of the body (see signRawSigV4JSON) or a
+// streaming sentinel such as "STREAMING-AWS4-HMAC-SHA256-PAYLOAD".
 func signRawSigV4(t *testing.T, req *http.Request, service, payloadHash string) {
 	t.Helper()
-	creds := aws.Credentials{AccessKeyID: "test", SecretAccessKey: "test"}
+	signRawSigV4Creds(t, req, service, payloadHash, "test", "test")
+}
+
+// signRawSigV4Creds is signRawSigV4 with an explicit access key id and secret,
+// for tests that need to sign with a real-but-wrong secret (proving the
+// simulator rejects a well-formed signature that doesn't verify) rather than
+// the seed admin credential.
+func signRawSigV4Creds(t *testing.T, req *http.Request, service, payloadHash, akid, secret string) {
+	t.Helper()
+	creds := aws.Credentials{AccessKeyID: akid, SecretAccessKey: secret}
 	if err := v4.NewSigner().SignHTTP(ctx, creds, req, payloadHash, service, "us-east-1", time.Now()); err != nil {
 		t.Fatalf("SigV4 sign (%s): %v", service, err)
 	}

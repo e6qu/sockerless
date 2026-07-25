@@ -40,6 +40,37 @@ func TestIAM_CreateServiceAccount(t *testing.T) {
 	assert.Contains(t, sa.Name, "test-sa")
 }
 
+// TestIAM_CreateServiceAccountDuplicateConflict pins that creating a second
+// service account under an accountId already in use within the project
+// returns 409 ALREADY_EXISTS like real Cloud IAM, instead of silently
+// overwriting the existing account.
+func TestIAM_CreateServiceAccountDuplicateConflict(t *testing.T) {
+	svc := iamService(t)
+
+	sa, err := svc.Projects.ServiceAccounts.Create("projects/dup-sa-project",
+		&iam.CreateServiceAccountRequest{
+			AccountId: "dup-sa",
+			ServiceAccount: &iam.ServiceAccount{
+				DisplayName: "Original",
+			},
+		}).Do()
+	require.NoError(t, err)
+
+	_, err = svc.Projects.ServiceAccounts.Create("projects/dup-sa-project",
+		&iam.CreateServiceAccountRequest{
+			AccountId: "dup-sa",
+			ServiceAccount: &iam.ServiceAccount{
+				DisplayName: "Duplicate",
+			},
+		}).Do()
+	requireGoogleErr(t, err, 409, "ALREADY_EXISTS")
+
+	// The rejected duplicate must not have overwritten the existing account.
+	got, err := svc.Projects.ServiceAccounts.Get(sa.Name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "Original", got.DisplayName, "duplicate create must not overwrite the existing account")
+}
+
 func TestIAM_GetServiceAccount(t *testing.T) {
 	svc := iamService(t)
 

@@ -90,19 +90,35 @@ func parseCredScope(s string) (credScope, bool) {
 // used only to compute the payload hash when the request omits the
 // x-amz-content-sha256 header; callers that must not consume a streaming body
 // (S3 uploads) pass nil and rely on the header, which S3 clients always send.
+//
+// aws-sdk-go-v2's v4 signer double-URI-encodes the canonical path for every
+// service except S3 (S3's client middleware sets DisableURIPathEscaping, the
+// one exemption the SigV4 spec itself carves out); this is sigv4Verify's
+// default (doubleEncodePath=true). Call sigv4VerifyS3 for the S3 REST gate,
+// the sole single-encode surface.
 func sigv4Verify(r *http.Request, body []byte) (sigv4Result, *sigv4Error) {
+	return sigv4VerifyEncoding(r, body, true)
+}
+
+// sigv4VerifyS3 is sigv4Verify for the S3 REST data plane, whose client
+// signer does not double-encode the canonical URI.
+func sigv4VerifyS3(r *http.Request, body []byte) (sigv4Result, *sigv4Error) {
+	return sigv4VerifyEncoding(r, body, false)
+}
+
+func sigv4VerifyEncoding(r *http.Request, body []byte, doubleEncodePath bool) (sigv4Result, *sigv4Error) {
 	q := r.URL.Query()
 	if q.Get("X-Amz-Algorithm") != "" || q.Get("X-Amz-Signature") != "" {
-		return sigv4VerifyPresigned(r, q)
+		return sigv4VerifyPresigned(r, q, doubleEncodePath)
 	}
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "AWS4-HMAC-SHA256") {
 		return sigv4NoCredential, nil
 	}
-	return sigv4VerifyHeader(r, auth, body)
+	return sigv4VerifyHeader(r, auth, body, doubleEncodePath)
 }
 
-func sigv4VerifyHeader(r *http.Request, auth string, body []byte) (sigv4Result, *sigv4Error) {
+func sigv4VerifyHeader(r *http.Request, auth string, body []byte, doubleEncodePath bool) (sigv4Result, *sigv4Error) {
 	cred, signedHeaders, providedSig, ok := parseAuthzHeader(auth)
 	if !ok {
 		return sigv4NoCredential, &sigv4Error{sigErrSignatureMismatch, sigMsgMismatch}
@@ -119,7 +135,7 @@ func sigv4VerifyHeader(r *http.Request, auth string, body []byte) (sigv4Result, 
 	if payloadHash == "" {
 		payloadHash = hexSHA256(body)
 	}
-	canonReq := sigv4CanonicalRequest(r, signedHeaders, sigv4CanonicalQuery(r.URL.Query(), false), payloadHash)
+	canonReq := sigv4CanonicalRequest(r, signedHeaders, sigv4CanonicalQuery(r.URL.Query(), false), payloadHash, doubleEncodePath)
 	computed := sigv4Signature(secret, cred, amzDate, canonReq)
 	if !hmac.Equal([]byte(computed), []byte(strings.ToLower(providedSig))) {
 		return sigv4NoCredential, &sigv4Error{sigErrSignatureMismatch, sigMsgMismatch}
@@ -131,7 +147,7 @@ func sigv4VerifyHeader(r *http.Request, auth string, body []byte) (sigv4Result, 
 // the form Amplify and S3 presigners emit: the algorithm, credential scope,
 // signed-header list, and signature all travel as X-Amz-* query parameters and
 // the payload hash is UNSIGNED-PAYLOAD.
-func sigv4VerifyPresigned(r *http.Request, q url.Values) (sigv4Result, *sigv4Error) {
+func sigv4VerifyPresigned(r *http.Request, q url.Values, doubleEncodePath bool) (sigv4Result, *sigv4Error) {
 	cred, ok := parseCredScope(q.Get("X-Amz-Credential"))
 	providedSig := q.Get("X-Amz-Signature")
 	amzDate := q.Get("X-Amz-Date")
@@ -147,7 +163,7 @@ func sigv4VerifyPresigned(r *http.Request, q url.Values) (sigv4Result, *sigv4Err
 	if h := r.Header.Get("X-Amz-Content-Sha256"); h != "" {
 		payloadHash = h
 	}
-	canonReq := sigv4CanonicalRequest(r, signedHeaders, sigv4CanonicalQuery(q, true), payloadHash)
+	canonReq := sigv4CanonicalRequest(r, signedHeaders, sigv4CanonicalQuery(q, true), payloadHash, doubleEncodePath)
 	computed := sigv4Signature(secret, cred, amzDate, canonReq)
 	if !hmac.Equal([]byte(computed), []byte(strings.ToLower(providedSig))) {
 		return sigv4NoCredential, &sigv4Error{sigErrSignatureMismatch, sigMsgMismatch}
@@ -215,11 +231,11 @@ func sigv4SecretFor(accessKeyID, presentedToken string) (string, *sigv4Error) {
 }
 
 // sigv4CanonicalRequest assembles the canonical request string.
-func sigv4CanonicalRequest(r *http.Request, signedHeaders []string, canonicalQuery, payloadHash string) string {
+func sigv4CanonicalRequest(r *http.Request, signedHeaders []string, canonicalQuery, payloadHash string, doubleEncodePath bool) string {
 	canonHeaders, signedHeadersStr := sigv4CanonicalHeaders(r, signedHeaders)
 	return strings.Join([]string{
 		r.Method,
-		sigv4CanonicalURI(r),
+		sigv4CanonicalURI(r, doubleEncodePath),
 		canonicalQuery,
 		canonHeaders,
 		signedHeadersStr,
@@ -227,11 +243,27 @@ func sigv4CanonicalRequest(r *http.Request, signedHeaders []string, canonicalQue
 	}, "\n")
 }
 
-// sigv4CanonicalURI builds the canonical URI path. The only SigV4-gated surfaces
-// are the control-plane dispatcher (path "/") and the S3 REST handlers. Amazon
-// S3 URI-encodes the path once without normalizing it, and single-encoding "/"
-// is trivially exact, so a single pass of awsURIEncode is correct for both.
-func sigv4CanonicalURI(r *http.Request) string {
+// sigv4CanonicalURI builds the canonical URI path. Real AWS's SigV4 spec
+// double-URI-encodes the path for every service except S3, and
+// aws-sdk-go-v2's v4 signer implements exactly that (S3's client middleware
+// sets DisableURIPathEscaping; every other service — including the
+// control-plane dispatcher at path "/", where the distinction is moot, and
+// Lambda's REST control plane, whose ARN path segments contain ':' — does
+// not). doubleEncodePath=false reproduces the S3 gate's existing behavior
+// unchanged: a single pass of awsURIEncode over the request's decoded path.
+// doubleEncodePath=true mirrors the SDK's two passes: r.URL.EscapedPath()
+// (the server-observed wire path — Go's http server reconstructs this from
+// what the client actually sent) re-encoded a second time, so a literal ':'
+// or other reserved character the wire path carried unescaped becomes %3A
+// exactly as the client's second signer pass computed it.
+func sigv4CanonicalURI(r *http.Request, doubleEncodePath bool) string {
+	if doubleEncodePath {
+		path := r.URL.EscapedPath()
+		if path == "" {
+			return "/"
+		}
+		return awsURIEncode(path, false)
+	}
 	path := r.URL.Path
 	if path == "" {
 		return "/"

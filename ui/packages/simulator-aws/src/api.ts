@@ -1,4 +1,4 @@
-import { awsJson, awsQuery, awsRestJson, awsRestXml } from "./console/federation.js";
+import { awsJson, awsQuery, awsRestJson, awsRestJsonDelete, awsRestXml, awsRestXmlDelete } from "./console/federation.js";
 
 // The console reads the real AWS APIs — ECS, Lambda, ECR, S3, CloudWatch Logs,
 // IAM, and AWS Organizations — over federated, SigV4-signed requests, rendering
@@ -58,6 +58,17 @@ export const fetchECSTasks = async (): Promise<ECSTask[]> => {
   return tasks;
 };
 
+// Real ECS never deletes a task record on request — a task is stopped, and
+// the service reaps the STOPPED record on its own schedule — so the console's
+// task action is StopTask, matching what the real console's "Stop" offers.
+export const stopECSTask = async (clusterArn: string, taskArn: string): Promise<void> => {
+  await awsJson("ecs", "AmazonEC2ContainerServiceV20141113.StopTask", {
+    cluster: clusterArn,
+    task: taskArn,
+    reason: "Stopped from the AWS console simulator",
+  });
+};
+
 export type LambdaState = "Pending" | "Active" | "Inactive" | "Failed";
 
 export interface LambdaFunction {
@@ -90,6 +101,10 @@ export const fetchLambdaFunctions = async (): Promise<LambdaFunction[]> => {
   }));
 };
 
+export const deleteLambdaFunction = async (functionName: string): Promise<void> => {
+  await awsRestJsonDelete("lambda", `/2015-03-31/functions/${encodeURIComponent(functionName)}`);
+};
+
 export interface ECRRepo {
   name: string;
   uri: string;
@@ -115,6 +130,17 @@ export const fetchECRRepos = async (): Promise<ECRRepo[]> => {
   }));
 };
 
+// DeleteRepository with force: true — the real console's delete dialog warns
+// that a non-empty repository's images are deleted along with it and asks the
+// operator to confirm by typing the repository name, then sends force so the
+// non-empty case succeeds rather than answering RepositoryNotEmptyException.
+export const deleteECRRepo = async (repositoryName: string): Promise<void> => {
+  await awsJson("ecr", "AmazonEC2ContainerRegistry_V20150921.DeleteRepository", {
+    repositoryName,
+    force: true,
+  });
+};
+
 export interface S3Bucket {
   name: string;
   creationDate: string;
@@ -126,6 +152,13 @@ export const fetchS3Buckets = async (): Promise<S3Bucket[]> => {
     name: bucket.getElementsByTagName("Name")[0]?.textContent ?? "",
     creationDate: bucket.getElementsByTagName("CreationDate")[0]?.textContent ?? "",
   }));
+};
+
+// DeleteBucket only succeeds on an empty bucket — the same constraint the
+// real console enforces, surfacing S3's BucketNotEmpty error rather than
+// emptying the bucket on the operator's behalf.
+export const deleteS3Bucket = async (bucketName: string): Promise<void> => {
+  await awsRestXmlDelete("s3", `/${encodeURIComponent(bucketName)}`);
 };
 
 export interface CWLogGroup {
@@ -369,4 +402,8 @@ export const fetchCWLogGroups = async (): Promise<CWLogGroup[]> => {
     retentionInDays: group.retentionInDays ?? 0,
     storedBytes: group.storedBytes ?? 0,
   }));
+};
+
+export const deleteCWLogGroup = async (logGroupName: string): Promise<void> => {
+  await awsJson("logs", "Logs_20140328.DeleteLogGroup", { logGroupName });
 };
