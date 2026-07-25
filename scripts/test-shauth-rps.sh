@@ -310,13 +310,93 @@ provision_aws_federation() {
 
 start_simulator "$repo_root/simulators/aws/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision" "$aws_federation_role"
 start_simulator "$repo_root/simulators/gcp/simulator-gcp" 29320 sockerless-gcp "$gcp_client_secret" "$work_dir/gcp.log" "$source_revision" "$gcp_workforce_provider"
-start_simulator "$repo_root/simulators/azure/simulator-azure" 29330 sockerless-azure "$azure_client_secret" "$work_dir/azure.log" "$source_revision"
 
 wait_for_url http://localhost:29090/healthz "Sockerless Admin"
 wait_for_url http://localhost:29310/health "AWS simulator"
 provision_aws_federation
 wait_for_url http://localhost:29320/health "Google Cloud simulator"
 provision_gcp_workforce_provider
+
+# ---- Microsoft Azure console: cloud and console as separate processes --------
+# Real Microsoft Entra serves no cross-origin response for the client_credentials
+# federation grant, so the console federates the operator server-side (the
+# /auth/federation/token broker) rather than in the browser. The broker exchanges
+# the operator's assertion at the cloud's Microsoft Entra endpoint, and the
+# browser then reads Azure Resource Manager and Microsoft Graph directly — so the
+# console must point at a *separate* cloud process, the way a real deployment
+# does: a token the cloud mints is verified by that same cloud (each simulator
+# instance signs with its own key), and the browser reaching the cloud
+# cross-origin needs the cloud's real CORS. The cloud instance is plain HTTP so
+# the console's server-side broker can reach it on macOS too (Go ignores
+# SSL_CERT_FILE there); az's separate TLS listener below is unrelated.
+azure_tenant=11111111-1111-1111-1111-111111111111
+azure_subscription=00000000-0000-0000-0000-000000000001
+shauth_admin_subject=$(compose exec -T postgres psql -U shauth -d shauth -Atc \
+  "SELECT id FROM users WHERE email='admin@localhost.test'")
+[[ -n $shauth_admin_subject ]] || {
+  echo "bootstrap administrator not found in the Shauth identity store" >&2
+  exit 1
+}
+
+azure_console_cloud_port=29332
+azure_console_cloud=http://localhost:$azure_console_cloud_port
+SIM_LISTEN_ADDR=":$azure_console_cloud_port" \
+  "$repo_root/simulators/azure/simulator-azure" >"$work_dir/azure-cloud.log" 2>&1 &
+pids+=("$!")
+wait_for_url "$azure_console_cloud/health" "Microsoft Azure console cloud"
+
+# The administrator provisions the console's federated identity through the real
+# Azure Resource Manager API, authenticating with the simulator's seeded ARM
+# token, then registers a federated identity credential for the operator's
+# Shauth subject. The console presents the operator's assertion — issued to the
+# console's own OpenID Connect client — so the credential's audience is that
+# client id.
+azure_console_arm_bearer=$(curl --silent --show-error --fail \
+  -X POST "$azure_console_cloud/$azure_tenant/oauth2/v2.0/token" \
+  --data-urlencode 'grant_type=client_credentials' \
+  --data-urlencode 'client_id=console-provisioning-admin' \
+  --data-urlencode 'scope=https://management.azure.com/.default' | jq -r '.access_token')
+[[ -n $azure_console_arm_bearer && $azure_console_arm_bearer != null ]] || {
+  echo "Microsoft Azure console cloud issued no Azure Resource Manager token" >&2
+  exit 1
+}
+azure_console_arm() {
+  curl --silent --show-error --fail -H "Authorization: Bearer $azure_console_arm_bearer" \
+    -H 'Content-Type: application/json' "$@"
+}
+azure_console_arm -o /dev/null -X PUT \
+  "$azure_console_cloud/subscriptions/$azure_subscription/resourcegroups/console-federation-rg?api-version=2021-04-01" \
+  -d '{"location":"eastus"}'
+azure_console_client_id=$(azure_console_arm -X PUT \
+  "$azure_console_cloud/subscriptions/$azure_subscription/resourceGroups/console-federation-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/console-identity?api-version=2023-01-31" \
+  -d '{"location":"eastus"}' | jq -r '.properties.clientId')
+[[ -n $azure_console_client_id && $azure_console_client_id != null ]] || {
+  echo "console user-assigned identity carried no clientId" >&2
+  exit 1
+}
+azure_console_arm -o /dev/null -X PUT \
+  "$azure_console_cloud/subscriptions/$azure_subscription/resourceGroups/console-federation-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/console-identity/federatedIdentityCredentials/shauth-operator?api-version=2023-01-31" \
+  -d "{\"properties\":{\"issuer\":\"http://localhost:8080\",\"subject\":\"$shauth_admin_subject\",\"audiences\":[\"sockerless-azure\"]}}"
+
+# The console (UI + auth) starts only now that its cloud identity exists: it
+# reads the generated client id at startup and points every cloud coordinate at
+# the separate cloud process.
+SIM_LISTEN_ADDR=":29330" \
+SIM_UI_OIDC_ISSUER=http://localhost:8080 \
+SIM_UI_OIDC_CLIENT_ID=sockerless-azure \
+SIM_UI_OIDC_CLIENT_SECRET="$azure_client_secret" \
+SIM_UI_PUBLIC_URL="http://localhost:29330" \
+SIM_UI_SESSION_SECRET="$session_secret" \
+SIM_UI_INSECURE_COOKIES=true \
+APPLICATION_RELEASE_REVISION="$source_revision" \
+SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT="$azure_console_cloud" \
+SOCKERLESS_CONSOLE_GRAPH_API_ENDPOINT="$azure_console_cloud" \
+SOCKERLESS_CONSOLE_LOGS_API_ENDPOINT="$azure_console_cloud" \
+SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT="$azure_console_cloud" \
+SOCKERLESS_CONSOLE_FEDERATION_TENANT="$azure_tenant" \
+SOCKERLESS_CONSOLE_FEDERATION_CLIENT_ID="$azure_console_client_id" \
+  "$repo_root/simulators/azure/simulator-azure" >"$work_dir/azure.log" 2>&1 &
+pids+=("$!")
 wait_for_url http://localhost:29330/health "Microsoft Azure simulator"
 
 # ---- `sockerless login` coordinates -----------------------------------------
@@ -327,8 +407,8 @@ wait_for_url http://localhost:29330/health "Microsoft Azure simulator"
 # REQUESTS_CA_BUNDLE — the trust bundle is a coordinate like the endpoints.
 azure_cli_port=29331
 azure_cli_base="https://127.0.0.1:$azure_cli_port"
-azure_tenant=11111111-1111-1111-1111-111111111111
-azure_subscription=00000000-0000-0000-0000-000000000001
+# azure_tenant / azure_subscription / shauth_admin_subject are defined once with
+# the Azure console two-process setup above and reused here for the CLI login.
 openssl req -x509 -newkey rsa:2048 -keyout "$work_dir/azure-cli-tls.key" \
   -out "$work_dir/azure-cli-tls.crt" -days 7 -nodes -subj "/CN=localhost" \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
@@ -370,16 +450,10 @@ azure_cli_client_id=$(azure_curl -X PUT \
   exit 1
 }
 
-# Microsoft Entra Workload Identity Federation pins exact subjects: the
-# administrator registers a federated identity credential for the operator who
-# will sign in. The relying-party matrix signs the CLI in as the bootstrap
-# administrator, whose subject is that user's Shauth ID.
-shauth_admin_subject=$(compose exec -T postgres psql -U shauth -d shauth -Atc \
-  "SELECT id FROM users WHERE email='admin@localhost.test'")
-[[ -n $shauth_admin_subject ]] || {
-  echo "bootstrap administrator not found in the Shauth identity store" >&2
-  exit 1
-}
+# Microsoft Entra Workload Identity Federation pins exact subjects. The
+# relying-party matrix signs the CLI in as the bootstrap administrator, whose
+# subject ($shauth_admin_subject, resolved with the console setup above) the
+# federated identity credential trusts.
 azure_curl -o /dev/null -X PUT \
   "$azure_cli_base/subscriptions/$azure_subscription/resourceGroups/cli-login-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/cli-login-identity/federatedIdentityCredentials/shauth-admin?api-version=2023-01-31" \
   -H "Authorization: Bearer $azure_arm_bearer" -H 'Content-Type: application/json' \

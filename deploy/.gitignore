@@ -1,0 +1,6 @@
+# Runtime artifacts written by provision.sh / a local boot — never committed.
+# The committed inputs are .env.example and the scripts; a deployment derives
+# its own secrets and certificates.
+.env
+.env.generated
+.caddy-local-ca.crt

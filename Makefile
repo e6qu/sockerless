@@ -373,3 +373,14 @@ upstream-test-gcl-all:
 	  printf "$(COLOR_CYAN)=== Upstream GCL: %s ===$(COLOR_RESET)\n" "$$b" && \
 	  $(MAKE) -s upstream-test-gcl-$$b || true; \
 	done
+
+.PHONY: deploy-smoke deploy-smoke-build deploy-down
+
+deploy-smoke: ## boot the deploy/ recipe from published images, provision, and smoke-test it (see deploy/README.md)
+	cd deploy && DEPLOY_COMPOSE_FILE=compose.yaml ./provision.sh && ./smoke.sh
+
+deploy-smoke-build: ## same as deploy-smoke, but builds every image from source (deploy/compose.build.yaml)
+	cd deploy && DEPLOY_COMPOSE_FILE=compose.build.yaml ./provision.sh && ./smoke.sh
+
+deploy-down: ## tear down the deploy/ recipe, including the PostgreSQL volume
+	cd deploy && docker compose -f $${DEPLOY_COMPOSE_FILE:-compose.yaml} --env-file .env --env-file .env.generated --profile console down --volumes

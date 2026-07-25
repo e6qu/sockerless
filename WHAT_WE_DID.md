@@ -4,6 +4,49 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-25 — Deployment recipe, and the Azure portal federates for real
+
+Phase 4 of the Console Self-Service roadmap: the deployment and provisioning
+recipe, and the Azure federation deployability fix (BUG-2640) it carries.
+
+A committed `deploy/` hosts Sockerless Admin, the three simulators, and a
+Shauth stack (Shauth + Ory Hydra + PostgreSQL) at persistent origins:
+`compose.yaml` runs the published `ghcr.io/e6qu/*` images (a required
+`SOCKERLESS_TAG`, no implicit latest), `compose.build.yaml` builds from source,
+`provision.sh` registers every console as a Shauth OpenID Connect client and
+provisions the cloud federation resources through the real APIs (AWS IAM OIDC
+provider + roles via SigV4, GCP workforce pool providers, Azure managed
+identity + federated identity credentials, capturing the generated Azure client
+id into `.env.generated`), and `smoke.sh` proves every health endpoint, the
+unauthenticated console redirects, each data plane's reject-unauthenticated /
+answer-authenticated contract, and a `sockerless login` authorize URL. A
+load-bearing discovery shaped the recipe: Admin and the consoles reject any
+non-HTTPS, non-`localhost` OpenID Connect issuer, so a Caddy reverse proxy
+TLS-terminates every persistent hostname on one port with its own local CA,
+trusted by the backchannel-logout and federated-JWT-verifying services through
+`SSL_CERT_FILE` (compose-only, no image change). The full boot → provision →
+smoke passed fresh and idempotent; no CI job was added because a cold
+from-source build of the five images alone runs ~10 minutes, past the
+15-minute ceiling before provisioning starts, so `make deploy-smoke` is the
+documented manual gate.
+
+BUG-2640 closed: the Azure portal's Workload Identity Federation exchange moved
+into the console's own **server-side broker** (`/auth/federation/token`, using
+the ui-auth session's assertion) — real Microsoft Entra serves no CORS for the
+`client_credentials` grant, so the browser could never read the token
+response, which is why the browser-side exchange only ever worked co-served.
+The Azure simulator gained faithful Azure Resource Manager and Microsoft Graph
+CORS (the Entra token endpoint deliberately gets none — the reason the broker
+exists), the SPA now calls the broker on its own origin and reads the cloud
+cross-origin over that CORS, and the relying-party harness runs the Azure
+console and cloud as **separate processes**: it provisions the console's
+managed identity and federated identity credential on the cloud process, then
+starts the console pointing every coordinate at it. That unblocked the Azure
+browser data plane and the app-registration / client-secret **minting flow
+deferred since the credential-minting phase** — the relying-party matrix now
+mints an Entra client secret through the portal in a real browser, alongside
+the AWS access key and Google Cloud service-account key.
+
 ## 2026-07-25 — `sockerless login` signs the terminal into every cloud
 
 Phase 3 of the Console Self-Service roadmap: the packaged terminal analog of

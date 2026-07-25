@@ -110,6 +110,13 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	// the mux to avoid route conflicts with ACR's /v2/{path...}).
 	srv.WrapHandler(AzureAuthMiddleware)
 
+	// CORS is outermost: a browser's preflight OPTIONS request for Azure
+	// Resource Manager or Microsoft Graph must be answered before the ARM
+	// bearer and api-version middlewares run, exactly as real Azure's edge
+	// answers a preflight ahead of the resource provider's own auth check —
+	// the request carries neither a bearer token nor api-version by design.
+	srv.WrapHandler(sim.AzureCORSMiddleware)
+
 	// Register Azure service routes
 	// Monitor must be registered first to initialize monitorLogs store
 	// used by Container Apps and Functions log injection.
