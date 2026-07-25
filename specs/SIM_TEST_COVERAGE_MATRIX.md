@@ -92,4 +92,5 @@ Legend:
 | `gcp-secretmanager` | direct | direct | direct | `simulators/gcp/sdk-tests/secretmanager_test.go`; `simulators/gcp/cli-tests/secretmanager_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-sqladmin` | direct | direct | direct | `simulators/gcp/sdk-tests/cloudsql_test.go`; `simulators/gcp/cli-tests/redis_sql_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-spanner` | direct | direct | direct | `simulators/gcp/sdk-tests/spanner_dataflow_bigtable_test.go`; `simulators/gcp/cli-tests/spanner_dataflow_bigtable_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-sts` | direct | direct | not applicable | `simulators/gcp/sdk-tests/sts_test.go`; `simulators/gcp/cli-tests/workforce_login_test.go` |
 | `gcp-vpcaccess` | direct | direct | direct | `simulators/gcp/sdk-tests/integration_test.go`; `simulators/gcp/cli-tests/vpcaccess_test.go`; `simulators/gcp/terraform-tests/main.tf` |

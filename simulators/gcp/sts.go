@@ -29,6 +29,7 @@ import (
 // access token its own resource endpoints validate.
 func registerSTS(srv *sim.Server) {
 	srv.HandleFunc("POST /v1/token", handleSTSTokenExchange)
+	srv.HandleFunc("POST /v1/introspect", handleSTSIntrospect)
 }
 
 const (
@@ -92,6 +93,63 @@ func handleSTSTokenExchange(w http.ResponseWriter, r *http.Request) {
 		"token_type":        "Bearer",
 		"expires_in":        expiresIn,
 	})
+}
+
+// handleSTSIntrospect implements the Security Token Service token
+// introspection endpoint (`https://sts.googleapis.com/v1/introspect`,
+// RFC 7662). gcloud calls it after `gcloud auth login --cred-file` refreshes
+// a workforce external_account credential, to resolve the federated
+// principal it stores as the account name: a form-encoded POST of
+// `token` (+ `token_type_hint`), authenticated with the caller's OAuth
+// client credentials over HTTP Basic — the gcloud CLI presents Google's own
+// published gcloud client id and secret.
+//
+// A token this simulator minted introspects active, with `username` naming
+// the workforce principal
+// (`principal://iam.googleapis.com/locations/.../subject/...`). A token the
+// simulator did not mint — malformed, unsigned by its key, or expired —
+// introspects `{"active": false}` at HTTP 200, which is both RFC 7662 §2.2
+// and real Google's observed response for a token it does not recognise.
+func handleSTSIntrospect(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		stsError(w, "invalid_request", "request body could not be parsed")
+		return
+	}
+	// RFC 7662 §2.1: the endpoint must authenticate the caller so token
+	// contents cannot be scanned anonymously. Clients authenticate with
+	// their OAuth client credentials — HTTP Basic (what gcloud sends) or the
+	// equivalent client_id/client_secret body parameters.
+	if _, _, hasBasic := r.BasicAuth(); !hasBasic && r.Form.Get("client_id") == "" {
+		w.Header().Set("WWW-Authenticate", "Basic")
+		sim.WriteJSON(w, http.StatusUnauthorized, map[string]string{
+			"error":             "invalid_client",
+			"error_description": "the introspection request carried no client authentication",
+		})
+		return
+	}
+	token := r.Form.Get("token")
+	if token == "" {
+		stsError(w, "invalid_request", "token is required")
+		return
+	}
+
+	claims, err := verifiedAccessTokenClaims(token)
+	if err != nil {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"active": false})
+		return
+	}
+	response := map[string]any{
+		"active": true,
+		"sub":    claims.Sub,
+		"scope":  claims.Scope,
+		"iss":    claims.Iss,
+		"exp":    claims.Exp,
+		"iat":    claims.Iat,
+	}
+	if strings.Contains(claims.Sub, "/workforcePools/") && strings.Contains(claims.Sub, "/subject/") {
+		response["username"] = "principal:" + workforceAudiencePrefix + claims.Sub
+	}
+	sim.WriteJSON(w, http.StatusOK, response)
 }
 
 // federateWorkforceSubject performs the Workforce Identity Federation token

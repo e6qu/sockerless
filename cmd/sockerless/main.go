@@ -56,6 +56,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: sockerless config migrate [--write]")
 			os.Exit(1)
 		}
+	case "login":
+		cmdLogin(os.Args[2:])
+	case "logout":
+		cmdLogout(os.Args[2:])
 	case "check":
 		cmdCheck()
 	case "version":
@@ -78,6 +82,8 @@ Commands:
   ps        List containers
   metrics   Show server metrics
   resources Manage cloud resources
+  login     Sign in to Shauth and wire vendor CLI credentials
+  logout    Remove credentials written by login
   check     Run backend health checks
   version   Print version`)
 }
