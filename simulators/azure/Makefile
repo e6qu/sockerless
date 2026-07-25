@@ -41,8 +41,12 @@ else
 sdk-test: sdk-test-local ## go test the SDK-driven sim tests
 endif
 
+# The Cosmos DB emulator differential tests are slow and variable, so the SDK
+# suite carries an explicit deadline above Go's 10-minute default; the CI step
+# gives it headroom over this.
+SDK_TEST_TIMEOUT ?= 13m
 sdk-test-local: build ## go test the SDK-driven sim tests on a Linux host with real-network capabilities
-	cd sdk-tests && $(GO_ENV) go test -v -count=1 ./...
+	cd sdk-tests && $(GO_ENV) go test -v -count=1 -timeout $(SDK_TEST_TIMEOUT) ./...
 
 cli-test: build ## go test the CLI-driven sim tests
 	cd cli-tests && $(GO_ENV) go test -v -count=1 -timeout $(CLI_TEST_TIMEOUT) ./...

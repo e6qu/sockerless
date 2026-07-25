@@ -298,7 +298,12 @@ jobs:
       fail-fast: false
       matrix:
         cloud: [gcp, azure]
-    name: sim (${{ matrix.cloud }})
+        # The SDK and CLI suites run as separate jobs so each gets its own
+        # 15-minute ceiling: the Azure SDK suite's Cosmos DB emulator
+        # differential tests alone approach the ceiling, leaving no room to run
+        # the CLI suite in the same job.
+        suite: [sdk, cli]
+    name: sim (${{ matrix.cloud }} ${{ matrix.suite }})
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
@@ -333,6 +338,8 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Run module unit tests
+        # Shard-independent; the sdk suite carries them so they run once per cloud.
+        if: matrix.suite == 'sdk'
         run: cd simulators/${{ matrix.cloud }} && GOWORK=off make unit-test
         timeout-minutes: 3
         env:
@@ -341,10 +348,11 @@ jobs:
       # TestCosmos_DifferentialVsEmulator). The differential checks the local
       # image store before running, so this is what makes it run for real.
       - name: Pull Cosmos DB emulator (differential oracle)
-        if: matrix.cloud == 'azure'
+        if: matrix.cloud == 'azure' && matrix.suite == 'sdk'
         run: docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
         timeout-minutes: 8
       - name: Run SDK tests
+        if: matrix.suite == 'sdk'
         run: |
           bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
           cd simulators/${{ matrix.cloud }}
@@ -352,10 +360,14 @@ jobs:
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}" \
             make sdk-test
-        timeout-minutes: 12
+        # Now the SDK suite owns the whole job: give the step headroom over the
+        # inner go-test deadline (SDK_TEST_TIMEOUT, 13m) so the Cosmos-heavy
+        # Azure suite fails with a named Go stack rather than an opaque step kill.
+        timeout-minutes: 14
         env:
           GOWORK: "off"
       - name: Run CLI tests
+        if: matrix.suite == 'cli'
         run: |
           bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
           cd simulators/${{ matrix.cloud }}
@@ -363,7 +375,7 @@ jobs:
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}" \
             make cli-test
-        timeout-minutes: 12
+        timeout-minutes: 14
         env:
           GOWORK: "off"
       - name: Spec-shape ratchet
