@@ -160,6 +160,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerContainerAppEnvironment(srv)
 	registerAppServicePlan(srv)
 	registerSubscription(srv)
+	registerSubscriptionAlias(srv)
 
 	// Entra identity seeding and Microsoft Graph delegated endpoints
 	registerEntra(srv)

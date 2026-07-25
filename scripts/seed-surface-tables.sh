@@ -74,6 +74,7 @@ table_for_file() {
     azure:containerapps|azure:containerapps_apps|azure:containerappsenv) echo "azure-containerapps" ;;
     azure:servicebus|azure:servicebus_dataplane) echo "azure-servicebus" ;;
     azure:insights|azure:monitor) echo "azure-monitor" ;;
+    azure:subscription|azure:subscription_alias) echo "azure-subscription" ;;
     gcp:cloudrun|gcp:cloudrunjobs|gcp:cloudrunservices) echo "gcp-cloudrun" ;;
     *) echo "$1-$2" ;;
   esac

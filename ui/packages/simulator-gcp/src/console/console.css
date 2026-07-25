@@ -424,3 +424,66 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 .gc-detail-pair { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 12px; padding: 8px 0; font-size: 14px; border-bottom: 1px solid var(--gc-border-subtle); }
 .gc-detail-pair dt { color: var(--gc-fg-secondary); }
 .gc-detail-pair dd { margin: 0; color: var(--gc-fg); overflow-wrap: anywhere; }
+
+/* ---- Project picker ---- */
+/* The chip is a button opening the project dialog; it keeps the chip look. */
+button.gc-project-chip {
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+button.gc-project-chip:hover { background: var(--gc-surface-alt); }
+.gc-picker-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.gc-picker-search {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--gc-fg);
+  background: var(--gc-surface);
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius-control);
+}
+.gc-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius);
+}
+.gc-picker-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: var(--gc-fg);
+  cursor: pointer;
+}
+.gc-picker-row:hover { background: var(--gc-surface-alt); }
+.gc-picker-row-current { background: var(--gc-nav-active-bg); color: var(--gc-nav-active-fg); }
+.gc-picker-row-current:hover { background: var(--gc-nav-active-bg); }
+.gc-picker-row-name { font-size: 14px; }
+.gc-picker-row-meta { font-size: 12px; color: var(--gc-fg-secondary); }
+.gc-picker-row-current .gc-picker-row-meta { color: inherit; }
+.gc-picker-empty { font-size: 14px; color: var(--gc-fg-secondary); margin: 8px 0; }
+.gc-picker-progress { display: flex; align-items: center; gap: 10px; font-size: 14px; margin: 0 0 8px; }
+.gc-picker-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--gc-border-subtle);
+  border-top-color: var(--gc-primary);
+  border-radius: 50%;
+  animation: gc-picker-spin 0.8s linear infinite;
+}
+@keyframes gc-picker-spin { to { transform: rotate(360deg); } }
+a.gc-button-text { text-decoration: none; display: inline-flex; align-items: center; }

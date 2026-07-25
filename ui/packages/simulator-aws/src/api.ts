@@ -1,8 +1,8 @@
 import { awsJson, awsQuery, awsRestJson, awsRestXml } from "./console/federation.js";
 
-// The console reads the real AWS APIs — ECS, Lambda, ECR, S3, and CloudWatch
-// Logs — over federated, SigV4-signed requests, rendering the true resource
-// shapes rather than a hand-picked subset.
+// The console reads the real AWS APIs — ECS, Lambda, ECR, S3, CloudWatch Logs,
+// IAM, and AWS Organizations — over federated, SigV4-signed requests, rendering
+// the true resource shapes rather than a hand-picked subset.
 
 export type ECSTaskStatus = "PROVISIONING" | "PENDING" | "RUNNING" | "STOPPED" | "DEPROVISIONING";
 
@@ -237,6 +237,128 @@ export const updateIAMAccessKeyStatus = async (
     AccessKeyId: accessKeyId,
     Status: status,
   });
+};
+
+// AWS Organizations — awsjson1.1, X-Amz-Target AWSOrganizationsV20161128.<Op>,
+// the wire the aws CLI and SDKs sign for `aws organizations …`. The console's
+// AWS accounts page is a plain Organizations client: ListAccounts for the
+// table, the async CreateAccount → DescribeCreateAccountStatus request flow,
+// and RemoveAccountFromOrganization / CloseAccount for the account actions the
+// real console offers.
+
+const ORG_TARGET_PREFIX = "AWSOrganizationsV20161128.";
+
+const orgJson = <T>(operation: string, input: Record<string, unknown> = {}): Promise<T> =>
+  awsJson<T>("organizations", `${ORG_TARGET_PREFIX}${operation}`, input);
+
+export interface OrgAccount {
+  id: string;
+  arn: string;
+  name: string;
+  email: string;
+  status: string;
+  joinedMethod: string;
+  joinedTimestamp: number;
+}
+
+interface OrgAccountEntry {
+  Id?: string;
+  Arn?: string;
+  Name?: string;
+  Email?: string;
+  Status?: string;
+  JoinedMethod?: string;
+  JoinedTimestamp?: number;
+}
+
+const orgAccountFromEntry = (entry: OrgAccountEntry): OrgAccount => ({
+  id: entry.Id ?? "",
+  arn: entry.Arn ?? "",
+  name: entry.Name ?? "",
+  email: entry.Email ?? "",
+  status: entry.Status ?? "",
+  joinedMethod: entry.JoinedMethod ?? "",
+  joinedTimestamp: entry.JoinedTimestamp ?? 0,
+});
+
+export const fetchOrgAccounts = async (): Promise<OrgAccount[]> => {
+  const listed = await orgJson<{ Accounts?: OrgAccountEntry[] }>("ListAccounts");
+  return (listed.Accounts ?? []).map(orgAccountFromEntry);
+};
+
+export const fetchOrgAccount = async (accountId: string): Promise<OrgAccount> => {
+  const described = await orgJson<{ Account?: OrgAccountEntry }>("DescribeAccount", { AccountId: accountId });
+  if (!described.Account) throw new Error(`DescribeAccount returned no Account for ${accountId}`);
+  return orgAccountFromEntry(described.Account);
+};
+
+export type OrgCreateAccountState = "IN_PROGRESS" | "SUCCEEDED" | "FAILED";
+
+export interface OrgCreateAccountStatus {
+  id: string;
+  accountName: string;
+  state: OrgCreateAccountState;
+  requestedTimestamp: number;
+  completedTimestamp: number;
+  accountId: string;
+  failureReason: string;
+}
+
+interface OrgCreateAccountStatusEntry {
+  Id?: string;
+  AccountName?: string;
+  State?: string;
+  RequestedTimestamp?: number;
+  CompletedTimestamp?: number;
+  AccountId?: string;
+  FailureReason?: string;
+}
+
+const orgCreateStatusFromEntry = (entry: OrgCreateAccountStatusEntry): OrgCreateAccountStatus => ({
+  id: entry.Id ?? "",
+  accountName: entry.AccountName ?? "",
+  state: (entry.State ?? "IN_PROGRESS") as OrgCreateAccountState,
+  requestedTimestamp: entry.RequestedTimestamp ?? 0,
+  completedTimestamp: entry.CompletedTimestamp ?? 0,
+  accountId: entry.AccountId ?? "",
+  failureReason: entry.FailureReason ?? "",
+});
+
+export const createOrgAccount = async (accountName: string, email: string): Promise<OrgCreateAccountStatus> => {
+  const created = await orgJson<{ CreateAccountStatus?: OrgCreateAccountStatusEntry }>("CreateAccount", {
+    AccountName: accountName,
+    Email: email,
+  });
+  if (!created.CreateAccountStatus) throw new Error("CreateAccount returned no CreateAccountStatus");
+  return orgCreateStatusFromEntry(created.CreateAccountStatus);
+};
+
+export const fetchOrgCreateAccountStatus = async (requestId: string): Promise<OrgCreateAccountStatus> => {
+  const described = await orgJson<{ CreateAccountStatus?: OrgCreateAccountStatusEntry }>(
+    "DescribeCreateAccountStatus",
+    { CreateAccountRequestId: requestId },
+  );
+  if (!described.CreateAccountStatus) {
+    throw new Error(`DescribeCreateAccountStatus returned no CreateAccountStatus for ${requestId}`);
+  }
+  return orgCreateStatusFromEntry(described.CreateAccountStatus);
+};
+
+export const fetchOrgCreateAccountStatuses = async (): Promise<OrgCreateAccountStatus[]> => {
+  const listed = await orgJson<{ CreateAccountStatuses?: OrgCreateAccountStatusEntry[] }>("ListCreateAccountStatus");
+  return (listed.CreateAccountStatuses ?? []).map(orgCreateStatusFromEntry);
+};
+
+export const createOrganization = async (): Promise<void> => {
+  await orgJson("CreateOrganization", { FeatureSet: "ALL" });
+};
+
+export const removeOrgAccount = async (accountId: string): Promise<void> => {
+  await orgJson("RemoveAccountFromOrganization", { AccountId: accountId });
+};
+
+export const closeOrgAccount = async (accountId: string): Promise<void> => {
+  await orgJson("CloseAccount", { AccountId: accountId });
 };
 
 export const fetchCWLogGroups = async (): Promise<CWLogGroup[]> => {

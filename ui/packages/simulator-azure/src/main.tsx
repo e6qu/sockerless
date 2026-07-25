@@ -4,6 +4,8 @@ import { Route } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AzureApp } from "./portal/index.js";
 import { OverviewPage } from "./pages/OverviewPage.js";
+import { SubscriptionsPage } from "./pages/SubscriptionsPage.js";
+import { SubscriptionDetailPage } from "./pages/SubscriptionDetailPage.js";
 import { ContainerAppsPage } from "./pages/ContainerAppsPage.js";
 import { AzureFunctionsPage } from "./pages/AzureFunctionsPage.js";
 import { ACRRegistriesPage } from "./pages/ACRRegistriesPage.js";
@@ -27,6 +29,8 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <AzureApp>
         <Route path="/ui/" element={<OverviewPage />} />
+        <Route path="/ui/subscriptions" element={<SubscriptionsPage />} />
+        <Route path="/ui/subscriptions/:subscriptionId" element={<SubscriptionDetailPage />} />
         <Route path="/ui/container-apps" element={<ContainerAppsPage />} />
         <Route path="/ui/functions" element={<AzureFunctionsPage />} />
         <Route path="/ui/acr" element={<ACRRegistriesPage />} />

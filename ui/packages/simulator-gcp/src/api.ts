@@ -1,12 +1,15 @@
 import { authorizedJSON, authorizedJSONDelete, authorizedJSONPost } from "./console/federation.js";
 
 // The console reads one project and region at a time, the way the real console
-// shows the selected project and region. These are the console's coordinates; a
-// deployment points them at the project its workloads run in.
-export const CONSOLE_PROJECT = "sockerless";
+// shows the selected project and region. The region is a console coordinate; a
+// deployment points it at the region its workloads run in. The project is SPA
+// state: the header's project picker selects it (console/project.tsx persists
+// the choice), so every fetcher takes the selected project and every query key
+// carries it.
+export const DEFAULT_CONSOLE_PROJECT = "sockerless";
 export const CONSOLE_REGION = "us-central1";
 
-const jobsParent = `/v2/projects/${CONSOLE_PROJECT}/locations/${CONSOLE_REGION}/jobs`;
+const jobsParent = (project: string) => `/v2/projects/${project}/locations/${CONSOLE_REGION}/jobs`;
 
 // The Cloud Run v2 Job resource, as the real API returns it. The console reads
 // the true shape rather than a hand-picked subset.
@@ -40,16 +43,16 @@ export interface CloudRunExecution {
   runningCount?: number;
 }
 
-export const fetchCloudRunJobsReal = async (): Promise<CloudRunJob[]> => {
-  const page = await authorizedJSON<{ jobs?: CloudRunJob[] }>(jobsParent);
+export const fetchCloudRunJobsReal = async (project: string): Promise<CloudRunJob[]> => {
+  const page = await authorizedJSON<{ jobs?: CloudRunJob[] }>(jobsParent(project));
   return page.jobs ?? [];
 };
 
-export const fetchCloudRunJob = (name: string): Promise<CloudRunJob> =>
-  authorizedJSON<CloudRunJob>(`${jobsParent}/${name}`);
+export const fetchCloudRunJob = (project: string, name: string): Promise<CloudRunJob> =>
+  authorizedJSON<CloudRunJob>(`${jobsParent(project)}/${name}`);
 
-export const fetchCloudRunJobExecutions = async (name: string): Promise<CloudRunExecution[]> => {
-  const page = await authorizedJSON<{ executions?: CloudRunExecution[] }>(`${jobsParent}/${name}/executions`);
+export const fetchCloudRunJobExecutions = async (project: string, name: string): Promise<CloudRunExecution[]> => {
+  const page = await authorizedJSON<{ executions?: CloudRunExecution[] }>(`${jobsParent(project)}/${name}/executions`);
   return page.executions ?? [];
 };
 
@@ -116,24 +119,26 @@ export interface LogEntry {
 }
 
 
-const functionsParent = `/v2/projects/${CONSOLE_PROJECT}/locations/${CONSOLE_REGION}/functions`;
-const repositoriesParent = `/v1/projects/${CONSOLE_PROJECT}/locations/${CONSOLE_REGION}/repositories`;
+const functionsParent = (project: string) => `/v2/projects/${project}/locations/${CONSOLE_REGION}/functions`;
+const repositoriesParent = (project: string) => `/v1/projects/${project}/locations/${CONSOLE_REGION}/repositories`;
 
-export const fetchCloudFunctions = async (): Promise<CloudFunction[]> =>
-  (await authorizedJSON<{ functions?: CloudFunction[] }>(functionsParent)).functions ?? [];
+export const fetchCloudFunctions = async (project: string): Promise<CloudFunction[]> =>
+  (await authorizedJSON<{ functions?: CloudFunction[] }>(functionsParent(project))).functions ?? [];
 
-export const fetchCloudFunction = (name: string): Promise<CloudFunction> =>
-  authorizedJSON<CloudFunction>(`${functionsParent}/${name}`);
+export const fetchCloudFunction = (project: string, name: string): Promise<CloudFunction> =>
+  authorizedJSON<CloudFunction>(`${functionsParent(project)}/${name}`);
 
-export const fetchARRepos = async (): Promise<ARRepo[]> =>
-  (await authorizedJSON<{ repositories?: ARRepo[] }>(repositoriesParent)).repositories ?? [];
+export const fetchARRepos = async (project: string): Promise<ARRepo[]> =>
+  (await authorizedJSON<{ repositories?: ARRepo[] }>(repositoriesParent(project))).repositories ?? [];
 
-export const fetchARRepo = (name: string): Promise<ARRepo> =>
-  authorizedJSON<ARRepo>(`${repositoriesParent}/${name}`);
+export const fetchARRepo = (project: string, name: string): Promise<ARRepo> =>
+  authorizedJSON<ARRepo>(`${repositoriesParent(project)}/${name}`);
 
-export const fetchGCSBuckets = async (): Promise<GCSBucket[]> =>
-  (await authorizedJSON<{ items?: GCSBucket[] }>(`/storage/v1/b?project=${CONSOLE_PROJECT}`)).items ?? [];
+export const fetchGCSBuckets = async (project: string): Promise<GCSBucket[]> =>
+  (await authorizedJSON<{ items?: GCSBucket[] }>(`/storage/v1/b?project=${project}`)).items ?? [];
 
+// Bucket names are global in Cloud Storage; the read addresses the bucket
+// directly, without a project segment.
 export const fetchGCSBucket = (name: string): Promise<GCSBucket> =>
   authorizedJSON<GCSBucket>(`/storage/v1/b/${name}`);
 
@@ -161,44 +166,109 @@ export interface ServiceAccountKey {
   privateKeyType?: string;
 }
 
-const serviceAccountsParent = `/v1/projects/${CONSOLE_PROJECT}/serviceAccounts`;
+const serviceAccountsParent = (project: string) => `/v1/projects/${project}/serviceAccounts`;
 
-export const fetchServiceAccounts = async (): Promise<ServiceAccount[]> =>
-  (await authorizedJSON<{ accounts?: ServiceAccount[] }>(serviceAccountsParent)).accounts ?? [];
+export const fetchServiceAccounts = async (project: string): Promise<ServiceAccount[]> =>
+  (await authorizedJSON<{ accounts?: ServiceAccount[] }>(serviceAccountsParent(project))).accounts ?? [];
 
-export const fetchServiceAccount = (email: string): Promise<ServiceAccount> =>
-  authorizedJSON<ServiceAccount>(`${serviceAccountsParent}/${email}`);
+export const fetchServiceAccount = (project: string, email: string): Promise<ServiceAccount> =>
+  authorizedJSON<ServiceAccount>(`${serviceAccountsParent(project)}/${email}`);
 
 // serviceAccounts.create — the wire body is { accountId, serviceAccount }.
 export const createServiceAccount = (
+  project: string,
   accountId: string,
   displayName: string,
   description: string,
 ): Promise<ServiceAccount> =>
-  authorizedJSONPost<ServiceAccount>(serviceAccountsParent, {
+  authorizedJSONPost<ServiceAccount>(serviceAccountsParent(project), {
     accountId,
     serviceAccount: { displayName, description },
   });
 
-export const deleteServiceAccount = (email: string): Promise<unknown> =>
-  authorizedJSONDelete(`${serviceAccountsParent}/${email}`);
+export const deleteServiceAccount = (project: string, email: string): Promise<unknown> =>
+  authorizedJSONDelete(`${serviceAccountsParent(project)}/${email}`);
 
-export const fetchServiceAccountKeys = async (email: string): Promise<ServiceAccountKey[]> =>
-  (await authorizedJSON<{ keys?: ServiceAccountKey[] }>(`${serviceAccountsParent}/${email}/keys`)).keys ?? [];
+export const fetchServiceAccountKeys = async (project: string, email: string): Promise<ServiceAccountKey[]> =>
+  (await authorizedJSON<{ keys?: ServiceAccountKey[] }>(`${serviceAccountsParent(project)}/${email}/keys`)).keys ?? [];
 
 // serviceAccounts.keys.create — the one response that carries privateKeyData.
-export const createServiceAccountKey = (email: string): Promise<ServiceAccountKey> =>
-  authorizedJSONPost<ServiceAccountKey>(`${serviceAccountsParent}/${email}/keys`, {});
+export const createServiceAccountKey = (project: string, email: string): Promise<ServiceAccountKey> =>
+  authorizedJSONPost<ServiceAccountKey>(`${serviceAccountsParent(project)}/${email}/keys`, {});
 
-export const deleteServiceAccountKey = (email: string, keyId: string): Promise<unknown> =>
-  authorizedJSONDelete(`${serviceAccountsParent}/${email}/keys/${keyId}`);
+export const deleteServiceAccountKey = (project: string, email: string, keyId: string): Promise<unknown> =>
+  authorizedJSONDelete(`${serviceAccountsParent(project)}/${email}/keys/${keyId}`);
 
 // Cloud Logging lists entries by POST, filtered to the project's logs.
-export const fetchLogEntries = async (): Promise<LogEntry[]> =>
+export const fetchLogEntries = async (project: string): Promise<LogEntry[]> =>
   (
     await authorizedJSONPost<{ entries?: LogEntry[] }>("/v2/entries:list", {
-      resourceNames: [`projects/${CONSOLE_PROJECT}`],
+      resourceNames: [`projects/${project}`],
       orderBy: "timestamp desc",
       pageSize: 100,
     })
   ).entries ?? [];
+
+// The Cloud Resource Manager v3 Project resource, as the real API returns it:
+// name carries the generated project number ("projects/415104041262"),
+// projectId the caller-chosen ID, and state the ACTIVE ⇄ DELETE_REQUESTED
+// soft-delete lifecycle.
+export interface CrmProject {
+  name: string;
+  projectId: string;
+  state?: "ACTIVE" | "DELETE_REQUESTED";
+  displayName?: string;
+  parent?: string;
+  createTime?: string;
+  deleteTime?: string;
+  labels?: Record<string, string>;
+}
+
+// A google.longrunning.Operation, as projects.create/delete return it.
+export interface CrmOperation {
+  name: string;
+  done?: boolean;
+  response?: Record<string, unknown>;
+  error?: { code?: number; message?: string };
+}
+
+// crmProjectNumber reads the project number out of the v3 resource name.
+export const crmProjectNumber = (project: CrmProject): string =>
+  project.name.replace(/^projects\//, "");
+
+// projects.search — the read behind the real console's picker and Manage
+// resources page: every project the caller can see, without requiring a
+// parent. The query is the API's own search syntax (e.g. "state:ACTIVE").
+export const searchProjects = async (query?: string): Promise<CrmProject[]> => {
+  const path = query ? `/v3/projects:search?query=${encodeURIComponent(query)}` : "/v3/projects:search";
+  return (await authorizedJSON<{ projects?: CrmProject[] }>(path)).projects ?? [];
+};
+
+// projects.create returns a long-running Operation.
+export const createProject = (projectId: string, displayName: string): Promise<CrmOperation> =>
+  authorizedJSONPost<CrmOperation>("/v3/projects", { projectId, displayName });
+
+// operations.get — the poll the create dialog runs until the operation is
+// done. The operation name is "operations/{id}", addressed under /v3.
+export const fetchCrmOperation = (name: string): Promise<CrmOperation> =>
+  authorizedJSON<CrmOperation>(`/v3/${name}`);
+
+// projects.delete soft-deletes: the project enters DELETE_REQUESTED (the
+// 30-day pending-deletion window) and the API returns an Operation.
+export const deleteProject = (projectId: string): Promise<CrmOperation> =>
+  authorizedJSONDelete<CrmOperation>(`/v3/projects/${projectId}`);
+
+// waitCrmOperation drives a returned Operation to completion the way every
+// real client does: poll operations.get until done, then surface the
+// operation's own error if it failed.
+export const waitCrmOperation = async (operation: CrmOperation): Promise<CrmOperation> => {
+  let current = operation;
+  while (!current.done) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    current = await fetchCrmOperation(current.name);
+  }
+  if (current.error) {
+    throw new Error(current.error.message ?? `operation ${current.name} failed`);
+  }
+  return current;
+};

@@ -11,6 +11,8 @@ import { S3BucketsPage } from "./pages/S3BucketsPage.js";
 import { LogGroupsPage } from "./pages/LogGroupsPage.js";
 import { IAMUsersPage } from "./pages/IAMUsersPage.js";
 import { IAMUserSecurityCredentialsPage } from "./pages/IAMUserSecurityCredentialsPage.js";
+import { OrganizationsPage } from "./pages/OrganizationsPage.js";
+import { OrgAccountDetailPage } from "./pages/OrgAccountDetailPage.js";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -27,6 +29,8 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/ecr" element={<ECRReposPage />} />
         <Route path="/ui/s3" element={<S3BucketsPage />} />
         <Route path="/ui/logs" element={<LogGroupsPage />} />
+        <Route path="/ui/organizations" element={<OrganizationsPage />} />
+        <Route path="/ui/organizations/accounts/:accountId" element={<OrgAccountDetailPage />} />
         <Route path="/ui/iam" element={<IAMUsersPage />} />
         <Route path="/ui/iam/users/:userName" element={<IAMUserSecurityCredentialsPage />} />
       </AwsApp>

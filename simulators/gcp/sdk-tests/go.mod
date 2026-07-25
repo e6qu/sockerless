@@ -11,6 +11,7 @@ require (
 	cloud.google.com/go/iam v1.12.0
 	cloud.google.com/go/kms v1.33.0
 	cloud.google.com/go/logging v1.19.0
+	cloud.google.com/go/resourcemanager v1.16.0
 	cloud.google.com/go/run v1.22.0
 	cloud.google.com/go/secretmanager v1.21.0
 	cloud.google.com/go/storage v1.64.0

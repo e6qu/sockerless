@@ -114,6 +114,7 @@ var azureMethodFloor = map[string]int{
 	"storage-dataplane-blob-2026-04-06":                                       60,
 	"storage-dataplane-file-2026-04-06":                                       31,
 	"storage-dataplane-queue-2018-03-28":                                      6,
+	"subscription-arm-subscriptions-2021-10-01":                               7,
 	"web-arm-openapi-2025-03-01":                                              161,
 }
 

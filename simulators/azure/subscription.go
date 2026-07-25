@@ -57,19 +57,7 @@ func registerSubscription(srv *sim.Server) {
 	// GET - Get subscription (for data.azurerm_subscription)
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
-
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"id":             "/subscriptions/" + sub,
-			"subscriptionId": sub,
-			"tenantId":       "00000000-0000-0000-0000-000000000000",
-			"displayName":    "Simulator Subscription",
-			"state":          "Enabled",
-			"subscriptionPolicies": map[string]any{
-				"locationPlacementId": "Internal_2014-09-01",
-				"quotaId":             "Internal_2014-09-01",
-				"spendingLimit":       "Off",
-			},
-		})
+		sim.WriteJSON(w, http.StatusOK, azureSubscriptionObject(sub))
 	})
 
 	// GET - List resource providers (azurerm populates its provider cache on init)
@@ -92,17 +80,24 @@ func registerSubscription(srv *sim.Server) {
 	})
 
 	// GET - List subscriptions (SubscriptionsClient.NewListPager). The
-	// catalog is the default subscription plus any subscription that owns a
-	// resource group.
+	// catalog is the default subscription, every subscription created or
+	// mutated through the Microsoft.Subscription API, and any subscription
+	// that owns a resource group.
 	srv.HandleFunc("GET /subscriptions", func(w http.ResponseWriter, _ *http.Request) {
 		seen := map[string]bool{azureDefaultSubscriptionID: true}
 		out := []map[string]any{azureSubscriptionObject(azureDefaultSubscriptionID)}
-		for _, sub := range azureSubscriptionIDsWithResourceGroups() {
-			if seen[sub] {
-				continue
+		add := func(sub string) {
+			if sub == "" || seen[sub] {
+				return
 			}
 			seen[sub] = true
 			out = append(out, azureSubscriptionObject(sub))
+		}
+		for _, rec := range azureSubscriptionRecords.List() {
+			add(rec.SubscriptionID)
+		}
+		for _, sub := range azureSubscriptionIDsWithResourceGroups() {
+			add(sub)
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
 	})
@@ -192,13 +187,24 @@ func azureSubscriptionIDsWithResourceGroups() []string {
 	return out
 }
 
+// azureSubscriptionView reports a subscription's display name and state:
+// the stored row when the Microsoft.Subscription API created or mutated it,
+// the simulator's implicit identity otherwise.
+func azureSubscriptionView(sub string) (displayName, state string) {
+	if rec, ok := azureSubscriptionRecords.Get(sub); ok {
+		return rec.DisplayName, rec.State
+	}
+	return "Simulator Subscription", "Enabled"
+}
+
 func azureSubscriptionObject(sub string) map[string]any {
+	displayName, state := azureSubscriptionView(sub)
 	return map[string]any{
 		"id":             "/subscriptions/" + sub,
 		"subscriptionId": sub,
 		"tenantId":       simTenantID,
-		"displayName":    "Simulator Subscription",
-		"state":          "Enabled",
+		"displayName":    displayName,
+		"state":          state,
 		"subscriptionPolicies": map[string]any{
 			"locationPlacementId": "Internal_2014-09-01",
 			"quotaId":             "Internal_2014-09-01",

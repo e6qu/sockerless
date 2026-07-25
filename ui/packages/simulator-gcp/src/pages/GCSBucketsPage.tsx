@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { GcpResourceTable, type GcpColumn } from "../console/index.js";
 import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchGCSBuckets, type GCSBucket } from "../api.js";
+import { useProject } from "../console/project.js";
 
 const columns: GcpColumn<GCSBucket>[] = [
   {
@@ -16,14 +17,15 @@ const columns: GcpColumn<GCSBucket>[] = [
 ];
 
 export function GCSBucketsPage() {
+  const { project } = useProject();
   return (
     <GcpResourceTable<GCSBucket>
       title="Cloud Storage"
       description="Buckets hold your objects — durable, scalable storage for any amount of data."
       actions={[{ label: "Create bucket", icon: "add", primary: true, disabled: true }]}
       columns={columns}
-      queryKey={["gcs-buckets-real"]}
-      queryFn={fetchGCSBuckets}
+      queryKey={["gcs-buckets-real", project]}
+      queryFn={() => fetchGCSBuckets(project)}
       filterPlaceholder="Filter buckets"
       resourceNoun="buckets"
       empty={{

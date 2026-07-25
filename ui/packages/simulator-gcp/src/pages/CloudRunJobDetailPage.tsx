@@ -3,13 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { GcpPageHeader, GcpStatus } from "../console/GcpConsole.js";
 import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchCloudRunJob, fetchCloudRunJobExecutions } from "../api.js";
+import { useProject } from "../console/project.js";
 
 export function CloudRunJobDetailPage() {
   const { name = "" } = useParams();
-  const job = useQuery({ queryKey: ["cloudrun-job", name], queryFn: () => fetchCloudRunJob(name) });
+  const { project } = useProject();
+  const job = useQuery({ queryKey: ["cloudrun-job", project, name], queryFn: () => fetchCloudRunJob(project, name) });
   const executions = useQuery({
-    queryKey: ["cloudrun-job-executions", name],
-    queryFn: () => fetchCloudRunJobExecutions(name),
+    queryKey: ["cloudrun-job-executions", project, name],
+    queryFn: () => fetchCloudRunJobExecutions(project, name),
     enabled: Boolean(job.data),
   });
 

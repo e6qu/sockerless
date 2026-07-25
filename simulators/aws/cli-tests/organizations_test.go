@@ -334,13 +334,24 @@ func TestOrganizationsCLI_EnableAllFeatures(t *testing.T) {
 
 // TestOrganizationsCLI_zzCreateDeleteOrganization covers delete-organization and
 // create-organization, restoring the default org before returning so reruns and
-// other suites still see it.
+// other suites still see it. In between it pins the organization-less account's
+// contract — the sequence the console's AWS accounts page drives: list-accounts
+// answers AWSOrganizationsNotInUseException until create-organization runs, then
+// lists the management account again.
 func TestOrganizationsCLI_zzCreateDeleteOrganization(t *testing.T) {
 	runCLI(t, awsCLI("organizations", "delete-organization"))
 	runCLIExpectError(t, awsCLI("organizations", "describe-organization", "--output", "json"))
+	notInUse := runCLIExpectError(t, awsCLI("organizations", "list-accounts", "--output", "json"))
+	if !strings.Contains(notInUse, "AWSOrganizationsNotInUseException") {
+		t.Fatalf("list-accounts without an organization didn't answer AWSOrganizationsNotInUseException: %s", notInUse)
+	}
 
 	out := runCLI(t, awsCLI("organizations", "create-organization", "--feature-set", "ALL", "--output", "json"))
 	if !strings.Contains(out, "\"FeatureSet\": \"ALL\"") && !strings.Contains(out, "\"FeatureSet\":\"ALL\"") {
 		t.Fatalf("create-organization didn't return ALL feature set: %s", out)
+	}
+	la := runCLI(t, awsCLI("organizations", "list-accounts", "--output", "json"))
+	if !strings.Contains(la, "\"Accounts\"") {
+		t.Fatalf("list-accounts after create-organization returned no account list: %s", la)
 	}
 }

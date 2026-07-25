@@ -599,9 +599,30 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
+      # The azure cloud runs as two shards: the shared stack, and a standalone
+      # `azurerm_subscription` config whose creates and cancels each sit
+      # through the provider's fixed 60s StateChangeConf delay plus four 10s
+      # confirmation polls — too long to fit inside the shared stack's budget
+      # under the repo-wide 15-minute job ceiling.
       matrix:
-        cloud: [aws, gcp, azure]
-    name: tf (${{ matrix.cloud }})
+        include:
+          - suite: aws
+            cloud: aws
+            timeout_minutes: 12
+          - suite: gcp
+            cloud: gcp
+            timeout_minutes: 12
+          - suite: azure
+            cloud: azure
+            tf_timeout: 600s
+            tf_run: TestTerraformApplyDestroy
+            timeout_minutes: 12
+          - suite: azure subscription
+            cloud: azure
+            tf_timeout: 780s
+            tf_run: TestTerraformSubscriptionApplyDestroy
+            timeout_minutes: 14
+    name: tf (${{ matrix.suite }})
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
@@ -641,15 +662,18 @@ jobs:
           elif [ "${{ matrix.cloud }}" = "azure" ]; then
             sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
               SOCKERLESS_SPEC_VALIDATE="$SOCKERLESS_SPEC_VALIDATE" SOCKERLESS_SPEC_DIR="$SOCKERLESS_SPEC_DIR" \
-              make terraform-test TERRAFORM_TEST_TIMEOUT=600s
+              make terraform-test TERRAFORM_TEST_TIMEOUT=${{ matrix.tf_timeout }} TERRAFORM_TEST_ARGS="-run ${{ matrix.tf_run }}"
           else
             sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
               SOCKERLESS_SPEC_VALIDATE="$SOCKERLESS_SPEC_VALIDATE" SOCKERLESS_SPEC_DIR="$SOCKERLESS_SPEC_DIR" \
               make terraform-https-test
           fi
-        # Must exceed the inner go-test deadline (TERRAFORM_TEST_TIMEOUT, 600s)
-        # plus docker startup so the step never beats the test's own watchdog.
-        timeout-minutes: 12
+        # Must exceed the inner go-test deadline (TERRAFORM_TEST_TIMEOUT)
+        # plus docker startup so the step never beats the test's own
+        # watchdog, while staying inside the repo-wide 15-minute job
+        # ceiling: 12 for the shared stacks (inner 600s), 14 for the
+        # azure subscription shard (inner 780s).
+        timeout-minutes: ${{ matrix.timeout_minutes }}
       - name: Spec-shape ratchet (tf)
         run: bash scripts/check-spec-violations.sh ${{ matrix.cloud }} "$RUNNER_TEMP/${{ matrix.cloud }}-tf-spec-violations.jsonl"
         env:

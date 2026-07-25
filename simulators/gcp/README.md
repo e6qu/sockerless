@@ -89,6 +89,8 @@ All services use REST/JSON routing with Go 1.22+ path patterns. Long-running ope
 | **Cloud Logging** | `/v2/entries` | Write entries, List entries (with filter) |
 | **Compute Engine** | `/compute/v1/projects/...` | Networks (CRUD), Subnetworks (CRUD), Operations |
 | **IAM** | `/v1/projects/.../serviceAccounts` | Service Accounts (CRUD), IAM Policies (get/set at any resource scope) |
+| **Cloud Resource Manager** | `/v1/projects`, `/v3/projects` | Project lifecycle on both API versions (create → LRO, get by ID or number, list/search with filters, update, soft-delete/undelete), folders, tags; unknown project → real 403, duplicate ID → real 409 |
+| **Cloud Billing** | `/v1/projects/.../billingInfo` | getBillingInfo (read by terraform's `google_project` Read) |
 | **VPC Access** | `/v1/projects/.../connectors` | Connectors (CRUD) |
 | **Service Usage** | `/v1/projects/.../services` | Enable, Disable, Get, List, Batch Enable |
 | **Operations** | `/v{1,2}/projects/.../operations` | Get (returns immediate DONE) |
@@ -136,7 +138,8 @@ gcp/
 ├── artifactregistry.go     Artifact Registry + OCI Distribution
 ├── logging.go              Cloud Logging entries
 ├── compute.go              Networks + subnetworks
-├── iam.go                  Service accounts + IAM policies
+├── iam.go                  Service accounts + IAM policies + CRM v3 projects/folders/tags
+├── cloudresourcemanager.go CRM v1 projects lifecycle + Cloud Billing billingInfo
 ├── vpcaccess.go            VPC Access connectors
 ├── serviceusage.go         Service enable/disable
 ├── operations.go           LRO status

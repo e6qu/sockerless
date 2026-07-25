@@ -21,7 +21,7 @@ function GcpThemeToggle() {
   );
 }
 
-export function GcpHeader({ project, account }: { project: string; account: ReactNode }) {
+export function GcpHeader({ picker, account }: { picker: ReactNode; account: ReactNode }) {
   return (
     <header className="gc-header">
       <div className="gc-header-left">
@@ -29,10 +29,7 @@ export function GcpHeader({ project, account }: { project: string; account: Reac
           <Icon name="menu" />
         </button>
         <span className="gc-wordmark">Google Cloud</span>
-        <span className="gc-project-chip">
-          <span aria-hidden className="gc-project-dot" />
-          {project}
-        </span>
+        {picker}
       </div>
       <div className="gc-header-search">
         <Icon name="search" size="1.25em" style={{ color: "var(--gc-fg-secondary)" }} />

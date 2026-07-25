@@ -302,6 +302,7 @@ body:has(.azure) { background: var(--az-layout-bg); }
 }
 .az-form h2, .az-form h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .az-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--az-fg); }
+.az-form-status { margin: 0; font-size: 13px; color: var(--az-fg-secondary); }
 .az-form-actions { display: flex; gap: 8px; }
 .az-button,
 .az-button-primary {

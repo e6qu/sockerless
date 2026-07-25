@@ -68,5 +68,6 @@ test (gcp backends)
 test (gcp-azure faas-smoke)
 tf (aws)
 tf (azure)
+tf (azure subscription)
 tf (gcp)
 ui

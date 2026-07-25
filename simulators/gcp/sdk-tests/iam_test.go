@@ -350,9 +350,18 @@ func crmService(t *testing.T) *cloudresourcemanager.Service {
 	return svc
 }
 
+// ensureV1Project creates the project a test's IAM verbs address — the real
+// API answers 403 PERMISSION_DENIED for a project that does not exist.
+func ensureV1Project(t *testing.T, svc *cloudresourcemanager.Service, projectID string) {
+	t.Helper()
+	_, err := svc.Projects.Create(&cloudresourcemanager.Project{ProjectId: projectID}).Do()
+	require.NoError(t, err)
+}
+
 func TestIAM_ProjectIAMPolicy(t *testing.T) {
 	svc := crmService(t)
 	project := "iam-policy-project"
+	ensureV1Project(t, svc, project)
 
 	// GetIamPolicy on a fresh project returns empty bindings.
 	policy, err := svc.Projects.GetIamPolicy(project,
@@ -391,6 +400,7 @@ func TestIAM_ProjectIAMPolicy(t *testing.T) {
 func TestIAM_ProjectIAMPolicyEtagConflict(t *testing.T) {
 	svc := crmService(t)
 	project := "iam-etag-project"
+	ensureV1Project(t, svc, project)
 
 	cur, err := svc.Projects.GetIamPolicy(project,
 		&cloudresourcemanager.GetIamPolicyRequest{}).Do()
@@ -441,6 +451,7 @@ func TestIAM_ProjectIAMPolicyEtagConflict(t *testing.T) {
 func TestIAM_ProjectIAMPolicyInvalidMember(t *testing.T) {
 	svc := crmService(t)
 	project := "iam-bad-member-project"
+	ensureV1Project(t, svc, project)
 
 	for _, bad := range []string{
 		"robot@example.com",     // no type prefix

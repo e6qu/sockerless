@@ -31,10 +31,12 @@ try {
     if (app.name === "Sockerless Google Cloud simulator") {
       await assertFederatedCloudToken(context, page, app);
       await assertMintedServiceAccountKey(page, app);
+      await assertCreatedProject(page);
     }
     if (app.name === "Sockerless AWS simulator") {
       await assertFederatedAwsCredentials(context, page, app);
       await assertMintedIAMAccessKey(page, app);
+      await assertCreatedOrganizationAccount(page, app);
     }
     // The Azure portal has no browser-driven minting flow here yet: this
     // environment co-serves each console with its cloud, and the Azure
@@ -410,6 +412,56 @@ async function assertMintedServiceAccountKey(page, app) {
   );
 }
 
+
+// assertCreatedOrganizationAccount drives the AWS Organizations console page
+// as the signed-in operator: create the organization when none exists, then
+// add an AWS account through the real console flow — the asynchronous
+// CreateAccount request polled to SUCCEEDED — and see the account listed.
+async function assertCreatedOrganizationAccount(page, app) {
+  const accountName = `rps-account-${Date.now() % 1_000_000}`;
+
+  await page.getByRole("link", { name: "AWS Organizations" }).click();
+  const createOrg = page.getByTestId("org-create-organization");
+  const addAccount = page.getByTestId("org-add-account");
+  await createOrg.or(addAccount).first().waitFor({ state: "visible" });
+  if (await createOrg.isVisible()) {
+    await createOrg.click();
+  }
+  await addAccount.click();
+  await page.getByTestId("org-account-name-input").fill(accountName);
+  await page.getByTestId("org-account-email-input").fill(`${accountName}@example.com`);
+  await page.getByTestId("org-add-account-submit").click();
+
+  const createdId = (await page.getByTestId("org-created-account-id").innerText()).trim();
+  assert.match(createdId, /^\d{12}$/, `${app.name} account creation did not report a 12-digit account id`);
+  await page.getByTestId("org-add-account-done").click();
+  await page.getByTestId(`org-account-row-${createdId}`).waitFor({ state: "visible" });
+}
+
+// assertCreatedProject drives the Google Cloud console's project picker as the
+// signed-in operator: open the picker, create a project through the real
+// Resource Manager create + long-running operation, and see the console switch
+// to it (real-console behavior after New Project completes).
+async function assertCreatedProject(page) {
+  const projectId = `rps-project-${Date.now() % 1_000_000}`;
+
+  await page.getByTestId("project-picker").click();
+  await page.getByTestId("project-dialog").waitFor({ state: "visible" });
+  await page.getByTestId("project-create-open").click();
+  await page.getByTestId("project-create-name").fill(projectId);
+  await page.getByTestId("project-create-id").fill(projectId);
+  await page.getByTestId("project-create-submit").click();
+
+  // The picker chip reflects the selected project once the create operation
+  // completes and the dialog selects the new project.
+  await page.getByTestId("project-picker").getByText(projectId).waitFor({ state: "visible" });
+
+  // Switch back to the seeded project so the remainder of the iteration
+  // (logout and later loops) runs against the default coordinates.
+  await page.getByTestId("project-picker").click();
+  await page.getByTestId("project-row-sockerless").click();
+  await page.getByTestId("project-picker").getByText("sockerless").waitFor({ state: "visible" });
+}
 
 async function assertAdministratorMutation(context) {
   const name = "authorization-matrix-proof";

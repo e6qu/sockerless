@@ -54,8 +54,14 @@ cli-test: build ## go test the CLI-driven sim tests
 # the apply/destroy deadline the tests honour is TERRAFORM_TEST_TIMEOUT.
 TERRAFORM_TEST_TIMEOUT ?= 600s
 
+# TERRAFORM_TEST_ARGS carries extra `go test` flags — CI's tf shards use it to
+# select one apply/destroy entrypoint per job (`-run TestTerraformApplyDestroy`
+# for the shared stack, `-run TestTerraformSubscriptionApplyDestroy` for the
+# standalone Microsoft.Subscription config).
+TERRAFORM_TEST_ARGS ?=
+
 terraform-test: build ## go test the terraform-driven sim tests (apply+destroy deadline = TERRAFORM_TEST_TIMEOUT)
-	cd terraform-tests && TERRAFORM_TEST_TIMEOUT=$(TERRAFORM_TEST_TIMEOUT) $(GO_ENV) go test -v -count=1 -timeout 20m ./...
+	cd terraform-tests && TERRAFORM_TEST_TIMEOUT=$(TERRAFORM_TEST_TIMEOUT) $(GO_ENV) go test -v -count=1 -timeout 20m $(TERRAFORM_TEST_ARGS) ./...
 
 # Aggregate that runs all four legacy test categories.
 .PHONY: test-all

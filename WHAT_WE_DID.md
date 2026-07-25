@@ -4,6 +4,55 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-25 — Consoles manage accounts, projects, and subscriptions
+
+Phase 2 of the Console Self-Service roadmap: a Shauth-authenticated operator
+manages the account containers themselves, through each cloud's real APIs over
+the federated session.
+
+- **Google Cloud** gained a real Cloud Resource Manager slice — and building
+  it surfaced that the existing partial v3 surface was faked: the sim
+  synthesized an ACTIVE project for any never-seen ID, returned a synthetic
+  done-operation for any operation name, never enforced duplicate-ID 409s, and
+  used the wrong v3 `name` form. All replaced with the real contract, verified
+  against what the real clients actually speak (gcloud's CRM v1 with its
+  `lifecycleState:ACTIVE` filter; Terraform's v1 lifecycle plus an
+  unconditional Cloud Billing read honoring `cloud_billing_custom_endpoint`;
+  the v3 GAPIC client whose proto resolution rejects invented operation
+  metadata types — each operation now carries its verb's real metadata
+  message). v1 create/list/update/delete/undelete/operations plus Cloud
+  Billing `getBillingInfo` were added, projects resolve by ID or number,
+  unknown projects answer 403 `PERMISSION_DENIED` without disclosing
+  existence, and delete is the real 30-day soft-delete. The console gained the
+  real header project-picker chip (search, New Project driving the create
+  LRO, Manage resources page with Shut down) and every console page now reads
+  the selected project — the hardcoded project constant is gone. SDK, gcloud
+  CLI, and `google_project` Terraform coverage landed in the same change,
+  including a real-provider apply/plan-idempotency/destroy proof.
+- **Microsoft Azure** gained the Microsoft.Subscription alias API at 2021-10-01
+  Swagger fidelity (vendored): alias PUT (billing-scope creation and
+  subscription adoption), the documented provisioning-state polling model
+  (verified against both azcore's body poller and go-autorest's), rename/
+  cancel/enable, and created subscriptions backing `GET /subscriptions`. The
+  portal gained a Subscriptions blade (list, Add with live provisioning,
+  detail with Cancel/Reactivate — no invented delete; Azure has none).
+  armsubscription SDK, az CLI (`az rest` on the documented wire — the alias
+  commands live in a preview extension), and `azurerm_subscription` Terraform
+  coverage (both modes) landed together; the subscription resources run as
+  their own `tf (azure subscription)` CI shard because the provider's fixed
+  60-second settle delays don't fit the shared azure stack's budget.
+- **AWS** gained the Organizations console page — accounts table, the real
+  console's asynchronous "Add an AWS account" flow (`CreateAccount` polled via
+  `DescribeCreateAccountStatus`), the organization-not-in-use state with
+  "Create an organization", remove/close actions, and account detail — over
+  the existing Organizations slice. `awsJson` now surfaces the real awsjson1.1
+  error code so pages branch on the service error, and the relying-party
+  federation role gained `organizations:*`.
+
+The Shauth relying-party matrix drives both new browser flows (create an
+organization account to SUCCEEDED; create a project through the picker and
+switch to it) and passed with its exit code observed directly.
+
 ## 2026-07-24 — Consoles mint real CLI credentials for Shauth-authenticated users
 
 Phase 1 of the Console Self-Service roadmap: each simulator console gained its

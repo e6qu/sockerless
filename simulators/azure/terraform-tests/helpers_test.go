@@ -491,10 +491,19 @@ func trustedHTTPClient(caCert string) (*http.Client, error) {
 	}, nil
 }
 
-func terraformCmd(args ...string) *exec.Cmd {
+// tfStackDir is the shared-stack configuration (this package directory);
+// tfSubscriptionDir is the standalone Microsoft.Subscription configuration
+// that runs as its own CI shard (see TestTerraformSubscriptionApplyDestroy).
+func tfStackDir() string        { return filepath.Dir(mustAbs("main.tf")) }
+func tfSubscriptionDir() string { return mustAbs("subscription") }
+
+// terraformCmd builds a terraform command for the configuration in dir; the
+// endpoint, trust anchor, and service-principal coordinates are identical for
+// every configuration this harness drives.
+func terraformCmd(dir string, args ...string) *exec.Cmd {
 	requireHTTPSURL(baseURL, "Azure Terraform endpoint")
 	cmd := exec.Command("terraform", args...)
-	cmd.Dir = filepath.Dir(mustAbs("main.tf"))
+	cmd.Dir = dir
 	// Own process group so runTimed can reap terraform + its provider-plugin
 	// grandchildren with one kill(-pgid); otherwise a timed-out command leaves
 	// orphaned, spinning plugins that starve later runs into cascading timeouts.

@@ -14,6 +14,7 @@ import { GCSBucketsPage } from "./pages/GCSBucketsPage.js";
 import { GCSBucketDetailPage } from "./pages/GCSBucketDetailPage.js";
 import { ServiceAccountsPage } from "./pages/ServiceAccountsPage.js";
 import { ServiceAccountDetailPage } from "./pages/ServiceAccountDetailPage.js";
+import { ManageProjectsPage } from "./pages/ManageProjectsPage.js";
 import { LoggingPage } from "./pages/LoggingPage.js";
 import "./index.css";
 
@@ -41,6 +42,7 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/gcs/:name" element={<GCSBucketDetailPage />} />
         <Route path="/ui/serviceaccounts" element={<ServiceAccountsPage />} />
         <Route path="/ui/serviceaccounts/:email" element={<ServiceAccountDetailPage />} />
+        <Route path="/ui/projects" element={<ManageProjectsPage />} />
         <Route path="/ui/logging" element={<LoggingPage />} />
       </GcpApp>
     </QueryClientProvider>

@@ -118,8 +118,27 @@ export async function awsFetch(request: AwsRequest): Promise<Response> {
   });
 }
 
+/**
+ * An AWS API failure with the service's own error code — the `__type` of an
+ * awsjson1.1 error or the `Code` of a Query-protocol ErrorResponse — so a page
+ * can act on the specific condition (AWS Organizations'
+ * AWSOrganizationsNotInUseException drives the "Create an organization" state)
+ * instead of pattern-matching message text.
+ */
+export class AwsApiError extends Error {
+  readonly code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.name = "AwsApiError";
+    this.code = code;
+  }
+}
+
 // awsJson calls an AWS JSON (1.1) target operation and returns the parsed
-// result — the protocol ECS, ECR, and CloudWatch Logs speak.
+// result — the protocol ECS, ECR, CloudWatch Logs, and AWS Organizations
+// speak. A failure carries the protocol's `__type` error code (stripped of any
+// `namespace#` prefix, the way SDKs resolve it) so the operator reads the real
+// service error.
 export async function awsJson<T>(service: string, target: string, input: Record<string, unknown> = {}): Promise<T> {
   const response = await awsFetch({
     service,
@@ -129,7 +148,23 @@ export async function awsJson<T>(service: string, target: string, input: Record<
     body: JSON.stringify(input),
   });
   if (!response.ok) {
-    throw new Error(`${target} returned HTTP ${response.status}`);
+    const text = await response.text();
+    let type = "";
+    let message = "";
+    try {
+      const parsed = JSON.parse(text) as { __type?: string; message?: string; Message?: string };
+      type = parsed.__type ?? "";
+      message = parsed.message ?? parsed.Message ?? "";
+    } catch {
+      // The body was not the protocol's JSON error shape (a proxy error page,
+      // an empty body); the HTTP status below is all the information there is.
+    }
+    const code = type.slice(type.lastIndexOf("#") + 1);
+    const operation = target.slice(target.lastIndexOf(".") + 1);
+    throw new AwsApiError(
+      code ? `${operation}: ${code}: ${message}` : `${target} returned HTTP ${response.status}`,
+      code,
+    );
   }
   return (await response.json()) as T;
 }

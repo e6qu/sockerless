@@ -425,7 +425,7 @@ package gcp_sdk_test
 //   GET /v3/liens/{lien}
 //   GET /v3/locations/{location}/effectiveTagBindingCollections/{collection}
 //   GET /v3/locations/{location}/tagBindingCollections/{collection}
-//   GET /v3/operations/{op}
+//   GET /v3/operations/{operation}
 //   GET /v3/organizations:search
 //   GET /v3/organizations/{org}
 //   GET /v3/projects
@@ -487,3 +487,29 @@ package gcp_sdk_test
 //   DELETE /v2/projects/{project}/locations/{location}/jobs/{job}/executions/{execution}
 //   GET /v2/projects/{project}/locations/{location}/jobs/{job}/executions/{execution}/tasks/{task}
 //   GET /v2/projects/{project}/locations/{location}/jobs/{job}/executions/{execution}/tasks
+
+// Cloud Resource Manager project lifecycle (v1 + v3) and the Cloud Billing
+// project billing-info read. These routes are driven by
+// cloud.google.com/go/resourcemanager/apiv3 (create/list/search/get/delete/
+// undelete with LRO polling), google.golang.org/api/cloudresourcemanager/v1
+// (the wire gcloud `projects` and terraform's google_project speak), and
+// google.golang.org/api/cloudbilling/v1 in resourcemanager_projects_test.go
+// and cloudresourcemanager_v3_test.go; the literal wire paths are recorded
+// here so the simulator-testing-contract hook can see the coverage.
+//
+//   POST /v1/projects
+//   GET /v1/projects
+//   GET /v1/projects/{project}
+//   PUT /v1/projects/{project}
+//   DELETE /v1/projects/{project}
+//   POST /v1/projects/{projectAction}
+//   GET /v1/operations/{operation}
+//   GET /v1/projects/{project}/billingInfo
+//   POST /v3/projects
+//   GET /v3/projects
+//   GET /v3/projects:search
+//   GET /v3/projects/{project}
+//   PATCH /v3/projects/{project}
+//   DELETE /v3/projects/{project}
+//   POST /v3/projects/{projectAction}
+//   GET /v3/operations/{operation}

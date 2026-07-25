@@ -47,6 +47,10 @@ import (
 //     which uses iam_beta_custom_endpoint, NOT iam_custom_endpoint)
 //   - spanner.googleapis.com (instance + database)
 //   - bigtableadmin.googleapis.com (instance + table)
+//   - cloudresourcemanager.googleapis.com v1 (google_project create +
+//     operation wait + read + soft-delete on destroy)
+//   - cloudbilling.googleapis.com (projects.getBillingInfo, read by the
+//     google_project Read path)
 func TestTerraformApplyDestroy(t *testing.T) {
 	requireTerraformNetworkHost(t)
 	cleanTerraformWorkspace(t)
@@ -232,6 +236,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	spannerDatabaseID := outputs.must(t, "spanner_database_id")
 	require.Equal(t, "tf-spanner/appdb", spannerDatabaseID,
 		"Terraform google_spanner_database.id follows the provider's {{instance}}/{{name}} format")
+
+	projectID := outputs.must(t, "project_id")
+	require.Equal(t, "tf-created-project", projectID,
+		"google_project must round-trip its project_id through the v1 create + read")
+
+	projectNumber := outputs.must(t, "project_number")
+	require.Regexp(t, `^[1-9][0-9]{11}$`, projectNumber,
+		"google_project.number must be the real 12-digit project number the v1 read returns; got %s", projectNumber)
 
 	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)

@@ -19,6 +19,8 @@ export interface PortalCommand {
   icon: AzureIconName;
   onSelect?: () => void;
   disabled?: boolean;
+  /** A structural-test hook rendered as data-testid on the command button. */
+  testid?: string;
 }
 
 function AzureThemeToggle() {
@@ -101,6 +103,7 @@ export function AzureCommandBar({ commands }: { commands: PortalCommand[] }) {
           className="az-command"
           onClick={command.onSelect}
           disabled={command.disabled}
+          data-testid={command.testid}
         >
           <span className="az-command-glyph"><AzureIcon name={command.icon} size={16} /></span>
           {command.label}
