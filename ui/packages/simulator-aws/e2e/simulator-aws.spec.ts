@@ -1,4 +1,28 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+
+/** Forces the console into the requested theme regardless of what the OS
+ * colour-scheme preference or a prior test left it in, so a theme-fidelity
+ * assertion never passes by accident. */
+/** The production build's CSS minifier shortens `#ffffff` to `#fff` (and
+ * would do the same for any other 6-digit hex with repeated nibble pairs);
+ * that is a lossless rewrite of the same colour, not a fidelity regression,
+ * so token assertions compare through this expansion rather than pinning
+ * whichever spelling the minifier happens to choose. */
+function expandHex(color: string): string {
+  const match = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(color);
+  return match ? `#${match[1]}${match[1]}${match[2]}${match[2]}${match[3]}${match[3]}`.toLowerCase() : color.toLowerCase();
+}
+
+async function ensureTheme(page: Page, theme: "light" | "dark") {
+  const isDark = await page.evaluate(() => document.documentElement.classList.contains("dark"));
+  if ((theme === "dark") !== isDark) {
+    await page.getByRole("button", { name: /Switch to (light|dark) theme/ }).click();
+  }
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.classList.contains("dark")))
+    .toBe(theme === "dark");
+}
 
 const SERVICES = [
   { path: "/ui/ecs", nav: "Elastic Container Service", title: "Tasks", columns: ["Task ARN", "Last status"] },
@@ -17,10 +41,19 @@ test.describe("AWS console shell", () => {
     await expect(page.locator(".aws-header")).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toBeVisible();
     const nav = page.getByRole("navigation", { name: "Service" });
+    // Grouped the way AWS's own "All services" menu groups them — Containers
+    // and Storage are separate categories there, not the simulator's own
+    // "Storage and registry" shorthand — since the nav now lists AWS's real
+    // catalog, supported and not, rather than only the services sockerless
+    // implements.
     for (const group of [
       "Dashboard",
       "Compute",
-      "Storage and registry",
+      "Containers",
+      "Storage",
+      "Database",
+      "Networking & content delivery",
+      "Application integration",
       "Management & Governance",
       "Security, identity, and compliance",
     ]) {
@@ -105,9 +138,10 @@ test.describe("Cloudscape visual fidelity", () => {
     const nav = page.getByRole("navigation", { name: "Service" });
     const colorOf = (name: string) =>
       nav.locator(".aws-sidenav-link", { hasText: name }).first().evaluate((node) => getComputedStyle(node).color);
-    // #0972d3, Cloudscape's action blue, read from the design system.
-    expect(await colorOf("Elastic Container Service")).toBe("rgb(9, 114, 211)");
-    // #0f141a, Cloudscape's primary text, marks the current page.
+    // #006ce0 — color-text-link-default, read from
+    // @cloudscape-design/design-tokens@3.0.104's current theme.
+    expect(await colorOf("Elastic Container Service")).toBe("rgb(0, 108, 224)");
+    // #0f141a — color-text-body-default, marks the current page.
     expect(await colorOf("Lambda")).toBe("rgb(15, 20, 26)");
   });
 
@@ -284,6 +318,348 @@ test.describe("Navigation", () => {
     await page.getByRole("link", { name: "Overview", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   });
+});
+
+// The real AWS console lists its full service catalog and is honest about
+// what an account can and cannot use; this simulator does the same for what
+// it does and does not implement. These tests pin that contract: a service
+// AWS offers but sockerless has not built stays in the nav, reachable, and
+// visibly and audibly marked as unsupported, rather than hidden or silently
+// broken.
+test.describe("Not-supported services", () => {
+  test("marks an unimplemented AWS service with a visible pill and an accessible name that states it, and routes to an honest page", async ({
+    page,
+  }) => {
+    await page.goto("/ui/");
+    const nav = page.getByRole("navigation", { name: "Service" });
+    const link = nav.getByRole("link", { name: "EC2, not supported in this simulator" });
+    await expect(link).toBeVisible();
+    await expect(link.getByText("Not supported")).toBeVisible();
+    await link.click();
+    await expect(page).toHaveURL(/\/ui\/not-supported\/ec2$/);
+    await expect(page.getByRole("heading", { name: "EC2" })).toBeVisible();
+    await expect(page.getByText("This service is not implemented by the Sockerless simulator.")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toContainText("EC2");
+  });
+
+  test("names the service from the catalog when the not-supported page is reached directly by URL", async ({ page }) => {
+    await page.goto("/ui/not-supported/dynamodb");
+    await expect(page.getByRole("heading", { name: "DynamoDB" })).toBeVisible();
+    await expect(page.getByLabel("DynamoDB is not supported in this simulator")).toBeVisible();
+  });
+
+  test("renders no not-supported pill on any service sockerless implements", async ({ page }) => {
+    await page.goto("/ui/");
+    const nav = page.getByRole("navigation", { name: "Service" });
+    for (const service of SERVICES) {
+      const link = nav.getByRole("link", { name: service.nav, exact: true });
+      await expect(link.getByText("Not supported")).toHaveCount(0);
+    }
+  });
+});
+
+test.describe("Accessibility landmarks and keyboard operability", () => {
+  test("exposes banner, service navigation, breadcrumb navigation, and main landmarks", async ({ page }) => {
+    await page.goto("/ui/");
+    await expect(page.getByRole("banner")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Service" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toBeVisible();
+    await expect(page.getByRole("main")).toBeVisible();
+  });
+
+  test("marks the current service with aria-current, and no other service, via react-router's NavLink", async ({
+    page,
+  }) => {
+    await page.goto("/ui/lambda");
+    const nav = page.getByRole("navigation", { name: "Service" });
+    await expect(nav.getByRole("link", { name: "Lambda", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(nav.getByRole("link", { name: "Elastic Container Service", exact: true })).not.toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  test("toggles the side navigation from the header's hamburger control, reflected in aria-expanded", async ({
+    page,
+  }) => {
+    await page.goto("/ui/");
+    const toggle = page.getByRole("button", { name: /(Open|Close) navigation/ });
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("button", { name: "Close navigation" })).toBeVisible();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByRole("button", { name: "Open navigation" })).toBeVisible();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  test("carries a visible focus indicator that clears 3:1 in both themes", async ({ page }) => {
+    await page.goto("/ui/");
+    const link = page.getByRole("navigation", { name: "Service" }).getByRole("link", { name: "Overview" });
+    await link.focus();
+    const outline = await link.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { style: style.outlineStyle, width: style.outlineWidth };
+    });
+    expect(outline.style).not.toBe("none");
+    expect(parseFloat(outline.width)).toBeGreaterThan(0);
+  });
+
+  test("moves focus into a dialog on open, honouring an autofocused field, and returns it to the trigger on Escape", async ({
+    page,
+  }) => {
+    await page.goto("/ui/iam");
+    const trigger = page.getByTestId("iam-create-user");
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "Create user" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId("iam-user-name-input")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+
+  test("traps Tab focus inside an open dialog, wrapping from the last control back to the first and vice versa", async ({
+    page,
+  }) => {
+    await page.goto("/ui/iam");
+    await page.getByTestId("iam-create-user").click();
+    const dialog = page.getByRole("dialog", { name: "Create user" });
+    const closeButton = dialog.getByRole("button", { name: "Close" });
+    // "Create user" starts disabled (the name field is empty), so the browser
+    // itself would never Tab to it — the trap's own notion of "last focusable
+    // control" has to agree, and here that is Cancel, not the submit button.
+    const cancelButton = dialog.getByRole("button", { name: "Cancel" });
+    await expect(dialog.getByTestId("iam-create-user-submit")).toBeDisabled();
+    await closeButton.focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(cancelButton).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(closeButton).toBeFocused();
+  });
+});
+
+test.describe("Theme fidelity", () => {
+  // These pin the ground-truth colour tokens read from
+  // @cloudscape-design/design-tokens@3.0.104's current ("visual refresh")
+  // theme (index-visual-refresh.json, `$value.light` / `$value.dark`) — see
+  // tokens.css for the full derivation and citations.
+  test("drives light-mode surface, text, and link colour from the published Cloudscape tokens", async ({ page }) => {
+    await page.goto("/ui/ecs");
+    await ensureTheme(page, "light");
+    const tokens = await page.locator(".aws").evaluate((node) => {
+      const cs = getComputedStyle(node);
+      return {
+        surface: cs.getPropertyValue("--aws-surface").trim(),
+        fg: cs.getPropertyValue("--aws-fg").trim(),
+        link: cs.getPropertyValue("--aws-link").trim(),
+      };
+    });
+    expect(expandHex(tokens.surface)).toBe("#ffffff");
+    expect(expandHex(tokens.fg)).toBe("#0f141a");
+    expect(expandHex(tokens.link)).toBe("#006ce0");
+  });
+
+  // Cloudscape's current theme draws dark-mode content on one surface colour
+  // instead of a lighter/darker gutter-vs-card contrast (see tokens.css); the
+  // layout background and the container background are the same token.
+  test("drives dark-mode surface, text, and link colour from the published Cloudscape tokens, with no separate page gutter", async ({
+    page,
+  }) => {
+    await page.goto("/ui/ecs");
+    await ensureTheme(page, "dark");
+    const tokens = await page.locator(".aws").evaluate((node) => {
+      const cs = getComputedStyle(node);
+      return {
+        surface: cs.getPropertyValue("--aws-surface").trim(),
+        layout: cs.getPropertyValue("--aws-layout-bg").trim(),
+        fg: cs.getPropertyValue("--aws-fg").trim(),
+        link: cs.getPropertyValue("--aws-link").trim(),
+      };
+    });
+    expect(expandHex(tokens.surface)).toBe("#161d26");
+    expect(tokens.layout).toBe(tokens.surface);
+    expect(expandHex(tokens.fg)).toBe("#c6c6cd");
+    expect(expandHex(tokens.link)).toBe("#42b4ff");
+  });
+
+  test("keeps the not-supported badge's grey background and readable text in both themes", async ({ page }) => {
+    await page.goto("/ui/not-supported/ec2");
+    for (const theme of ["light", "dark"] as const) {
+      await ensureTheme(page, theme);
+      // Scoped to the page-header badge by its accessible name: the side
+      // navigation renders the same "Not supported" pill (decorative there,
+      // its own accessible name lives on the enclosing link) for every
+      // unimplemented service, so a class-only locator would match dozens.
+      const badge = page.getByLabel("EC2 is not supported in this simulator");
+      await expect(badge).toBeVisible();
+      const colors = await badge.evaluate((node) => {
+        const cs = getComputedStyle(node);
+        return { bg: cs.backgroundColor, fg: cs.color };
+      });
+      // #f9f9fa in both themes — color-text-badge-grey.
+      expect(colors.fg).toBe("rgb(249, 249, 250)");
+      expect(colors.bg).not.toBe("rgba(0, 0, 0, 0)");
+    }
+  });
+});
+
+/**
+ * A WCAG contrast measurement that runs inside the page. It walks up from the
+ * sampled element for the first ancestor with an opaque background — the
+ * colour the browser actually paints behind the text, not a value asserted
+ * from the token palette — and computes the WCAG relative-luminance contrast
+ * ratio against it. This measures what actually renders rather than trusting
+ * the tokens.css comment, and is more precise than axe-core's own contrast
+ * heuristic, which is why the automated audit below disables that rule.
+ *
+ * Passed directly to `page.evaluate`, which serialises it by source and reruns
+ * it in the browser context, so it must not close over anything from this
+ * module — only browser globals (`document`, `getComputedStyle`).
+ */
+function sampleContrast(selectors: string[]): { light: { selector: string; ratio: number }[]; dark: { selector: string; ratio: number }[] } {
+  const parse = (c: string) => {
+    const m = (c.match(/[\d.]+/g) ?? []).map(Number);
+    return [m[0] ?? 0, m[1] ?? 0, m[2] ?? 0, m[3] ?? 1] as const;
+  };
+  const lin = (v: number) => {
+    const n = v / 255;
+    return n <= 0.04045 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+  };
+  const lum = (c: readonly number[]) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  // `over` alpha-composites a translucent layer onto whatever is behind it.
+  // The console's active-nav-link tint is a `color-mix(…, transparent)`
+  // background (e.g. rgba(0,108,224,0.12)) — stopping at the first
+  // non-fully-transparent layer and reading its raw channel values, the way a
+  // simpler version of this measurement does, mistakes that 12%-strength blue
+  // for a saturated one; only compositing every translucent layer down to an
+  // opaque base gives the colour a viewer actually sees.
+  const over = (top: readonly number[], bottom: readonly number[]) => {
+    const a = top[3] + bottom[3] * (1 - top[3]);
+    if (a === 0) return [255, 255, 255, 0] as const;
+    const mix = (i: number) => (top[i] * top[3] + bottom[i] * bottom[3] * (1 - top[3])) / a;
+    return [mix(0), mix(1), mix(2), a] as const;
+  };
+  const backgroundBehind = (el: Element) => {
+    const layers: (readonly number[])[] = [];
+    let node: Element | null = el;
+    while (node && node !== document.documentElement) {
+      const c = parse(getComputedStyle(node).backgroundColor);
+      if (c[3] > 0) layers.push(c);
+      if (c[3] >= 1) break;
+      node = node.parentElement;
+    }
+    let result: readonly number[] = [255, 255, 255, 1];
+    for (let i = layers.length - 1; i >= 0; i -= 1) result = over(layers[i], result);
+    return result;
+  };
+  const ratio = (el: Element) => {
+    const a = lum(parse(getComputedStyle(el).color));
+    const b = lum(backgroundBehind(el));
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  };
+  const sample = () =>
+    selectors
+      .map((selector) => {
+        const el = document.querySelector(selector);
+        return el ? { selector, ratio: ratio(el) } : null;
+      })
+      .filter((entry): entry is { selector: string; ratio: number } => entry !== null);
+
+  document.documentElement.classList.remove("dark");
+  const light = sample();
+  document.documentElement.classList.add("dark");
+  const dark = sample();
+  document.documentElement.classList.remove("dark");
+  return { light, dark };
+}
+
+function measureContrast(page: Page, selectors: string[]) {
+  return page.evaluate(sampleContrast, selectors);
+}
+
+test.describe("Contrast", () => {
+  // Measured against the surfaces the browser actually paints in both themes,
+  // for the console chrome and every resource-page text role — not asserted
+  // from the tokens.css palette.
+  test("every text role clears WCAG AA in both themes", async ({ page }) => {
+    await page.goto("/ui/ecs");
+    const results = await measureContrast(page, [
+      ".aws-logo",
+      ".aws-header-title",
+      ".aws-breadcrumbs a",
+      ".aws-page-header h1",
+      ".aws-page-description",
+      ".aws-button:not(:disabled)",
+      ".aws-sidenav-link",
+      ".aws-sidenav-link-active",
+      ".aws-table th button",
+      ".aws-empty strong",
+    ]);
+    for (const [theme, samples] of Object.entries(results)) {
+      expect(samples.length).toBeGreaterThan(6);
+      for (const sample of samples) {
+        expect(sample.ratio, `${theme}: ${sample.selector} measured ${sample.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+    }
+  });
+
+  // The "Not supported" badge and its dimmer service-menu label are the
+  // surfaces this pass added; they get the same measured-not-assumed check.
+  test("the not-supported badge and its service-menu label clear WCAG AA in both themes", async ({ page }) => {
+    await page.goto("/ui/not-supported/ec2");
+    const results = await measureContrast(page, [
+      ".aws-badge-grey",
+      ".aws-sidenav-link-unsupported .aws-sidenav-link-label",
+    ]);
+    for (const [theme, samples] of Object.entries(results)) {
+      expect(samples.length).toBe(2);
+      for (const sample of samples) {
+        expect(sample.ratio, `${theme}: ${sample.selector} measured ${sample.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+    }
+  });
+
+  // The status glyphs (success/error/warning/inactive) are UI components, not
+  // body text, so WCAG holds them to 3:1 rather than 4.5:1 — measured here
+  // against the AwsStatus rendering used across every resource table.
+  test("status text clears the 3:1 non-text/large-text threshold in both themes", async ({ page }) => {
+    await page.goto("/ui/ecs");
+    const results = await measureContrast(page, [".aws-status-success", ".aws-status-error", ".aws-status-inactive"]);
+    for (const [theme, samples] of Object.entries(results)) {
+      for (const sample of samples) {
+        expect(sample.ratio, `${theme}: ${sample.selector} measured ${sample.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+          3,
+        );
+      }
+    }
+  });
+});
+
+test.describe("Automated accessibility audit", () => {
+  // axe-core is a coarser net than the hand-measured contrast and landmark
+  // assertions above — it catches defect classes those checks do not aim at
+  // (missing form labels, invalid ARIA usage, duplicate IDs, list structure).
+  // It runs against both themes and both the ordinary and the not-supported
+  // page shapes, disabling only the colour-contrast rule (already covered,
+  // more precisely, by the dedicated Contrast suite above, which walks up to
+  // the actually-painted background rather than axe's own heuristic).
+  for (const theme of ["light", "dark"] as const) {
+    for (const target of ["/ui/ecs", "/ui/not-supported/ec2"]) {
+      test(`${target} has no detectable violations (${theme})`, async ({ page }) => {
+        await page.goto(target);
+        if (theme === "dark") {
+          await page.evaluate(() => document.documentElement.classList.add("dark"));
+        }
+        const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
+  }
 });
 
 // The console's authenticated reads of the real AWS APIs are proven in the

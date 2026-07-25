@@ -259,7 +259,6 @@ export function IAMUserSecurityCredentialsPage() {
       )}
       <AwsResourceTable<IAMAccessKeyMetadata>
         title="Access keys"
-        breadcrumbLabel="Access keys"
         description="Use access keys to sign programmatic requests with the AWS CLI or SDKs. The secret is shown only at creation."
         columns={keyColumns}
         queryKey={["iam-access-keys", userName]}

@@ -86,7 +86,6 @@ export function LambdaFunctionsPage() {
     <>
       <AwsResourceTable<LambdaFunction>
         title="Functions"
-        breadcrumbLabel="Functions"
         description="Functions in this account and Region."
         columns={columns}
         queryKey={["lambda-functions"]}

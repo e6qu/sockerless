@@ -98,6 +98,16 @@ have merged or are in flight.
 
 The console/simulator fidelity follow-ups filed during the roadmap were closed (BUG-2637 AWS console table actions, BUG-2638 GCP serviceAccounts 409, and BUG-2642 — the Lambda SigV4/IAM enforcement gap found while fixing them). BUG-2639 (Azure implicit grant for unregistered client ids) is now closed: the simulator seeds a bootstrap Entra application and the implicit-client branch was deleted, so an unregistered client id returns the real AADSTS700016. It was a clean single-coordinate consolidation, not the feared mass migration.
 
+Console parity pass 1 raised all three simulator consoles toward their real
+design languages (Cloudscape/AWS, Material/GCP, Fluent/Azure) with faithful
+service navigation + accessible "Not supported" pills on unsupported services,
+correct light and dark modes at WCAG AA (browser-verified), and axe-clean a11y.
+It is pass 1, not literal 100% parity — the shells are hand-built approximations,
+not the vendored component libraries, and the catalogues came from public IA not
+authenticated screenshots. Deeper parity (real component-library adoption,
+per-service page depth, exact catalogue/ordering against real screenshots) is the
+natural follow-up.
+
 No roadmap phase remains queued. Candidate next work: the staged live-cloud
 validation backlog (BUG-1075), the deployment recipe's real-registry/GHCR
 publish path, or new console surfaces as the product grows — pick with the

@@ -83,7 +83,6 @@ export function S3BucketsPage() {
     <>
       <AwsResourceTable<S3Bucket>
         title="Buckets"
-        breadcrumbLabel="Buckets"
         description="General purpose buckets in this account."
         columns={columns}
         queryKey={["s3-buckets"]}

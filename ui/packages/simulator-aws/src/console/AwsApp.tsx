@@ -1,42 +1,9 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { BrowserRouter, Routes, useLocation } from "react-router";
 import { ErrorBoundary, OperatorAccount } from "@sockerless/ui-core/components";
-import { AwsBreadcrumbs, AwsHeader, AwsSideNavigation, type NavGroup } from "./AwsConsole.js";
+import { AwsBreadcrumbs, AwsHeader, AwsSideNavigation } from "./AwsConsole.js";
 import { REGION } from "./federation.js";
-
-/**
- * AWS groups services in its navigation rather than listing them flat, so the
- * simulator does too: an operator looking for a registry looks under
- * containers, not through an undifferentiated list.
- */
-const NAV_GROUPS: NavGroup[] = [
-  { label: "Dashboard", items: [{ label: "Overview", to: "/ui/" }] },
-  {
-    label: "Compute",
-    items: [
-      { label: "Elastic Container Service", to: "/ui/ecs" },
-      { label: "Lambda", to: "/ui/lambda" },
-    ],
-  },
-  {
-    label: "Storage and registry",
-    items: [
-      { label: "Elastic Container Registry", to: "/ui/ecr" },
-      { label: "Simple Storage Service", to: "/ui/s3" },
-    ],
-  },
-  {
-    label: "Management & Governance",
-    items: [
-      { label: "CloudWatch Logs", to: "/ui/logs" },
-      { label: "AWS Organizations", to: "/ui/organizations" },
-    ],
-  },
-  {
-    label: "Security, identity, and compliance",
-    items: [{ label: "Identity and Access Management", to: "/ui/iam" }],
-  },
-];
+import { findNavService, NAV_GROUPS } from "./serviceCatalog.js";
 
 const CRUMBS: Record<string, string> = {
   "/ui/": "Overview",
@@ -51,6 +18,8 @@ const CRUMBS: Record<string, string> = {
 
 const IAM_USER_PREFIX = "/ui/iam/users/";
 const ORG_ACCOUNT_PREFIX = "/ui/organizations/accounts/";
+const NOT_SUPPORTED_PREFIX = "/ui/not-supported/";
+const SIDENAV_ID = "aws-sidenav";
 
 function crumbTrail(pathname: string): { label: string; to?: string }[] {
   // Detail pages nest under their service the way the real console breadcrumbs
@@ -69,6 +38,13 @@ function crumbTrail(pathname: string): { label: string; to?: string }[] {
       { label: decodeURIComponent(pathname.slice(ORG_ACCOUNT_PREFIX.length)) },
     ];
   }
+  if (pathname.startsWith(NOT_SUPPORTED_PREFIX)) {
+    const slug = pathname.slice(NOT_SUPPORTED_PREFIX.length);
+    return [
+      { label: "Simulator", to: "/ui/" },
+      { label: findNavService(slug)?.label ?? slug },
+    ];
+  }
   return [
     { label: "Simulator", to: "/ui/" },
     { label: CRUMBS[pathname] ?? "Overview" },
@@ -77,13 +53,25 @@ function crumbTrail(pathname: string): { label: string; to?: string }[] {
 
 function ConsoleFrame({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
+  // The header's hamburger control and the side navigation share this state.
+  // Cloudscape's own AppLayout keeps the navigation open by default and lets
+  // an operator collapse it; the collapse only changes anything visually
+  // below the responsive breakpoint (see console.css), but the control stays
+  // wired and keyboard-operable regardless of viewport width.
+  const [navExpanded, setNavExpanded] = useState(true);
   return (
     <div className="aws">
       <a href="#main-content" className="sl-skip-link">Skip to main content</a>
-      <AwsHeader region={REGION} account={<OperatorAccount />} />
+      <AwsHeader
+        region={REGION}
+        account={<OperatorAccount />}
+        navExpanded={navExpanded}
+        onToggleNav={() => setNavExpanded((current) => !current)}
+        navId={SIDENAV_ID}
+      />
       <AwsBreadcrumbs trail={crumbTrail(pathname)} />
       <div className="aws-body">
-        <AwsSideNavigation serviceName="Simulator" groups={NAV_GROUPS} />
+        <AwsSideNavigation serviceName="Simulator" groups={NAV_GROUPS} id={SIDENAV_ID} expanded={navExpanded} />
         <main id="main-content" tabIndex={-1} className="aws-main">
           {children}
         </main>

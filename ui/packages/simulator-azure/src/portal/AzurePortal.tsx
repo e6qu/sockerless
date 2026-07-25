@@ -5,6 +5,11 @@ import { AzureIcon, type AzureIconName } from "./icons.js";
 export interface ServiceMenuItem {
   label: string;
   to: string;
+  /** False marks a service the real Azure portal offers that this simulator
+   *  does not implement. The item still links — to a small honest
+   *  explanation — rather than disappearing or turning into a dead end that
+   *  looks clickable but isn't; see AzureNotSupportedBadge. */
+  supported?: boolean;
 }
 
 export interface ServiceMenuGroup {
@@ -80,11 +85,14 @@ export function AzureBreadcrumbs({ trail }: { trail: { label: string; to?: strin
 }
 
 /** The portal titles a working pane with the resource, its type beneath, and
- *  the directory it belongs to — not with the service's name alone. */
+ *  the directory it belongs to — not with the service's name alone. It sits
+ *  above the service menu and the main pane, spanning both, so it is its own
+ *  landmark region — named from the same heading a sighted operator reads —
+ *  rather than content orphaned outside every landmark on the page. */
 export function AzureResourceTitle({ name, kind, directory }: { name: string; kind: string; directory: string }) {
   return (
-    <div className="az-resource-title">
-      <h1>{name}</h1>
+    <div className="az-resource-title" role="region" aria-labelledby="az-resource-title-heading">
+      <h1 id="az-resource-title-heading">{name}</h1>
       <p>
         <span>{kind}</span>
         <span className="az-directory">Directory: {directory}</span>
@@ -113,8 +121,51 @@ export function AzureCommandBar({ commands }: { commands: PortalCommand[] }) {
   );
 }
 
+/** A Fluent-style pill marking a service the real Azure portal offers that
+ *  this simulator does not implement. State never rests on colour alone: the
+ *  badge carries its own icon and the words "Not supported" as real text, so
+ *  it reads the same to a screen reader as to a sighted operator. */
+export function AzureNotSupportedBadge() {
+  return (
+    <span className="az-badge az-badge-unsupported">
+      <AzureIcon name="not_supported" size={12} />
+      Not supported
+    </span>
+  );
+}
+
+function ServiceMenuLink({ item, end }: { item: ServiceMenuItem; end?: boolean }) {
+  const unsupported = item.supported === false;
+  return (
+    <NavLink
+      to={item.to}
+      end={end}
+      // aria-label replaces the link's accessible name outright, so an
+      // unsupported service announces why it's there rather than just that
+      // it's there — "not supported in this simulator" reads the same for a
+      // screen-reader operator as the visible badge reads for a sighted one.
+      aria-label={unsupported ? `${item.label}, not supported in this simulator` : undefined}
+      className={({ isActive }) =>
+        [
+          "az-service-link",
+          isActive ? "az-service-link-active" : "",
+          unsupported ? "az-service-link-unsupported" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+      }
+    >
+      <span className="az-service-label">{item.label}</span>
+      {unsupported ? <AzureNotSupportedBadge /> : null}
+    </NavLink>
+  );
+}
+
 /** The service menu carries its own search and expandable groups, so a long
- *  menu stays navigable without leaving the resource. */
+ *  menu stays navigable without leaving the resource. It lists the real
+ *  Azure catalog — including services this simulator does not implement,
+ *  marked rather than hidden — so the menu reads as the real portal's
+ *  information architecture. */
 export function AzureServiceMenu({ groups, flat }: { groups: ServiceMenuGroup[]; flat: ServiceMenuItem[] }) {
   const [filter, setFilter] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -134,13 +185,7 @@ export function AzureServiceMenu({ groups, flat }: { groups: ServiceMenuGroup[];
       <ul className="az-service-flat">
         {flat.filter(matches).map((item) => (
           <li key={item.to}>
-            <NavLink
-              to={item.to}
-              end={item.to === "/ui/"}
-              className={({ isActive }) => (isActive ? "az-service-link az-service-link-active" : "az-service-link")}
-            >
-              {item.label}
-            </NavLink>
+            <ServiceMenuLink item={item} end={item.to === "/ui/"} />
           </li>
         ))}
       </ul>
@@ -172,12 +217,7 @@ export function AzureServiceMenu({ groups, flat }: { groups: ServiceMenuGroup[];
               <ul>
                 {visible.map((item) => (
                   <li key={item.to}>
-                    <NavLink
-                      to={item.to}
-                      className={({ isActive }) => (isActive ? "az-service-link az-service-link-active" : "az-service-link")}
-                    >
-                      {item.label}
-                    </NavLink>
+                    <ServiceMenuLink item={item} />
                   </li>
                 ))}
               </ul>

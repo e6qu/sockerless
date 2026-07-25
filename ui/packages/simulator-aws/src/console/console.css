@@ -121,7 +121,9 @@ body:has(.aws) { background: var(--aws-layout-bg); }
 }
 .aws-sidenav ul { list-style: none; margin: 0; padding: 0; }
 .aws-sidenav-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 6px 20px;
   font-size: 14px;
   color: var(--aws-link);
@@ -136,6 +138,19 @@ body:has(.aws) { background: var(--aws-layout-bg); }
   padding-left: 18px;
   background: color-mix(in srgb, var(--aws-primary) 12%, transparent);
 }
+/* A service AWS offers that sockerless has not implemented: the label reads
+ * as ordinary text rather than a link (no blue, no hover underline) with the
+ * "Not supported" pill beside it — the pill is what says the item is
+ * different, not a colour-only cue. It stays a real, focusable, navigable
+ * link (to the honest explanation page) rather than a disabled control,
+ * because a disabled control is unreachable by keyboard and unannounced by
+ * some assistive tech, and this simulator would rather be over-honest than
+ * under-navigable. */
+.aws-sidenav-link-unsupported {
+  color: var(--aws-fg-secondary);
+}
+.aws-sidenav-link-unsupported:hover { text-decoration: none; }
+.aws-sidenav-link-unsupported .aws-sidenav-link-label { text-decoration: none; }
 
 .aws-main { padding: 20px 24px 48px; min-width: 0; }
 
@@ -257,16 +272,48 @@ body:has(.aws) { background: var(--aws-layout-bg); }
 .aws-empty { padding: 40px 16px; text-align: center; color: var(--aws-fg-secondary); }
 .aws-empty strong { display: block; font-size: 16px; color: var(--aws-fg); margin-bottom: 4px; }
 .aws-empty p { margin: 0 0 12px; }
-.aws-flash { padding: 12px 16px; font-size: 14px; }
+.aws-flash { padding: 12px 16px; font-size: 14px; border-left: 4px solid transparent; }
 .aws-flash-error {
-  background: color-mix(in srgb, var(--aws-status-error) 10%, transparent);
+  background: var(--aws-flash-error-bg);
   color: var(--aws-status-error);
+  border-left-color: var(--aws-status-error);
+}
+.aws-flash-success {
+  background: var(--aws-flash-success-bg);
+  color: var(--aws-status-success);
+  border-left-color: var(--aws-status-success);
+}
+.aws-flash-info {
+  background: var(--aws-flash-info-bg);
+  color: var(--aws-status-info);
+  border-left-color: var(--aws-status-info);
 }
 .aws-flash-warning {
-  background: color-mix(in srgb, var(--aws-status-warning) 12%, transparent);
+  background: var(--aws-flash-warning-bg);
   color: var(--aws-fg);
-  border-left: 4px solid var(--aws-status-warning);
+  border-left-color: var(--aws-status-warning);
 }
+
+/* Badge -------------------------------------------------------------------
+ * A small pill that states a fact in text, not colour alone. The colours are
+ * the same solid brand tones (blue/green/red) or neutral grey the real
+ * Cloudscape badge uses, each against the badge text colour Cloudscape pairs
+ * with it — every pairing clears WCAG AA. */
+.aws-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--aws-radius-badge);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: nowrap;
+  color: var(--aws-badge-fg);
+}
+.aws-badge-grey { background: var(--aws-badge-grey-bg); }
+.aws-badge-blue { background: var(--aws-badge-blue-bg); }
+.aws-badge-green { background: var(--aws-badge-green-bg); }
+.aws-badge-red { background: var(--aws-badge-red-bg); }
 
 /* Modal ------------------------------------------------------------------ */
 .aws-modal-overlay {
@@ -380,6 +427,11 @@ body:has(.aws) { background: var(--aws-layout-bg); }
 @media (max-width: 900px) {
   .aws-body { grid-template-columns: minmax(0, 1fr); }
   .aws-sidenav { min-height: 0; border-right: 0; border-bottom: 1px solid var(--aws-border-subtle); }
+  /* The header's hamburger control collapses the navigation only below this
+   * breakpoint, where the body grid already stacks to one column — on a wide
+   * viewport Cloudscape's own navigation stays open regardless of the
+   * toggle's state, and so does this one. */
+  .aws-sidenav[data-collapsed="true"] { display: none; }
 }
 
 /* Every interactive control shows where focus is, which keyboard and

@@ -83,7 +83,6 @@ export function LogGroupsPage() {
     <>
       <AwsResourceTable<CWLogGroup>
         title="Log groups"
-        breadcrumbLabel="Log groups"
         description="Log groups in this account and Region."
         columns={columns}
         queryKey={["log-groups"]}

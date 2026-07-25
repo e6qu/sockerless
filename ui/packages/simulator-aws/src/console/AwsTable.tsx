@@ -23,7 +23,6 @@ export interface AwsTableActions<T> {
 
 export interface AwsResourceTableProps<T> {
   title: string;
-  breadcrumbLabel: string;
   description?: string;
   columns: AwsColumn<T>[];
   queryKey: unknown[];
@@ -168,10 +167,11 @@ export function AwsResourceTable<T>({
          * operator can still see what the resource is described by while it is
          * loading, empty, or failed. Replacing the whole table with a message
          * takes that away exactly when it is most useful. */}
-        <table className="aws-table" data-testid={tableTestId}>
+        <table className="aws-table" aria-label={title} data-testid={tableTestId}>
           <thead>
             <tr>
-              <th className="aws-table-select">
+              <th className="aws-table-select" scope="col">
+                <span className="sr-only">Select</span>
                 <input
                   type="checkbox"
                   aria-label="Select all resources on this page"
@@ -192,7 +192,7 @@ export function AwsResourceTable<T>({
               {columns.map((column) => {
                 const active = sort?.column === column.id;
                 return (
-                  <th key={column.id} aria-sort={active ? (sort.ascending ? "ascending" : "descending") : "none"}>
+                  <th key={column.id} scope="col" aria-sort={active ? (sort.ascending ? "ascending" : "descending") : "none"}>
                     <button type="button" onClick={() => toggleSort(column.id)}>
                       {column.header}
                       <span aria-hidden className="aws-sort">{active ? (sort.ascending ? "▲" : "▼") : "⇅"}</span>

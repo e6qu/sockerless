@@ -82,7 +82,6 @@ export function ECRReposPage() {
     <>
       <AwsResourceTable<ECRRepo>
         title="Repositories"
-        breadcrumbLabel="Repositories"
         description="Private repositories in this account and Region."
         columns={columns}
         queryKey={["ecr-repos"]}

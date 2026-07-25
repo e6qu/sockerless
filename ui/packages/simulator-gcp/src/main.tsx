@@ -16,6 +16,7 @@ import { ServiceAccountsPage } from "./pages/ServiceAccountsPage.js";
 import { ServiceAccountDetailPage } from "./pages/ServiceAccountDetailPage.js";
 import { ManageProjectsPage } from "./pages/ManageProjectsPage.js";
 import { LoggingPage } from "./pages/LoggingPage.js";
+import { NotSupportedPage } from "./pages/NotSupportedPage.js";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -44,6 +45,7 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/serviceaccounts/:email" element={<ServiceAccountDetailPage />} />
         <Route path="/ui/projects" element={<ManageProjectsPage />} />
         <Route path="/ui/logging" element={<LoggingPage />} />
+        <Route path="/ui/not-supported/:service" element={<NotSupportedPage />} />
       </GcpApp>
     </QueryClientProvider>
   </StrictMode>,

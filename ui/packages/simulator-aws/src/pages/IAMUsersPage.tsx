@@ -155,7 +155,6 @@ export function IAMUsersPage() {
     <>
       <AwsResourceTable<IAMUserSummary>
         title="Users"
-        breadcrumbLabel="Users"
         description="Users in AWS Identity and Access Management (IAM). Open a user's Security credentials to create an access key for the AWS CLI."
         columns={columns}
         queryKey={["iam-users"]}

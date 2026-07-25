@@ -96,7 +96,6 @@ export function ECSTasksPage() {
     <>
       <AwsResourceTable<ECSTask>
         title="Tasks"
-        breadcrumbLabel="Tasks"
         description="Tasks running in this account and Region."
         columns={columns}
         queryKey={["ecs-tasks"]}

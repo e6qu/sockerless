@@ -48,7 +48,7 @@ export function ServiceAccountKeyMintedDialog({
     // nothing to download and the dialog must say so rather than save an
     // empty file.
     return (
-      <GcpDialog title="Private key unavailable" testId="sa-key-minted-dialog">
+      <GcpDialog title="Private key unavailable" testId="sa-key-minted-dialog" onClose={onClose}>
         <p className="gc-message gc-message-error" role="alert">
           This key's private material was returned only when it was created and can't be downloaded
           again.
@@ -63,7 +63,7 @@ export function ServiceAccountKeyMintedDialog({
   }
 
   return (
-    <GcpDialog title="Private key saved to your computer" testId="sa-key-minted-dialog">
+    <GcpDialog title="Private key saved to your computer" testId="sa-key-minted-dialog" onClose={onClose}>
       <p data-testid="sa-key-filename">
         <code>{file.filename}</code> allows access to your cloud resources, so store it securely.{" "}
         <strong className="gc-danger">
