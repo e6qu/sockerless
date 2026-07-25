@@ -34,6 +34,10 @@ type Server struct {
 	db      *sql.DB         // nil when persistence disabled
 	tracker *ProcessTracker // nil when persistence disabled
 	uiAuth  *uiauth.Auth
+	// federation carries the console's Microsoft Entra Workload Identity
+	// Federation coordinates for the server-side broker (see
+	// federation_broker.go). Zero value = federation not configured.
+	federation consoleFederation
 
 	// routePatterns records every mux pattern registered through
 	// Handle/HandleFunc, in registration order. The spec-conformance
@@ -58,6 +62,14 @@ func NewServer(cfg Config) (*Server, error) {
 		ReleaseRevision: cfg.ApplicationReleaseRevision,
 		InsecureCookies: cfg.UIOIDCInsecureCookies,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// The console federation broker's coordinates fail loud at startup exactly
+	// like the OIDC config above: an operator who sets any
+	// SOCKERLESS_CONSOLE_FEDERATION_* coordinate but not all of them has a
+	// deployment error, never a silently degraded broker.
+	federation, err := loadConsoleFederation()
 	if err != nil {
 		return nil, err
 	}
@@ -124,11 +136,12 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	srv := &Server{
-		config:  cfg,
-		logger:  logger,
-		mux:     mux,
-		handler: handler,
-		uiAuth:  uiAuth,
+		config:     cfg,
+		logger:     logger,
+		mux:        mux,
+		handler:    handler,
+		uiAuth:     uiAuth,
+		federation: federation,
 	}
 
 	// Persistence opens fail loud — operator asked for durable state.
@@ -264,27 +277,44 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) RegisterUI(fsys fs.FS) {
 	identityEndpoint, logoutEndpoint := "", ""
 	federationSubject := ""
+	federationTokenEndpoint := ""
 	if s.uiAuth.Enabled() {
 		identityEndpoint, logoutEndpoint = uiauth.SessionPath, uiauth.LogoutPath
 		federationSubject = uiauth.FederationSubjectPath
 		s.uiAuth.Register(s.mux)
+		// The federation broker (federation_broker.go) is a console auth-layer
+		// endpoint like the routes above, registered unprotected — it reads the
+		// operator's session itself and answers 401 JSON when there is none,
+		// the correct contract for an XHR endpoint the SPA polls rather than a
+		// browser-navigated redirect target. It is exposed to the SPA only when
+		// a deployment actually configured cloud federation; with no
+		// SOCKERLESS_CONSOLE_FEDERATION_* coordinates set, the portal has
+		// nothing to federate into and stays in its unauthenticated-reads mode.
+		if s.federation.configured() {
+			federationTokenEndpoint = FederationTokenPath
+		}
+		s.mux.HandleFunc("GET "+FederationTokenPath, s.handleFederationToken)
 	}
 	configHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		// Cloud data-plane coordinates. Empty means the console's own origin
 		// (the simulator); a deployment against real Azure sets them to Azure
 		// Resource Manager, Microsoft Entra, and the operator's identity. The
-		// console federates and reads real APIs identically either way.
+		// console federates and reads real APIs identically either way. The
+		// Microsoft Entra Workload Identity Federation exchange itself runs
+		// server-side (see federation_broker.go): the browser never learns the
+		// federation endpoint, tenant, or client ID, only whether the broker is
+		// reachable (federationTokenEndpoint) and, for display purposes only
+		// (CLI usage samples), the directory tenant.
 		WriteJSON(w, http.StatusOK, map[string]string{
-			"identityEndpoint":   identityEndpoint,
-			"logoutEndpoint":     logoutEndpoint,
-			"cloudApiEndpoint":   os.Getenv("SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT"),
-			"logsApiEndpoint":    os.Getenv("SOCKERLESS_CONSOLE_LOGS_API_ENDPOINT"),
-			"graphApiEndpoint":   os.Getenv("SOCKERLESS_CONSOLE_GRAPH_API_ENDPOINT"),
-			"federationEndpoint": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT"),
-			"federationTenant":   os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_TENANT"),
-			"federationClientId": os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_CLIENT_ID"),
-			"federationSubject":  federationSubject,
+			"identityEndpoint":        identityEndpoint,
+			"logoutEndpoint":          logoutEndpoint,
+			"cloudApiEndpoint":        os.Getenv("SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT"),
+			"logsApiEndpoint":         os.Getenv("SOCKERLESS_CONSOLE_LOGS_API_ENDPOINT"),
+			"graphApiEndpoint":        os.Getenv("SOCKERLESS_CONSOLE_GRAPH_API_ENDPOINT"),
+			"federationTokenEndpoint": federationTokenEndpoint,
+			"federationTenant":        os.Getenv("SOCKERLESS_CONSOLE_FEDERATION_TENANT"),
+			"federationSubject":       federationSubject,
 		})
 	})
 	s.mux.Handle("GET /ui/config.json", s.uiAuth.Protect(configHandler))

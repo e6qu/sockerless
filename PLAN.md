@@ -223,7 +223,11 @@ this order.
    Manager and Microsoft Graph CORS, and the relying-party harness runs the
    Azure console and cloud as separate processes with the portal's managed
    identity provisioned before console start — unlocking the Azure browser
-   minting flow deferred from phase 1.
+   minting flow deferred from phase 1. Done — `deploy/` boots the Shauth
+   stack + Admin + the three simulators behind a Caddy TLS proxy with
+   real-API provisioning and a smoke gate, and the Azure portal federates
+   through the console's server-side broker with faithful ARM/Graph CORS, the
+   harness running the Azure console and cloud as separate processes.
 
 ## Standing Work
 

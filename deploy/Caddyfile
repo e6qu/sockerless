@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# TLS-terminating reverse proxy for every persistent origin. This is the
+# ONLY internet-facing surface in a real deployment (see deploy/README.md
+# "Security") — every backend service publishes no host port of its own.
+#
+# `tls internal` makes every site here use Caddy's own on-the-fly local
+# certificate authority instead of attempting ACME (real Let's Encrypt
+# cannot issue a certificate for a *.localtest.me name — it does not own
+# that DNS and cannot complete an HTTP-01/TLS-ALPN-01 challenge against
+# 127.0.0.1). A production deployment with real DNS names removes every
+# `tls internal` line below (or replaces it with `tls {$ACME_EMAIL}`) and
+# gets automatic Let's Encrypt certificates instead — nothing else in this
+# file changes, matching the project's "coordinates only" rule.
+{
+	admin off
+}
+
+https://{$SHAUTH_HOSTNAME}:{$CADDY_PORT} {
+	tls internal
+	reverse_proxy shauth:8080
+}
+
+https://{$ADMIN_HOSTNAME}:{$CADDY_PORT} {
+	tls internal
+	reverse_proxy sockerless-admin:9090
+}
+
+https://{$AWS_SIM_HOSTNAME}:{$CADDY_PORT} {
+	tls internal
+	reverse_proxy simulator-aws:4566
+}
+
+https://{$GCP_SIM_HOSTNAME}:{$CADDY_PORT} {
+	tls internal
+	reverse_proxy simulator-gcp:4567
+}
+
+# The Azure Resource Manager / Microsoft Graph / Azure Monitor data plane —
+# no browser reaches this origin directly, but it is fronted the same way as
+# every other origin: a real deployment reaches real Azure Resource Manager
+# over TLS, so the simulator's stand-in does too.
+https://{$AZURE_CLOUD_SIM_HOSTNAME}:{$CADDY_PORT} {
+	tls internal
+	reverse_proxy simulator-azure-cloud:4568
+}
+
+https://{$AZURE_CONSOLE_SIM_HOSTNAME}:{$CADDY_PORT} {
+	tls internal
+	reverse_proxy simulator-azure-console:4568
+}

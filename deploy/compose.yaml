@@ -1,0 +1,323 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Persistent-origin deployment for Sockerless Admin, the three cloud
+# simulators, and the Shauth identity stack (Shauth + Ory Hydra +
+# PostgreSQL) — PLAN.md § "Console Self-Service" phase 4.
+#
+# Images are pulled from ghcr.io/e6qu/<image>, pinned by the REQUIRED
+# SOCKERLESS_TAG (a short-SHA tag published by
+# .github/workflows/publish-container-images.yml) and SHAUTH_TAG (the
+# short-SHA tag Shauth publishes for the exact commit
+# scripts/test-shauth-rps.sh pins). Neither has a default: an unset tag
+# fails the compose parse rather than silently resolving to "latest".
+#
+# Every persistent origin is served over TLS by the caddy service — see
+# deploy/Caddyfile. Sockerless Admin and each simulator console validate
+# their own OpenID Connect issuer/public URL strictly (HTTPS, or plain HTTP
+# only for the literal hostname "localhost"), so a custom persistent
+# hostname over plain HTTP is rejected by design; only caddy publishes a
+# host port; every backend service is reachable from the host only through
+# it.
+#
+# To build every image from source instead, use compose.build.yaml (a
+# complete standalone file, not a merge overlay — see deploy/README.md
+# for why layering it over this file cannot work with the required-tag
+# gate).
+#
+# See deploy/README.md for the .env schema, boot order, provisioning,
+# and smoke test this file is designed to run under.
+
+name: sockerless-deploy
+
+services:
+  postgres:
+    image: postgres:17.5-alpine
+    environment:
+      POSTGRES_DB: shauth
+      POSTGRES_USER: shauth
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shauth -d shauth"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./shauth-postgres-init.sql:/docker-entrypoint-initdb.d/001-databases.sql:ro
+    networks:
+      default: {}
+
+  hydra-migrate:
+    image: ghcr.io/e6qu/shauth:${SHAUTH_TAG:?set SHAUTH_TAG in deploy/.env}
+    entrypoint: ["/hydra"]
+    command: migrate sql up --read-from-env --yes
+    environment: &hydra-environment
+      DSN: ${HYDRA_DSN:?run deploy/provision.sh first to derive HYDRA_DSN from POSTGRES_PASSWORD}
+      HYDRA_DSN: ${HYDRA_DSN:?run deploy/provision.sh first to derive HYDRA_DSN from POSTGRES_PASSWORD}
+      HYDRA_PUBLIC_URL: ${HYDRA_PUBLIC_URL:?set HYDRA_PUBLIC_URL in deploy/.env}
+      SHAUTH_PUBLIC_URL: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}
+      HYDRA_SYSTEM_SECRET: ${HYDRA_SYSTEM_SECRET:?set HYDRA_SYSTEM_SECRET in deploy/.env}
+      URLS_SELF_ISSUER: ${HYDRA_PUBLIC_URL:?set HYDRA_PUBLIC_URL in deploy/.env}
+      URLS_LOGIN: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}/oauth/login
+      URLS_CONSENT: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}/oauth/consent
+      URLS_LOGOUT: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}/oauth/logout
+      URLS_ERROR: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}/oauth/error
+      URLS_POST_LOGOUT_REDIRECT: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}/signed-out
+      SECRETS_SYSTEM_0: ${HYDRA_SYSTEM_SECRET:?set HYDRA_SYSTEM_SECRET in deploy/.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      default: {}
+
+  hydra:
+    image: ghcr.io/e6qu/shauth:${SHAUTH_TAG:?set SHAUTH_TAG in deploy/.env}
+    entrypoint: ["/hydra"]
+    command: serve all --dev --config /etc/config/hydra.yaml
+    environment:
+      <<: *hydra-environment
+      # Every registered client's backchannel_logout_uri is the public https
+      # origin through caddy (Shauth rejects a plain-HTTP non-loopback
+      # bootstrap app URL at startup — see provision.sh), so Hydra needs to
+      # trust caddy's local certificate authority to deliver it. SSL_CERT_FILE
+      # is Go's crypto/x509 override for the system trust store on Unix
+      # systems; the file it names comes from the caddy-data volume caddy
+      # itself writes its local certificate authority into below.
+      SSL_CERT_FILE: /caddy-data/caddy/pki/authorities/local/root.crt
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    # Hydra's public OIDC surface is reached exclusively through Shauth's own
+    # reverse-proxying (HYDRA_PUBLIC_URL == SHAUTH_PUBLIC_URL); the admin API
+    # (4445) is a bearer-less administrative surface deploy/provision.sh uses
+    # from the host and must never be reachable from outside this host.
+    ports:
+      - "127.0.0.1:${HYDRA_PUBLIC_PORT:-4444}:4444"
+      - "127.0.0.1:${HYDRA_ADMIN_PORT:-4445}:4445"
+    volumes:
+      - ./hydra.yaml:/etc/config/hydra.yaml:ro
+      - caddy-data:/caddy-data:ro
+    networks:
+      default: {}
+
+  shauth-migrate:
+    image: ghcr.io/e6qu/shauth:${SHAUTH_TAG:?set SHAUTH_TAG in deploy/.env}
+    entrypoint: ["/shauth-migrate"]
+    environment:
+      DATABASE_URL: ${SHAUTH_DATABASE_URL:?run deploy/provision.sh first to derive SHAUTH_DATABASE_URL from POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      default: {}
+
+  shauth:
+    image: ghcr.io/e6qu/shauth:${SHAUTH_TAG:?set SHAUTH_TAG in deploy/.env}
+    environment:
+      SHAUTH_LISTEN_ADDRESS: :8080
+      SHAUTH_PUBLIC_URL: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}
+      SHAUTH_ALLOW_INSECURE_COOKIES: ${SHAUTH_INSECURE_COOKIES:-false}
+      DATABASE_URL: ${SHAUTH_DATABASE_URL:?run deploy/provision.sh first to derive SHAUTH_DATABASE_URL from POSTGRES_PASSWORD}
+      HYDRA_ADMIN_URL: http://hydra:4445
+      HYDRA_PUBLIC_INTERNAL_URL: http://hydra:4444
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?set GITHUB_CLIENT_ID in deploy/.env}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?set GITHUB_CLIENT_SECRET in deploy/.env}
+      GITHUB_DEVELOPER_TEAM: ${GITHUB_DEVELOPER_TEAM:?set GITHUB_DEVELOPER_TEAM in deploy/.env}
+      GITHUB_ADMIN_TEAM: ${GITHUB_ADMIN_TEAM:?set GITHUB_ADMIN_TEAM in deploy/.env}
+      SHAUTH_BOOTSTRAP_ADMIN_EMAIL: ${SHAUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@localhost.test}
+      SHAUTH_BOOTSTRAP_ADMIN_PASSWORD: ${SHAUTH_BOOTSTRAP_ADMIN_PASSWORD:?set SHAUTH_BOOTSTRAP_ADMIN_PASSWORD in deploy/.env}
+      SHAUTH_BOOTSTRAP_APPS_JSON: ${SHAUTH_BOOTSTRAP_APPS_JSON:?run deploy/provision.sh --write-env first (see deploy/README.md)}
+      SHAUTH_SES_REGION: ${SHAUTH_SES_REGION:-eu-west-1}
+      SHAUTH_INVITATION_EMAIL_FROM: ${SHAUTH_INVITATION_EMAIL_FROM:-no-reply@localhost.test}
+    depends_on:
+      shauth-migrate:
+        condition: service_completed_successfully
+      hydra:
+        condition: service_started
+    networks:
+      default: {}
+
+  sockerless-admin:
+    image: ghcr.io/e6qu/sockerless-admin:${SOCKERLESS_TAG:?set SOCKERLESS_TAG in deploy/.env}
+    environment:
+      SOCKERLESS_ADMIN_SHAUTH_ISSUER: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}
+      SOCKERLESS_ADMIN_SHAUTH_CLIENT_ID: sockerless-admin
+      SOCKERLESS_ADMIN_SHAUTH_CLIENT_SECRET: ${ADMIN_OIDC_CLIENT_SECRET:?set ADMIN_OIDC_CLIENT_SECRET in deploy/.env}
+      SOCKERLESS_ADMIN_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in deploy/.env}
+      SOCKERLESS_ADMIN_PUBLIC_URL: ${ADMIN_PUBLIC_URL:?set ADMIN_PUBLIC_URL in deploy/.env}
+      SOCKERLESS_ADMIN_INSECURE_COOKIES: ${SHAUTH_INSECURE_COOKIES:-false}
+      APPLICATION_RELEASE_REVISION: ${APPLICATION_RELEASE_REVISION:?set APPLICATION_RELEASE_REVISION in deploy/.env}
+    depends_on:
+      shauth:
+        condition: service_started
+    networks:
+      default: {}
+
+  simulator-aws:
+    image: ghcr.io/e6qu/sockerless-simulator-aws:${SOCKERLESS_TAG:?set SOCKERLESS_TAG in deploy/.env}
+    environment:
+      SIM_LISTEN_ADDR: :4566
+      SIM_RUNTIME: process
+      SIM_UI_OIDC_ISSUER: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}
+      SIM_UI_OIDC_CLIENT_ID: sockerless-aws
+      SIM_UI_OIDC_CLIENT_SECRET: ${AWS_OIDC_CLIENT_SECRET:?set AWS_OIDC_CLIENT_SECRET in deploy/.env}
+      SIM_UI_PUBLIC_URL: ${AWS_SIM_PUBLIC_URL:?set AWS_SIM_PUBLIC_URL in deploy/.env}
+      SIM_UI_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in deploy/.env}
+      SIM_UI_INSECURE_COOKIES: ${SHAUTH_INSECURE_COOKIES:-false}
+      APPLICATION_RELEASE_REVISION: ${APPLICATION_RELEASE_REVISION:?set APPLICATION_RELEASE_REVISION in deploy/.env}
+      # Co-served console: the credential-minting pages read the same
+      # simulator origin they are served from (empty coordinates), exactly
+      # as the AWS console reads AWS's own APIs same-origin.
+      SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT: ""
+      SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT: ""
+      SOCKERLESS_CONSOLE_FEDERATION_AUDIENCE: ${AWS_FEDERATION_ROLE_ARN:-}
+      # Verifying a federated operator's Shauth-issued web identity token
+      # (AssumeRoleWithWebIdentity) means fetching Shauth's real OpenID
+      # Connect discovery document and JWKS from SHAUTH_PUBLIC_URL — reached
+      # through caddy, so this simulator needs to trust caddy's local
+      # certificate authority the same way the hydra service does.
+      SSL_CERT_FILE: /caddy-data/caddy/pki/authorities/local/root.crt
+    depends_on:
+      shauth:
+        condition: service_started
+    volumes:
+      - caddy-data:/caddy-data:ro
+    networks:
+      default: {}
+
+  simulator-gcp:
+    image: ghcr.io/e6qu/sockerless-simulator-gcp:${SOCKERLESS_TAG:?set SOCKERLESS_TAG in deploy/.env}
+    environment:
+      SIM_LISTEN_ADDR: :4567
+      SIM_RUNTIME: process
+      SIM_UI_OIDC_ISSUER: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}
+      SIM_UI_OIDC_CLIENT_ID: sockerless-gcp
+      SIM_UI_OIDC_CLIENT_SECRET: ${GCP_OIDC_CLIENT_SECRET:?set GCP_OIDC_CLIENT_SECRET in deploy/.env}
+      SIM_UI_PUBLIC_URL: ${GCP_SIM_PUBLIC_URL:?set GCP_SIM_PUBLIC_URL in deploy/.env}
+      SIM_UI_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in deploy/.env}
+      SIM_UI_INSECURE_COOKIES: ${SHAUTH_INSECURE_COOKIES:-false}
+      APPLICATION_RELEASE_REVISION: ${APPLICATION_RELEASE_REVISION:?set APPLICATION_RELEASE_REVISION in deploy/.env}
+      SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT: ""
+      SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT: ""
+      SOCKERLESS_CONSOLE_FEDERATION_AUDIENCE: ${GCP_WORKFORCE_PROVIDER:-}
+      # See simulator-aws's SSL_CERT_FILE comment: the Google Cloud simulator
+      # fetches Shauth's real discovery document/JWKS through caddy the same
+      # way to verify a workforce-federated operator's assertion.
+      SSL_CERT_FILE: /caddy-data/caddy/pki/authorities/local/root.crt
+    depends_on:
+      shauth:
+        condition: service_started
+    volumes:
+      - caddy-data:/caddy-data:ro
+    networks:
+      default: {}
+
+  # simulator-azure-cloud is the Azure Resource Manager / Microsoft Graph /
+  # Azure Monitor data plane: the same simulator-azure image as the console,
+  # configured with no SIM_UI_OIDC_* (no browser ever reaches it directly)
+  # and no SOCKERLESS_CONSOLE_FEDERATION_* (federation is not configured on
+  # this instance — it is the target the console federates against, not a
+  # federator itself).
+  simulator-azure-cloud:
+    image: ghcr.io/e6qu/sockerless-simulator-azure:${SOCKERLESS_TAG:?set SOCKERLESS_TAG in deploy/.env}
+    environment:
+      SIM_LISTEN_ADDR: :4568
+      SIM_RUNTIME: process
+      APPLICATION_RELEASE_REVISION: ${APPLICATION_RELEASE_REVISION:?set APPLICATION_RELEASE_REVISION in deploy/.env}
+      # See simulator-aws's SSL_CERT_FILE comment: verifying a federated
+      # identity credential's client_assertion means fetching Shauth's real
+      # discovery document/JWKS through caddy the same way.
+      SSL_CERT_FILE: /caddy-data/caddy/pki/authorities/local/root.crt
+    volumes:
+      - caddy-data:/caddy-data:ro
+    networks:
+      default: {}
+
+  # simulator-azure-console is the operator-facing portal: it federates the
+  # signed-in Shauth operator through its own server-side broker
+  # (SOCKERLESS_CONSOLE_FEDERATION_*) against simulator-azure-cloud's real
+  # Microsoft Entra token endpoint (reached directly over the compose
+  # network — a plain server-to-server call, never subject to the
+  # browser-facing OIDC issuer/public URL validation above, so it never
+  # needs to cross caddy), then reads Azure Resource Manager, Microsoft
+  # Graph, and Log Analytics on simulator-azure-cloud's real APIs — never a
+  # same-process shortcut. It only starts once provision.sh has written
+  # SOCKERLESS_CONSOLE_FEDERATION_CLIENT_ID to deploy/.env.generated (the
+  # managed identity clientId it federates as), so it is gated behind the
+  # "console" profile: `docker compose --profile console up -d` after
+  # provisioning. See deploy/README.md "Boot order".
+  simulator-azure-console:
+    image: ghcr.io/e6qu/sockerless-simulator-azure:${SOCKERLESS_TAG:?set SOCKERLESS_TAG in deploy/.env}
+    profiles: ["console"]
+    environment:
+      SIM_LISTEN_ADDR: :4568
+      SIM_RUNTIME: process
+      SIM_UI_OIDC_ISSUER: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}
+      SIM_UI_OIDC_CLIENT_ID: sockerless-azure
+      SIM_UI_OIDC_CLIENT_SECRET: ${AZURE_OIDC_CLIENT_SECRET:?set AZURE_OIDC_CLIENT_SECRET in deploy/.env}
+      SIM_UI_PUBLIC_URL: ${AZURE_CONSOLE_SIM_PUBLIC_URL:?set AZURE_CONSOLE_SIM_PUBLIC_URL in deploy/.env}
+      SIM_UI_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in deploy/.env}
+      SIM_UI_INSECURE_COOKIES: ${SHAUTH_INSECURE_COOKIES:-false}
+      APPLICATION_RELEASE_REVISION: ${APPLICATION_RELEASE_REVISION:?set APPLICATION_RELEASE_REVISION in deploy/.env}
+      SOCKERLESS_CONSOLE_CLOUD_API_ENDPOINT: http://simulator-azure-cloud:4568
+      SOCKERLESS_CONSOLE_LOGS_API_ENDPOINT: http://simulator-azure-cloud:4568
+      SOCKERLESS_CONSOLE_GRAPH_API_ENDPOINT: http://simulator-azure-cloud:4568
+      SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT: http://simulator-azure-cloud:4568
+      SOCKERLESS_CONSOLE_FEDERATION_TENANT: ${AZURE_FEDERATION_TENANT:?set AZURE_FEDERATION_TENANT in deploy/.env}
+      SOCKERLESS_CONSOLE_FEDERATION_CLIENT_ID: ${SOCKERLESS_CONSOLE_FEDERATION_CLIENT_ID:?run deploy/provision.sh first to mint the managed identity (see deploy/README.md)}
+    depends_on:
+      shauth:
+        condition: service_started
+      simulator-azure-cloud:
+        condition: service_started
+    networks:
+      default: {}
+
+  # The only internet-facing service: TLS-terminates every persistent
+  # origin above by hostname (SNI) on one shared port and reverse-proxies to
+  # the backend service over the private compose network. See
+  # deploy/Caddyfile and deploy/README.md "Security".
+  caddy:
+    image: caddy:2.9.1-alpine
+    environment:
+      SHAUTH_HOSTNAME: ${SHAUTH_HOSTNAME:-shauth.localtest.me}
+      ADMIN_HOSTNAME: ${ADMIN_HOSTNAME:-admin.localtest.me}
+      AWS_SIM_HOSTNAME: ${AWS_SIM_HOSTNAME:-aws.localtest.me}
+      GCP_SIM_HOSTNAME: ${GCP_SIM_HOSTNAME:-gcp.localtest.me}
+      AZURE_CLOUD_SIM_HOSTNAME: ${AZURE_CLOUD_SIM_HOSTNAME:-azure-cloud.localtest.me}
+      AZURE_CONSOLE_SIM_HOSTNAME: ${AZURE_CONSOLE_SIM_HOSTNAME:-azure-console.localtest.me}
+      CADDY_PORT: ${CADDY_PORT:-8443}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    ports:
+      - "127.0.0.1:${CADDY_PORT:-8443}:${CADDY_PORT:-8443}"
+    depends_on:
+      shauth:
+        condition: service_started
+      sockerless-admin:
+        condition: service_started
+      simulator-aws:
+        condition: service_started
+      simulator-gcp:
+        condition: service_started
+      simulator-azure-cloud:
+        condition: service_started
+    networks:
+      default:
+        aliases:
+          - "${SHAUTH_HOSTNAME:-shauth.localtest.me}"
+          - "${ADMIN_HOSTNAME:-admin.localtest.me}"
+          - "${AWS_SIM_HOSTNAME:-aws.localtest.me}"
+          - "${GCP_SIM_HOSTNAME:-gcp.localtest.me}"
+          - "${AZURE_CLOUD_SIM_HOSTNAME:-azure-cloud.localtest.me}"
+          - "${AZURE_CONSOLE_SIM_HOSTNAME:-azure-console.localtest.me}"
+
+networks:
+  default: {}
+
+volumes:
+  postgres-data:
+  caddy-data:

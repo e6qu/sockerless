@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Ory Hydra configuration for the Shauth-fronted OpenID Connect provider.
+# Mirrors the exact config Shauth's own compose.yaml mounts (Shauth is a
+# deployment-neutral identity service — this is the one Hydra config every
+# Shauth deployment ships, not a sockerless-specific variant).
+serve: {}
+strategies:
+  access_token: jwt
+
+ttl:
+  access_token: 15m
+  refresh_token: 720h
+  id_token: 15m
+  auth_code: 10m

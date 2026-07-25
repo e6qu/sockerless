@@ -44,15 +44,10 @@ try {
       await assertMintedIAMAccessKey(page, app);
       await assertCreatedOrganizationAccount(page, app);
     }
-    // The Azure portal has no browser-driven minting flow here yet: this
-    // environment co-serves each console with its cloud, and the Azure
-    // portal's browser-side client_credentials exchange requires a provisioned
-    // portal identity whose generated client id must be console start-time
-    // configuration — impossible to provision against the same process. The
-    // separately-deployed shape needs the server-side federation broker and
-    // faithful CORS (BUG-2640); Entra minting itself is proven end to end by
-    // the Azure SDK and az CLI suites.
-    if (app.name === "Sockerless Microsoft Azure simulator") await assertFederatedAzureToken(context, app);
+    if (app.name === "Sockerless Microsoft Azure simulator") {
+      await assertFederatedAzureToken(context, page, app);
+      await assertMintedEntraClientSecret(page, app);
+    }
     await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
     await context.close();
@@ -269,84 +264,34 @@ async function assertFederatedCloudToken(context, page, app) {
 }
 
 // assertFederatedAzureToken proves the Azure portal federates the signed-in
-// operator's real Shauth assertion into an Azure Resource Manager token the way
-// it reaches Azure: an administrator registers a user-assigned managed identity
-// and a federated identity credential trusting the operator's issuer, subject,
-// and audience, and Microsoft Entra exchanges the assertion for a token. The
-// exchange is the security-critical, novel path; the portal's real Azure
-// Resource Manager reads over that token are covered by the Playwright suite,
-// which seeds resources through the same APIs and asserts they render.
-async function assertFederatedAzureToken(context, app) {
+// operator through the console's own server-side broker — the fix for the
+// cross-origin gap that once blocked the Azure browser data plane. Real
+// Microsoft Entra serves no CORS for the client_credentials grant, so the
+// console (its own OpenID Connect relying party) performs the Workload Identity
+// Federation exchange server-side at /auth/federation/token, against a separate
+// cloud process whose federated identity credential the harness provisioned for
+// the operator's subject; the browser then reads Azure Resource Manager and
+// Microsoft Graph directly over that cloud's real CORS. A bearer token here
+// means the whole server-side federation works end to end with a live identity.
+async function assertFederatedAzureToken(context, page, app) {
   const origin = new URL(app.launch).origin;
-  const sub = "00000000-0000-0000-0000-000000000001";
-  const rg = "console-federation-rg";
-  const identityName = "console-identity";
-
-  const subjectResponse = await context.request.get(`${origin}/auth/federation-subject`);
-  assert.equal(subjectResponse.status(), 200, `${app.name} auth layer did not expose the operator assertion`);
-  const { subject_token: subjectToken } = await subjectResponse.json();
-  assert.ok(subjectToken, `${app.name} exposed no operator assertion to federate`);
-
-  // The federated identity credential pins the operator's own issuer, subject,
-  // and audience, so read them from the assertion the way an administrator reads
-  // them off a real token before registering the trust.
-  const claims = JSON.parse(Buffer.from(subjectToken.split(".")[1], "base64url").toString("utf8"));
-  const audience = Array.isArray(claims.aud) ? claims.aud[0] : claims.aud;
-
-  // The Azure simulator enforces bearer authentication on its Azure Resource
-  // Manager plane exactly as real ARM does: a request without a token whose
-  // `aud` is the management audience is rejected with 401. The administrator
-  // provisioning below therefore acquires an ARM token through a client
-  // credentials grant — the same flow a real admin client (az login as a service
-  // principal, azidentity) uses — and presents it on every ARM write. The token
-  // endpoint is exempt because it is how a client obtains the credential.
-  const adminTokenResponse = await context.request.post(`${origin}/organizations/oauth2/v2.0/token`, {
-    form: {
-      grant_type: "client_credentials",
-      client_id: "console-provisioning-admin",
-      scope: "https://management.azure.com/.default",
-    },
-  });
-  assert.equal(adminTokenResponse.status(), 200, `${app.name} admin ARM token request returned ${adminTokenResponse.status()}`);
-  const { access_token: adminToken } = await adminTokenResponse.json();
-  assert.ok(adminToken, `${app.name} issued no admin ARM token to provision with`);
-  const armAuth = { Authorization: `Bearer ${adminToken}` };
-
-  const rgResponse = await context.request.put(
-    `${origin}/subscriptions/${sub}/resourcegroups/${rg}?api-version=2021-04-01`,
-    { headers: armAuth, data: { location: "eastus" } },
+  for (const scope of ["arm", "graph"]) {
+    const brokered = await context.request.get(`${origin}/auth/federation/token?scope=${scope}`);
+    assert.equal(brokered.status(), 200, `${app.name} federation broker (${scope}) returned ${brokered.status()}`);
+    const token = await brokered.json();
+    assert.ok(token.access_token, `${app.name} federation broker issued no ${scope} token`);
+    assert.equal(token.token_type, "Bearer", `${app.name} brokered ${scope} token was not a bearer token`);
+  }
+  // The signed-in console reads a real cloud API through that federation; a load
+  // error would mean the SPA's broker-backed federation path is broken.
+  await page.goto(`${origin}/ui/subscriptions`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Subscriptions" }).waitFor({ state: "visible" });
+  assert.equal(
+    await page.getByText("Couldn't load").count() + await page.getByText("Could not load").count(),
+    0,
+    `${app.name} portal failed to read the real Azure API over the federation broker`,
   );
-  assert.ok(rgResponse.ok(), `${app.name} resource group create returned ${rgResponse.status()}`);
-
-  const identityResponse = await context.request.put(
-    `${origin}/subscriptions/${sub}/resourceGroups/${rg}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${identityName}?api-version=2024-11-30`,
-    { headers: armAuth, data: { location: "eastus" } },
-  );
-  assert.ok(identityResponse.ok(), `${app.name} managed identity create returned ${identityResponse.status()}`);
-  const { properties: identity } = await identityResponse.json();
-  assert.ok(identity?.clientId, `${app.name} managed identity has no client id`);
-
-  const ficResponse = await context.request.put(
-    `${origin}/subscriptions/${sub}/resourceGroups/${rg}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${identityName}/federatedIdentityCredentials/console-fic?api-version=2024-11-30`,
-    { headers: armAuth, data: { properties: { issuer: claims.iss, subject: claims.sub, audiences: [audience] } } },
-  );
-  assert.ok(ficResponse.ok(), `${app.name} federated identity credential create returned ${ficResponse.status()}`);
-
-  const exchange = await context.request.post(`${origin}/organizations/oauth2/v2.0/token`, {
-    form: {
-      grant_type: "client_credentials",
-      client_id: identity.clientId,
-      scope: "https://management.azure.com/.default",
-      client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-      client_assertion: subjectToken,
-    },
-  });
-  assert.equal(exchange.status(), 200, `${app.name} Microsoft Entra token exchange returned ${exchange.status()}`);
-  const token = await exchange.json();
-  assert.ok(token.access_token, `${app.name} exchange issued no federated token`);
-  assert.equal(token.token_type, "Bearer", `${app.name} federated token was not a bearer token`);
 }
-
 // assertSockerlessCliLogin proves the packaged terminal sign-in end to end:
 // `sockerless login` starts the RFC 8252 loopback flow, the operator signs
 // into Shauth (and authorizes the CLI once) in a real browser, and the vendor
@@ -559,6 +504,55 @@ async function assertCreatedProject(page) {
   await page.getByTestId("project-picker").click();
   await page.getByTestId("project-row-sockerless").click();
   await page.getByTestId("project-picker").getByText("sockerless").waitFor({ state: "visible" });
+}
+
+// assertMintedEntraClientSecret drives the Azure portal's app-registration and
+// Certificates & secrets blades as the signed-in operator — the browser data
+// plane the server-side federation broker unblocks. It creates an app
+// registration and mints a client secret through the real Microsoft Graph
+// APIs, and asserts the real portal's one-time secret disclosure.
+async function assertMintedEntraClientSecret(page, app) {
+  const appName = `rps-minted-${Date.now() % 1_000_000}`;
+
+  await page.getByRole("link", { name: "App registrations" }).click();
+  await page.getByRole("button", { name: "New registration" }).click();
+  await page.getByTestId("entra-app-name-input").fill(appName);
+  await page.getByTestId("entra-register-submit").click();
+
+  let clientId;
+  try {
+    clientId = (await page.getByTestId("entra-app-client-id").innerText()).trim();
+  } catch (cause) {
+    const alerts = await page.getByRole("alert").allInnerTexts();
+    throw new Error(
+      `${app.name} registration detail never rendered at ${page.url()}; visible alerts: ${JSON.stringify(alerts)}`,
+      { cause },
+    );
+  }
+  assert.match(
+    clientId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    `${app.name} registration exposed no application (client) ID`,
+  );
+
+  await page.getByTestId("entra-new-client-secret").click();
+  await page.getByTestId("entra-secret-description").fill("rps-proof");
+  await page.getByTestId("entra-secret-add").click();
+  const secret = (await page.getByTestId("entra-secret-value").innerText()).trim();
+  assert.ok(secret.length >= 20, `${app.name} minted client secret was empty`);
+  await page.getByTestId("entra-secret-notice").waitFor({ state: "visible" });
+  await page.getByTestId("entra-cli-usage").waitFor({ state: "visible" });
+  // Wait for the stored-credential row so the post-mint refetch settles before
+  // the reload (an aborted in-flight request would trip the failure monitor).
+  await page.getByTestId("entra-secret-row").first().waitFor({ state: "visible" });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  assert.equal(
+    await page.getByText(secret).count(),
+    0,
+    `${app.name} client secret was still readable after leaving the blade`,
+  );
+  await page.getByTestId("entra-secret-hint").first().waitFor({ state: "visible" });
 }
 
 async function assertAdministratorMutation(context) {

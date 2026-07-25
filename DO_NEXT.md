@@ -86,12 +86,20 @@ auth login --cred-file`, `az login --federated-token` against a TLS simulator
 instance), with the simulator's missing STS introspection slice added
 (BUG-2641) and the relying-party matrix driving the whole terminal story.
 
-Next per the roadmap: phase 4 — the deployment and provisioning recipe
-(committed infrastructure hosting Admin + the three simulators + Shauth at
-persistent origins, console OIDC client registration, federation resources
-via Terraform, a live-origin smoke) — which also carries BUG-2640, the Azure
-server-side federation broker + CORS work that unlocks the Azure browser
-minting flow. Filed follow-ups with fix
+Phase 4 shipped, completing the Console Self-Service roadmap: a committed
+`deploy/` recipe (Shauth stack + Admin + three simulators behind a Caddy TLS
+proxy, real-API provisioning, a `make deploy-smoke` gate) and BUG-2640 — the
+Azure portal now federates through the console's server-side broker with
+faithful ARM/Graph CORS, the harness running the Azure console and cloud as
+separate processes, which unblocked the Azure browser minting flow deferred
+since phase 1. All four phases (credential minting; account/project/
+subscription management; `sockerless login`; deployment + Azure federation)
+have merged or are in flight.
+
+No roadmap phase remains queued. Candidate next work: the staged live-cloud
+validation backlog (BUG-1075), the deployment recipe's real-registry/GHCR
+publish path, or new console surfaces as the product grows — pick with the
+user. Filed follow-ups with fix
 shapes: BUG-2637 (inert default AwsTable actions), BUG-2638 (GCP
 `serviceAccounts.create` overwrite vs 409), BUG-2639 (Entra implicit grant for
 unregistered client ids), BUG-2640 (Azure portal federation deployability).

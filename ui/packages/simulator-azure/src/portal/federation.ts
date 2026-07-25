@@ -1,15 +1,27 @@
 // The portal reads the real Azure Resource Manager APIs, and it reaches them
 // exactly as it would reach real Azure: it federates the signed-in operator's
 // Shauth assertion into an Azure token through Microsoft Entra's own Workload
-// Identity Federation, then calls the real Azure Resource Manager paths with it.
-// Only the coordinates — the endpoint base URLs, the tenant, and the identity
-// the console federates as — change between the simulator and real Azure. There
-// is no simulator-versus-cloud branch and no simulator-served credential broker.
+// Identity Federation. Only the coordinates — the endpoint base URLs and the
+// identity the console federates as — change between the simulator and real
+// Azure; there is no simulator-versus-cloud branch.
+//
+// Unlike Azure Resource Manager and Microsoft Graph, real Microsoft Entra
+// serves no CORS for the client_credentials token endpoint, so a browser
+// cannot read that response cross-origin — the exchange itself runs
+// server-side, in the console's own federation broker
+// (simulators/azure/shared/federation_broker.go): the portal asks its own
+// origin for a token, the broker performs the client_credentials grant with
+// the signed-in operator's assertion (which never leaves the server), and
+// returns only the token and its lifetime. Everything after the token — Azure
+// Resource Manager, Microsoft Graph, and Log Analytics reads — stays
+// browser-side against the cloud's own CORS-serving surfaces, reached
+// directly by the SPA exactly as it would reach real Azure.
 //
 // Whether a credential is attached is a real deployment condition, not a
-// fallback: a portal wired to an identity provider federates the operator and
-// every call carries a token, and a federation failure there is surfaced rather
-// than hidden; a portal with no identity provider — a local or test instance —
+// fallback: a portal wired to a cloud identity federates the operator and
+// every call carries a token, and a federation failure there is surfaced
+// rather than hidden; a portal with no cloud identity configured — a local or
+// test instance, or a console auth layer with no cloud identity assigned yet —
 // runs unauthenticated, the mode the account control reports. The two are
 // distinguished by the portal's own configuration, never guessed.
 
@@ -24,23 +36,24 @@ interface PortalConfig {
   // Microsoft Graph is likewise its own host (graph.microsoft.com) with its
   // own token audience. Empty means the portal's own origin.
   graphApiEndpoint?: string;
-  federationEndpoint?: string;
+  // The console's own server-side federation broker: GET
+  // "${federationTokenEndpoint}?scope=arm|logs|graph" with the operator's
+  // session cookie returns a short-lived Azure token for that resource. Empty
+  // means this deployment has no cloud identity to federate the operator
+  // into — the tenant and client ID the exchange itself needs live at the
+  // broker, never in this browser-visible config.
+  federationTokenEndpoint?: string;
+  // The Microsoft Entra directory tenant this deployment federates into.
+  // Display-only: CLI usage samples (e.g. the app registration blade's
+  // `az login --tenant`) show it; the exchange itself no longer needs it
+  // client-side.
   federationTenant?: string;
-  federationClientId?: string;
-  // Where the portal's auth layer exposes the operator's assertion.
-  federationSubject?: string;
 }
 
 // Azure Resource Manager, Log Analytics, and Microsoft Graph are separate
-// resources, each reached with a token scoped to it. Real Azure issues each
-// from the same federated assertion; the simulator does the same.
+// resources, each reached with a token scoped to it. The broker resolves
+// these short names to Microsoft Entra's own resource scopes server-side.
 export type CloudScope = "arm" | "logs" | "graph";
-
-const SCOPES: Record<CloudScope, string> = {
-  arm: "https://management.azure.com/.default",
-  logs: "https://api.loganalytics.io/.default",
-  graph: "https://graph.microsoft.com/.default",
-};
 
 let configPromise: Promise<PortalConfig> | null = null;
 const cachedTokens: Partial<Record<CloudScope, { value: string; expiresAt: number }>> = {};
@@ -55,100 +68,36 @@ async function portalConfig(): Promise<PortalConfig> {
   return configPromise;
 }
 
-// FederationSetup is a complete, validated federation configuration. Every field
-// is required and non-empty; a base endpoint that is the empty string is the
-// deliberate "same origin as the portal" coordinate, not a missing value.
-interface FederationSetup {
-  subject: string;
-  clientId: string;
-  tenant: string;
-  endpoint: string;
+// resolveFederation turns the portal's configuration into an explicit
+// decision, with no implicit default: federationTokenEndpoint is the sole
+// signal that this deployment intends to federate the operator into Azure.
+// The server only ever sets it alongside identityEndpoint (see
+// simulators/azure/shared/server.go's RegisterUI), so there is no partial
+// state to reject here the way there was when the browser held the tenant
+// and client ID itself — a console auth layer with no cloud identity
+// configured is a supported deployment shape (unauthenticated reads), not a
+// broken one.
+function resolveFederation(config: PortalConfig): string | null {
+  return config.federationTokenEndpoint || null;
 }
 
-// resolveFederation turns the portal's configuration into an explicit decision,
-// with no implicit defaults and no partial fall-through:
-//   - A cloud identity to federate as (federationClientId) is the signal that a
-//     deployment intends to federate. When it is set, every coordinate the
-//     exchange needs must also be set; an incomplete set is a deployment error
-//     surfaced here, never patched with a default (an empty tenant, for one,
-//     would build the protocol-relative `//oauth2/v2.0/token`).
-//   - With no cloud identity configured, the portal does not federate; reads go
-//     unauthenticated and the cloud decides what they get (real Azure answers
-//     401; the simulator answers as it does any unauthenticated read). This is a
-//     deliberate, configuration-driven mode — a local instance, or a deployment
-//     that has not set federation up — chosen by the absence of the coordinate,
-//     not a fallback from a failed attempt.
-function resolveFederation(config: PortalConfig): FederationSetup | null {
-  if (!config.federationClientId) {
-    // An operator auth layer with no cloud identity to federate the operator
-    // into is an incomplete federation configuration — surfaced loudly rather
-    // than degraded into unauthenticated reads the cloud would reject anyway.
-    // With no auth layer either, the portal runs unauthenticated: a local or
-    // test instance, chosen by the absence of both coordinates.
-    if (config.identityEndpoint) {
-      throw new Error(
-        "incomplete federation configuration: identityEndpoint is set but federationClientId is missing",
-      );
-    }
-    return null;
-  }
-  const missing = (
-    [
-      ["identityEndpoint", config.identityEndpoint],
-      ["federationSubject", config.federationSubject],
-      ["federationTenant", config.federationTenant],
-    ] as const
-  )
-    .filter(([, value]) => !value)
-    .map(([name]) => name);
-  if (missing.length > 0) {
-    throw new Error(
-      `incomplete federation configuration: federationClientId is set but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing`,
-    );
-  }
-  // federationEndpoint is allowed to be empty: that is the portal's own origin,
-  // the coordinate for a console co-served with the cloud it reads.
-  return {
-    subject: config.federationSubject!,
-    clientId: config.federationClientId,
-    tenant: config.federationTenant!,
-    endpoint: config.federationEndpoint ?? "",
-  };
-}
-
-// federatedToken exchanges the operator's assertion for a short-lived Azure
-// token scoped to a resource at Microsoft Entra — the real Workload Identity
-// Federation client-assertion grant, at whichever coordinate the portal is
-// configured for.
-async function federatedToken(setup: FederationSetup, scope: CloudScope): Promise<string> {
+// federatedToken asks the console's own federation broker for a short-lived
+// Azure token scoped to a resource. The broker performs the real Microsoft
+// Entra Workload Identity Federation client-assertion grant server-side (see
+// federation.ts's module comment); this call only ever reaches the portal's
+// own origin.
+async function federatedToken(tokenEndpoint: string, scope: CloudScope): Promise<string> {
   const now = Date.now();
   const cached = cachedTokens[scope];
   if (cached && cached.expiresAt - 30_000 > now) {
     return cached.value;
   }
 
-  const subjectResponse = await fetch(setup.subject, { credentials: "include" });
-  if (!subjectResponse.ok) {
-    throw new Error(`could not read the operator assertion: HTTP ${subjectResponse.status}`);
+  const response = await fetch(`${tokenEndpoint}?scope=${scope}`, { credentials: "include" });
+  if (!response.ok) {
+    throw new Error(`console federation broker returned HTTP ${response.status}`);
   }
-  const { subject_token: subjectToken } = (await subjectResponse.json()) as { subject_token: string };
-
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: setup.clientId,
-    scope: SCOPES[scope],
-    client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-    client_assertion: subjectToken,
-  });
-  const exchange = await fetch(`${setup.endpoint}/${setup.tenant}/oauth2/v2.0/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  if (!exchange.ok) {
-    throw new Error(`Microsoft Entra token exchange failed: HTTP ${exchange.status}`);
-  }
-  const token = (await exchange.json()) as { access_token: string; expires_in: number };
+  const token = (await response.json()) as { access_token: string; expires_in: number };
   cachedTokens[scope] = { value: token.access_token, expiresAt: now + token.expires_in * 1000 };
   return token.access_token;
 }
@@ -172,12 +121,20 @@ export async function directoryTenantId(): Promise<string | null> {
 // portal is configured to federate (see resolveFederation).
 export async function authorizedFetch(path: string, scope: CloudScope = "arm", init: RequestInit = {}): Promise<Response> {
   const config = await portalConfig();
-  const setup = resolveFederation(config);
+  const tokenEndpoint = resolveFederation(config);
   const headers = new Headers(init.headers);
-  if (setup) {
-    headers.set("Authorization", `Bearer ${await federatedToken(setup, scope)}`);
+  if (tokenEndpoint) {
+    headers.set("Authorization", `Bearer ${await federatedToken(tokenEndpoint, scope)}`);
   }
-  return fetch(`${baseFor(config, scope)}${path}`, { ...init, headers, credentials: "include" });
+  // The cloud call authenticates with the federated Bearer token, never a
+  // cookie — exactly as a browser reaches real Azure Resource Manager and
+  // Microsoft Graph. Omitting credentials is also what makes the cross-origin
+  // read work: real ARM/Graph answer a browser with Access-Control-Allow-Origin
+  // but not Access-Control-Allow-Credentials (they are token-, not
+  // cookie-authenticated), so a credentialed request would be rejected. Only
+  // the console's own same-origin endpoints (config, the federation broker)
+  // carry the session cookie.
+  return fetch(`${baseFor(config, scope)}${path}`, { ...init, headers, credentials: "omit" });
 }
 
 // authorizedJSON reads a real Azure API path as JSON, raising the API's own
@@ -190,8 +147,8 @@ export async function authorizedJSON<T>(path: string, scope: CloudScope = "arm")
   return (await response.json()) as T;
 }
 
-// authorizedJSONPost posts a JSON body to a real Azure API path — the shape Log
-// Analytics' query endpoint and other POST reads take.
+// authorizedJSONPost posts a JSON body to a real Azure API path — the shape
+// Log Analytics' query endpoint and other POST reads take.
 export async function authorizedJSONPost<T>(path: string, requestBody: unknown, scope: CloudScope = "arm"): Promise<T> {
   const response = await authorizedFetch(path, scope, {
     method: "POST",
