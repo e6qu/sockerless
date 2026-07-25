@@ -2,6 +2,7 @@ package azure_sdk_test
 
 import (
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -244,6 +245,51 @@ func TestACR_CacheRuleIdempotentUpsert(t *testing.T) {
 	secondResp, err := second.PollUntilDone(ctx, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "ghcr-io/owner/app-v2", *secondResp.Properties.TargetRepository)
+}
+
+// TestACR_LoginServerIsSimulatorCoordinate verifies BUG-2643's fix: a
+// registry's `loginServer` is derived from the ARM request host (via the
+// SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON "acr" template TestMain
+// configures, mirroring storage/keyVault/serviceBus) rather than hardcoded to
+// the real-cloud `<name>.azurecr.io` host, which the simulator can never
+// serve. The derived host must actually resolve to this simulator's ACR data
+// plane — the OCI /v2/ and /acr/v1/ routes are mounted without a host
+// component, so any Host reaching this process's port is served, but the
+// value must no longer be the unreachable real-cloud host.
+func TestACR_LoginServerIsSimulatorCoordinate(t *testing.T) {
+	const (
+		rgName       = "acr-loginserver-rg"
+		registryName = "loginservertestreg"
+	)
+
+	ensureRG(t, rgName)
+
+	registriesClient, err := armcontainerregistry.NewRegistriesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	poller, err := registriesClient.BeginCreate(ctx, rgName, registryName, armcontainerregistry.Registry{
+		Location: ptrStr("eastus"),
+		SKU:      &armcontainerregistry.SKU{Name: ptrSKU(armcontainerregistry.SKUNameBasic)},
+	}, nil)
+	require.NoError(t, err)
+	created, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, created.Properties)
+	require.NotNil(t, created.Properties.LoginServer)
+	loginServer := *created.Properties.LoginServer
+
+	assert.False(t, strings.HasSuffix(loginServer, ".azurecr.io"),
+		"loginServer must not be the unreachable real-cloud host, got %q", loginServer)
+	assert.Contains(t, loginServer, registryName+".azurecr.shim.localhost")
+
+	// The advertised coordinate must actually reach this simulator's ACR data
+	// plane, proving it differs from real Azure only in coordinates.
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/acr/v1/_catalog", nil)
+	require.NoError(t, err)
+	req.Host = loginServer
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func ptrSKU(s armcontainerregistry.SKUName) *armcontainerregistry.SKUName { return &s }

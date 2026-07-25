@@ -380,6 +380,20 @@ azure_console_arm -o /dev/null -X PUT \
   "$azure_console_cloud/subscriptions/$azure_subscription/resourceGroups/console-federation-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/console-identity/federatedIdentityCredentials/shauth-operator?api-version=2023-01-31" \
   -d "{\"properties\":{\"issuer\":\"http://localhost:8080\",\"subject\":\"$shauth_admin_subject\",\"audiences\":[\"sockerless-azure\"]}}"
 
+# Seed a Container Apps managed environment and job so the operator has a real
+# resource to open in the portal — the browser flow proves the resource detail
+# blade renders live cloud data end to end (federated ARM read), not just its
+# shell. Provisioned as an administrator through the real Azure Resource Manager
+# API on the same cloud process the console reads.
+azure_console_env_id="/subscriptions/$azure_subscription/resourceGroups/console-federation-rg/providers/Microsoft.App/managedEnvironments/console-demo-env"
+azure_console_arm -o /dev/null -X PUT \
+  "$azure_console_cloud$azure_console_env_id?api-version=2024-03-01" \
+  -d '{"location":"eastus","properties":{}}'
+azure_console_job=console-demo-job
+azure_console_arm -o /dev/null -X PUT \
+  "$azure_console_cloud/subscriptions/$azure_subscription/resourceGroups/console-federation-rg/providers/Microsoft.App/jobs/$azure_console_job?api-version=2024-03-01" \
+  -d "{\"location\":\"eastus\",\"properties\":{\"environmentId\":\"$azure_console_env_id\",\"configuration\":{\"triggerType\":\"Manual\",\"replicaTimeout\":60},\"template\":{\"containers\":[{\"name\":\"worker\",\"image\":\"alpine:latest\",\"command\":[\"sh\",\"-c\"],\"args\":[\"sleep 30\"]}]}}}"
+
 # The console (UI + auth) starts only now that its cloud identity exists: it
 # reads the generated client id at startup and points every cloud coordinate at
 # the separate cloud process.
@@ -504,6 +518,7 @@ export SOCKERLESS_CLI_AZURE_CONFIG_DIR="$work_dir/cli-home/azure"
 export SOCKERLESS_CLI_AZURE_CA_BUNDLE="$work_dir/azure-cli-tls.crt"
 export SOCKERLESS_CLI_AZURE_ARM_ENDPOINT="$azure_cli_base"
 export SOCKERLESS_CLI_AZURE_FEDERATION_CLIENT_ID="$azure_cli_client_id"
+export SOCKERLESS_RPS_AZURE_JOB="$azure_console_job"
 # ---- end `sockerless login` coordinates -------------------------------------
 
 assert_anonymous_validation() {

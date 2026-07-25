@@ -174,8 +174,8 @@ func TestMain(m *testing.M) {
 
 	simCmd = exec.Command(binaryPath)
 	advertisedEndpoints := fmt.Sprintf(
-		`{"storage":{"blob":"http://{account}.blob.shim.localhost:%d/","file":"http://{account}.file.shim.localhost:%d/","queue":"http://{account}.queue.shim.localhost:%d/","table":"http://{account}.table.shim.localhost:%d/","web":"http://{account}.web.shim.localhost:%d/","dfs":"http://{account}.dfs.shim.localhost:%d/"},"keyVault":"https://{vault}.vault.shim.localhost:%d/","serviceBus":"https://{namespace}.servicebus.shim.localhost:%d/"}`,
-		port, port, port, port, port, port, port, port)
+		`{"storage":{"blob":"http://{account}.blob.shim.localhost:%d/","file":"http://{account}.file.shim.localhost:%d/","queue":"http://{account}.queue.shim.localhost:%d/","table":"http://{account}.table.shim.localhost:%d/","web":"http://{account}.web.shim.localhost:%d/","dfs":"http://{account}.dfs.shim.localhost:%d/"},"keyVault":"https://{vault}.vault.shim.localhost:%d/","serviceBus":"https://{namespace}.servicebus.shim.localhost:%d/","acr":"http://{name}.azurecr.shim.localhost:%d/"}`,
+		port, port, port, port, port, port, port, port, port)
 	simCmd.Env = append(os.Environ(),
 		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port),
 		fmt.Sprintf("SIM_SERVICEBUS_AMQP_LISTEN_ADDR=:%d", amqpPort),

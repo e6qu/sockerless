@@ -56,6 +56,7 @@ Default HTTPS port: `8443`.
 | Azure Service Bus | `https://{namespace}.servicebus.azure.sockerless.localhost:8443` |
 | Azure Event Grid | `https://{topic}.eventgrid.azure.sockerless.localhost:8443` |
 | Azure Cosmos DB documents | `https://{account}.documents.azure.sockerless.localhost:8443` |
+| Azure Container Registry | `https://{name}.azurecr.azure.sockerless.localhost:8443` |
 
 Override the port with:
 

@@ -408,6 +408,164 @@ test.describe("Navigation", () => {
   });
 });
 
+// The header's "Services" trigger opens the mega-menu overlay: a full-width
+// dialog docked under the header, reusing the exact NAV_GROUPS catalog the
+// side navigation renders (same groups, same supported/"Not supported"
+// treatment), with a live search field that narrows it. The side navigation
+// stays the current-section affordance; this is the global, from-anywhere
+// one, matching the real console's split between the two.
+test.describe("Services mega-menu", () => {
+  test("opens from the header trigger with aria-haspopup/aria-expanded, focuses the search field, and closes on Escape returning focus to the trigger", async ({
+    page,
+  }) => {
+    await page.goto("/ui/");
+    const trigger = page.getByRole("button", { name: "Services" });
+    await expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    await trigger.click();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const dialog = page.getByRole("dialog", { name: "All services" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("searchbox", { name: "Search services" })).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(trigger).toBeFocused();
+  });
+
+  test("toggles closed on a second click of the trigger", async ({ page }) => {
+    await page.goto("/ui/");
+    const trigger = page.getByRole("button", { name: "Services" });
+    await trigger.click();
+    await expect(page.getByRole("dialog", { name: "All services" })).toBeVisible();
+    await trigger.click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
+  test("dismisses on an outside click", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Services" }).click();
+    await expect(page.getByRole("dialog", { name: "All services" })).toBeVisible();
+    // The panel docks under the header and can grow tall enough to cover the
+    // page body beneath it (the catalog has plenty of rows), so "outside"
+    // has to be a point the panel never reaches: the header itself, to the
+    // right of the trigger, which sits above the panel's own top edge.
+    await page.locator(".aws-header-region").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
+  test("traps Tab focus inside the open panel, wrapping from the last link back to the search field and vice versa", async ({
+    page,
+  }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Services" }).click();
+    const dialog = page.getByRole("dialog", { name: "All services" });
+    const search = dialog.getByRole("searchbox", { name: "Search services" });
+    const lastLink = dialog.getByRole("link").last();
+
+    await expect(search).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(lastLink).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(search).toBeFocused();
+  });
+
+  test("filters the catalog live as the operator types, narrowing to matching services and dropping empty categories", async ({
+    page,
+  }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Services" }).click();
+    const dialog = page.getByRole("dialog", { name: "All services" });
+    await expect(dialog.getByRole("link", { name: "Lambda", exact: true })).toBeVisible();
+    await expect(dialog.getByRole("link", { name: "Elastic Container Service", exact: true })).toBeVisible();
+
+    await dialog.getByRole("searchbox", { name: "Search services" }).fill("lambda");
+    await expect(dialog.getByRole("link", { name: "Lambda", exact: true })).toBeVisible();
+    await expect(dialog.getByRole("link", { name: "Elastic Container Service", exact: true })).toHaveCount(0);
+    await expect(dialog.getByText("Compute", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Containers", { exact: true })).toHaveCount(0);
+
+    await dialog.getByRole("searchbox", { name: "Search services" }).fill("zzzznotaservice");
+    await expect(dialog.getByText('No services match "zzzznotaservice".')).toBeVisible();
+
+    await dialog.getByRole("searchbox", { name: "Search services" }).fill("");
+    await expect(dialog.getByRole("link", { name: "Elastic Container Service", exact: true })).toBeVisible();
+  });
+
+  test("resets the search field to empty every time the panel re-opens", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Services" }).click();
+    let dialog = page.getByRole("dialog", { name: "All services" });
+    await dialog.getByRole("searchbox", { name: "Search services" }).fill("lambda");
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Services" }).click();
+    dialog = page.getByRole("dialog", { name: "All services" });
+    await expect(dialog.getByRole("searchbox", { name: "Search services" })).toHaveValue("");
+    await expect(dialog.getByRole("link", { name: "Elastic Container Service", exact: true })).toBeVisible();
+  });
+
+  test("a supported service link navigates to its real page and closes the menu", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Services" }).click();
+    const dialog = page.getByRole("dialog", { name: "All services" });
+    await dialog.getByRole("link", { name: "Lambda", exact: true }).click();
+    await expect(page).toHaveURL(/\/ui\/lambda$/);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Functions" })).toBeVisible();
+  });
+
+  test("an unsupported service link routes to the honest not-supported page", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Services" }).click();
+    const dialog = page.getByRole("dialog", { name: "All services" });
+    const link = dialog.getByRole("link", { name: "EC2, not supported in this simulator" });
+    await expect(link.getByText("Not supported")).toBeVisible();
+    await link.click();
+    await expect(page).toHaveURL(/\/ui\/not-supported\/ec2$/);
+    await expect(page.getByRole("heading", { name: "EC2" })).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
+  test("passes an automated accessibility audit while open, in both themes", async ({ page }) => {
+    for (const theme of ["light", "dark"] as const) {
+      await page.goto("/ui/");
+      if (theme === "dark") {
+        await page.evaluate(() => document.documentElement.classList.add("dark"));
+      }
+      await page.getByRole("button", { name: "Services" }).click();
+      await expect(page.getByRole("dialog", { name: "All services" })).toBeVisible();
+      const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+      expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+    }
+  });
+
+  test("clears WCAG AA contrast for the panel's search field, group labels, service links, and not-supported badge in both themes", async ({
+    page,
+  }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Services" }).click();
+    await expect(page.getByRole("dialog", { name: "All services" })).toBeVisible();
+    const results = await measureContrast(page, [
+      ".aws-services-search",
+      ".aws-services-column-label",
+      ".aws-services-link",
+      ".aws-services-link-unsupported .aws-services-link-label",
+      ".aws-services-panel .aws-badge-grey",
+    ]);
+    for (const [theme, samples] of Object.entries(results)) {
+      expect(samples.length).toBe(5);
+      for (const sample of samples) {
+        expect(sample.ratio, `${theme}: ${sample.selector} measured ${sample.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+    }
+  });
+});
+
 // The real AWS console lists its full service catalog and is honest about
 // what an account can and cannot use; this simulator does the same for what
 // it does and does not implement. These tests pin that contract: a service

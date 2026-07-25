@@ -4,6 +4,34 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-25 — Simulator console parity pass 3: services flyout, ACR coordinate, authenticated detail render
+
+Pass 3 closed the loose ends parity passes 1 and 2 left open, holding the same
+bar (real design tokens, light and dark at WCAG AA, axe-clean ARIA).
+
+- **AWS "All services" mega-menu flyout.** The real console's Services button
+  now opens a full-width overlay with a live search field and the service
+  catalogue in grouped columns — reusing the single `serviceCatalog.ts` (one
+  supported/"Not supported" rule, applied in both the side nav and the flyout),
+  with a focus trap, Escape/outside-click dismiss, and measured light/dark
+  contrast. The left side nav stays the current-section affordance.
+- **BUG-2643 fixed — ACR loginServer coordinate.** `simulators/azure/acr.go`
+  hardcoded `loginServer` to `<name>.azurecr.io`, which no browser could reach;
+  it now derives the host from the request via `azureACRLoginServer(r, name)`
+  like Storage/Key Vault, so the portal's ACR detail blade resolves
+  repositories/tags against the simulator. The ACA/Azure Functions overlay
+  push/pull is unaffected (it uses the `SOCKERLESS_AZURE_ACR_*` coordinates, not
+  `loginServer`).
+- **Authenticated end-to-end detail render.** The relying-party matrix seeds a
+  Container Apps managed environment and job through the real Azure Resource
+  Manager API, then — after the operator signs into the portal through Shauth —
+  opens that job's detail blade and asserts its live Essentials render (the
+  resource group parsed from the resource id, the provisioning state the
+  simulator assigned) over the federated ARM path. This closes the gap the
+  earlier passes noted: detail pages were component- and structurally-tested,
+  and are now proven rendering live cloud data in a real browser end to end.
+
+
 ## 2026-07-25 — Simulator console parity pass 2: resource detail views
 
 Pass 2 built the resource-detail functionality pass 1 deferred (pass 1 dropped

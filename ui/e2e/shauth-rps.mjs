@@ -47,6 +47,7 @@ try {
     if (app.name === "Sockerless Microsoft Azure simulator") {
       await assertFederatedAzureToken(context, page, app);
       await assertMintedEntraClientSecret(page, app);
+      await assertResourceDetailBladeRendersLiveData(page, app);
     }
     await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
@@ -504,6 +505,32 @@ async function assertCreatedProject(page) {
   await page.getByTestId("project-picker").click();
   await page.getByTestId("project-row-sockerless").click();
   await page.getByTestId("project-picker").getByText("sockerless").waitFor({ state: "visible" });
+}
+
+// assertResourceDetailBladeRendersLiveData proves a resource detail blade
+// renders live cloud data end to end, not just its shell: the signed-in operator
+// opens the seeded Container Apps job, and the blade reads it over the federated
+// Azure Resource Manager path and shows its real Essentials. A blade that
+// couldn't reach the cloud would render its error alert instead.
+async function assertResourceDetailBladeRendersLiveData(page, app) {
+  const origin = new URL(app.launch).origin;
+  const job = process.env.SOCKERLESS_RPS_AZURE_JOB;
+  assert.ok(job, "SOCKERLESS_RPS_AZURE_JOB is required (the harness seeds the job)");
+  await page.goto(`${origin}/ui/container-apps/${job}`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("ca-job-detail").waitFor({ state: "visible" });
+  assert.equal(
+    await page.getByTestId("ca-job-error").count(),
+    0,
+    `${app.name} Container Apps job detail blade failed to read the resource over the federated ARM path`,
+  );
+  // The blade's real Essentials must carry the resource's live values, read from
+  // the seeded job's Azure Resource Manager record — the resource group parsed
+  // from its id and the provisioning state the simulator assigned.
+  await page.getByText("console-federation-rg").first().waitFor({ state: "visible" });
+  assert.ok(
+    await page.getByText("Succeeded").count() > 0,
+    `${app.name} job detail Essentials did not render the live provisioning state`,
+  );
 }
 
 // assertMintedEntraClientSecret drives the Azure portal's app-registration and

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,10 +40,40 @@ func TestACR_CreateAndShow(t *testing.T) {
 	assert.NotEmpty(t, registry.Properties.LoginServer)
 	assert.Equal(t, "LegacyRegistryPermissions", registry.Properties.RoleAssignmentMode)
 
+	// The advertised loginServer is a simulator coordinate (the request host,
+	// SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON's "cli-shim.localhost"
+	// template applied here) — never the unreachable real-cloud
+	// "<name>.azurecr.io" host a browser or client couldn't resolve against
+	// the simulator (BUG-2643).
+	assert.False(t, strings.HasSuffix(registry.Properties.LoginServer, ".azurecr.io"),
+		"loginServer must not be the real-cloud host, got %q", registry.Properties.LoginServer)
+	assert.Contains(t, registry.Properties.LoginServer, "clitestregistry.azurecr.cli-shim.localhost")
+
 	// GET
 	out = runCLI(t, azRest("GET", url, ""))
 	parseJSON(t, out, &registry)
 	assert.Equal(t, "clitestregistry", registry.Name)
+
+	// The advertised loginServer must actually resolve to this simulator: a
+	// direct HTTP request to the loopback base URL carrying that host in the
+	// Host header must reach the ACR data plane and see the same catalog a
+	// request without the Host-header trick would (the OCI /v2/ and
+	// /acr/v1/ routes are mounted without a host component, so any Host
+	// reaches them — but the value must not be the never-resolvable
+	// "*.azurecr.io" real-cloud host it used to be).
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/acr/v1/_catalog", nil)
+	if err != nil {
+		t.Fatalf("build catalog request: %v", err)
+	}
+	req.Host = registry.Properties.LoginServer
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET catalog via loginServer coordinate: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("catalog via loginServer coordinate returned %d", resp.StatusCode)
+	}
 
 	// Cleanup
 	runCLI(t, azRest("DELETE", url, ""))
