@@ -1,608 +1,64 @@
-/* Amazon Web Services console layout. See tokens.css for why these values. */
-
-.aws,
-.aws h1,
-.aws h2,
-.aws h3,
-.aws button,
-.aws input {
-  /* The shared shell sets a display face on headings and controls. The AWS
-   * console uses one family throughout, so it is reasserted here rather than
-   * inherited. */
-  font-family: var(--aws-font);
-}
-
-/* The shared shell tints the document background; the console owns the whole
- * viewport, so it is reset here rather than showing through at the edges. */
-body:has(.aws) { background: var(--aws-layout-bg); }
+/* Amazon Web Services console layout — the residue that is not itself a
+ * Cloudscape component. See tokens.css for where --aws-header-bg/-fg come
+ * from. */
 
 .aws {
   min-height: 100vh;
   width: 100%;
-  display: grid;
-  grid-template-rows: auto auto 1fr;
-  background: var(--aws-layout-bg);
-  color: var(--aws-fg);
   font-family: var(--aws-font);
-  font-size: 14px;
+}
+.aws h1,
+.aws h2,
+.aws h3 {
+  font-family: var(--aws-font);
 }
 
-/* Global header ---------------------------------------------------------- */
-/* The header sizes to its contents. A fixed height clipped the account
- * control out of the header box, and the breadcrumb bar below paints over
- * whatever overflows — which put the sign-out control underneath an opaque
- * sibling, where a click reaches the breadcrumbs instead. The stacking
- * context keeps the header above its neighbours regardless of content. */
+/* Global header ----------------------------------------------------------
+ * `TopNavigation` (in AwsConsole.tsx) renders the identity, the services
+ * search row, and the notification/settings/support utilities with its own
+ * genuine dark "top-navigation" visual context — no CSS of this console's
+ * own is involved in that part. The account cluster (region, the operator's
+ * signed-in identity, the theme toggle) sits beside it, outside
+ * `TopNavigation`'s own DOM, so it needs its own rule to sit on the same
+ * dark strip rather than the page's light/dark surface colour. */
 .aws-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 4px 16px;
-  min-height: 40px;
-  position: relative;
-  z-index: 1;
   background: var(--aws-header-bg);
   color: var(--aws-header-fg);
 }
-.aws-header-left, .aws-header-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.aws-logo { font-weight: 700; letter-spacing: 0.02em; font-size: 18px; }
-.aws-header-title { font-size: 14px; font-weight: 700; }
-.aws-header-region { font-size: 12px; color: #d1d5db; white-space: nowrap; }
-
-/* The console's global search sits between the service menu and the account
- * cluster, growing to fill the header the way the real console's does. */
-.aws-header-search {
+.aws-header-account {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 1 1 auto;
-  max-width: 640px;
-  min-width: 0;
-  padding: 0 10px;
-  height: 28px;
-  border-radius: var(--aws-radius-control);
-  background: rgba(255, 255, 255, 0.12);
-  color: #d1d5db;
-}
-.aws-header-search input {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: #ffffff;
-  font: inherit;
-  font-size: 13px;
-  outline: none;
-}
-.aws-header-search input::placeholder { color: #a4aab5; }
-
-/* Icon-only header controls: notifications, settings, support, theme. */
-.aws-icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--aws-radius-control);
-  background: transparent;
-  color: var(--aws-header-fg);
-  cursor: pointer;
-}
-.aws-icon-button:hover { background: var(--aws-header-hover); }
-.aws-icon-button:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }
-
-/* Services mega-menu ------------------------------------------------------
- * The global "Services" flyout: a menu-button in the header's left cluster
- * and, while open, a dialog docked to the header's own bottom edge. The
- * dialog is positioned against `.aws-header` (the nearest positioned
- * ancestor, `position: relative` above) rather than the button itself, so
- * `top: 100%` / `left: 0` / `right: 0` pin it to the header's full width and
- * bottom edge regardless of where in the header the trigger sits or how tall
- * the header grows — the same full-width dock the real console's flyout
- * uses, without measuring anything in script. */
-.aws-services-menu { position: static; }
-.aws-services-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--aws-radius-control);
-  background: transparent;
-  color: var(--aws-header-fg);
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-.aws-services-trigger:hover,
-.aws-services-trigger[aria-expanded="true"] { background: var(--aws-header-hover); }
-.aws-services-trigger:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }
-.aws-services-panel {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 10;
-  background: var(--aws-surface);
-  color: var(--aws-fg);
-  border-bottom: 1px solid var(--aws-border-subtle);
-  box-shadow: 0 8px 24px rgba(0, 7, 22, 0.25);
-  max-height: calc(100vh - 80px);
-  overflow-y: auto;
-  padding: 20px 24px 28px;
-}
-.aws-services-title { margin: 0 0 12px; font-size: 16px; font-weight: 700; }
-.aws-services-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 480px;
-  padding: 6px 12px;
-  margin-bottom: 20px;
-  border: 1px solid var(--aws-border);
-  border-radius: var(--aws-radius-control);
-  background: var(--aws-surface);
-  color: var(--aws-fg-secondary);
-}
-.aws-services-search:focus-within { outline: 2px solid var(--aws-primary); outline-offset: 0; border-color: var(--aws-primary); }
-.aws-services-search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  color: var(--aws-fg);
-  background: transparent;
-  outline: none;
-}
-.aws-services-empty { color: var(--aws-fg-secondary); margin: 0; }
-.aws-services-columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 20px 24px;
-}
-.aws-services-column-label {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--aws-fg-secondary);
-  margin-bottom: 8px;
-}
-.aws-services-column ul { list-style: none; margin: 0; padding: 0; }
-.aws-services-link {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  font-size: 14px;
-  color: var(--aws-link);
-  text-decoration: none;
-}
-.aws-services-link:hover { text-decoration: underline; }
-/* Mirrors .aws-sidenav-link-unsupported: the "Not supported" pill states the
- * fact, so the label itself drops the link colour rather than relying on
- * colour alone to carry the meaning. */
-.aws-services-link-unsupported { color: var(--aws-fg-secondary); }
-.aws-services-link-unsupported:hover { text-decoration: none; }
-.aws-services-link-unsupported .aws-services-link-label { text-decoration: none; }
-
-/* Breadcrumbs ------------------------------------------------------------ */
-.aws-breadcrumbs { padding: 8px 24px; background: var(--aws-layout-bg); }
-.aws-breadcrumbs ol { display: flex; gap: 8px; list-style: none; margin: 0; padding: 0; font-size: 12px; }
-.aws-breadcrumbs li + li::before { content: "/"; margin-right: 8px; color: var(--aws-fg-disabled); }
-.aws-breadcrumbs a { color: var(--aws-link); text-decoration: none; }
-.aws-breadcrumbs a:hover { text-decoration: underline; }
-.aws-breadcrumbs [aria-current="page"] { color: var(--aws-fg-secondary); }
-
-/* Body: service navigation beside the working area ----------------------- */
-.aws-body { display: grid; grid-template-columns: 280px minmax(0, 1fr); align-items: start; gap: 0; }
-.aws-sidenav {
-  background: var(--aws-surface);
-  border-right: 1px solid var(--aws-border-subtle);
-  min-height: calc(100vh - 80px);
-  padding: 20px 0;
-}
-.aws-sidenav-title { font-size: 18px; font-weight: 700; padding: 0 20px 12px; }
-.aws-sidenav-group { padding: 8px 0; }
-.aws-sidenav-group + .aws-sidenav-group { border-top: 1px solid var(--aws-border-subtle); margin-top: 8px; }
-.aws-sidenav-group-label {
-  padding: 8px 20px 4px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--aws-fg);
-}
-.aws-sidenav ul { list-style: none; margin: 0; padding: 0; }
-.aws-sidenav-link {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 20px;
-  font-size: 14px;
-  color: var(--aws-link);
-  text-decoration: none;
-}
-.aws-sidenav a { text-decoration: none; }
-.aws-sidenav-link:hover { text-decoration: underline; }
-.aws-sidenav-link-active {
-  color: var(--aws-fg);
-  font-weight: 700;
-  border-left: 2px solid var(--aws-primary);
-  padding-left: 18px;
-  background: color-mix(in srgb, var(--aws-primary) 12%, transparent);
-}
-/* A service AWS offers that sockerless has not implemented: the label reads
- * as ordinary text rather than a link (no blue, no hover underline) with the
- * "Not supported" pill beside it — the pill is what says the item is
- * different, not a colour-only cue. It stays a real, focusable, navigable
- * link (to the honest explanation page) rather than a disabled control,
- * because a disabled control is unreachable by keyboard and unannounced by
- * some assistive tech, and this simulator would rather be over-honest than
- * under-navigable. */
-.aws-sidenav-link-unsupported {
-  color: var(--aws-fg-secondary);
-}
-.aws-sidenav-link-unsupported:hover { text-decoration: none; }
-.aws-sidenav-link-unsupported .aws-sidenav-link-label { text-decoration: none; }
-
-.aws-main { padding: 20px 24px 48px; min-width: 0; }
-
-/* Page header ------------------------------------------------------------ */
-.aws-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-.aws-page-header h1 { margin: 0; font-size: 20px; font-weight: 700; }
-.aws-page-count { font-weight: 400; color: var(--aws-fg-secondary); }
-.aws-page-description { margin: 4px 0 0; font-size: 14px; color: var(--aws-fg-secondary); }
-.aws-page-actions { display: flex; gap: 8px; flex-shrink: 0; }
-
-/* Buttons ---------------------------------------------------------------- */
-.aws-button {
-  border: 1px solid var(--aws-primary);
-  border-radius: var(--aws-radius-button);
-  background: transparent;
-  color: var(--aws-primary);
-  font: inherit;
-  font-weight: 700;
-  padding: 4px 20px;
-  cursor: pointer;
-}
-.aws-button:hover:not(:disabled) { background: color-mix(in srgb, var(--aws-primary) 12%, transparent); color: var(--aws-primary-hover); border-color: var(--aws-primary-hover); }
-.aws-button:disabled { border-color: var(--aws-fg-disabled); color: var(--aws-fg-disabled); cursor: default; }
-.aws-button-primary { background: var(--aws-primary); color: #fff; }
-.aws-button-primary:hover:not(:disabled) { background: var(--aws-primary-hover); color: #fff; }
-
-/* Container -------------------------------------------------------------- */
-.aws-container {
-  background: var(--aws-surface);
-  border: 1px solid var(--aws-border-subtle);
-  border-radius: var(--aws-radius-container);
-  overflow: hidden;
-}
-
-/* Table tools ------------------------------------------------------------ */
-.aws-table-tools {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--aws-border-subtle);
-}
-/* The filter is a Cloudscape text field: a bordered box with a leading search
- * glyph, the input filling the rest. */
-.aws-table-filter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  max-width: 480px;
-  padding: 6px 12px;
-  border: 1px solid var(--aws-border);
-  border-radius: var(--aws-radius-control);
-  background: var(--aws-surface);
-  color: var(--aws-fg-secondary);
-}
-.aws-table-filter:focus-within { outline: 2px solid var(--aws-primary); outline-offset: 0; border-color: var(--aws-primary); }
-.aws-input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  color: var(--aws-fg);
-  background: transparent;
-  outline: none;
-}
-/* Refresh sits beside the filter; pagination is pushed to the far edge. */
-.aws-table-refresh {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--aws-border);
-  border-radius: var(--aws-radius-control);
-  background: var(--aws-surface);
-  color: var(--aws-fg-secondary);
-  cursor: pointer;
-}
-.aws-table-refresh:hover:not(:disabled) { background: var(--aws-surface-alt); color: var(--aws-fg); }
-.aws-table-refresh:disabled { color: var(--aws-fg-disabled); cursor: default; }
-.aws-table-refresh:focus-visible { outline: 2px solid var(--aws-primary); outline-offset: 0; }
-.aws-pagination { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13px; color: var(--aws-fg-secondary); }
-.aws-pagination button {
-  border: 0; background: transparent; font: inherit; font-size: 16px;
-  color: var(--aws-link); cursor: pointer; padding: 0 6px; border-radius: 4px;
-}
-.aws-pagination button:disabled { color: var(--aws-fg-disabled); cursor: default; }
-
-/* Table ------------------------------------------------------------------ */
-.aws-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-.aws-table th, .aws-table td {
-  text-align: left;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--aws-border-subtle);
-  vertical-align: top;
-}
-.aws-table th { font-weight: 700; white-space: nowrap; }
-.aws-table th button {
-  border: 0; background: transparent; font: inherit; font-weight: 700;
-  color: var(--aws-fg); cursor: pointer; padding: 0; display: inline-flex; gap: 6px; align-items: center;
-}
-.aws-sort { color: var(--aws-fg-disabled); font-size: 10px; }
-.aws-table-select { width: 40px; }
-.aws-table tbody tr:hover { background: var(--aws-surface-alt); }
-.aws-row-selected { background: color-mix(in srgb, var(--aws-primary) 12%, transparent) !important; }
-.aws-table td { color: var(--aws-fg-secondary); overflow-wrap: anywhere; }
-
-/* Status ----------------------------------------------------------------- */
-.aws-status { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
-.aws-status-success { color: var(--aws-status-success); }
-.aws-status-error { color: var(--aws-status-error); }
-.aws-status-warning { color: var(--aws-status-warning); }
-.aws-status-inactive { color: var(--aws-status-inactive); }
-
-/* Empty and error states ------------------------------------------------- */
-.aws-empty { padding: 40px 16px; text-align: center; color: var(--aws-fg-secondary); }
-.aws-empty strong { display: block; font-size: 16px; color: var(--aws-fg); margin-bottom: 4px; }
-.aws-empty p { margin: 0 0 12px; }
-.aws-flash { padding: 12px 16px; font-size: 14px; border-left: 4px solid transparent; }
-.aws-flash-error {
-  background: var(--aws-flash-error-bg);
-  color: var(--aws-status-error);
-  border-left-color: var(--aws-status-error);
-}
-.aws-flash-success {
-  background: var(--aws-flash-success-bg);
-  color: var(--aws-status-success);
-  border-left-color: var(--aws-status-success);
-}
-.aws-flash-info {
-  background: var(--aws-flash-info-bg);
-  color: var(--aws-status-info);
-  border-left-color: var(--aws-status-info);
-}
-.aws-flash-warning {
-  background: var(--aws-flash-warning-bg);
-  color: var(--aws-fg);
-  border-left-color: var(--aws-status-warning);
-}
-
-/* Badge -------------------------------------------------------------------
- * A small pill that states a fact in text, not colour alone. The colours are
- * the same solid brand tones (blue/green/red) or neutral grey the real
- * Cloudscape badge uses, each against the badge text colour Cloudscape pairs
- * with it — every pairing clears WCAG AA. */
-.aws-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 8px;
-  border-radius: var(--aws-radius-badge);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.6;
-  white-space: nowrap;
-  color: var(--aws-badge-fg);
-}
-.aws-badge-grey { background: var(--aws-badge-grey-bg); }
-.aws-badge-blue { background: var(--aws-badge-blue-bg); }
-.aws-badge-green { background: var(--aws-badge-green-bg); }
-.aws-badge-red { background: var(--aws-badge-red-bg); }
-
-/* Modal ------------------------------------------------------------------ */
-.aws-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 20, 26, 0.6);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 48px 16px;
-  overflow-y: auto;
-  z-index: 100;
-}
-.aws-modal {
-  background: var(--aws-surface);
-  color: var(--aws-fg);
-  border-radius: 16px;
-  border: 1px solid var(--aws-border-subtle);
-  width: min(640px, 100%);
-  box-shadow: 0 4px 20px rgba(0, 7, 22, 0.35);
-}
-.aws-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--aws-border-subtle);
-}
-.aws-modal-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
-.aws-modal-close {
-  border: 0;
-  background: none;
-  color: var(--aws-fg-secondary);
-  cursor: pointer;
-  padding: 4px;
-  display: inline-flex;
-}
-.aws-modal-close:hover { color: var(--aws-fg); }
-.aws-modal-content { padding: 16px 20px; font-size: 14px; }
-.aws-modal-content > * + * { margin-top: 12px; }
-.aws-modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 20px 16px;
-  border-top: 1px solid var(--aws-border-subtle);
-}
-
-/* Credential display ----------------------------------------------------- */
-.aws-key-value { display: grid; gap: 4px; }
-/* A key-value block reached directly inside a container gets the container's
- * own gutter, so its content doesn't sit flush against the rounded corners
- * (a tab panel already pads itself — see .aws-tab-panel above — so a
- * key-value nested inside one is left alone). */
-.aws-container > .aws-key-value { padding: 16px; }
-.aws-key-value dt { font-size: 12px; font-weight: 700; color: var(--aws-fg-secondary); }
-.aws-key-value dd {
-  margin: 0 0 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.aws-key-value code, .aws-code code { font-family: Monaco, Menlo, Consolas, monospace; font-size: 13px; }
-.aws-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 0;
-  background: none;
-  color: var(--aws-link);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 2px 4px;
-}
-.aws-copy:hover { text-decoration: underline; }
-.aws-reveal {
-  border: 0;
-  background: none;
-  color: var(--aws-link);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 2px 4px;
-}
-.aws-reveal:hover { text-decoration: underline; }
-.aws-code {
-  background: var(--aws-surface-alt);
-  border: 1px solid var(--aws-border-subtle);
-  border-radius: 8px;
-  padding: 12px;
-  overflow-x: auto;
-}
-.aws-code pre { margin: 0; white-space: pre; }
-.aws-code-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-.aws-code-header .aws-code-title { font-size: 12px; font-weight: 700; color: var(--aws-fg-secondary); }
-
-/* Tabs --------------------------------------------------------------------
- * The Cloudscape "details page with tabs" pattern: an underline strip with
- * one tab in the page's Tab order at a time (see AwsTabs.tsx for the
- * roving-tabindex contract) and a panel drawn on the same surface as the
- * summary container above it. */
-.aws-tabs-list {
-  display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--aws-border-subtle);
+  flex-shrink: 0;
   padding: 0 16px;
+  color: var(--aws-header-fg);
 }
-.aws-tab {
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  font: inherit;
-  font-weight: 700;
-  color: var(--aws-fg-secondary);
-  padding: 10px 12px;
-  margin-bottom: -1px;
-  cursor: pointer;
+.aws-header-region {
+  font-size: 12px;
+  white-space: nowrap;
 }
-.aws-tab:hover { color: var(--aws-fg); }
-.aws-tab-active { color: var(--aws-primary); border-bottom-color: var(--aws-primary); }
-.aws-tab-panel { padding: 16px; }
-.aws-tab-panel:focus-visible { outline: 2px solid var(--aws-primary); outline-offset: -2px; }
-.aws-tab-panel .aws-table { border-top: 1px solid var(--aws-border-subtle); }
-.aws-tab-panel .aws-empty { padding: 24px 0; }
-
-/* Sub-heading inside a tab panel or detail section, one step down from the
- * page h1. Reached directly inside a container (not a tab panel, which pads
- * itself) it takes the container's own gutter, matching the key-value rule
- * above. */
-.aws-subheading { margin: 0 0 8px; font-size: 16px; font-weight: 700; }
-.aws-container > .aws-subheading:first-child { margin: 16px 16px 8px; }
-.aws-detail-section + .aws-detail-section { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--aws-border-subtle); }
 
 /* Log events viewer -------------------------------------------------------
  * The CloudWatch Logs stream's recent-events panel: a scrolling monospace
  * transcript, one line per event, timestamp dimmed ahead of the message —
- * the same shape the real console's log-stream viewer renders. */
+ * the same shape the real console's log-stream viewer renders. Cloudscape
+ * has no packaged "log transcript" component, so this stays hand-built. Its
+ * border-radius and font-family come from `@cloudscape-design/design-tokens`
+ * (`borderRadiusContainer`/`fontFamilyMonospace`, applied as inline style in
+ * LogGroupDetailPage.tsx) rather than a literal value here — those two
+ * tokens are mode-independent (identical in light and dark), so, unlike the
+ * colours below, importing the real published token is possible without
+ * fighting Cloudscape's own build-hashed custom property names. */
 .aws-log-events {
   max-height: 360px;
   overflow-y: auto;
-  margin: 0 16px 16px;
-  background: var(--aws-surface-alt);
-  border: 1px solid var(--aws-border-subtle);
-  border-radius: 8px;
+  background: var(--aws-log-bg);
+  border: 1px solid var(--aws-log-border);
   padding: 8px 12px;
-  font-family: var(--aws-font-mono);
   font-size: 12px;
 }
 .aws-log-event-line { display: flex; gap: 12px; padding: 3px 0; align-items: baseline; }
-.aws-log-event-timestamp { color: var(--aws-fg-secondary); white-space: nowrap; }
-.aws-log-event-message { color: var(--aws-fg); white-space: pre-wrap; overflow-wrap: anywhere; }
-
-/* Detail-page summary ---------------------------------------------------- */
-.aws-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; padding: 16px; }
-.aws-summary dt { font-size: 12px; font-weight: 700; color: var(--aws-fg-secondary); }
-.aws-summary dd { margin: 4px 0 0; font-size: 14px; overflow-wrap: anywhere; }
-
-/* Overview --------------------------------------------------------------- */
-.aws-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-.aws-metric { padding: 16px; }
-.aws-metric-label { font-size: 14px; font-weight: 700; color: var(--aws-fg); }
-.aws-metric-value { font-size: 32px; font-weight: 400; color: var(--aws-link); line-height: 1.2; margin-top: 4px; }
-.aws-metric-value a { color: inherit; text-decoration: none; border-bottom: 2px solid currentColor; }
-
-@media (max-width: 900px) {
-  .aws-body { grid-template-columns: minmax(0, 1fr); }
-  .aws-sidenav { min-height: 0; border-right: 0; border-bottom: 1px solid var(--aws-border-subtle); }
-  /* The header's hamburger control collapses the navigation only below this
-   * breakpoint, where the body grid already stacks to one column — on a wide
-   * viewport Cloudscape's own navigation stays open regardless of the
-   * toggle's state, and so does this one. */
-  .aws-sidenav[data-collapsed="true"] { display: none; }
-}
-
-/* Every interactive control shows where focus is, which keyboard and
- * screen-magnifier users depend on. */
-.aws a:focus-visible,
-.aws button:focus-visible,
-.aws input:focus-visible {
-  outline: 2px solid var(--aws-primary);
-  outline-offset: 1px;
-  border-radius: 2px;
-}
-
-/* The state row spans the full width so a message reads across the table
- * rather than under the first column. */
-.aws-table-state { padding: 0; }
-.aws-table-state .aws-empty, .aws-table-state .aws-flash { margin: 0; border: 0; }
+.aws-log-event-timestamp { color: var(--aws-log-fg-secondary); white-space: nowrap; }
+.aws-log-event-message { color: var(--aws-log-fg); white-space: pre-wrap; overflow-wrap: anywhere; }

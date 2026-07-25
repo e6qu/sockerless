@@ -5,6 +5,9 @@ import {
   AwsButton,
   AwsContainer,
   AwsCopyButton,
+  AwsEmptyState,
+  AwsErrorAlert,
+  AwsKeyValue,
   AwsPageHeader,
   AwsResourceTable,
   type AwsColumn,
@@ -57,28 +60,34 @@ export function ECRRepositoryDetailPage() {
       />
       <AwsContainer>
         {repo.isError ? (
-          <div className="aws-flash aws-flash-error" role="alert" data-testid="ecr-repo-error">
+          <AwsErrorAlert testId="ecr-repo-error">
             <strong>Could not load the repository.</strong>{" "}
             {repo.error instanceof Error ? repo.error.message : "The request failed."}
-          </div>
+          </AwsErrorAlert>
         ) : repo.isLoading ? (
-          <div className="aws-empty" role="status">
-            Loading repository…
-          </div>
+          <AwsEmptyState title="Loading repository…" loading />
         ) : repo.data ? (
-          <dl className="aws-key-value" data-testid="ecr-repo-summary">
-            <dt>URI</dt>
-            <dd>
-              <code>{repo.data.uri}</code>
-              <AwsCopyButton value={repo.data.uri} label="Copy repository URI" />
-            </dd>
-            <dt>Created at</dt>
-            <dd>{formatEpoch(repo.data.createdAt)}</dd>
-          </dl>
+          <div data-testid="ecr-repo-summary">
+            <AwsKeyValue
+              items={[
+                {
+                  label: "URI",
+                  value: (
+                    <>
+                      <code>{repo.data.uri}</code>
+                      <AwsCopyButton value={repo.data.uri} label="Copy repository URI" />
+                    </>
+                  ),
+                },
+                { label: "Created at", value: formatEpoch(repo.data.createdAt) },
+              ]}
+            />
+          </div>
         ) : null}
       </AwsContainer>
       <AwsResourceTable<ECRImage>
         title="Images"
+        headingVariant="h2"
         description="Images pushed to this repository."
         columns={imageColumns}
         queryKey={["ecr-images", name]}
@@ -88,7 +97,6 @@ export function ECRRepositoryDetailPage() {
         emptyDescription="No images have been pushed to this repository."
         rowKey={(row) => row.digest}
         tableTestId="ecr-images-table"
-        rowTestId={(row) => `ecr-image-row-${row.digest}`}
         actions={({ refetch, isFetching }) => (
           <AwsButton onClick={refetch} disabled={isFetching}>
             {isFetching ? "Refreshing…" : "Refresh"}

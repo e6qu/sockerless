@@ -1,5 +1,5 @@
 import { useParams } from "react-router";
-import { AwsContainer, AwsNotSupportedBadge, AwsPageHeader, findNavService } from "../console/index.js";
+import { AwsEmptyState, AwsNotSupportedBadge, AwsPageHeader, findNavService } from "../console/index.js";
 
 /**
  * The real AWS console lists every service in its catalog, whether or not
@@ -15,16 +15,10 @@ export function NotSupportedServicePage() {
   return (
     <>
       <AwsPageHeader title={label} actions={<AwsNotSupportedBadge serviceName={label} />} />
-      <AwsContainer>
-        <div className="aws-empty" role="status">
-          <strong>This service is not implemented by the Sockerless simulator.</strong>
-          <p>
-            {label} is part of the real AWS service catalog. Sockerless has not built a simulator or backend for it,
-            so there is no page here to show — the navigation still lists it, honestly marked, alongside the
-            services sockerless does implement.
-          </p>
-        </div>
-      </AwsContainer>
+      <AwsEmptyState
+        title="This service is not implemented by the Sockerless simulator."
+        description={`${label} is part of the real AWS service catalog. Sockerless has not built a simulator or backend for it, so there is no page here to show — the navigation still lists it, honestly marked, alongside the services sockerless does implement.`}
+      />
     </>
   );
 }

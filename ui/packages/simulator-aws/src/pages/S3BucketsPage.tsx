@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { NavLink, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsModal, AwsResourceTable, type AwsColumn } from "../console/index.js";
+import { AwsButton, AwsErrorAlert, AwsModal, AwsResourceTable, AwsRowLink, type AwsColumn } from "../console/index.js";
 import { formatTimestamp } from "../console/format.js";
 import { deleteS3Bucket, fetchS3Buckets, type S3Bucket } from "../api.js";
 
@@ -16,7 +16,7 @@ const columns: AwsColumn<S3Bucket>[] = [
   {
     id: "name",
     header: "Name",
-    cell: (row) => <NavLink to={`/ui/s3/${encodeURIComponent(row.name)}`}>{row.name}</NavLink>,
+    cell: (row) => <AwsRowLink to={`/ui/s3/${encodeURIComponent(row.name)}`}>{row.name}</AwsRowLink>,
     value: (row) => row.name,
   },
   { id: "creationDate", header: "Creation date", cell: (row) => formatTimestamp(row.creationDate), value: (row) => row.creationDate },
@@ -74,10 +74,10 @@ export function DeleteBucketsModal({
         ))}
       </ul>
       {remove.isError && (
-        <div className="aws-flash aws-flash-error" role="alert">
+        <AwsErrorAlert>
           <strong>Could not delete.</strong>{" "}
           {remove.error instanceof Error ? remove.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </AwsModal>
   );
@@ -99,7 +99,6 @@ export function S3BucketsPage() {
         emptyDescription="No buckets exist in this account."
         rowKey={(row) => row.name}
         tableTestId="s3-buckets-table"
-        rowTestId={(row) => `s3-bucket-row-${row.name}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
             <AwsButton

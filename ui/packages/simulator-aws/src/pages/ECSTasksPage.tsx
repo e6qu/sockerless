@@ -1,7 +1,15 @@
 import { useState } from "react";
-import { NavLink, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsModal, AwsResourceTable, AwsStatus, type AwsColumn } from "../console/index.js";
+import {
+  AwsButton,
+  AwsErrorAlert,
+  AwsModal,
+  AwsResourceTable,
+  AwsRowLink,
+  AwsStatus,
+  type AwsColumn,
+} from "../console/index.js";
 import { fetchECSTasks, stopECSTask, type ECSTask } from "../api.js";
 
 // Amazon Elastic Container Service — Tasks. The list and the header action
@@ -15,7 +23,7 @@ const columns: AwsColumn<ECSTask>[] = [
   {
     id: "taskArn",
     header: "Task ARN",
-    cell: (row) => <NavLink to={`/ui/ecs/${encodeURIComponent(row.taskArn)}`}>{row.taskArn}</NavLink>,
+    cell: (row) => <AwsRowLink to={`/ui/ecs/${encodeURIComponent(row.taskArn)}`}>{row.taskArn}</AwsRowLink>,
     value: (row) => row.taskArn,
   },
   { id: "status", header: "Last status", cell: (row) => <AwsStatus status={row.status} />, value: (row) => row.status },
@@ -87,10 +95,10 @@ export function StopTasksModal({
         ))}
       </ul>
       {stop.isError && (
-        <div className="aws-flash aws-flash-error" role="alert">
+        <AwsErrorAlert>
           <strong>Could not stop the task.</strong>{" "}
           {stop.error instanceof Error ? stop.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </AwsModal>
   );
@@ -112,7 +120,6 @@ export function ECSTasksPage() {
         emptyDescription="No tasks are running in this account and Region."
         rowKey={(row) => row.taskArn}
         tableTestId="ecs-tasks-table"
-        rowTestId={(row) => `ecs-task-row-${row.taskArn}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
             <AwsButton

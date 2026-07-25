@@ -65,7 +65,7 @@ describe("AwsServicesMenu", () => {
     expect(link.textContent).not.toContain("Not supported");
   });
 
-  it("marks an unsupported service with a real link, a text badge, and an explicit accessible name", () => {
+  it("marks an unsupported service with a real link and an explicit accessible name, with a 'Not supported' pill beside it", () => {
     render(
       <MemoryRouter>
         <AwsServicesMenu groups={GROUPS} />
@@ -74,7 +74,11 @@ describe("AwsServicesMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: "Services" }));
     const link = screen.getByRole("link", { name: "EC2, not supported in this simulator" });
     expect(link.getAttribute("href")).toBe("/ui/not-supported/ec2");
-    expect(link.textContent).toContain("Not supported");
+    // The "Not supported" pill sits beside the link, in reading order, rather
+    // than fused into its accessible name — the accessible name already
+    // states the fact explicitly via `ariaLabel`, and the pill is this
+    // console's own visible affordance layered on top.
+    expect(link.closest("li")?.textContent).toContain("Not supported");
   });
 
   it("narrows to matching services as the search field's value changes", () => {

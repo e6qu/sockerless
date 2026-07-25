@@ -1,7 +1,16 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsContainer, AwsPageHeader, AwsResourceTable, type AwsColumn } from "../console/index.js";
+import {
+  AwsButton,
+  AwsContainer,
+  AwsEmptyState,
+  AwsErrorAlert,
+  AwsKeyValue,
+  AwsPageHeader,
+  AwsResourceTable,
+  type AwsColumn,
+} from "../console/index.js";
 import { formatBytes, formatTimestamp } from "../console/format.js";
 import { fetchS3BucketLocation, fetchS3Buckets, fetchS3Objects, type S3Bucket, type S3Object } from "../api.js";
 import { DeleteBucketsModal } from "./S3BucketsPage.js";
@@ -52,27 +61,28 @@ export function S3BucketDetailPage() {
       />
       <AwsContainer>
         {isError ? (
-          <div className="aws-flash aws-flash-error" role="alert" data-testid="s3-bucket-error">
+          <AwsErrorAlert testId="s3-bucket-error">
             <strong>Could not load the bucket.</strong>{" "}
             {(buckets.error ?? location.error) instanceof Error
               ? ((buckets.error ?? location.error) as Error).message
               : "The request failed."}
-          </div>
+          </AwsErrorAlert>
         ) : isLoading ? (
-          <div className="aws-empty" role="status">
-            Loading bucket…
-          </div>
+          <AwsEmptyState title="Loading bucket…" loading />
         ) : (
-          <dl className="aws-key-value" data-testid="s3-bucket-summary">
-            <dt>Region</dt>
-            <dd>{location.data}</dd>
-            <dt>Creation date</dt>
-            <dd>{bucket ? formatTimestamp(bucket.creationDate) : "–"}</dd>
-          </dl>
+          <div data-testid="s3-bucket-summary">
+            <AwsKeyValue
+              items={[
+                { label: "Region", value: location.data },
+                { label: "Creation date", value: bucket ? formatTimestamp(bucket.creationDate) : "–" },
+              ]}
+            />
+          </div>
         )}
       </AwsContainer>
       <AwsResourceTable<S3Object>
         title="Objects"
+        headingVariant="h2"
         description="Objects stored in this bucket."
         columns={objectColumns}
         queryKey={["s3-objects", name]}
@@ -82,7 +92,6 @@ export function S3BucketDetailPage() {
         emptyDescription="This bucket has no objects."
         rowKey={(row) => row.key}
         tableTestId="s3-objects-table"
-        rowTestId={(row) => `s3-object-row-${row.key}`}
         actions={({ refetch, isFetching }) => (
           <AwsButton onClick={refetch} disabled={isFetching}>
             {isFetching ? "Refreshing…" : "Refresh"}

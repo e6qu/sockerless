@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react";
-import { NavLink } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Input from "@cloudscape-design/components/input";
+import FormField from "@cloudscape-design/components/form-field";
+import Container from "@cloudscape-design/components/container";
+import Header from "@cloudscape-design/components/header";
 import {
   AwsButton,
   AwsContainer,
+  AwsEmptyState,
+  AwsErrorAlert,
+  AwsKeyValue,
   AwsModal,
   AwsPageHeader,
   AwsResourceTable,
+  AwsRowLink,
   AwsStatus,
   type AwsColumn,
   type AwsStatusKind,
@@ -54,7 +61,7 @@ const columns: AwsColumn<OrgAccount>[] = [
   {
     id: "name",
     header: "Account name",
-    cell: (row) => <NavLink to={`/ui/organizations/accounts/${encodeURIComponent(row.id)}`}>{row.name}</NavLink>,
+    cell: (row) => <AwsRowLink to={`/ui/organizations/accounts/${encodeURIComponent(row.id)}`}>{row.name}</AwsRowLink>,
     value: (row) => row.name,
   },
   { id: "id", header: "Account ID", cell: (row) => <code>{row.id}</code>, value: (row) => row.id },
@@ -84,41 +91,27 @@ export function CreateAccountStatusPanel({ status }: { status: OrgCreateAccountS
     status.state === "SUCCEEDED" ? "success" : status.state === "FAILED" ? "error" : "warning";
   return (
     <div data-testid="org-create-status">
-      <dl className="aws-key-value">
-        <dt>Request ID</dt>
-        <dd>
-          <code>{status.id}</code>
-        </dd>
-        <dt>Account name</dt>
-        <dd>{status.accountName}</dd>
-        <dt>Status</dt>
-        <dd>
-          <AwsStatus status={status.state} kind={kind} />
-        </dd>
-        {status.state === "SUCCEEDED" && (
-          <>
-            <dt>Account ID</dt>
-            <dd>
-              <code data-testid="org-created-account-id">{status.accountId}</code>
-            </dd>
-          </>
-        )}
-        <dt>Requested</dt>
-        <dd>{formatEpoch(status.requestedTimestamp)}</dd>
-        {status.completedTimestamp > 0 && (
-          <>
-            <dt>Completed</dt>
-            <dd>{formatEpoch(status.completedTimestamp)}</dd>
-          </>
-        )}
-      </dl>
+      <AwsKeyValue
+        items={[
+          { label: "Request ID", value: <code>{status.id}</code> },
+          { label: "Account name", value: status.accountName },
+          { label: "Status", value: <AwsStatus status={status.state} kind={kind} /> },
+          ...(status.state === "SUCCEEDED"
+            ? [{ label: "Account ID", value: <code data-testid="org-created-account-id">{status.accountId}</code> }]
+            : []),
+          { label: "Requested", value: formatEpoch(status.requestedTimestamp) },
+          ...(status.completedTimestamp > 0
+            ? [{ label: "Completed", value: formatEpoch(status.completedTimestamp) }]
+            : []),
+        ]}
+      />
       {status.state === "IN_PROGRESS" && (
         <p role="status">AWS Organizations is creating the account. This page updates when the request completes.</p>
       )}
       {status.state === "FAILED" && (
-        <div className="aws-flash aws-flash-error" role="alert" data-testid="org-error">
+        <AwsErrorAlert testId="org-error">
           <strong>The account could not be created.</strong> {status.failureReason || "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </div>
   );
@@ -150,17 +143,14 @@ export function OrganizationNotInUsePanel({
         }
       />
       <AwsContainer>
-        <div className="aws-empty">
-          <strong>No organization</strong>
-          <p>
-            An organization lets you create member accounts, group them into organizational units, and govern them with
-            policies. Your account becomes the organization's management account.
-          </p>
-        </div>
+        <AwsEmptyState
+          title="No organization"
+          description="An organization lets you create member accounts, group them into organizational units, and govern them with policies. Your account becomes the organization's management account."
+        />
         {errorMessage && (
-          <div className="aws-flash aws-flash-error" role="alert" data-testid="org-error">
+          <AwsErrorAlert testId="org-error">
             <strong>Could not create the organization.</strong> {errorMessage}
-          </div>
+          </AwsErrorAlert>
         )}
       </AwsContainer>
     </>
@@ -243,37 +233,26 @@ function AddAccountModal({ onClose }: { onClose: () => void }) {
         AWS Organizations creates the account and places it in your organization's root. The request is asynchronous —
         its status is shown here until it succeeds or fails.
       </p>
-      <label htmlFor="org-account-name">
-        <strong>AWS account name</strong>
-      </label>
-      <input
-        id="org-account-name"
-        data-testid="org-account-name-input"
-        className="aws-input"
-        value={name}
-        autoFocus
-        onChange={(event) => setName(event.target.value)}
-        aria-describedby="org-account-name-constraint"
-      />
-      <p id="org-account-name-constraint" className="aws-page-description">
-        Up to 50 printable characters.
-      </p>
-      <label htmlFor="org-account-email">
-        <strong>Email address of the account's owner</strong>
-      </label>
-      <input
-        id="org-account-email"
-        data-testid="org-account-email-input"
-        className="aws-input"
-        type="email"
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-      />
+      <FormField label="AWS account name" constraintText="Up to 50 printable characters.">
+        <Input
+          value={name}
+          onChange={(event) => setName(event.detail.value)}
+          nativeInputAttributes={{ "data-testid": "org-account-name-input" }}
+        />
+      </FormField>
+      <FormField label="Email address of the account's owner">
+        <Input
+          type="email"
+          value={email}
+          onChange={(event) => setEmail(event.detail.value)}
+          nativeInputAttributes={{ "data-testid": "org-account-email-input" }}
+        />
+      </FormField>
       {create.isError && (
-        <div className="aws-flash aws-flash-error" role="alert" data-testid="org-error">
+        <AwsErrorAlert testId="org-error">
           <strong>Could not create the account.</strong>{" "}
           {create.error instanceof Error ? create.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </AwsModal>
   );
@@ -357,10 +336,10 @@ export function AccountActionModal({
         ))}
       </ul>
       {mutate.isError && (
-        <div className="aws-flash aws-flash-error" role="alert" data-testid="org-error">
+        <AwsErrorAlert testId="org-error">
           <strong>Could not {action} the account.</strong>{" "}
           {mutate.error instanceof Error ? mutate.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </AwsModal>
   );
@@ -382,21 +361,22 @@ function CreationRequests({ enabled }: { enabled: boolean }) {
   if (requests.isError) {
     return (
       <AwsContainer>
-        <div className="aws-flash aws-flash-error" role="alert">
+        <AwsErrorAlert>
           <strong>Could not load account creation requests.</strong>{" "}
           {requests.error instanceof Error ? requests.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       </AwsContainer>
     );
   }
   if (open.length === 0) return null;
   return (
-    <AwsContainer>
-      <h2>Account creation requests</h2>
-      {open.map((request) => (
-        <CreateAccountStatusPanel key={request.id} status={request} />
+    <Container header={<Header variant="h2">Account creation requests</Header>}>
+      {open.map((request, index) => (
+        <div key={request.id} style={index > 0 ? { marginTop: 16 } : undefined}>
+          <CreateAccountStatusPanel status={request} />
+        </div>
       ))}
-    </AwsContainer>
+    </Container>
   );
 }
 
@@ -445,7 +425,6 @@ export function OrganizationsPage() {
         emptyDescription="The organization has no member accounts. Add an AWS account to create one."
         rowKey={(row) => row.id}
         tableTestId="org-accounts-table"
-        rowTestId={(row) => `org-account-row-${row.id}`}
         errorTestId="org-error"
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>

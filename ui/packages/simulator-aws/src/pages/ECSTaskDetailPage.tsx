@@ -1,7 +1,19 @@
-import { Fragment, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsContainer, AwsPageHeader, AwsStatus, AwsTabs, type AwsTab } from "../console/index.js";
+import Table from "@cloudscape-design/components/table";
+import Header from "@cloudscape-design/components/header";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import {
+  AwsButton,
+  AwsContainer,
+  AwsEmptyState,
+  AwsErrorAlert,
+  AwsKeyValue,
+  AwsPageHeader,
+  AwsStatus,
+  AwsTabs,
+} from "../console/index.js";
 import { formatEpoch } from "../console/format.js";
 import { fetchECSTaskDefinition, fetchECSTaskDetail, type ECSTask } from "../api.js";
 import { isStoppable, StopTasksModal } from "./ECSTasksPage.js";
@@ -64,252 +76,203 @@ export function ECSTaskDetailPage() {
       />
       <AwsContainer>
         {task.isError ? (
-          <div className="aws-flash aws-flash-error" role="alert" data-testid="ecs-task-error">
+          <AwsErrorAlert testId="ecs-task-error">
             <strong>Could not load the task.</strong>{" "}
             {task.error instanceof Error ? task.error.message : "The request failed."}
-          </div>
+          </AwsErrorAlert>
         ) : task.isLoading ? (
-          <div className="aws-empty" role="status">
-            Loading task…
-          </div>
+          <AwsEmptyState title="Loading task…" loading />
         ) : task.data ? (
           <>
-            <dl className="aws-key-value" data-testid="ecs-task-summary">
-              <dt>Last status</dt>
-              <dd>
-                <AwsStatus status={task.data.status} />
-              </dd>
-              <dt>Desired status</dt>
-              <dd>{task.data.desiredStatus || "–"}</dd>
-              <dt>Cluster</dt>
-              <dd>{shortArn(task.data.clusterArn) || "–"}</dd>
-              <dt>Launch type</dt>
-              <dd>{task.data.launchType || "–"}</dd>
-              <dt>Connectivity</dt>
-              <dd>{task.data.connectivity || "–"}</dd>
-              <dt>CPU</dt>
-              <dd>{task.data.cpu || "–"}</dd>
-              <dt>Memory</dt>
-              <dd>{task.data.memory || "–"}</dd>
-              <dt>Task definition</dt>
-              <dd>{taskDefinition.data ? `${taskDefinition.data.family}:${taskDefinition.data.revision}` : "–"}</dd>
-              <dt>Created</dt>
-              <dd>{task.data.createdAt ? formatEpoch(task.data.createdAt) : "–"}</dd>
-              <dt>Started</dt>
-              <dd>{task.data.startedAt ? formatEpoch(task.data.startedAt) : "–"}</dd>
-              {task.data.stoppedAt ? (
-                <>
-                  <dt>Stopped</dt>
-                  <dd>{formatEpoch(task.data.stoppedAt)}</dd>
-                  <dt>Stop reason</dt>
-                  <dd>{task.data.stoppedReason || task.data.stopCode || "–"}</dd>
-                </>
-              ) : null}
-            </dl>
-            <AwsTabs
-              ariaLabel="Task detail"
-              tabs={[
-                {
-                  id: "containers",
-                  label: "Containers",
-                  content: (
-                    <table className="aws-table" aria-label="Containers" data-testid="ecs-task-containers">
-                      <thead>
-                        <tr>
-                          <th scope="col">Container name</th>
-                          <th scope="col">Image</th>
-                          <th scope="col">Status</th>
-                          <th scope="col">Exit code</th>
-                          <th scope="col">Private IP</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {containersWithImage.length === 0 ? (
-                          <tr>
-                            <td className="aws-table-state" colSpan={5}>
-                              <div className="aws-empty">
-                                <strong>No containers</strong>
-                                <p>This task reports no containers.</p>
+            <div data-testid="ecs-task-summary">
+              <AwsKeyValue
+                items={[
+                  { label: "Last status", value: <AwsStatus status={task.data.status} /> },
+                  { label: "Desired status", value: task.data.desiredStatus || "–" },
+                  { label: "Cluster", value: shortArn(task.data.clusterArn) || "–" },
+                  { label: "Launch type", value: task.data.launchType || "–" },
+                  { label: "Connectivity", value: task.data.connectivity || "–" },
+                  { label: "CPU", value: task.data.cpu || "–" },
+                  { label: "Memory", value: task.data.memory || "–" },
+                  {
+                    label: "Task definition",
+                    value: taskDefinition.data ? `${taskDefinition.data.family}:${taskDefinition.data.revision}` : "–",
+                  },
+                  { label: "Created", value: task.data.createdAt ? formatEpoch(task.data.createdAt) : "–" },
+                  { label: "Started", value: task.data.startedAt ? formatEpoch(task.data.startedAt) : "–" },
+                  ...(task.data.stoppedAt
+                    ? [
+                        { label: "Stopped", value: formatEpoch(task.data.stoppedAt) },
+                        { label: "Stop reason", value: task.data.stoppedReason || task.data.stopCode || "–" },
+                      ]
+                    : []),
+                ]}
+              />
+            </div>
+            <div style={{ marginTop: 20 }}>
+              <AwsTabs
+                ariaLabel="Task detail"
+                tabs={[
+                  {
+                    id: "containers",
+                    label: "Containers",
+                    content: (
+                      <div data-testid="ecs-task-containers">
+                        <Table
+                          variant="embedded"
+                          ariaLabels={{ tableLabel: "Containers" }}
+                          items={containersWithImage}
+                          columnDefinitions={[
+                            { id: "name", header: "Container name", cell: (container) => container.name },
+                            { id: "image", header: "Image", cell: (container) => container.image || "–" },
+                            {
+                              id: "status",
+                              header: "Status",
+                              cell: (container) => <AwsStatus status={container.lastStatus} />,
+                            },
+                            { id: "exitCode", header: "Exit code", cell: (container) => container.exitCode ?? "–" },
+                            {
+                              id: "privateIp",
+                              header: "Private IP",
+                              cell: (container) => container.privateIpv4Address ?? "–",
+                            },
+                          ]}
+                          empty={<AwsEmptyState title="No containers" description="This task reports no containers." />}
+                        />
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "network",
+                    label: "Network",
+                    content: (
+                      <div data-testid="ecs-task-network">
+                        <SpaceBetween size="l">
+                          {task.data.networkConfiguration && (
+                            <AwsKeyValue
+                              items={[
+                                { label: "Subnets", value: task.data.networkConfiguration.subnets.join(", ") || "–" },
+                                {
+                                  label: "Security groups",
+                                  value: task.data.networkConfiguration.securityGroups.join(", ") || "–",
+                                },
+                                { label: "Assign public IP", value: task.data.networkConfiguration.assignPublicIp || "–" },
+                              ]}
+                            />
+                          )}
+                          {task.data.attachments.length === 0 ? (
+                            <AwsEmptyState
+                              title="No network attachments"
+                              description="This task has no elastic network interface attachments."
+                            />
+                          ) : (
+                            task.data.attachments.map((attachment) => (
+                              <div key={attachment.id}>
+                                <Header variant="h3">{attachment.type || "Attachment"}</Header>
+                                <AwsKeyValue
+                                  items={[
+                                    { label: "Status", value: <AwsStatus status={attachment.status} /> },
+                                    ...attachment.details.map((detail) => ({ label: detail.name, value: detail.value })),
+                                  ]}
+                                />
                               </div>
-                            </td>
-                          </tr>
-                        ) : (
-                          containersWithImage.map((container) => (
-                            <tr key={container.name}>
-                              <td>{container.name}</td>
-                              <td>{container.image || "–"}</td>
-                              <td>
-                                <AwsStatus status={container.lastStatus} />
-                              </td>
-                              <td>{container.exitCode ?? "–"}</td>
-                              <td>{container.privateIpv4Address ?? "–"}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  ),
-                },
-                {
-                  id: "network",
-                  label: "Network",
-                  content: (
-                    <div data-testid="ecs-task-network">
-                      {task.data.networkConfiguration && (
-                        <dl className="aws-key-value">
-                          <dt>Subnets</dt>
-                          <dd>{task.data.networkConfiguration.subnets.join(", ") || "–"}</dd>
-                          <dt>Security groups</dt>
-                          <dd>{task.data.networkConfiguration.securityGroups.join(", ") || "–"}</dd>
-                          <dt>Assign public IP</dt>
-                          <dd>{task.data.networkConfiguration.assignPublicIp || "–"}</dd>
-                        </dl>
-                      )}
-                      {task.data.attachments.length === 0 ? (
-                        <div className="aws-empty">
-                          <strong>No network attachments</strong>
-                          <p>This task has no elastic network interface attachments.</p>
-                        </div>
-                      ) : (
-                        task.data.attachments.map((attachment) => (
-                          <div key={attachment.id} className="aws-detail-section">
-                            <h3 className="aws-subheading">{attachment.type || "Attachment"}</h3>
-                            <dl className="aws-key-value">
-                              <dt>Status</dt>
-                              <dd>
-                                <AwsStatus status={attachment.status} />
-                              </dd>
-                              {attachment.details.map((detail) => (
-                                <Fragment key={detail.name}>
-                                  <dt>{detail.name}</dt>
-                                  <dd>{detail.value}</dd>
-                                </Fragment>
-                              ))}
-                            </dl>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  ),
-                },
-                {
-                  id: "task-definition",
-                  label: "Task definition",
-                  content: taskDefinition.isError ? (
-                    <div className="aws-flash aws-flash-error" role="alert">
-                      <strong>Could not load the task definition.</strong>{" "}
-                      {taskDefinition.error instanceof Error ? taskDefinition.error.message : "The request failed."}
-                    </div>
-                  ) : taskDefinition.isLoading || !taskDefinition.data ? (
-                    <div className="aws-empty" role="status">
-                      Loading task definition…
-                    </div>
-                  ) : (
-                    <div data-testid="ecs-task-definition">
-                      <dl className="aws-key-value">
-                        <dt>Family : revision</dt>
-                        <dd>
-                          {taskDefinition.data.family}:{taskDefinition.data.revision}
-                        </dd>
-                        <dt>Network mode</dt>
-                        <dd>{taskDefinition.data.networkMode || "–"}</dd>
-                        <dt>Requires compatibilities</dt>
-                        <dd>{taskDefinition.data.requiresCompatibilities.join(", ") || "–"}</dd>
-                        <dt>Task CPU</dt>
-                        <dd>{taskDefinition.data.cpu || "–"}</dd>
-                        <dt>Task memory</dt>
-                        <dd>{taskDefinition.data.memory || "–"}</dd>
-                        <dt>Task role</dt>
-                        <dd>{taskDefinition.data.taskRoleArn || "–"}</dd>
-                        <dt>Execution role</dt>
-                        <dd>{taskDefinition.data.executionRoleArn || "–"}</dd>
-                      </dl>
-                      {taskDefinition.data.containerDefinitions.map((container) => (
-                        <div key={container.name} className="aws-detail-section">
-                          <h3 className="aws-subheading">{container.name}</h3>
-                          <dl className="aws-key-value">
-                            <dt>Image</dt>
-                            <dd>{container.image}</dd>
-                            <dt>Essential</dt>
-                            <dd>{container.essential ? "Yes" : "No"}</dd>
-                            {container.cpu !== undefined && (
-                              <>
-                                <dt>CPU units</dt>
-                                <dd>{container.cpu}</dd>
-                              </>
-                            )}
-                            {container.memory !== undefined && (
-                              <>
-                                <dt>Memory hard limit</dt>
-                                <dd>{container.memory} MiB</dd>
-                              </>
-                            )}
-                            {container.memoryReservation !== undefined && (
-                              <>
-                                <dt>Memory soft limit</dt>
-                                <dd>{container.memoryReservation} MiB</dd>
-                              </>
-                            )}
-                            {container.entryPoint.length > 0 && (
-                              <>
-                                <dt>Entry point</dt>
-                                <dd>
-                                  <code>{container.entryPoint.join(" ")}</code>
-                                </dd>
-                              </>
-                            )}
-                            {container.command.length > 0 && (
-                              <>
-                                <dt>Command</dt>
-                                <dd>
-                                  <code>{container.command.join(" ")}</code>
-                                </dd>
-                              </>
-                            )}
-                            {container.portMappings.length > 0 && (
-                              <>
-                                <dt>Port mappings</dt>
-                                <dd>
-                                  {container.portMappings
-                                    .map((mapping) =>
-                                      mapping.hostPort
-                                        ? `${mapping.hostPort}:${mapping.containerPort}/${mapping.protocol ?? "tcp"}`
-                                        : `${mapping.containerPort}/${mapping.protocol ?? "tcp"}`,
-                                    )
-                                    .join(", ")}
-                                </dd>
-                              </>
-                            )}
-                            {container.logDriver && (
-                              <>
-                                <dt>Log driver</dt>
-                                <dd>{container.logDriver}</dd>
-                              </>
-                            )}
-                            {container.environment.length > 0 && (
-                              <>
-                                <dt>Environment variables</dt>
-                                <dd>
-                                  <ul>
-                                    {container.environment.map((entry) => (
-                                      <li key={entry.name}>
-                                        <code>
-                                          {entry.name}={entry.value}
-                                        </code>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </dd>
-                              </>
-                            )}
-                          </dl>
-                        </div>
-                      ))}
-                    </div>
-                  ),
-                },
-              ]}
-            />
+                            ))
+                          )}
+                        </SpaceBetween>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "task-definition",
+                    label: "Task definition",
+                    content: taskDefinition.isError ? (
+                      <AwsErrorAlert>
+                        <strong>Could not load the task definition.</strong>{" "}
+                        {taskDefinition.error instanceof Error ? taskDefinition.error.message : "The request failed."}
+                      </AwsErrorAlert>
+                    ) : taskDefinition.isLoading || !taskDefinition.data ? (
+                      <AwsEmptyState title="Loading task definition…" loading />
+                    ) : (
+                      <div data-testid="ecs-task-definition">
+                        <SpaceBetween size="l">
+                          <AwsKeyValue
+                            items={[
+                              { label: "Family : revision", value: `${taskDefinition.data.family}:${taskDefinition.data.revision}` },
+                              { label: "Network mode", value: taskDefinition.data.networkMode || "–" },
+                              {
+                                label: "Requires compatibilities",
+                                value: taskDefinition.data.requiresCompatibilities.join(", ") || "–",
+                              },
+                              { label: "Task CPU", value: taskDefinition.data.cpu || "–" },
+                              { label: "Task memory", value: taskDefinition.data.memory || "–" },
+                              { label: "Task role", value: taskDefinition.data.taskRoleArn || "–" },
+                              { label: "Execution role", value: taskDefinition.data.executionRoleArn || "–" },
+                            ]}
+                          />
+                          {taskDefinition.data.containerDefinitions.map((container) => (
+                            <div key={container.name}>
+                              <Header variant="h3">{container.name}</Header>
+                              <AwsKeyValue
+                                items={[
+                                  { label: "Image", value: container.image },
+                                  { label: "Essential", value: container.essential ? "Yes" : "No" },
+                                  ...(container.cpu !== undefined ? [{ label: "CPU units", value: String(container.cpu) }] : []),
+                                  ...(container.memory !== undefined
+                                    ? [{ label: "Memory hard limit", value: `${container.memory} MiB` }]
+                                    : []),
+                                  ...(container.memoryReservation !== undefined
+                                    ? [{ label: "Memory soft limit", value: `${container.memoryReservation} MiB` }]
+                                    : []),
+                                  ...(container.entryPoint.length > 0
+                                    ? [{ label: "Entry point", value: <code>{container.entryPoint.join(" ")}</code> }]
+                                    : []),
+                                  ...(container.command.length > 0
+                                    ? [{ label: "Command", value: <code>{container.command.join(" ")}</code> }]
+                                    : []),
+                                  ...(container.portMappings.length > 0
+                                    ? [
+                                        {
+                                          label: "Port mappings",
+                                          value: container.portMappings
+                                            .map((mapping) =>
+                                              mapping.hostPort
+                                                ? `${mapping.hostPort}:${mapping.containerPort}/${mapping.protocol ?? "tcp"}`
+                                                : `${mapping.containerPort}/${mapping.protocol ?? "tcp"}`,
+                                            )
+                                            .join(", "),
+                                        },
+                                      ]
+                                    : []),
+                                  ...(container.logDriver ? [{ label: "Log driver", value: container.logDriver }] : []),
+                                  ...(container.environment.length > 0
+                                    ? [
+                                        {
+                                          label: "Environment variables",
+                                          value: (
+                                            <ul>
+                                              {container.environment.map((entry) => (
+                                                <li key={entry.name}>
+                                                  <code>
+                                                    {entry.name}={entry.value}
+                                                  </code>
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          ),
+                                        },
+                                      ]
+                                    : []),
+                                ]}
+                              />
+                            </div>
+                          ))}
+                        </SpaceBetween>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            </div>
           </>
         ) : null}
       </AwsContainer>

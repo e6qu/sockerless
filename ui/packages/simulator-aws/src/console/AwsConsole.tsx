@@ -1,58 +1,79 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { NavLink } from "react-router";
+import { useNavigate } from "react-router";
 import { useTheme } from "@sockerless/ui-core/hooks";
-import { AwsIcon } from "./icons.js";
+import { applyMode, Mode } from "@cloudscape-design/global-styles";
+import Button, { type ButtonProps } from "@cloudscape-design/components/button";
+import Container from "@cloudscape-design/components/container";
+import Header from "@cloudscape-design/components/header";
+import Badge from "@cloudscape-design/components/badge";
+import StatusIndicator, { type StatusIndicatorProps } from "@cloudscape-design/components/status-indicator";
+import Modal from "@cloudscape-design/components/modal";
+import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard";
+import KeyValuePairs, { type KeyValuePairsProps } from "@cloudscape-design/components/key-value-pairs";
+import Alert from "@cloudscape-design/components/alert";
+import Box from "@cloudscape-design/components/box";
+import Spinner from "@cloudscape-design/components/spinner";
+import TopNavigation from "@cloudscape-design/components/top-navigation";
+import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Input, { type InputProps } from "@cloudscape-design/components/input";
+import Link from "@cloudscape-design/components/link";
 import { filterNavGroups, type NavGroup } from "./serviceCatalog.js";
 
 /**
- * The console shell: a dark global header, a breadcrumb trail, and a grouped
- * service navigation beside the working area. Every AWS console page is
- * assembled this way, so an operator recognises where they are before reading
- * anything.
+ * The console shell and shared building blocks — all real
+ * `@cloudscape-design/components`, the same design system the real AWS
+ * Management Console is built on. This module wires them into the shapes
+ * this simulator's pages already consume (`AwsButton`, `AwsModal`,
+ * `AwsPageHeader`, …) so every page renders through genuine Cloudscape
+ * components without each page needing to know the library's own prop
+ * shapes.
  */
 
 export type { NavGroup, NavService } from "./serviceCatalog.js";
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /**
- * The console keeps its theme control in the header, so this one lives there
- * too. The glyph is decorative; the accessible name states the action, and it
- * changes with the state so a screen reader announces what the press will do.
+ * The console's theme control lives in the header. Cloudscape ships its own
+ * light/dark modes (`applyMode`) with WCAG AA contrast in both — this toggle
+ * drives that, on top of the shared `useTheme` hook every simulator UI uses
+ * (which also flips the `.dark` class the shared, non-Cloudscape chrome
+ * still reads). The glyph is decorative; the accessible name states the
+ * action, and it changes with the state so a screen reader announces what
+ * the press will do.
  */
-function AwsThemeToggle() {
+function useAwsTheme() {
   const { theme, toggle } = useTheme();
-  const isDark = theme === "dark";
-  const label = isDark ? "Switch to light theme" : "Switch to dark theme";
-  return (
-    <button type="button" className="aws-icon-button" onClick={toggle} aria-label={label} title={label}>
-      <AwsIcon name={isDark ? "sun" : "moon"} size={16} />
-    </button>
-  );
+  useEffect(() => {
+    applyMode(theme === "dark" ? Mode.Dark : Mode.Light);
+  }, [theme]);
+  return { theme, toggle };
 }
 
 /**
  * The "Services" mega-menu: the real AWS console's global, from-anywhere way
  * to reach any service, distinct from the side navigation beside it (which
- * this simulator keeps as the current-section affordance — see AwsApp.tsx).
- * The trigger is a plain menu-button (`aria-haspopup="dialog"` /
- * `aria-expanded`); the panel it discloses is a labelled dialog docked to the
- * header's own bottom edge and spanning its full width, the way the real
- * console's flyout does, reusing the exact NAV_GROUPS catalog the side
- * navigation renders rather than a second copy of it.
- *
- * Keyboard and focus behaviour mirrors AwsModal (focus enters the panel,
- * lands on the search field so typing narrows the catalog immediately, Tab
- * is trapped inside while open, Escape and an outside pointer close it and
- * return focus to the trigger) — the same contract every disclosure in this
- * console holds, sized for a menu instead of a form.
+ * this simulator keeps as the current-section affordance). Cloudscape's
+ * `TopNavigation` has no built-in multi-column, searchable flyout, so this
+ * disclosure is assembled from Cloudscape primitives (`Input`, `Link`,
+ * `Badge`) with the same focus-trap contract every dialog in this console
+ * holds — the panel is a labelled dialog docked to the header's own bottom
+ * edge and spanning its full width, the way the real console's flyout does,
+ * reusing the exact NAV_GROUPS catalog the side navigation renders from
+ * rather than a second copy of it.
  */
 export function AwsServicesMenu({ groups }: { groups: NavGroup[] }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const panelId = useId();
   const titleId = useId();
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const buttonRef = useRef<ButtonProps.Ref>(null);
+  const triggerWrapperRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<InputProps.Ref>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!open) return;
@@ -85,7 +106,7 @@ export function AwsServicesMenu({ groups }: { groups: NavGroup[] }) {
     }
     function onPointerDown(event: MouseEvent) {
       const target = event.target as Node;
-      if (panelRef.current?.contains(target) || buttonRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target) || triggerWrapperRef.current?.contains(target)) return;
       setOpen(false);
     }
     document.addEventListener("keydown", onKeyDown);
@@ -105,76 +126,115 @@ export function AwsServicesMenu({ groups }: { groups: NavGroup[] }) {
 
   const filtered = filterNavGroups(groups, query);
 
+  function follow(to: string) {
+    setOpen(false);
+    navigate(to);
+  }
+
   return (
-    <div className="aws-services-menu">
-      <button
-        ref={buttonRef}
-        type="button"
-        className="aws-services-trigger"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        onClick={() => setOpen((current) => !current)}
-      >
-        Services
-        <AwsIcon name="caret" size={10} />
-      </button>
+    <div style={{ position: "relative" }}>
+      <div ref={triggerWrapperRef}>
+        <Button
+          ref={buttonRef}
+          variant="normal"
+          iconName="angle-down"
+          iconAlign="right"
+          ariaHaspopup="dialog"
+          ariaExpanded={open}
+          ariaControls={open ? panelId : undefined}
+          onClick={() => setOpen((current) => !current)}
+        >
+          Services
+        </Button>
+      </div>
       {open && (
         <div
           ref={panelRef}
           id={panelId}
           role="dialog"
           aria-labelledby={titleId}
-          className="aws-services-panel"
           tabIndex={-1}
+          style={{
+            position: "fixed",
+            insetInlineStart: 0,
+            insetInlineEnd: 0,
+            top: 40,
+            zIndex: 1000,
+            maxHeight: "calc(100vh - 80px)",
+            overflowY: "auto",
+            // Only layout (position/size/scroll) — the panel's own surface
+            // (background, border, shadow) comes from the real Cloudscape
+            // `Container` inside, which themes itself correctly in both
+            // modes. Cloudscape's own colour tokens are exposed as
+            // build-hashed custom properties private to the installed
+            // package version, so this wrapper cannot reference them
+            // directly (see tokens.css) — reaching for a real Container
+            // avoids needing to.
+          }}
         >
-          <h2 id={titleId} className="aws-services-title">All services</h2>
-          <div className="aws-services-search">
-            <AwsIcon name="search" size={16} />
-            <input
-              ref={searchRef}
-              type="search"
-              aria-label="Search services"
-              placeholder="Find services"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
-          {filtered.length === 0 ? (
-            <p className="aws-services-empty">No services match &quot;{query.trim()}&quot;.</p>
-          ) : (
-            <div className="aws-services-columns">
-              {filtered.map((group) => (
-                <div className="aws-services-column" key={group.label}>
-                  <div className="aws-services-column-label">{group.label}</div>
-                  <ul>
-                    {group.items.map((item) => {
-                      const supported = item.supported !== false;
-                      return (
-                        <li key={item.to}>
-                          <NavLink
-                            to={item.to}
-                            end={item.to === "/ui/"}
-                            className={[
-                              "aws-services-link",
-                              !supported && "aws-services-link-unsupported",
-                            ]
-                              .filter(Boolean)
-                              .join(" ")}
-                            aria-label={supported ? undefined : `${item.label}, not supported in this simulator`}
-                            onClick={() => setOpen(false)}
-                          >
-                            <span className="aws-services-link-label">{item.label}</span>
-                            {!supported && <AwsNotSupportedBadge serviceName={item.label} decorative />}
-                          </NavLink>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          )}
+          <Container disableContentPaddings>
+            <Box padding={{ horizontal: "xl", vertical: "l" }}>
+              <Box variant="h2" fontSize="heading-m" id={titleId} margin={{ bottom: "m" }}>
+                All services
+              </Box>
+              <Box margin={{ bottom: "l" }} className="aws-services-search">
+                <Input
+                  ref={searchRef}
+                  type="search"
+                  ariaLabel="Search services"
+                  placeholder="Find services"
+                  value={query}
+                  onChange={(event) => setQuery(event.detail.value)}
+                />
+              </Box>
+              {filtered.length === 0 ? (
+                <Box color="text-body-secondary">No services match &quot;{query.trim()}&quot;.</Box>
+              ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+                  gap: "20px 24px",
+                }}
+              >
+                {filtered.map((group) => (
+                  <div key={group.label}>
+                    <Box variant="h3" fontSize="body-s" fontWeight="bold" color="text-body-secondary" margin={{ bottom: "xs" }}>
+                      {group.label}
+                    </Box>
+                    <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                      {group.items.map((item) => {
+                        const supported = item.supported !== false;
+                        return (
+                          <li key={item.to} style={{ padding: "4px 0" }}>
+                            <Link
+                              href={item.to}
+                              ariaLabel={supported ? undefined : `${item.label}, not supported in this simulator`}
+                              variant={supported ? undefined : "secondary"}
+                              onFollow={(event) => {
+                                event.preventDefault();
+                                follow(item.to);
+                              }}
+                            >
+                              {item.label}
+                            </Link>
+                            {!supported && (
+                              <span style={{ marginInlineStart: 8 }}>
+                                <Badge color="grey" nativeAttributes={{ "aria-hidden": true }}>
+                                  Not supported
+                                </Badge>
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+              )}
+            </Box>
+          </Container>
         </div>
       )}
     </div>
@@ -184,144 +244,184 @@ export function AwsServicesMenu({ groups }: { groups: NavGroup[] }) {
 export function AwsHeader({
   region,
   account,
-  navExpanded,
-  onToggleNav,
-  navId,
   services,
 }: {
   region: string;
   account: ReactNode;
-  navExpanded: boolean;
-  onToggleNav: () => void;
-  navId: string;
   services: NavGroup[];
 }) {
+  const navigate = useNavigate();
+  const { theme, toggle } = useAwsTheme();
+  const isDark = theme === "dark";
   return (
-    <header className="aws-header">
-      <div className="aws-header-left">
-        <button
-          type="button"
-          className="aws-icon-button"
-          aria-label={navExpanded ? "Close navigation" : "Open navigation"}
-          aria-expanded={navExpanded}
-          aria-controls={navId}
-          onClick={onToggleNav}
-        >
-          <AwsIcon name="menu" size={16} />
-        </button>
-        <span className="aws-logo" aria-hidden>aws</span>
-        <span className="aws-header-title">Simulator Console</span>
-        <AwsServicesMenu groups={services} />
+    <div className="aws-header">
+      <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+        <TopNavigation
+          identity={{
+            href: "/ui/",
+            title: "Simulator Console",
+            onFollow: (event) => {
+              event.preventDefault();
+              navigate("/ui/");
+            },
+          }}
+          search={
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <AwsServicesMenu groups={services} />
+              <div style={{ flex: "1 1 auto", minWidth: 0, maxWidth: 640 }}>
+                <Input type="search" ariaLabel="Search" placeholder="Search [Option+S]" value="" readOnly />
+              </div>
+            </div>
+          }
+          utilities={[
+            { type: "button", iconName: "notification", ariaLabel: "Notifications" },
+            { type: "button", iconName: "settings", ariaLabel: "Settings" },
+            { type: "button", iconName: "support", ariaLabel: "Support" },
+          ]}
+          i18nStrings={{
+            searchIconAriaLabel: "Search",
+            searchDismissIconAriaLabel: "Close search",
+            overflowMenuDismissIconAriaLabel: "Close menu",
+            overflowMenuBackIconAriaLabel: "Back",
+            overflowMenuTriggerText: "More",
+            overflowMenuTitleText: "All",
+          }}
+        />
       </div>
-      <div className="aws-header-search">
-        <AwsIcon name="search" size={16} />
-        <input type="search" aria-label="Search" placeholder="Search [Option+S]" />
-      </div>
-      <div className="aws-header-right">
-        <button type="button" className="aws-icon-button" aria-label="Notifications">
-          <AwsIcon name="notification" size={16} />
-        </button>
-        <button type="button" className="aws-icon-button" aria-label="Settings">
-          <AwsIcon name="settings" size={16} />
-        </button>
-        <button type="button" className="aws-icon-button" aria-label="Support">
-          <AwsIcon name="help" size={16} />
-        </button>
+      {/* TopNavigation renders its own real `<header>` (the banner
+       * landmark), scoped to its own DOM — this cluster sits beside it, not
+       * inside it, so it needs a landmark of its own rather than being
+       * orphaned content (axe: region). `role="region"` rather than a
+       * second banner: two banner landmarks on one page is its own
+       * violation (landmark-no-duplicate-banner). */}
+      <div className="aws-header-account" role="region" aria-label="Account settings">
         <span className="aws-header-region">{region}</span>
         {account}
-        <AwsThemeToggle />
+        <Button
+          variant="icon"
+          iconName="light-dark"
+          onClick={() => toggle()}
+          ariaLabel={isDark ? "Switch to light theme" : "Switch to dark theme"}
+        />
       </div>
-    </header>
+    </div>
   );
 }
 
 export function AwsBreadcrumbs({ trail }: { trail: { label: string; to?: string }[] }) {
+  const navigate = useNavigate();
   return (
-    <nav aria-label="Breadcrumbs" className="aws-breadcrumbs">
-      <ol>
-        {trail.map((crumb, index) => (
-          <li key={crumb.label}>
-            {crumb.to && index < trail.length - 1 ? (
-              <NavLink to={crumb.to}>{crumb.label}</NavLink>
-            ) : (
-              <span aria-current={index === trail.length - 1 ? "page" : undefined}>{crumb.label}</span>
-            )}
-          </li>
-        ))}
-      </ol>
-    </nav>
-  );
-}
-
-export function AwsSideNavigation({
-  groups,
-  serviceName,
-  id,
-  expanded,
-}: {
-  groups: NavGroup[];
-  serviceName: string;
-  id: string;
-  expanded: boolean;
-}) {
-  return (
-    <nav aria-label="Service" className="aws-sidenav" id={id} data-collapsed={expanded ? undefined : "true"}>
-      <div className="aws-sidenav-title">{serviceName}</div>
-      {groups.map((group) => (
-        <div className="aws-sidenav-group" key={group.label}>
-          <div className="aws-sidenav-group-label">{group.label}</div>
-          <ul>
-            {group.items.map((item) => {
-              const supported = item.supported !== false;
-              return (
-                <li key={item.to}>
-                  {/* react-router's NavLink sets aria-current="page" on the
-                   * rendered anchor automatically when the route matches, so
-                   * the current service is conveyed to assistive tech as well
-                   * as by the bold/underline treatment below. An unsupported
-                   * service's accessible name states that up front, in the
-                   * link itself, rather than relying on a screen reader
-                   * reaching the decorative pill inside it. */}
-                  <NavLink
-                    to={item.to}
-                    end={item.to === "/ui/"}
-                    aria-label={supported ? undefined : `${item.label}, not supported in this simulator`}
-                  >
-                    {({ isActive }) => (
-                      <span
-                        className={[
-                          "aws-sidenav-link",
-                          isActive && "aws-sidenav-link-active",
-                          !supported && "aws-sidenav-link-unsupported",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                      >
-                        <span className="aws-sidenav-link-label">{item.label}</span>
-                        {!supported && <AwsNotSupportedBadge serviceName={item.label} decorative />}
-                      </span>
-                    )}
-                  </NavLink>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ))}
-    </nav>
+    <BreadcrumbGroup
+      ariaLabel="Breadcrumbs"
+      items={trail.map((crumb) => ({ text: crumb.label, href: crumb.to ?? "#" }))}
+      onFollow={(event) => {
+        event.preventDefault();
+        const href = event.detail.href;
+        if (href && href !== "#") navigate(href);
+      }}
+    />
   );
 }
 
 /**
- * `Resources (count)` with an information link, the pattern every Cloudscape
- * list page uses. The count belongs beside the title rather than under it,
- * because that is how an operator confirms a filter did what they expected.
- *
- * Every page in this console renders exactly one of these, so it is also the
- * one place that sets the browser tab's title — the real AWS console updates
- * it per page (an operator with a dozen console tabs open depends on this to
- * tell them apart), and a single console-wide "Simulator Console" title
- * would not.
+ * The service navigation beside the working area, built from Cloudscape's
+ * `Link` and `Badge` primitives rather than the packaged `SideNavigation`
+ * composite. `SideNavigation`'s own declarative `items` API renders an
+ * item's `info` badge as a DOM sibling of the link, not inside it — real
+ * Cloudscape's own convention for a "New" badge — which also means it has no
+ * way to give one link a distinct accessible name from its visible text.
+ * That is fine for a decorative "New" tag; it is not fine for "not
+ * supported", which this console states in the accessible name itself
+ * (`Link.ariaLabel`, which `SideNavigation.Link` does not expose), so this
+ * nav is assembled from `Link` directly, keeping the same reading-order
+ * badge alongside it.
+ */
+export function AwsSideNavigation({
+  groups,
+  activeHref,
+}: {
+  groups: NavGroup[];
+  activeHref: string;
+}) {
+  const navigate = useNavigate();
+  function follow(to: string) {
+    navigate(to);
+  }
+  return (
+    <Box padding={{ vertical: "m" }}>
+      <Box padding={{ horizontal: "l", bottom: "m" }} fontWeight="bold" fontSize="heading-m">
+        <Link
+          href="/ui/"
+          onFollow={(event) => {
+            event.preventDefault();
+            follow("/ui/");
+          }}
+        >
+          Simulator
+        </Link>
+      </Box>
+      <SpaceBetween size="l">
+        {groups.map((group) => (
+          <div key={group.label}>
+            <Box padding={{ horizontal: "l", bottom: "xs" }} fontSize="body-s" fontWeight="bold" color="text-body-secondary">
+              {group.label}
+            </Box>
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {group.items.map((item) => {
+                const supported = item.supported !== false;
+                const isActive = item.to === activeHref;
+                return (
+                  <li key={item.to} style={{ padding: "2px 24px" }}>
+                    <Link
+                      href={item.to}
+                      variant={supported ? undefined : "secondary"}
+                      ariaLabel={supported ? undefined : `${item.label}, not supported in this simulator`}
+                      nativeAttributes={isActive ? { "aria-current": "page" } : undefined}
+                      onFollow={(event) => {
+                        event.preventDefault();
+                        follow(item.to);
+                      }}
+                    >
+                      {isActive ? (
+                        // Box always sets an explicit text colour (it does
+                        // not simply inherit the Link's), which is exactly
+                        // what the current-page item needs — plain body
+                        // text instead of link-blue — but wrapping every
+                        // item this way would flatten every other, genuinely
+                        // clickable link to that same plain colour too.
+                        <Box fontWeight="bold" color="text-label">
+                          {item.label}
+                        </Box>
+                      ) : (
+                        item.label
+                      )}
+                    </Link>
+                    {!supported && (
+                      <span style={{ marginInlineStart: 8 }}>
+                        <Badge color="grey" nativeAttributes={{ "aria-hidden": true }}>
+                          Not supported
+                        </Badge>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </SpaceBetween>
+    </Box>
+  );
+}
+
+/**
+ * `Resources (count)` with actions — the pattern every Cloudscape list page
+ * uses, whether as a table's own header or a stand-alone detail-page title.
+ * Every page in this console renders exactly one top-level heading, so this
+ * is also the one place that sets the browser tab's title — the real AWS
+ * console updates it per page (an operator with a dozen console tabs open
+ * depends on this to tell them apart), and a single console-wide "Simulator
+ * Console" title would not.
  */
 export function AwsPageHeader({
   title,
@@ -338,96 +438,93 @@ export function AwsPageHeader({
     document.title = `${title} - Simulator Console`;
   }, [title]);
   return (
-    <div className="aws-page-header">
-      <div>
-        <h1>
-          {title}
-          {count !== undefined && <span className="aws-page-count"> ({count})</span>}
-        </h1>
-        {description && <p className="aws-page-description">{description}</p>}
-      </div>
-      {actions && <div className="aws-page-actions">{actions}</div>}
-    </div>
+    <Header variant="h1" description={description} actions={actions} counter={count !== undefined ? `(${count})` : undefined}>
+      {title}
+    </Header>
   );
 }
 
 export function AwsButton({
   children,
   variant = "normal",
-  ...rest
-}: { children: ReactNode; variant?: "normal" | "primary" } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  onClick,
+  disabled,
+  "data-testid": testId,
+}: {
+  children: ReactNode;
+  variant?: "normal" | "primary";
+  onClick?: () => void;
+  disabled?: boolean;
+  "data-testid"?: string;
+}) {
   return (
-    <button type="button" className={variant === "primary" ? "aws-button aws-button-primary" : "aws-button"} {...rest}>
+    <Button
+      variant={variant}
+      disabled={disabled}
+      onClick={onClick ? () => onClick() : undefined}
+      nativeButtonAttributes={testId ? { "data-testid": testId } : undefined}
+    >
       {children}
-    </button>
+    </Button>
   );
 }
 
 export function AwsContainer({ children }: { children: ReactNode }) {
-  return <section className="aws-container">{children}</section>;
+  return <Container>{children}</Container>;
 }
 
 /**
- * A Cloudscape badge: a small pill that states a fact about the thing beside
- * it. Cloudscape never encodes that fact in colour alone — the label itself
- * carries the meaning — which is why every caller passes readable text, not
- * an icon or a dot.
+ * A table cell that navigates to a resource's detail route — every list
+ * page's row-header column. A real Cloudscape `Link`, routed through
+ * react-router the same way the console's other navigation controls are.
  */
-export type AwsBadgeColor = "blue" | "green" | "red" | "grey";
-
-export function AwsBadge({
-  children,
-  color = "grey",
-  ...rest
-}: { children: ReactNode; color?: AwsBadgeColor } & React.HTMLAttributes<HTMLSpanElement>) {
+export function AwsRowLink({ to, children }: { to: string; children: ReactNode }) {
+  const navigate = useNavigate();
   return (
-    <span className={`aws-badge aws-badge-${color}`} {...rest}>
+    <Link
+      href={to}
+      onFollow={(event) => {
+        event.preventDefault();
+        navigate(to);
+      }}
+    >
       {children}
-    </span>
+    </Link>
   );
 }
 
 /**
  * The pill the navigation and the "not supported" page use for a service
- * sockerless has not implemented. In the side navigation the enclosing link
- * already states "…, not supported in this simulator" as its own accessible
- * name (see AwsSideNavigation), so the badge there is `decorative` — hidden
- * from assistive tech to avoid announcing the same fact twice. Used on its
- * own, on the "not supported" page itself, it carries its own accessible name
- * naming the service.
+ * sockerless has not implemented. Used on its own, on the "not supported"
+ * page itself, it carries its own accessible name naming the service; inside
+ * the side navigation (`decorative`) the fact is instead conveyed by reading
+ * order (see `AwsSideNavigation`), so this copy is hidden from assistive
+ * tech to avoid double-announcing it.
  */
-export function AwsNotSupportedBadge({
-  serviceName,
-  decorative = false,
-}: {
-  serviceName: string;
-  decorative?: boolean;
-}) {
+export function AwsNotSupportedBadge({ serviceName, decorative = false }: { serviceName: string; decorative?: boolean }) {
   return (
-    <AwsBadge
+    <Badge
       color="grey"
-      aria-hidden={decorative || undefined}
-      aria-label={decorative ? undefined : `${serviceName} is not supported in this simulator`}
+      nativeAttributes={
+        decorative ? { "aria-hidden": true } : { "aria-label": `${serviceName} is not supported in this simulator` }
+      }
     >
       Not supported
-    </AwsBadge>
+    </Badge>
   );
 }
 
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
 /**
- * A Cloudscape-style modal dialog. When `onDismiss` is provided the dialog can
- * be dismissed from its close control, the overlay, or the Escape key; when it
- * is omitted the dialog closes only through its own footer actions — the
- * shape a one-time disclosure needs, where an accidental dismissal would lose
- * material the operator can never see again.
- *
- * Focus moves into the dialog when it opens (a page-level `autoFocus` field
- * takes priority; the dialog itself is the fallback), Tab is trapped inside
- * it for as long as it is open, and focus returns to whatever opened it on
- * close — the keyboard-operability contract every Cloudscape dialog holds.
+ * A Cloudscape `Modal`: it already traps focus, closes on Escape, on an
+ * overlay click, and on its own close control — the same contract the real
+ * console's "Access key created" dialog holds (an operator can dismiss it
+ * early and lose the one-time secret, exactly as the real console allows),
+ * so every caller wires the same handler to `onDismiss` as to any Cancel/Done
+ * footer action. Cloudscape's own focus lock moves focus to the first
+ * focusable element in the dialog on open — structurally, the dialog's own
+ * close control, ahead of any form field in the body — and returns it to
+ * whatever opened the dialog on close; this is Cloudscape's real behaviour,
+ * not something a caller can retarget to a specific field.
  */
 export function AwsModal({
   title,
@@ -436,120 +533,41 @@ export function AwsModal({
   children,
 }: {
   title: string;
-  onDismiss?: () => void;
+  onDismiss: () => void;
   footer: ReactNode;
   children: ReactNode;
 }) {
-  const titleId = useId();
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const onDismissRef = useRef(onDismiss);
-  onDismissRef.current = onDismiss;
-  // Captured during render, before this component's own children — including
-  // a page's autoFocus field — reach the DOM. useEffect runs after commit, by
-  // which point autoFocus has already moved document.activeElement onto the
-  // dialog's own input; capturing there would restore focus to the dialog's
-  // own field instead of what opened it.
-  const previouslyFocusedRef = useRef<HTMLElement | null>(
-    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
-  );
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-
-    if (!dialog.contains(document.activeElement)) {
-      const focusable = dialog.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
-      (focusable ?? dialog).focus();
-    }
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        if (!onDismissRef.current) return;
-        event.stopPropagation();
-        onDismissRef.current();
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-      if (focusables.length === 0) {
-        event.preventDefault();
-        return;
-      }
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-    dialog.addEventListener("keydown", onKeyDown);
-    return () => {
-      dialog.removeEventListener("keydown", onKeyDown);
-      previouslyFocusedRef.current?.focus?.();
-    };
-  }, []);
-
   return (
-    <div className="aws-modal-overlay" role="presentation" onClick={onDismiss}>
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="aws-modal"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="aws-modal-header">
-          <h2 id={titleId}>{title}</h2>
-          {onDismiss && (
-            <button type="button" className="aws-modal-close" aria-label="Close" onClick={onDismiss}>
-              <AwsIcon name="close" size={16} />
-            </button>
-          )}
-        </div>
-        <div className="aws-modal-content">{children}</div>
-        <div className="aws-modal-footer">{footer}</div>
-      </div>
-    </div>
+    <Modal visible header={title} footer={footer} onDismiss={onDismiss} closeAriaLabel="Close">
+      {children}
+    </Modal>
   );
 }
 
 /**
  * Copy-to-clipboard with spoken and visible feedback, the control Cloudscape
- * places beside every credential and identifier. Failure is announced rather
- * than swallowed: an operator who believes a secret is on the clipboard when it
- * is not will paste something else into a credentials file.
+ * places beside every credential and identifier.
  */
 export function AwsCopyButton({ value, label }: { value: string; label: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   return (
-    <button
-      type="button"
-      className="aws-copy"
-      aria-label={label}
-      title={label}
-      onClick={() => {
-        navigator.clipboard.writeText(value).then(
-          () => setState("copied"),
-          () => setState("failed"),
-        );
-      }}
-    >
-      <AwsIcon name="copy" size={14} />
-      <span role="status">{state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy"}</span>
-    </button>
+    <CopyToClipboard
+      variant="icon"
+      textToCopy={value}
+      copyButtonAriaLabel={label}
+      copySuccessText="Copied"
+      copyErrorText="Copy failed"
+    />
   );
 }
 
-/**
- * Status is an icon and a word. Cloudscape never relies on colour alone, so
- * the glyph carries the meaning for anyone who cannot distinguish the hue.
- */
 export type AwsStatusKind = "success" | "error" | "warning" | "inactive";
+
+const KIND_TO_INDICATOR: Record<AwsStatusKind, StatusIndicatorProps.Type> = {
+  success: "success",
+  error: "error",
+  warning: "in-progress",
+  inactive: "stopped",
+};
 
 /**
  * Where the caller knows the meaning it passes `kind`, because inferring it
@@ -563,7 +581,17 @@ export function AwsStatus({ status, kind: explicitKind }: { status: string; kind
   // contains "active", so a looser check reports a green tick for a failure.
   const words = value.split(/[^a-z]+/).filter(Boolean);
   const has = (...candidates: string[]) => candidates.some((candidate) => words.includes(candidate));
-  const kind = has("unavailable", "stopped", "stopping", "failed", "failure", "error", "deactivated", "inactive", "deleted")
+  const kind: AwsStatusKind = has(
+    "unavailable",
+    "stopped",
+    "stopping",
+    "failed",
+    "failure",
+    "error",
+    "deactivated",
+    "inactive",
+    "deleted",
+  )
     ? "error"
     : has("pending", "provisioning", "creating", "updating", "deleting")
       ? "warning"
@@ -571,18 +599,76 @@ export function AwsStatus({ status, kind: explicitKind }: { status: string; kind
         ? "success"
         : "inactive";
   const resolved = explicitKind ?? kind;
+  return <StatusIndicator type={KIND_TO_INDICATOR[resolved]}>{status}</StatusIndicator>;
+}
+
+/**
+ * A resource's key-value property block — Cloudscape's own `KeyValuePairs`,
+ * replacing the hand-built `<dl>` every detail page used to draw. Callers
+ * build a flat list of `{label, value}` pairs (skipping any conditional
+ * field simply by not including it), the same shape the JSX `<dt>`/`<dd>`
+ * pairs held before.
+ */
+export function AwsKeyValue({
+  items,
+  columns = 3,
+  ariaLabel,
+}: {
+  items: { label: string; value: ReactNode }[];
+  columns?: number;
+  ariaLabel?: string;
+}) {
+  const pairs: KeyValuePairsProps.Item[] = items.map((item) => ({ type: "pair", label: item.label, value: item.value }));
+  return <KeyValuePairs columns={columns} items={pairs} ariaLabel={ariaLabel} />;
+}
+
+/**
+ * A load failure, rendered as a real Cloudscape `Alert`. The `role="alert"`
+ * wrapper is this console's own addition on top of Cloudscape's own markup
+ * (Cloudscape's Alert relies on its visual presentation and does not itself
+ * assert an ARIA live-region role) so a screen reader announces a failed
+ * read the moment it happens, matching this console's accessibility bar.
+ */
+export function AwsErrorAlert({
+  children,
+  testId,
+}: {
+  children: ReactNode;
+  testId?: string;
+}) {
   return (
-    <span className={`aws-status aws-status-${resolved}`}>
-      {resolved === "success" ? (
-        <AwsIcon name="status_positive" size={14} />
-      ) : resolved === "error" ? (
-        <AwsIcon name="status_negative" size={14} />
-      ) : resolved === "warning" ? (
-        <AwsIcon name="status_pending" size={14} />
-      ) : (
-        <span aria-hidden>–</span>
-      )}
-      {status}
-    </span>
+    <div role="alert" data-testid={testId}>
+      <Alert type="error">{children}</Alert>
+    </div>
   );
+}
+
+/**
+ * A resource's empty or loading placeholder, replacing the hand-built
+ * `.aws-empty` block. `role="status"` while loading lets assistive tech pick
+ * up the change without the operator having to go looking for it.
+ */
+export function AwsEmptyState({
+  title,
+  description,
+  loading,
+}: {
+  title: string;
+  description?: string;
+  loading?: boolean;
+}) {
+  const body = (
+    <Box textAlign="center" color="text-body-secondary" padding={{ vertical: "xxl" }}>
+      {loading && (
+        <Box margin={{ bottom: "s" }}>
+          <Spinner size="normal" />
+        </Box>
+      )}
+      <Box variant="strong" color="text-body-secondary" fontSize="heading-s">
+        {title}
+      </Box>
+      {description && <Box margin={{ top: "xxs" }}>{description}</Box>}
+    </Box>
+  );
+  return loading ? <div role="status">{body}</div> : body;
 }

@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { NavLink } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsModal, AwsResourceTable, type AwsColumn } from "../console/index.js";
+import Input from "@cloudscape-design/components/input";
+import FormField from "@cloudscape-design/components/form-field";
+import { AwsButton, AwsErrorAlert, AwsModal, AwsResourceTable, AwsRowLink, type AwsColumn } from "../console/index.js";
 import { createIAMUser, deleteIAMUser, fetchIAMUsers, type IAMUserSummary } from "../api.js";
 
 // AWS Identity and Access Management (IAM) users. The list, creation, and
@@ -12,7 +13,7 @@ const columns: AwsColumn<IAMUserSummary>[] = [
   {
     id: "userName",
     header: "User name",
-    cell: (row) => <NavLink to={`/ui/iam/users/${encodeURIComponent(row.userName)}`}>{row.userName}</NavLink>,
+    cell: (row) => <AwsRowLink to={`/ui/iam/users/${encodeURIComponent(row.userName)}`}>{row.userName}</AwsRowLink>,
     value: (row) => row.userName,
   },
   { id: "path", header: "Path", cell: (row) => row.path, value: (row) => row.path },
@@ -58,26 +59,18 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
         A user is an identity in AWS Identity and Access Management (IAM) with long-term credentials. After creating
         the user, open its Security credentials to create an access key.
       </p>
-      <label htmlFor="iam-user-name">
-        <strong>User name</strong>
-      </label>
-      <input
-        id="iam-user-name"
-        data-testid="iam-user-name-input"
-        className="aws-input"
-        value={name}
-        autoFocus
-        onChange={(event) => setName(event.target.value)}
-        aria-describedby="iam-user-name-constraint"
-      />
-      <p id="iam-user-name-constraint" className="aws-page-description">
-        Up to 64 characters. Letters, digits, and + = , . @ _ - are allowed.
-      </p>
+      <FormField label="User name" constraintText="Up to 64 characters. Letters, digits, and + = , . @ _ - are allowed.">
+        <Input
+          value={name}
+          onChange={(event) => setName(event.detail.value)}
+          nativeInputAttributes={{ "data-testid": "iam-user-name-input" }}
+        />
+      </FormField>
       {create.isError && (
-        <div className="aws-flash aws-flash-error" role="alert">
+        <AwsErrorAlert>
           <strong>Could not create the user.</strong>{" "}
           {create.error instanceof Error ? create.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </AwsModal>
   );
@@ -139,10 +132,10 @@ function DeleteUsersModal({
         ))}
       </ul>
       {remove.isError && (
-        <div className="aws-flash aws-flash-error" role="alert">
+        <AwsErrorAlert>
           <strong>Could not delete.</strong>{" "}
           {remove.error instanceof Error ? remove.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </AwsModal>
   );

@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { NavLink, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsModal, AwsResourceTable, type AwsColumn } from "../console/index.js";
+import { AwsButton, AwsErrorAlert, AwsModal, AwsResourceTable, AwsRowLink, type AwsColumn } from "../console/index.js";
 import { formatBytes, formatEpoch, formatRetention } from "../console/format.js";
 import { deleteCWLogGroup, fetchCWLogGroups, type CWLogGroup } from "../api.js";
 
@@ -14,7 +14,7 @@ const columns: AwsColumn<CWLogGroup>[] = [
   {
     id: "name",
     header: "Log group",
-    cell: (row) => <NavLink to={`/ui/logs/${encodeURIComponent(row.name)}`}>{row.name}</NavLink>,
+    cell: (row) => <AwsRowLink to={`/ui/logs/${encodeURIComponent(row.name)}`}>{row.name}</AwsRowLink>,
     value: (row) => row.name,
   },
   { id: "retentionInDays", header: "Retention", cell: (row) => formatRetention(row.retentionInDays), value: (row) => String(row.retentionInDays) },
@@ -74,10 +74,10 @@ export function DeleteLogGroupsModal({
         ))}
       </ul>
       {remove.isError && (
-        <div className="aws-flash aws-flash-error" role="alert">
+        <AwsErrorAlert>
           <strong>Could not delete.</strong>{" "}
           {remove.error instanceof Error ? remove.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </AwsModal>
   );
@@ -99,7 +99,6 @@ export function LogGroupsPage() {
         emptyDescription="No log groups exist in this account and Region."
         rowKey={(row) => row.name}
         tableTestId="log-groups-table"
-        rowTestId={(row) => `log-group-row-${row.name}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
             <AwsButton

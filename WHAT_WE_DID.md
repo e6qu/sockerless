@@ -4,6 +4,48 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — AWS console adopts the real Cloudscape component library
+
+The AWS simulator console (ui/packages/simulator-aws) moved from its hand-built
+Cloudscape *approximation* to the real `@cloudscape-design/components` — the
+system the AWS Management Console itself is built on — the biggest single step
+toward literal AWS console parity. React 19 compatibility was spike-verified
+first (real Table/Tabs/Button render and behave under the stack).
+
+The whole console renders through genuine Cloudscape now: `AppLayout`,
+`TopNavigation`, `BreadcrumbGroup`, `Table` (with `TextFilter`/`Pagination`),
+`Header`, `Modal`, `Tabs`, `Button`, `Link`, `Badge`, `StatusIndicator`,
+`Alert`, `KeyValuePairs`, `ColumnLayout`, `CopyToClipboard`, `Input`,
+`FormField`, `Spinner` — across the shell, all seven list pages, all five
+detail pages, every modal and tab strip. Light and dark are Cloudscape's own
+WCAG-AA modes via `applyMode`, wired to the existing `useTheme` hook, so
+`tokens.css`/`console.css` shrank from ~600 to ~60 lines (only the always-dark
+header account cluster beside `TopNavigation` and the CloudWatch Logs
+transcript viewer stay hand-built). Two composites stayed hand-built for a real
+reason: the searchable multi-column Services flyout (no Cloudscape equivalent)
+and the side navigation (the packaged `SideNavigation` badge can't carry a
+distinct "not supported" accessible name). The federated SigV4 data plane
+(`federation.ts`/`api.ts`/`sigv4.ts`) was untouched — only rendering changed.
+
+The migration also fixed real defects it surfaced: a duplicate `<main>`
+landmark, an unlandmarked header account cluster, a Modal close button with no
+accessible name, a dark-mode contrast failure in the Services panel, and a
+duplicate not-supported aria-label.
+
+Verified end to end: typecheck/knip clean; 49 vitest; 85 Playwright; axe-core's
+full ruleset zero-violations across every page, the not-supported page, the
+Services flyout, and a dialog in both themes; and the Shauth relying-party
+matrix green — the AWS federated flow (sign-in → SigV4 reads → IAM key minting
+→ Organizations account creation) works through the real Cloudscape DOM (the
+matrix's account-row lookup was adapted to find the row by its Cloudscape link).
+
+Trade-off, recorded honestly: the `dist` bundle grew from ~460 KB to ~2.0 MB
+(JS 111→311 KB gzip, CSS 7→226 KB gzip) — the real cost of a full design system
+versus a hand-rolled approximation. Scoped to AWS deliberately: Cloudscape is
+open-source and the most verifiable; Microsoft Fluent (Azure) can follow, and
+Google Cloud stays hand-built (no official Google console component library).
+
+
 ## 2026-07-25 — Simulator console parity pass 3: services flyout, ACR coordinate, authenticated detail render
 
 Pass 3 closed the loose ends parity passes 1 and 2 left open, holding the same

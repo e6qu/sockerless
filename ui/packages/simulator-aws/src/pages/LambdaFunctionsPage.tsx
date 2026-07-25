@@ -1,7 +1,15 @@
 import { useState } from "react";
-import { NavLink, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsModal, AwsResourceTable, AwsStatus, type AwsColumn } from "../console/index.js";
+import {
+  AwsButton,
+  AwsErrorAlert,
+  AwsModal,
+  AwsResourceTable,
+  AwsRowLink,
+  AwsStatus,
+  type AwsColumn,
+} from "../console/index.js";
 import { formatTimestamp } from "../console/format.js";
 import { deleteLambdaFunction, fetchLambdaFunctions, type LambdaFunction } from "../api.js";
 
@@ -14,7 +22,7 @@ const columns: AwsColumn<LambdaFunction>[] = [
   {
     id: "name",
     header: "Function name",
-    cell: (row) => <NavLink to={`/ui/lambda/${encodeURIComponent(row.name)}`}>{row.name}</NavLink>,
+    cell: (row) => <AwsRowLink to={`/ui/lambda/${encodeURIComponent(row.name)}`}>{row.name}</AwsRowLink>,
     value: (row) => row.name,
   },
   { id: "state", header: "State", cell: (row) => <AwsStatus status={row.state} />, value: (row) => row.state },
@@ -77,10 +85,10 @@ export function DeleteFunctionsModal({
         ))}
       </ul>
       {remove.isError && (
-        <div className="aws-flash aws-flash-error" role="alert">
+        <AwsErrorAlert>
           <strong>Could not delete.</strong>{" "}
           {remove.error instanceof Error ? remove.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </AwsModal>
   );
@@ -102,7 +110,6 @@ export function LambdaFunctionsPage() {
         emptyDescription="No functions exist in this account and Region."
         rowKey={(row) => row.name}
         tableTestId="lambda-functions-table"
-        rowTestId={(row) => `lambda-function-row-${row.name}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
             <AwsButton

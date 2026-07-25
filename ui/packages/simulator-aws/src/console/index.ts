@@ -1,14 +1,16 @@
 export { AwsApp } from "./AwsApp.js";
 export {
-  AwsBadge,
   AwsButton,
   AwsContainer,
   AwsCopyButton,
+  AwsEmptyState,
+  AwsErrorAlert,
+  AwsKeyValue,
   AwsModal,
   AwsNotSupportedBadge,
   AwsPageHeader,
+  AwsRowLink,
   AwsStatus,
-  type AwsBadgeColor,
   type AwsStatusKind,
 } from "./AwsConsole.js";
 export { AwsResourceTable, type AwsColumn } from "./AwsTable.js";

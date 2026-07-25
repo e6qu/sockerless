@@ -1,7 +1,18 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsContainer, AwsPageHeader, AwsResourceTable, type AwsColumn } from "../console/index.js";
+import { useQuery } from "@tanstack/react-query";
+import Header from "@cloudscape-design/components/header";
+import { borderRadiusContainer, fontFamilyMonospace } from "@cloudscape-design/design-tokens";
+import {
+  AwsButton,
+  AwsContainer,
+  AwsEmptyState,
+  AwsErrorAlert,
+  AwsKeyValue,
+  AwsPageHeader,
+  AwsResourceTable,
+  type AwsColumn,
+} from "../console/index.js";
 import { formatBytes, formatEpoch, formatRetention } from "../console/format.js";
 import { fetchCWLogEvents, fetchCWLogGroup, fetchCWLogStreams, type CWLogGroup, type CWLogStream } from "../api.js";
 import { DeleteLogGroupsModal } from "./LogGroupsPage.js";
@@ -36,23 +47,22 @@ function RecentEventsPanel({ logGroupName, logStreamName }: { logGroupName: stri
   });
   return (
     <AwsContainer>
-      <h2 className="aws-subheading">Recent events — {logStreamName}</h2>
+      <Header variant="h2">Recent events — {logStreamName}</Header>
       {events.isError ? (
-        <div className="aws-flash aws-flash-error" role="alert" data-testid="logs-events-error">
+        <AwsErrorAlert testId="logs-events-error">
           <strong>Could not load events.</strong>{" "}
           {events.error instanceof Error ? events.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       ) : events.isLoading ? (
-        <div className="aws-empty" role="status">
-          Loading events…
-        </div>
+        <AwsEmptyState title="Loading events…" loading />
       ) : (events.data ?? []).length === 0 ? (
-        <div className="aws-empty">
-          <strong>No events</strong>
-          <p>This log stream has no events yet.</p>
-        </div>
+        <AwsEmptyState title="No events" description="This log stream has no events yet." />
       ) : (
-        <div className="aws-log-events" data-testid="logs-events-panel">
+        <div
+          className="aws-log-events"
+          data-testid="logs-events-panel"
+          style={{ borderRadius: borderRadiusContainer, fontFamily: fontFamilyMonospace }}
+        >
           {(events.data ?? []).map((event, index) => (
             <div className="aws-log-event-line" key={`${event.timestamp}-${index}`}>
               <span className="aws-log-event-timestamp">{formatEpoch(event.timestamp)}</span>
@@ -68,7 +78,6 @@ function RecentEventsPanel({ logGroupName, logStreamName }: { logGroupName: stri
 export function LogGroupDetailPage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
   const [viewingStream, setViewingStream] = useState<string | null>(null);
   const group = useQuery({ queryKey: ["log-group", name], queryFn: () => fetchCWLogGroup(name) });
@@ -88,27 +97,27 @@ export function LogGroupDetailPage() {
       />
       <AwsContainer>
         {group.isError ? (
-          <div className="aws-flash aws-flash-error" role="alert" data-testid="logs-log-group-error">
+          <AwsErrorAlert testId="logs-log-group-error">
             <strong>Could not load the log group.</strong>{" "}
             {group.error instanceof Error ? group.error.message : "The request failed."}
-          </div>
+          </AwsErrorAlert>
         ) : group.isLoading ? (
-          <div className="aws-empty" role="status">
-            Loading log group…
-          </div>
+          <AwsEmptyState title="Loading log group…" loading />
         ) : group.data ? (
-          <dl className="aws-key-value" data-testid="logs-log-group-summary">
-            <dt>Retention</dt>
-            <dd>{formatRetention(group.data.retentionInDays)}</dd>
-            <dt>Stored bytes</dt>
-            <dd>{formatBytes(group.data.storedBytes)}</dd>
-            <dt>Created at</dt>
-            <dd>{formatEpoch(group.data.creationTime)}</dd>
-          </dl>
+          <div data-testid="logs-log-group-summary">
+            <AwsKeyValue
+              items={[
+                { label: "Retention", value: formatRetention(group.data.retentionInDays) },
+                { label: "Stored bytes", value: formatBytes(group.data.storedBytes) },
+                { label: "Created at", value: formatEpoch(group.data.creationTime) },
+              ]}
+            />
+          </div>
         ) : null}
       </AwsContainer>
       <AwsResourceTable<CWLogStream>
         title="Log streams"
+        headingVariant="h2"
         description="Log streams in this log group. Select one and choose View recent events to read it."
         columns={streamColumns}
         queryKey={["log-streams", name]}
@@ -118,7 +127,6 @@ export function LogGroupDetailPage() {
         emptyDescription="This log group has no log streams."
         rowKey={(row) => row.name}
         tableTestId="logs-streams-table"
-        rowTestId={(row) => `logs-stream-row-${row.name}`}
         actions={({ selected, refetch, isFetching }) => (
           <>
             <AwsButton
