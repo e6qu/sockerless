@@ -4,6 +4,27 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-25 — Azure `client_credentials` rejects unregistered clients
+
+BUG-2639, the last actionable fidelity gap from the Console Self-Service
+roadmap: the Azure simulator's v2.0 `client_credentials` grant minted a token
+for any client id — an unregistered id fell through to an implicit-client
+branch with no secret validation, where real Microsoft Entra rejects unknown
+clients with `unauthorized_client` AADSTS700016. Enumerating every
+`client_credentials`-with-secret call site showed the harnesses had almost all
+already converged on one coordinate (`test-client-id`/`test-client-secret`), so
+the fix was a clean single-coordinate consolidation, not a mass migration: the
+simulator seeds a well-known bootstrap Entra application (that appId, a hashed
+secret password credential, and its service principal — the Azure analog of the
+AWS `test`/`test` bootstrap), the few stragglers (a couple of test subtests, and
+a relying-party harness call that had relied on the implicit grant with no
+secret at all) were pointed at it, and the implicit-client branch was deleted so
+an unregistered client id now returns the real AADSTS700016. A new SDK test
+asserts the rejection; the Azure Container Apps and Azure Functions backends
+were confirmed unaffected (they authenticate through the managed-identity
+`/msi/token` endpoint, never `client_credentials`).
+
+
 ## 2026-07-25 — Closed the console/simulator fidelity follow-ups the roadmap surfaced
 
 Three fidelity gaps filed during the Console Self-Service phases, resolved

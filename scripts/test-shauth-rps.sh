@@ -346,15 +346,17 @@ pids+=("$!")
 wait_for_url "$azure_console_cloud/health" "Microsoft Azure console cloud"
 
 # The administrator provisions the console's federated identity through the real
-# Azure Resource Manager API, authenticating with the simulator's seeded ARM
-# token, then registers a federated identity credential for the operator's
-# Shauth subject. The console presents the operator's assertion — issued to the
-# console's own OpenID Connect client — so the credential's audience is that
-# client id.
+# Azure Resource Manager API, authenticating with the simulator's seeded
+# bootstrap service principal — the same well-known coordinate the CLI test
+# surfaces configure — then registers a federated identity credential for the
+# operator's Shauth subject. The console presents the operator's assertion —
+# issued to the console's own OpenID Connect client — so the credential's
+# audience is that client id.
 azure_console_arm_bearer=$(curl --silent --show-error --fail \
   -X POST "$azure_console_cloud/$azure_tenant/oauth2/v2.0/token" \
   --data-urlencode 'grant_type=client_credentials' \
-  --data-urlencode 'client_id=console-provisioning-admin' \
+  --data-urlencode 'client_id=test-client-id' \
+  --data-urlencode 'client_secret=test-client-secret' \
   --data-urlencode 'scope=https://management.azure.com/.default' | jq -r '.access_token')
 [[ -n $azure_console_arm_bearer && $azure_console_arm_bearer != null ]] || {
   echo "Microsoft Azure console cloud issued no Azure Resource Manager token" >&2

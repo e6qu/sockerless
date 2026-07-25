@@ -226,8 +226,8 @@ func TestAzureEntra_TokenRS256VerifiesWithJWKS(t *testing.T) {
 	tenant := "tenant-rs256"
 	tokenBody := requestAzureToken(t, tenant, "oauth2/v2.0/token", url.Values{
 		"grant_type":    {"client_credentials"},
-		"client_id":     {"client"},
-		"client_secret": {"secret"},
+		"client_id":     {"test-client-id"},
+		"client_secret": {"test-client-secret"},
 		"scope":         {"https://management.azure.com/.default"},
 	})
 
@@ -301,8 +301,8 @@ func TestAzureEntra_TokenAudienceFollowsScopeAndResource(t *testing.T) {
 			tokenURL: "oauth2/v2.0/token",
 			values: url.Values{
 				"grant_type":    {"client_credentials"},
-				"client_id":     {"client"},
-				"client_secret": {"secret"},
+				"client_id":     {"test-client-id"},
+				"client_secret": {"test-client-secret"},
 				"scope":         {"https://vault.azure.net/.default"},
 			},
 			wantAud: "https://vault.azure.net",
@@ -313,8 +313,8 @@ func TestAzureEntra_TokenAudienceFollowsScopeAndResource(t *testing.T) {
 			tokenURL: "oauth2/v2.0/token",
 			values: url.Values{
 				"grant_type":    {"client_credentials"},
-				"client_id":     {"client"},
-				"client_secret": {"secret"},
+				"client_id":     {"test-client-id"},
+				"client_secret": {"test-client-secret"},
 				"scope":         {"https://storage.azure.com/.default"},
 			},
 			wantAud: "https://storage.azure.com/",
@@ -325,8 +325,8 @@ func TestAzureEntra_TokenAudienceFollowsScopeAndResource(t *testing.T) {
 			tokenURL: "oauth2/token",
 			values: url.Values{
 				"grant_type":    {"client_credentials"},
-				"client_id":     {"client"},
-				"client_secret": {"secret"},
+				"client_id":     {"test-client-id"},
+				"client_secret": {"test-client-secret"},
 				"resource":      {"https://servicebus.azure.net"},
 			},
 			wantAud: "https://servicebus.azure.net",

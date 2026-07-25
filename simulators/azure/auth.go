@@ -446,32 +446,18 @@ func handleAzureToken(w http.ResponseWriter, r *http.Request, path string) {
 	// A client_id registered as an application in the directory is a real
 	// confidential client: its client_secret must validate against the app
 	// registration's password credentials, exactly as Microsoft Entra
-	// validates the client_credentials grant. Client IDs the directory holds
-	// no application for keep the sim's implicit-client behavior below.
+	// validates the client_credentials grant.
 	if app, ok := entraFindApplicationByAppID(clientID); ok {
 		handleAzureRegisteredAppClientCredentials(w, r, tenantId, app)
 		return
 	}
 
-	audience, err := azureTokenAudienceFromRequest(r)
-	if err != nil {
-		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
-		return
-	}
-	now := time.Now()
-	token, err := mintAzureSimJWT(tenantId, audience, now, now.Add(1*time.Hour))
-	if err != nil {
-		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"access_token":   token,
-		"token_type":     "Bearer",
-		"expires_in":     3600,
-		"ext_expires_in": 3600,
-	})
+	// A client_id the directory holds no application registration for is not
+	// a confidential client Microsoft Entra recognizes for this tenant — real
+	// Microsoft Entra rejects it before ever inspecting a client_secret.
+	azureOAuthError(w, "unauthorized_client",
+		fmt.Sprintf("AADSTS700016: Application with identifier '%s' was not found in the directory '%s'. This can happen if the application has not been installed by the administrator of the tenant or consented to by any user in the tenant. You may have sent your authentication request to the wrong tenant.", clientID, tenantId),
+		http.StatusBadRequest)
 }
 
 // azureTokenClientID resolves the OAuth2 client identity for a token request.
@@ -850,7 +836,7 @@ func azureScopeIsOIDC(scope string) bool {
 }
 
 // mintAzureSimJWTForUser produces a real-shape Azure AD access token JWT for
-// a specific user. mintAzureSimJWT uses the directory's default identity.
+// a specific user.
 func mintAzureSimJWTForUser(u EntraUser, tenantId, audience string, issuedAt, expiresAt time.Time) (string, error) {
 	return mintAzureSimSignedJWT(map[string]any{
 		"tid":   tenantId,
@@ -864,10 +850,6 @@ func mintAzureSimJWTForUser(u EntraUser, tenantId, audience string, issuedAt, ex
 		"ver":   "1.0",
 		"appid": "sockerless-sim",
 	})
-}
-
-func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (string, error) {
-	return mintAzureSimJWTForUser(entraDefaultUser, tenantId, audience, issuedAt, expiresAt)
 }
 
 // mintAzureSimIDTokenForUser produces a real-shape Azure AD id_token for a

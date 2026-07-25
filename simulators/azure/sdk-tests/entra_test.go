@@ -667,6 +667,30 @@ func TestEntra_ApplicationClientSecretEndToEnd(t *testing.T) {
 	assert.Equal(t, "invalid_client", revokedBody["error"])
 }
 
+// TestEntra_UnregisteredClientCredentialsRejected proves the v2.0
+// client_credentials grant rejects a client_id the directory holds no
+// application registration for — exactly as real Microsoft Entra rejects an
+// unknown client with AADSTS700016 unauthorized_client, before ever
+// inspecting a client_secret. A client_secret that happens to match the
+// seeded bootstrap application's secret must not authenticate a different,
+// unregistered client_id.
+func TestEntra_UnregisteredClientCredentialsRejected(t *testing.T) {
+	resp, err := http.PostForm(baseURL+"/"+simTenantID+"/oauth2/v2.0/token", url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {"no-such-registered-app"},
+		"client_secret": {"test-client-secret"},
+		"scope":         {"https://management.azure.com/.default"},
+	})
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "unauthorized_client", body["error"])
+	assert.Contains(t, body["error_description"], "AADSTS700016")
+	assert.Contains(t, body["error_description"], "no-such-registered-app")
+}
+
 // appSecretCredential implements azcore.TokenCredential by running the OAuth2
 // client_credentials grant with an app registration's appId + client secret —
 // the same wire request azidentity's ClientSecretCredential sends, issued

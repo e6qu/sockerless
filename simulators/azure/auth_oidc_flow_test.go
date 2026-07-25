@@ -187,10 +187,15 @@ func TestAzureTokenEndpoint_ClientSecretBasic(t *testing.T) {
 	})
 
 	t.Run("client_credentials", func(t *testing.T) {
+		// The seeded bootstrap application registration (the well-known
+		// coordinate every SDK/CLI/Terraform harness authenticates with)
+		// stands in for a real confidential client here — real Microsoft
+		// Entra rejects an unregistered client_id outright, so this Basic-
+		// authorization exercise must present a registered client_id/secret.
 		status, body := oidcToken(t, srv, tenant, url.Values{
 			"grant_type": {"client_credentials"},
 			"scope":      {"https://management.azure.com/.default"},
-		}, "basic-cc-client", "s3cret")
+		}, entraBootstrapClientID, entraBootstrapClientSecret)
 		if status != http.StatusOK {
 			t.Fatalf("token status = %d, want 200: %v", status, body)
 		}
