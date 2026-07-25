@@ -365,6 +365,11 @@ body:has(.aws) { background: var(--aws-layout-bg); }
 
 /* Credential display ----------------------------------------------------- */
 .aws-key-value { display: grid; gap: 4px; }
+/* A key-value block reached directly inside a container gets the container's
+ * own gutter, so its content doesn't sit flush against the rounded corners
+ * (a tab panel already pads itself — see .aws-tab-panel above — so a
+ * key-value nested inside one is left alone). */
+.aws-container > .aws-key-value { padding: 16px; }
 .aws-key-value dt { font-size: 12px; font-weight: 700; color: var(--aws-fg-secondary); }
 .aws-key-value dd {
   margin: 0 0 8px;
@@ -411,6 +416,62 @@ body:has(.aws) { background: var(--aws-layout-bg); }
   margin-bottom: 4px;
 }
 .aws-code-header .aws-code-title { font-size: 12px; font-weight: 700; color: var(--aws-fg-secondary); }
+
+/* Tabs --------------------------------------------------------------------
+ * The Cloudscape "details page with tabs" pattern: an underline strip with
+ * one tab in the page's Tab order at a time (see AwsTabs.tsx for the
+ * roving-tabindex contract) and a panel drawn on the same surface as the
+ * summary container above it. */
+.aws-tabs-list {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--aws-border-subtle);
+  padding: 0 16px;
+}
+.aws-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  color: var(--aws-fg-secondary);
+  padding: 10px 12px;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.aws-tab:hover { color: var(--aws-fg); }
+.aws-tab-active { color: var(--aws-primary); border-bottom-color: var(--aws-primary); }
+.aws-tab-panel { padding: 16px; }
+.aws-tab-panel:focus-visible { outline: 2px solid var(--aws-primary); outline-offset: -2px; }
+.aws-tab-panel .aws-table { border-top: 1px solid var(--aws-border-subtle); }
+.aws-tab-panel .aws-empty { padding: 24px 0; }
+
+/* Sub-heading inside a tab panel or detail section, one step down from the
+ * page h1. Reached directly inside a container (not a tab panel, which pads
+ * itself) it takes the container's own gutter, matching the key-value rule
+ * above. */
+.aws-subheading { margin: 0 0 8px; font-size: 16px; font-weight: 700; }
+.aws-container > .aws-subheading:first-child { margin: 16px 16px 8px; }
+.aws-detail-section + .aws-detail-section { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--aws-border-subtle); }
+
+/* Log events viewer -------------------------------------------------------
+ * The CloudWatch Logs stream's recent-events panel: a scrolling monospace
+ * transcript, one line per event, timestamp dimmed ahead of the message —
+ * the same shape the real console's log-stream viewer renders. */
+.aws-log-events {
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 0 16px 16px;
+  background: var(--aws-surface-alt);
+  border: 1px solid var(--aws-border-subtle);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: var(--aws-font-mono);
+  font-size: 12px;
+}
+.aws-log-event-line { display: flex; gap: 12px; padding: 3px 0; align-items: baseline; }
+.aws-log-event-timestamp { color: var(--aws-fg-secondary); white-space: nowrap; }
+.aws-log-event-message { color: var(--aws-fg); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Detail-page summary ---------------------------------------------------- */
 .aws-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; padding: 16px; }

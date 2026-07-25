@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink } from "react-router";
 import { AzureIcon, type AzureIconName } from "./icons.js";
 
@@ -35,9 +35,84 @@ function AzureThemeToggle() {
   }, [dark]);
   const label = dark ? "Switch to light theme" : "Switch to dark theme";
   return (
-    <button type="button" className="az-icon-button" onClick={() => setDark((on) => !on)} aria-label={label} title={label}>
+    <button
+      type="button"
+      className="az-icon-button"
+      data-testid="az-theme-toggle"
+      onClick={() => setDark((on) => !on)}
+      aria-label={label}
+      title={label}
+    >
       <AzureIcon name={dark ? "sun" : "moon"} size={18} />
     </button>
+  );
+}
+
+/** A header icon button that discloses a small panel rather than acting
+ *  directly — the shape every header control that has no real backing
+ *  feature in this simulator takes (Cloud Shell, Notifications, Help). The
+ *  panel says plainly what it is and, where one exists, what the faithful
+ *  alternative is, rather than presenting a dead icon that looks live. Focus
+ *  moves into the panel on open, Escape and an outside pointer close it and
+ *  return focus to the trigger — the same contract a real Fluent callout
+ *  offers. */
+function AzureHeaderPopover({
+  icon,
+  label,
+  testid,
+  children,
+}: {
+  icon: AzureIconName;
+  label: string;
+  testid: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    panelRef.current?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      buttonRef.current?.focus();
+    }
+    function onPointerDown(event: MouseEvent) {
+      const target = event.target as Node;
+      if (panelRef.current?.contains(target) || buttonRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onPointerDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="az-header-popover">
+      <button
+        ref={buttonRef}
+        type="button"
+        className="az-icon-button"
+        data-testid={testid}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        aria-label={label}
+        title={label}
+      >
+        <AzureIcon name={icon} size={18} />
+      </button>
+      {open ? (
+        <div ref={panelRef} className="az-header-panel" role="dialog" aria-label={label} tabIndex={-1}>
+          {children}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -59,6 +134,36 @@ export function AzureHeader({ account }: { account: ReactNode }) {
         />
       </div>
       <div className="az-header-right">
+        {/* The real Azure portal header carries Cloud Shell, Notifications,
+         * and Help alongside the account and Settings controls. This
+         * simulator has no Cloud Shell runtime, no operation queue to
+         * notify from, and no support surface — each stays a real, focusable
+         * control rather than disappearing, disclosing that honestly instead
+         * of faking the feature. Settings is the theme toggle below. */}
+        <AzureHeaderPopover icon="cloud_shell" label="Cloud Shell" testid="az-cloud-shell">
+          <h2>Cloud Shell</h2>
+          <p>
+            Azure Cloud Shell isn&rsquo;t available in this simulator. Use the <code>az</code> CLI installed locally,
+            pointed at this deployment&rsquo;s endpoint, for an equivalent browser-free shell.
+          </p>
+        </AzureHeaderPopover>
+        <AzureHeaderPopover icon="notifications" label="Notifications" testid="az-notifications">
+          <h2>Notifications</h2>
+          <p>
+            This simulator doesn&rsquo;t emit portal notifications — there&rsquo;s no background operation queue to
+            report on. Command results and errors surface inline on each blade instead.
+          </p>
+        </AzureHeaderPopover>
+        <AzureHeaderPopover icon="help" label="Help and support" testid="az-help">
+          <h2>Help + support</h2>
+          <p>
+            Help and support isn&rsquo;t available in this simulator. See the real{" "}
+            <a href="https://learn.microsoft.com/azure/" target="_blank" rel="noreferrer">
+              Azure documentation
+            </a>{" "}
+            for the services it simulates.
+          </p>
+        </AzureHeaderPopover>
         {account}
         <AzureThemeToggle />
       </div>

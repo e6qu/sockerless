@@ -56,7 +56,11 @@ test.describe("Azure portal shell", () => {
 
   test("puts the theme control in the top right and switches both ways", async ({ page }) => {
     await page.goto("/ui/");
-    const toggle = page.locator(".az-icon-button");
+    // Cloud Shell, Notifications, and Help sit alongside the theme toggle in
+    // the header's right-hand group (see "Header disclosure controls"
+    // below), so the toggle is targeted by its own testid rather than the
+    // shared `.az-icon-button` class every header icon button now carries.
+    const toggle = page.getByTestId("az-theme-toggle");
     const headerBox = await page.locator(".az-header").boundingBox();
     const toggleBox = await toggle.boundingBox();
     expect(toggleBox!.x).toBeGreaterThan(headerBox!.x + headerBox!.width / 2);
@@ -81,6 +85,32 @@ test.describe("Azure portal shell", () => {
     await expect(page.locator(".sl-skip-link")).toBeFocused();
     await expect(page.locator("#main-content")).toHaveCount(1);
   });
+});
+
+// The real Azure global header carries Cloud Shell, Notifications, and Help
+// alongside the account and Settings (theme) controls. This simulator backs
+// none of the first three with a real feature, so each discloses that
+// honestly in a small panel instead of acting — a labelled, accessible
+// affordance rather than a dead icon that looks live.
+test.describe("Header disclosure controls", () => {
+  for (const [testid, heading] of [
+    ["az-cloud-shell", "Cloud Shell"],
+    ["az-notifications", "Notifications"],
+    ["az-help", "Help + support"],
+  ] as const) {
+    test(`${testid} opens an honest panel, closes on Escape, and returns focus`, async ({ page }) => {
+      await page.goto("/ui/");
+      const button = page.getByTestId(testid);
+      await expect(button).toHaveAttribute("aria-expanded", "false");
+      await button.click();
+      await expect(button).toHaveAttribute("aria-expanded", "true");
+      const panel = page.getByRole("dialog", { name: await button.getAttribute("aria-label") ?? "" });
+      await expect(panel.getByRole("heading", { name: heading })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(panel).toHaveCount(0);
+      await expect(button).toBeFocused();
+    });
+  }
 });
 
 // These pin the ground-truth values of the Azure portal's visual language — the
@@ -279,6 +309,33 @@ test.describe("Microsoft Entra ID: App registrations", () => {
   });
 });
 
+// The four resource detail blades pass 2 added. This lightweight suite has
+// no identity provider (see the Subscriptions/Entra suites above), so each
+// read reaches the enforcing simulator unauthenticated and surfaces a loud
+// HTTP 401 rather than rendering as if the read had succeeded — the same
+// unauthenticated-safe convention the rest of this file follows. Reads that
+// only succeed once the shell's Essentials data loads are covered by the
+// relying-party suite (ui/e2e/shauth-rps.mjs).
+const DETAIL_BLADES = [
+  { path: "/ui/container-apps/structural-test-job", parent: "Container Apps", testid: "ca-job-error", command: "Run now" },
+  { path: "/ui/functions/structural-test-site", parent: "Function Apps", testid: "fn-site-error", command: "Refresh" },
+  { path: "/ui/acr/structuraltestregistry", parent: "Container registries", testid: "acr-registry-error", command: "Refresh" },
+  { path: "/ui/storage/structuraltestaccount", parent: "Storage accounts", testid: "storage-account-error", command: "Refresh" },
+];
+
+test.describe("Resource detail blades", () => {
+  for (const blade of DETAIL_BLADES) {
+    test(`${blade.path} carries the breadcrumb, command bar, and a loud unauthenticated error`, async ({ page }) => {
+      await page.goto(blade.path);
+      const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+      await expect(crumbs).toContainText(blade.parent);
+      await expect(page.getByRole("toolbar", { name: "Commands" }).getByRole("button", { name: blade.command })).toBeVisible();
+      await expect(page.getByTestId(blade.testid)).toBeVisible();
+      await expect(page.getByTestId(blade.testid)).toContainText("HTTP 401");
+    });
+  }
+});
+
 test.describe("Navigation", () => {
   test("reaches every service from the menu and updates the breadcrumb", async ({ page }) => {
     await page.goto("/ui/");
@@ -416,6 +473,61 @@ test.describe("Contrast", () => {
       }
     }
   });
+
+  // The header disclosure panel (Cloud Shell/Notifications/Help) is the
+  // other surface this pass added — measured the same way rather than
+  // trusted because it reuses existing tokens.
+  test("the header disclosure panel's heading, body, and link clear WCAG AA in both themes", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByTestId("az-help").click();
+    const results = await page.evaluate(() => {
+      const parse = (c: string) => {
+        const m = (c.match(/[\d.]+/g) ?? []).map(Number);
+        return [m[0] ?? 0, m[1] ?? 0, m[2] ?? 0, m[3] ?? 1] as const;
+      };
+      const lin = (v: number) => {
+        const n = v / 255;
+        return n <= 0.04045 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+      };
+      const lum = (c: readonly number[]) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+      const opaqueBehind = (el: Element) => {
+        let node: Element | null = el;
+        while (node && node !== document.documentElement) {
+          const c = parse(getComputedStyle(node).backgroundColor);
+          if (c[3] > 0) return c;
+          node = node.parentElement;
+        }
+        return [255, 255, 255, 1] as const;
+      };
+      const ratio = (el: Element) => {
+        const a = lum(parse(getComputedStyle(el).color));
+        const b = lum(opaqueBehind(el));
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      };
+      const selectors = [".az-header-panel h2", ".az-header-panel p", ".az-header-panel a"];
+      const sample = () =>
+        selectors
+          .map((selector) => {
+            const el = document.querySelector(selector);
+            return el ? { selector, ratio: ratio(el) } : null;
+          })
+          .filter((entry): entry is { selector: string; ratio: number } => entry !== null);
+
+      document.documentElement.classList.remove("dark");
+      const light = sample();
+      document.documentElement.classList.add("dark");
+      const dark = sample();
+      document.documentElement.classList.remove("dark");
+      return { light, dark };
+    });
+
+    for (const [theme, samples] of Object.entries(results)) {
+      expect(samples.length).toBe(3);
+      for (const sample of samples) {
+        expect(sample.ratio, `${theme}: ${sample.selector} measured ${sample.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
 });
 
 test.describe("ARIA landmarks and keyboard state", () => {
@@ -461,7 +573,11 @@ test.describe("Automated accessibility audit", () => {
   // walks up to the actually-painted background rather than axe's own
   // heuristic).
   for (const theme of ["light", "dark"] as const) {
-    for (const target of ["/ui/container-apps", "/ui/not-supported/virtual-machines"]) {
+    for (const target of [
+      "/ui/container-apps",
+      "/ui/not-supported/virtual-machines",
+      ...DETAIL_BLADES.map((blade) => blade.path),
+    ]) {
       test(`${target} has no detectable violations (${theme})`, async ({ page }) => {
         await page.goto(target);
         if (theme === "dark") {
@@ -471,5 +587,15 @@ test.describe("Automated accessibility audit", () => {
         expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
       });
     }
+
+    test(`an open header disclosure panel has no detectable violations (${theme})`, async ({ page }) => {
+      await page.goto("/ui/");
+      if (theme === "dark") {
+        await page.evaluate(() => document.documentElement.classList.add("dark"));
+      }
+      await page.getByTestId("az-cloud-shell").click();
+      const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+      expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+    });
   }
 });

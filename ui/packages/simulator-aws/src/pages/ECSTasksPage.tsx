@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { NavLink, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AwsButton, AwsModal, AwsResourceTable, AwsStatus, type AwsColumn } from "../console/index.js";
 import { fetchECSTasks, stopECSTask, type ECSTask } from "../api.js";
@@ -11,7 +12,12 @@ import { fetchECSTasks, stopECSTask, type ECSTask } from "../api.js";
 // here is Stop, matching what the real console's task Actions menu offers.
 
 const columns: AwsColumn<ECSTask>[] = [
-  { id: "taskArn", header: "Task ARN", cell: (row) => row.taskArn, value: (row) => row.taskArn },
+  {
+    id: "taskArn",
+    header: "Task ARN",
+    cell: (row) => <NavLink to={`/ui/ecs/${encodeURIComponent(row.taskArn)}`}>{row.taskArn}</NavLink>,
+    value: (row) => row.taskArn,
+  },
   { id: "status", header: "Last status", cell: (row) => <AwsStatus status={row.status} />, value: (row) => row.status },
   { id: "clusterArn", header: "Cluster", cell: (row) => row.clusterArn, value: (row) => row.clusterArn },
   { id: "launchType", header: "Launch type", cell: (row) => row.launchType, value: (row) => row.launchType },
@@ -26,7 +32,7 @@ export function isStoppable(task: ECSTask): boolean {
   return task.status !== "STOPPED" && task.status !== "DEPROVISIONING";
 }
 
-function StopTasksModal({
+export function StopTasksModal({
   tasks,
   onClose,
   clearSelection,
@@ -91,6 +97,7 @@ function StopTasksModal({
 }
 
 export function ECSTasksPage() {
+  const navigate = useNavigate();
   const [stopping, setStopping] = useState<{ tasks: ECSTask[]; clearSelection: () => void } | null>(null);
   return (
     <>
@@ -108,6 +115,13 @@ export function ECSTasksPage() {
         rowTestId={(row) => `ecs-task-row-${row.taskArn}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
+            <AwsButton
+              data-testid="ecs-view-task"
+              disabled={selected.length !== 1}
+              onClick={() => navigate(`/ui/ecs/${encodeURIComponent(selected[0].taskArn)}`)}
+            >
+              View details
+            </AwsButton>
             <AwsButton
               data-testid="ecs-stop-task"
               disabled={selected.length === 0 || !selected.every(isStoppable)}

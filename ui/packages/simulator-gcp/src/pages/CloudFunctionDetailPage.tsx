@@ -25,6 +25,55 @@ export function CloudFunctionDetailPage() {
         { label: "Updated", value: formatTimestamp(fn.updateTime ?? "") },
         { label: "Description", value: fn.description ?? "—" },
       ]}
+      extra={(fn) => {
+        const service = fn.serviceConfig;
+        const envVars = Object.entries(service?.environmentVariables ?? {});
+        return (
+          <>
+            <h2 className="gc-detail-heading">Configuration</h2>
+            <dl className="gc-detail-grid">
+              {[
+                { label: "Memory allocated", value: service?.availableMemory ?? "—" },
+                { label: "CPU", value: service?.availableCpu ?? "—" },
+                { label: "Timeout", value: service?.timeoutSeconds ? `${service.timeoutSeconds} seconds` : "—" },
+                { label: "Minimum instances", value: String(service?.minInstanceCount ?? 0) },
+                { label: "Maximum instances", value: service?.maxInstanceCount ? String(service.maxInstanceCount) : "—" },
+                { label: "Ingress settings", value: service?.ingressSettings ?? "—" },
+                { label: "Underlying Cloud Run service", value: service?.service ? shortName(service.service) : "—" },
+              ].map((property) => (
+                <div className="gc-detail-pair" key={property.label}>
+                  <dt>{property.label}</dt>
+                  <dd>{property.value}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <h2 className="gc-detail-heading">Runtime environment variables</h2>
+            {envVars.length === 0 ? (
+              <p className="gc-page-description">No environment variables are configured for this function.</p>
+            ) : (
+              <div className="gc-table-wrap">
+                <table className="gc-table" data-testid="function-env-vars-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {envVars.map(([key, value]) => (
+                      <tr key={key}>
+                        <td>{key}</td>
+                        <td>{value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        );
+      }}
     />
   );
 }

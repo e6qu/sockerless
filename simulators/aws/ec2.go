@@ -316,10 +316,16 @@ type EC2Snapshot struct {
 
 // EC2RunInstancesToken records the reservation a RunInstances ClientToken
 // produced, keyed by the token, so a retried call replays the same instances.
+// LaunchInstances is the exact set the original call returned, captured at
+// launch, so a retried RunInstances replays that original response verbatim —
+// including the "pending" state every instance reported at launch — rather than
+// re-reading the control plane, which may have since transitioned them to
+// "running".
 type EC2RunInstancesToken struct {
-	Token         string
-	ReservationId string
-	InstanceIds   []string
+	Token           string
+	ReservationId   string
+	InstanceIds     []string
+	LaunchInstances []EC2Instance
 }
 
 // State stores
@@ -3419,6 +3425,7 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 		}
 		ec2RunTokens.Put(clientToken, EC2RunInstancesToken{
 			Token: clientToken, ReservationId: reservationID, InstanceIds: ids,
+			LaunchInstances: instances,
 		})
 	}
 
@@ -3444,10 +3451,19 @@ func writeRunInstancesResponse(w http.ResponseWriter, reservationID string, inst
 // writeRunInstancesReplay re-renders the original reservation for an idempotent
 // RunInstances retry, re-fetching each instance's current state from the store.
 func writeRunInstancesReplay(w http.ResponseWriter, tok EC2RunInstancesToken) {
-	var instances []EC2Instance
-	for _, id := range tok.InstanceIds {
-		if inst, ok := ec2Instances.Get(id); ok {
-			instances = append(instances, inst)
+	// Replay the exact response the original call returned (instances in their
+	// launch-time "pending" state), captured in the token. Re-reading the live
+	// control-plane state here raced the asynchronous pending->running
+	// transition, so a retried RunInstances could report "running".
+	instances := tok.LaunchInstances
+	if instances == nil {
+		// Tokens persisted before LaunchInstances was recorded fall back to the
+		// instance ids; the launch state is still "pending" for the replay.
+		for _, id := range tok.InstanceIds {
+			if inst, ok := ec2Instances.Get(id); ok {
+				inst.State = "pending"
+				instances = append(instances, inst)
+			}
 		}
 	}
 	writeRunInstancesResponse(w, tok.ReservationId, instances)

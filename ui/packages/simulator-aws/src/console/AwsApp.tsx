@@ -21,6 +21,17 @@ const ORG_ACCOUNT_PREFIX = "/ui/organizations/accounts/";
 const NOT_SUPPORTED_PREFIX = "/ui/not-supported/";
 const SIDENAV_ID = "aws-sidenav";
 
+// Resource detail routes nest under their service the way the real console
+// breadcrumbs them: <service> > <resource identifier>. Every prefix here has
+// a matching `:id`/`:name` route in main.tsx.
+const RESOURCE_DETAIL_PREFIXES: { prefix: string; service: string; to: string }[] = [
+  { prefix: "/ui/ecs/", service: "Elastic Container Service", to: "/ui/ecs" },
+  { prefix: "/ui/lambda/", service: "Lambda", to: "/ui/lambda" },
+  { prefix: "/ui/ecr/", service: "Elastic Container Registry", to: "/ui/ecr" },
+  { prefix: "/ui/s3/", service: "Simple Storage Service", to: "/ui/s3" },
+  { prefix: "/ui/logs/", service: "CloudWatch Logs", to: "/ui/logs" },
+];
+
 function crumbTrail(pathname: string): { label: string; to?: string }[] {
   // Detail pages nest under their service the way the real console breadcrumbs
   // them: IAM > Users > <user name>, AWS Organizations > <account id>.
@@ -37,6 +48,15 @@ function crumbTrail(pathname: string): { label: string; to?: string }[] {
       { label: "AWS Organizations", to: "/ui/organizations" },
       { label: decodeURIComponent(pathname.slice(ORG_ACCOUNT_PREFIX.length)) },
     ];
+  }
+  for (const entry of RESOURCE_DETAIL_PREFIXES) {
+    if (pathname.startsWith(entry.prefix)) {
+      return [
+        { label: "Simulator", to: "/ui/" },
+        { label: entry.service, to: entry.to },
+        { label: decodeURIComponent(pathname.slice(entry.prefix.length)) },
+      ];
+    }
   }
   if (pathname.startsWith(NOT_SUPPORTED_PREFIX)) {
     const slug = pathname.slice(NOT_SUPPORTED_PREFIX.length);

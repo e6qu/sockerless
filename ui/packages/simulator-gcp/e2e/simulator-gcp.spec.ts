@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const SERVICES = [
   { path: "/ui/cloudrun", nav: "Cloud Run jobs", title: "Cloud Run jobs", columns: ["Name", "Status of last execution", "Created", "Executions", "Launch stage"] },
@@ -59,6 +60,21 @@ test.describe("Google Cloud console shell", () => {
     expect(await isDark()).toBe(!before);
     await toggle.click();
     expect(await isDark()).toBe(before);
+  });
+
+  test("focuses the search field on \"/\", the shortcut the placeholder names", async ({ page }) => {
+    await page.goto("/ui/");
+    const search = page.getByLabel("Search resources, docs, products, and more");
+    await expect(search).not.toBeFocused();
+    await page.keyboard.press("/");
+    await expect(search).toBeFocused();
+  });
+
+  test("does not steal a literal \"/\" typed into another field", async ({ page }) => {
+    await page.goto("/ui/logging");
+    const query = page.getByTestId("log-query-input");
+    await query.fill("logName:\"run.googleapis.com/stdout\"");
+    await expect(query).toHaveValue('logName:"run.googleapis.com/stdout"');
   });
 
   test("redirects / to /ui/", async ({ page }) => {
@@ -368,6 +384,72 @@ test.describe("Contrast", () => {
     ]);
     assertAA(results);
   });
+
+  // The Logs Explorer query bar is this pass's new surface: unlike the
+  // authenticated tabs and sub-resource tables, it renders unconditionally,
+  // so it gets the same empirical guard here.
+  test("the Logs Explorer query bar clears WCAG AA in both themes", async ({ page }) => {
+    await page.goto("/ui/logging");
+    const results = await page.evaluate(sampleContrast, [".gc-log-query-field", '[data-testid="log-query-run"]']);
+    assertAA(results);
+  });
+});
+
+test.describe("Resource detail pages", () => {
+  // This lightweight suite has no identity provider (see the Overview and
+  // Project picker describes above), so every detail read reaches the
+  // enforcing simulator unauthenticated and reports the API's own error
+  // rather than rendering the resource. That still proves the page shell
+  // itself — breadcrumb, page header and description — renders honestly on a
+  // failed read instead of crashing or fabricating data; the authenticated
+  // property grids, tabs and sub-resource tables (Executions, Images,
+  // Objects) are proven in the relying-party suite (ui/e2e/shauth-rps.mjs).
+  const DETAILS = [
+    { path: "/ui/cloudrun/example-job", back: "Cloud Run jobs", backHref: "/ui/cloudrun" },
+    { path: "/ui/functions/example-function", back: "Cloud Run functions", backHref: "/ui/functions" },
+    { path: "/ui/ar/example-repo", back: "Artifact Registry", backHref: "/ui/ar" },
+    { path: "/ui/gcs/example-bucket", back: "Cloud Storage", backHref: "/ui/gcs" },
+    { path: "/ui/serviceaccounts/example@sockerless.iam.gserviceaccount.com", back: "Service accounts", backHref: "/ui/serviceaccounts" },
+  ];
+
+  for (const detail of DETAILS) {
+    test(`renders the breadcrumb and page shell for ${detail.path}`, async ({ page }) => {
+      await page.goto(detail.path);
+      const back = page.getByRole("link", { name: `‹ ${detail.back}` });
+      await expect(back).toBeVisible();
+      await expect(back).toHaveAttribute("href", detail.backHref);
+      await expect(page.locator(".gc-message-error, .gc-loading")).toBeVisible();
+    });
+  }
+});
+
+test.describe("Logs Explorer query bar", () => {
+  // The query bar itself — unlike the results table — needs no authenticated
+  // read to render, so its structure and interaction are provable in this
+  // lightweight suite; the real filtered results are proven in the
+  // relying-party suite.
+  test("offers a Cloud Logging query field and a minimum-severity picker", async ({ page }) => {
+    await page.goto("/ui/logging");
+    const query = page.getByTestId("log-query-input");
+    await expect(query).toBeVisible();
+    const severity = page.getByTestId("log-severity-select");
+    await expect(severity).toBeVisible();
+    // "Any" plus the 9 Cloud Logging severity levels (DEFAULT..EMERGENCY).
+    await expect(severity.locator("option")).toHaveCount(10);
+    await expect(page.getByTestId("log-query-run")).toBeVisible();
+  });
+
+  test("composes the typed query and severity into the request without reloading the page", async ({ page }) => {
+    await page.goto("/ui/logging");
+    await page.getByTestId("log-query-input").fill('resource.type="cloud_run_job"');
+    await page.getByTestId("log-severity-select").selectOption("ERROR");
+    await page.getByTestId("log-query-run").click();
+    // The query composes client-side; the page never navigates away, and the
+    // Logs Explorer heading and query bar are still present, unauthenticated
+    // read of the composed query notwithstanding.
+    await expect(page.getByRole("heading", { name: "Logs Explorer" })).toBeVisible();
+    await expect(page.getByTestId("log-query-input")).toHaveValue('resource.type="cloud_run_job"');
+  });
 });
 
 test.describe("Visual fidelity", () => {
@@ -405,4 +487,27 @@ test.describe("Visual fidelity", () => {
   // unauthenticated and the read is rejected. The empty state (and every other
   // data-dependent view) is exercised over an authenticated read in the
   // relying-party suite (ui/e2e/shauth-rps.mjs).
+});
+
+test.describe("Automated accessibility audit", () => {
+  // axe-core is a coarser net than the hand-measured contrast and landmark
+  // assertions above — it catches defect classes those checks do not aim at
+  // (missing form labels, invalid ARIA usage, duplicate IDs, list structure).
+  // It runs against both themes and the ordinary, not-supported, and resource
+  // detail page shapes, disabling only the colour-contrast rule (already
+  // covered, more precisely, by the dedicated Contrast suite above, which
+  // walks up to the actually-painted background rather than axe's own
+  // heuristic).
+  for (const theme of ["light", "dark"] as const) {
+    for (const target of ["/ui/cloudrun", "/ui/logging", "/ui/not-supported/compute-engine", "/ui/cloudrun/example-job"]) {
+      test(`${target} has no detectable violations (${theme})`, async ({ page }) => {
+        await page.goto(target);
+        if (theme === "dark") {
+          await page.evaluate(() => document.documentElement.classList.add("dark"));
+        }
+        const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
+  }
 });

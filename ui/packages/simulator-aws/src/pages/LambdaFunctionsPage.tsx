@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { NavLink, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AwsButton, AwsModal, AwsResourceTable, AwsStatus, type AwsColumn } from "../console/index.js";
 import { formatTimestamp } from "../console/format.js";
@@ -10,7 +11,12 @@ import { deleteLambdaFunction, fetchLambdaFunctions, type LambdaFunction } from 
 // operator's federated credentials.
 
 const columns: AwsColumn<LambdaFunction>[] = [
-  { id: "name", header: "Function name", cell: (row) => row.name, value: (row) => row.name },
+  {
+    id: "name",
+    header: "Function name",
+    cell: (row) => <NavLink to={`/ui/lambda/${encodeURIComponent(row.name)}`}>{row.name}</NavLink>,
+    value: (row) => row.name,
+  },
   { id: "state", header: "State", cell: (row) => <AwsStatus status={row.state} />, value: (row) => row.state },
   { id: "runtime", header: "Runtime", cell: (row) => row.runtime, value: (row) => row.runtime },
   { id: "memorySize", header: "Memory", cell: (row) => `${row.memorySize} MB`, value: (row) => String(row.memorySize) },
@@ -18,7 +24,7 @@ const columns: AwsColumn<LambdaFunction>[] = [
   { id: "lastModified", header: "Last modified", cell: (row) => formatTimestamp(row.lastModified), value: (row) => row.lastModified },
 ];
 
-function DeleteFunctionsModal({
+export function DeleteFunctionsModal({
   functions,
   onClose,
   clearSelection,
@@ -81,6 +87,7 @@ function DeleteFunctionsModal({
 }
 
 export function LambdaFunctionsPage() {
+  const navigate = useNavigate();
   const [deleting, setDeleting] = useState<{ functions: LambdaFunction[]; clearSelection: () => void } | null>(null);
   return (
     <>
@@ -98,6 +105,13 @@ export function LambdaFunctionsPage() {
         rowTestId={(row) => `lambda-function-row-${row.name}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
+            <AwsButton
+              data-testid="lambda-view-function"
+              disabled={selected.length !== 1}
+              onClick={() => navigate(`/ui/lambda/${encodeURIComponent(selected[0].name)}`)}
+            >
+              View details
+            </AwsButton>
             <AwsButton
               data-testid="lambda-delete-function"
               disabled={selected.length === 0}

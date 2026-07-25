@@ -244,6 +244,433 @@ export const fetchStorageAccounts = async (): Promise<StorageAccount[]> => {
   }));
 };
 
+// resourceIdByName resolves a resource's real ARM resource ID from its short
+// name. ARM's per-resource Get operations need the full
+// subscription/resourceGroup-scoped path, which a route carrying only the
+// resource's name doesn't have; this reads the same subscription-wide list
+// the listing blade already reads (a real ARM List call) and returns the
+// matching resource's own `id`, so the detail blade's subsequent Get reads
+// the exact resource ARM would read for that ID.
+async function resourceIdByName(provider: string, apiVersion: string, name: string): Promise<string> {
+  const matches = await listAcrossSubscriptions<ArmResource>(provider, apiVersion);
+  const match = matches.find((resource) => resource.name === name);
+  if (!match?.id) {
+    throw new Error(`${provider}/${name} was not found in any subscription this directory can reach.`);
+  }
+  return match.id;
+}
+
+// --- Container Apps job detail: containers + execution history ---
+//
+// The Container Apps blade this console lists (ContainerAppsPage) reads the
+// real Microsoft.App/jobs resource — Azure Container Apps' run-to-completion
+// model, the one sockerless deploys container tasks onto. The sim also
+// implements the separate Microsoft.App/containerApps ("Apps") resource
+// type, which is where `latestRevisionName` / `latestRevisionFqdn` live —
+// but pass 1 never gave that resource type a list page or a menu entry, so
+// nothing on this console reaches it today. This detail blade stays on the
+// resource type the list page already shows: its own real Essentials
+// (provisioning state, trigger type, replica timeout, environment), its own
+// containers (from the job's template), and its own run history (the real
+// executions list) — the Container Apps Jobs equivalent of a Cloud Run job's
+// executions.
+
+export interface ContainerAppJobContainer {
+  name: string;
+  image: string;
+  command: string[];
+  args: string[];
+}
+
+export interface ContainerAppJobDetail {
+  id: string;
+  name: string;
+  location: string;
+  provisioningState: string;
+  environmentId: string;
+  triggerType: string;
+  replicaTimeout: number;
+  replicaRetryLimit: number;
+  containers: ContainerAppJobContainer[];
+}
+
+interface ArmContainerAppJob {
+  id?: string;
+  name?: string;
+  location?: string;
+  properties?: {
+    provisioningState?: string;
+    environmentId?: string;
+    configuration?: { triggerType?: string; replicaTimeout?: number; replicaRetryLimit?: number };
+    template?: {
+      containers?: { name?: string; image?: string; command?: string[]; args?: string[] }[];
+    };
+  };
+}
+
+function containerAppJobOf(job: ArmContainerAppJob): ContainerAppJobDetail {
+  return {
+    id: job.id ?? "",
+    name: job.name ?? "",
+    location: job.location ?? "",
+    provisioningState: job.properties?.provisioningState ?? "",
+    environmentId: job.properties?.environmentId ?? "",
+    triggerType: job.properties?.configuration?.triggerType ?? "",
+    replicaTimeout: job.properties?.configuration?.replicaTimeout ?? 0,
+    replicaRetryLimit: job.properties?.configuration?.replicaRetryLimit ?? 0,
+    containers: (job.properties?.template?.containers ?? []).map((container) => ({
+      name: container.name ?? "",
+      image: container.image ?? "",
+      command: container.command ?? [],
+      args: container.args ?? [],
+    })),
+  };
+}
+
+export const fetchContainerAppJob = async (name: string): Promise<ContainerAppJobDetail> => {
+  const id = await resourceIdByName("Microsoft.App/jobs", API_VERSION.jobs, name);
+  return containerAppJobOf(await authorizedJSON<ArmContainerAppJob>(`${id}?api-version=${API_VERSION.jobs}`));
+};
+
+export interface ContainerAppJobExecution {
+  name: string;
+  status: string;
+  startTime: string;
+  endTime: string;
+}
+
+interface ArmContainerAppJobExecution {
+  name?: string;
+  properties?: { status?: string; startTime?: string; endTime?: string };
+}
+
+export const fetchContainerAppJobExecutions = async (jobId: string): Promise<ContainerAppJobExecution[]> => {
+  const list = await authorizedJSON<ArmList<ArmContainerAppJobExecution>>(
+    `${jobId}/executions?api-version=${API_VERSION.jobs}`,
+  );
+  return (list.value ?? []).map((execution) => ({
+    name: execution.name ?? "",
+    status: execution.properties?.status ?? "",
+    startTime: execution.properties?.startTime ?? "",
+    endTime: execution.properties?.endTime ?? "",
+  }));
+};
+
+// startContainerAppJobExecution / stopContainerAppJobExecutions drive the
+// real Container Apps Jobs start/stop actions — the same POSTs
+// `az containerapp job start` / `az containerapp job stop-execution --all`
+// issue.
+export const startContainerAppJobExecution = async (jobId: string): Promise<void> => {
+  await armSend(`${jobId}/start?api-version=${API_VERSION.jobs}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+};
+
+export const stopContainerAppJobExecutions = async (jobId: string): Promise<void> => {
+  await armSend(`${jobId}/stop?api-version=${API_VERSION.jobs}`, { method: "POST" });
+};
+
+// --- Function App detail: app settings + functions ---
+
+export interface FunctionAppDetail {
+  id: string;
+  name: string;
+  location: string;
+  kind: string;
+  state: string;
+  defaultHostName: string;
+  httpsOnly: boolean;
+  enabled: boolean;
+}
+
+interface ArmSite {
+  id?: string;
+  name?: string;
+  location?: string;
+  kind?: string;
+  properties?: { state?: string; defaultHostName?: string; httpsOnly?: boolean; enabled?: boolean };
+}
+
+function functionAppOf(site: ArmSite): FunctionAppDetail {
+  return {
+    id: site.id ?? "",
+    name: site.name ?? "",
+    location: site.location ?? "",
+    kind: site.kind ?? "",
+    state: site.properties?.state ?? "",
+    defaultHostName: site.properties?.defaultHostName ?? "",
+    httpsOnly: site.properties?.httpsOnly ?? false,
+    enabled: site.properties?.enabled ?? false,
+  };
+}
+
+export const fetchFunctionApp = async (name: string): Promise<FunctionAppDetail> => {
+  const id = await resourceIdByName("Microsoft.Web/sites", API_VERSION.sites, name);
+  return functionAppOf(await authorizedJSON<ArmSite>(`${id}?api-version=${API_VERSION.sites}`));
+};
+
+// fetchFunctionAppSettings reads app settings the real way: Microsoft.Web
+// models `config/appsettings` as a write-only PUT resource and serves the
+// current values only through the dedicated `/list` action POST (the same
+// request `az functionapp config appsettings list` sends), because the
+// values can carry secrets that stay out of GET URLs and proxy logs.
+export const fetchFunctionAppSettings = async (siteId: string): Promise<Record<string, string>> => {
+  const response = await armSend(`${siteId}/config/appsettings/list?api-version=${API_VERSION.sites}`, {
+    method: "POST",
+  });
+  const body = (await response.json()) as { properties?: Record<string, string> };
+  return body.properties ?? {};
+};
+
+export interface AzureFunctionSummary {
+  name: string;
+  language: string;
+  isDisabled: boolean;
+}
+
+interface ArmFunctionEnvelope {
+  name?: string;
+  properties?: { language?: string; isDisabled?: boolean };
+}
+
+export const fetchFunctions = async (siteId: string): Promise<AzureFunctionSummary[]> => {
+  const list = await authorizedJSON<ArmList<ArmFunctionEnvelope>>(`${siteId}/functions?api-version=${API_VERSION.sites}`);
+  return (list.value ?? []).map((fn) => ({
+    name: fn.name ?? "",
+    language: fn.properties?.language ?? "",
+    isDisabled: fn.properties?.isDisabled ?? false,
+  }));
+};
+
+// --- Container registry (ACR) detail: repositories + tags ---
+
+export interface ACRRegistryDetail {
+  id: string;
+  name: string;
+  location: string;
+  loginServer: string;
+  skuName: string;
+  skuTier: string;
+  adminUserEnabled: boolean;
+  provisioningState: string;
+}
+
+interface ArmRegistry {
+  id?: string;
+  name?: string;
+  location?: string;
+  sku?: { name?: string; tier?: string };
+  properties?: { loginServer?: string; adminUserEnabled?: boolean; provisioningState?: string };
+}
+
+function acrRegistryOf(registry: ArmRegistry): ACRRegistryDetail {
+  return {
+    id: registry.id ?? "",
+    name: registry.name ?? "",
+    location: registry.location ?? "",
+    loginServer: registry.properties?.loginServer ?? "",
+    skuName: registry.sku?.name ?? "",
+    skuTier: registry.sku?.tier ?? "",
+    adminUserEnabled: registry.properties?.adminUserEnabled ?? false,
+    provisioningState: registry.properties?.provisioningState ?? "",
+  };
+}
+
+export const fetchACRRegistry = async (name: string): Promise<ACRRegistryDetail> => {
+  const id = await resourceIdByName("Microsoft.ContainerRegistry/registries", API_VERSION.registries, name);
+  return acrRegistryOf(await authorizedJSON<ArmRegistry>(`${id}?api-version=${API_VERSION.registries}`));
+};
+
+interface ACRAdminCredentials {
+  username: string;
+  password: string;
+}
+
+// mintACRAdminCredentials calls the real `listCredentials` ARM action — the
+// same request `az acr credential show` sends — to obtain the registry's
+// admin username/password. The ACR data plane (the registry's own login
+// server, a distinct host from Azure Resource Manager) authenticates that
+// pair as HTTP Basic, exactly the way `docker login <loginServer>` does with
+// admin credentials.
+async function mintACRAdminCredentials(registryId: string): Promise<ACRAdminCredentials> {
+  const response = await armSend(`${registryId}/listCredentials?api-version=${API_VERSION.registries}`, {
+    method: "POST",
+  });
+  const body = (await response.json()) as { username?: string; passwords?: { value?: string }[] };
+  return { username: body.username ?? "", password: body.passwords?.[0]?.value ?? "" };
+}
+
+async function acrDataPlaneFetch(loginServer: string, path: string, credentials: ACRAdminCredentials): Promise<Response> {
+  const url = `https://${loginServer}${path}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Basic ${btoa(`${credentials.username}:${credentials.password}`)}` },
+  });
+  if (!response.ok) {
+    throw new Error(`${url} returned HTTP ${response.status}`);
+  }
+  return response;
+}
+
+// fetchACRRepositories reads the registry's own data-plane catalog — ACR's
+// `/acr/v1/_catalog` convenience API, the same one `az acr repository list`
+// calls — authenticated with the admin credentials minted above. Real ACR
+// (and this simulator's registries.go) requires the admin user to be
+// enabled for that credential pair to exist; a registry without it stays
+// honestly unreadable from here rather than silently showing nothing.
+export const fetchACRRepositories = async (registry: ACRRegistryDetail): Promise<string[]> => {
+  if (!registry.adminUserEnabled) {
+    throw new Error("Enable the admin user on this registry to browse its repositories from this console.");
+  }
+  const credentials = await mintACRAdminCredentials(registry.id);
+  const response = await acrDataPlaneFetch(registry.loginServer, "/acr/v1/_catalog", credentials);
+  const body = (await response.json()) as { repositories?: string[] };
+  return body.repositories ?? [];
+};
+
+export interface ACRTag {
+  name: string;
+  digest: string;
+}
+
+export const fetchACRTags = async (registry: ACRRegistryDetail, repository: string): Promise<ACRTag[]> => {
+  const credentials = await mintACRAdminCredentials(registry.id);
+  const response = await acrDataPlaneFetch(
+    registry.loginServer,
+    `/acr/v1/${encodeURIComponent(repository)}/_tags`,
+    credentials,
+  );
+  const body = (await response.json()) as { tags?: { name?: string; digest?: string }[] };
+  return (body.tags ?? []).map((tag) => ({ name: tag.name ?? "", digest: tag.digest ?? "" }));
+};
+
+// --- Storage account detail: blob containers + blobs ---
+
+export interface StorageAccountDetail {
+  id: string;
+  name: string;
+  location: string;
+  kind: string;
+  skuName: string;
+  provisioningState: string;
+  accessTier: string;
+  blobEndpoint: string;
+}
+
+interface ArmStorageAccount {
+  id?: string;
+  name?: string;
+  location?: string;
+  kind?: string;
+  sku?: { name?: string };
+  properties?: { provisioningState?: string; accessTier?: string; primaryEndpoints?: { blob?: string } };
+}
+
+function storageAccountOf(account: ArmStorageAccount): StorageAccountDetail {
+  return {
+    id: account.id ?? "",
+    name: account.name ?? "",
+    location: account.location ?? "",
+    kind: account.kind ?? "",
+    skuName: account.sku?.name ?? "",
+    provisioningState: account.properties?.provisioningState ?? "",
+    accessTier: account.properties?.accessTier ?? "",
+    blobEndpoint: account.properties?.primaryEndpoints?.blob ?? "",
+  };
+}
+
+export const fetchStorageAccount = async (name: string): Promise<StorageAccountDetail> => {
+  const id = await resourceIdByName("Microsoft.Storage/storageAccounts", API_VERSION.storage, name);
+  return storageAccountOf(await authorizedJSON<ArmStorageAccount>(`${id}?api-version=${API_VERSION.storage}`));
+};
+
+// mintAccountSas calls the real `ListAccountSas` ARM action — the same
+// request the portal's own Storage Browser issues — to obtain a read-only
+// account SAS scoped to the blob service, then uses it as the credential for
+// the direct blob data-plane reads below.
+async function mintAccountSas(accountId: string): Promise<string> {
+  const signedExpiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const response = await armSend(`${accountId}/ListAccountSas?api-version=${API_VERSION.storage}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      signedServices: "b",
+      signedResourceTypes: "sco",
+      signedPermission: "rl",
+      signedProtocol: "https",
+      signedExpiry,
+    }),
+  });
+  const body = (await response.json()) as { accountSasToken?: string };
+  return body.accountSasToken ?? "";
+}
+
+function parseAzureStorageXML(xml: string): Document {
+  return new DOMParser().parseFromString(xml, "application/xml");
+}
+
+function xmlText(scope: Element | null, tag: string): string {
+  return scope?.querySelector(tag)?.textContent ?? "";
+}
+
+export interface BlobContainerSummary {
+  name: string;
+}
+
+// parseContainerListXML reads the real Azure Storage `ListContainers`
+// response shape (`EnumerationResults><Containers><Container><Name>`) — the
+// same XML the .NET/Go/Python SDKs and `az storage container list` parse.
+export function parseContainerListXML(xml: string): BlobContainerSummary[] {
+  const doc = parseAzureStorageXML(xml);
+  return Array.from(doc.querySelectorAll("Containers > Container")).map((node) => ({
+    name: xmlText(node, "Name"),
+  }));
+}
+
+export interface BlobSummary {
+  name: string;
+  contentLength: number;
+  lastModified: string;
+}
+
+// parseBlobListXML reads the real `ListBlobs` response shape
+// (`EnumerationResults><Blobs><Blob><Name>`/`<Properties>`).
+export function parseBlobListXML(xml: string): BlobSummary[] {
+  const doc = parseAzureStorageXML(xml);
+  return Array.from(doc.querySelectorAll("Blobs > Blob")).map((node) => {
+    const properties = node.querySelector("Properties");
+    return {
+      name: xmlText(node, "Name"),
+      contentLength: Number(xmlText(properties, "Content-Length") || "0"),
+      lastModified: xmlText(properties, "Last-Modified"),
+    };
+  });
+}
+
+export const fetchBlobContainers = async (account: StorageAccountDetail): Promise<BlobContainerSummary[]> => {
+  if (!account.blobEndpoint) {
+    throw new Error("This storage account has no blob endpoint to read.");
+  }
+  const sas = await mintAccountSas(account.id);
+  const url = `${account.blobEndpoint}?comp=list&${sas}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`${url} returned HTTP ${response.status}`);
+  }
+  return parseContainerListXML(await response.text());
+};
+
+export const fetchBlobs = async (account: StorageAccountDetail, container: string): Promise<BlobSummary[]> => {
+  const sas = await mintAccountSas(account.id);
+  const url = `${account.blobEndpoint}${encodeURIComponent(container)}?restype=container&comp=list&${sas}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`${url} returned HTTP ${response.status}`);
+  }
+  return parseBlobListXML(await response.text());
+};
+
 // A Kusto result names its own columns; the portal reads the ones a container
 // log query is expected to carry.
 export interface MonitorLogRow {

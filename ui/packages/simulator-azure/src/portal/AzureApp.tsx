@@ -57,6 +57,38 @@ function paneFor(pathname: string): Pane {
       parent: { label: "Subscriptions", to: "/ui/subscriptions" },
     };
   }
+  if (pathname.startsWith("/ui/container-apps/")) {
+    return {
+      crumb: "Job",
+      title: "Container Apps job",
+      kind: "Container Apps job",
+      parent: { label: "Container Apps", to: "/ui/container-apps" },
+    };
+  }
+  if (pathname.startsWith("/ui/functions/")) {
+    return {
+      crumb: "Function App",
+      title: "Function App",
+      kind: "Function App",
+      parent: { label: "Function Apps", to: "/ui/functions" },
+    };
+  }
+  if (pathname.startsWith("/ui/acr/")) {
+    return {
+      crumb: "Registry",
+      title: "Container registry",
+      kind: "Container registry",
+      parent: { label: "Container registries", to: "/ui/acr" },
+    };
+  }
+  if (pathname.startsWith("/ui/storage/")) {
+    return {
+      crumb: "Storage account",
+      title: "Storage account",
+      kind: "Storage account",
+      parent: { label: "Storage accounts", to: "/ui/storage" },
+    };
+  }
   if (pathname.startsWith("/ui/entra/app-registrations/")) {
     return {
       crumb: "Certificates & secrets",

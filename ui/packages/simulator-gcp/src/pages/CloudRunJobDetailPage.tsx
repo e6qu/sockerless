@@ -1,9 +1,84 @@
 import { Link, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { GcpPageHeader, GcpStatus } from "../console/GcpConsole.js";
+import { GcpTabs } from "../console/GcpTabs.js";
 import { shortName, formatTimestamp } from "../console/format.js";
-import { fetchCloudRunJob, fetchCloudRunJobExecutions } from "../api.js";
+import { fetchCloudRunJob, fetchCloudRunJobExecutions, type CloudRunExecution, type CloudRunJob } from "../api.js";
 import { useProject } from "../console/project.js";
+
+// jobState reads the Job resource's own terminal condition rather than
+// inventing a status field — the same derivation the jobs list uses.
+function jobState(job: CloudRunJob): string {
+  const condition = job.terminalCondition;
+  if (!condition) return job.reconciling ? "Reconciling" : "Unknown";
+  if (condition.state === "CONDITION_SUCCEEDED") return "Ready";
+  if (condition.state === "CONDITION_FAILED") return condition.message ? `Failed: ${condition.message}` : "Failed";
+  return condition.state ?? "Unknown";
+}
+
+// executionState reads an Execution's own conditions the way the real
+// console's Executions tab does — the "Completed" condition's state, since
+// Cloud Run Executions don't carry a single terminalCondition field the way
+// Jobs do. Falls back to the task counts when no condition has landed yet
+// (e.g. an execution the sim just created).
+export function executionState(execution: CloudRunExecution): string {
+  const completed = execution.conditions?.find((condition) => condition.type === "Completed");
+  if (completed) {
+    if (completed.state === "CONDITION_SUCCEEDED") return "Succeeded";
+    if (completed.state === "CONDITION_FAILED") return completed.message ? `Failed: ${completed.message}` : "Failed";
+    return completed.state ?? "Unknown";
+  }
+  if ((execution.runningCount ?? 0) > 0) return "Running";
+  if ((execution.cancelledCount ?? 0) > 0) return "Cancelled";
+  if ((execution.failedCount ?? 0) > 0) return "Failed";
+  if ((execution.succeededCount ?? 0) > 0 && execution.succeededCount === execution.taskCount) return "Succeeded";
+  return execution.completionTime ? "Succeeded" : "Running";
+}
+
+// ExecutionsTable is the Executions tab's table, presentational so the
+// row-derivation logic is testable apart from the queries that feed it.
+export function ExecutionsTable({ executions }: { executions: CloudRunExecution[] }) {
+  return (
+    <div className="gc-table-wrap">
+      <table className="gc-table" data-testid="cloudrun-executions-table">
+        <thead>
+          <tr>
+            <th>Execution</th>
+            <th>Status</th>
+            <th>Tasks</th>
+            <th>Created</th>
+            <th>Completed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {executions.length === 0 ? (
+            <tr>
+              <td className="gc-table-state" colSpan={5}>
+                <div className="gc-empty">
+                  <p className="gc-empty-headline">No executions yet</p>
+                  <p className="gc-empty-description">Runs of this job appear here.</p>
+                </div>
+              </td>
+            </tr>
+          ) : (
+            executions.map((execution) => (
+              <tr key={execution.name}>
+                <td>{shortName(execution.name)}</td>
+                <td><GcpStatus status={executionState(execution)} /></td>
+                <td>
+                  {execution.succeededCount ?? 0}/{execution.taskCount ?? 0} succeeded
+                  {execution.failedCount ? `, ${execution.failedCount} failed` : ""}
+                </td>
+                <td>{formatTimestamp(execution.createTime ?? "")}</td>
+                <td>{execution.completionTime ? formatTimestamp(execution.completionTime) : "—"}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export function CloudRunJobDetailPage() {
   const { name = "" } = useParams();
@@ -28,14 +103,7 @@ export function CloudRunJobDetailPage() {
   }
 
   const data = job.data;
-  const condition = data?.terminalCondition;
-  const status = !condition
-    ? "Unknown"
-    : condition.state === "CONDITION_SUCCEEDED"
-      ? "Ready"
-      : condition.state === "CONDITION_FAILED"
-        ? "Failed"
-        : condition.state ?? "Unknown";
+  const status = data ? jobState(data) : "Unknown";
 
   const properties: { label: string; value: React.ReactNode }[] = data
     ? [
@@ -65,67 +133,54 @@ export function CloudRunJobDetailPage() {
       {job.isLoading ? (
         <div className="gc-loading" role="status">Loading job…</div>
       ) : (
-        <>
-          <dl className="gc-detail-grid">
-            {properties.map((property) => (
-              <div className="gc-detail-pair" key={property.label}>
-                <dt>{property.label}</dt>
-                <dd>{property.value}</dd>
-              </div>
-            ))}
-          </dl>
-
-          {labels.length > 0 ? (
-            <>
-              <h2 className="gc-detail-heading">Labels</h2>
-              <dl className="gc-detail-grid">
-                {labels.map(([key, value]) => (
-                  <div className="gc-detail-pair" key={key}>
-                    <dt>{key}</dt>
-                    <dd>{value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </>
-          ) : null}
-
-          <h2 className="gc-detail-heading">Executions</h2>
-          <div className="gc-table-wrap">
-            <table className="gc-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Created</th>
-                  <th>Completed</th>
-                  <th>Succeeded</th>
-                  <th>Failed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(executions.data ?? []).length === 0 ? (
-                  <tr>
-                    <td className="gc-table-state" colSpan={5}>
-                      <div className="gc-empty">
-                        <p className="gc-empty-headline">No executions yet</p>
-                        <p className="gc-empty-description">Runs of this job appear here.</p>
+        <GcpTabs
+          label="Job detail"
+          tabs={[
+            {
+              id: "details",
+              label: "Details",
+              content: (
+                <>
+                  <dl className="gc-detail-grid">
+                    {properties.map((property) => (
+                      <div className="gc-detail-pair" key={property.label}>
+                        <dt>{property.label}</dt>
+                        <dd>{property.value}</dd>
                       </div>
-                    </td>
-                  </tr>
-                ) : (
-                  (executions.data ?? []).map((execution) => (
-                    <tr key={execution.name}>
-                      <td>{shortName(execution.name)}</td>
-                      <td>{formatTimestamp(execution.createTime ?? "")}</td>
-                      <td>{execution.completionTime ? formatTimestamp(execution.completionTime) : "—"}</td>
-                      <td>{execution.succeededCount ?? 0}</td>
-                      <td>{execution.failedCount ?? 0}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </>
+                    ))}
+                  </dl>
+                  {labels.length > 0 ? (
+                    <>
+                      <h2 className="gc-detail-heading">Labels</h2>
+                      <dl className="gc-detail-grid">
+                        {labels.map(([key, value]) => (
+                          <div className="gc-detail-pair" key={key}>
+                            <dt>{key}</dt>
+                            <dd>{value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </>
+                  ) : null}
+                </>
+              ),
+            },
+            {
+              id: "executions",
+              label: "Executions",
+              content: executions.isError ? (
+                <div className="gc-message gc-message-error" role="alert">
+                  <strong>Couldn't load executions.</strong>{" "}
+                  {executions.error instanceof Error ? executions.error.message : "The simulator did not respond."}
+                </div>
+              ) : executions.isLoading ? (
+                <div className="gc-loading" role="status">Loading executions…</div>
+              ) : (
+                <ExecutionsTable executions={executions.data ?? []} />
+              ),
+            },
+          ]}
+        />
       )}
     </>
   );
