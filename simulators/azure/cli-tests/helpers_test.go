@@ -229,6 +229,16 @@ func armURL(provider, resourcePath, apiVersion string) string {
 func runCLI(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
 	const perCmdTimeout = 60 * time.Second
+	// az is a Python program; recent versions compile a module that raises a
+	// Python SyntaxWarning ("invalid decimal literal") to stderr, which merges
+	// into the captured stdout below and corrupts the JSON az prints. The
+	// warning is interpreter noise, not part of az's data contract, so silence
+	// Python's own warnings for the subprocess. Set at the interpreter's startup
+	// via the environment so it also covers warnings raised during import.
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env, "PYTHONWARNINGS=ignore")
 	var combined bytes.Buffer
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
