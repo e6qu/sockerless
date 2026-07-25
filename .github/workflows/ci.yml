@@ -491,11 +491,15 @@ jobs:
             fi
             sleep 10
           done
-          wait "$test_pid"
-          status=$?
+          # The step runs under `bash -e`; guard the wait with `|| status=$?`
+          # so a failing test binary does not abort the step before `cat "$log"`
+          # prints which test failed — an unguarded `wait` swallowed the entire
+          # diagnostic on a real failure.
+          status=0
+          wait "$test_pid" || status=$?
           cat "$log"
           report
-          exit $status
+          exit "$status"
         # The suite grows as services reach full op-coverage; give the step
         # headroom over the inner go-test deadline (SDK_TEST_TIMEOUT) so a hung
         # test fails with a named Go stack rather than an opaque step kill.
