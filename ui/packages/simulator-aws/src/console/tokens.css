@@ -1,158 +1,49 @@
 /*
- * Amazon Web Services Management Console appearance.
+ * Amazon Web Services Management Console appearance — the small residue of
+ * AWS product chrome that is not itself a published Cloudscape component or
+ * design token. Everything else (surfaces, text, borders, status colours,
+ * badges, buttons, focus rings, light/dark themes) now comes directly from
+ * the real `@cloudscape-design/components` this console renders and
+ * `@cloudscape-design/global-styles` (imported in index.css), which is
+ * exactly the AWS Management Console's own design system.
  *
- * The console is built from the Cloudscape Design System, which Amazon
- * publishes (cloudscape.design, @cloudscape-design/components,
- * @cloudscape-design/design-tokens). Every colour token below except the two
- * explicitly called out is copied verbatim from
- * `@cloudscape-design/design-tokens@3.0.104`'s current ("visual refresh")
- * theme — `index-visual-refresh.json`'s `$value.light` / `$value.dark`, the
- * same JSON the package ships to consumers and cloudscape.design's own
- * "design tokens" reference page renders from. Sizes (border-radius) come
- * from the same file. No proprietary asset is reproduced; only the published,
- * versioned design tokens are read and applied.
- *
- * Two values are NOT in that package, because they are AWS's own console
- * chrome layered on top of Cloudscape rather than a published component
- * token: the dark-navy global header background/hover, and the light-mode
- * page gutter behind white containers. Cloudscape's current theme has no
- * "page background" token at all — `color-background-layout-main` is white
- * in light mode and `#161d26` in dark mode, identical to the container
- * background, because the current console redesign draws content directly on
- * that colour with border dividers instead of a grey gutter. AWS's actual
- * product chrome still shows a light grey gutter behind service pages; that
- * value (and the header navy) are approximated from published AWS console
- * screenshots, not from a design token, and are marked as such below.
+ * Cloudscape components read their own colours from CSS custom properties
+ * with build-hashed names (e.g. `--color-text-body-default-vvtq8u`), private
+ * to the installed package version — there is no stable, public custom
+ * property this console's own CSS can read the same tokens from. The values
+ * below are instead read directly from the same published JSON that backs
+ * those hashed properties — `@cloudscape-design/design-tokens@3.0.104`'s
+ * `index-visual-refresh.json`, `tokens[name].$value.light` /
+ * `.dark` (or, for the header, `contexts["top-navigation"]
+ * .tokens["color-background-container-header"].$value`) — for the handful
+ * of surfaces that have no packaged Cloudscape component of their own: the
+ * global header's account cluster (which sits beside `TopNavigation`,
+ * outside its own DOM) and the CloudWatch Logs events transcript.
  */
 .aws {
-  /* Approximated from AWS console screenshots — not a published Cloudscape
-   * component token; the global header is AWS product chrome. */
-  --aws-header-bg: #0f1b2d;
-  --aws-header-fg: #ffffff;
-  --aws-header-hover: #232f3e;
+  /* contexts["top-navigation"].tokens["color-background-container-header"],
+   * identical in light and dark mode — TopNavigation applies it to itself
+   * automatically; this lets the header's own account cluster match it. */
+  --aws-header-bg: #161d26;
+  --aws-header-fg: #f9f9fa;
 
-  /* Approximated from AWS console screenshots (see file header) — Cloudscape
-   * itself no longer publishes a separate page-gutter token. */
-  --aws-layout-bg: #f2f3f3;
-
-  /* color-background-container-content / color-background-container-header */
-  --aws-surface: #ffffff;
-  --aws-surface-alt: #f0fbff;
-
-  /* color-text-body-default / color-text-body-secondary */
-  --aws-fg: #0f141a;
-  --aws-fg-secondary: #424650;
-  /* color-text-button-normal-disabled / color-text-interactive-disabled */
-  --aws-fg-disabled: #8c8c94;
-
-  /* color-text-link-default / color-text-link-hover */
-  --aws-link: #006ce0;
-  --aws-link-hover: #002b66;
-  /* color-background-button-primary-default / -hover, doubles as the action
-   * blue used for focus rings and selection tints. */
-  --aws-primary: #006ce0;
-  --aws-primary-hover: #002b66;
-
-  /* color-border-divider-default / color-border-divider-secondary */
-  --aws-border: #c6c6cd;
-  --aws-border-subtle: #ebebf0;
-  --aws-divider: #c6c6cd;
-
-  /* color-text-status-{success,error,warning,info,inactive} */
-  --aws-status-success: #00802f;
-  --aws-status-error: #db0000;
-  --aws-status-warning: #855900;
-  --aws-status-info: #006ce0;
-  --aws-status-inactive: #656871;
-
-  /* color-background-status-{info,success,error,warning} */
-  --aws-flash-info-bg: #f0fbff;
-  --aws-flash-success-bg: #effff1;
-  --aws-flash-error-bg: #fff5f5;
-  --aws-flash-warning-bg: #fffef0;
-
-  /* color-background-badge-{grey,blue,green,red} / color-text-badge-*. The
-   * blue/green/red badge colours and the badge text colour are identical in
-   * light and dark mode per the token file; only grey differs, so it is the
-   * only one repeated in the dark block below. */
-  --aws-badge-grey-bg: #424650;
-  --aws-badge-blue-bg: #006ce0;
-  --aws-badge-green-bg: #00802f;
-  --aws-badge-red-bg: #db0000;
-  --aws-badge-fg: #f9f9fa;
-
-  /* border-radius-container / border-radius-input / border-radius-button /
-   * border-radius-badge — Cloudscape's current theme: rounded containers,
-   * pill buttons. */
-  --aws-radius-container: 16px;
-  --aws-radius-control: 8px;
-  --aws-radius-button: 20px;
-  --aws-radius-badge: 4px;
-
-  /* font-family-base */
+  /* font-family-base, light and dark alike — Cloudscape applies this per
+   * component rather than once globally, so the console's own root
+   * reasserts it for anything (headings, page text) that isn't itself a
+   * Cloudscape component. */
   --aws-font: "Open Sans", "Helvetica Neue", Roboto, Arial, sans-serif;
-  --aws-font-mono: Monaco, Menlo, Consolas, "Courier Prime", Courier, "Courier New", monospace;
+
+  /* tokens["color-background-container-header"/"color-border-divider-default"
+   * /"color-text-body-secondary"/"color-text-body-default"].$value.light */
+  --aws-log-bg: #ffffff;
+  --aws-log-border: #c6c6cd;
+  --aws-log-fg-secondary: #424650;
+  --aws-log-fg: #0f141a;
 }
-
-/*
- * Dark mode, read the same way from `$value.dark` in the same token file.
- * Two token pairs are worth calling out because they read as surprising
- * against the light theme, and are exactly what the package specifies:
- *
- * - `color-text-body-secondary` (dark) is `#c6c6cd` — identical to
- *   `color-text-body-default` (dark). Cloudscape's dark theme does not dim
- *   secondary text the way the light theme does; a dimmer grey would not
- *   hold AA contrast as reliably against the darker surface, so the current
- *   theme keeps primary and secondary body text the same colour in dark
- *   mode. That collapses some visual hierarchy between primary/secondary
- *   text, faithfully, because that is what the published token does.
- * - `color-background-layout-main` (dark) is `#161d26` — the same colour as
- *   the container background, for the reason noted in the light-mode
- *   comment above: current Cloudscape draws content on one surface colour
- *   with border dividers, not a lighter/darker gutter-vs-card contrast. The
- *   header keeps its own navy in both themes, because it is AWS chrome, not
- *   themed Cloudscape content.
- *
- * Every text/background pair below (body, links, status colours against
- * their own status-background token, badge text against badge background)
- * was checked against WCAG 2.1 AA (4.5:1 for body text) using the exact hex
- * values in this file; see the PR description for the computed ratios.
- * Disabled-state colours are exempt under WCAG 1.4.3 and are not included in
- * that check.
- */
 .dark .aws {
-  --aws-header-bg: #0f1b2d;
-  --aws-header-fg: #ffffff;
-  --aws-header-hover: #192534;
-
-  --aws-layout-bg: #161d26;
-
-  --aws-surface: #161d26;
-  --aws-surface-alt: #1b232d;
-
-  --aws-fg: #c6c6cd;
-  --aws-fg-secondary: #c6c6cd;
-  --aws-fg-disabled: #8c8c94;
-
-  --aws-link: #42b4ff;
-  --aws-link-hover: #75cfff;
-  --aws-primary: #42b4ff;
-  --aws-primary-hover: #75cfff;
-
-  --aws-border: #424650;
-  --aws-border-subtle: #232b37;
-  --aws-divider: #424650;
-
-  --aws-status-success: #2bb534;
-  --aws-status-error: #ff7a7a;
-  --aws-status-warning: #fbd332;
-  --aws-status-info: #42b4ff;
-  --aws-status-inactive: #a4a4ad;
-
-  --aws-flash-info-bg: #001129;
-  --aws-flash-success-bg: #001401;
-  --aws-flash-error-bg: #1f0000;
-  --aws-flash-warning-bg: #191100;
-
-  --aws-badge-grey-bg: #656871;
+  /* the same four tokens' .$value.dark */
+  --aws-log-bg: #161d26;
+  --aws-log-border: #424650;
+  --aws-log-fg-secondary: #c6c6cd;
+  --aws-log-fg: #c6c6cd;
 }

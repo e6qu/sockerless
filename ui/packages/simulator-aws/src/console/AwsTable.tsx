@@ -1,7 +1,10 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AwsButton, AwsContainer, AwsPageHeader } from "./AwsConsole.js";
-import { AwsIcon } from "./icons.js";
+import Table, { type TableProps } from "@cloudscape-design/components/table";
+import Header from "@cloudscape-design/components/header";
+import TextFilter from "@cloudscape-design/components/text-filter";
+import Pagination from "@cloudscape-design/components/pagination";
+import { AwsButton, AwsEmptyState, AwsErrorAlert } from "./AwsConsole.js";
 
 export interface AwsColumn<T> {
   id: string;
@@ -35,10 +38,16 @@ export interface AwsResourceTableProps<T> {
   /** Page-specific header actions. Without it the header carries the standard
    * selection-aware controls. */
   actions?: (context: AwsTableActions<T>) => ReactNode;
-  /** Automation hooks: a stable id on the table element, one per data row, and
-   * one on the load-failure flash, for suites that drive the page. */
+  /** The table's own heading level: `h1` for a page whose primary heading
+   * this table's header is, `h2` for a sub-resource table beneath a detail
+   * page's own `AwsPageHeader`. */
+  headingVariant?: "h1" | "h2";
+  /** Automation hooks: a stable id wrapping the table, and one on the
+   * load-failure alert, for suites that drive the page. Individual rows are
+   * found through their selection checkbox's accessible name
+   * (`Select <id>`), the same way the real Cloudscape table testing pattern
+   * does. */
   tableTestId?: string;
-  rowTestId?: (row: T) => string;
   errorTestId?: string;
 }
 
@@ -55,15 +64,24 @@ export function AwsResourceTable<T>({
   emptyDescription,
   rowKey,
   actions,
+  headingVariant = "h1",
   tableTestId,
-  rowTestId,
   errorTestId,
 }: AwsResourceTableProps<T>) {
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({ queryKey, queryFn });
   const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<{ column: string; ascending: boolean } | null>(null);
-  const [page, setPage] = useState(0);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [sortingColumnId, setSortingColumnId] = useState<string | null>(null);
+  const [sortingDescending, setSortingDescending] = useState(false);
+  const [page, setPage] = useState(1);
+  const [selectedItems, setSelectedItems] = useState<T[]>([]);
+
+  const columnDefinitions: TableProps.ColumnDefinition<T>[] = columns.map((column) => ({
+    id: column.id,
+    header: column.header,
+    cell: column.cell,
+    sortingComparator: (left: T, right: T) =>
+      column.value(left).localeCompare(column.value(right), undefined, { numeric: true }),
+  }));
 
   const rows = useMemo(() => {
     const all = data ?? [];
@@ -71,185 +89,105 @@ export function AwsResourceTable<T>({
     const matched = needle
       ? all.filter((row) => columns.some((column) => column.value(row).toLowerCase().includes(needle)))
       : all;
-    if (!sort) return matched;
-    const column = columns.find((candidate) => candidate.id === sort.column);
-    if (!column) return matched;
+    const sortColumn = columns.find((candidate) => candidate.id === sortingColumnId);
+    if (!sortColumn) return matched;
     return [...matched].sort((left, right) => {
-      const comparison = column.value(left).localeCompare(column.value(right), undefined, { numeric: true });
-      return sort.ascending ? comparison : -comparison;
+      const comparison = sortColumn.value(left).localeCompare(sortColumn.value(right), undefined, { numeric: true });
+      return sortingDescending ? -comparison : comparison;
     });
-  }, [data, filter, sort, columns]);
+  }, [data, filter, sortingColumnId, sortingDescending, columns]);
 
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const visible = rows.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
-  const allVisibleSelected = visible.length > 0 && visible.every((row) => selected.has(rowKey(row)));
+  const currentPage = Math.min(page, pageCount);
+  const visible = rows.slice((currentPage - 1) * PAGE_SIZE, (currentPage - 1) * PAGE_SIZE + PAGE_SIZE);
 
-  function toggleSort(columnId: string) {
-    setSort((current) =>
-      current && current.column === columnId
-        ? { column: columnId, ascending: !current.ascending }
-        : { column: columnId, ascending: true },
+  const selected = (data ?? []).filter((row) => selectedItems.some((item) => rowKey(item) === rowKey(row)));
+  const clearSelection = () => setSelectedItems([]);
+
+  const headerActions = actions
+    ? actions({ selected, clearSelection, refetch: () => void refetch(), isFetching })
+    : (
+      <>
+        <AwsButton disabled={selected.length !== 1}>View details</AwsButton>
+        <AwsButton disabled={selected.length === 0}>Delete</AwsButton>
+        <AwsButton onClick={() => void refetch()} disabled={isFetching}>
+          {isFetching ? "Refreshing…" : "Refresh"}
+        </AwsButton>
+      </>
     );
-  }
 
-  function toggleRow(id: string) {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
+  const sortingColumn = columnDefinitions.find((column) => column.id === sortingColumnId);
 
-  return (
-    <>
-      <AwsPageHeader
-        title={title}
-        count={data?.length}
-        description={description}
-        actions={
-          actions ? (
-            actions({
-              selected: (data ?? []).filter((row) => selected.has(rowKey(row))),
-              clearSelection: () => setSelected(new Set()),
-              refetch: () => void refetch(),
-              isFetching,
-            })
-          ) : (
-            <>
-              <AwsButton disabled={selected.size !== 1}>View details</AwsButton>
-              <AwsButton disabled={selected.size === 0}>Delete</AwsButton>
-              <AwsButton onClick={() => void refetch()} disabled={isFetching}>
-                {isFetching ? "Refreshing…" : "Refresh"}
-              </AwsButton>
-            </>
-          )
-        }
-      />
-      <AwsContainer>
-        <div className="aws-table-tools">
-          <div className="aws-table-filter">
-            <AwsIcon name="search" size={16} />
-            <input
-              className="aws-input"
-              type="search"
-              value={filter}
-              placeholder={filterPlaceholder}
-              aria-label={filterPlaceholder}
-              onChange={(event) => {
-                setFilter(event.target.value);
-                setPage(0);
-              }}
-            />
-          </div>
-          <button
-            type="button"
-            className="aws-table-refresh"
-            aria-label="Refresh"
-            title="Refresh"
-            disabled={isFetching}
-            onClick={() => refetch()}
-          >
-            <AwsIcon name="refresh" size={16} />
-          </button>
-          <div className="aws-pagination">
-            <span className="aws-pagination-summary">
-              {rows.length === 0 ? "0 matches" : `${currentPage * PAGE_SIZE + 1}–${currentPage * PAGE_SIZE + visible.length} of ${rows.length}`}
-            </span>
-            <button type="button" aria-label="Previous page" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>‹</button>
-            <span aria-current="page">{currentPage + 1}</span>
-            <button type="button" aria-label="Next page" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>›</button>
-          </div>
-        </div>
-
-        {/* The console keeps the column headers whatever the body holds, so an
-         * operator can still see what the resource is described by while it is
-         * loading, empty, or failed. Replacing the whole table with a message
-         * takes that away exactly when it is most useful. */}
-        <table className="aws-table" aria-label={title} data-testid={tableTestId}>
-          <thead>
-            <tr>
-              <th className="aws-table-select" scope="col">
-                <span className="sr-only">Select</span>
-                <input
-                  type="checkbox"
-                  aria-label="Select all resources on this page"
-                  checked={allVisibleSelected}
-                  disabled={visible.length === 0}
-                  onChange={() =>
-                    setSelected((current) => {
-                      const next = new Set(current);
-                      for (const row of visible) {
-                        if (allVisibleSelected) next.delete(rowKey(row));
-                        else next.add(rowKey(row));
-                      }
-                      return next;
-                    })
-                  }
-                />
-              </th>
-              {columns.map((column) => {
-                const active = sort?.column === column.id;
-                return (
-                  <th key={column.id} scope="col" aria-sort={active ? (sort.ascending ? "ascending" : "descending") : "none"}>
-                    <button type="button" onClick={() => toggleSort(column.id)}>
-                      {column.header}
-                      <span aria-hidden className="aws-sort">{active ? (sort.ascending ? "▲" : "▼") : "⇅"}</span>
-                    </button>
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {isError ? (
-              <tr>
-                <td className="aws-table-state" colSpan={columns.length + 1}>
-                  <div className="aws-flash aws-flash-error" role="alert" data-testid={errorTestId}>
-                    <strong>Could not load {title.toLowerCase()}.</strong>{" "}
-                    {error instanceof Error ? error.message : "The simulator did not respond."}
-                  </div>
-                </td>
-              </tr>
-            ) : isLoading ? (
-              <tr>
-                <td className="aws-table-state" colSpan={columns.length + 1}>
-                  <div className="aws-empty" role="status">Loading {title.toLowerCase()}…</div>
-                </td>
-              </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td className="aws-table-state" colSpan={columns.length + 1}>
-                  <div className="aws-empty">
-                    <strong>{emptyTitle}</strong>
-                    <p>{emptyDescription}</p>
-                  </div>
-                </td>
-              </tr>
-            ) : (
-              visible.map((row) => {
-                const id = rowKey(row);
-                return (
-                  <tr key={id} className={selected.has(id) ? "aws-row-selected" : undefined} data-testid={rowTestId?.(row)}>
-                    <td className="aws-table-select">
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${id}`}
-                        checked={selected.has(id)}
-                        onChange={() => toggleRow(id)}
-                      />
-                    </td>
-                    {columns.map((column) => (
-                      <td key={column.id}>{column.cell(row)}</td>
-                    ))}
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </AwsContainer>
-    </>
+  const table = (
+    <Table<T>
+      variant="container"
+      items={visible}
+      columnDefinitions={columnDefinitions}
+      trackBy={(row) => rowKey(row)}
+      selectionType="multi"
+      selectedItems={selected}
+      onSelectionChange={(event) => setSelectedItems([...event.detail.selectedItems])}
+      sortingColumn={sortingColumn}
+      sortingDescending={sortingDescending}
+      onSortingChange={(event) => {
+        setSortingColumnId((event.detail.sortingColumn as TableProps.ColumnDefinition<T>).id ?? null);
+        setSortingDescending(event.detail.isDescending ?? false);
+      }}
+      loading={isLoading}
+      loadingText={`Loading ${title.toLowerCase()}…`}
+      ariaLabels={{
+        selectionGroupLabel: "Select",
+        allItemsSelectionLabel: () => "Select all resources on this page",
+        itemSelectionLabel: (_state, row) => `Select ${rowKey(row)}`,
+      }}
+      header={
+        <Header
+          variant={headingVariant}
+          description={description}
+          counter={data !== undefined ? `(${data.length})` : undefined}
+          actions={headerActions}
+        >
+          {title}
+        </Header>
+      }
+      filter={
+        <TextFilter
+          filteringText={filter}
+          filteringPlaceholder={filterPlaceholder}
+          filteringAriaLabel={filterPlaceholder}
+          filteringClearAriaLabel="Clear"
+          countText={filter.trim() ? `${rows.length} match${rows.length === 1 ? "" : "es"}` : undefined}
+          onChange={(event) => {
+            setFilter(event.detail.filteringText);
+            setPage(1);
+          }}
+        />
+      }
+      pagination={
+        <Pagination
+          currentPageIndex={currentPage}
+          pagesCount={pageCount}
+          onChange={(event) => setPage(event.detail.currentPageIndex)}
+          ariaLabels={{
+            paginationLabel: `${title} pagination`,
+            previousPageLabel: "Previous page",
+            nextPageLabel: "Next page",
+            pageLabel: (pageNumber) => `Page ${pageNumber}`,
+          }}
+        />
+      }
+      empty={
+        isError ? (
+          <AwsErrorAlert testId={errorTestId}>
+            <strong>Could not load {title.toLowerCase()}.</strong>{" "}
+            {error instanceof Error ? error.message : "The simulator did not respond."}
+          </AwsErrorAlert>
+        ) : (
+          <AwsEmptyState title={emptyTitle} description={emptyDescription} />
+        )
+      }
+    />
   );
+
+  return tableTestId ? <div data-testid={tableTestId}>{table}</div> : table;
 }

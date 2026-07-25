@@ -3,16 +3,29 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { AwsTabs } from "../console/AwsTabs.js";
 
 /**
- * AwsTabs is the one genuinely new interactive shared component this pass
- * adds — the detail pages' resource data always requires a live cloud read,
- * so it isn't reachable through the per-package Playwright suite (no
- * identity provider there). Its ARIA structure and keyboard contract are
- * proven directly here instead, against inert tab content. This package has
- * no jest-dom matchers installed, so visibility and focus are read straight
- * off the DOM the way the rest of this suite already does.
+ * `AwsTabs` is a thin wrapper over the real Cloudscape `Tabs` component. Its
+ * ARIA structure and keyboard contract are proven directly here (against
+ * inert tab content), rather than only through Playwright, because the
+ * detail pages that use it always require a live cloud read.
+ *
+ * Cloudscape's `Tabs` renders every panel `<div role="tabpanel">` up front —
+ * visibility between them is CSS-driven, not an DOM `hidden` attribute — but
+ * only the *active* tab's content is ever mounted inside its panel (the
+ * `contentRenderStrategy="active"` default), so an inactive panel exists in
+ * the accessibility tree but is empty. That is what this suite checks,
+ * rather than a `hidden` attribute Cloudscape doesn't use.
+ *
+ * Cloudscape's own keyboard handling reads the legacy `KeyboardEvent.keyCode`
+ * property, so the keyboard tests below pass it explicitly — jsdom does not
+ * synthesize it from `key` the way a real browser does.
  */
 
 afterEach(cleanup);
+
+const ARROW_LEFT = { key: "ArrowLeft", keyCode: 37 };
+const ARROW_RIGHT = { key: "ArrowRight", keyCode: 39 };
+const HOME = { key: "Home", keyCode: 36 };
+const END = { key: "End", keyCode: 35 };
 
 function renderTabs() {
   return render(
@@ -27,11 +40,9 @@ function renderTabs() {
   );
 }
 
-/** Only the active tab's panel renders its children (see AwsTabs.tsx: an
- * inactive panel's content is never mounted, so its own text can never be
- * announced twice) — every panel still exists in the DOM, `hidden`, with its
- * `aria-controls`/id pairing intact, which is what this reads directly
- * rather than depending on content that may not be there. */
+/** The panel Cloudscape renders for a given tab, found via that tab's own
+ * `aria-controls`/id pairing — present in the DOM whether or not it is the
+ * active tab (only its *content* is conditional). */
 function panelFor(tabLabel: string): HTMLElement {
   const tab = screen.getByRole("tab", { name: tabLabel });
   const panelId = tab.getAttribute("aria-controls");
@@ -51,11 +62,11 @@ describe("AwsTabs", () => {
     expect(tabs[2].getAttribute("aria-selected")).toBe("false");
   });
 
-  it("shows only the active panel's content, each panel labelled by its own tab", () => {
+  it("mounts only the active panel's content, each panel labelled by its own tab", () => {
     renderTabs();
-    expect(panelFor("First").hasAttribute("hidden")).toBe(false);
-    expect(panelFor("Second").hasAttribute("hidden")).toBe(true);
-    expect(panelFor("Third").hasAttribute("hidden")).toBe(true);
+    expect(panelFor("First").textContent).toBe("First content");
+    expect(panelFor("Second").textContent).toBe("");
+    expect(panelFor("Third").textContent).toBe("");
     expect(screen.getByTestId("panel-a").textContent).toBe("First content");
     expect(screen.queryByTestId("panel-b")).toBeNull();
     expect(screen.queryByTestId("panel-c")).toBeNull();
@@ -67,8 +78,8 @@ describe("AwsTabs", () => {
     renderTabs();
     fireEvent.click(screen.getByRole("tab", { name: "Second" }));
     expect(screen.getByRole("tab", { name: "Second" }).getAttribute("aria-selected")).toBe("true");
-    expect(panelFor("Second").hasAttribute("hidden")).toBe(false);
-    expect(panelFor("First").hasAttribute("hidden")).toBe(true);
+    expect(panelFor("Second").textContent).toBe("Second content");
+    expect(panelFor("First").textContent).toBe("");
     expect(screen.getByTestId("panel-b").textContent).toBe("Second content");
     expect(screen.queryByTestId("panel-a")).toBeNull();
   });
@@ -88,19 +99,19 @@ describe("AwsTabs", () => {
     renderTabs();
     const [first, second, third] = screen.getAllByRole("tab");
     first.focus();
-    fireEvent.keyDown(first, { key: "ArrowRight" });
+    fireEvent.keyDown(first, ARROW_RIGHT);
     expect(document.activeElement).toBe(second);
     expect(second.getAttribute("aria-selected")).toBe("true");
 
-    fireEvent.keyDown(second, { key: "ArrowRight" });
+    fireEvent.keyDown(second, ARROW_RIGHT);
     expect(document.activeElement).toBe(third);
 
     // Wraps forward from the last tab back to the first.
-    fireEvent.keyDown(third, { key: "ArrowRight" });
+    fireEvent.keyDown(third, ARROW_RIGHT);
     expect(document.activeElement).toBe(first);
 
     // Wraps backward from the first tab to the last.
-    fireEvent.keyDown(first, { key: "ArrowLeft" });
+    fireEvent.keyDown(first, ARROW_LEFT);
     expect(document.activeElement).toBe(third);
   });
 
@@ -108,9 +119,9 @@ describe("AwsTabs", () => {
     renderTabs();
     const [first, second, third] = screen.getAllByRole("tab");
     second.focus();
-    fireEvent.keyDown(second, { key: "End" });
+    fireEvent.keyDown(second, END);
     expect(document.activeElement).toBe(third);
-    fireEvent.keyDown(third, { key: "Home" });
+    fireEvent.keyDown(third, HOME);
     expect(document.activeElement).toBe(first);
   });
 });

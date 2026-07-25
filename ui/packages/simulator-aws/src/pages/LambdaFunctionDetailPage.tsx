@@ -1,7 +1,19 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { AwsButton, AwsContainer, AwsPageHeader, AwsStatus, AwsTabs, type AwsTab } from "../console/index.js";
+import Table from "@cloudscape-design/components/table";
+import Header from "@cloudscape-design/components/header";
+import {
+  AwsButton,
+  AwsContainer,
+  AwsEmptyState,
+  AwsErrorAlert,
+  AwsKeyValue,
+  AwsPageHeader,
+  AwsStatus,
+  AwsTabs,
+  type AwsTab,
+} from "../console/index.js";
 import { formatBytes, formatTimestamp } from "../console/format.js";
 import { fetchLambdaFunctionDetail, type LambdaFunction } from "../api.js";
 import { DeleteFunctionsModal } from "./LambdaFunctionsPage.js";
@@ -36,54 +48,35 @@ export function LambdaFunctionDetailPage() {
           label: "Configuration",
           content: (
             <div data-testid="lambda-function-configuration">
-              <dl className="aws-key-value">
-                <dt>Handler</dt>
-                <dd>{config.handler || "–"}</dd>
-                <dt>Memory</dt>
-                <dd>{config.memorySize} MB</dd>
-                <dt>Timeout</dt>
-                <dd>{config.timeout} s</dd>
-                <dt>Execution role</dt>
-                <dd>{config.role || "–"}</dd>
-                {config.vpcConfig && (
-                  <>
-                    <dt>VPC</dt>
-                    <dd>{config.vpcConfig.vpcId || "–"}</dd>
-                    <dt>Subnets</dt>
-                    <dd>{config.vpcConfig.subnetIds.join(", ") || "–"}</dd>
-                    <dt>Security groups</dt>
-                    <dd>{config.vpcConfig.securityGroupIds.join(", ") || "–"}</dd>
-                  </>
-                )}
-              </dl>
-              <div className="aws-detail-section">
-                <h3 className="aws-subheading">Environment variables</h3>
+              <AwsKeyValue
+                items={[
+                  { label: "Handler", value: config.handler || "–" },
+                  { label: "Memory", value: `${config.memorySize} MB` },
+                  { label: "Timeout", value: `${config.timeout} s` },
+                  { label: "Execution role", value: config.role || "–" },
+                  ...(config.vpcConfig
+                    ? [
+                        { label: "VPC", value: config.vpcConfig.vpcId || "–" },
+                        { label: "Subnets", value: config.vpcConfig.subnetIds.join(", ") || "–" },
+                        { label: "Security groups", value: config.vpcConfig.securityGroupIds.join(", ") || "–" },
+                      ]
+                    : []),
+                ]}
+              />
+              <div style={{ marginTop: 20 }}>
+                <Header variant="h3">Environment variables</Header>
                 {config.environment.length === 0 ? (
-                  <div className="aws-empty">
-                    <strong>No environment variables</strong>
-                    <p>This function defines no environment variables.</p>
-                  </div>
+                  <AwsEmptyState title="No environment variables" description="This function defines no environment variables." />
                 ) : (
-                  <table className="aws-table" aria-label="Environment variables">
-                    <thead>
-                      <tr>
-                        <th scope="col">Key</th>
-                        <th scope="col">Value</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {config.environment.map((entry) => (
-                        <tr key={entry.name}>
-                          <td>
-                            <code>{entry.name}</code>
-                          </td>
-                          <td>
-                            <code>{entry.value}</code>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <Table
+                    variant="embedded"
+                    ariaLabels={{ tableLabel: "Environment variables" }}
+                    items={config.environment}
+                    columnDefinitions={[
+                      { id: "name", header: "Key", cell: (entry) => <code>{entry.name}</code> },
+                      { id: "value", header: "Value", cell: (entry) => <code>{entry.value}</code> },
+                    ]}
+                  />
                 )}
               </div>
             </div>
@@ -93,31 +86,19 @@ export function LambdaFunctionDetailPage() {
           id: "code",
           label: "Code",
           content: (
-            <dl className="aws-key-value" data-testid="lambda-function-code">
-              <dt>Package type</dt>
-              <dd>{config.packageType || "Zip"}</dd>
-              <dt>Architectures</dt>
-              <dd>{config.architectures.join(", ") || "–"}</dd>
-              {detail.data?.code.imageUri ? (
-                <>
-                  <dt>Container image</dt>
-                  <dd>
-                    <code>{detail.data.code.imageUri}</code>
-                  </dd>
-                </>
-              ) : (
-                <>
-                  <dt>Code size</dt>
-                  <dd>{formatBytes(config.codeSize)}</dd>
-                </>
-              )}
-              <dt>Code SHA-256</dt>
-              <dd>
-                <code>{config.codeSha256 || "–"}</code>
-              </dd>
-              <dt>Version</dt>
-              <dd>{config.version || "–"}</dd>
-            </dl>
+            <div data-testid="lambda-function-code">
+              <AwsKeyValue
+                items={[
+                  { label: "Package type", value: config.packageType || "Zip" },
+                  { label: "Architectures", value: config.architectures.join(", ") || "–" },
+                  detail.data?.code.imageUri
+                    ? { label: "Container image", value: <code>{detail.data.code.imageUri}</code> }
+                    : { label: "Code size", value: formatBytes(config.codeSize) },
+                  { label: "Code SHA-256", value: <code>{config.codeSha256 || "–"}</code> },
+                  { label: "Version", value: config.version || "–" },
+                ]}
+              />
+            </div>
           ),
         },
       ]
@@ -136,31 +117,31 @@ export function LambdaFunctionDetailPage() {
       />
       <AwsContainer>
         {detail.isError ? (
-          <div className="aws-flash aws-flash-error" role="alert" data-testid="lambda-function-error">
+          <AwsErrorAlert testId="lambda-function-error">
             <strong>Could not load the function.</strong>{" "}
             {detail.error instanceof Error ? detail.error.message : "The request failed."}
-          </div>
+          </AwsErrorAlert>
         ) : detail.isLoading ? (
-          <div className="aws-empty" role="status">
-            Loading function…
-          </div>
+          <AwsEmptyState title="Loading function…" loading />
         ) : config ? (
           <>
-            <dl className="aws-key-value" data-testid="lambda-function-summary">
-              <dt>State</dt>
-              <dd>
-                <AwsStatus status={config.state} />
-              </dd>
-              <dt>Last update status</dt>
-              <dd>{config.lastUpdateStatus ? <AwsStatus status={config.lastUpdateStatus} /> : "–"}</dd>
-              <dt>Runtime</dt>
-              <dd>{config.runtime || "–"}</dd>
-              <dt>ARN</dt>
-              <dd>{config.arn}</dd>
-              <dt>Last modified</dt>
-              <dd>{formatTimestamp(config.lastModified)}</dd>
-            </dl>
-            <AwsTabs ariaLabel="Function detail" tabs={tabs} />
+            <div data-testid="lambda-function-summary">
+              <AwsKeyValue
+                items={[
+                  { label: "State", value: <AwsStatus status={config.state} /> },
+                  {
+                    label: "Last update status",
+                    value: config.lastUpdateStatus ? <AwsStatus status={config.lastUpdateStatus} /> : "–",
+                  },
+                  { label: "Runtime", value: config.runtime || "–" },
+                  { label: "ARN", value: config.arn },
+                  { label: "Last modified", value: formatTimestamp(config.lastModified) },
+                ]}
+              />
+            </div>
+            <div style={{ marginTop: 20 }}>
+              <AwsTabs ariaLabel="Function detail" tabs={tabs} />
+            </div>
           </>
         ) : null}
       </AwsContainer>

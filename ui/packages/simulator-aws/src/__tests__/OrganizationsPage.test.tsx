@@ -35,7 +35,7 @@ describe("CreateAccountStatusPanel", () => {
     const panel = screen.getByTestId("org-create-status");
     expect(panel.textContent).toContain(baseStatus.id);
     expect(panel.textContent).toContain("Sandbox");
-    expect(panel.querySelector(".aws-status-warning")?.textContent).toContain("IN_PROGRESS");
+    expect(panel.querySelector('[class*="status-in-progress"]')?.textContent).toContain("IN_PROGRESS");
     expect(screen.queryByTestId("org-created-account-id")).toBeNull();
     expect(screen.getByRole("status").textContent).toContain("creating the account");
   });
@@ -52,7 +52,7 @@ describe("CreateAccountStatusPanel", () => {
       />,
     );
     const panel = screen.getByTestId("org-create-status");
-    expect(panel.querySelector(".aws-status-success")?.textContent).toContain("SUCCEEDED");
+    expect(panel.querySelector('[class*="status-success"]')?.textContent).toContain("SUCCEEDED");
     expect(screen.getByTestId("org-created-account-id").textContent).toBe("123456789013");
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -69,7 +69,7 @@ describe("CreateAccountStatusPanel", () => {
       />,
     );
     const panel = screen.getByTestId("org-create-status");
-    expect(panel.querySelector(".aws-status-error")?.textContent).toContain("FAILED");
+    expect(panel.querySelector('[class*="status-error"]')?.textContent).toContain("FAILED");
     const alert = screen.getByTestId("org-error");
     expect(alert.textContent).toContain("could not be created");
     expect(alert.textContent).toContain("EMAIL_ALREADY_EXISTS");

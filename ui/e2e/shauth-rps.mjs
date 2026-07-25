@@ -479,7 +479,9 @@ async function assertCreatedOrganizationAccount(page, app) {
   const createdId = (await page.getByTestId("org-created-account-id").innerText()).trim();
   assert.match(createdId, /^\d{12}$/, `${app.name} account creation did not report a 12-digit account id`);
   await page.getByTestId("org-add-account-done").click();
-  await page.getByTestId(`org-account-row-${createdId}`).waitFor({ state: "visible" });
+  // The created account appears in the accounts table; its name column is a link
+  // to the account detail (the Cloudscape table renders no per-row test id).
+  await page.getByRole("link", { name: accountName }).waitFor({ state: "visible" });
 }
 
 // assertCreatedProject drives the Google Cloud console's project picker as the

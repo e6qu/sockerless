@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { BrowserRouter, Routes, useLocation } from "react-router";
 import { ErrorBoundary, OperatorAccount } from "@sockerless/ui-core/components";
+import AppLayout from "@cloudscape-design/components/app-layout";
 import { AwsBreadcrumbs, AwsHeader, AwsSideNavigation } from "./AwsConsole.js";
 import { REGION } from "./federation.js";
 import { findNavService, NAV_GROUPS } from "./serviceCatalog.js";
@@ -19,7 +20,6 @@ const CRUMBS: Record<string, string> = {
 const IAM_USER_PREFIX = "/ui/iam/users/";
 const ORG_ACCOUNT_PREFIX = "/ui/organizations/accounts/";
 const NOT_SUPPORTED_PREFIX = "/ui/not-supported/";
-const SIDENAV_ID = "aws-sidenav";
 
 // Resource detail routes nest under their service the way the real console
 // breadcrumbs them: <service> > <resource identifier>. Every prefix here has
@@ -73,30 +73,36 @@ function crumbTrail(pathname: string): { label: string; to?: string }[] {
 
 function ConsoleFrame({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
-  // The header's hamburger control and the side navigation share this state.
-  // Cloudscape's own AppLayout keeps the navigation open by default and lets
-  // an operator collapse it; the collapse only changes anything visually
-  // below the responsive breakpoint (see console.css), but the control stays
-  // wired and keyboard-operable regardless of viewport width.
-  const [navExpanded, setNavExpanded] = useState(true);
+  // Cloudscape's own `AppLayout` keeps the navigation open by default and
+  // owns the toggle control (and its accessible name) that collapses it —
+  // this is the only navigation-open state the console keeps.
+  const [navigationOpen, setNavigationOpen] = useState(true);
   return (
     <div className="aws">
       <a href="#main-content" className="sl-skip-link">Skip to main content</a>
-      <AwsHeader
-        region={REGION}
-        account={<OperatorAccount />}
-        navExpanded={navExpanded}
-        onToggleNav={() => setNavExpanded((current) => !current)}
-        navId={SIDENAV_ID}
-        services={NAV_GROUPS}
+      <AwsHeader region={REGION} account={<OperatorAccount />} services={NAV_GROUPS} />
+      <AppLayout
+        navigation={<AwsSideNavigation groups={NAV_GROUPS} activeHref={pathname} />}
+        navigationOpen={navigationOpen}
+        onNavigationChange={(event) => setNavigationOpen(event.detail.open)}
+        breadcrumbs={<AwsBreadcrumbs trail={crumbTrail(pathname)} />}
+        toolsHide
+        content={
+          // AppLayout's own `content` slot already renders inside a real
+          // `<main>` landmark — wrapping it in a second one here duplicated
+          // the main landmark (axe: landmark-no-duplicate-main). This stays
+          // a plain element so `#main-content`/the skip link still has
+          // something to focus.
+          <div id="main-content" tabIndex={-1}>
+            {children}
+          </div>
+        }
+        ariaLabels={{
+          navigation: "Service",
+          navigationToggle: "Open navigation",
+          navigationClose: "Close navigation",
+        }}
       />
-      <AwsBreadcrumbs trail={crumbTrail(pathname)} />
-      <div className="aws-body">
-        <AwsSideNavigation serviceName="Simulator" groups={NAV_GROUPS} id={SIDENAV_ID} expanded={navExpanded} />
-        <main id="main-content" tabIndex={-1} className="aws-main">
-          {children}
-        </main>
-      </div>
     </div>
   );
 }

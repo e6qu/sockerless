@@ -1,6 +1,10 @@
-import { Link } from "react-router";
+import { useNavigate } from "react-router";
 import { useQueries } from "@tanstack/react-query";
-import { AwsContainer, AwsPageHeader, AwsStatus } from "../console/index.js";
+import Container from "@cloudscape-design/components/container";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
+import Box from "@cloudscape-design/components/box";
+import Link from "@cloudscape-design/components/link";
+import { AwsErrorAlert, AwsPageHeader, AwsStatus } from "../console/index.js";
 import { REGION } from "../console/federation.js";
 import {
   fetchECSTasks,
@@ -25,6 +29,7 @@ const SERVICES = [
 ] as const;
 
 export function OverviewPage() {
+  const navigate = useNavigate();
   const results = useQueries({
     queries: SERVICES.map((service) => ({ queryKey: service.queryKey, queryFn: service.queryFn })),
   });
@@ -35,9 +40,11 @@ export function OverviewPage() {
     return (
       <>
         <AwsPageHeader title="Overview" />
-        <AwsContainer>
-          <div className="aws-empty">Loading service overview…</div>
-        </AwsContainer>
+        <Container>
+          <Box textAlign="center" color="text-body-secondary">
+            Loading service overview…
+          </Box>
+        </Container>
       </>
     );
   }
@@ -47,12 +54,10 @@ export function OverviewPage() {
     return (
       <>
         <AwsPageHeader title="Overview" />
-        <AwsContainer>
-          <div className="aws-flash aws-flash-error" role="alert">
-            <strong>Could not load the service overview.</strong>{" "}
-            {String(results.find((result) => result.error)?.error)}
-          </div>
-        </AwsContainer>
+        <AwsErrorAlert>
+          <strong>Could not load the service overview.</strong>{" "}
+          {String(results.find((result) => result.error)?.error)}
+        </AwsErrorAlert>
       </>
     );
   }
@@ -60,28 +65,33 @@ export function OverviewPage() {
   return (
     <>
       <AwsPageHeader title="Overview" description="Resources in this account and Region." />
-      <div className="aws-overview-grid">
-        <AwsContainer>
-          <div className="aws-metric">
-            <div className="aws-metric-label">Region</div>
-            <div style={{ marginTop: 4 }}>{REGION}</div>
-            <div className="aws-metric-label" style={{ marginTop: 12 }}>Service health</div>
-            <div style={{ marginTop: 4 }}>
-              <AwsStatus status="Operating normally" kind="success" />
-            </div>
+      <Container>
+        <ColumnLayout columns={4} variant="text-grid">
+          <div>
+            <Box variant="awsui-key-label">Region</Box>
+            <div>{REGION}</div>
+            <Box variant="awsui-key-label" margin={{ top: "s" }}>
+              Service health
+            </Box>
+            <AwsStatus status="Operating normally" kind="success" />
           </div>
-        </AwsContainer>
-        {SERVICES.map((service, index) => (
-          <AwsContainer key={service.label}>
-            <div className="aws-metric">
-              <div className="aws-metric-label">{service.label}</div>
-              <div className="aws-metric-value">
-                <Link to={service.to}>{results[index].data?.length ?? 0}</Link>
-              </div>
+          {SERVICES.map((service, index) => (
+            <div key={service.label}>
+              <Box variant="awsui-key-label">{service.label}</Box>
+              <Link
+                href={service.to}
+                fontSize="display-l"
+                onFollow={(event) => {
+                  event.preventDefault();
+                  navigate(service.to);
+                }}
+              >
+                {results[index].data?.length ?? 0}
+              </Link>
             </div>
-          </AwsContainer>
-        ))}
-      </div>
+          ))}
+        </ColumnLayout>
+      </Container>
     </>
   );
 }

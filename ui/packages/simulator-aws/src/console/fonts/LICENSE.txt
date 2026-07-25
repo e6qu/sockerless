@@ -1,8 +1,0 @@
-Open Sans is licensed under the SIL Open Font License, Version 1.1.
-https://fonts.google.com/specimen/Open+Sans — Copyright the Open Sans Project Authors.
-A copy of the SIL Open Font License 1.1 is available at
-https://openfontlicense.org/
-
-The inline SVG icon paths in ../icons.tsx approximate the Cloudscape Design
-System icon set (Apache License 2.0, Amazon.com, Inc.) and are original
-renderings in that style.

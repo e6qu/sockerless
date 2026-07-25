@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { NavLink, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsModal, AwsResourceTable, type AwsColumn } from "../console/index.js";
+import { AwsButton, AwsErrorAlert, AwsModal, AwsResourceTable, AwsRowLink, type AwsColumn } from "../console/index.js";
 import { formatEpoch } from "../console/format.js";
 import { deleteECRRepo, fetchECRRepos, type ECRRepo } from "../api.js";
 
@@ -14,7 +14,7 @@ const columns: AwsColumn<ECRRepo>[] = [
   {
     id: "name",
     header: "Repository name",
-    cell: (row) => <NavLink to={`/ui/ecr/${encodeURIComponent(row.name)}`}>{row.name}</NavLink>,
+    cell: (row) => <AwsRowLink to={`/ui/ecr/${encodeURIComponent(row.name)}`}>{row.name}</AwsRowLink>,
     value: (row) => row.name,
   },
   { id: "uri", header: "URI", cell: (row) => row.uri, value: (row) => row.uri },
@@ -73,10 +73,10 @@ export function DeleteReposModal({
         ))}
       </ul>
       {remove.isError && (
-        <div className="aws-flash aws-flash-error" role="alert">
+        <AwsErrorAlert>
           <strong>Could not delete.</strong>{" "}
           {remove.error instanceof Error ? remove.error.message : "The request failed."}
-        </div>
+        </AwsErrorAlert>
       )}
     </AwsModal>
   );
@@ -98,7 +98,6 @@ export function ECRReposPage() {
         emptyDescription="No private repositories exist in this account and Region."
         rowKey={(row) => row.name}
         tableTestId="ecr-repos-table"
-        rowTestId={(row) => `ecr-repo-row-${row.name}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
             <AwsButton
