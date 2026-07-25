@@ -122,6 +122,46 @@ var entraDefaultUser = EntraUser{
 	Name:              "Sockerless Test User",
 }
 
+// entraBootstrapClientID and entraBootstrapClientSecret are the well-known
+// application registration seeded into every directory the simulator serves —
+// the Microsoft Entra equivalent of the AWS simulator's seeded "test"/"test"
+// credential. Real Microsoft Entra requires a registered application, a
+// service principal materializing it in the tenant, and a client secret
+// before the v2.0 client_credentials grant issues a token; every SDK, CLI, and
+// Terraform harness authenticates against this seeded registration exactly as
+// a real confidential client authenticates against one an administrator
+// provisioned.
+const (
+	entraBootstrapClientID     = "test-client-id"
+	entraBootstrapClientSecret = "test-client-secret"
+	entraBootstrapAppObjectID  = "00000000-0000-0000-0000-0000000000b1"
+	entraBootstrapSPObjectID   = "00000000-0000-0000-0000-0000000000b2"
+)
+
+// init seeds the bootstrap application registration, its service principal,
+// and its client secret so the client_credentials grant is immediately usable
+// for entraBootstrapClientID — the same directory state an administrator
+// would provision once via the Certificates & secrets blade and the Enterprise
+// applications blade before handing the credential to automation.
+func init() {
+	hash := sha256.Sum256([]byte(entraBootstrapClientSecret))
+	now := time.Now().UTC()
+	entraApplicationStore.Put(entraBootstrapAppObjectID, EntraApplication{
+		ID:             entraBootstrapAppObjectID,
+		AppID:          entraBootstrapClientID,
+		DisplayName:    "Sockerless Bootstrap",
+		SignInAudience: "AzureADMyOrg",
+		PasswordCredentials: []EntraPasswordCredential{{
+			KeyID:         "00000000-0000-0000-0000-0000000000b3",
+			DisplayName:   "bootstrap",
+			StartDateTime: now.Format(time.RFC3339),
+			EndDateTime:   now.AddDate(10, 0, 0).Format(time.RFC3339),
+			SecretHash:    base64.RawStdEncoding.EncodeToString(hash[:]),
+		}},
+	})
+	entraRegisterServicePrincipal(entraBootstrapSPObjectID, entraBootstrapClientID, "Sockerless Bootstrap", "Application")
+}
+
 // getEntraSimUser looks up a directory user by oid, falling back to the
 // built-in default identity.
 func getEntraSimUser(oid string) EntraUser {

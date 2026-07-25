@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2642 filed - 2621 fixed - 5 open - 16 false positives.**
+**2642 filed - 2622 fixed - 4 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,7 +10,6 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 2639 | P2 | Azure simulator Entra fidelity | permissive grant kept for unmigrated harnesses | The v2.0 `client_credentials` grant validated client secrets only for client ids registered as Microsoft Entra applications; unregistered client ids still received implicit tokens, where real Azure AD rejects unknown clients with `unauthorized_client` AADSTS700016. Fix shape: provision app registrations (+ secrets) in every SDK/CLI/Terraform helper and backend harness, then delete the implicit grant. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
@@ -20,6 +19,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2639~~ | P2 | Azure simulator Entra fidelity | permissive grant for unregistered clients | The v2.0 `client_credentials` grant minted a token for any client id — an unregistered id fell through to an implicit-client branch with no secret validation, where real Microsoft Entra rejects unknown clients with `unauthorized_client` AADSTS700016. The simulator now seeds a well-known bootstrap Entra application (appId `test-client-id`, a hashed `test-client-secret` password credential, and its service principal — the Azure analog of the AWS `test`/`test` bootstrap), the harnesses and deploy scripts authenticate as that registered application, and the implicit-client branch was deleted so an unregistered client id returns the real AADSTS700016. A new SDK test asserts the rejection; the aca/azf backends were confirmed unaffected (they authenticate through the managed-identity `/msi/token` endpoint, never client_credentials). |
 | ~~2642~~ | P2 | AWS simulator Lambda enforcement | data plane accepted unsigned requests | AWS Lambda's REST API surface bypassed SigV4/IAM enforcement — an unauthenticated call returned data where real Lambda requires SigV4 on every call (a hole in the BUG-2625 credential-enforcement contract). A `lambdaEnforced` wrapper (mirroring `s3Enforced`) now SigV4-verifies and IAM-evaluates every `registerLambda` control-plane route with its real `lambda:` action, returning Lambda's REST-JSON auth error shape; the `/2018-06-01/runtime/...` container-polling routes stay unenforced (a separate per-invocation mux), so function execution is unaffected — verified by the invoke suite plus a new unsigned/wrong-secret deny test. |
 | ~~2638~~ | P3 | GCP simulator IAM fidelity | missing conflict semantics | `serviceAccounts.create` silently overwrote an existing service account; it now returns real Google Cloud IAM's 409 `ALREADY_EXISTS` ("Service account … already exists within project …") on a duplicate email. The Cloud Run and Cloud Run Functions backend harnesses that re-provision `sockerless-runner` against a persistent simulator moved to get-or-create, and SDK + CLI tests cover the conflict. |
 | ~~2637~~ | P3 | AWS console interface | enabled controls without behavior | `AwsTable`'s default "View details"/"Delete" header actions rendered enabled but did nothing on the Amazon ECS, AWS Lambda, Amazon ECR, Amazon S3, and CloudWatch Logs pages. Each page now passes the `actions` render prop so the inert defaults no longer render: "View details" was dropped (no detail view exists for these resources), and a real Stop/Delete was wired over the federated SigV4 path (ECS StopTask, Lambda/ECR/S3/CloudWatch-Logs deletes) with a confirm dialog. |
