@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AzureCommandBar, AzureEssentials } from "../portal/AzurePortal.js";
+import { makeStyles, tokens, Text } from "@fluentui/react-components";
+import { AzureCommandBar, AzureEssentials, AzureErrorMessage, AzureEmptyState } from "../portal/AzurePortal.js";
 import { directoryTenantId } from "../portal/federation.js";
 import {
   addClientSecret,
@@ -11,6 +12,20 @@ import {
   type MintedClientSecret,
 } from "../api.js";
 import { CertificatesAndSecrets } from "./CertificatesAndSecrets.js";
+
+const useStyles = makeStyles({
+  code: {
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: "12px",
+    fontSize: "12px",
+    fontFamily: tokens.fontFamilyMonospace,
+    overflowX: "auto",
+    color: tokens.colorNeutralForeground1,
+  },
+  hint: { display: "block", maxWidth: "72ch", marginBottom: "10px" },
+});
 
 // CliUsage shows credential usage that genuinely works against this
 // deployment: the OAuth2 client_credentials token request (the same request
@@ -29,16 +44,19 @@ function CliUsage({
   subscription: string | null;
   origin: string;
 }) {
+  const styles = useStyles();
   const tenantId = tenant ?? "<tenant-id>";
   const subscriptionId = subscription ?? "<subscription-id>";
   return (
     <section className="az-blade-section" aria-label="Connect with the Azure CLI">
-      <h2>Connect with the Azure CLI</h2>
-      <p className="az-blade-hint">
+      <Text as="h2" weight="semibold" block>
+        Connect with the Azure CLI
+      </Text>
+      <Text as="p" className={styles.hint}>
         Use the application (client) ID with a client secret from this blade. The token request below is the request{" "}
         <code>az login --service-principal</code> sends.
-      </p>
-      <pre className="az-code" data-testid="entra-cli-usage">
+      </Text>
+      <pre className={styles.code} data-testid="entra-cli-usage">
         {`# Acquire an Azure Resource Manager token with the client secret
 TOKEN=$(curl -s -X POST "${origin}/${tenantId}/oauth2/v2.0/token" \\
   -d grant_type=client_credentials \\
@@ -55,14 +73,14 @@ az rest --method get \\
 az login --service-principal --username ${appId} \\
   --password "<client-secret-value>" --tenant ${tenantId}`}
       </pre>
-      <p className="az-blade-hint">
+      <Text as="p" className={styles.hint}>
         Azure SDK equivalent (the client-credentials flow):{" "}
         <code>
           azidentity.NewClientSecretCredential(&quot;{tenantId}&quot;, &quot;{appId}&quot;,
           &quot;&lt;client-secret-value&gt;&quot;, nil)
         </code>{" "}
         — azidentity requires an https authority host; over plain http issue the token request above.
-      </p>
+      </Text>
     </section>
   );
 }
@@ -112,15 +130,17 @@ export function AppRegistrationDetailPage() {
       />
       <div className="az-main">
         {isError ? (
-          <div className="az-message az-message-error" role="alert" data-testid="entra-app-error">
+          <AzureErrorMessage testid="entra-app-error">
             <strong>Could not load the app registration.</strong>{" "}
             {error instanceof Error ? error.message : "Microsoft Graph did not respond."}
-          </div>
+          </AzureErrorMessage>
         ) : isLoading || !app ? (
-          <div className="az-empty" role="status">Loading the app registration…</div>
+          <AzureEmptyState title="Loading the app registration…" loading />
         ) : (
           <>
-            <h2 data-testid="entra-app-name">{app.displayName}</h2>
+            <Text as="h2" weight="semibold" block data-testid="entra-app-name">
+              {app.displayName}
+            </Text>
             <AzureEssentials
               properties={[
                 { label: "Display name", value: app.displayName },
@@ -138,10 +158,10 @@ export function AppRegistrationDetailPage() {
             />
 
             {mutationError ? (
-              <div className="az-message az-message-error" role="alert" data-testid="entra-secret-error">
+              <AzureErrorMessage testid="entra-secret-error">
                 <strong>The credential operation failed.</strong>{" "}
                 {mutationError instanceof Error ? mutationError.message : "Microsoft Graph did not respond."}
-              </div>
+              </AzureErrorMessage>
             ) : null}
 
             <CertificatesAndSecrets

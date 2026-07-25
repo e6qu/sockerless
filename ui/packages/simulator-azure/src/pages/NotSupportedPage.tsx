@@ -1,5 +1,5 @@
 import { useLocation } from "react-router";
-import { AzureEssentials, AzureNotSupportedBadge } from "../portal/index.js";
+import { AzureEssentials, AzureNotSupportedBadge, AzureWarningMessage } from "../portal/index.js";
 import { AzureCommandBar } from "../portal/AzurePortal.js";
 import { catalogItemForPath } from "../catalog.js";
 
@@ -24,7 +24,7 @@ export function NotSupportedPage() {
             { label: "Status", value: <AzureNotSupportedBadge /> },
           ]}
         />
-        <div className="az-message az-message-warning" role="status" data-testid="not-supported-message">
+        <AzureWarningMessage testid="not-supported-message">
           <strong>{label} is not implemented by the Sockerless simulator.</strong>
           <p>
             This entry stays in the service menu because the real Azure portal offers it, so the menu reads as
@@ -32,7 +32,7 @@ export function NotSupportedPage() {
             Function Apps, Container Registry, Storage accounts, Log Analytics, and Microsoft Entra ID app
             registrations — and does not simulate {label.toLowerCase()}.
           </p>
-        </div>
+        </AzureWarningMessage>
       </div>
     </>
   );

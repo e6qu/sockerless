@@ -1,6 +1,40 @@
 import { useState } from "react";
+import {
+  makeStyles,
+  tokens,
+  Field,
+  Input,
+  Select,
+  Button,
+  Table,
+  TableHeader,
+  TableRow,
+  TableHeaderCell,
+  TableBody,
+  TableCell,
+  Text,
+} from "@fluentui/react-components";
 import { AzureIcon } from "../portal/icons.js";
+import { AzureWarningMessage, AzureErrorMessage } from "../portal/AzurePortal.js";
+import { AzureTableEmptyRow } from "../portal/AzureTable.js";
 import type { ClientSecretMetadata, MintedClientSecret } from "../api.js";
+
+const useStyles = makeStyles({
+  form: {
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: "14px 16px",
+    margin: "12px 0",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    maxWidth: "480px",
+  },
+  formActions: { display: "flex", gap: "8px" },
+  hint: { display: "block", maxWidth: "72ch", marginBottom: "10px" },
+  secretValue: { display: "inline-flex", alignItems: "center", gap: "6px" },
+});
 
 // The expiry choices the real Certificates & secrets blade offers, as days
 // from now; the blade posts the resulting endDateTime to Microsoft Graph.
@@ -36,6 +70,7 @@ function formatDate(value: string): string {
 // full secretText appears exactly once, from the addPassword response held in
 // this session; leaving the blade discards it, matching the real portal.
 export function CertificatesAndSecrets({ credentials, minted, busy, onCreate, onRemove }: CertificatesAndSecretsProps) {
+  const styles = useStyles();
   const [adding, setAdding] = useState(false);
   const [description, setDescription] = useState("");
   const [days, setDays] = useState<number>(180);
@@ -44,26 +79,27 @@ export function CertificatesAndSecrets({ credentials, minted, busy, onCreate, on
 
   return (
     <section className="az-blade-section" aria-label="Certificates & secrets">
-      <h2>Certificates &amp; secrets</h2>
-      <p className="az-blade-hint">
+      <Text as="h2" weight="semibold" block>
+        Certificates &amp; secrets
+      </Text>
+      <Text as="p" className={styles.hint}>
         Credentials enable confidential applications to identify themselves to the authentication service when
         receiving tokens. A client secret is a string the application uses as a password.
-      </p>
+      </Text>
 
-      <button
-        type="button"
-        className="az-command"
+      <Button
+        appearance="subtle"
+        icon={<AzureIcon name="add" size={16} />}
         data-testid="entra-new-client-secret"
         disabled={busy}
         onClick={() => setAdding(true)}
       >
-        <span className="az-command-glyph"><AzureIcon name="add" size={16} /></span>
         New client secret
-      </button>
+      </Button>
 
       {adding ? (
         <form
-          className="az-form"
+          className={styles.form}
           data-testid="entra-secret-form"
           onSubmit={(event) => {
             event.preventDefault();
@@ -72,21 +108,19 @@ export function CertificatesAndSecrets({ credentials, minted, busy, onCreate, on
             setDescription("");
           }}
         >
-          <h3>Add a client secret</h3>
-          <label>
-            Description
-            <input
-              className="az-input"
+          <Text as="h3" weight="semibold">
+            Add a client secret
+          </Text>
+          <Field label="Description">
+            <Input
               data-testid="entra-secret-description"
               value={description}
               placeholder="Enter a description for this client secret"
-              onChange={(event) => setDescription(event.target.value)}
+              onChange={(_, data) => setDescription(data.value)}
             />
-          </label>
-          <label>
-            Expires
-            <select
-              className="az-input"
+          </Field>
+          <Field label="Expires">
+            <Select
               data-testid="entra-secret-expiry"
               value={days}
               onChange={(event) => setDays(Number(event.target.value))}
@@ -96,64 +130,58 @@ export function CertificatesAndSecrets({ credentials, minted, busy, onCreate, on
                   {option.label}
                 </option>
               ))}
-            </select>
-          </label>
-          <div className="az-form-actions">
-            <button type="submit" className="az-button-primary" data-testid="entra-secret-add" disabled={busy}>
+            </Select>
+          </Field>
+          <div className={styles.formActions}>
+            <Button type="submit" appearance="primary" data-testid="entra-secret-add" disabled={busy}>
               Add
-            </button>
-            <button type="button" className="az-button" onClick={() => setAdding(false)}>
+            </Button>
+            <Button type="button" onClick={() => setAdding(false)}>
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       ) : null}
 
       {minted ? (
-        <div className="az-message az-message-warning" role="alert" data-testid="entra-secret-notice">
+        <AzureWarningMessage testid="entra-secret-notice">
           Remember to copy the new client secret value. You won&rsquo;t be able to retrieve it after you leave this
           blade.
-        </div>
+        </AzureWarningMessage>
       ) : null}
       {copyError ? (
-        <div className="az-message az-message-error" role="alert">
+        <AzureErrorMessage>
           <strong>Could not copy the secret to the clipboard.</strong> {copyError}
-        </div>
+        </AzureErrorMessage>
       ) : null}
 
-      <table className="az-table" data-testid="entra-secrets-table">
-        <thead>
-          <tr>
-            <th>Description</th>
-            <th>Expires</th>
-            <th>Value</th>
-            <th>Secret ID</th>
-            <th aria-label="Actions" />
-          </tr>
-        </thead>
-        <tbody>
+      <Table aria-label="Certificates & secrets" size="small" data-testid="entra-secrets-table">
+        <TableHeader>
+          <TableRow>
+            <TableHeaderCell>Description</TableHeaderCell>
+            <TableHeaderCell>Expires</TableHeaderCell>
+            <TableHeaderCell>Value</TableHeaderCell>
+            <TableHeaderCell>Secret ID</TableHeaderCell>
+            <TableHeaderCell aria-label="Actions" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {credentials.length === 0 ? (
-            <tr>
-              <td className="az-table-state" colSpan={5}>
-                <div className="az-empty">
-                  <strong>No client secrets have been created for this application.</strong>
-                </div>
-              </td>
-            </tr>
+            <AzureTableEmptyRow colSpan={5} title="No client secrets have been created for this application." />
           ) : (
             credentials.map((credential) => {
               const isMinted = minted !== null && credential.keyId === minted.keyId;
               return (
-                <tr key={credential.keyId} data-testid="entra-secret-row">
-                  <td>{credential.displayName || "—"}</td>
-                  <td>{formatDate(credential.endDateTime)}</td>
-                  <td>
+                <TableRow key={credential.keyId} data-testid="entra-secret-row">
+                  <TableCell>{credential.displayName || "—"}</TableCell>
+                  <TableCell>{formatDate(credential.endDateTime)}</TableCell>
+                  <TableCell>
                     {isMinted ? (
-                      <span className="az-secret-value">
+                      <span className={styles.secretValue}>
                         <code data-testid="entra-secret-value">{minted.secretText}</code>
-                        <button
-                          type="button"
-                          className="az-icon-button az-copy"
+                        <Button
+                          appearance="transparent"
+                          icon={<AzureIcon name="copy" size={16} />}
                           aria-label="Copy the client secret value"
                           data-testid="entra-secret-copy"
                           onClick={() => {
@@ -162,36 +190,32 @@ export function CertificatesAndSecrets({ credentials, minted, busy, onCreate, on
                               (err: unknown) => setCopyError(err instanceof Error ? err.message : String(err)),
                             );
                           }}
-                        >
-                          <AzureIcon name="copy" size={16} />
-                        </button>
+                        />
                         {copied ? <span role="status">Copied</span> : null}
                       </span>
                     ) : (
                       <code data-testid="entra-secret-hint">{credential.hint ? `${credential.hint}${"*".repeat(31)}` : "Hidden"}</code>
                     )}
-                  </td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
                     <code>{credential.keyId}</code>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="az-icon-button"
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      appearance="transparent"
+                      icon={<AzureIcon name="delete" size={16} />}
                       aria-label={`Delete the client secret ${credential.displayName || credential.keyId}`}
                       data-testid="entra-secret-delete"
                       disabled={busy}
                       onClick={() => onRemove(credential.keyId)}
-                    >
-                      <AzureIcon name="delete" size={16} />
-                    </button>
-                  </td>
-                </tr>
+                    />
+                  </TableCell>
+                </TableRow>
               );
             })
           )}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </section>
   );
 }

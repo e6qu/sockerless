@@ -1,6 +1,6 @@
 import { useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AzureCommandBar, AzureEssentials } from "../portal/AzurePortal.js";
+import { AzureCommandBar, AzureEssentials, AzureErrorMessage, AzureEmptyState } from "../portal/AzurePortal.js";
 import { cancelSubscription, enableSubscription, fetchSubscription } from "../api.js";
 
 // A subscription's detail blade: the Essentials the real portal leads with,
@@ -52,12 +52,12 @@ export function SubscriptionDetailPage() {
       />
       <div className="az-main" data-testid="subs-detail">
         {isError ? (
-          <div className="az-message az-message-error" role="alert" data-testid="subs-detail-error">
+          <AzureErrorMessage testid="subs-detail-error">
             <strong>Could not load the subscription.</strong>{" "}
             {error instanceof Error ? error.message : "Azure Resource Manager did not respond."}
-          </div>
+          </AzureErrorMessage>
         ) : isLoading ? (
-          <div className="az-empty" role="status">Loading subscription…</div>
+          <AzureEmptyState title="Loading subscription…" loading />
         ) : data ? (
           <AzureEssentials
             properties={[
@@ -69,10 +69,10 @@ export function SubscriptionDetailPage() {
         ) : null}
 
         {mutationError ? (
-          <div className="az-message az-message-error" role="alert" data-testid="subs-action-error">
+          <AzureErrorMessage testid="subs-action-error">
             <strong>The subscription operation failed.</strong>{" "}
             {mutationError instanceof Error ? mutationError.message : "Azure Resource Manager did not respond."}
-          </div>
+          </AzureErrorMessage>
         ) : null}
       </div>
     </>

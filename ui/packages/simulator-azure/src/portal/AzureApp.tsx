@@ -1,12 +1,38 @@
 import { type ReactNode } from "react";
 import { BrowserRouter, Routes, useLocation } from "react-router";
 import { ErrorBoundary, OperatorAccount } from "@sockerless/ui-core/components";
+import { useTheme } from "@sockerless/ui-core/hooks";
+import { FluentProvider, webDarkTheme, webLightTheme } from "@fluentui/react-components";
+import type { Theme } from "@fluentui/react-components";
+
+// The Azure portal's most recognizable surface is its blue global header and
+// primary buttons — the iconic Azure blue #0078d4, not Fluent's stock brand
+// #0f6cbd. Overriding just the brand-background tokens keeps every other Fluent
+// behavior intact while making that signature colour faithful. Light mode uses
+// the classic Azure blue and its documented hover/pressed shades; dark mode
+// keeps Fluent's lighter brand ramp (a dark surface needs the lighter blue for
+// AA contrast), only nudging the base to Azure's dark-portal blue.
+const azureLightTheme: Theme = {
+  ...webLightTheme,
+  colorBrandBackground: "#0078d4",
+  colorBrandBackgroundHover: "#106ebe",
+  colorBrandBackgroundPressed: "#005a9e",
+  colorBrandBackgroundSelected: "#005a9e",
+};
+const azureDarkTheme: Theme = {
+  ...webDarkTheme,
+  colorBrandBackground: "#0078d4",
+  colorBrandBackgroundHover: "#2b88d8",
+  colorBrandBackgroundPressed: "#005a9e",
+  colorBrandBackgroundSelected: "#106ebe",
+};
 import { SERVICE_CATALOG, catalogItemForPath } from "../catalog.js";
 import {
   AzureBreadcrumbs,
   AzureHeader,
   AzureResourceTitle,
   AzureServiceMenu,
+  useAzureStyles,
   type ServiceMenuGroup,
   type ServiceMenuItem,
 } from "./AzurePortal.js";
@@ -105,7 +131,16 @@ function paneFor(pathname: string): Pane {
   return PANE["/ui/"];
 }
 
-function PortalFrame({ children }: { children: ReactNode }) {
+function PortalFrame({
+  children,
+  isDark,
+  onToggleTheme,
+}: {
+  children: ReactNode;
+  isDark: boolean;
+  onToggleTheme: () => void;
+}) {
+  const styles = useAzureStyles();
   const { pathname } = useLocation();
   const pane = paneFor(pathname);
   const trail = [
@@ -114,11 +149,11 @@ function PortalFrame({ children }: { children: ReactNode }) {
     { label: pane.crumb },
   ];
   return (
-    <div className="azure">
+    <div className={`azure ${styles.shell}`}>
       <a href="#main-content" className="sl-skip-link">Skip to main content</a>
-      <AzureHeader account={<OperatorAccount />} />
+      <AzureHeader account={<OperatorAccount />} isDark={isDark} onToggleTheme={onToggleTheme} />
       <AzureBreadcrumbs trail={trail} />
-      <div className="az-body">
+      <div className={`az-body ${styles.body}`}>
         <AzureResourceTitle name={pane.title} kind={pane.kind} directory="Simulator" />
         <AzureServiceMenu flat={FLAT_ITEMS} groups={MENU_GROUPS} />
         <main id="main-content" tabIndex={-1}>
@@ -129,14 +164,29 @@ function PortalFrame({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * `useAzureTheme` drives the shared `useTheme` hook every simulator UI uses
+ * — the same hook that flips the `.dark` class the residual, non-Fluent
+ * chrome still reads — and additionally selects between Fluent's own real
+ * `webLightTheme`/`webDarkTheme`, which is the design system the real Azure
+ * portal is built on and ships WCAG AA contrast in both modes.
+ */
+function useAzureTheme() {
+  const { theme, toggle } = useTheme();
+  return { theme, toggle };
+}
+
 export function AzureApp({ children }: { children: ReactNode }) {
+  const { theme, toggle } = useAzureTheme();
   return (
     <ErrorBoundary>
-      <BrowserRouter>
-        <PortalFrame>
-          <Routes>{children}</Routes>
-        </PortalFrame>
-      </BrowserRouter>
+      <FluentProvider theme={theme === "dark" ? azureDarkTheme : azureLightTheme}>
+        <BrowserRouter>
+          <PortalFrame isDark={theme === "dark"} onToggleTheme={toggle}>
+            <Routes>{children}</Routes>
+          </PortalFrame>
+        </BrowserRouter>
+      </FluentProvider>
     </ErrorBoundary>
   );
 }

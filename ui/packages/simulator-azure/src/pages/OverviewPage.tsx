@@ -1,6 +1,7 @@
-import { Link } from "react-router";
+import { useNavigate } from "react-router";
 import { useQueries } from "@tanstack/react-query";
-import { AzureEssentials, AzureStatus } from "../portal/index.js";
+import { makeStyles, Card, Link, Text } from "@fluentui/react-components";
+import { AzureEssentials, AzureStatus, AzureErrorMessage } from "../portal/index.js";
 import { AzureCommandBar } from "../portal/AzurePortal.js";
 import {
   fetchContainerAppJobs,
@@ -21,7 +22,15 @@ const RESOURCES = [
   { label: "Log entries", to: "/ui/monitor", queryKey: ["monitor-logs"], queryFn: fetchMonitorLogs },
 ] as const;
 
+const useStyles = makeStyles({
+  cards: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "12px" },
+  cardBody: { padding: "14px 16px", display: "flex", flexDirection: "column", gap: "6px" },
+  count: { fontSize: "26px", textDecorationLine: "none" },
+});
+
 export function OverviewPage() {
+  const styles = useStyles();
+  const navigate = useNavigate();
   const results = useQueries({
     queries: RESOURCES.map((resource) => ({ queryKey: resource.queryKey, queryFn: resource.queryFn })),
   });
@@ -58,17 +67,28 @@ export function OverviewPage() {
           ]}
         />
         {failed ? (
-          <div className="az-message az-message-error" role="alert" data-testid="overview-error">
+          <AzureErrorMessage testid="overview-error">
             <strong>Could not load the subscription overview.</strong>{" "}
             {firstError instanceof Error ? firstError.message : "The portal could not reach Azure."}
-          </div>
+          </AzureErrorMessage>
         ) : (
-          <div className="az-cards">
+          <div className={styles.cards}>
             {RESOURCES.map((resource, index) => (
-              <div className="az-card" key={resource.label}>
-                <h2>{resource.label}</h2>
-                <Link to={resource.to}>{loading ? "—" : (results[index].data?.length ?? 0)}</Link>
-              </div>
+              <Card key={resource.label} className={styles.cardBody}>
+                <Text as="h2" weight="semibold" size={200}>
+                  {resource.label}
+                </Text>
+                <Link
+                  className={styles.count}
+                  href={resource.to}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    navigate(resource.to);
+                  }}
+                >
+                  {loading ? "—" : (results[index].data?.length ?? 0)}
+                </Link>
+              </Card>
             ))}
           </div>
         )}

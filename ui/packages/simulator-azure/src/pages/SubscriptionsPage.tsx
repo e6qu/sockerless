@@ -1,13 +1,44 @@
 import { useState } from "react";
-import { Link } from "react-router";
+import { useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AzureCommandBar, AzureEssentials } from "../portal/AzurePortal.js";
+import {
+  makeStyles,
+  tokens,
+  Field,
+  Input,
+  Button,
+  Link,
+  Table,
+  TableHeader,
+  TableRow,
+  TableHeaderCell,
+  TableBody,
+  TableCell,
+  Text,
+} from "@fluentui/react-components";
+import { AzureCommandBar, AzureEssentials, AzureErrorMessage } from "../portal/AzurePortal.js";
+import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
 import {
   createSubscriptionAlias,
   fetchSubscriptions,
   getSubscriptionAlias,
   type Subscription,
 } from "../api.js";
+
+const useStyles = makeStyles({
+  form: {
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: "14px 16px",
+    margin: "12px 0",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    maxWidth: "480px",
+  },
+  formActions: { display: "flex", gap: "8px" },
+});
 
 // The default enrollment-account billing scope offered by the create form —
 // the coordinate a real tenant reads from its Microsoft.Billing accounts; the
@@ -29,54 +60,49 @@ interface SubscriptionCreateFormProps {
 // Microsoft.Subscription alias PUT and reporting the alias's provisioning
 // state until the subscription materializes.
 export function SubscriptionCreateForm({ busy, provisioningState, onCreate, onDismiss }: SubscriptionCreateFormProps) {
+  const styles = useStyles();
   const [name, setName] = useState("");
   const [scope, setScope] = useState(DEFAULT_BILLING_SCOPE);
   return (
     <form
-      className="az-form"
+      className={styles.form}
       data-testid="subs-create-form"
       onSubmit={(event) => {
         event.preventDefault();
         if (name.trim() && scope.trim()) onCreate(name.trim(), scope.trim());
       }}
     >
-      <h2>Create a subscription</h2>
-      <label>
-        Subscription name
-        <input
-          className="az-input"
+      <Text as="h2" weight="semibold">
+        Create a subscription
+      </Text>
+      <Field label="Subscription name">
+        <Input
           data-testid="subs-create-name"
           value={name}
           placeholder="Enter a name for the subscription"
-          onChange={(event) => setName(event.target.value)}
+          onChange={(_, data) => setName(data.value)}
         />
-      </label>
-      <label>
-        Billing scope
-        <input
-          className="az-input"
-          data-testid="subs-create-scope"
-          value={scope}
-          onChange={(event) => setScope(event.target.value)}
-        />
-      </label>
+      </Field>
+      <Field label="Billing scope">
+        <Input data-testid="subs-create-scope" value={scope} onChange={(_, data) => setScope(data.value)} />
+      </Field>
       {provisioningState ? (
-        <p className="az-form-status" role="status" data-testid="subs-provisioning">
+        <Text as="p" role="status" block data-testid="subs-provisioning">
           Creating subscription… provisioning state: {provisioningState}
-        </p>
+        </Text>
       ) : null}
-      <div className="az-form-actions">
-        <button
+      <div className={styles.formActions}>
+        <Button
           type="submit"
-          className="az-button-primary"
+          appearance="primary"
           data-testid="subs-create-submit"
           disabled={!name.trim() || !scope.trim() || busy}
         >
           Create
-        </button>
-        <button type="button" className="az-button" onClick={onDismiss} disabled={busy}>
+        </Button>
+        <Button type="button" onClick={onDismiss} disabled={busy}>
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -87,6 +113,7 @@ export function SubscriptionCreateForm({ busy, provisioningState, onCreate, onDi
 // through the Microsoft.Subscription alias API, polling the alias until the
 // subscription is provisioned.
 export function SubscriptionsPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["subscriptions"],
@@ -136,10 +163,10 @@ export function SubscriptionsPage() {
         />
 
         {create.error ? (
-          <div className="az-message az-message-error" role="alert" data-testid="subs-error">
+          <AzureErrorMessage testid="subs-error">
             <strong>The subscription could not be created.</strong>{" "}
             {create.error instanceof Error ? create.error.message : "Azure Resource Manager did not respond."}
-          </div>
+          </AzureErrorMessage>
         ) : null}
 
         {adding ? (
@@ -151,54 +178,51 @@ export function SubscriptionsPage() {
           />
         ) : null}
 
-        <table className="az-table" data-testid="subs-table">
-          <thead>
-            <tr>
-              <th>Subscription name</th>
-              <th>Subscription ID</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table aria-label="Subscriptions" size="small" data-testid="subs-table">
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell>Subscription name</TableHeaderCell>
+              <TableHeaderCell>Subscription ID</TableHeaderCell>
+              <TableHeaderCell>Status</TableHeaderCell>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {isError ? (
-              <tr>
-                <td className="az-table-state" colSpan={3}>
-                  <div className="az-message az-message-error" role="alert" data-testid="subs-list-error">
-                    <strong>Could not load subscriptions.</strong>{" "}
-                    {error instanceof Error ? error.message : "Azure Resource Manager did not respond."}
-                  </div>
-                </td>
-              </tr>
+              <AzureTableErrorRow colSpan={3} testid="subs-list-error">
+                <strong>Could not load subscriptions.</strong>{" "}
+                {error instanceof Error ? error.message : "Azure Resource Manager did not respond."}
+              </AzureTableErrorRow>
             ) : isLoading ? (
-              <tr>
-                <td className="az-table-state" colSpan={3}>
-                  <div className="az-empty" role="status">Loading subscriptions…</div>
-                </td>
-              </tr>
+              <AzureTableLoadingRow colSpan={3} label="Loading subscriptions…" />
             ) : rows.length === 0 ? (
-              <tr>
-                <td className="az-table-state" colSpan={3}>
-                  <div className="az-empty">
-                    <strong>No subscriptions to display</strong>
-                    <p>Subscriptions this directory can reach appear here.</p>
-                  </div>
-                </td>
-              </tr>
+              <AzureTableEmptyRow
+                colSpan={3}
+                title="No subscriptions to display"
+                description="Subscriptions this directory can reach appear here."
+              />
             ) : (
               rows.map((row: Subscription) => (
-                <tr key={row.subscriptionId} data-testid="subs-row">
-                  <td>
-                    <Link to={`/ui/subscriptions/${row.subscriptionId}`}>{row.displayName}</Link>
-                  </td>
-                  <td>
+                <TableRow key={row.subscriptionId} data-testid="subs-row">
+                  <TableCell>
+                    <Link
+                      href={`/ui/subscriptions/${row.subscriptionId}`}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        navigate(`/ui/subscriptions/${row.subscriptionId}`);
+                      }}
+                    >
+                      {row.displayName}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
                     <code>{row.subscriptionId}</code>
-                  </td>
-                  <td>{row.state === "Enabled" ? "Active" : row.state === "Disabled" ? "Disabled" : row.state}</td>
-                </tr>
+                  </TableCell>
+                  <TableCell>{row.state === "Enabled" ? "Active" : row.state === "Disabled" ? "Disabled" : row.state}</TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </>
   );

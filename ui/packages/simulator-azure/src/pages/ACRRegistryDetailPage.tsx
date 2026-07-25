@@ -1,7 +1,16 @@
 import { useState } from "react";
 import { useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { AzureCommandBar, AzureEssentials, AzureStatus } from "../portal/AzurePortal.js";
+import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Button, Text } from "@fluentui/react-components";
+import {
+  AzureCommandBar,
+  AzureEssentials,
+  AzureStatus,
+  AzureErrorMessage,
+  AzureEmptyState,
+  AzureWarningMessage,
+} from "../portal/AzurePortal.js";
+import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
 import { fetchACRRegistry, fetchACRRepositories, fetchACRTags } from "../api.js";
 
@@ -46,14 +55,12 @@ export function ACRRegistryDetailPage() {
       />
       <div className="az-main" data-testid="acr-registry-detail">
         {registry.isError ? (
-          <div className="az-message az-message-error" role="alert" data-testid="acr-registry-error">
+          <AzureErrorMessage testid="acr-registry-error">
             <strong>Could not load this container registry.</strong>{" "}
             {registry.error instanceof Error ? registry.error.message : "Azure Resource Manager did not respond."}
-          </div>
+          </AzureErrorMessage>
         ) : registry.isLoading || !registry.data ? (
-          <div className="az-empty" role="status">
-            Loading the registry…
-          </div>
+          <AzureEmptyState title="Loading the registry…" loading />
         ) : (
           <>
             <AzureEssentials
@@ -68,117 +75,89 @@ export function ACRRegistryDetailPage() {
             />
 
             <section className="az-blade-section" aria-label="Repositories">
-              <h2>Repositories</h2>
+              <Text as="h2" weight="semibold" block>
+                Repositories
+              </Text>
               {!registry.data.adminUserEnabled ? (
-                <div className="az-message az-message-warning" role="status" data-testid="acr-admin-disabled">
+                <AzureWarningMessage testid="acr-admin-disabled">
                   Enable the admin user on this registry to browse its repositories from this console.
-                </div>
+                </AzureWarningMessage>
               ) : (
-                <div className="az-table-tools">
-                  <table className="az-table" data-testid="acr-repositories">
-                    <thead>
-                      <tr>
-                        <th>Repository</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {repositories.isError ? (
-                        <tr>
-                          <td className="az-table-state">
-                            <div className="az-message az-message-error" role="alert">
-                              <strong>Could not reach the registry's repository catalog.</strong>{" "}
-                              {repositories.error instanceof Error ? repositories.error.message : "The registry did not respond."}
-                            </div>
-                          </td>
-                        </tr>
-                      ) : repositories.isLoading ? (
-                        <tr>
-                          <td className="az-table-state">
-                            <div className="az-empty" role="status">
-                              Loading repositories…
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (repositories.data ?? []).length === 0 ? (
-                        <tr>
-                          <td className="az-table-state">
-                            <div className="az-empty">
-                              <strong>No repositories to display</strong>
-                              <p>Images pushed to this registry appear here.</p>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (
-                        (repositories.data ?? []).map((repo) => (
-                          <tr key={repo} className={selectedRepo === repo ? "az-row-selected" : undefined}>
-                            <td>
-                              <button
-                                type="button"
-                                className="az-command"
-                                data-testid="acr-repository-row"
-                                aria-pressed={selectedRepo === repo}
-                                onClick={() => setSelectedRepo((current) => (current === repo ? null : repo))}
-                              >
-                                {repo}
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                <Table aria-label="Repositories" size="small" data-testid="acr-repositories">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHeaderCell>Repository</TableHeaderCell>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {repositories.isError ? (
+                      <AzureTableErrorRow colSpan={1}>
+                        <strong>Could not reach the registry's repository catalog.</strong>{" "}
+                        {repositories.error instanceof Error ? repositories.error.message : "The registry did not respond."}
+                      </AzureTableErrorRow>
+                    ) : repositories.isLoading ? (
+                      <AzureTableLoadingRow colSpan={1} label="Loading repositories…" />
+                    ) : (repositories.data ?? []).length === 0 ? (
+                      <AzureTableEmptyRow
+                        colSpan={1}
+                        title="No repositories to display"
+                        description="Images pushed to this registry appear here."
+                      />
+                    ) : (
+                      (repositories.data ?? []).map((repo) => (
+                        <TableRow key={repo} appearance={selectedRepo === repo ? "neutral" : undefined}>
+                          <TableCell>
+                            <Button
+                              appearance="subtle"
+                              data-testid="acr-repository-row"
+                              aria-pressed={selectedRepo === repo}
+                              onClick={() => setSelectedRepo((current) => (current === repo ? null : repo))}
+                            >
+                              {repo}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
               )}
             </section>
 
             {selectedRepo ? (
               <section className="az-blade-section" aria-label={`Tags for ${selectedRepo}`}>
-                <h2>Tags — {selectedRepo}</h2>
-                <table className="az-table" data-testid="acr-tags">
-                  <thead>
-                    <tr>
-                      <th>Tag</th>
-                      <th>Digest</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <Text as="h2" weight="semibold" block>
+                  Tags — {selectedRepo}
+                </Text>
+                <Table aria-label={`Tags for ${selectedRepo}`} size="small" data-testid="acr-tags">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHeaderCell>Tag</TableHeaderCell>
+                      <TableHeaderCell>Digest</TableHeaderCell>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {tags.isError ? (
-                      <tr>
-                        <td className="az-table-state" colSpan={2}>
-                          <div className="az-message az-message-error" role="alert">
-                            <strong>Could not load tags.</strong>{" "}
-                            {tags.error instanceof Error ? tags.error.message : "The registry did not respond."}
-                          </div>
-                        </td>
-                      </tr>
+                      <AzureTableErrorRow colSpan={2}>
+                        <strong>Could not load tags.</strong>{" "}
+                        {tags.error instanceof Error ? tags.error.message : "The registry did not respond."}
+                      </AzureTableErrorRow>
                     ) : tags.isLoading ? (
-                      <tr>
-                        <td className="az-table-state" colSpan={2}>
-                          <div className="az-empty" role="status">
-                            Loading tags…
-                          </div>
-                        </td>
-                      </tr>
+                      <AzureTableLoadingRow colSpan={2} label="Loading tags…" />
                     ) : (tags.data ?? []).length === 0 ? (
-                      <tr>
-                        <td className="az-table-state" colSpan={2}>
-                          <div className="az-empty">
-                            <strong>No tags to display</strong>
-                          </div>
-                        </td>
-                      </tr>
+                      <AzureTableEmptyRow colSpan={2} title="No tags to display" />
                     ) : (
                       (tags.data ?? []).map((tag) => (
-                        <tr key={tag.name}>
-                          <td>{tag.name}</td>
-                          <td>
+                        <TableRow key={tag.name}>
+                          <TableCell>{tag.name}</TableCell>
+                          <TableCell>
                             <code>{tag.digest}</code>
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       ))
                     )}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </section>
             ) : null}
           </>

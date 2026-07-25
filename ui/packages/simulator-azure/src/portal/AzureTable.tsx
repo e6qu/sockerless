@@ -1,6 +1,21 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AzureCommandBar, AzureEssentials, type EssentialsProperty } from "./AzurePortal.js";
+import {
+  makeStyles,
+  tokens,
+  Table,
+  TableHeader,
+  TableRow,
+  TableHeaderCell,
+  TableBody,
+  TableCell,
+  TableSelectionCell,
+  Input,
+  Button,
+  Text,
+} from "@fluentui/react-components";
+import { ChevronLeftRegular, ChevronRightRegular } from "@fluentui/react-icons";
+import { AzureCommandBar, AzureEssentials, AzureEmptyState, AzureErrorMessage, type EssentialsProperty } from "./AzurePortal.js";
 
 export interface AzureColumn<T> {
   id: string;
@@ -25,6 +40,75 @@ export interface AzureResourceTableProps<T> {
 
 const PAGE_SIZE = 10;
 
+const useStyles = makeStyles({
+  tools: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", marginBottom: "8px" },
+  filter: { flex: 1, maxWidth: "420px" },
+  pagination: { display: "flex", alignItems: "center", gap: "4px", color: tokens.colorNeutralForeground2 },
+  stateCell: { padding: 0 },
+});
+
+/** The three states every sub-resource table on a detail blade renders
+ *  instead of its rows — a load failure, the initial load, or a genuinely
+ *  empty resource — each a single wide cell spanning every column, exactly
+ *  the shape the hand-built `<table>` ternary used to draw, now built from
+ *  `AzureErrorMessage`/`AzureEmptyState` (real Fluent `MessageBar`/`Spinner`)
+ *  inside a real `TableRow`/`TableCell`. */
+export function AzureTableErrorRow({
+  colSpan,
+  testid,
+  children,
+}: {
+  colSpan: number;
+  testid?: string;
+  children: ReactNode;
+}) {
+  const styles = useStyles();
+  return (
+    <TableRow>
+      <TableCell className={styles.stateCell} colSpan={colSpan}>
+        <AzureErrorMessage testid={testid}>{children}</AzureErrorMessage>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+export function AzureTableLoadingRow({ colSpan, label }: { colSpan: number; label: string }) {
+  const styles = useStyles();
+  return (
+    <TableRow>
+      <TableCell className={styles.stateCell} colSpan={colSpan}>
+        <AzureEmptyState title={label} loading />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+export function AzureTableEmptyRow({
+  colSpan,
+  title,
+  description,
+}: {
+  colSpan: number;
+  title: string;
+  description?: string;
+}) {
+  const styles = useStyles();
+  return (
+    <TableRow>
+      <TableCell className={styles.stateCell} colSpan={colSpan}>
+        <AzureEmptyState title={title} description={description} />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+/** The real Fluent `Table` primitives (not the packaged `DataGrid`
+ *  orchestrator) composed by hand, so this portal keeps exact control over
+ *  the accessible names Fluent's own `DataGrid` selection wiring doesn't
+ *  expose a hook for (`Select <id>`, `Select all resources on this page`) —
+ *  the same shape the hand-built table held, now built from genuine
+ *  `Table`/`TableRow`/`TableSelectionCell` components rather than a raw
+ *  `<table>`. */
 export function AzureResourceTable<T>({
   columns,
   queryKey,
@@ -36,6 +120,7 @@ export function AzureResourceTable<T>({
   essentials,
   resourceNoun,
 }: AzureResourceTableProps<T>) {
+  const styles = useStyles();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({ queryKey, queryFn });
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ column: string; ascending: boolean } | null>(null);
@@ -83,121 +168,124 @@ export function AzureResourceTable<T>({
       />
       <div className="az-main">
         <AzureEssentials properties={essentials(data ?? [])} />
-        <div className="az-table-tools">
-          <input
-            className="az-input"
+        <div className={styles.tools}>
+          <Input
+            className={styles.filter}
             type="search"
             value={filter}
             placeholder={filterPlaceholder}
             aria-label={filterPlaceholder}
-            onChange={(event) => {
-              setFilter(event.target.value);
+            onChange={(_, changeData) => {
+              setFilter(changeData.value);
               setPage(0);
             }}
           />
-          <div className="az-pagination">
-            <span>
+          <div className={styles.pagination}>
+            <Text>
               {rows.length === 0
                 ? `No ${resourceNoun}`
                 : `${currentPage * PAGE_SIZE + 1}–${currentPage * PAGE_SIZE + visible.length} of ${rows.length}`}
-            </span>
-            <button type="button" aria-label="Previous page" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>‹</button>
-            <span aria-current="page">{currentPage + 1}</span>
-            <button type="button" aria-label="Next page" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>›</button>
+            </Text>
+            <Button
+              appearance="subtle"
+              icon={<ChevronLeftRegular />}
+              aria-label="Previous page"
+              disabled={currentPage === 0}
+              onClick={() => setPage(currentPage - 1)}
+            />
+            <Text aria-current="page">{currentPage + 1}</Text>
+            <Button
+              appearance="subtle"
+              icon={<ChevronRightRegular />}
+              aria-label="Next page"
+              disabled={currentPage >= pageCount - 1}
+              onClick={() => setPage(currentPage + 1)}
+            />
           </div>
         </div>
 
-        {/* The column headers stay whatever the body holds, so what the
-         * resource is described by remains readable while it is loading,
-         * empty, or failed. */}
-        <table className="az-table">
-          <thead>
-            <tr>
-              <th className="az-table-select">
-                <input
-                  type="checkbox"
-                  aria-label="Select all resources on this page"
-                  checked={allVisibleSelected}
-                  disabled={visible.length === 0}
-                  onChange={() =>
-                    setSelected((current) => {
-                      const next = new Set(current);
-                      for (const row of visible) {
-                        if (allVisibleSelected) next.delete(rowKey(row));
-                        else next.add(rowKey(row));
-                      }
-                      return next;
-                    })
-                  }
-                />
-              </th>
+        <Table aria-label={resourceNoun} size="small" className="az-table">
+          <TableHeader>
+            <TableRow>
+              <TableSelectionCell
+                type="checkbox"
+                checked={allVisibleSelected}
+                checkboxIndicator={{ "aria-label": "Select all resources on this page" }}
+                onClick={() =>
+                  setSelected((current) => {
+                    const next = new Set(current);
+                    for (const row of visible) {
+                      if (allVisibleSelected) next.delete(rowKey(row));
+                      else next.add(rowKey(row));
+                    }
+                    return next;
+                  })
+                }
+              />
               {columns.map((column) => {
                 const active = sort?.column === column.id;
                 return (
-                  <th key={column.id} aria-sort={active ? (sort.ascending ? "ascending" : "descending") : "none"}>
-                    <button type="button" onClick={() => toggleSort(column.id)}>
-                      {column.header}
-                      <span aria-hidden className="az-sort">{active ? (sort.ascending ? "▲" : "▼") : "⇅"}</span>
-                    </button>
-                  </th>
+                  <TableHeaderCell
+                    key={column.id}
+                    sortable
+                    sortDirection={active ? (sort.ascending ? "ascending" : "descending") : undefined}
+                    onClick={() => toggleSort(column.id)}
+                  >
+                    {column.header}
+                  </TableHeaderCell>
                 );
               })}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {isError ? (
-              <tr>
-                <td className="az-table-state" colSpan={columns.length + 1}>
-                  <div className="az-message az-message-error" role="alert">
+              <TableRow>
+                <TableCell className={styles.stateCell} colSpan={columns.length + 1}>
+                  <AzureErrorMessage>
                     <strong>Could not load {resourceNoun}.</strong>{" "}
                     {error instanceof Error ? error.message : "The simulator did not respond."}
-                  </div>
-                </td>
-              </tr>
+                  </AzureErrorMessage>
+                </TableCell>
+              </TableRow>
             ) : isLoading ? (
-              <tr>
-                <td className="az-table-state" colSpan={columns.length + 1}>
-                  <div className="az-empty" role="status">Loading {resourceNoun}…</div>
-                </td>
-              </tr>
+              <TableRow>
+                <TableCell className={styles.stateCell} colSpan={columns.length + 1}>
+                  <AzureEmptyState title={`Loading ${resourceNoun}…`} loading />
+                </TableCell>
+              </TableRow>
             ) : rows.length === 0 ? (
-              <tr>
-                <td className="az-table-state" colSpan={columns.length + 1}>
-                  <div className="az-empty">
-                    <strong>{emptyTitle}</strong>
-                    <p>{emptyDescription}</p>
-                  </div>
-                </td>
-              </tr>
+              <TableRow>
+                <TableCell className={styles.stateCell} colSpan={columns.length + 1}>
+                  <AzureEmptyState title={emptyTitle} description={emptyDescription} />
+                </TableCell>
+              </TableRow>
             ) : (
               visible.map((row) => {
                 const id = rowKey(row);
                 return (
-                  <tr key={id} className={selected.has(id) ? "az-row-selected" : undefined}>
-                    <td className="az-table-select">
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${id}`}
-                        checked={selected.has(id)}
-                        onChange={() =>
-                          setSelected((current) => {
-                            const next = new Set(current);
-                            if (next.has(id)) next.delete(id);
-                            else next.add(id);
-                            return next;
-                          })
-                        }
-                      />
-                    </td>
+                  <TableRow key={id} appearance={selected.has(id) ? "neutral" : undefined}>
+                    <TableSelectionCell
+                      type="checkbox"
+                      checked={selected.has(id)}
+                      checkboxIndicator={{ "aria-label": `Select ${id}` }}
+                      onClick={() =>
+                        setSelected((current) => {
+                          const next = new Set(current);
+                          if (next.has(id)) next.delete(id);
+                          else next.add(id);
+                          return next;
+                        })
+                      }
+                    />
                     {columns.map((column) => (
-                      <td key={column.id}>{column.cell(row)}</td>
+                      <TableCell key={column.id}>{column.cell(row)}</TableCell>
                     ))}
-                  </tr>
+                  </TableRow>
                 );
               })
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </>
   );

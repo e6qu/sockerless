@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { AzureCommandBar, AzureEssentials, AzureStatus } from "../portal/AzurePortal.js";
+import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Button, Text } from "@fluentui/react-components";
+import { AzureCommandBar, AzureEssentials, AzureStatus, AzureErrorMessage, AzureEmptyState } from "../portal/AzurePortal.js";
+import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
 import { fetchStorageAccount, fetchBlobContainers, fetchBlobs } from "../api.js";
 
@@ -45,14 +47,12 @@ export function StorageAccountDetailPage() {
       />
       <div className="az-main" data-testid="storage-account-detail">
         {account.isError ? (
-          <div className="az-message az-message-error" role="alert" data-testid="storage-account-error">
+          <AzureErrorMessage testid="storage-account-error">
             <strong>Could not load this storage account.</strong>{" "}
             {account.error instanceof Error ? account.error.message : "Azure Resource Manager did not respond."}
-          </div>
+          </AzureErrorMessage>
         ) : account.isLoading || !account.data ? (
-          <div className="az-empty" role="status">
-            Loading the storage account…
-          </div>
+          <AzureEmptyState title="Loading the storage account…" loading />
         ) : (
           <>
             <AzureEssentials
@@ -68,109 +68,83 @@ export function StorageAccountDetailPage() {
             />
 
             <section className="az-blade-section" aria-label="Containers">
-              <h2>Containers</h2>
-              <table className="az-table" data-testid="storage-containers">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Text as="h2" weight="semibold" block>
+                Containers
+              </Text>
+              <Table aria-label="Containers" size="small" data-testid="storage-containers">
+                <TableHeader>
+                  <TableRow>
+                    <TableHeaderCell>Name</TableHeaderCell>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {containers.isError ? (
-                    <tr>
-                      <td className="az-table-state">
-                        <div className="az-message az-message-error" role="alert">
-                          <strong>Could not reach the blob service.</strong>{" "}
-                          {containers.error instanceof Error ? containers.error.message : "The storage account did not respond."}
-                        </div>
-                      </td>
-                    </tr>
+                    <AzureTableErrorRow colSpan={1}>
+                      <strong>Could not reach the blob service.</strong>{" "}
+                      {containers.error instanceof Error ? containers.error.message : "The storage account did not respond."}
+                    </AzureTableErrorRow>
                   ) : containers.isLoading ? (
-                    <tr>
-                      <td className="az-table-state">
-                        <div className="az-empty" role="status">
-                          Loading containers…
-                        </div>
-                      </td>
-                    </tr>
+                    <AzureTableLoadingRow colSpan={1} label="Loading containers…" />
                   ) : (containers.data ?? []).length === 0 ? (
-                    <tr>
-                      <td className="az-table-state">
-                        <div className="az-empty">
-                          <strong>No containers to display</strong>
-                          <p>Blob containers created in this account appear here.</p>
-                        </div>
-                      </td>
-                    </tr>
+                    <AzureTableEmptyRow
+                      colSpan={1}
+                      title="No containers to display"
+                      description="Blob containers created in this account appear here."
+                    />
                   ) : (
                     (containers.data ?? []).map((container) => (
-                      <tr key={container.name} className={selectedContainer === container.name ? "az-row-selected" : undefined}>
-                        <td>
-                          <button
-                            type="button"
-                            className="az-command"
+                      <TableRow key={container.name} appearance={selectedContainer === container.name ? "neutral" : undefined}>
+                        <TableCell>
+                          <Button
+                            appearance="subtle"
                             data-testid="storage-container-row"
                             aria-pressed={selectedContainer === container.name}
                             onClick={() => setSelectedContainer((current) => (current === container.name ? null : container.name))}
                           >
                             {container.name}
-                          </button>
-                        </td>
-                      </tr>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
                     ))
                   )}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </section>
 
             {selectedContainer ? (
               <section className="az-blade-section" aria-label={`Blobs in ${selectedContainer}`}>
-                <h2>Blobs — {selectedContainer}</h2>
-                <table className="az-table" data-testid="storage-blobs">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Size</th>
-                      <th>Last modified</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <Text as="h2" weight="semibold" block>
+                  Blobs — {selectedContainer}
+                </Text>
+                <Table aria-label={`Blobs in ${selectedContainer}`} size="small" data-testid="storage-blobs">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHeaderCell>Name</TableHeaderCell>
+                      <TableHeaderCell>Size</TableHeaderCell>
+                      <TableHeaderCell>Last modified</TableHeaderCell>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {blobs.isError ? (
-                      <tr>
-                        <td className="az-table-state" colSpan={3}>
-                          <div className="az-message az-message-error" role="alert">
-                            <strong>Could not load blobs.</strong>{" "}
-                            {blobs.error instanceof Error ? blobs.error.message : "The storage account did not respond."}
-                          </div>
-                        </td>
-                      </tr>
+                      <AzureTableErrorRow colSpan={3}>
+                        <strong>Could not load blobs.</strong>{" "}
+                        {blobs.error instanceof Error ? blobs.error.message : "The storage account did not respond."}
+                      </AzureTableErrorRow>
                     ) : blobs.isLoading ? (
-                      <tr>
-                        <td className="az-table-state" colSpan={3}>
-                          <div className="az-empty" role="status">
-                            Loading blobs…
-                          </div>
-                        </td>
-                      </tr>
+                      <AzureTableLoadingRow colSpan={3} label="Loading blobs…" />
                     ) : (blobs.data ?? []).length === 0 ? (
-                      <tr>
-                        <td className="az-table-state" colSpan={3}>
-                          <div className="az-empty">
-                            <strong>No blobs to display</strong>
-                          </div>
-                        </td>
-                      </tr>
+                      <AzureTableEmptyRow colSpan={3} title="No blobs to display" />
                     ) : (
                       (blobs.data ?? []).map((blob) => (
-                        <tr key={blob.name}>
-                          <td>{blob.name}</td>
-                          <td>{blob.contentLength.toLocaleString()} B</td>
-                          <td>{blob.lastModified || "—"}</td>
-                        </tr>
+                        <TableRow key={blob.name}>
+                          <TableCell>{blob.name}</TableCell>
+                          <TableCell>{blob.contentLength.toLocaleString()} B</TableCell>
+                          <TableCell>{blob.lastModified || "—"}</TableCell>
+                        </TableRow>
                       ))
                     )}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </section>
             ) : null}
           </>

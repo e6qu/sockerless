@@ -1,7 +1,24 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AzureCommandBar, AzureEssentials } from "../portal/AzurePortal.js";
+import {
+  makeStyles,
+  tokens,
+  Field,
+  Input,
+  Button,
+  Link,
+  Table,
+  TableHeader,
+  TableRow,
+  TableHeaderCell,
+  TableBody,
+  TableCell,
+  TableSelectionCell,
+  Text,
+} from "@fluentui/react-components";
+import { AzureCommandBar, AzureEssentials, AzureErrorMessage } from "../portal/AzurePortal.js";
+import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
 import {
   createAppRegistration,
   deleteAppRegistration,
@@ -9,12 +26,28 @@ import {
   type AppRegistration,
 } from "../api.js";
 
+const useStyles = makeStyles({
+  form: {
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: "14px 16px",
+    margin: "12px 0",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    maxWidth: "480px",
+  },
+  formActions: { display: "flex", gap: "8px" },
+});
+
 // The Microsoft Entra ID App registrations blade: it lists the directory's
 // application registrations from Microsoft Graph and registers new ones the
 // way the real portal does — the application object plus its service
 // principal — so the appId can immediately authenticate a client_credentials
 // grant once a client secret is minted on the Certificates & secrets blade.
 export function AppRegistrationsPage() {
+  const styles = useStyles();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
@@ -74,126 +107,121 @@ export function AppRegistrationsPage() {
         />
 
         {mutationError ? (
-          <div className="az-message az-message-error" role="alert" data-testid="entra-apps-error">
+          <AzureErrorMessage testid="entra-apps-error">
             <strong>The directory operation failed.</strong>{" "}
             {mutationError instanceof Error ? mutationError.message : "Microsoft Graph did not respond."}
-          </div>
+          </AzureErrorMessage>
         ) : null}
 
         {registering ? (
           <form
-            className="az-form"
+            className={styles.form}
             data-testid="entra-new-registration-form"
             onSubmit={(event) => {
               event.preventDefault();
               if (name.trim()) create.mutate(name.trim());
             }}
           >
-            <h2>Register an application</h2>
-            <label>
-              Name
-              <input
-                className="az-input"
+            <Text as="h2" weight="semibold">
+              Register an application
+            </Text>
+            <Field label="Name">
+              <Input
                 data-testid="entra-app-name-input"
                 value={name}
                 placeholder="Enter a display name for the application"
-                onChange={(event) => setName(event.target.value)}
+                onChange={(_, data) => setName(data.value)}
               />
-            </label>
-            <div className="az-form-actions">
-              <button
+            </Field>
+            <div className={styles.formActions}>
+              <Button
                 type="submit"
-                className="az-button-primary"
+                appearance="primary"
                 data-testid="entra-register-submit"
                 disabled={!name.trim() || create.isPending}
               >
                 Register
-              </button>
-              <button type="button" className="az-button" onClick={() => setRegistering(false)}>
+              </Button>
+              <Button type="button" onClick={() => setRegistering(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         ) : null}
 
-        <table className="az-table" data-testid="entra-apps-table">
-          <thead>
-            <tr>
-              <th className="az-table-select">
-                <input
-                  type="checkbox"
-                  aria-label="Select all app registrations"
-                  checked={rows.length > 0 && rows.every((row) => selected.has(row.id))}
-                  disabled={rows.length === 0}
-                  onChange={() =>
-                    setSelected((current) =>
-                      current.size === rows.length ? new Set() : new Set(rows.map((row) => row.id)),
-                    )
-                  }
-                />
-              </th>
-              <th>Display name</th>
-              <th>Application (client) ID</th>
-              <th>Object ID</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table aria-label="App registrations" size="small" data-testid="entra-apps-table">
+          <TableHeader>
+            <TableRow>
+              <TableSelectionCell
+                type="checkbox"
+                checked={rows.length > 0 && rows.every((row) => selected.has(row.id))}
+                checkboxIndicator={{
+                  "aria-label": "Select all app registrations",
+                  disabled: rows.length === 0,
+                }}
+                onClick={() =>
+                  setSelected((current) =>
+                    current.size === rows.length ? new Set() : new Set(rows.map((row) => row.id)),
+                  )
+                }
+              />
+              <TableHeaderCell>Display name</TableHeaderCell>
+              <TableHeaderCell>Application (client) ID</TableHeaderCell>
+              <TableHeaderCell>Object ID</TableHeaderCell>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {isError ? (
-              <tr>
-                <td className="az-table-state" colSpan={4}>
-                  <div className="az-message az-message-error" role="alert">
-                    <strong>Could not load app registrations.</strong>{" "}
-                    {error instanceof Error ? error.message : "Microsoft Graph did not respond."}
-                  </div>
-                </td>
-              </tr>
+              <AzureTableErrorRow colSpan={4}>
+                <strong>Could not load app registrations.</strong>{" "}
+                {error instanceof Error ? error.message : "Microsoft Graph did not respond."}
+              </AzureTableErrorRow>
             ) : isLoading ? (
-              <tr>
-                <td className="az-table-state" colSpan={4}>
-                  <div className="az-empty" role="status">Loading app registrations…</div>
-                </td>
-              </tr>
+              <AzureTableLoadingRow colSpan={4} label="Loading app registrations…" />
             ) : rows.length === 0 ? (
-              <tr>
-                <td className="az-table-state" colSpan={4}>
-                  <div className="az-empty">
-                    <strong>No app registrations to display</strong>
-                    <p>Applications registered in this directory appear here.</p>
-                  </div>
-                </td>
-              </tr>
+              <AzureTableEmptyRow
+                colSpan={4}
+                title="No app registrations to display"
+                description="Applications registered in this directory appear here."
+              />
             ) : (
               rows.map((row: AppRegistration) => (
-                <tr key={row.id} data-testid="entra-app-row">
-                  <td className="az-table-select">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${row.displayName}`}
-                      checked={selected.has(row.id)}
-                      onChange={() =>
-                        setSelected((current) => {
-                          const next = new Set(current);
-                          if (next.has(row.id)) next.delete(row.id);
-                          else next.add(row.id);
-                          return next;
-                        })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <Link to={`/ui/entra/app-registrations/${row.id}`}>{row.displayName}</Link>
-                  </td>
-                  <td>
+                <TableRow key={row.id} data-testid="entra-app-row">
+                  <TableSelectionCell
+                    type="checkbox"
+                    checked={selected.has(row.id)}
+                    checkboxIndicator={{ "aria-label": `Select ${row.displayName}` }}
+                    onClick={() =>
+                      setSelected((current) => {
+                        const next = new Set(current);
+                        if (next.has(row.id)) next.delete(row.id);
+                        else next.add(row.id);
+                        return next;
+                      })
+                    }
+                  />
+                  <TableCell>
+                    <Link
+                      href={`/ui/entra/app-registrations/${row.id}`}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        navigate(`/ui/entra/app-registrations/${row.id}`);
+                      }}
+                    >
+                      {row.displayName}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
                     <code>{row.appId}</code>
-                  </td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
                     <code>{row.id}</code>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </>
   );
