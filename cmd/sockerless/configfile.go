@@ -26,10 +26,21 @@ type environment struct {
 	Addr      string       `yaml:"addr,omitempty"`
 	LogLevel  string       `yaml:"log_level,omitempty"`
 	Simulator string       `yaml:"simulator,omitempty"`
+	Login     *loginConfig `yaml:"login,omitempty"`
 	AWS       *awsConfig   `yaml:"aws,omitempty"`
 	GCP       *gcpConfig   `yaml:"gcp,omitempty"`
 	Azure     *azureConfig `yaml:"azure,omitempty"`
 	Common    commonConfig `yaml:"common,omitempty"`
+}
+
+// loginConfig holds the Shauth OpenID Connect coordinates `sockerless login`
+// signs in against. client_secret stays empty for a public client
+// (token_endpoint_auth_method "none"); when the deployment registered the CLI
+// as a confidential client the secret is a coordinate like the rest.
+type loginConfig struct {
+	Issuer       string `yaml:"issuer,omitempty"`
+	ClientID     string `yaml:"client_id,omitempty"`
+	ClientSecret string `yaml:"client_secret,omitempty"`
 }
 
 type commonConfig struct {
@@ -43,6 +54,7 @@ type commonConfig struct {
 
 type awsConfig struct {
 	Region string           `yaml:"region,omitempty"`
+	Login  *awsLoginConfig  `yaml:"login,omitempty"`
 	ECS    *ecsEnvConfig    `yaml:"ecs,omitempty"`
 	Lambda *lambdaEnvConfig `yaml:"lambda,omitempty"`
 }
@@ -51,14 +63,56 @@ type gcpConfig struct {
 	Project       string             `yaml:"project,omitempty"`
 	BuildBucket   string             `yaml:"build_bucket,omitempty"`
 	BuildPlatform string             `yaml:"build_platform,omitempty"`
+	Login         *gcpLoginConfig    `yaml:"login,omitempty"`
 	CloudRun      *cloudRunEnvConfig `yaml:"cloudrun,omitempty"`
 	GCF           *gcfEnvConfig      `yaml:"gcf,omitempty"`
 }
 
 type azureConfig struct {
-	SubscriptionID string        `yaml:"subscription_id,omitempty"`
-	ACA            *acaEnvConfig `yaml:"aca,omitempty"`
-	AZF            *azfEnvConfig `yaml:"azf,omitempty"`
+	SubscriptionID string            `yaml:"subscription_id,omitempty"`
+	Login          *azureLoginConfig `yaml:"login,omitempty"`
+	ACA            *acaEnvConfig     `yaml:"aca,omitempty"`
+	AZF            *azfEnvConfig     `yaml:"azf,omitempty"`
+}
+
+// awsLoginConfig wires the Shauth sign-in to Amazon Web Services: the CLI
+// writes an `~/.aws/config` profile whose role_arn + web_identity_token_file
+// make the aws CLI and SDKs run AssumeRoleWithWebIdentity themselves. The
+// region comes from awsConfig.Region. endpoint_url points the profile at a
+// deployed simulator; empty targets real AWS.
+type awsLoginConfig struct {
+	RoleARN     string `yaml:"role_arn,omitempty"`
+	EndpointURL string `yaml:"endpoint_url,omitempty"`
+	Profile     string `yaml:"profile,omitempty"`
+}
+
+// gcpLoginConfig wires the Shauth sign-in to Google Cloud Workforce Identity
+// Federation: the CLI writes an external_account Application Default
+// Credentials file naming the workforce pool provider audience and the
+// Security Token Service coordinate. sts_endpoint and api_endpoint default to
+// real Google (https://sts.googleapis.com and no api_endpoint_overrides).
+type gcpLoginConfig struct {
+	WorkforceAudience        string `yaml:"workforce_audience,omitempty"`
+	STSEndpoint              string `yaml:"sts_endpoint,omitempty"`
+	APIEndpoint              string `yaml:"api_endpoint,omitempty"`
+	WorkforcePoolUserProject string `yaml:"workforce_pool_user_project,omitempty"`
+	Configuration            string `yaml:"configuration,omitempty"`
+}
+
+// azureLoginConfig wires the Shauth sign-in to Microsoft Entra Workload
+// Identity Federation: the CLI runs `az login --service-principal
+// --federated-token` for the federation client. authority_endpoint and
+// resource_manager_endpoint default to the Azure public cloud; set both to
+// target a deployed simulator (the az CLI requires HTTPS coordinates, so a
+// simulator target serves TLS and ca_bundle names the trust bundle az reads
+// through REQUESTS_CA_BUNDLE).
+type azureLoginConfig struct {
+	Tenant                  string `yaml:"tenant,omitempty"`
+	ClientID                string `yaml:"client_id,omitempty"`
+	AuthorityEndpoint       string `yaml:"authority_endpoint,omitempty"`
+	ResourceManagerEndpoint string `yaml:"resource_manager_endpoint,omitempty"`
+	CABundle                string `yaml:"ca_bundle,omitempty"`
+	CloudName               string `yaml:"cloud_name,omitempty"`
 }
 
 type ecsEnvConfig struct {

@@ -203,7 +203,12 @@ this order.
    resulting real cloud credentials written to the vendor tools' standard
    locations (`~/.aws/credentials`, Application Default Credentials, the az
    token cache) so unmodified vendor CLIs and SDKs work against the deployed
-   simulators.
+   simulators. Done — implemented as vendor-native credential wiring the
+   tools refresh themselves (AWS `web_identity_token_file` profile, a
+   workforce `external_account` ADC file, `az login --federated-token`), with
+   the CLI as a public Hydra client over the RFC 8252 loopback flow; proving
+   gcloud's path added the simulator's missing STS token-introspection slice
+   (BUG-2641).
 4. **Deployment and provisioning recipe.** Committed infrastructure that hosts
    Sockerless Admin, the three simulators, and a Shauth instance at persistent
    origins: each console registered as a Shauth OpenID Connect client with its

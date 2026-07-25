@@ -4,6 +4,44 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-25 — `sockerless login` signs the terminal into every cloud
+
+Phase 3 of the Console Self-Service roadmap: the packaged terminal analog of
+`aws configure sso` / `gcloud auth login` / `az login`. `sockerless login`
+(zero-dependency, stdlib-only in `cmd/sockerless`) runs the RFC 8252
+native-app flow — ephemeral loopback listener, S256 PKCE, the authorize URL
+printed (and opened unless `--no-browser`), Shauth sign-in and the one-time
+consent screen in the operator's browser — then wires **vendor-native
+credentials** that the vendor tools refresh themselves, never one-shot copied
+secrets:
+
+- **AWS**: an INI-preserving `~/.aws/config` profile with `role_arn`,
+  `web_identity_token_file`, `region`, and `endpoint_url` — the AWS CLI runs
+  `AssumeRoleWithWebIdentity` itself (`aws --profile sockerless-<ctx> sts
+  get-caller-identity` returns the assumed federation role).
+- **Google Cloud**: a real workforce `external_account` Application Default
+  Credentials file plus a dedicated gcloud configuration with the proven
+  `api_endpoint_overrides`, activated via `gcloud auth login --cred-file`.
+  Proving this surfaced BUG-2641: gcloud resolves the signed-in account via
+  STS token introspection (`POST /v1/introspect`, RFC 7662), which the
+  simulator lacked — implemented against gcloud's captured live wire (HTTP
+  Basic with Google's published gcloud OAuth client, `principal://…/subject/…`
+  username, `active:false` for unknown tokens as real Google answers) with
+  SDK-shaped and real-gcloud CLI coverage.
+- **Microsoft Azure**: `az cloud register` + `az login --service-principal
+  --federated-token` — az stores the assertion and re-exchanges it on demand.
+  az/MSAL reject any http authority, so the relying-party harness runs a
+  second TLS-serving Azure simulator instance for the CLI's coordinates.
+
+Shauth findings baked into the harness: the CLI registers as a public Hydra
+client (`token_endpoint_auth_method: none`) with the RFC 8252 loopback
+any-port redirect; non-managed clients traverse Shauth's explicit consent
+screen once. `sockerless logout` removes the token, the ADC file, and the
+CLI's own profile section, and runs `az logout`. The relying-party matrix
+drives the whole story: spawn the CLI, sign in and authorize in a real
+browser, then prove `aws`, `az`, and `gcloud` each work vendor-natively
+against the simulators, then log out.
+
 ## 2026-07-25 — Consoles manage accounts, projects, and subscriptions
 
 Phase 2 of the Console Self-Service roadmap: a Shauth-authenticated operator

@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
+import { spawn, execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { promisify } from "node:util";
 import { chromium } from "playwright";
+
+const execFileAsync = promisify(execFile);
 
 const authOrigin = "http://localhost:8080";
 const password = process.env.SHAUTH_BOOTSTRAP_ADMIN_PASSWORD;
@@ -51,6 +57,8 @@ try {
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
     await context.close();
   }
+
+  await assertSockerlessCliLogin(browser);
 
   const portalContext = await browser.newContext();
   const portalPage = await portalContext.newPage();
@@ -337,6 +345,96 @@ async function assertFederatedAzureToken(context, app) {
   const token = await exchange.json();
   assert.ok(token.access_token, `${app.name} exchange issued no federated token`);
   assert.equal(token.token_type, "Bearer", `${app.name} federated token was not a bearer token`);
+}
+
+// assertSockerlessCliLogin proves the packaged terminal sign-in end to end:
+// `sockerless login` starts the RFC 8252 loopback flow, the operator signs
+// into Shauth (and authorizes the CLI once) in a real browser, and the vendor
+// tools then work with the credentials the CLI wired — the AWS CLI assumes the
+// federation role itself via the written profile, az re-exchanges its stored
+// federated assertion, and gcloud uses the workforce external-account file.
+// `sockerless logout` then removes what login wrote.
+async function assertSockerlessCliLogin(browser) {
+  const bin = process.env.SOCKERLESS_CLI_BIN;
+  assert.ok(bin, "SOCKERLESS_CLI_BIN is required (the harness builds and exports the CLI)");
+  const cliEnv = {
+    ...process.env,
+    // A dedicated HOME isolates every vendor tool's implicit per-user state —
+    // most importantly the AWS CLI's assume-role cache (~/.aws/cli/cache),
+    // which has no env override and is keyed such that a credential cached by
+    // an earlier run against an earlier simulator instance would be replayed
+    // against this one and rejected. CI runners start clean; a local run must
+    // behave identically.
+    HOME: `${process.env.SOCKERLESS_CLI_HOME}/home`,
+    SOCKERLESS_HOME: process.env.SOCKERLESS_CLI_HOME,
+    SOCKERLESS_CONTEXT: "rps",
+    AWS_CONFIG_FILE: process.env.SOCKERLESS_CLI_AWS_CONFIG_FILE,
+    CLOUDSDK_CONFIG: process.env.SOCKERLESS_CLI_CLOUDSDK_CONFIG,
+    CLOUDSDK_ACTIVE_CONFIG_NAME: "sockerless-rps",
+    AZURE_CONFIG_DIR: process.env.SOCKERLESS_CLI_AZURE_CONFIG_DIR,
+    REQUESTS_CA_BUNDLE: process.env.SOCKERLESS_CLI_AZURE_CA_BUNDLE,
+  };
+  await mkdir(cliEnv.HOME, { recursive: true });
+
+  const child = spawn(bin, ["login", "--no-browser", "--timeout", "180s"], { env: cliEnv });
+  let output = "";
+  const urlPromise = new Promise((resolve, reject) => {
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      const match = output.match(/http:\/\/localhost:8080\/oauth2\/auth\?\S+/);
+      if (match) resolve(match[0]);
+    });
+    child.on("error", reject);
+  });
+  let errors = "";
+  child.stderr.on("data", (chunk) => {
+    errors += chunk;
+  });
+  const exitPromise = new Promise((resolve) => child.on("close", resolve));
+
+  const authorizeURL = await urlPromise;
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(authorizeURL, { waitUntil: "domcontentloaded" });
+  await signInIfRequired(page);
+  // A terminal client is not a Shauth-managed application, so the first
+  // authorization presents Shauth's explicit consent screen.
+  const authorize = page.getByRole("button", { name: "Authorize application" });
+  if (await authorize.isVisible().catch(() => false)) {
+    await authorize.click();
+  }
+  await page.getByRole("heading", { name: "Signed in" }).waitFor({ state: "visible" });
+  const exitCode = await exitPromise;
+  assert.equal(exitCode, 0, `sockerless login exited ${exitCode}\nstdout:\n${output}\nstderr:\n${errors}`);
+  await context.close();
+
+  // The AWS CLI performs AssumeRoleWithWebIdentity itself from the written
+  // profile — the credential path is entirely vendor-native.
+  let aws;
+  try {
+    aws = await execFileAsync("aws", ["--profile", "sockerless-rps", "sts", "get-caller-identity", "--output", "json"], { env: cliEnv });
+  } catch (cause) {
+    const debug = await execFileAsync("aws", ["--profile", "sockerless-rps", "sts", "get-caller-identity", "--debug"], { env: cliEnv }).catch((e) => e);
+    throw new Error(
+      `aws get-caller-identity failed: ${cause.stderr ?? cause}\n--- debug tail ---\n${String(debug.stderr ?? "").split("\n").slice(-60).join("\n")}`,
+      { cause },
+    );
+  }
+  const awsIdentity = JSON.parse(aws.stdout);
+  assert.match(awsIdentity.Arn ?? "", /cli-federation-role/, `aws sts get-caller-identity returned ${aws.stdout}`);
+
+  // az re-exchanges the stored federated assertion on demand.
+  const az = await execFileAsync("az", ["account", "show", "--output", "json"], { env: cliEnv });
+  assert.ok(JSON.parse(az.stdout).id, `az account show returned ${az.stdout}`);
+
+  // gcloud resolves the workforce identity through the real STS exchange and
+  // introspection from the external-account credential file.
+  const gcloud = await execFileAsync("gcloud", ["iam", "service-accounts", "list", "--format", "json"], { env: cliEnv });
+  assert.ok(Array.isArray(JSON.parse(gcloud.stdout)), `gcloud service-accounts list returned ${gcloud.stdout}`);
+
+  const logout = await execFileAsync(bin, ["logout"], { env: cliEnv });
+  const tokenPath = `${process.env.SOCKERLESS_CLI_HOME}/contexts/rps/web-identity-token`;
+  assert.ok(!existsSync(tokenPath), `sockerless logout left the web identity token behind\n${logout.stdout}`);
 }
 
 // The assertMinted* flows prove the credential-minting console pages

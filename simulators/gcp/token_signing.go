@@ -187,67 +187,84 @@ func signServiceAccountIDToken(subject, audience string, includeEmail bool, issu
 	return signWithAccessKey(claims)
 }
 
+// accessTokenClaims is the claim set of a simulator-minted access token, as
+// returned by verifiedAccessTokenClaims for callers — the bearer middleware
+// and the Security Token Service introspection endpoint — that need the
+// token's contents after verification.
+type accessTokenClaims struct {
+	Iss   string `json:"iss"`
+	Aud   any    `json:"aud"`
+	Sub   string `json:"sub"`
+	Scope string `json:"scope"`
+	Exp   int64  `json:"exp"`
+	Iat   int64  `json:"iat"`
+}
+
 // verifyAccessToken checks that a bearer token is one the simulator minted:
 // a well-formed RS256 JWT, signed by the simulator's key, carrying the
 // simulator's issuer and audience, and unexpired. It returns a descriptive
 // error the middleware surfaces in the UNAUTHENTICATED response.
 func verifyAccessToken(raw string) error {
+	_, err := verifiedAccessTokenClaims(raw)
+	return err
+}
+
+// verifiedAccessTokenClaims verifies a simulator-minted access token and
+// returns its claims: a well-formed RS256 JWT, signed by the simulator's key,
+// carrying the simulator's issuer and audience, and unexpired.
+func verifiedAccessTokenClaims(raw string) (accessTokenClaims, error) {
+	var claims accessTokenClaims
 	if accessSigner == nil {
-		return fmt.Errorf("access-token signer not initialised")
+		return claims, fmt.Errorf("access-token signer not initialised")
 	}
 	parts := strings.Split(raw, ".")
 	if len(parts) != 3 {
-		return fmt.Errorf("token is not a JWT")
+		return claims, fmt.Errorf("token is not a JWT")
 	}
 	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return fmt.Errorf("token header is not base64url: %w", err)
+		return claims, fmt.Errorf("token header is not base64url: %w", err)
 	}
 	var header struct {
 		Alg string `json:"alg"`
 	}
 	if err := json.Unmarshal(headerJSON, &header); err != nil {
-		return fmt.Errorf("token header is not JSON: %w", err)
+		return claims, fmt.Errorf("token header is not JSON: %w", err)
 	}
 	if header.Alg != "RS256" {
-		return fmt.Errorf("token algorithm %q is not RS256", header.Alg)
+		return claims, fmt.Errorf("token algorithm %q is not RS256", header.Alg)
 	}
 
 	signingInput := parts[0] + "." + parts[1]
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return fmt.Errorf("token signature is not base64url: %w", err)
+		return claims, fmt.Errorf("token signature is not base64url: %w", err)
 	}
 	digest := sha256.Sum256([]byte(signingInput))
 	if err := rsa.VerifyPKCS1v15(&accessSigner.key.PublicKey, crypto.SHA256, digest[:], sig); err != nil {
-		return fmt.Errorf("token signature is invalid")
+		return claims, fmt.Errorf("token signature is invalid")
 	}
 
 	claimsJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return fmt.Errorf("token claims are not base64url: %w", err)
-	}
-	var claims struct {
-		Iss string `json:"iss"`
-		Aud any    `json:"aud"`
-		Exp int64  `json:"exp"`
+		return claims, fmt.Errorf("token claims are not base64url: %w", err)
 	}
 	if err := json.Unmarshal(claimsJSON, &claims); err != nil {
-		return fmt.Errorf("token claims are not JSON: %w", err)
+		return claims, fmt.Errorf("token claims are not JSON: %w", err)
 	}
 	if claims.Iss != simAccessTokenIssuer {
-		return fmt.Errorf("token issuer %q is not recognised", claims.Iss)
+		return claims, fmt.Errorf("token issuer %q is not recognised", claims.Iss)
 	}
 	if !audienceContains(claims.Aud, simAccessTokenAudience) {
-		return fmt.Errorf("token audience does not include the simulator")
+		return claims, fmt.Errorf("token audience does not include the simulator")
 	}
 	if claims.Exp == 0 {
-		return fmt.Errorf("token has no expiry")
+		return claims, fmt.Errorf("token has no expiry")
 	}
 	if time.Now().After(time.Unix(claims.Exp, 0)) {
-		return fmt.Errorf("token has expired")
+		return claims, fmt.Errorf("token has expired")
 	}
-	return nil
+	return claims, nil
 }
 
 // audienceContains reports whether the JWT `aud` claim — a string or an array
@@ -361,6 +378,11 @@ func isAuthExempt(r *http.Request) bool {
 		return true
 	case r.Method == http.MethodPost && (p == "/token" || p == "/oauth2/v4/token" || p == "/v1/token"):
 		// Token minters: how a client obtains a token in the first place.
+		return true
+	case r.Method == http.MethodPost && p == "/v1/introspect":
+		// Security Token Service token introspection authenticates with
+		// OAuth client credentials (RFC 7662 §2.1) inside the handler — a
+		// client introspects the very token it would otherwise present.
 		return true
 	case strings.HasPrefix(p, "/.well-known/"):
 		// OpenID Connect discovery + JWKS.

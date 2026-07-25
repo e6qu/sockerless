@@ -78,11 +78,20 @@ project picker, the Azure Microsoft.Subscription alias API with the portal
 Subscriptions blade (its Terraform coverage as the `tf (azure subscription)`
 shard), and the AWS Organizations console page — all with SDK/CLI/Terraform
 coverage and the relying-party matrix driving the AWS and Google Cloud browser
-flows. Next per the roadmap: phase 3 — `sockerless login` (browser Shauth
-sign-in via a localhost callback, the per-cloud federation exchange, real
-cloud credentials written to the vendor tools' standard locations) — then
-phase 4, the deployment and provisioning recipe (which also carries BUG-2640,
-the Azure server-side federation broker + CORS work). Filed follow-ups with fix
+flows. Phase 3 shipped: `sockerless login`/`logout` — the RFC 8252 loopback PKCE
+flow against Shauth (public Hydra client, one-time consent), wiring
+vendor-native credentials (AWS `web_identity_token_file` profile with
+`endpoint_url`, GCP workforce `external_account` ADC activated via `gcloud
+auth login --cred-file`, `az login --federated-token` against a TLS simulator
+instance), with the simulator's missing STS introspection slice added
+(BUG-2641) and the relying-party matrix driving the whole terminal story.
+
+Next per the roadmap: phase 4 — the deployment and provisioning recipe
+(committed infrastructure hosting Admin + the three simulators + Shauth at
+persistent origins, console OIDC client registration, federation resources
+via Terraform, a live-origin smoke) — which also carries BUG-2640, the Azure
+server-side federation broker + CORS work that unlocks the Azure browser
+minting flow. Filed follow-ups with fix
 shapes: BUG-2637 (inert default AwsTable actions), BUG-2638 (GCP
 `serviceAccounts.create` overwrite vs 409), BUG-2639 (Entra implicit grant for
 unregistered client ids), BUG-2640 (Azure portal federation deployability).

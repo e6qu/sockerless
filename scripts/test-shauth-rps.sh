@@ -5,7 +5,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 shauth_root=${SHAUTH_SOURCE_DIR:?SHAUTH_SOURCE_DIR must point to a Shauth checkout}
 shauth_expected_commit=0fda680cba964e5768ed75a9c3e5b7230c418ca6
 
-for command in bun curl docker git jq make node openssl; do
+for command in bun curl docker git go jq make node openssl; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required" >&2
     exit 1
@@ -130,6 +130,19 @@ for client_coordinate in \
     --data "$registration" "http://localhost:4445/admin/clients/$client_id" >/dev/null
 done
 
+# `sockerless login` is an RFC 8252 native app: the administrator registers it
+# directly with Ory Hydra as a PUBLIC client (token_endpoint_auth_method
+# "none", PKCE only) whose registered loopback redirect
+# http://127.0.0.1/callback matches the CLI's ephemeral loopback port — the
+# same admin surface the back-channel rewrite above uses. It is deliberately
+# not a Shauth managed app: managed apps are browser applications with health,
+# validation, and logout-bridge URLs a terminal cannot serve, so the CLI's
+# consent runs through Shauth's explicit consent screen instead of the
+# managed-app auto-consent.
+curl --fail --silent --show-error --request POST --header 'Content-Type: application/json' \
+  --data '{"client_id":"sockerless-cli","client_name":"Sockerless CLI","token_endpoint_auth_method":"none","grant_types":["authorization_code"],"response_types":["code"],"scope":"openid","redirect_uris":["http://127.0.0.1/callback"]}' \
+  http://localhost:4445/admin/clients >/dev/null
+
 (cd "$repo_root/ui" && bun install --frozen-lockfile)
 for package in admin simulator-aws simulator-gcp simulator-azure; do
   (cd "$repo_root/ui/packages/$package" && bun run build)
@@ -208,6 +221,14 @@ provision_gcp_workforce_provider() {
     -H "Authorization: Bearer $token" \
     -H 'Content-Type: application/json' \
     -d '{"displayName":"Shauth","oidc":{"issuerUri":"http://localhost:8080","clientId":"sockerless-gcp"},"attributeMapping":{"google.subject":"assertion.sub"}}'
+  # `sockerless login` federates through its own provider in the same pool:
+  # the workforce provider's clientId must equal the assertion audience, and
+  # the CLI's Shauth ID tokens carry aud=sockerless-cli.
+  curl --silent --show-error --fail -o /dev/null -X POST \
+    "$base/v1/locations/global/workforcePools/sockerless-console/providers?workforcePoolProviderId=cli" \
+    -H "Authorization: Bearer $token" \
+    -H 'Content-Type: application/json' \
+    -d '{"displayName":"Shauth CLI","oidc":{"issuerUri":"http://localhost:8080","clientId":"sockerless-cli"},"attributeMapping":{"google.subject":"assertion.sub"}}'
 }
 
 # The AWS console federates through an IAM OpenID Connect provider that trusts
@@ -271,8 +292,14 @@ aws_sigv4_post() {
 }
 
 provision_aws_federation() {
-  aws_sigv4_post "Action=CreateOpenIDConnectProvider&Version=2010-05-08&Url=$(urlenc http://localhost:8080)&ClientIDList.member.1=sockerless-aws&ThumbprintList.member.1=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  # One OpenID Connect provider per issuer; its client ID list carries every
+  # audience Shauth issues tokens for — the console's and the CLI's.
+  aws_sigv4_post "Action=CreateOpenIDConnectProvider&Version=2010-05-08&Url=$(urlenc http://localhost:8080)&ClientIDList.member.1=sockerless-aws&ClientIDList.member.2=sockerless-cli&ThumbprintList.member.1=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   aws_sigv4_post "Action=CreateRole&Version=2010-05-08&RoleName=console-federation-role&AssumeRolePolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/localhost:8080"},"Action":"sts:AssumeRoleWithWebIdentity"}]}')"
+  # The role `sockerless login` writes into the aws CLI profile: the aws CLI
+  # itself runs AssumeRoleWithWebIdentity with the Shauth ID token on demand.
+  aws_sigv4_post "Action=CreateRole&Version=2010-05-08&RoleName=cli-federation-role&AssumeRolePolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/localhost:8080"},"Action":"sts:AssumeRoleWithWebIdentity"}]}')"
+  aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=cli-federation-role&PolicyName=cli-access&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecs:*","lambda:*","ecr:*","s3:*","logs:*","sts:*"],"Resource":"*"}]}')"
   # The console reads across services and administers IAM users and access
   # keys from its credential-minting pages, so the administrator grants the
   # role that access; without it, the simulator's IAM enforcement denies the
@@ -291,6 +318,117 @@ provision_aws_federation
 wait_for_url http://localhost:29320/health "Google Cloud simulator"
 provision_gcp_workforce_provider
 wait_for_url http://localhost:29330/health "Microsoft Azure simulator"
+
+# ---- `sockerless login` coordinates -----------------------------------------
+# The az CLI refuses an http authority: MSAL validates Microsoft Entra
+# coordinates as HTTPS. The CLI login therefore targets a TLS listener of the
+# same Microsoft Azure simulator binary at its own https coordinate, trusted
+# through a harness-generated certificate the az CLI reads via
+# REQUESTS_CA_BUNDLE — the trust bundle is a coordinate like the endpoints.
+azure_cli_port=29331
+azure_cli_base="https://127.0.0.1:$azure_cli_port"
+azure_tenant=11111111-1111-1111-1111-111111111111
+azure_subscription=00000000-0000-0000-0000-000000000001
+openssl req -x509 -newkey rsa:2048 -keyout "$work_dir/azure-cli-tls.key" \
+  -out "$work_dir/azure-cli-tls.crt" -days 7 -nodes -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
+SIM_LISTEN_ADDR=":$azure_cli_port" \
+SIM_TLS_CERT="$work_dir/azure-cli-tls.crt" \
+SIM_TLS_KEY="$work_dir/azure-cli-tls.key" \
+  "$repo_root/simulators/azure/simulator-azure" >"$work_dir/azure-cli.log" 2>&1 &
+pids+=("$!")
+
+azure_curl() { curl --silent --show-error --fail --cacert "$work_dir/azure-cli-tls.crt" "$@"; }
+for attempt in $(seq 1 60); do
+  azure_curl -o /dev/null "$azure_cli_base/health" 2>/dev/null && break
+  [[ $attempt == 60 ]] && { echo "Microsoft Azure simulator (TLS) did not become ready at $azure_cli_base" >&2; exit 1; }
+  sleep 1
+done
+
+# The administrator provisions the CLI's federation resources through the real
+# Azure Resource Manager API, authenticating with the simulator's seeded
+# bootstrap service principal — the same well-known coordinate the CLI test
+# surfaces configure.
+azure_arm_bearer=$(azure_curl -X POST "$azure_cli_base/$azure_tenant/oauth2/v2.0/token" \
+  --data-urlencode grant_type=client_credentials \
+  --data-urlencode client_id=test-client-id \
+  --data-urlencode client_secret=test-client-secret \
+  --data-urlencode 'scope=https://management.azure.com/.default' | jq -r '.access_token')
+[[ -n $azure_arm_bearer && $azure_arm_bearer != null ]] || {
+  echo "Microsoft Azure simulator issued no Azure Resource Manager token for provisioning" >&2
+  exit 1
+}
+azure_curl -o /dev/null -X PUT \
+  "$azure_cli_base/subscriptions/$azure_subscription/resourcegroups/cli-login-rg?api-version=2021-04-01" \
+  -H "Authorization: Bearer $azure_arm_bearer" -H 'Content-Type: application/json' -d '{"location":"eastus"}'
+azure_cli_client_id=$(azure_curl -X PUT \
+  "$azure_cli_base/subscriptions/$azure_subscription/resourceGroups/cli-login-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/cli-login-identity?api-version=2023-01-31" \
+  -H "Authorization: Bearer $azure_arm_bearer" -H 'Content-Type: application/json' -d '{"location":"eastus"}' |
+  jq -r '.properties.clientId')
+[[ -n $azure_cli_client_id && $azure_cli_client_id != null ]] || {
+  echo "user-assigned identity for the CLI login carried no clientId" >&2
+  exit 1
+}
+
+# Microsoft Entra Workload Identity Federation pins exact subjects: the
+# administrator registers a federated identity credential for the operator who
+# will sign in. The relying-party matrix signs the CLI in as the bootstrap
+# administrator, whose subject is that user's Shauth ID.
+shauth_admin_subject=$(compose exec -T postgres psql -U shauth -d shauth -Atc \
+  "SELECT id FROM users WHERE email='admin@localhost.test'")
+[[ -n $shauth_admin_subject ]] || {
+  echo "bootstrap administrator not found in the Shauth identity store" >&2
+  exit 1
+}
+azure_curl -o /dev/null -X PUT \
+  "$azure_cli_base/subscriptions/$azure_subscription/resourceGroups/cli-login-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/cli-login-identity/federatedIdentityCredentials/shauth-admin?api-version=2023-01-31" \
+  -H "Authorization: Bearer $azure_arm_bearer" -H 'Content-Type: application/json' \
+  -d "{\"properties\":{\"issuer\":\"http://localhost:8080\",\"subject\":\"$shauth_admin_subject\",\"audiences\":[\"sockerless-cli\"]}}"
+
+(cd "$repo_root/cmd/sockerless" && GOWORK=off go build -o "$work_dir/sockerless" .)
+mkdir -p "$work_dir/cli-home"
+cat >"$work_dir/cli-home/config.yaml" <<EOF
+environments:
+  rps:
+    backend: docker
+    login:
+      issuer: http://localhost:8080
+      client_id: sockerless-cli
+    aws:
+      region: us-east-1
+      login:
+        role_arn: arn:aws:iam::123456789012:role/cli-federation-role
+        endpoint_url: http://localhost:29310
+    gcp:
+      project: sockerless
+      login:
+        workforce_audience: //iam.googleapis.com/locations/global/workforcePools/sockerless-console/providers/cli
+        sts_endpoint: http://localhost:29320
+        api_endpoint: http://localhost:29320
+    azure:
+      subscription_id: $azure_subscription
+      login:
+        tenant: $azure_tenant
+        client_id: $azure_cli_client_id
+        authority_endpoint: $azure_cli_base
+        resource_manager_endpoint: $azure_cli_base
+        ca_bundle: $work_dir/azure-cli-tls.crt
+EOF
+printf 'rps\n' >"$work_dir/cli-home/active"
+
+# Coordinates the relying-party matrix uses to run and verify `sockerless
+# login`: the built CLI, its isolated home, and isolated vendor-tool state so
+# the flows never touch the invoking user's real ~/.aws, gcloud, or az config.
+export SOCKERLESS_CLI_BIN="$work_dir/sockerless"
+export SOCKERLESS_CLI_HOME="$work_dir/cli-home"
+export SOCKERLESS_CLI_CONTEXT=rps
+export SOCKERLESS_CLI_AWS_CONFIG_FILE="$work_dir/cli-home/aws-config"
+export SOCKERLESS_CLI_CLOUDSDK_CONFIG="$work_dir/cli-home/gcloud"
+export SOCKERLESS_CLI_AZURE_CONFIG_DIR="$work_dir/cli-home/azure"
+export SOCKERLESS_CLI_AZURE_CA_BUNDLE="$work_dir/azure-cli-tls.crt"
+export SOCKERLESS_CLI_AZURE_ARM_ENDPOINT="$azure_cli_base"
+export SOCKERLESS_CLI_AZURE_FEDERATION_CLIENT_ID="$azure_cli_client_id"
+# ---- end `sockerless login` coordinates -------------------------------------
 
 assert_anonymous_validation() {
   local origin=$1

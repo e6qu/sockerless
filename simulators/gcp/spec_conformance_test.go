@@ -176,6 +176,11 @@ var allowedNonSpecGCPRoutes = map[string]string{
 	// the Workforce Identity Federation surface, described by the STS service's
 	// own Discovery rather than any resource service's document.
 	"POST /v1/token": "Security Token Service token exchange (sts.googleapis.com)",
+	// Security Token Service token introspection (sts.googleapis.com
+	// /v1/introspect, RFC 7662) — the endpoint gcloud resolves a federated
+	// workforce principal against after `gcloud auth login --cred-file`; same
+	// STS surface as /v1/token, outside any resource service's Discovery.
+	"POST /v1/introspect": "Security Token Service token introspection (sts.googleapis.com)",
 
 	// OpenID Connect discovery + JSON Web Key Set publishing the simulator's
 	// access-token signing key — the well-known material a resource server uses
