@@ -4,6 +4,53 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-25 — Simulator console parity pass 2: resource detail views
+
+Pass 2 built the resource-detail functionality pass 1 deferred (pass 1 dropped
+the "View details" affordance because no detail pages existed), holding pass 1's
+bar throughout — real design-system tokens, light and dark at WCAG AA with
+contrast measured on painted surfaces, axe-clean ARIA, real API wiring.
+
+- **AWS**: real API-wired detail pages for all five supported services — ECS
+  task (DescribeTasks + DescribeTaskDefinition, tabbed Containers/Network/Task
+  definition), Lambda function (GetFunction), ECR repository (DescribeImages),
+  S3 bucket (ListObjectsV2 + GetBucketLocation), CloudWatch log group
+  (DescribeLogStreams + GetLogEvents) — each with a Cloudscape details-with-tabs
+  layout, "View details" restored through the table's actions render prop, and a
+  new WAI-ARIA `AwsTabs` component (roving tabindex, arrow/Home/End). The
+  "All services" mega-menu flyout stayed deferred (a distinct interactive
+  surface), the static grouped sidebar kept.
+- **Azure**: real ARM/data-plane detail blades for Container App jobs
+  (executions + start/stop), Function Apps (app settings + functions), Container
+  registries (repositories/tags via minted admin credentials against the ACR
+  data plane), and Storage accounts (containers/blobs via a minted account SAS,
+  parsing the real EnumerationResults XML) — each an Essentials grid + command
+  bar + sub-resource tables. The global header gained Cloud Shell, Notifications,
+  and Help as honest, accessible popover affordances (W3C ARIA APG
+  menu-button/dialog pattern). Filing surfaced BUG-2643: ACR's `loginServer` is
+  hardcoded to `<name>.azurecr.io` rather than derived from the request host, so
+  the blade's repositories/tags panel shows a loud honest error until that
+  simulator coordinate is fixed.
+- **Google Cloud**: deepened the existing detail pages toward the real console
+  — Cloud Run job (Details/Executions tabs with a real per-execution status),
+  Artifact Registry repo (an Images tab wired to the previously-unused
+  dockerImages.list), GCS bucket (an Objects tab), Cloud Function (surfaced the
+  serviceConfig fields) — plus a real Cloud Logging query bar (query-language +
+  minimum-severity composing the server-side filter) with entry expansion, and
+  closed a gap: simulator-gcp was the only console package missing
+  @axe-core/playwright, added here (which caught a pre-existing invalid-ARIA
+  avatar).
+
+Verification: all three packages typecheck / vitest / build / knip green;
+Playwright e2e per package (AWS 59, GCP 50, Azure 53) covering the new
+surfaces' structure, measured light/dark contrast, and axe (zero violations);
+the shells were rendered in a browser in both themes and measured. Detail
+pages' data-bound rendering is proven at the component level (vitest with
+realistic props) and structurally in e2e; the authenticated end-to-end detail
+render (which needs the federation token) remains component/structural, as with
+pass 1's detail pages.
+
+
 ## 2026-07-25 — Simulator console parity pass 1: faithful shells, not-supported pills, light/dark, a11y
 
 A first parity pass raising all three simulator consoles toward their real

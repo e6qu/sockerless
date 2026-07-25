@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { NavLink, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AwsButton, AwsModal, AwsResourceTable, type AwsColumn } from "../console/index.js";
 import { formatBytes, formatEpoch, formatRetention } from "../console/format.js";
@@ -10,13 +11,18 @@ import { deleteCWLogGroup, fetchCWLogGroups, type CWLogGroup } from "../api.js";
 // credentials.
 
 const columns: AwsColumn<CWLogGroup>[] = [
-  { id: "name", header: "Log group", cell: (row) => row.name, value: (row) => row.name },
+  {
+    id: "name",
+    header: "Log group",
+    cell: (row) => <NavLink to={`/ui/logs/${encodeURIComponent(row.name)}`}>{row.name}</NavLink>,
+    value: (row) => row.name,
+  },
   { id: "retentionInDays", header: "Retention", cell: (row) => formatRetention(row.retentionInDays), value: (row) => String(row.retentionInDays) },
   { id: "storedBytes", header: "Stored", cell: (row) => formatBytes(row.storedBytes), value: (row) => String(row.storedBytes) },
   { id: "creationTime", header: "Created at", cell: (row) => formatEpoch(row.creationTime), value: (row) => String(row.creationTime) },
 ];
 
-function DeleteLogGroupsModal({
+export function DeleteLogGroupsModal({
   groups,
   onClose,
   clearSelection,
@@ -78,6 +84,7 @@ function DeleteLogGroupsModal({
 }
 
 export function LogGroupsPage() {
+  const navigate = useNavigate();
   const [deleting, setDeleting] = useState<{ groups: CWLogGroup[]; clearSelection: () => void } | null>(null);
   return (
     <>
@@ -95,6 +102,13 @@ export function LogGroupsPage() {
         rowTestId={(row) => `log-group-row-${row.name}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
+            <AwsButton
+              data-testid="logs-view-log-group"
+              disabled={selected.length !== 1}
+              onClick={() => navigate(`/ui/logs/${encodeURIComponent(selected[0].name)}`)}
+            >
+              View details
+            </AwsButton>
             <AwsButton
               data-testid="logs-delete-log-group"
               disabled={selected.length === 0}

@@ -108,6 +108,15 @@ authenticated screenshots. Deeper parity (real component-library adoption,
 per-service page depth, exact catalogue/ordering against real screenshots) is the
 natural follow-up.
 
+Console parity pass 2 added the resource detail views pass 1 deferred: AWS
+gained detail pages for all five supported services (restoring "View
+details"), Azure gained detail blades for Container App jobs/Functions/ACR/
+Storage plus honest header-chrome popovers, and GCP deepened its existing
+detail pages and Logging. BUG-2643 (ACR loginServer hardcoded, not derived
+from the request host) was filed. Deferred: the AWS "All services" mega-menu
+flyout, and authenticated end-to-end detail rendering via the relying-party
+suite (detail data rendering is component- and structurally-tested).
+
 No roadmap phase remains queued. Candidate next work: the staged live-cloud
 validation backlog (BUG-1075), the deployment recipe's real-registry/GHCR
 publish path, or new console surfaces as the product grows — pick with the

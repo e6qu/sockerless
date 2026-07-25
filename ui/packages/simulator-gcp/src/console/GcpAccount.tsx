@@ -57,7 +57,7 @@ export function GcpAccount() {
   // stays presentable; it never renders an error into its own chrome.
   if (!identityEndpoint || !config.data?.logoutEndpoint || !identity.data) {
     return (
-      <span className="gc-avatar gc-avatar-anonymous" aria-label="Account">
+      <span className="gc-avatar gc-avatar-anonymous" role="img" aria-label="Account">
         <Icon name="account_circle" size="1.5em" />
       </span>
     );

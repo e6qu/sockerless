@@ -310,6 +310,20 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 .gc-refresh:disabled { color: var(--gc-fg-disabled); cursor: default; }
 .gc-page-description { margin: 8px 0 0; font-size: 14px; color: var(--gc-fg-secondary); max-width: 900px; }
 
+/* Logs Explorer query bar --------------------------------------------------- */
+.gc-log-query { display: flex; align-items: flex-end; gap: 16px; margin: 16px 0; flex-wrap: wrap; }
+.gc-log-query-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--gc-fg-secondary); min-width: 220px; }
+.gc-log-query-field input,
+.gc-log-query-field select {
+  padding: 8px 10px;
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius-control);
+  background: var(--gc-surface);
+  color: var(--gc-fg);
+  font: inherit;
+  font-size: 14px;
+}
+
 /* Table tools ------------------------------------------------------------ */
 .gc-table-tools {
   display: flex;
@@ -484,6 +498,13 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 .gc-button-text:disabled { color: var(--gc-fg-disabled); cursor: default; background: transparent; }
 
 /* Inline code / CLI usage -------------------------------------------------- */
+.gc-code-inline {
+  font-family: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  background: var(--gc-surface-alt);
+  border-radius: var(--gc-radius-control);
+  padding: 1px 6px;
+}
 .gc-code {
   background: var(--gc-surface-alt);
   border-radius: var(--gc-radius-control);
@@ -505,6 +526,27 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 .gc-detail-pair { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 12px; padding: 8px 0; font-size: 14px; border-bottom: 1px solid var(--gc-border-subtle); }
 .gc-detail-pair dt { color: var(--gc-fg-secondary); }
 .gc-detail-pair dd { margin: 0; color: var(--gc-fg); overflow-wrap: anywhere; }
+
+/* Resource detail tabs — Material 3 primary tabs: a row of text labels below
+ * the header, the active one tinted with the primary colour and underlined. */
+.gc-tabs { margin-top: 8px; }
+.gc-tablist { display: flex; gap: 4px; border-bottom: 1px solid var(--gc-border-subtle); }
+.gc-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+  padding: 12px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--gc-fg-secondary);
+  cursor: pointer;
+}
+.gc-tab:hover { color: var(--gc-fg); background: var(--gc-surface-alt); }
+.gc-tab-active { color: var(--gc-primary); border-bottom-color: var(--gc-primary); }
+.gc-tabpanel { padding-top: 20px; }
+.gc-tabpanel:focus-visible { outline: none; }
 
 /* ---- Project picker ---- */
 /* The chip is a button opening the project dialog; it keeps the chip look. */

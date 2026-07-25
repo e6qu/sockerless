@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { NavLink, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AwsButton, AwsModal, AwsResourceTable, type AwsColumn } from "../console/index.js";
 import { formatEpoch } from "../console/format.js";
@@ -10,12 +11,17 @@ import { deleteECRRepo, fetchECRRepos, type ECRRepo } from "../api.js";
 // federated credentials.
 
 const columns: AwsColumn<ECRRepo>[] = [
-  { id: "name", header: "Repository name", cell: (row) => row.name, value: (row) => row.name },
+  {
+    id: "name",
+    header: "Repository name",
+    cell: (row) => <NavLink to={`/ui/ecr/${encodeURIComponent(row.name)}`}>{row.name}</NavLink>,
+    value: (row) => row.name,
+  },
   { id: "uri", header: "URI", cell: (row) => row.uri, value: (row) => row.uri },
   { id: "createdAt", header: "Created at", cell: (row) => formatEpoch(row.createdAt), value: (row) => String(row.createdAt) },
 ];
 
-function DeleteReposModal({
+export function DeleteReposModal({
   repos,
   onClose,
   clearSelection,
@@ -77,6 +83,7 @@ function DeleteReposModal({
 }
 
 export function ECRReposPage() {
+  const navigate = useNavigate();
   const [deleting, setDeleting] = useState<{ repos: ECRRepo[]; clearSelection: () => void } | null>(null);
   return (
     <>
@@ -94,6 +101,13 @@ export function ECRReposPage() {
         rowTestId={(row) => `ecr-repo-row-${row.name}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
+            <AwsButton
+              data-testid="ecr-view-repo"
+              disabled={selected.length !== 1}
+              onClick={() => navigate(`/ui/ecr/${encodeURIComponent(selected[0].name)}`)}
+            >
+              View details
+            </AwsButton>
             <AwsButton
               data-testid="ecr-delete-repo"
               disabled={selected.length === 0}

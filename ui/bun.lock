@@ -266,6 +266,7 @@
         "react-router": "^7.6.0",
       },
       "devDependencies": {
+        "@axe-core/playwright": "^4.12.1",
         "@playwright/test": "^1.61.1",
         "@tailwindcss/vite": "^4.1.0",
         "@testing-library/react": "^16.3.0",

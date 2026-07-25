@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ECSTasksPage, isStoppable } from "../pages/ECSTasksPage.js";
 import { LambdaFunctionsPage } from "../pages/LambdaFunctionsPage.js";
@@ -12,11 +13,14 @@ import type { ECSTask } from "../api.js";
  * The Amazon ECS, AWS Lambda, Amazon ECR, Amazon S3, and CloudWatch Logs
  * pages used to render an enabled "View details" and "Delete" header action
  * with no handler — a fake affordance (BUG-2637). Each page now passes
- * AwsTable its own `actions`, so the defaults never render, and the real
- * action goes out over the same federated wire the reads use. These tests
- * drive the full read → select → confirm → mutate round trip against a
- * mocked federated fetch, the way ContainersPage.test.tsx drives admin's
- * mutation flows, rather than reaching into the mutation internals.
+ * AwsTable its own `actions`, so the inert defaults never render. "View
+ * details" is now a real, initially-disabled action that navigates to the
+ * resource's detail route once exactly one row is selected, alongside the
+ * real Stop/Delete mutation that goes out over the same federated wire the
+ * reads use. These tests drive the full read → select → confirm → mutate
+ * round trip against a mocked federated fetch, the way ContainersPage.test.tsx
+ * drives admin's mutation flows, rather than reaching into the mutation
+ * internals.
  */
 
 const mockFetch = vi.fn();
@@ -65,7 +69,28 @@ function installFetch(rules: Rule[]) {
 
 function renderWithQuery(ui: React.ReactElement) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+/** Proves "View details" actually navigates, not just that it's enabled: the
+ * list page and its detail route both mount under a real `<Routes>`, and the
+ * marker only appears once the click has landed on the detail route. */
+function renderWithNavigation(listPath: string, list: React.ReactElement, detailPath: string) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[listPath]}>
+        <Routes>
+          <Route path={listPath} element={list} />
+          <Route path={detailPath} element={<div data-testid="landed-on-detail">landed</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 describe("isStoppable", () => {
@@ -114,13 +139,26 @@ describe("ECSTasksPage", () => {
     ]);
   }
 
-  it("renders no default View details or Delete, and disables Stop with nothing selected", async () => {
+  it("renders no default Delete, and disables View details and Stop with nothing selected", async () => {
     installList();
     renderWithQuery(<ECSTasksPage />);
     await screen.findByText(taskArn);
-    expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect((screen.getByTestId("ecs-view-task") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId("ecs-stop-task") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("enables View details once a task is selected and navigates to its detail route", async () => {
+    installList();
+    renderWithNavigation("/ui/ecs", <ECSTasksPage />, "/ui/ecs/:taskArn");
+    await screen.findByText(taskArn);
+
+    const view = screen.getByTestId("ecs-view-task") as HTMLButtonElement;
+    expect(view.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${taskArn}` }));
+    expect(view.disabled).toBe(false);
+    fireEvent.click(view);
+    expect(await screen.findByTestId("landed-on-detail")).toBeTruthy();
   });
 
   it("stops the selected task through the real StopTask operation", async () => {
@@ -197,7 +235,7 @@ describe("LambdaFunctionsPage", () => {
     ]);
     renderWithQuery(<LambdaFunctionsPage />);
     await screen.findByText(functionName);
-    expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
+    expect((screen.getByTestId("lambda-view-function") as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Select ${functionName}` }));
     fireEvent.click(screen.getByTestId("lambda-delete-function"));
@@ -206,6 +244,33 @@ describe("LambdaFunctionsPage", () => {
 
     await waitFor(() => expect(deleteCalled).toBe("DELETE"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("enables View details once a function is selected and navigates to its detail route", async () => {
+    installFetch([
+      {
+        when: (url, init) => url === "/2015-03-31/functions" && (init?.method ?? "GET") === "GET",
+        respond: () =>
+          jsonResponse({
+            Functions: [
+              {
+                FunctionName: functionName,
+                Runtime: "nodejs20.x",
+                State: "Active",
+                MemorySize: 128,
+                Timeout: 3,
+                LastModified: "2026-01-01T00:00:00.000+0000",
+              },
+            ],
+          }),
+      },
+    ]);
+    renderWithNavigation("/ui/lambda", <LambdaFunctionsPage />, "/ui/lambda/:name");
+    await screen.findByText(functionName);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${functionName}` }));
+    fireEvent.click(screen.getByTestId("lambda-view-function"));
+    expect(await screen.findByTestId("landed-on-detail")).toBeTruthy();
   });
 });
 
@@ -238,6 +303,7 @@ describe("ECRReposPage", () => {
     ]);
     renderWithQuery(<ECRReposPage />);
     await screen.findByText(repoName);
+    expect((screen.getByTestId("ecr-view-repo") as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Select ${repoName}` }));
     fireEvent.click(screen.getByTestId("ecr-delete-repo"));
@@ -249,6 +315,30 @@ describe("ECRReposPage", () => {
     expect(sent.repositoryName).toBe(repoName);
     expect(sent.force).toBe(true);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("enables View details once a repository is selected and navigates to its detail route", async () => {
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerRegistry_V20150921.DescribeRepositories",
+        respond: () =>
+          jsonResponse({
+            repositories: [
+              {
+                repositoryName: repoName,
+                repositoryUri: `123456789012.dkr.ecr.us-east-1.amazonaws.com/${repoName}`,
+                createdAt: 1750000000,
+              },
+            ],
+          }),
+      },
+    ]);
+    renderWithNavigation("/ui/ecr", <ECRReposPage />, "/ui/ecr/:name");
+    await screen.findByText(repoName);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${repoName}` }));
+    fireEvent.click(screen.getByTestId("ecr-view-repo"));
+    expect(await screen.findByTestId("landed-on-detail")).toBeTruthy();
   });
 });
 
@@ -271,7 +361,7 @@ describe("S3BucketsPage", () => {
     ]);
     renderWithQuery(<S3BucketsPage />);
     await screen.findByText(bucketName);
-    expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
+    expect((screen.getByTestId("s3-view-bucket") as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Select ${bucketName}` }));
     fireEvent.click(screen.getByTestId("s3-delete-bucket"));
@@ -282,6 +372,24 @@ describe("S3BucketsPage", () => {
     expect(alert.textContent).toContain("BucketNotEmpty");
     // The failed delete never dismisses the confirmation.
     expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("enables View details once a bucket is selected and navigates to its detail route", async () => {
+    installFetch([
+      {
+        when: (url, init) => url === "/" && (init?.method ?? "GET") === "GET",
+        respond: () =>
+          xmlResponse(
+            `<ListAllMyBucketsResult><Buckets><Bucket><Name>${bucketName}</Name><CreationDate>2026-01-01T00:00:00.000Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>`,
+          ),
+      },
+    ]);
+    renderWithNavigation("/ui/s3", <S3BucketsPage />, "/ui/s3/:name");
+    await screen.findByText(bucketName);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${bucketName}` }));
+    fireEvent.click(screen.getByTestId("s3-view-bucket"));
+    expect(await screen.findByTestId("landed-on-detail")).toBeTruthy();
   });
 });
 
@@ -308,6 +416,7 @@ describe("LogGroupsPage", () => {
     ]);
     renderWithQuery(<LogGroupsPage />);
     await screen.findByText(logGroupName);
+    expect((screen.getByTestId("logs-view-log-group") as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Select ${logGroupName}` }));
     fireEvent.click(screen.getByTestId("logs-delete-log-group"));
@@ -317,5 +426,23 @@ describe("LogGroupsPage", () => {
     await waitFor(() => expect(sentBody).not.toBeNull());
     expect(JSON.parse(sentBody!)).toEqual({ logGroupName });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("enables View details once a log group is selected and navigates to its detail route", async () => {
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "Logs_20140328.DescribeLogGroups",
+        respond: () =>
+          jsonResponse({
+            logGroups: [{ logGroupName, creationTime: 1750000000000, retentionInDays: 14, storedBytes: 2048 }],
+          }),
+      },
+    ]);
+    renderWithNavigation("/ui/logs", <LogGroupsPage />, "/ui/logs/:name");
+    await screen.findByText(logGroupName);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: `Select ${logGroupName}` }));
+    fireEvent.click(screen.getByTestId("logs-view-log-group"));
+    expect(await screen.findByTestId("landed-on-detail")).toBeTruthy();
   });
 });

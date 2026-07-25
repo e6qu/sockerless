@@ -37,10 +37,14 @@ export interface CloudRunJob {
 export interface CloudRunExecution {
   name: string;
   createTime?: string;
+  startTime?: string;
   completionTime?: string;
   succeededCount?: number;
   failedCount?: number;
   runningCount?: number;
+  cancelledCount?: number;
+  taskCount?: number;
+  conditions?: CloudRunJobCondition[];
 }
 
 export const fetchCloudRunJobsReal = async (project: string): Promise<CloudRunJob[]> => {
@@ -73,7 +77,17 @@ export interface CloudFunction {
   createTime?: string;
   updateTime?: string;
   labels?: Record<string, string>;
-  serviceConfig?: { uri?: string; service?: string };
+  serviceConfig?: {
+    uri?: string;
+    service?: string;
+    timeoutSeconds?: number;
+    availableMemory?: string;
+    availableCpu?: string;
+    maxInstanceCount?: number;
+    minInstanceCount?: number;
+    ingressSettings?: string;
+    environmentVariables?: Record<string, string>;
+  };
   buildConfig?: { runtime?: string; entryPoint?: string };
 }
 
@@ -88,6 +102,17 @@ export interface ARRepo {
   labels?: Record<string, string>;
 }
 
+// The real Artifact Registry DockerImage resource
+// (artifactregistry.googleapis.com/v1 projects.locations.repositories.dockerImages).
+export interface ARDockerImage {
+  name: string;
+  uri?: string;
+  tags?: string[];
+  uploadTime?: string;
+  mediaType?: string;
+  buildTime?: string;
+}
+
 // The real Cloud Storage bucket resource (storage#bucket).
 export interface GCSBucket {
   name: string;
@@ -96,6 +121,18 @@ export interface GCSBucket {
   storageClass?: string;
   timeCreated?: string;
   updated?: string;
+}
+
+// The real Cloud Storage object resource (storage#object).
+export interface GCSObject {
+  name: string;
+  bucket: string;
+  size?: string;
+  contentType?: string;
+  storageClass?: string;
+  timeCreated?: string;
+  updated?: string;
+  generation?: string;
 }
 
 // Cloud Logging LogSeverity enum (proto .String()).
@@ -110,12 +147,23 @@ export type LogSeverity =
   | "ALERT"
   | "EMERGENCY";
 
+// The monitored resource that produced a log entry (logging/v2
+// MonitoredResource), as the real API returns it.
+export interface LogEntryResource {
+  type: string;
+  labels?: Record<string, string>;
+}
+
 export interface LogEntry {
   logName: string;
   timestamp: string;
   // Omitted by the server (json:"severity,omitempty") when unset (DEFAULT).
   severity?: LogSeverity;
   textPayload?: string;
+  jsonPayload?: Record<string, unknown>;
+  insertId?: string;
+  resource?: LogEntryResource;
+  labels?: Record<string, string>;
 }
 
 
@@ -134,6 +182,13 @@ export const fetchARRepos = async (project: string): Promise<ARRepo[]> =>
 export const fetchARRepo = (project: string, name: string): Promise<ARRepo> =>
   authorizedJSON<ARRepo>(`${repositoriesParent(project)}/${name}`);
 
+// projects.locations.repositories.dockerImages.list — the repository's
+// stored images, the real console's "Images" tab.
+export const fetchARImages = async (project: string, repo: string): Promise<ARDockerImage[]> =>
+  (
+    await authorizedJSON<{ dockerImages?: ARDockerImage[] }>(`${repositoriesParent(project)}/${repo}/dockerImages`)
+  ).dockerImages ?? [];
+
 export const fetchGCSBuckets = async (project: string): Promise<GCSBucket[]> =>
   (await authorizedJSON<{ items?: GCSBucket[] }>(`/storage/v1/b?project=${project}`)).items ?? [];
 
@@ -141,6 +196,10 @@ export const fetchGCSBuckets = async (project: string): Promise<GCSBucket[]> =>
 // directly, without a project segment.
 export const fetchGCSBucket = (name: string): Promise<GCSBucket> =>
   authorizedJSON<GCSBucket>(`/storage/v1/b/${name}`);
+
+// objects.list — the bucket's stored objects, the real console's "Objects" tab.
+export const fetchGCSObjects = async (bucket: string): Promise<GCSObject[]> =>
+  (await authorizedJSON<{ items?: GCSObject[] }>(`/storage/v1/b/${bucket}/o`)).items ?? [];
 
 // The real IAM ServiceAccount resource (iam.googleapis.com v1), as the API
 // returns it.
@@ -199,13 +258,16 @@ export const createServiceAccountKey = (project: string, email: string): Promise
 export const deleteServiceAccountKey = (project: string, email: string, keyId: string): Promise<unknown> =>
   authorizedJSONDelete(`${serviceAccountsParent(project)}/${email}/keys/${keyId}`);
 
-// Cloud Logging lists entries by POST, filtered to the project's logs.
-export const fetchLogEntries = async (project: string): Promise<LogEntry[]> =>
+// Cloud Logging lists entries by POST, filtered to the project's logs and,
+// when given, the operator's own Cloud Logging query-language filter — the
+// same `filter` field the real Logs Explorer's query box sends.
+export const fetchLogEntries = async (project: string, filter?: string): Promise<LogEntry[]> =>
   (
     await authorizedJSONPost<{ entries?: LogEntry[] }>("/v2/entries:list", {
       resourceNames: [`projects/${project}`],
       orderBy: "timestamp desc",
       pageSize: 100,
+      ...(filter ? { filter } : {}),
     })
   ).entries ?? [];
 

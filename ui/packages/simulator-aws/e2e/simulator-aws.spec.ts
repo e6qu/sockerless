@@ -274,32 +274,120 @@ test.describe("AWS Organizations account management", () => {
 // The Amazon ECS, AWS Lambda, Amazon ECR, Amazon S3, and CloudWatch Logs
 // pages used to render AwsTable's default "View details" and "Delete" header
 // actions — enabled, but with no handler wired (BUG-2637). Each page now
-// passes its own `actions`, so those inert defaults never render; the real
-// action (Stop for ECS tasks, Delete elsewhere) takes their place, disabled
-// until a row is selected. Like the IAM and Organizations header-action
-// checks above, this is assertable without an identity provider — reading
-// zero rows still renders the header controls. The authenticated
-// select→confirm→mutate loop belongs to the Shauth relying-party suite.
+// passes its own `actions`: a real "View details" that navigates to the
+// resource's detail route, and the real mutation (Stop for ECS tasks, Delete
+// elsewhere) — both disabled until a row is selected, and neither the AwsTable
+// default. Like the IAM and Organizations header-action checks above, this is
+// assertable without an identity provider — reading zero rows still renders
+// the header controls. The authenticated select→confirm→mutate and
+// select→View details→navigate loops are exercised in the Shauth
+// relying-party suite (real data) and in the per-package vitest suite
+// (mocked federated fetch); this suite pins that the controls render, in the
+// right disabled state, without a live cloud read.
 test.describe("Resource header actions", () => {
   const cases = [
-    { path: "/ui/ecs", testId: "ecs-stop-task", label: "Stop" },
-    { path: "/ui/lambda", testId: "lambda-delete-function", label: "Delete" },
-    { path: "/ui/ecr", testId: "ecr-delete-repo", label: "Delete" },
-    { path: "/ui/s3", testId: "s3-delete-bucket", label: "Delete" },
-    { path: "/ui/logs", testId: "logs-delete-log-group", label: "Delete" },
+    { path: "/ui/ecs", viewTestId: "ecs-view-task", actionTestId: "ecs-stop-task", actionLabel: "Stop" },
+    { path: "/ui/lambda", viewTestId: "lambda-view-function", actionTestId: "lambda-delete-function", actionLabel: "Delete" },
+    { path: "/ui/ecr", viewTestId: "ecr-view-repo", actionTestId: "ecr-delete-repo", actionLabel: "Delete" },
+    { path: "/ui/s3", viewTestId: "s3-view-bucket", actionTestId: "s3-delete-bucket", actionLabel: "Delete" },
+    { path: "/ui/logs", viewTestId: "logs-view-log-group", actionTestId: "logs-delete-log-group", actionLabel: "Delete" },
   ];
 
-  for (const { path, testId, label } of cases) {
-    test(`${path} wires a real, initially-disabled ${label} action and renders no inert default`, async ({ page }) => {
+  for (const { path, viewTestId, actionTestId, actionLabel } of cases) {
+    test(`${path} wires a real, initially-disabled View details and ${actionLabel} action`, async ({ page }) => {
       await page.goto(path);
-      const action = page.getByTestId(testId);
+      const view = page.getByTestId(viewTestId);
+      await expect(view).toBeVisible();
+      await expect(view).toHaveText("View details");
+      await expect(view).toBeDisabled();
+      const action = page.getByTestId(actionTestId);
       await expect(action).toBeVisible();
-      await expect(action).toHaveText(label);
+      await expect(action).toHaveText(actionLabel);
       await expect(action).toBeDisabled();
-      // The AwsTable default header actions this replaced.
-      await expect(page.getByRole("button", { name: "View details" })).toHaveCount(0);
-      if (label !== "Delete") {
+      if (actionLabel !== "Delete") {
         await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+      }
+    });
+  }
+});
+
+// Pass 1 dropped "View details" because no detail pages existed. Pass 2 adds
+// one real, API-wired detail route per supported service — ECS task, Lambda
+// function, ECR repository, S3 bucket, CloudWatch Logs log group — each
+// reachable by encoded identifier and rendering a Cloudscape-shaped
+// breadcrumb → page header → properties → sub-resource(s) layout. This suite
+// has no identity provider (see the file-level comment at the bottom), so the
+// simulator rejects the unsigned read exactly as real AWS would; these tests
+// pin the shell that renders regardless — heading, breadcrumb, and a real,
+// initially-disabled action — while the authenticated real-data render is
+// exercised by the Shauth relying-party suite and the mocked-fetch unit
+// suite (ResourceHeaderActions.test.tsx).
+const DETAIL_PAGES = [
+  {
+    id: "arn:aws:ecs:us-east-1:123456789012:task/default/abc123",
+    prefix: "/ui/ecs/",
+    crumbService: "Elastic Container Service",
+    actionTestId: "ecs-task-stop",
+    errorTestId: "ecs-task-error",
+  },
+  {
+    id: "my-function",
+    prefix: "/ui/lambda/",
+    crumbService: "Lambda",
+    actionTestId: "lambda-function-delete",
+    errorTestId: "lambda-function-error",
+  },
+  {
+    id: "my-repo",
+    prefix: "/ui/ecr/",
+    crumbService: "Elastic Container Registry",
+    actionTestId: "ecr-repo-delete",
+    errorTestId: "ecr-repo-error",
+  },
+  {
+    id: "my-bucket",
+    prefix: "/ui/s3/",
+    crumbService: "Simple Storage Service",
+    actionTestId: "s3-bucket-delete",
+    errorTestId: "s3-bucket-error",
+  },
+  {
+    id: "/ecs/my-task",
+    prefix: "/ui/logs/",
+    crumbService: "CloudWatch Logs",
+    actionTestId: "logs-log-group-delete",
+    errorTestId: "logs-log-group-error",
+  },
+];
+
+test.describe("Resource detail pages", () => {
+  for (const detail of DETAIL_PAGES) {
+    test(`${detail.prefix}:id renders the resource heading, breadcrumb, and a disabled action without a live cloud read`, async ({
+      page,
+    }) => {
+      await page.goto(`${detail.prefix}${encodeURIComponent(detail.id)}`);
+      await expect(page.getByRole("heading", { name: detail.id, exact: true })).toBeVisible();
+      const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+      await expect(crumbs).toContainText(detail.crumbService);
+      await expect(crumbs).toContainText(detail.id);
+      const action = page.getByTestId(detail.actionTestId);
+      await expect(action).toBeVisible();
+      await expect(action).toBeDisabled();
+      // Unauthenticated in this suite (no identity provider) — the simulator
+      // rejects the read exactly as real AWS would, and the page reports the
+      // failure rather than rendering an empty or falsely-successful state.
+      await expect(page.getByTestId(detail.errorTestId)).toBeVisible();
+    });
+
+    test(`${detail.prefix}:id passes an automated accessibility audit in both themes`, async ({ page }) => {
+      for (const theme of ["light", "dark"] as const) {
+        await page.goto(`${detail.prefix}${encodeURIComponent(detail.id)}`);
+        if (theme === "dark") {
+          await page.evaluate(() => document.documentElement.classList.add("dark"));
+        }
+        await expect(page.getByTestId(detail.errorTestId)).toBeVisible();
+        const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
       }
     });
   }
@@ -614,6 +702,58 @@ test.describe("Contrast", () => {
       ".aws-badge-grey",
       ".aws-sidenav-link-unsupported .aws-sidenav-link-label",
     ]);
+    for (const [theme, samples] of Object.entries(results)) {
+      expect(samples.length).toBe(2);
+      for (const sample of samples) {
+        expect(sample.ratio, `${theme}: ${sample.selector} measured ${sample.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+    }
+  });
+
+  // The tab strip and the log-events viewer are the surfaces this pass adds;
+  // both need a live cloud read to reach a resource-detail page's real
+  // content, so they are rendered in isolation here rather than through
+  // page.goto, and measured the same way as every other surface above.
+  test("the tab strip's active and inactive labels clear WCAG AA in both themes", async ({ page }) => {
+    // page.goto (not setContent) so the real bundled stylesheet — the source
+    // of the CSS custom properties this measurement reads — is loaded; the
+    // markup is then injected as a descendant of the already-present `.aws`
+    // root so it inherits the same tokens the rest of the console does.
+    await page.goto("/ui/ecs");
+    await page.evaluate(() => {
+      document.querySelector(".aws-main")!.insertAdjacentHTML(
+        "beforeend",
+        '<div class="aws-container"><div class="aws-tabs"><div role="tablist" class="aws-tabs-list">' +
+          '<button role="tab" class="aws-tab aws-tab-active">Active tab</button>' +
+          '<button role="tab" class="aws-tab">Inactive tab</button>' +
+          "</div></div></div>",
+      );
+    });
+    const results = await measureContrast(page, [".aws-tab-active", ".aws-tab"]);
+    for (const [theme, samples] of Object.entries(results)) {
+      expect(samples.length).toBe(2);
+      for (const sample of samples) {
+        expect(sample.ratio, `${theme}: ${sample.selector} measured ${sample.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+    }
+  });
+
+  test("the log-events viewer's timestamp and message text clear WCAG AA in both themes", async ({ page }) => {
+    await page.goto("/ui/ecs");
+    await page.evaluate(() => {
+      document.querySelector(".aws-main")!.insertAdjacentHTML(
+        "beforeend",
+        '<div class="aws-container"><div class="aws-log-events">' +
+          '<div class="aws-log-event-line"><span class="aws-log-event-timestamp">2026-01-01 00:00:00 UTC</span>' +
+          '<span class="aws-log-event-message">a log line</span></div>' +
+          "</div></div>",
+      );
+    });
+    const results = await measureContrast(page, [".aws-log-event-timestamp", ".aws-log-event-message"]);
     for (const [theme, samples] of Object.entries(results)) {
       expect(samples.length).toBe(2);
       for (const sample of samples) {

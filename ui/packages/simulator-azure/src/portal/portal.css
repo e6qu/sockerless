@@ -56,6 +56,28 @@ body:has(.azure) { background: var(--az-layout-bg); }
 }
 .az-header-search input:focus-visible { outline: 2px solid #ffffff; outline-offset: 1px; }
 .az-header-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; min-width: 0; }
+
+/* Header disclosure panels (Cloud Shell, Notifications, Help) ------------- */
+.az-header-popover { position: relative; display: flex; }
+.az-header-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: max-content;
+  min-width: 240px;
+  max-width: 320px;
+  background: var(--az-surface);
+  color: var(--az-fg);
+  border: 1px solid var(--az-border-subtle);
+  border-radius: var(--az-radius);
+  padding: 12px 14px;
+  font-size: var(--az-text-caption);
+  line-height: var(--az-line-caption);
+}
+.az-header-panel h2 { margin: 0 0 6px; font-size: var(--az-text-caption); font-weight: 600; color: var(--az-fg); }
+.az-header-panel p { margin: 0; color: var(--az-fg-secondary); }
+.az-header-panel a { color: var(--az-link); }
 .az-icon-button {
   border: 1px solid transparent;
   border-radius: var(--az-radius);

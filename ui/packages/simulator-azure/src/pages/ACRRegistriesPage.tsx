@@ -1,9 +1,15 @@
+import { Link } from "react-router";
 import { AzureResourceTable, type AzureColumn } from "../portal/index.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
 import { fetchACRRegistries, type ACRRegistry } from "../api.js";
 
 const columns: AzureColumn<ACRRegistry>[] = [
-  { id: "name", header: "Name", cell: (row) => row.name, value: (row) => row.name },
+  {
+    id: "name",
+    header: "Name",
+    cell: (row) => <Link to={`/ui/acr/${encodeURIComponent(row.name)}`}>{row.name}</Link>,
+    value: (row) => row.name,
+  },
   { id: "resourceGroup", header: "Resource group", cell: (row) => resourceGroupOf(row.id), value: (row) => resourceGroupOf(row.id) },
   { id: "location", header: "Location", cell: (row) => locationLabel(row.location), value: (row) => row.location },
   { id: "loginServer", header: "Login server", cell: (row) => `${row.name}.azurecr.io`, value: (row) => `${row.name}.azurecr.io` },

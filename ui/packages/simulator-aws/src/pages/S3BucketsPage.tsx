@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { NavLink, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AwsButton, AwsModal, AwsResourceTable, type AwsColumn } from "../console/index.js";
 import { formatTimestamp } from "../console/format.js";
@@ -12,11 +13,16 @@ import { deleteS3Bucket, fetchS3Buckets, type S3Bucket } from "../api.js";
 // restriction the real console enforces.
 
 const columns: AwsColumn<S3Bucket>[] = [
-  { id: "name", header: "Name", cell: (row) => row.name, value: (row) => row.name },
+  {
+    id: "name",
+    header: "Name",
+    cell: (row) => <NavLink to={`/ui/s3/${encodeURIComponent(row.name)}`}>{row.name}</NavLink>,
+    value: (row) => row.name,
+  },
   { id: "creationDate", header: "Creation date", cell: (row) => formatTimestamp(row.creationDate), value: (row) => row.creationDate },
 ];
 
-function DeleteBucketsModal({
+export function DeleteBucketsModal({
   buckets,
   onClose,
   clearSelection,
@@ -78,6 +84,7 @@ function DeleteBucketsModal({
 }
 
 export function S3BucketsPage() {
+  const navigate = useNavigate();
   const [deleting, setDeleting] = useState<{ buckets: S3Bucket[]; clearSelection: () => void } | null>(null);
   return (
     <>
@@ -95,6 +102,13 @@ export function S3BucketsPage() {
         rowTestId={(row) => `s3-bucket-row-${row.name}`}
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
+            <AwsButton
+              data-testid="s3-view-bucket"
+              disabled={selected.length !== 1}
+              onClick={() => navigate(`/ui/s3/${encodeURIComponent(selected[0].name)}`)}
+            >
+              View details
+            </AwsButton>
             <AwsButton
               data-testid="s3-delete-bucket"
               disabled={selected.length === 0}

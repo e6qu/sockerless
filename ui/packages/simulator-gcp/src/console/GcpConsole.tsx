@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink } from "react-router";
 import { useTheme } from "@sockerless/ui-core/hooks";
 import { Icon, type IconName } from "./icons.js";
@@ -32,6 +32,27 @@ function GcpThemeToggle() {
 export function GcpHeader({ picker, account }: { picker: ReactNode; account: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
   const menuRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // The real console's own "/" shortcut: pressing it anywhere outside a text
+  // field jumps focus to the search box, exactly the affordance the
+  // placeholder text names. Suppressed while a field or an editable element
+  // already has focus, so it never steals a literal "/" a user is typing.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (typing) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <header className="gc-header">
       <div className="gc-header-left">
@@ -53,6 +74,7 @@ export function GcpHeader({ picker, account }: { picker: ReactNode; account: Rea
       <div className="gc-header-search">
         <Icon name="search" size="1.25em" style={{ color: "var(--gc-fg-secondary)" }} />
         <input
+          ref={searchRef}
           type="search"
           aria-label="Search resources, docs, products, and more"
           placeholder="Search (/) for resources, docs, products, and more"

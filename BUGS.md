@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2642 filed - 2622 fixed - 4 open - 16 false positives.**
+**2643 filed - 2622 fixed - 5 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2643 | P3 | Azure simulator ACR loginServer coordinate | endpoint hardcoded to the real-cloud host, not the request host | `simulators/azure/acr.go` sets a registry's `loginServer` to `<name>.azurecr.io` unconditionally, unlike Storage/Key Vault/Service Bus which derive their data-plane host from the request via `azureEndpointHost(r, ...)`. A browser console blade (or any client) reading the ACR data plane at the advertised `loginServer` therefore cannot reach the simulator without an external DNS/hosts mapping — the Azure portal's ACR detail blade surfaces a loud, honest network error rather than repositories/tags. Fix shape: derive `loginServer` from the request host the way the other data planes do, keeping the backend's ACR push/pull path (which also consumes `loginServer` via the `SOCKERLESS_AZURE_ACR_ENDPOINT` coordinate) working — so the console reads the ACR catalog/tags at a coordinate that resolves to the sim, differing from the real cloud only in coordinates. |
 | 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
