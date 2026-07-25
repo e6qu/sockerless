@@ -191,10 +191,11 @@ test.describe("Product catalog navigation drawer", () => {
     await page.getByRole("button", { name: "Main menu" }).click();
     const item = page.getByTestId("drawer-item-compute-engine");
     await expect(item.locator(".gc-chip-unsupported")).toHaveText("Not supported");
-    // The chip's own aria-label combines with the link's visible product name
-    // into one accessible name, so a screen-reader user hears both without a
-    // second, redundant announcement.
-    await expect(item).toHaveAccessibleName(/Compute Engine\s+Not supported in this simulator/);
+    // The link carries an explicit aria-label so the accessible name reads as a
+    // single clean phrase ("<product>, not supported in this simulator"),
+    // matching the AWS and Azure consoles; the visible "Not supported" chip
+    // conveys the same meaning in text, not colour alone.
+    await expect(item).toHaveAccessibleName("Compute Engine, not supported in this simulator");
   });
 
   test("routes an unsupported product to a short, honest explanation instead of a dead link", async ({ page }) => {
