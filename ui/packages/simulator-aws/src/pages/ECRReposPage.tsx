@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import Input from "@cloudscape-design/components/input";
+import FormField from "@cloudscape-design/components/form-field";
 import { AwsButton, AwsErrorAlert, AwsModal, AwsResourceTable, AwsRowLink, type AwsColumn } from "../console/index.js";
 import { formatEpoch } from "../console/format.js";
-import { deleteECRRepo, fetchECRRepos, type ECRRepo } from "../api.js";
+import { createECRRepository, deleteECRRepo, fetchECRRepos, type ECRRepo } from "../api.js";
 
 // Amazon Elastic Container Registry — Repositories. The list and Delete both
 // go through the real ECR awsjson1.1 API (DescribeRepositories for the
@@ -20,6 +22,66 @@ const columns: AwsColumn<ECRRepo>[] = [
   { id: "uri", header: "URI", cell: (row) => row.uri, value: (row) => row.uri },
   { id: "createdAt", header: "Created at", cell: (row) => formatEpoch(row.createdAt), value: (row) => String(row.createdAt) },
 ];
+
+// The repository-name shape real ECR enforces on CreateRepository: 2–256
+// characters of lowercase letters, numbers, and the separators `.` `_` `-`,
+// optionally namespaced with `/` — validating it inline is what the real
+// console does before it lets the request go out.
+const ECR_REPO_NAME_PATTERN = /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+function isValidECRRepoName(name: string): boolean {
+  return name.length >= 2 && name.length <= 256 && ECR_REPO_NAME_PATTERN.test(name);
+}
+
+function CreateRepoModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const create = useMutation({
+    mutationFn: createECRRepository,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["ecr-repos"] });
+      onClose();
+    },
+  });
+  const trimmed = name.trim();
+  const valid = isValidECRRepoName(trimmed);
+  return (
+    <AwsModal
+      title="Create repository"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton
+            variant="primary"
+            data-testid="ecr-create-repo-submit"
+            disabled={!valid || create.isPending}
+            onClick={() => create.mutate(trimmed)}
+          >
+            {create.isPending ? "Creating…" : "Create repository"}
+          </AwsButton>
+        </>
+      }
+    >
+      <p>A private repository stores the container images you push to it, versioned by tag or digest.</p>
+      <FormField
+        label="Repository name"
+        constraintText="2–256 characters. Lowercase letters, numbers, and the separators . _ -, optionally namespaced with /."
+      >
+        <Input
+          value={name}
+          onChange={(event) => setName(event.detail.value)}
+          nativeInputAttributes={{ "data-testid": "ecr-repo-name-input" }}
+        />
+      </FormField>
+      {create.isError && (
+        <AwsErrorAlert>
+          <strong>Could not create the repository.</strong>{" "}
+          {create.error instanceof Error ? create.error.message : "The request failed."}
+        </AwsErrorAlert>
+      )}
+    </AwsModal>
+  );
+}
 
 export function DeleteReposModal({
   repos,
@@ -84,6 +146,7 @@ export function DeleteReposModal({
 
 export function ECRReposPage() {
   const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<{ repos: ECRRepo[]; clearSelection: () => void } | null>(null);
   return (
     <>
@@ -117,9 +180,13 @@ export function ECRReposPage() {
             <AwsButton onClick={refetch} disabled={isFetching}>
               {isFetching ? "Refreshing…" : "Refresh"}
             </AwsButton>
+            <AwsButton variant="primary" data-testid="ecr-create-repo" onClick={() => setCreating(true)}>
+              Create repository
+            </AwsButton>
           </>
         )}
       />
+      {creating && <CreateRepoModal onClose={() => setCreating(false)} />}
       {deleting && (
         <DeleteReposModal repos={deleting.repos} clearSelection={deleting.clearSelection} onClose={() => setDeleting(null)} />
       )}

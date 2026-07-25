@@ -1,4 +1,12 @@
-import { awsJson, awsQuery, awsRestJson, awsRestJsonDelete, awsRestXml, awsRestXmlDelete } from "./console/federation.js";
+import {
+  awsJson,
+  awsQuery,
+  awsRestJson,
+  awsRestJsonDelete,
+  awsRestXml,
+  awsRestXmlDelete,
+  awsRestXmlPut,
+} from "./console/federation.js";
 
 // The console reads the real AWS APIs — ECS, Lambda, ECR, S3, CloudWatch Logs,
 // IAM, and AWS Organizations — over federated, SigV4-signed requests, rendering
@@ -448,6 +456,20 @@ export const fetchECRRepos = async (): Promise<ECRRepo[]> => {
   }));
 };
 
+// CreateRepository — the real console's "Create repository" dialog collects
+// just the name (image tag mutability, scanning, and encryption all keep
+// ECR's own defaults, the same as a bare `aws ecr create-repository`).
+export const createECRRepository = async (repositoryName: string): Promise<ECRRepo> => {
+  const created = await awsJson<{ repository?: ECRRepository }>(
+    "ecr",
+    "AmazonEC2ContainerRegistry_V20150921.CreateRepository",
+    { repositoryName },
+  );
+  const repo = created.repository;
+  if (!repo) throw new Error("CreateRepository returned no repository");
+  return { name: repo.repositoryName ?? repositoryName, uri: repo.repositoryUri ?? "", createdAt: repo.createdAt ?? 0 };
+};
+
 // DeleteRepository with force: true — the real console's delete dialog warns
 // that a non-empty repository's images are deleted along with it and asks the
 // operator to confirm by typing the repository name, then sends force so the
@@ -512,6 +534,14 @@ export const fetchS3Buckets = async (): Promise<S3Bucket[]> => {
     name: bucket.getElementsByTagName("Name")[0]?.textContent ?? "",
     creationDate: bucket.getElementsByTagName("CreationDate")[0]?.textContent ?? "",
   }));
+};
+
+// CreateBucket — PUT /{bucket} with an empty body, the same request the real
+// console's "Create bucket" issues for a bucket in this console's own Region
+// (us-east-1 is the one Region CreateBucket rejects a LocationConstraint
+// for, so the console sends none rather than special-casing it).
+export const createS3Bucket = async (bucketName: string): Promise<void> => {
+  await awsRestXmlPut("s3", `/${encodeURIComponent(bucketName)}`);
 };
 
 // DeleteBucket only succeeds on an empty bucket — the same constraint the
@@ -793,6 +823,13 @@ export const fetchCWLogGroups = async (): Promise<CWLogGroup[]> => {
     retentionInDays: group.retentionInDays ?? 0,
     storedBytes: group.storedBytes ?? 0,
   }));
+};
+
+// CreateLogGroup — the real console's "Create log group" dialog collects
+// just the name; retention and KMS key both keep CloudWatch Logs' own
+// defaults (never expire, service-managed encryption).
+export const createCWLogGroup = async (logGroupName: string): Promise<void> => {
+  await awsJson("logs", "Logs_20140328.CreateLogGroup", { logGroupName });
 };
 
 export const deleteCWLogGroup = async (logGroupName: string): Promise<void> => {
