@@ -4,6 +4,55 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — Closed the fidelity gaps the test-contract pass surfaced
+
+The test-contract pass filed four follow-ups rather than dropping them; this
+closes three and narrows the fourth to its genuine upstream cause.
+
+- **AWS host-prefix accommodations (BUG-2648).** Three sdk-test clients
+  suppressed the endpoint host prefix their operations model — Cloud Map's
+  `data-`, Step Functions' `sync-`, and CloudWatch Logs' `stream-` (the third
+  was not in the original report) — so the suite proved a simulator-special path
+  rather than the real client path. All three now use stock clients at
+  service-shaped endpoints plus a shared transport overriding only
+  `DialContext`: the SDK builds and signs a byte-identical request, and only the
+  dial destination differs. Two macOS `t.Skip`s in the CLI suite were removed
+  the same way through an `HTTP_PROXY` coordinate, so four operations that had
+  never run outside Linux CI now execute everywhere. Guard tests capture the
+  signed request after the finalize step, so re-introducing the accommodation
+  fails the suite.
+- **Cloud Run container fidelity (BUG-2647).** `Container` now models the three
+  probes and `EnvVar` models `valueSource`, with the probe/HTTP/TCP/gRPC action
+  and secret-selector types taken field-for-field from the vendored Discovery
+  document. Because these are the shared v2 types, Jobs, Services, Worker Pools,
+  and Instances all inherit them. `EnvVar` also marshals its `values` oneof
+  correctly — a sourced variable returns `valueSource` and no `value`, where the
+  simulator previously always emitted an empty `value`.
+- **Collapsed-port route collision (BUG-2645).** The Cloud Run Admin v1
+  instances IAM aliases could not mount because Memorystore Redis owned the same
+  path shape. Requests now resolve by the `Host` a real client sends, and where
+  one origin serves every service the AIP-136 custom method decides — Cloud Run
+  owns exactly the three IAM verbs and Memorystore owns its five actions, so the
+  sets are disjoint and the resolution is total rather than a fallback.
+- **Worker-pool scaling (BUG-2646) stays open, correctly.** The fields are
+  modelled and covered end to end, but fetching the newest live Discovery
+  document (revision 20260713) showed it still declares only
+  `manualInstanceCount` — as does the published REST reference — even though
+  gcloud's own generated client and the GA Terraform provider send all four
+  members. This is an upstream publication lag, not a simulator defect, so the
+  six resulting `unknown-field` keys are allowlisted under that bug and the
+  entry stays open until Google publishes them.
+
+Every fix was proven non-vacuous by reverting it and watching the new tests fail
+— including a real `terraform plan -detailed-exitcode` returning 2 with the
+missing scaling block, and drift on all three Cloud Run resources without the
+probe fields. Filed BUG-2649 (roughly seven AWS CLI tests skip when the
+installed `aws` predates an operation — the deceptive shape the no-skip-if-absent
+rule targets) and BUG-2650 (vendored specs across all three clouds have drifted
+behind upstream while the freshness check only reports, so the conformance
+ratchet's authority decays silently).
+
+
 ## 2026-07-26 — Closed the simulator test-contract gaps, uncovering 31 fidelity bugs
 
 `scripts/check-simulator-tests.sh` only enforces *newly added* `Register`/

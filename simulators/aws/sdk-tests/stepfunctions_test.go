@@ -15,9 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// sfnClient is a stock Step Functions client pointed at the simulator's states
+// endpoint coordinate. StartSyncExecution and TestState carry a modeled `sync-`
+// endpoint host prefix, so the SDK sends and signs them against
+// `sync-states.localhost` exactly as it sends them to
+// `sync-states.us-east-1.amazonaws.com` against real AWS.
 func sfnClient() *sfn.Client {
 	return sfn.NewFromConfig(sdkConfig(), func(o *sfn.Options) {
-		o.BaseEndpoint = aws.String(baseURL)
+		o.BaseEndpoint = aws.String(simEndpoint("states"))
 	})
 }
 

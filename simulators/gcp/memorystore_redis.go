@@ -805,6 +805,10 @@ func handleMSRedisAclPolicyDelete(w http.ResponseWriter, r *http.Request) {
 func handleMSRedisAction(w http.ResponseWriter, r *http.Request) {
 	idAction := sim.PathParam(r, "idAction")
 	id, action, found := strings.Cut(idAction, ":")
+	if gcpV1InstancesIsCloudRun(r, action) {
+		cloudRunAdminV1InstanceIAM(w, r, id, action)
+		return
+	}
 	if !found {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
 			"unknown action on memorystore instance %q", idAction)
@@ -918,7 +922,13 @@ func handleMSRedisCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMSRedisGet(w http.ResponseWriter, r *http.Request) {
-	name := msRedisInstanceName(sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "id"))
+	idVerb := sim.PathParam(r, "id")
+	id, verb, _ := strings.Cut(idVerb, ":")
+	if gcpV1InstancesIsCloudRun(r, verb) {
+		cloudRunAdminV1InstanceIAM(w, r, id, verb)
+		return
+	}
+	name := msRedisInstanceName(sim.PathParam(r, "project"), sim.PathParam(r, "location"), idVerb)
 	inst, ok := msRedisInstances.Get(name)
 	if !ok {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance not found: %s", name)

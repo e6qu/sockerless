@@ -32,10 +32,19 @@ import (
 //     commands therefore have no CLI coverage; the v2 collection they would
 //     otherwise reach is covered by the SDK tests and the wire round-trips
 //     below.
-//   - Cloud Run *Instances* have no `gcloud run` command group at any release
-//     track (GA, beta or alpha), so the instances collection is exercised
-//     through the raw v2 wire here and through the official clients in
-//     sdk-tests.
+//   - Cloud Run *Instances* have a `gcloud alpha run instances` group whose
+//     IAM commands reach the simulator; they are driven in
+//     run_instances_iam_test.go. Its lifecycle commands resolve the regional
+//     host like the worker-pool ones do, so the instance collection itself is
+//     exercised through the raw v2 wire here and through the official clients
+//     in sdk-tests.
+//   - `scaling.scalingMode`, `scaling.minInstanceCount` and
+//     `scaling.maxInstanceCount` are members the pinned Cloud Run Discovery
+//     revision does not publish, so the Discovery-generated Go client cannot
+//     carry them (see specs/SIM_SURFACE_TABLES/gcp-cloudrun.md). gcloud's own
+//     generated Cloud Run v2 client and the google Terraform provider both
+//     model them; they are round-tripped over the raw v2 wire below and driven
+//     end to end by the terraform-tests worker pool.
 
 func workerPoolsBaseURL() string {
 	return fmt.Sprintf("%s/v2/projects/%s/locations/%s/workerPools", baseURL, project, location)
@@ -257,6 +266,161 @@ func TestCloudRunV2WorkerPools_Wire_CreateGetListPatchDelete(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, 404, resp.StatusCode, "GetWorkerPool after delete must 404")
+}
+
+// TestCloudRunV2WorkerPools_Wire_AutomaticScaling round-trips the
+// automatic-scaling members of WorkerPoolScaling through create, get and a
+// masked patch.
+func TestCloudRunV2WorkerPools_Wire_AutomaticScaling(t *testing.T) {
+	const id = "cli-wp-autoscaling"
+	createBody := `{
+		"template": {"containers": [{"image": "gcr.io/test-project/wp-autoscaling"}]},
+		"scaling": {"scalingMode": "AUTOMATIC", "minInstanceCount": 2, "maxInstanceCount": 9}
+	}`
+	httpDoJSON(t, "POST", workerPoolsBaseURL()+"?workerPoolId="+id, createBody)
+	t.Cleanup(func() {
+		resp, err := httpDo("DELETE", workerPoolURL(id), "")
+		if err == nil {
+			resp.Body.Close()
+		}
+	})
+
+	type scaling struct {
+		ScalingMode         string `json:"scalingMode"`
+		MinInstanceCount    int    `json:"minInstanceCount"`
+		MaxInstanceCount    int    `json:"maxInstanceCount"`
+		ManualInstanceCount int    `json:"manualInstanceCount"`
+	}
+	var got struct {
+		Scaling scaling `json:"scaling"`
+	}
+	parseJSON(t, httpDoJSON(t, "GET", workerPoolURL(id), ""), &got)
+	assert.Equal(t, "AUTOMATIC", got.Scaling.ScalingMode)
+	assert.Equal(t, 2, got.Scaling.MinInstanceCount)
+	assert.Equal(t, 9, got.Scaling.MaxInstanceCount)
+	assert.Zero(t, got.Scaling.ManualInstanceCount,
+		"manualInstanceCount is unset under automatic scaling and must not be invented")
+
+	patchOut := httpDoJSON(t, "PATCH", workerPoolURL(id)+"?updateMask=scaling",
+		`{"scaling": {"scalingMode": "MANUAL", "manualInstanceCount": 4}}`)
+	var patched struct {
+		Response struct {
+			Scaling scaling `json:"scaling"`
+		} `json:"response"`
+	}
+	parseJSON(t, patchOut, &patched)
+	assert.Equal(t, "MANUAL", patched.Response.Scaling.ScalingMode)
+	assert.Equal(t, 4, patched.Response.Scaling.ManualInstanceCount)
+	assert.Zero(t, patched.Response.Scaling.MinInstanceCount,
+		"a masked scaling patch replaces the whole message")
+}
+
+// TestCloudRunV2WorkerPools_Wire_ProbesAndEnvValueSource round-trips the
+// container health probes and the Secret Manager-sourced environment variable
+// through the worker-pool collection.
+func TestCloudRunV2WorkerPools_Wire_ProbesAndEnvValueSource(t *testing.T) {
+	const id = "cli-wp-probes"
+	createBody := `{
+		"template": {
+			"containers": [{
+				"image": "gcr.io/test-project/wp-probes",
+				"env": [
+					{"name": "LITERAL", "value": "plain"},
+					{"name": "SOURCED", "valueSource": {"secretKeyRef": {"secret": "wp-secret", "version": "3"}}}
+				],
+				"startupProbe": {
+					"initialDelaySeconds": 2, "timeoutSeconds": 3,
+					"periodSeconds": 12, "failureThreshold": 5,
+					"httpGet": {"path": "/startup", "port": 9090,
+						"httpHeaders": [{"name": "X-Probe", "value": "startup"}]}
+				},
+				"livenessProbe": {"grpc": {"port": 9090, "service": "worker.v1.Health"}},
+				"readinessProbe": {"tcpSocket": {"port": 9091}}
+			}]
+		}
+	}`
+	httpDoJSON(t, "POST", workerPoolsBaseURL()+"?workerPoolId="+id, createBody)
+	t.Cleanup(func() {
+		resp, err := httpDo("DELETE", workerPoolURL(id), "")
+		if err == nil {
+			resp.Body.Close()
+		}
+	})
+
+	var got struct {
+		Template struct {
+			Containers []struct {
+				Env []struct {
+					Name        string `json:"name"`
+					Value       string `json:"value"`
+					ValueSource *struct {
+						SecretKeyRef struct {
+							Secret  string `json:"secret"`
+							Version string `json:"version"`
+						} `json:"secretKeyRef"`
+					} `json:"valueSource"`
+				} `json:"env"`
+				StartupProbe struct {
+					InitialDelaySeconds int `json:"initialDelaySeconds"`
+					TimeoutSeconds      int `json:"timeoutSeconds"`
+					PeriodSeconds       int `json:"periodSeconds"`
+					FailureThreshold    int `json:"failureThreshold"`
+					HTTPGet             struct {
+						Path        string `json:"path"`
+						Port        int    `json:"port"`
+						HTTPHeaders []struct {
+							Name  string `json:"name"`
+							Value string `json:"value"`
+						} `json:"httpHeaders"`
+					} `json:"httpGet"`
+				} `json:"startupProbe"`
+				LivenessProbe struct {
+					GRPC struct {
+						Port    int    `json:"port"`
+						Service string `json:"service"`
+					} `json:"grpc"`
+				} `json:"livenessProbe"`
+				ReadinessProbe struct {
+					TCPSocket struct {
+						Port int `json:"port"`
+					} `json:"tcpSocket"`
+				} `json:"readinessProbe"`
+			} `json:"containers"`
+		} `json:"template"`
+	}
+	parseJSON(t, httpDoJSON(t, "GET", workerPoolURL(id), ""), &got)
+	require.Len(t, got.Template.Containers, 1)
+	c := got.Template.Containers[0]
+
+	assert.Equal(t, 2, c.StartupProbe.InitialDelaySeconds)
+	assert.Equal(t, 3, c.StartupProbe.TimeoutSeconds)
+	assert.Equal(t, 12, c.StartupProbe.PeriodSeconds)
+	assert.Equal(t, 5, c.StartupProbe.FailureThreshold)
+	assert.Equal(t, "/startup", c.StartupProbe.HTTPGet.Path)
+	assert.Equal(t, 9090, c.StartupProbe.HTTPGet.Port)
+	require.Len(t, c.StartupProbe.HTTPGet.HTTPHeaders, 1)
+	assert.Equal(t, "X-Probe", c.StartupProbe.HTTPGet.HTTPHeaders[0].Name)
+	assert.Equal(t, "startup", c.StartupProbe.HTTPGet.HTTPHeaders[0].Value)
+	assert.Equal(t, 9090, c.LivenessProbe.GRPC.Port)
+	assert.Equal(t, "worker.v1.Health", c.LivenessProbe.GRPC.Service)
+	assert.Equal(t, 9091, c.ReadinessProbe.TCPSocket.Port)
+
+	require.Len(t, c.Env, 2)
+	byName := map[string]int{}
+	for i, e := range c.Env {
+		byName[e.Name] = i
+	}
+	require.Contains(t, byName, "LITERAL")
+	assert.Equal(t, "plain", c.Env[byName["LITERAL"]].Value)
+	assert.Nil(t, c.Env[byName["LITERAL"]].ValueSource)
+
+	require.Contains(t, byName, "SOURCED")
+	sourced := c.Env[byName["SOURCED"]]
+	require.NotNil(t, sourced.ValueSource)
+	assert.Equal(t, "wp-secret", sourced.ValueSource.SecretKeyRef.Secret)
+	assert.Equal(t, "3", sourced.ValueSource.SecretKeyRef.Version)
+	assert.Empty(t, sourced.Value,
+		"value and valueSource are alternatives of one oneof; only the set member is returned")
 }
 
 func TestCloudRunV2Instances_Wire_CreatePatchStartStopDelete(t *testing.T) {

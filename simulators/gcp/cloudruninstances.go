@@ -51,8 +51,15 @@ type InstanceV2 struct {
 	Reconciling                   bool                 `json:"reconciling,omitempty"`
 }
 
+// crv2Instances is the Cloud Run instances store. The Cloud Run Admin v1 IAM
+// aliases address the same resource under a different API version and reach it
+// from the shared `/v1/projects/{p}/locations/{l}/instances/…` prefix, so the
+// store is package-scoped rather than closed over by the v2 handlers alone.
+var crv2Instances sim.Store[InstanceV2]
+
 func registerCloudRunInstancesV2(srv *sim.Server) {
 	instances := sim.MakeStore[InstanceV2](srv.DB(), "crv2_instances")
+	crv2Instances = instances
 	if crOperations == nil {
 		crOperations = sim.MakeStore[Operation](srv.DB(), "operations")
 	}
@@ -266,6 +273,25 @@ func registerCloudRunInstancesV2(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on instance %q", action, id)
 		}
 	})
+}
+
+// cloudRunAdminV1InstanceIAM serves the Cloud Run Admin v1 instances IAM
+// aliases (run.projects.locations.instances.{get,set,test}IamPolicy). They ride
+// the `/v1/projects/{p}/locations/{l}/instances/{id}:{verb}` path that
+// Memorystore for Redis also publishes, so the shared prefix resolves the
+// owning service first (see endpoint_hosts.go). Both API versions address one
+// resource, so the policy is stored under the v2 resource name and a policy
+// written through either version reads back through the other — the same rule
+// the worker-pool v1/v2 aliases follow.
+func cloudRunAdminV1InstanceIAM(w http.ResponseWriter, r *http.Request, id, action string) {
+	if !cloudRunAdminV1InstanceIAMVerbs[r.Method][action] {
+		// The IAM triple is the whole of the Cloud Run Admin v1 instances
+		// collection: anything else on that path is a method run.googleapis.com
+		// does not publish.
+		sim.GCPError(w, http.StatusNotFound, "Method not found.", "NOT_FOUND")
+		return
+	}
+	instanceIAM(w, r, crv2Instances, sim.PathParam(r, "project"), sim.PathParam(r, "location"), id, action)
 }
 
 // instanceIAM serves an AIP-141 IAM verb against a Cloud Run instance. An IAM

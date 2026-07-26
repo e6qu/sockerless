@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // emptySHA256 is the hex SHA-256 of an empty body — the payload hash for a
@@ -61,6 +65,7 @@ func signRawSigV4JSON(t *testing.T, req *http.Request, service string, body []by
 
 var (
 	baseURL                string
+	simPort                int
 	dnsPort                int
 	simCmd                 *exec.Cmd
 	binaryPath             string
@@ -74,6 +79,94 @@ func sdkConfig() aws.Config {
 	return aws.Config{
 		Region:      "us-east-1",
 		Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""),
+		HTTPClient:  simHTTPClient,
+	}
+}
+
+// simEndpoint returns the endpoint coordinate for one AWS service against the
+// simulator: the service's own hostname in the `.localhost` family on the
+// simulator's port. It has the same shape as the endpoint a real client
+// resolves (`servicediscovery.us-east-1.amazonaws.com`), so an operation that
+// carries a modeled endpoint host prefix — Cloud Map's `data-` on
+// DiscoverInstances/DiscoverInstancesRevision, Step Functions' `sync-` on
+// StartSyncExecution/TestState — builds and signs the real prefixed host
+// (`data-servicediscovery.localhost`) instead of a prefix glued onto an IP
+// literal. Only the endpoint coordinate differs from a real-cloud client; the
+// request the SDK builds and signs is byte-for-byte the one AWS receives.
+func simEndpoint(service string) string {
+	return fmt.Sprintf("http://%s.localhost:%d", service, simPort)
+}
+
+// simHTTPClient is the SDK transport every client in this suite uses. It keeps
+// the SDK's own transport defaults and replaces only name resolution: a host in
+// the `.localhost` family resolves to the loopback address, which is what RFC
+// 6761 mandates and what glibc does on Linux but macOS's resolver does not.
+// Resolution is a coordinate, not a request property — the Host header, the
+// URL and the SigV4 signature the SDK produces are untouched, so a request to
+// `data-servicediscovery.localhost` carries and signs exactly that host.
+var simHTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+	tr.DialContext = simDialContext
+	tr.Proxy = simProxy
+})
+
+var simDialer = &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+
+func simDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if host, port, err := net.SplitHostPort(addr); err == nil && isLocalhostName(host) {
+		addr = net.JoinHostPort("127.0.0.1", port)
+	}
+	return simDialer.DialContext(ctx, network, addr)
+}
+
+// simProxy keeps the SDK's environment-driven proxy behaviour for every host
+// except the `.localhost` family, which resolves to loopback and must never be
+// routed through a proxy Go would otherwise apply to a non-`localhost` name.
+func simProxy(req *http.Request) (*url.URL, error) {
+	if isLocalhostName(req.URL.Hostname()) {
+		return nil, nil
+	}
+	return http.ProxyFromEnvironment(req)
+}
+
+func isLocalhostName(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	return h == "localhost" || strings.HasSuffix(h, ".localhost")
+}
+
+// capturedRequest holds the host and Authorization header of the request an
+// SDK client actually put on the wire.
+type capturedRequest struct {
+	host          string
+	authorization string
+}
+
+// signedHeaders returns the SignedHeaders list out of a SigV4 Authorization
+// header, so a test can assert which headers the signature covers.
+func (c capturedRequest) signedHeaders() []string {
+	for _, part := range strings.Split(c.authorization, ",") {
+		part = strings.TrimSpace(part)
+		if rest, ok := strings.CutPrefix(part, "SignedHeaders="); ok {
+			return strings.Split(rest, ";")
+		}
+	}
+	return nil
+}
+
+// captureSignedRequest is an SDK API option that records the final request
+// after every Finalize middleware has run — the modeled endpoint host-prefix
+// mutation and the SigV4 signer included. A test uses it to assert the host the
+// SDK addressed and signed, which is the only way to prove an operation with a
+// modeled host prefix really exercised the prefixed host.
+func captureSignedRequest(rec *capturedRequest) func(*middleware.Stack) error {
+	return func(stack *middleware.Stack) error {
+		return stack.Finalize.Add(middleware.FinalizeMiddlewareFunc("captureSignedRequest",
+			func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+				if req, ok := in.Request.(*smithyhttp.Request); ok {
+					rec.host = req.URL.Host
+					rec.authorization = req.Header.Get("Authorization")
+				}
+				return next.HandleFinalize(ctx, in)
+			}), middleware.After)
 	}
 }
 
@@ -127,6 +220,7 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to find free port: %v", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
+	simPort = port
 	ln.Close()
 
 	// Free UDP port for the Route 53 DNS server. The simulator and the

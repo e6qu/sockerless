@@ -2,7 +2,6 @@ package aws_cli_test
 
 import (
 	"fmt"
-	"net"
 	"strings"
 	"testing"
 	"time"
@@ -11,19 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// sfnSyncEndpoint returns an endpoint URL whose host stays in the
-// `*.localhost` family after botocore prepends the `sync-` host prefix that
-// the StartSyncExecution / TestState operations carry, so the request still
-// reaches the loopback sim. On Linux CI `sync-sfn.localhost` resolves to
-// 127.0.0.1; on platforms where it does not resolve the caller skips.
+// sfnSyncEndpoint returns the simulator's Step Functions endpoint coordinate.
+// It has the same shape as the real endpoint a CLI resolves
+// (`states.us-east-1.amazonaws.com`), so botocore prepends the `sync-` host
+// prefix that StartSyncExecution and TestState carry and sends the request to
+// `sync-states.localhost`. Callers pair it with awsCLIHostPrefixed, which is
+// what makes that name reach the loopback sim.
 func sfnSyncEndpoint(t *testing.T) string {
 	t.Helper()
-	host := portFromBaseURL(t)
-	// Probe whether the prefixed host resolves; skip if it doesn't (macOS).
-	if _, err := net.LookupHost("sync-sfn.localhost"); err != nil {
-		t.Skipf("sync-sfn.localhost does not resolve on this platform: %v", err)
-	}
-	return fmt.Sprintf("http://sfn.localhost:%s", host)
+	return fmt.Sprintf("http://states.localhost:%s", portFromBaseURL(t))
 }
 
 // portFromBaseURL extracts the port from the suite baseURL (http://127.0.0.1:PORT).
@@ -159,7 +154,7 @@ func TestSFNCLI_VersionsAndAliases(t *testing.T) {
 // carries a `sync-` host prefix, so it targets the sync endpoint.
 func TestSFNCLI_TestState(t *testing.T) {
 	endpoint := sfnSyncEndpoint(t)
-	out := runCLI(t, awsCLI("stepfunctions", "test-state",
+	out := runCLI(t, awsCLIHostPrefixed("stepfunctions", "test-state",
 		"--definition", `{"Type":"Pass","Result":{"hello":"world"},"End":true}`,
 		"--input", `{"x":1}`,
 		"--role-arn", "arn:aws:iam::123456789012:role/sfn-role",
@@ -192,7 +187,7 @@ func TestSFNCLI_StartSyncExecution(t *testing.T) {
 		runCLI(t, awsCLI("stepfunctions", "delete-state-machine", "--state-machine-arn", sm.StateMachineArn))
 	})
 
-	out = runCLI(t, awsCLI("stepfunctions", "start-sync-execution",
+	out = runCLI(t, awsCLIHostPrefixed("stepfunctions", "start-sync-execution",
 		"--state-machine-arn", sm.StateMachineArn, "--input", "{}",
 		"--endpoint-url", endpoint))
 	var res struct {
