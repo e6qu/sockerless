@@ -141,6 +141,85 @@ func TestCompute_VirtualMachineLifecycle(t *testing.T) {
 	require.NotNil(t, got.Properties.InstanceView)
 	require.NotEmpty(t, got.Properties.InstanceView.Statuses)
 
+	// VirtualMachines_ListAll — the subscription-wide inventory read
+	// (`GET /subscriptions/{subscriptionId}/providers/Microsoft.Compute/virtualMachines`),
+	// the one `az vm list` without --resource-group and every
+	// subscription-scoped console blade issues. Distinct from the
+	// resource-group-scoped NewListPager below it.
+	listAllPager := vmClient.NewListAllPager(nil)
+	var allVMs []*armcompute.VirtualMachine
+	for listAllPager.More() {
+		page, err := listAllPager.NextPage(ctx)
+		require.NoError(t, err)
+		allVMs = append(allVMs, page.Value...)
+	}
+	require.NotEmpty(t, allVMs)
+	foundAll := false
+	for _, vm := range allVMs {
+		require.NotNil(t, vm.ID)
+		require.NotNil(t, vm.Name)
+		if *vm.Name == vmName {
+			foundAll = true
+			require.NotNil(t, vm.Properties)
+			require.NotNil(t, vm.Properties.HardwareProfile)
+			assert.Equal(t, "eastus", *vm.Location)
+			assert.Equal(t, "Microsoft.Compute/virtualMachines", *vm.Type)
+		}
+	}
+	assert.True(t, foundAll, "VirtualMachines_ListAll omitted %s", vmName)
+
+	// statusOnly=true asks the same operation for the instance view rather
+	// than the model view — the shape the portal's VM list reads power state
+	// from.
+	statusPager := vmClient.NewListAllPager(&armcompute.VirtualMachinesClientListAllOptions{StatusOnly: to.Ptr("true")})
+	require.True(t, statusPager.More())
+	statusPage, err := statusPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, statusPage.Value)
+	sawInstanceView := false
+	for _, vm := range statusPage.Value {
+		if vm.Name != nil && *vm.Name == vmName {
+			require.NotNil(t, vm.Properties)
+			require.NotNil(t, vm.Properties.InstanceView)
+			assert.True(t, containsVMStatus(vm.Properties.InstanceView.Statuses, "PowerState/running"))
+			sawInstanceView = true
+		}
+	}
+	assert.True(t, sawInstanceView, "statusOnly ListAll omitted %s", vmName)
+
+	// VirtualMachines_Update — the PATCH carrying a VirtualMachineUpdate. A
+	// tags-only update replaces the tags dictionary and must leave every other
+	// property (here the hardware profile) exactly as it was.
+	updatePoller, err := vmClient.BeginUpdate(ctx, rg, vmName, armcompute.VirtualMachineUpdate{
+		Tags: map[string]*string{"env": to.Ptr("sdk"), "owner": to.Ptr("platform")},
+	}, nil)
+	require.NoError(t, err)
+	updated, err := updatePoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, updated.Tags["owner"])
+	assert.Equal(t, "platform", *updated.Tags["owner"])
+	require.NotNil(t, updated.Properties)
+	require.NotNil(t, updated.Properties.HardwareProfile)
+	assert.Equal(t, armcompute.VirtualMachineSizeTypesStandardB1S, *updated.Properties.HardwareProfile.VMSize)
+
+	afterUpdate, err := vmClient.Get(ctx, rg, vmName, nil)
+	require.NoError(t, err)
+	require.NotNil(t, afterUpdate.Tags["owner"])
+	assert.Equal(t, "platform", *afterUpdate.Tags["owner"])
+	require.NotNil(t, afterUpdate.Properties.OSProfile)
+	assert.Equal(t, vmName, *afterUpdate.Properties.OSProfile.ComputerName)
+	// The write-only admin password is never echoed back, on update as on
+	// create.
+	assert.Nil(t, afterUpdate.Properties.OSProfile.AdminPassword)
+
+	// The resource-group-scoped list stays its own operation and still only
+	// reports this group's machines.
+	rgPager := vmClient.NewListPager(rg, nil)
+	require.True(t, rgPager.More())
+	rgPage, err := rgPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, rgPage.Value)
+
 	powerOff, err := vmClient.BeginPowerOff(ctx, rg, vmName, nil)
 	require.NoError(t, err)
 	_, err = powerOff.PollUntilDone(ctx, nil)
@@ -170,4 +249,38 @@ func containsVMStatus(statuses []*armcompute.InstanceViewStatus, code string) bo
 		}
 	}
 	return false
+}
+
+// TestCompute_VirtualMachinesSubscriptionScope covers the two subscription- and
+// resource-scoped virtual-machine operations that need no booted machine, so
+// they are exercised on every host rather than only where the real-execution
+// network capabilities the lifecycle test needs are available:
+// VirtualMachines_ListAll (the subscription-wide inventory read) and
+// VirtualMachines_Update against a machine that does not exist, which must
+// come back as ARM's own ResourceNotFound rather than silently succeeding.
+func TestCompute_VirtualMachinesSubscriptionScope(t *testing.T) {
+	vmClient, err := armcompute.NewVirtualMachinesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+
+	pager := vmClient.NewListAllPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, vm := range page.Value {
+			require.NotNil(t, vm.ID)
+			require.NotNil(t, vm.Name)
+			require.NotNil(t, vm.Type)
+			assert.Equal(t, "Microsoft.Compute/virtualMachines", *vm.Type)
+			assert.True(t, strings.HasPrefix(*vm.ID, "/subscriptions/"+subscriptionID+"/"))
+		}
+	}
+
+	// armcompute surfaces ARM's 404 from BeginUpdate itself rather than from
+	// the poller, because the operation never starts.
+	_, err = vmClient.BeginUpdate(ctx, "compute-absent-rg", "no-such-vm", armcompute.VirtualMachineUpdate{
+		Tags: map[string]*string{"env": to.Ptr("sdk")},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ResourceNotFound")
+	assert.Contains(t, err.Error(), "404")
 }

@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { Route } from "react-router";
+import { Navigate, Route } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AzureApp } from "./portal/index.js";
 import { OverviewPage } from "./pages/OverviewPage.js";
@@ -18,6 +18,9 @@ import { MonitorPage } from "./pages/MonitorPage.js";
 import { AppRegistrationsPage } from "./pages/AppRegistrationsPage.js";
 import { AppRegistrationDetailPage } from "./pages/AppRegistrationDetailPage.js";
 import { NotSupportedPage } from "./pages/NotSupportedPage.js";
+import { ServiceListPage } from "./pages/ServiceListPage.js";
+import { ServiceDetailPage } from "./pages/ServiceDetailPage.js";
+import { SERVICE_BLADES } from "./services.js";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -47,7 +50,25 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/monitor" element={<MonitorPage />} />
         <Route path="/ui/entra/app-registrations" element={<AppRegistrationsPage />} />
         <Route path="/ui/entra/app-registrations/:objectId" element={<AppRegistrationDetailPage />} />
+        {/* Every descriptor-driven service blade: a list on the provider's
+            real subscription-wide ARM List, and a resource pane on its real
+            Get plus the sub-resource Lists and action POSTs ARM nests under
+            it. The route slug and everything each blade reads come from the
+            service's own descriptor (services.ts). */}
+        {SERVICE_BLADES.map((blade) => (
+          <Route key={blade.slug} path={`/ui/${blade.slug}`} element={<ServiceListPage blade={blade} />} />
+        ))}
+        {SERVICE_BLADES.map((blade) => (
+          <Route
+            key={`${blade.slug}-detail`}
+            path={`/ui/${blade.slug}/:name`}
+            element={<ServiceDetailPage blade={blade} />}
+          />
+        ))}
         <Route path="/ui/not-supported/:slug" element={<NotSupportedPage />} />
+        {/* Any other path lands on the overview rather than an empty shell:
+            a mistyped or stale deep link must never render a blank console. */}
+        <Route path="*" element={<Navigate to="/ui/" replace />} />
       </AzureApp>
     </QueryClientProvider>
   </StrictMode>,

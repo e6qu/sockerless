@@ -3,13 +3,21 @@ import type { IconName } from "./icons.js";
 // The real console's hamburger menu opens a navigation drawer listing the
 // Google Cloud product catalog, grouped the way the console groups it
 // (Compute, Serverless, Storage, Databases, Networking, Operations,
-// Analytics, Artificial Intelligence, Developer Tools, IAM & Admin,
-// Security). The simulator implements a slice of Google Cloud — Cloud Run,
-// Cloud Run functions, Artifact Registry, Cloud Storage, IAM service
-// accounts, Cloud Logging, and Resource Manager projects — so the catalog
-// carries the real IA truthfully: every product Google Cloud offers is
-// listed, the ones the simulator implements link to their page, and the
-// rest are marked "Not supported" rather than omitted or silently faked.
+// Analytics, Artificial Intelligence, Developer Tools, API Management,
+// APIs & Services, IAM & Admin, Security). The simulator implements a
+// substantial slice of Google Cloud, so the catalog carries the real
+// information architecture truthfully: every product Google Cloud offers is
+// listed, every product whose real API the simulator serves links to its
+// page, and only the products with no simulated API at all are marked
+// "Not supported".
+//
+// The "Not supported" chip is a claim about the simulator, so it is only
+// correct where the simulator serves no API for the product. A product whose
+// real REST surface the simulator answers — Compute Engine, Cloud SQL,
+// Spanner, Bigtable, Firestore, Memorystore for Redis, Cloud DNS, Cloud Load
+// Balancing, Serverless VPC Access, BigQuery, Pub/Sub, Dataflow, Cloud Build,
+// Eventarc, API Gateway, Service Usage, Cloud KMS, Secret Manager and Cloud
+// IAM — links to its own page instead.
 //
 // Icons are Material Symbols Outlined glyphs (the console's own icon set),
 // not the trademarked per-product logos the real catalog uses — see
@@ -35,7 +43,7 @@ export const CATALOG: CatalogGroup[] = [
   {
     label: "Compute",
     items: [
-      { id: "compute-engine", name: "Compute Engine", icon: "computer" },
+      { id: "compute-engine", name: "Compute Engine", icon: "computer", to: "/ui/compute" },
       { id: "kubernetes-engine", name: "Kubernetes Engine", icon: "hub" },
       { id: "cloud-run", name: "Cloud Run", icon: "deployed_code", to: "/ui/cloudrun" },
       { id: "app-engine", name: "App Engine", icon: "package_2" },
@@ -46,7 +54,7 @@ export const CATALOG: CatalogGroup[] = [
     items: [
       { id: "cloud-run-functions", name: "Cloud Run functions", icon: "function", to: "/ui/functions" },
       { id: "workflows", name: "Workflows", icon: "list_alt" },
-      { id: "eventarc", name: "Eventarc", icon: "notifications" },
+      { id: "eventarc", name: "Eventarc", icon: "notifications", to: "/ui/eventarc" },
     ],
   },
   {
@@ -59,18 +67,20 @@ export const CATALOG: CatalogGroup[] = [
   {
     label: "Databases",
     items: [
-      { id: "cloud-sql", name: "Cloud SQL", icon: "database" },
-      { id: "firestore", name: "Firestore", icon: "database" },
-      { id: "spanner", name: "Spanner", icon: "database" },
-      { id: "bigtable", name: "Bigtable", icon: "database" },
+      { id: "cloud-sql", name: "Cloud SQL", icon: "database", to: "/ui/sql" },
+      { id: "firestore", name: "Firestore", icon: "database", to: "/ui/firestore" },
+      { id: "spanner", name: "Spanner", icon: "database", to: "/ui/spanner" },
+      { id: "bigtable", name: "Bigtable", icon: "database", to: "/ui/bigtable" },
+      { id: "memorystore", name: "Memorystore for Redis", icon: "database", to: "/ui/memorystore" },
     ],
   },
   {
     label: "Networking",
     items: [
-      { id: "vpc-network", name: "VPC network", icon: "lan" },
-      { id: "cloud-load-balancing", name: "Cloud Load Balancing", icon: "lan" },
-      { id: "cloud-dns", name: "Cloud DNS", icon: "lan" },
+      { id: "vpc-network", name: "VPC network", icon: "lan", to: "/ui/vpc" },
+      { id: "cloud-load-balancing", name: "Cloud Load Balancing", icon: "lan", to: "/ui/loadbalancing" },
+      { id: "cloud-dns", name: "Cloud DNS", icon: "lan", to: "/ui/dns" },
+      { id: "serverless-vpc-access", name: "Serverless VPC Access", icon: "lan", to: "/ui/vpcaccess" },
     ],
   },
   {
@@ -84,9 +94,9 @@ export const CATALOG: CatalogGroup[] = [
   {
     label: "Analytics",
     items: [
-      { id: "bigquery", name: "BigQuery", icon: "query_stats" },
-      { id: "pub-sub", name: "Pub/Sub", icon: "notifications" },
-      { id: "dataflow", name: "Dataflow", icon: "integration_instructions" },
+      { id: "bigquery", name: "BigQuery", icon: "query_stats", to: "/ui/bigquery" },
+      { id: "pub-sub", name: "Pub/Sub", icon: "notifications", to: "/ui/pubsub" },
+      { id: "dataflow", name: "Dataflow", icon: "integration_instructions", to: "/ui/dataflow" },
     ],
   },
   {
@@ -97,16 +107,24 @@ export const CATALOG: CatalogGroup[] = [
     label: "Developer Tools",
     items: [
       { id: "artifact-registry", name: "Artifact Registry", icon: "inventory_2", to: "/ui/ar" },
-      { id: "cloud-build", name: "Cloud Build", icon: "integration_instructions" },
+      { id: "cloud-build", name: "Cloud Build", icon: "integration_instructions", to: "/ui/cloudbuild" },
       { id: "cloud-source-repositories", name: "Cloud Source Repositories", icon: "list_alt" },
     ],
+  },
+  {
+    label: "API Management",
+    items: [{ id: "api-gateway", name: "API Gateway", icon: "lan", to: "/ui/apigateway" }],
+  },
+  {
+    label: "APIs & Services",
+    items: [{ id: "enabled-apis", name: "Enabled APIs & services", icon: "list_alt", to: "/ui/apis" }],
   },
   {
     label: "IAM & Admin",
     items: [
       { id: "service-accounts", name: "Service accounts", icon: "manage_accounts", to: "/ui/serviceaccounts" },
       { id: "manage-resources", name: "Manage resources", icon: "folder_data", to: "/ui/projects" },
-      { id: "iam", name: "IAM", icon: "token" },
+      { id: "iam", name: "IAM", icon: "token", to: "/ui/iam" },
       { id: "organization-policies", name: "Organization policies", icon: "security" },
     ],
   },
@@ -114,7 +132,8 @@ export const CATALOG: CatalogGroup[] = [
     label: "Security",
     items: [
       { id: "security-command-center", name: "Security Command Center", icon: "security" },
-      { id: "cloud-kms", name: "Cloud KMS", icon: "token" },
+      { id: "cloud-kms", name: "Cloud KMS", icon: "token", to: "/ui/kms" },
+      { id: "secret-manager", name: "Secret Manager", icon: "token", to: "/ui/secrets" },
     ],
   },
 ];

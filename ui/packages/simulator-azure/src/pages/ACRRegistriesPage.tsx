@@ -69,7 +69,12 @@ export interface ACRRegistryCreateFormProps {
 // request go out.
 export function ACRRegistryCreateForm({ subscriptions, busy, onCreate, onDismiss }: ACRRegistryCreateFormProps) {
   const styles = useStyles();
-  const [subscriptionId, setSubscriptionId] = useState(subscriptions[0]?.subscriptionId ?? "");
+  // The subscription list arrives asynchronously, so the chosen value cannot be
+  // frozen at mount: a form opened before the query resolves would hold an
+  // empty subscription forever and leave its submit permanently disabled.
+  // An explicit choice wins; otherwise the first loaded subscription is used.
+  const [chosenSubscriptionId, setSubscriptionId] = useState("");
+  const subscriptionId = chosenSubscriptionId || subscriptions[0]?.subscriptionId || "";
   const [resourceGroup, setResourceGroup] = useState("sockerless-console");
   const [name, setName] = useState("");
   const [location, setLocation] = useState("eastus");

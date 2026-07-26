@@ -28,9 +28,12 @@ export function NotSupportedPage() {
         </svg>
         <p className="gc-empty-headline">{name} isn't implemented by the Sockerless simulator</p>
         <p className="gc-empty-description">
-          The simulator faithfully implements a slice of Google Cloud — Cloud Run, Cloud Run functions,
-          Artifact Registry, Cloud Storage, IAM service accounts, Cloud Logging, and Resource Manager
-          projects — rather than approximating the rest with synthetic data.
+          The simulator faithfully implements a slice of Google Cloud — Compute Engine, Cloud Run, Cloud Run
+          functions, Cloud Storage, Artifact Registry, Cloud SQL, Firestore, Spanner, Bigtable, Memorystore
+          for Redis, VPC networking, Cloud Load Balancing, Cloud DNS, Serverless VPC Access, BigQuery,
+          Pub/Sub, Dataflow, Cloud Build, Eventarc, API Gateway, Service Usage, Cloud KMS, Secret Manager,
+          Cloud IAM, Cloud Logging and Resource Manager — rather than approximating the rest with synthetic
+          data. Every product it implements is listed in the product menu and opens its own page.
         </p>
         <div className="gc-empty-actions">
           <Link className="gc-button-primary" to="/ui/">Back to Overview</Link>

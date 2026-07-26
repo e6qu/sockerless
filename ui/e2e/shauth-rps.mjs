@@ -40,12 +40,14 @@ try {
       await assertCreatedProject(page);
       await assertCreatedGCSBucket(page, app);
       await assertRanCloudRunJob(page, app);
+      await assertCreatedPubSubTopic(page, app);
     }
     if (app.name === "Sockerless AWS simulator") {
       await assertFederatedAwsCredentials(context, page, app);
       await assertMintedIAMAccessKey(page, app);
       await assertCreatedOrganizationAccount(page, app);
       await assertCreatedECRRepository(page, app);
+      await assertCreatedDynamoDBTable(page, app);
     }
     if (app.name === "Sockerless Microsoft Azure simulator") {
       await assertFederatedAzureToken(context, page, app);
@@ -460,6 +462,45 @@ async function assertMintedServiceAccountKey(page, app) {
   );
 }
 
+
+// assertCreatedDynamoDBTable proves a service the console had wrongly advertised
+// as unsupported is genuinely usable by the signed-in operator: create a table
+// through the real DynamoDB CreateTable API over the federated SigV4 path, see
+// it in the list, then delete it through DeleteTable and see it leave.
+async function assertCreatedDynamoDBTable(page, app) {
+  const origin = new URL(app.launch).origin;
+  const tableName = `rps-table-${Date.now() % 1_000_000}`;
+  await page.goto(`${origin}/ui/dynamodb`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("dynamodb-create-table").click();
+  await page.getByTestId("dynamodb-table-name-input").fill(tableName);
+  await page.getByTestId("dynamodb-partition-key-input").fill("id");
+  await page.getByTestId("dynamodb-create-table-submit").click();
+  await page.getByRole("link", { name: tableName }).waitFor({ state: "visible" });
+
+  await page.getByRole("link", { name: tableName }).click();
+  await page.getByTestId("dynamodb-table-delete").click();
+  await page.getByTestId("dynamodb-delete-table-confirm").click();
+  await page.goto(`${origin}/ui/dynamodb`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("dynamodb-create-table").waitFor({ state: "visible" });
+  assert.equal(
+    await page.getByRole("link", { name: tableName }).count(),
+    0,
+    `${app.name} deleted DynamoDB table still appears in the list`,
+  );
+}
+
+// assertCreatedPubSubTopic proves the same for Google Cloud: Pub/Sub was
+// advertised as unsupported, and the operator can create a topic through the
+// real topics.create API and see it listed.
+async function assertCreatedPubSubTopic(page, app) {
+  const origin = new URL(app.launch).origin;
+  const topicId = `rps-topic-${Date.now() % 1_000_000}`;
+  await page.goto(`${origin}/ui/pubsub`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("pubsub-create-topic").click();
+  await page.getByTestId("pubsub-create-topic-id").fill(topicId);
+  await page.getByTestId("pubsub-create-topic-submit").click();
+  await page.getByRole("link", { name: topicId }).waitFor({ state: "visible" });
+}
 
 // assertRanCloudRunJob proves the Google Cloud console's compute-create and
 // lifecycle-action flows end to end for the signed-in operator: create a Cloud

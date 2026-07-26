@@ -28,9 +28,9 @@ export function NotSupportedPage() {
           <strong>{label} is not implemented by the Sockerless simulator.</strong>
           <p>
             This entry stays in the service menu because the real Azure portal offers it, so the menu reads as
-            Azure&rsquo;s own catalog. Sockerless implements the resources it stands services up on — Container Apps,
-            Function Apps, Container Registry, Storage accounts, Log Analytics, and Microsoft Entra ID app
-            registrations — and does not simulate {label.toLowerCase()}.
+            Azure&rsquo;s own catalog. The simulator serves no Azure Resource Manager routes for{" "}
+            {label.toLowerCase()}, so there is nothing here to list. Every other service in this menu links to a real
+            blade reading that provider&rsquo;s own Azure Resource Manager operations.
           </p>
         </AzureWarningMessage>
       </div>

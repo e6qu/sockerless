@@ -40,6 +40,26 @@ func TestComputeVirtualMachineLifecycleCLI(t *testing.T) {
 		t.Fatalf("expected running VM instance view, got %s", out)
 	}
 
+	// VirtualMachines_ListAll — `az vm list` without --resource-group reads
+	// the subscription-wide path, a different operation from the
+	// resource-group list.
+	listAllURL := fmt.Sprintf("%s/subscriptions/%s/providers/Microsoft.Compute/virtualMachines?api-version=2024-07-01", baseURL, subscriptionID)
+	out = runCLI(t, azRest("GET", listAllURL, ""))
+	if !strings.Contains(out, "cli-vm") {
+		t.Fatalf("expected subscription-wide VM list to carry cli-vm, got %s", out)
+	}
+	out = runCLI(t, azRest("GET", listAllURL+"&statusOnly=true", ""))
+	if !strings.Contains(out, "PowerState/running") {
+		t.Fatalf("expected statusOnly VM list to carry the instance view, got %s", out)
+	}
+
+	// VirtualMachines_Update — a tags-only PATCH must replace the tags and
+	// leave the hardware profile untouched.
+	out = runCLI(t, azRest("PATCH", vmURL, `{"tags":{"env":"cli","owner":"platform"}}`))
+	if !strings.Contains(out, "platform") || !strings.Contains(out, "Standard_B1s") {
+		t.Fatalf("expected the VM PATCH to set tags and preserve the hardware profile, got %s", out)
+	}
+
 	runCLI(t, azRest("POST", vmPath+"/powerOff?api-version=2024-07-01", ""))
 	out = runCLI(t, azRest("GET", vmPath+"/instanceView?api-version=2024-07-01", ""))
 	if !strings.Contains(out, "PowerState/stopped") {

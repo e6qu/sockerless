@@ -891,6 +891,29 @@ func registerCompute(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, subnet)
 	})
 
+	// List subnetworks in a region (compute.subnetworks.list). Regional, so
+	// the reply is a SubnetworkList — `kind` plus `items` — rather than the
+	// scope-keyed map subnetworks.aggregatedList returns.
+	srv.HandleFunc("GET /compute/v1/projects/{project}/regions/{region}/subnetworks", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		prefix := fmt.Sprintf("projects/%s/regions/%s/subnetworks/", project, region)
+		all := subnetworks.Filter(func(subnet ComputeSubnetwork) bool {
+			return strings.HasPrefix(subnet.SelfLink, prefix)
+		})
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		all = gcpApplyListParams(all, r)
+		page, next, ok := paginateListCompute(w, r, all)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"kind": "compute#subnetworkList", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
 	// Delete subnetwork
 	srv.HandleFunc("DELETE /compute/v1/projects/{project}/regions/{region}/subnetworks/{name}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")

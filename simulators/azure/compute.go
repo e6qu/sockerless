@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1059,6 +1060,57 @@ func registerVirtualMachines(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, virtualMachineWithInstanceView(vm))
 	})
 
+	// VirtualMachines_Update — the PATCH that carries a VirtualMachineUpdate:
+	// the tags dictionary (replaced wholesale, as real Azure does) plus the
+	// mutable property blocks. Only the blocks present in the body are
+	// touched, which is what makes a tags-only PATCH — the request the portal's
+	// Tags blade, `az vm update --set tags…`, and the azurerm provider's tag
+	// update all send — leave the machine's hardware, storage, OS, and network
+	// profiles alone.
+	srv.HandleFunc("PATCH "+armBase+"/virtualMachines/{vmName}", func(w http.ResponseWriter, r *http.Request) {
+		id := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s",
+			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "vmName"))
+		var patch struct {
+			Tags       map[string]string `json:"tags"`
+			Properties *struct {
+				HardwareProfile map[string]any    `json:"hardwareProfile"`
+				StorageProfile  map[string]any    `json:"storageProfile"`
+				OSProfile       map[string]any    `json:"osProfile"`
+				NetworkProfile  *VMNetworkProfile `json:"networkProfile"`
+			} `json:"properties"`
+		}
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !azureVMs.Update(id, func(vm *VirtualMachine) {
+			if patch.Tags != nil {
+				vm.Tags = patch.Tags
+			}
+			if patch.Properties == nil {
+				return
+			}
+			if patch.Properties.HardwareProfile != nil {
+				vm.Properties.HardwareProfile = patch.Properties.HardwareProfile
+			}
+			if patch.Properties.StorageProfile != nil {
+				vm.Properties.StorageProfile = patch.Properties.StorageProfile
+			}
+			if patch.Properties.OSProfile != nil {
+				vm.Properties.OSProfile = patch.Properties.OSProfile
+			}
+			if patch.Properties.NetworkProfile != nil {
+				vm.Properties.NetworkProfile = *patch.Properties.NetworkProfile
+			}
+			stripVMAdminPassword(vm)
+		}) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", id)
+			return
+		}
+		vm, _ := azureVMs.Get(id)
+		sim.WriteJSON(w, http.StatusOK, vm)
+	})
+
 	srv.HandleFunc("GET "+armBase+"/virtualMachines/{vmName}", func(w http.ResponseWriter, r *http.Request) {
 		id := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s",
 			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "vmName"))
@@ -1098,6 +1150,39 @@ func registerVirtualMachines(srv *sim.Server) {
 			items = []VirtualMachine{}
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": items})
+	})
+
+	// VirtualMachines_ListAll — every virtual machine in the subscription,
+	// across all resource groups. Distinct from the resource-group-scoped
+	// VirtualMachines_List above: `az vm list` without `--resource-group`,
+	// armcompute's NewListAllPager, and any subscription-wide inventory read
+	// (the Azure portal's own "Virtual machines" blade) go through this one.
+	// The result is paged the way ARM pages it — a nextLink once the page
+	// fills — over a resource-ID ordering, which is what makes the offset
+	// continuation token address the same machine on every page request.
+	// `statusOnly=true` asks for the instance view rather than the model view.
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.Compute/virtualMachines", func(w http.ResponseWriter, r *http.Request) {
+		prefix := fmt.Sprintf("/subscriptions/%s/", sim.PathParam(r, "subscriptionId"))
+		all := azureVMs.Filter(func(vm VirtualMachine) bool { return strings.HasPrefix(vm.ID, prefix) })
+		sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+		statusOnly := strings.EqualFold(r.URL.Query().Get("statusOnly"), "true")
+		for i := range all {
+			if state, _ := azureVMStates.Get(all[i].ID); state == "PowerState/running" && !azureRealVMAlive(all[i].ID) {
+				azureVMStates.Put(all[i].ID, "PowerState/stopped")
+			}
+			if statusOnly {
+				all[i] = virtualMachineWithInstanceView(all[i])
+			}
+		}
+		page, next := armPage(r, all)
+		if page == nil {
+			page = []VirtualMachine{}
+		}
+		out := map[string]any{"value": page}
+		if next != "" {
+			out["nextLink"] = armNextLink(r, next)
+		}
+		sim.WriteJSON(w, http.StatusOK, out)
 	})
 
 	srv.HandleFunc("DELETE "+armBase+"/virtualMachines/{vmName}", func(w http.ResponseWriter, r *http.Request) {

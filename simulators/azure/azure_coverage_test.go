@@ -43,7 +43,7 @@ var azureMethodFloor = map[string]int{
 	"authorization-arm-authorization-roledefinitionscalls-2022-05-01-preview": 5,
 	"compute-arm-computerpcommon-2022-03-01":                                  1,
 	"compute-arm-skus-2021-07-01":                                             1,
-	"compute-arm-virtualmachine-2022-03-01":                                   9,
+	"compute-arm-virtualmachine-2022-03-01":                                   11,
 	"containerinstance-arm-containerinstance-2021-10-01":                      18,
 	"containerregistry-arm-containerregistry-2023-07-01":                      52,
 	"containerregistry-arm-containerregistry-2025-11-01":                      58,

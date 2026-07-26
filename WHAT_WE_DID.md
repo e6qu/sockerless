@@ -4,6 +4,52 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — The consoles now tell the truth about what the simulators support
+
+The three simulator consoles were badging most of their cloud's catalogue "Not
+supported" while the simulators demonstrably implemented it. The AWS simulator
+alone registers roughly two thousand operations across forty services, yet the
+console marked EC2, DynamoDB, RDS, KMS, Route 53, API Gateway, SNS, SQS,
+Systems Manager and more as unavailable. This pass derived the true map from the
+simulators themselves — reading route registrations rather than file names, and
+in two cases dumping the router at runtime and probing a live simulator with a
+real token — then corrected every catalogue and built the missing pages.
+
+- **AWS** — 15 of 22 "Not supported" labels were false. Fifteen further
+  implemented services were absent from the catalogue entirely, and nine
+  genuinely-unimplemented ones were added so the catalogue reads complete rather
+  than silently omitting them. Thirty list pages and six detail pages now cover
+  33 services on their real operations. A mechanical check confirmed all 89
+  operations the console calls were already registered, so no simulator change
+  was needed — the honest outcome rather than an invented one.
+- **Google Cloud** — 19 products were falsely badged; four implemented products
+  were missing from the catalogue. Twenty-one list and fifteen detail pages were
+  added, with writes driven through real long-running-operation polls. One
+  genuine simulator gap was filled: the regional `compute.subnetworks.list` 404'd
+  while its aggregated sibling worked. `supported` is no longer asserted — it is
+  derived from whether a product has a page, so nothing can claim support it
+  does not have.
+- **Microsoft Azure** — unsupported went from eleven to seven, with 29 new
+  blades covering virtual machines, App Service, Cosmos DB, PostgreSQL, Redis,
+  virtual networks, load balancers, network security groups, DNS, Key Vault,
+  Service Bus, Event Hubs, Event Grid, API Management, Logic Apps and more. Two
+  simulator gaps were filled (`VirtualMachines_ListAll` and
+  `VirtualMachines_Update`) with SDK and CLI coverage. A follow-up corrected a
+  naming error the audit exposed — the menu entry labelled "Container Apps"
+  actually pointed at Container Apps *jobs* — so both now appear as the distinct
+  services they are.
+
+Screenshots of every console in both themes caught two rendering defects that
+the structural, axe and contrast suites all missed. The Google Cloud header
+search field carried a hard-coded light fill while its text followed the theme
+token, leaving near-white text at 1.08:1 in dark mode — invisible while typing;
+it now uses a themed token and measures 10.79:1. Azure's "Not supported" badge
+had no style rule at all, so in the narrow service menu it wrapped onto two
+lines and collided with the service name. A third defect found the same way: an
+unknown `/ui/...` path rendered an empty shell in all three consoles, which now
+redirect to the overview.
+
+
 ## 2026-07-26 — Closed the fidelity gaps the test-contract pass surfaced
 
 The test-contract pass filed four follow-ups rather than dropping them; this

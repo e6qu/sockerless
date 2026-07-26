@@ -26,8 +26,8 @@ import {
 } from "../api.js";
 import { ContainerAppJobEditForm } from "./ContainerAppJobForms.js";
 
-// The Container Apps blade this console lists (ContainerAppsPage) reads the
-// real Microsoft.App/jobs resource — Container Apps' run-to-completion
+// The Container App jobs blade this console lists (ContainerAppsPage) reads the
+// real Microsoft.App/jobs resource — Container Apps Jobs' run-to-completion
 // model, the one sockerless deploys container tasks onto — so this detail
 // blade stays on that same resource: its real Essentials, its containers
 // (from the job's own template), and its run history (the real executions
@@ -152,7 +152,7 @@ export function ContainerAppDetailPage() {
           onCancel={() => setDeleting(false)}
         >
           <Text as="p">
-            Deleting a Container Apps job is permanent and removes its execution history. This action can&rsquo;t be
+            Deleting a Container App job is permanent and removes its execution history. This action can&rsquo;t be
             undone.
           </Text>
         </AzureConfirmDialog>
@@ -160,7 +160,7 @@ export function ContainerAppDetailPage() {
       <div className="az-main" data-testid="ca-job-detail">
         {job.isError ? (
           <AzureErrorMessage testid="ca-job-error">
-            <strong>Could not load this Container Apps job.</strong>{" "}
+            <strong>Could not load this Container App job.</strong>{" "}
             {job.error instanceof Error ? job.error.message : "Azure Resource Manager did not respond."}
           </AzureErrorMessage>
         ) : job.isLoading || !job.data ? (

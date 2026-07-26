@@ -63,7 +63,7 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
   align-items: center;
   gap: 10px;
   min-width: 0;
-  background: #eef3fb;
+  background: var(--gc-header-search-bg);
   border-radius: 999px;
   padding: 0 16px;
   max-width: 720px;

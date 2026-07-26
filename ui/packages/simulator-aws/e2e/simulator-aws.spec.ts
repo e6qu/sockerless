@@ -12,6 +12,13 @@ async function ensureTheme(page: Page, theme: "light" | "dark") {
   await expect
     .poll(() => page.evaluate(() => document.documentElement.classList.contains("dark")))
     .toBe(theme === "dark");
+  // Cloudscape animates its surface colours when the mode flips. A contrast
+  // audit that samples mid-transition reads a transient blend of the two
+  // themes — the side navigation's own background is still the lighter
+  // surface while its link colour has already switched — and reports a
+  // contrast failure for a pairing that never actually paints. Waiting the
+  // transition out measures the settled result.
+  await page.waitForTimeout(400);
 }
 
 const SERVICES = [
@@ -687,14 +694,14 @@ test.describe("Services mega-menu", () => {
     await page.goto("/ui/");
     await page.getByRole("button", { name: "Services" }).click();
     const dialog = page.getByRole("dialog", { name: "All services" });
-    const link = dialog.getByRole("link", { name: "EC2, not supported in this simulator" });
+    const link = dialog.getByRole("link", { name: "Elastic Kubernetes Service, not supported in this simulator" });
     // The "Not supported" pill sits beside the link (not fused into its
     // accessible name — see AwsConsole.tsx's AwsServicesMenu/AwsSideNavigation
     // comments), so it's read from the enclosing list item.
     await expect(link.locator("xpath=ancestor::li[1]").getByText("Not supported")).toBeVisible();
     await link.click();
-    await expect(page).toHaveURL(/\/ui\/not-supported\/ec2$/);
-    await expect(page.getByRole("heading", { name: "EC2" })).toBeVisible();
+    await expect(page).toHaveURL(/\/ui\/not-supported\/eks$/);
+    await expect(page.getByRole("heading", { name: "Elastic Kubernetes Service" })).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 
@@ -744,20 +751,20 @@ test.describe("Not-supported services", () => {
   }) => {
     await page.goto("/ui/");
     const nav = page.getByRole("navigation", { name: "Service" });
-    const link = nav.getByRole("link", { name: "EC2, not supported in this simulator" });
+    const link = nav.getByRole("link", { name: "Elastic Kubernetes Service, not supported in this simulator" });
     await expect(link).toBeVisible();
     await expect(link.locator("xpath=ancestor::li[1]").getByText("Not supported")).toBeVisible();
     await link.click();
-    await expect(page).toHaveURL(/\/ui\/not-supported\/ec2$/);
-    await expect(page.getByRole("heading", { name: "EC2" })).toBeVisible();
+    await expect(page).toHaveURL(/\/ui\/not-supported\/eks$/);
+    await expect(page.getByRole("heading", { name: "Elastic Kubernetes Service" })).toBeVisible();
     await expect(page.getByText("This service is not implemented by the Sockerless simulator.")).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toContainText("EC2");
+    await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toContainText("Elastic Kubernetes Service");
   });
 
   test("names the service from the catalog when the not-supported page is reached directly by URL", async ({ page }) => {
-    await page.goto("/ui/not-supported/dynamodb");
-    await expect(page.getByRole("heading", { name: "DynamoDB" })).toBeVisible();
-    await expect(page.getByLabel("DynamoDB is not supported in this simulator")).toBeVisible();
+    await page.goto("/ui/not-supported/cloudformation");
+    await expect(page.getByRole("heading", { name: "CloudFormation" })).toBeVisible();
+    await expect(page.getByLabel("CloudFormation is not supported in this simulator")).toBeVisible();
   });
 
   test("renders no not-supported pill on any service sockerless implements", async ({ page }) => {
@@ -904,14 +911,14 @@ test.describe("Theme fidelity", () => {
   });
 
   test("keeps the not-supported badge's grey background and readable text in both themes", async ({ page }) => {
-    await page.goto("/ui/not-supported/ec2");
+    await page.goto("/ui/not-supported/eks");
     for (const theme of ["light", "dark"] as const) {
       await ensureTheme(page, theme);
       // Scoped to the page-header badge by its accessible name: the side
       // navigation renders the same "Not supported" pill (decorative there)
       // for every unimplemented service, so a class-only locator would match
       // dozens.
-      const badge = page.getByLabel("EC2 is not supported in this simulator");
+      const badge = page.getByLabel("Elastic Kubernetes Service is not supported in this simulator");
       await expect(badge).toBeVisible();
       const colors = await badge.evaluate((node) => {
         const cs = getComputedStyle(node);
@@ -1029,9 +1036,9 @@ test.describe("Contrast", () => {
   test("the not-supported badge clears WCAG AA in both themes, on the page header and in the side navigation", async ({
     page,
   }) => {
-    await page.goto("/ui/not-supported/ec2");
+    await page.goto("/ui/not-supported/eks");
     const results = await measureContrast(page, [
-      '[aria-label="EC2 is not supported in this simulator"]',
+      '[aria-label="Elastic Kubernetes Service is not supported in this simulator"]',
       'nav[aria-label="Service"] [class*="badge-color-grey"]',
     ]);
     for (const [theme, samples] of Object.entries(results)) {
@@ -1093,7 +1100,7 @@ test.describe("Automated accessibility audit", () => {
   // against every list page, the not-supported page, and the two overlays
   // (the Services mega-menu and the "Create user" dialog) that render
   // content no simple page.goto reaches, in both themes.
-  const PAGES = ["/ui/", "/ui/ecs", "/ui/lambda", "/ui/ecr", "/ui/s3", "/ui/logs", "/ui/organizations", "/ui/iam", "/ui/not-supported/ec2"];
+  const PAGES = ["/ui/", "/ui/ecs", "/ui/lambda", "/ui/ecr", "/ui/s3", "/ui/logs", "/ui/organizations", "/ui/iam", "/ui/not-supported/eks"];
   for (const theme of ["light", "dark"] as const) {
     for (const target of PAGES) {
       test(`${target} has no detectable violations (${theme})`, async ({ page }) => {
@@ -1146,6 +1153,238 @@ test.describe("Automated accessibility audit", () => {
         expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
       });
     }
+  }
+});
+
+// The console used to mark 22 AWS services "Not supported" that the simulator
+// in fact implements, and left another dozen it implements out of the catalog
+// entirely. Each of the services below now has a real console page reading the
+// service's own AWS API — the same operation its real console page reads — so
+// this suite pins that every one of them renders its heading and its real
+// column headers, and clears an automated accessibility audit in both themes.
+// This suite has no identity provider, so a Query- or JSON-protocol read is
+// rejected by the simulator exactly as real AWS would reject it and the page
+// reports the failure; a REST-protocol read succeeds and renders an honest
+// empty state. Either way the shell asserted here renders, and the
+// authenticated data render belongs to the Shauth relying-party suite.
+const SERVICE_PAGES = [
+  { path: "/ui/ec2", nav: "EC2", title: "Instances", columns: ["Instance ID", "Instance state"] },
+  { path: "/ui/autoscaling", nav: "EC2 Auto Scaling", title: "Auto Scaling groups", columns: ["Name", "Desired capacity"] },
+  { path: "/ui/batch", nav: "AWS Batch", title: "Job queues", columns: ["Priority", "Compute environments"] },
+  { path: "/ui/efs", nav: "Elastic File System", title: "File systems", columns: ["File system ID", "Mount targets"] },
+  { path: "/ui/rds", nav: "RDS", title: "DB instances", columns: ["Size", "Storage"] },
+  { path: "/ui/dynamodb", nav: "DynamoDB", title: "Tables", columns: ["Name", "Partition key"] },
+  { path: "/ui/elasticache", nav: "ElastiCache", title: "Caches", columns: ["Cache name", "Node type"] },
+  { path: "/ui/vpc", nav: "VPC", title: "Your VPCs", columns: ["VPC ID", "IPv4 CIDR"] },
+  { path: "/ui/cloudfront", nav: "CloudFront", title: "Distributions", columns: ["Distribution ID", "Domain name"] },
+  { path: "/ui/route53", nav: "Route 53", title: "Hosted zones", columns: ["Domain name", "Record count"] },
+  { path: "/ui/apigateway", nav: "API Gateway", title: "REST APIs", columns: ["Description", "Endpoint type"] },
+  { path: "/ui/elb", nav: "Elastic Load Balancing", title: "Load balancers", columns: ["DNS name", "Scheme"] },
+  { path: "/ui/cloudmap", nav: "AWS Cloud Map", title: "Namespaces", columns: ["Namespace name", "Service count"] },
+  { path: "/ui/codebuild", nav: "CodeBuild", title: "Build projects", columns: ["Name", "Source provider"] },
+  { path: "/ui/amplify", nav: "AWS Amplify", title: "Apps", columns: ["App name", "Default domain"] },
+  { path: "/ui/kinesis", nav: "Kinesis Data Streams", title: "Data streams", columns: ["Stream name", "Open shards"] },
+  { path: "/ui/glue", nav: "AWS Glue", title: "Databases", columns: ["Description", "Location"] },
+  { path: "/ui/sns", nav: "Simple Notification Service", title: "Topics", columns: ["Name", "ARN"] },
+  { path: "/ui/sqs", nav: "Simple Queue Service", title: "Queues", columns: ["Name", "Messages available"] },
+  { path: "/ui/eventbridge", nav: "Amazon EventBridge", title: "Rules", columns: ["Event bus", "Schedule"] },
+  { path: "/ui/scheduler", nav: "Amazon EventBridge Scheduler", title: "Schedules", columns: ["Schedule name", "Target"] },
+  { path: "/ui/stepfunctions", nav: "AWS Step Functions", title: "State machines", columns: ["Name", "Type"] },
+  { path: "/ui/cloudwatch", nav: "CloudWatch", title: "Alarms", columns: ["Conditions", "Namespace"] },
+  { path: "/ui/cloudtrail", nav: "AWS CloudTrail", title: "Trails", columns: ["Name", "Home Region"] },
+  { path: "/ui/ssm", nav: "Systems Manager", title: "Parameter Store", columns: ["Tier", "Data type"] },
+  { path: "/ui/secretsmanager", nav: "Secrets Manager", title: "Secrets", columns: ["Secret name", "Rotation"] },
+  { path: "/ui/kms", nav: "Key Management Service", title: "Customer managed keys", columns: ["Key ID", "Key usage"] },
+  { path: "/ui/acm", nav: "AWS Certificate Manager", title: "Certificates", columns: ["Domain name", "Expires"] },
+  { path: "/ui/waf", nav: "AWS WAF", title: "Web ACLs", columns: ["Web ACL ID", "ARN"] },
+  { path: "/ui/budgets", nav: "AWS Budgets", title: "Budgets", columns: ["Budget name", "Budget type"] },
+];
+
+test.describe("Service coverage", () => {
+  for (const service of SERVICE_PAGES) {
+    test.describe(service.nav, () => {
+      test("renders its heading and real column headers", async ({ page }) => {
+        await page.goto(service.path);
+        await expect(page.getByRole("heading", { name: service.title })).toBeVisible();
+        for (const column of service.columns) {
+          await expect(page.getByRole("columnheader", { name: column, exact: true })).toBeVisible();
+        }
+      });
+
+      test("is reachable from the side navigation without a not-supported pill", async ({ page }) => {
+        await page.goto("/ui/");
+        const nav = page.getByRole("navigation", { name: "Service" });
+        const link = nav.getByRole("link", { name: service.nav, exact: true });
+        await expect(link.locator("xpath=ancestor::li[1]").getByText("Not supported")).toHaveCount(0);
+        await link.click();
+        await expect(page).toHaveURL(new RegExp(`${service.path}$`));
+        await expect(page.getByRole("heading", { name: service.title })).toBeVisible();
+        await expect(link).toHaveAttribute("aria-current", "page");
+        await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toContainText(service.nav);
+      });
+
+      test("passes an automated accessibility audit in both themes", async ({ page }) => {
+        for (const theme of ["light", "dark"] as const) {
+          await page.goto(service.path);
+          if (theme === "dark") await ensureTheme(page, "dark");
+          await expect(page.getByRole("heading", { name: service.title })).toBeVisible();
+          const results = await new AxeBuilder({ page }).analyze();
+          expect(results.violations, `${theme}: ${JSON.stringify(results.violations, null, 2)}`).toEqual([]);
+        }
+      });
+    });
+  }
+});
+
+// The detail routes the newly-covered services grew. Each renders its resource
+// identifier as the page heading and breadcrumbs under its own service before
+// any cloud read resolves, which is what this unauthenticated suite pins.
+const SERVICE_DETAIL_PAGES = [
+  { path: "/ui/ec2/i-0123456789abcdef0", heading: "i-0123456789abcdef0", crumbService: "EC2" },
+  { path: "/ui/vpc/vpc-0123456789abcdef0", heading: "vpc-0123456789abcdef0", crumbService: "VPC" },
+  { path: "/ui/dynamodb/orders", heading: "orders", crumbService: "DynamoDB" },
+  { path: "/ui/efs/fs-0123456789abcdef0", heading: "fs-0123456789abcdef0", crumbService: "Elastic File System" },
+  { path: "/ui/route53/Z0123456789ABCDEFGHIJ", heading: "Z0123456789ABCDEFGHIJ", crumbService: "Route 53" },
+];
+
+test.describe("Service detail pages", () => {
+  for (const detail of SERVICE_DETAIL_PAGES) {
+    test(`${detail.path} renders its resource heading and breadcrumb`, async ({ page }) => {
+      await page.goto(detail.path);
+      await expect(page.getByRole("heading", { name: detail.heading, exact: true })).toBeVisible();
+      const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+      await expect(crumbs).toContainText(detail.crumbService);
+      await expect(crumbs).toContainText(detail.heading);
+    });
+
+    test(`${detail.path} passes an automated accessibility audit in both themes`, async ({ page }) => {
+      for (const theme of ["light", "dark"] as const) {
+        await page.goto(detail.path);
+        if (theme === "dark") await ensureTheme(page, "dark");
+        await expect(page.getByRole("heading", { name: detail.heading, exact: true })).toBeVisible();
+        const results = await new AxeBuilder({ page }).analyze();
+        expect(results.violations, `${theme}: ${JSON.stringify(results.violations, null, 2)}`).toEqual([]);
+      }
+    });
+  }
+});
+
+// The write flows the newly-covered services offer. Like every other creation
+// dialog in this suite, the trigger and the dialog render before (and
+// regardless of) any cloud read, so the shell — the trigger, the fields, the
+// initially disabled submit, and focus management — is assertable here; the
+// authenticated create→appears-in-list loop belongs to the Shauth
+// relying-party suite.
+const SERVICE_CREATE_DIALOGS = [
+  {
+    path: "/ui/efs",
+    createTestId: "efs-create-file-system",
+    dialogName: "Create file system",
+    inputTestId: "efs-file-system-name-input",
+    submitTestId: "efs-create-file-system-submit",
+    validValue: "shared-workspace",
+  },
+  {
+    path: "/ui/dynamodb",
+    createTestId: "dynamodb-create-table",
+    dialogName: "Create table",
+    inputTestId: "dynamodb-table-name-input",
+    submitTestId: "dynamodb-create-table-submit",
+    validValue: "orders",
+    extraFill: { testId: "dynamodb-partition-key-input", value: "orderId" },
+  },
+  {
+    path: "/ui/sns",
+    createTestId: "sns-create-topic",
+    dialogName: "Create topic",
+    inputTestId: "sns-topic-name-input",
+    submitTestId: "sns-create-topic-submit",
+    validValue: "order-events",
+  },
+  {
+    path: "/ui/sqs",
+    createTestId: "sqs-create-queue",
+    dialogName: "Create queue",
+    inputTestId: "sqs-queue-name-input",
+    submitTestId: "sqs-create-queue-submit",
+    validValue: "order-queue",
+  },
+  {
+    path: "/ui/ssm",
+    createTestId: "ssm-create-parameter",
+    dialogName: "Create parameter",
+    inputTestId: "ssm-parameter-name-input",
+    submitTestId: "ssm-create-parameter-submit",
+    validValue: "/app/prod/database-url",
+    extraFill: { testId: "ssm-parameter-value-input", value: "postgres://db" },
+  },
+  {
+    path: "/ui/secretsmanager",
+    createTestId: "secrets-create-secret",
+    dialogName: "Store a new secret",
+    inputTestId: "secrets-secret-name-input",
+    submitTestId: "secrets-create-secret-submit",
+    validValue: "prod/db/password",
+    extraFill: { testId: "secrets-secret-value-input", value: "s3cr3t" },
+  },
+  {
+    path: "/ui/kms",
+    createTestId: "kms-create-key",
+    dialogName: "Create key",
+    inputTestId: "kms-key-description-input",
+    submitTestId: "kms-create-key-submit",
+    validValue: "Application data key",
+  },
+];
+
+test.describe("Service resource creation", () => {
+  for (const dialog of SERVICE_CREATE_DIALOGS) {
+    test(`${dialog.path} opens ${dialog.dialogName} with an initially disabled submit`, async ({ page }) => {
+      await page.goto(dialog.path);
+      const trigger = page.getByTestId(dialog.createTestId);
+      await expect(trigger).toBeVisible();
+      await trigger.click();
+      const modal = page.getByRole("dialog", { name: dialog.dialogName });
+      await expect(modal).toBeVisible();
+      await expect(modal.getByTestId(dialog.submitTestId)).toBeDisabled();
+      await modal.getByTestId(dialog.inputTestId).fill(dialog.validValue);
+      if (dialog.extraFill) {
+        await expect(modal.getByTestId(dialog.submitTestId)).toBeDisabled();
+        await modal.getByTestId(dialog.extraFill.testId).fill(dialog.extraFill.value);
+      }
+      await expect(modal.getByTestId(dialog.submitTestId)).toBeEnabled();
+      await modal.getByRole("button", { name: "Cancel" }).click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    });
+
+    test(`${dialog.path} traps focus in ${dialog.dialogName} and returns it to the trigger on Escape`, async ({
+      page,
+    }) => {
+      await page.goto(dialog.path);
+      const trigger = page.getByTestId(dialog.createTestId);
+      await trigger.click();
+      const modal = page.getByRole("dialog", { name: dialog.dialogName });
+      await expect(modal).toBeVisible();
+      await expect(modal.getByRole("button", { name: "Close" })).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    });
+
+    test(`the ${dialog.dialogName} dialog has no detectable violations in both themes`, async ({ page }) => {
+      for (const theme of ["light", "dark"] as const) {
+        await page.goto(dialog.path);
+        if (theme === "dark") await ensureTheme(page, "dark");
+        await page.getByTestId(dialog.createTestId).click();
+        await expect(page.getByRole("dialog", { name: dialog.dialogName })).toBeVisible();
+        // Cloudscape's Modal has a brief open transition; sampling colours
+        // mid-transition reads a transient, partially-composited blend rather
+        // than the settled result.
+        await page.waitForTimeout(400);
+        const results = await new AxeBuilder({ page }).analyze();
+        expect(results.violations, `${theme}: ${JSON.stringify(results.violations, null, 2)}`).toEqual([]);
+      }
+    });
   }
 });
 

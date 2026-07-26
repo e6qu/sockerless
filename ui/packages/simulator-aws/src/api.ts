@@ -1303,3 +1303,1910 @@ export const fetchCWLogEvents = async (logGroupName: string, logStreamName: stri
   );
   return (described.events ?? []).map((event) => ({ timestamp: event.timestamp ?? 0, message: event.message ?? "" }));
 };
+
+// ---------------------------------------------------------------------------
+// The rest of the AWS services this simulator implements.
+//
+// Every reader below drives the same real AWS API its service's own console
+// page drives — the operation names, wire protocols, request shapes and
+// response shapes are AWS's, reached through the same federated, SigV4-signed
+// `awsFetch` the readers above use. Nothing here is a simulator-specific
+// endpoint or a sockerless-invented summary.
+// ---------------------------------------------------------------------------
+
+// awsJson10 is the awsjson1.0 variant of `awsJson` — the protocol Amazon
+// DynamoDB, Amazon SQS, and AWS Step Functions speak. The wire differs from
+// awsjson1.1 only in the Content-Type the client declares; the target header,
+// the JSON body, and the `{"__type", "message"}` error shape are identical.
+async function awsJson10<T>(service: string, target: string, input: Record<string, unknown> = {}): Promise<T> {
+  const response = await awsFetch({
+    service,
+    method: "POST",
+    path: "/",
+    headers: { "content-type": "application/x-amz-json-1.0", "x-amz-target": target },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let type = "";
+    let message = "";
+    try {
+      const parsed = JSON.parse(text) as { __type?: string; message?: string; Message?: string };
+      type = parsed.__type ?? "";
+      message = parsed.message ?? parsed.Message ?? "";
+    } catch {
+      // Not the protocol's JSON error shape — the HTTP status is all there is.
+    }
+    const operation = target.slice(target.lastIndexOf(".") + 1);
+    const code = type.slice(type.lastIndexOf("#") + 1);
+    throw new AwsApiError(
+      code ? `${operation}: ${code}: ${message}` : `${operation} returned HTTP ${response.status}`,
+      code,
+    );
+  }
+  return (await response.json()) as T;
+}
+
+/** The direct element children of the first element named `container`, which is
+ * how every AWS Query- and REST-XML-protocol list is shaped: a wrapper element
+ * (`<Topics>`, `<vpcSet>`, `<DBInstances>`) holding one element per entry. */
+function xmlList(root: Document | Element, container: string): Element[] {
+  const found = root.getElementsByTagName(container)[0];
+  return found ? Array.from(found.children) : [];
+}
+
+/**
+ * The text of a *direct child* element, which is the only safe way to read a
+ * field off an AWS XML entry. A descendant search finds the first element with
+ * that name anywhere beneath it, and AWS's own shapes nest the same names at
+ * several depths — a CloudFront DistributionSummary carries its own `Enabled`
+ * flag *after* a `DefaultCacheBehavior` whose `TrustedSigners` has an `Enabled`
+ * of its own, so a descendant search reads the wrong one.
+ */
+function childText(parent: Element, tag: string): string {
+  for (const child of Array.from(parent.children)) {
+    if (child.tagName === tag) return child.textContent ?? "";
+  }
+  return "";
+}
+
+/** The first direct child element named `tag`, for a nested structure a caller
+ * then reads fields out of (`<Endpoint><Address>…`). */
+function childElement(parent: Element, tag: string): Element | undefined {
+  for (const child of Array.from(parent.children)) {
+    if (child.tagName === tag) return child;
+  }
+  return undefined;
+}
+
+/** Query-protocol form parameters for a list argument, which AWS flattens as
+ * `<Name>.1`, `<Name>.2`, … (`InstanceId.1=i-abc`). */
+function xmlIndexedParams(name: string, values: string[]): Record<string, string> {
+  return Object.fromEntries(values.map((value, index) => [`${name}.${index + 1}`, value]));
+}
+
+/** An AWS resource tag set, as every EC2-family XML response carries it. */
+function xmlTags(element: Element): Record<string, string> {
+  const tags: Record<string, string> = {};
+  for (const item of xmlList(element, "tagSet")) {
+    const key = childText(item, "key");
+    if (key) tags[key] = childText(item, "value");
+  }
+  return tags;
+}
+
+// ---------------------------------------------------------------------------
+// Amazon Elastic Compute Cloud (EC2) — the Query protocol
+// (Action + Version=2016-11-15, form-encoded, XML responses).
+// ---------------------------------------------------------------------------
+
+const EC2_VERSION = "2016-11-15";
+
+export interface EC2Instance {
+  instanceId: string;
+  name: string;
+  instanceType: string;
+  state: string;
+  imageId: string;
+  privateIpAddress: string;
+  publicIpAddress: string;
+  launchTime: string;
+  availabilityZone: string;
+  vpcId: string;
+  subnetId: string;
+  keyName: string;
+  architecture: string;
+  securityGroups: { groupId: string; groupName: string }[];
+}
+
+function ec2InstanceFromElement(item: Element): EC2Instance {
+  const tags = xmlTags(item);
+  const instanceState = childElement(item, "instanceState");
+  const placement = childElement(item, "placement");
+  return {
+    instanceId: childText(item, "instanceId"),
+    name: tags.Name ?? "",
+    instanceType: childText(item, "instanceType"),
+    state: instanceState ? childText(instanceState, "name") : "",
+    imageId: childText(item, "imageId"),
+    privateIpAddress: childText(item, "privateIpAddress"),
+    publicIpAddress: childText(item, "ipAddress"),
+    launchTime: childText(item, "launchTime"),
+    availabilityZone: placement ? childText(placement, "availabilityZone") : "",
+    vpcId: childText(item, "vpcId"),
+    subnetId: childText(item, "subnetId"),
+    keyName: childText(item, "keyName"),
+    architecture: childText(item, "architecture"),
+    securityGroups: xmlList(item, "groupSet").map((group) => ({
+      groupId: childText(group, "groupId"),
+      groupName: childText(group, "groupName"),
+    })),
+  };
+}
+
+// DescribeInstances answers reservations, each holding the instances launched
+// by one RunInstances call; the real console's Instances table flattens them,
+// so this reader does the same.
+export const fetchEC2Instances = async (): Promise<EC2Instance[]> => {
+  const xml = await awsQuery("ec2", EC2_VERSION, "DescribeInstances");
+  const instances: EC2Instance[] = [];
+  for (const reservation of xmlList(xml, "reservationSet")) {
+    for (const item of xmlList(reservation, "instancesSet")) {
+      instances.push(ec2InstanceFromElement(item));
+    }
+  }
+  return instances;
+};
+
+export const fetchEC2Instance = async (instanceId: string): Promise<EC2Instance> => {
+  const xml = await awsQuery("ec2", EC2_VERSION, "DescribeInstances", { "InstanceId.1": instanceId });
+  for (const reservation of xmlList(xml, "reservationSet")) {
+    for (const item of xmlList(reservation, "instancesSet")) {
+      return ec2InstanceFromElement(item);
+    }
+  }
+  throw new Error(`DescribeInstances returned no instance for ${instanceId}`);
+};
+
+// The three instance lifecycle actions the real console's Instance state menu
+// offers. Each is the real EC2 operation, taking the same InstanceId list.
+export const startEC2Instances = async (instanceIds: string[]): Promise<void> => {
+  await awsQuery("ec2", EC2_VERSION, "StartInstances", xmlIndexedParams("InstanceId", instanceIds));
+};
+
+export const stopEC2Instances = async (instanceIds: string[]): Promise<void> => {
+  await awsQuery("ec2", EC2_VERSION, "StopInstances", xmlIndexedParams("InstanceId", instanceIds));
+};
+
+export const rebootEC2Instances = async (instanceIds: string[]): Promise<void> => {
+  await awsQuery("ec2", EC2_VERSION, "RebootInstances", xmlIndexedParams("InstanceId", instanceIds));
+};
+
+export const terminateEC2Instances = async (instanceIds: string[]): Promise<void> => {
+  await awsQuery("ec2", EC2_VERSION, "TerminateInstances", xmlIndexedParams("InstanceId", instanceIds));
+};
+
+export interface EC2Vpc {
+  vpcId: string;
+  name: string;
+  cidrBlock: string;
+  state: string;
+  isDefault: boolean;
+  dhcpOptionsId: string;
+  instanceTenancy: string;
+}
+
+export const fetchEC2Vpcs = async (): Promise<EC2Vpc[]> => {
+  const xml = await awsQuery("ec2", EC2_VERSION, "DescribeVpcs");
+  return xmlList(xml, "vpcSet").map((item) => ({
+    vpcId: childText(item, "vpcId"),
+    name: xmlTags(item).Name ?? "",
+    cidrBlock: childText(item, "cidrBlock"),
+    state: childText(item, "state"),
+    isDefault: childText(item, "isDefault") === "true",
+    dhcpOptionsId: childText(item, "dhcpOptionsId"),
+    instanceTenancy: childText(item, "instanceTenancy"),
+  }));
+};
+
+export interface EC2Subnet {
+  subnetId: string;
+  name: string;
+  vpcId: string;
+  cidrBlock: string;
+  availabilityZone: string;
+  state: string;
+  availableIpAddressCount: number;
+  mapPublicIpOnLaunch: boolean;
+}
+
+// DescribeSubnets narrowed by VPC uses EC2's own `Filter.N` form — the same
+// filter the real console's VPC detail page applies.
+export const fetchEC2Subnets = async (vpcId?: string): Promise<EC2Subnet[]> => {
+  const params: Record<string, string> = vpcId ? { "Filter.1.Name": "vpc-id", "Filter.1.Value.1": vpcId } : {};
+  const xml = await awsQuery("ec2", EC2_VERSION, "DescribeSubnets", params);
+  return xmlList(xml, "subnetSet").map((item) => ({
+    subnetId: childText(item, "subnetId"),
+    name: xmlTags(item).Name ?? "",
+    vpcId: childText(item, "vpcId"),
+    cidrBlock: childText(item, "cidrBlock"),
+    availabilityZone: childText(item, "availabilityZone"),
+    state: childText(item, "state"),
+    availableIpAddressCount: Number(childText(item, "availableIpAddressCount") || "0"),
+    mapPublicIpOnLaunch: childText(item, "mapPublicIpOnLaunch") === "true",
+  }));
+};
+
+export interface EC2SecurityGroup {
+  groupId: string;
+  groupName: string;
+  description: string;
+  vpcId: string;
+}
+
+export const fetchEC2SecurityGroups = async (vpcId?: string): Promise<EC2SecurityGroup[]> => {
+  const params: Record<string, string> = vpcId ? { "Filter.1.Name": "vpc-id", "Filter.1.Value.1": vpcId } : {};
+  const xml = await awsQuery("ec2", EC2_VERSION, "DescribeSecurityGroups", params);
+  return xmlList(xml, "securityGroupInfo").map((item) => ({
+    groupId: childText(item, "groupId"),
+    groupName: childText(item, "groupName"),
+    description: childText(item, "groupDescription"),
+    vpcId: childText(item, "vpcId"),
+  }));
+};
+
+export interface EC2Volume {
+  volumeId: string;
+  size: number;
+  state: string;
+  volumeType: string;
+  availabilityZone: string;
+  createTime: string;
+  encrypted: boolean;
+}
+
+export const fetchEC2Volumes = async (): Promise<EC2Volume[]> => {
+  const xml = await awsQuery("ec2", EC2_VERSION, "DescribeVolumes");
+  return xmlList(xml, "volumeSet").map((item) => ({
+    volumeId: childText(item, "volumeId"),
+    size: Number(childText(item, "size") || "0"),
+    state: childText(item, "status"),
+    volumeType: childText(item, "volumeType"),
+    availabilityZone: childText(item, "availabilityZone"),
+    createTime: childText(item, "createTime"),
+    encrypted: childText(item, "encrypted") === "true",
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Amazon EC2 Auto Scaling — the Query protocol (Version=2011-01-01).
+// ---------------------------------------------------------------------------
+
+export interface AutoScalingGroup {
+  name: string;
+  arn: string;
+  minSize: number;
+  maxSize: number;
+  desiredCapacity: number;
+  healthCheckType: string;
+  instanceCount: number;
+  availabilityZones: string[];
+  createdTime: string;
+}
+
+export const fetchAutoScalingGroups = async (): Promise<AutoScalingGroup[]> => {
+  const xml = await awsQuery("autoscaling", "2011-01-01", "DescribeAutoScalingGroups");
+  return xmlList(xml, "AutoScalingGroups").map((member) => ({
+    name: childText(member, "AutoScalingGroupName"),
+    arn: childText(member, "AutoScalingGroupARN"),
+    minSize: Number(childText(member, "MinSize") || "0"),
+    maxSize: Number(childText(member, "MaxSize") || "0"),
+    desiredCapacity: Number(childText(member, "DesiredCapacity") || "0"),
+    healthCheckType: childText(member, "HealthCheckType"),
+    instanceCount: xmlList(member, "Instances").length,
+    availabilityZones: xmlList(member, "AvailabilityZones").map((zone) => zone.textContent ?? ""),
+    createdTime: childText(member, "CreatedTime"),
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// AWS Batch — the REST-JSON protocol (POST /v1/<operation>).
+// ---------------------------------------------------------------------------
+
+export interface BatchJobQueue {
+  jobQueueName: string;
+  jobQueueArn: string;
+  state: string;
+  status: string;
+  priority: number;
+  computeEnvironments: string[];
+}
+
+export const fetchBatchJobQueues = async (): Promise<BatchJobQueue[]> => {
+  const described = await restJson<{
+    jobQueues?: {
+      jobQueueName?: string;
+      jobQueueArn?: string;
+      state?: string;
+      status?: string;
+      priority?: number;
+      computeEnvironmentOrder?: { computeEnvironment?: string }[];
+    }[];
+  }>("batch", "POST", "/v1/describejobqueues", {});
+  return (described.jobQueues ?? []).map((queue) => ({
+    jobQueueName: queue.jobQueueName ?? "",
+    jobQueueArn: queue.jobQueueArn ?? "",
+    state: queue.state ?? "",
+    status: queue.status ?? "",
+    priority: queue.priority ?? 0,
+    computeEnvironments: (queue.computeEnvironmentOrder ?? []).map((entry) => entry.computeEnvironment ?? ""),
+  }));
+};
+
+export interface BatchComputeEnvironment {
+  computeEnvironmentName: string;
+  computeEnvironmentArn: string;
+  type: string;
+  state: string;
+  status: string;
+  serviceRole: string;
+}
+
+export const fetchBatchComputeEnvironments = async (): Promise<BatchComputeEnvironment[]> => {
+  const described = await restJson<{
+    computeEnvironments?: {
+      computeEnvironmentName?: string;
+      computeEnvironmentArn?: string;
+      type?: string;
+      state?: string;
+      status?: string;
+      serviceRole?: string;
+    }[];
+  }>("batch", "POST", "/v1/describecomputeenvironments", {});
+  return (described.computeEnvironments ?? []).map((env) => ({
+    computeEnvironmentName: env.computeEnvironmentName ?? "",
+    computeEnvironmentArn: env.computeEnvironmentArn ?? "",
+    type: env.type ?? "",
+    state: env.state ?? "",
+    status: env.status ?? "",
+    serviceRole: env.serviceRole ?? "",
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Amazon Elastic File System (EFS) — the REST-JSON protocol.
+// ---------------------------------------------------------------------------
+
+export interface EFSFileSystem {
+  fileSystemId: string;
+  name: string;
+  lifeCycleState: string;
+  performanceMode: string;
+  throughputMode: string;
+  sizeInBytes: number;
+  numberOfMountTargets: number;
+  creationTime: number;
+  encrypted: boolean;
+}
+
+interface EFSFileSystemWire {
+  FileSystemId?: string;
+  Name?: string;
+  LifeCycleState?: string;
+  PerformanceMode?: string;
+  ThroughputMode?: string;
+  SizeInBytes?: { Value?: number };
+  NumberOfMountTargets?: number;
+  CreationTime?: number;
+  Encrypted?: boolean;
+}
+
+const efsFileSystemFromWire = (fs: EFSFileSystemWire): EFSFileSystem => ({
+  fileSystemId: fs.FileSystemId ?? "",
+  name: fs.Name ?? "",
+  lifeCycleState: fs.LifeCycleState ?? "",
+  performanceMode: fs.PerformanceMode ?? "",
+  throughputMode: fs.ThroughputMode ?? "",
+  sizeInBytes: fs.SizeInBytes?.Value ?? 0,
+  numberOfMountTargets: fs.NumberOfMountTargets ?? 0,
+  creationTime: fs.CreationTime ?? 0,
+  encrypted: fs.Encrypted ?? false,
+});
+
+export const fetchEFSFileSystems = async (): Promise<EFSFileSystem[]> => {
+  const listed = await awsRestJson<{ FileSystems?: EFSFileSystemWire[] }>("elasticfilesystem", "/2015-02-01/file-systems");
+  return (listed.FileSystems ?? []).map(efsFileSystemFromWire);
+};
+
+// CreateFileSystem takes a caller-supplied idempotency token; the real console
+// generates one per create, which is what `crypto.randomUUID` does here.
+export const createEFSFileSystem = async (name: string): Promise<void> => {
+  await restJson("elasticfilesystem", "POST", "/2015-02-01/file-systems", {
+    CreationToken: crypto.randomUUID(),
+    Tags: [{ Key: "Name", Value: name }],
+  });
+};
+
+export const deleteEFSFileSystem = async (fileSystemId: string): Promise<void> => {
+  await restJson("elasticfilesystem", "DELETE", `/2015-02-01/file-systems/${encodeURIComponent(fileSystemId)}`);
+};
+
+export interface EFSMountTarget {
+  mountTargetId: string;
+  fileSystemId: string;
+  subnetId: string;
+  lifeCycleState: string;
+  ipAddress: string;
+  availabilityZoneName: string;
+}
+
+export const fetchEFSMountTargets = async (fileSystemId: string): Promise<EFSMountTarget[]> => {
+  const listed = await awsRestJson<{
+    MountTargets?: {
+      MountTargetId?: string;
+      FileSystemId?: string;
+      SubnetId?: string;
+      LifeCycleState?: string;
+      IpAddress?: string;
+      AvailabilityZoneName?: string;
+    }[];
+  }>("elasticfilesystem", `/2015-02-01/mount-targets?FileSystemId=${encodeURIComponent(fileSystemId)}`);
+  return (listed.MountTargets ?? []).map((target) => ({
+    mountTargetId: target.MountTargetId ?? "",
+    fileSystemId: target.FileSystemId ?? "",
+    subnetId: target.SubnetId ?? "",
+    lifeCycleState: target.LifeCycleState ?? "",
+    ipAddress: target.IpAddress ?? "",
+    availabilityZoneName: target.AvailabilityZoneName ?? "",
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Amazon Relational Database Service (RDS) — the Query protocol
+// (Version=2014-10-31).
+// ---------------------------------------------------------------------------
+
+const RDS_VERSION = "2014-10-31";
+
+export interface RDSInstance {
+  dbInstanceIdentifier: string;
+  engine: string;
+  engineVersion: string;
+  status: string;
+  dbInstanceClass: string;
+  endpointAddress: string;
+  endpointPort: number;
+  availabilityZone: string;
+  allocatedStorage: number;
+  multiAZ: boolean;
+  arn: string;
+}
+
+export const fetchRDSInstances = async (): Promise<RDSInstance[]> => {
+  const xml = await awsQuery("rds", RDS_VERSION, "DescribeDBInstances");
+  return xmlList(xml, "DBInstances").map((item) => {
+    const endpoint = childElement(item, "Endpoint");
+    return {
+      dbInstanceIdentifier: childText(item, "DBInstanceIdentifier"),
+      engine: childText(item, "Engine"),
+      engineVersion: childText(item, "EngineVersion"),
+      status: childText(item, "DBInstanceStatus"),
+      dbInstanceClass: childText(item, "DBInstanceClass"),
+      endpointAddress: endpoint ? childText(endpoint, "Address") : "",
+      endpointPort: endpoint ? Number(childText(endpoint, "Port") || "0") : 0,
+      availabilityZone: childText(item, "AvailabilityZone"),
+      allocatedStorage: Number(childText(item, "AllocatedStorage") || "0"),
+      multiAZ: childText(item, "MultiAZ") === "true",
+      arn: childText(item, "DBInstanceArn"),
+    };
+  });
+};
+
+export interface RDSCluster {
+  dbClusterIdentifier: string;
+  engine: string;
+  engineVersion: string;
+  status: string;
+  endpoint: string;
+  arn: string;
+}
+
+export const fetchRDSClusters = async (): Promise<RDSCluster[]> => {
+  const xml = await awsQuery("rds", RDS_VERSION, "DescribeDBClusters");
+  return xmlList(xml, "DBClusters").map((item) => ({
+    dbClusterIdentifier: childText(item, "DBClusterIdentifier"),
+    engine: childText(item, "Engine"),
+    engineVersion: childText(item, "EngineVersion"),
+    status: childText(item, "Status"),
+    endpoint: childText(item, "Endpoint"),
+    arn: childText(item, "DBClusterArn"),
+  }));
+};
+
+// DeleteDBInstance without a final snapshot is what the real console's delete
+// dialog sends when the operator clears "Create final snapshot"; the console
+// states that plainly before it asks for confirmation.
+export const deleteRDSInstance = async (dbInstanceIdentifier: string): Promise<void> => {
+  await awsQuery("rds", RDS_VERSION, "DeleteDBInstance", {
+    DBInstanceIdentifier: dbInstanceIdentifier,
+    SkipFinalSnapshot: "true",
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Amazon DynamoDB — awsjson1.0, X-Amz-Target DynamoDB_20120810.<Op>.
+// ---------------------------------------------------------------------------
+
+const DDB_TARGET_PREFIX = "DynamoDB_20120810.";
+
+const ddbJson = <T>(operation: string, input: Record<string, unknown> = {}): Promise<T> =>
+  awsJson10<T>("dynamodb", `${DDB_TARGET_PREFIX}${operation}`, input);
+
+export interface DynamoDBTable {
+  tableName: string;
+  tableStatus: string;
+  tableArn: string;
+  itemCount: number;
+  tableSizeBytes: number;
+  partitionKey: string;
+  sortKey: string;
+  billingMode: string;
+  creationDateTime: number;
+  globalSecondaryIndexes: string[];
+}
+
+interface DDBTableDescriptionWire {
+  TableName?: string;
+  TableStatus?: string;
+  TableArn?: string;
+  ItemCount?: number;
+  TableSizeBytes?: number;
+  CreationDateTime?: number;
+  KeySchema?: { AttributeName?: string; KeyType?: string }[];
+  BillingModeSummary?: { BillingMode?: string };
+  GlobalSecondaryIndexes?: { IndexName?: string }[];
+}
+
+const ddbTableFromWire = (table: DDBTableDescriptionWire, fallbackName: string): DynamoDBTable => {
+  const schema = table.KeySchema ?? [];
+  return {
+    tableName: table.TableName ?? fallbackName,
+    tableStatus: table.TableStatus ?? "",
+    tableArn: table.TableArn ?? "",
+    itemCount: table.ItemCount ?? 0,
+    tableSizeBytes: table.TableSizeBytes ?? 0,
+    partitionKey: schema.find((key) => key.KeyType === "HASH")?.AttributeName ?? "",
+    sortKey: schema.find((key) => key.KeyType === "RANGE")?.AttributeName ?? "",
+    billingMode: table.BillingModeSummary?.BillingMode ?? "PROVISIONED",
+    creationDateTime: table.CreationDateTime ?? 0,
+    globalSecondaryIndexes: (table.GlobalSecondaryIndexes ?? []).map((index) => index.IndexName ?? ""),
+  };
+};
+
+// DynamoDB has no operation that answers a table's properties for every table
+// at once: ListTables answers names, and DescribeTable answers one table's
+// description — the same two calls the real console's Tables page makes.
+export const fetchDynamoDBTables = async (): Promise<DynamoDBTable[]> => {
+  const listed = await ddbJson<{ TableNames?: string[] }>("ListTables");
+  const tables: DynamoDBTable[] = [];
+  for (const name of listed.TableNames ?? []) {
+    const described = await ddbJson<{ Table?: DDBTableDescriptionWire }>("DescribeTable", { TableName: name });
+    tables.push(ddbTableFromWire(described.Table ?? {}, name));
+  }
+  return tables;
+};
+
+export const fetchDynamoDBTable = async (tableName: string): Promise<DynamoDBTable> => {
+  const described = await ddbJson<{ Table?: DDBTableDescriptionWire }>("DescribeTable", { TableName: tableName });
+  if (!described.Table) throw new Error(`DescribeTable returned no Table for ${tableName}`);
+  return ddbTableFromWire(described.Table, tableName);
+};
+
+export interface CreateDynamoDBTableInput {
+  tableName: string;
+  partitionKey: string;
+  partitionKeyType: "S" | "N" | "B";
+  sortKey?: string;
+  sortKeyType?: "S" | "N" | "B";
+}
+
+// CreateTable in the real console's default "on-demand" mode: PAY_PER_REQUEST
+// billing, a partition key, and an optional sort key.
+export const createDynamoDBTable = async (input: CreateDynamoDBTableInput): Promise<void> => {
+  const attributeDefinitions = [{ AttributeName: input.partitionKey, AttributeType: input.partitionKeyType }];
+  const keySchema = [{ AttributeName: input.partitionKey, KeyType: "HASH" }];
+  if (input.sortKey) {
+    attributeDefinitions.push({ AttributeName: input.sortKey, AttributeType: input.sortKeyType ?? "S" });
+    keySchema.push({ AttributeName: input.sortKey, KeyType: "RANGE" });
+  }
+  await ddbJson("CreateTable", {
+    TableName: input.tableName,
+    AttributeDefinitions: attributeDefinitions,
+    KeySchema: keySchema,
+    BillingMode: "PAY_PER_REQUEST",
+  });
+};
+
+export const deleteDynamoDBTable = async (tableName: string): Promise<void> => {
+  await ddbJson("DeleteTable", { TableName: tableName });
+};
+
+// ---------------------------------------------------------------------------
+// Amazon ElastiCache — the Query protocol (Version=2015-02-02).
+// ---------------------------------------------------------------------------
+
+export interface ElastiCacheCluster {
+  cacheClusterId: string;
+  engine: string;
+  engineVersion: string;
+  status: string;
+  cacheNodeType: string;
+  numCacheNodes: number;
+  preferredAvailabilityZone: string;
+  arn: string;
+}
+
+export const fetchElastiCacheClusters = async (): Promise<ElastiCacheCluster[]> => {
+  const xml = await awsQuery("elasticache", "2015-02-02", "DescribeCacheClusters");
+  return xmlList(xml, "CacheClusters").map((item) => ({
+    cacheClusterId: childText(item, "CacheClusterId"),
+    engine: childText(item, "Engine"),
+    engineVersion: childText(item, "EngineVersion"),
+    status: childText(item, "CacheClusterStatus"),
+    cacheNodeType: childText(item, "CacheNodeType"),
+    numCacheNodes: Number(childText(item, "NumCacheNodes") || "0"),
+    preferredAvailabilityZone: childText(item, "PreferredAvailabilityZone"),
+    arn: childText(item, "ARN"),
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Amazon CloudFront — the REST-XML protocol (GET /2020-05-31/distribution).
+// ---------------------------------------------------------------------------
+
+export interface CloudFrontDistribution {
+  id: string;
+  arn: string;
+  status: string;
+  domainName: string;
+  comment: string;
+  enabled: boolean;
+  lastModifiedTime: string;
+  aliases: string[];
+  origins: string[];
+  priceClass: string;
+  httpVersion: string;
+}
+
+export const fetchCloudFrontDistributions = async (): Promise<CloudFrontDistribution[]> => {
+  const xml = await awsRestXml("cloudfront", "/2020-05-31/distribution");
+  return xmlList(xml, "Items").map((summary) => ({
+    id: childText(summary, "Id"),
+    arn: childText(summary, "ARN"),
+    status: childText(summary, "Status"),
+    domainName: childText(summary, "DomainName"),
+    comment: childText(summary, "Comment"),
+    enabled: childText(summary, "Enabled") === "true",
+    lastModifiedTime: childText(summary, "LastModifiedTime"),
+    aliases: Array.from(childElement(summary, "Aliases")?.getElementsByTagName("CNAME") ?? []).map(
+      (alias) => alias.textContent ?? "",
+    ),
+    origins: Array.from(childElement(summary, "Origins")?.getElementsByTagName("DomainName") ?? []).map(
+      (origin) => origin.textContent ?? "",
+    ),
+    priceClass: childText(summary, "PriceClass"),
+    httpVersion: childText(summary, "HttpVersion"),
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Amazon Route 53 — the REST-XML protocol (GET /2013-04-01/hostedzone).
+// ---------------------------------------------------------------------------
+
+export interface Route53HostedZone {
+  id: string;
+  name: string;
+  comment: string;
+  privateZone: boolean;
+  resourceRecordSetCount: number;
+}
+
+// A hosted zone's Id arrives as the resource path `/hostedzone/Z123`; every
+// Route 53 operation that takes one accepts the bare id, which is also what
+// the real console shows.
+function route53ZoneId(path: string): string {
+  return path.replace(/^\/hostedzone\//, "");
+}
+
+export const fetchRoute53HostedZones = async (): Promise<Route53HostedZone[]> => {
+  const xml = await awsRestXml("route53", "/2013-04-01/hostedzone");
+  return xmlList(xml, "HostedZones").map((zone) => {
+    const config = childElement(zone, "Config");
+    return {
+      id: route53ZoneId(childText(zone, "Id")),
+      name: childText(zone, "Name"),
+      comment: config ? childText(config, "Comment") : "",
+      privateZone: config ? childText(config, "PrivateZone") === "true" : false,
+      resourceRecordSetCount: Number(childText(zone, "ResourceRecordSetCount") || "0"),
+    };
+  });
+};
+
+export interface Route53RecordSet {
+  name: string;
+  type: string;
+  ttl: number;
+  values: string[];
+}
+
+export const fetchRoute53RecordSets = async (hostedZoneId: string): Promise<Route53RecordSet[]> => {
+  const xml = await awsRestXml("route53", `/2013-04-01/hostedzone/${encodeURIComponent(hostedZoneId)}/rrset`);
+  return xmlList(xml, "ResourceRecordSets").map((record) => ({
+    name: childText(record, "Name"),
+    type: childText(record, "Type"),
+    ttl: Number(childText(record, "TTL") || "0"),
+    values: Array.from(record.getElementsByTagName("Value")).map((value) => value.textContent ?? ""),
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Amazon API Gateway — REST-JSON. The v1 (REST API) and v2 (HTTP and WebSocket
+// API) surfaces are separate AWS APIs on separate paths, which is why the
+// console reads both.
+// ---------------------------------------------------------------------------
+
+export interface APIGatewayRestApi {
+  id: string;
+  name: string;
+  description: string;
+  createdDate: number;
+  apiKeySource: string;
+  endpointTypes: string[];
+}
+
+export const fetchAPIGatewayRestApis = async (): Promise<APIGatewayRestApi[]> => {
+  const listed = await awsRestJson<{
+    item?: {
+      id?: string;
+      name?: string;
+      description?: string;
+      createdDate?: number;
+      apiKeySource?: string;
+      endpointConfiguration?: { types?: string[] };
+    }[];
+  }>("apigateway", "/restapis");
+  return (listed.item ?? []).map((api) => ({
+    id: api.id ?? "",
+    name: api.name ?? "",
+    description: api.description ?? "",
+    createdDate: api.createdDate ?? 0,
+    apiKeySource: api.apiKeySource ?? "",
+    endpointTypes: api.endpointConfiguration?.types ?? [],
+  }));
+};
+
+export interface APIGatewayV2Api {
+  apiId: string;
+  name: string;
+  protocolType: string;
+  apiEndpoint: string;
+  routeSelectionExpression: string;
+  createdDate: string;
+}
+
+export const fetchAPIGatewayV2Apis = async (): Promise<APIGatewayV2Api[]> => {
+  const listed = await awsRestJson<{
+    Items?: {
+      ApiId?: string;
+      Name?: string;
+      ProtocolType?: string;
+      ApiEndpoint?: string;
+      RouteSelectionExpression?: string;
+      CreatedDate?: string;
+    }[];
+  }>("apigateway", "/v2/apis");
+  return (listed.Items ?? []).map((api) => ({
+    apiId: api.ApiId ?? "",
+    name: api.Name ?? "",
+    protocolType: api.ProtocolType ?? "",
+    apiEndpoint: api.ApiEndpoint ?? "",
+    routeSelectionExpression: api.RouteSelectionExpression ?? "",
+    createdDate: api.CreatedDate ?? "",
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Elastic Load Balancing — the Query protocol (Version=2015-12-01), the API
+// behind Application, Network, and Gateway Load Balancers.
+// ---------------------------------------------------------------------------
+
+const ELBV2_VERSION = "2015-12-01";
+
+export interface LoadBalancer {
+  loadBalancerArn: string;
+  loadBalancerName: string;
+  dnsName: string;
+  type: string;
+  scheme: string;
+  state: string;
+  vpcId: string;
+  availabilityZones: string[];
+}
+
+export const fetchLoadBalancers = async (): Promise<LoadBalancer[]> => {
+  const xml = await awsQuery("elasticloadbalancing", ELBV2_VERSION, "DescribeLoadBalancers");
+  return xmlList(xml, "LoadBalancers").map((member) => {
+    const state = childElement(member, "State");
+    return {
+      loadBalancerArn: childText(member, "LoadBalancerArn"),
+      loadBalancerName: childText(member, "LoadBalancerName"),
+      dnsName: childText(member, "DNSName"),
+      type: childText(member, "Type"),
+      scheme: childText(member, "Scheme"),
+      state: state ? childText(state, "Code") : "",
+      vpcId: childText(member, "VpcId"),
+      availabilityZones: xmlList(member, "AvailabilityZones").map((zone) => childText(zone, "ZoneName")),
+    };
+  });
+};
+
+export interface TargetGroup {
+  targetGroupArn: string;
+  targetGroupName: string;
+  protocol: string;
+  port: number;
+  targetType: string;
+  vpcId: string;
+  healthCheckPath: string;
+}
+
+export const fetchTargetGroups = async (): Promise<TargetGroup[]> => {
+  const xml = await awsQuery("elasticloadbalancing", ELBV2_VERSION, "DescribeTargetGroups");
+  return xmlList(xml, "TargetGroups").map((member) => ({
+    targetGroupArn: childText(member, "TargetGroupArn"),
+    targetGroupName: childText(member, "TargetGroupName"),
+    protocol: childText(member, "Protocol"),
+    port: Number(childText(member, "Port") || "0"),
+    targetType: childText(member, "TargetType"),
+    vpcId: childText(member, "VpcId"),
+    healthCheckPath: childText(member, "HealthCheckPath"),
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// AWS Cloud Map — awsjson1.1, X-Amz-Target Route53AutoNaming_v20170314.<Op>.
+// ---------------------------------------------------------------------------
+
+const CLOUDMAP_TARGET_PREFIX = "Route53AutoNaming_v20170314.";
+
+export interface CloudMapNamespace {
+  id: string;
+  arn: string;
+  name: string;
+  type: string;
+  description: string;
+  serviceCount: number;
+  createDate: number;
+}
+
+export const fetchCloudMapNamespaces = async (): Promise<CloudMapNamespace[]> => {
+  const listed = await awsJson<{
+    Namespaces?: {
+      Id?: string;
+      Arn?: string;
+      Name?: string;
+      Type?: string;
+      Description?: string;
+      ServiceCount?: number;
+      CreateDate?: number;
+    }[];
+  }>("servicediscovery", `${CLOUDMAP_TARGET_PREFIX}ListNamespaces`, {});
+  return (listed.Namespaces ?? []).map((namespace) => ({
+    id: namespace.Id ?? "",
+    arn: namespace.Arn ?? "",
+    name: namespace.Name ?? "",
+    type: namespace.Type ?? "",
+    description: namespace.Description ?? "",
+    serviceCount: namespace.ServiceCount ?? 0,
+    createDate: namespace.CreateDate ?? 0,
+  }));
+};
+
+export interface CloudMapService {
+  id: string;
+  arn: string;
+  name: string;
+  description: string;
+  instanceCount: number;
+  createDate: number;
+}
+
+export const fetchCloudMapServices = async (): Promise<CloudMapService[]> => {
+  const listed = await awsJson<{
+    Services?: { Id?: string; Arn?: string; Name?: string; Description?: string; InstanceCount?: number; CreateDate?: number }[];
+  }>("servicediscovery", `${CLOUDMAP_TARGET_PREFIX}ListServices`, {});
+  return (listed.Services ?? []).map((service) => ({
+    id: service.Id ?? "",
+    arn: service.Arn ?? "",
+    name: service.Name ?? "",
+    description: service.Description ?? "",
+    instanceCount: service.InstanceCount ?? 0,
+    createDate: service.CreateDate ?? 0,
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// AWS CodeBuild — awsjson1.1, X-Amz-Target CodeBuild_20161006.<Op>.
+// ---------------------------------------------------------------------------
+
+export interface CodeBuildProject {
+  name: string;
+  arn: string;
+  sourceType: string;
+  environmentImage: string;
+  environmentType: string;
+  serviceRole: string;
+  created: number;
+  lastModified: number;
+}
+
+// ListProjects answers names; BatchGetProjects answers the descriptions — the
+// same two calls the real console's Build projects page makes.
+export const fetchCodeBuildProjects = async (): Promise<CodeBuildProject[]> => {
+  const listed = await awsJson<{ projects?: string[] }>("codebuild", "CodeBuild_20161006.ListProjects", {});
+  const names = listed.projects ?? [];
+  if (names.length === 0) return [];
+  const described = await awsJson<{
+    projects?: {
+      name?: string;
+      arn?: string;
+      source?: { type?: string };
+      environment?: { image?: string; type?: string };
+      serviceRole?: string;
+      created?: number;
+      lastModified?: number;
+    }[];
+  }>("codebuild", "CodeBuild_20161006.BatchGetProjects", { names });
+  return (described.projects ?? []).map((project) => ({
+    name: project.name ?? "",
+    arn: project.arn ?? "",
+    sourceType: project.source?.type ?? "",
+    environmentImage: project.environment?.image ?? "",
+    environmentType: project.environment?.type ?? "",
+    serviceRole: project.serviceRole ?? "",
+    created: project.created ?? 0,
+    lastModified: project.lastModified ?? 0,
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// AWS Amplify — the REST-JSON protocol (GET /apps).
+// ---------------------------------------------------------------------------
+
+export interface AmplifyApp {
+  appId: string;
+  appArn: string;
+  name: string;
+  platform: string;
+  defaultDomain: string;
+  repository: string;
+  createTime: number;
+}
+
+export const fetchAmplifyApps = async (): Promise<AmplifyApp[]> => {
+  const listed = await awsRestJson<{
+    apps?: {
+      appId?: string;
+      appArn?: string;
+      name?: string;
+      platform?: string;
+      defaultDomain?: string;
+      repository?: string;
+      createTime?: number;
+    }[];
+  }>("amplify", "/apps");
+  return (listed.apps ?? []).map((app) => ({
+    appId: app.appId ?? "",
+    appArn: app.appArn ?? "",
+    name: app.name ?? "",
+    platform: app.platform ?? "",
+    defaultDomain: app.defaultDomain ?? "",
+    repository: app.repository ?? "",
+    createTime: app.createTime ?? 0,
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Amazon Kinesis Data Streams — awsjson1.1, X-Amz-Target Kinesis_20131202.<Op>.
+// ---------------------------------------------------------------------------
+
+export interface KinesisStream {
+  streamName: string;
+  streamArn: string;
+  status: string;
+  streamMode: string;
+  openShardCount: number;
+  retentionPeriodHours: number;
+  creationTimestamp: number;
+}
+
+// ListStreams answers names; DescribeStreamSummary answers each stream's
+// properties without enumerating its shards, which is what the real console's
+// Data streams table shows.
+export const fetchKinesisStreams = async (): Promise<KinesisStream[]> => {
+  const listed = await awsJson<{ StreamNames?: string[] }>("kinesis", "Kinesis_20131202.ListStreams", {});
+  const streams: KinesisStream[] = [];
+  for (const name of listed.StreamNames ?? []) {
+    const described = await awsJson<{
+      StreamDescriptionSummary?: {
+        StreamName?: string;
+        StreamARN?: string;
+        StreamStatus?: string;
+        StreamModeDetails?: { StreamMode?: string };
+        OpenShardCount?: number;
+        RetentionPeriodHours?: number;
+        StreamCreationTimestamp?: number;
+      };
+    }>("kinesis", "Kinesis_20131202.DescribeStreamSummary", { StreamName: name });
+    const summary = described.StreamDescriptionSummary ?? {};
+    streams.push({
+      streamName: summary.StreamName ?? name,
+      streamArn: summary.StreamARN ?? "",
+      status: summary.StreamStatus ?? "",
+      streamMode: summary.StreamModeDetails?.StreamMode ?? "",
+      openShardCount: summary.OpenShardCount ?? 0,
+      retentionPeriodHours: summary.RetentionPeriodHours ?? 0,
+      creationTimestamp: summary.StreamCreationTimestamp ?? 0,
+    });
+  }
+  return streams;
+};
+
+// ---------------------------------------------------------------------------
+// AWS Glue — awsjson1.1, X-Amz-Target AWSGlue.<Op>.
+// ---------------------------------------------------------------------------
+
+export interface GlueDatabase {
+  name: string;
+  description: string;
+  locationUri: string;
+  createTime: number;
+}
+
+export const fetchGlueDatabases = async (): Promise<GlueDatabase[]> => {
+  const listed = await awsJson<{
+    DatabaseList?: { Name?: string; Description?: string; LocationUri?: string; CreateTime?: number }[];
+  }>("glue", "AWSGlue.GetDatabases", {});
+  return (listed.DatabaseList ?? []).map((database) => ({
+    name: database.Name ?? "",
+    description: database.Description ?? "",
+    locationUri: database.LocationUri ?? "",
+    createTime: database.CreateTime ?? 0,
+  }));
+};
+
+export interface GlueJob {
+  name: string;
+  role: string;
+  glueVersion: string;
+  workerType: string;
+  scriptLocation: string;
+  createdOn: number;
+}
+
+export const fetchGlueJobs = async (): Promise<GlueJob[]> => {
+  const listed = await awsJson<{
+    Jobs?: {
+      Name?: string;
+      Role?: string;
+      GlueVersion?: string;
+      WorkerType?: string;
+      Command?: { ScriptLocation?: string };
+      CreatedOn?: number;
+    }[];
+  }>("glue", "AWSGlue.GetJobs", {});
+  return (listed.Jobs ?? []).map((job) => ({
+    name: job.Name ?? "",
+    role: job.Role ?? "",
+    glueVersion: job.GlueVersion ?? "",
+    workerType: job.WorkerType ?? "",
+    scriptLocation: job.Command?.ScriptLocation ?? "",
+    createdOn: job.CreatedOn ?? 0,
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Amazon Simple Notification Service (SNS) — the Query protocol
+// (Version=2010-03-31).
+// ---------------------------------------------------------------------------
+
+const SNS_VERSION = "2010-03-31";
+
+export interface SNSTopic {
+  arn: string;
+  name: string;
+}
+
+/** An SNS topic's name is the last segment of its ARN — SNS has no separate
+ * name field on ListTopics, and the real console displays the same segment. */
+function snsTopicName(arn: string): string {
+  return arn.slice(arn.lastIndexOf(":") + 1);
+}
+
+export const fetchSNSTopics = async (): Promise<SNSTopic[]> => {
+  const xml = await awsQuery("sns", SNS_VERSION, "ListTopics");
+  return xmlList(xml, "Topics").map((member) => {
+    const arn = childText(member, "TopicArn");
+    return { arn, name: snsTopicName(arn) };
+  });
+};
+
+export const createSNSTopic = async (name: string): Promise<void> => {
+  await awsQuery("sns", SNS_VERSION, "CreateTopic", { Name: name });
+};
+
+export const deleteSNSTopic = async (topicArn: string): Promise<void> => {
+  await awsQuery("sns", SNS_VERSION, "DeleteTopic", { TopicArn: topicArn });
+};
+
+export interface SNSSubscription {
+  subscriptionArn: string;
+  topicArn: string;
+  protocol: string;
+  endpoint: string;
+  owner: string;
+}
+
+export const fetchSNSSubscriptions = async (): Promise<SNSSubscription[]> => {
+  const xml = await awsQuery("sns", SNS_VERSION, "ListSubscriptions");
+  return xmlList(xml, "Subscriptions").map((member) => ({
+    subscriptionArn: childText(member, "SubscriptionArn"),
+    topicArn: childText(member, "TopicArn"),
+    protocol: childText(member, "Protocol"),
+    endpoint: childText(member, "Endpoint"),
+    owner: childText(member, "Owner"),
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// Amazon Simple Queue Service (SQS) — awsjson1.0, X-Amz-Target AmazonSQS.<Op>
+// (SQS moved off the Query protocol in 2023).
+// ---------------------------------------------------------------------------
+
+export interface SQSQueue {
+  queueUrl: string;
+  name: string;
+  arn: string;
+  approximateNumberOfMessages: number;
+  approximateNumberOfMessagesNotVisible: number;
+  createdTimestamp: number;
+  visibilityTimeout: number;
+}
+
+/** A queue's name is the last path segment of its URL, which is how every SQS
+ * client (and the real console) derives it. */
+function sqsQueueName(queueUrl: string): string {
+  return queueUrl.slice(queueUrl.lastIndexOf("/") + 1);
+}
+
+// ListQueues answers URLs only; the real console's Queues table shows the
+// message counts and creation time, which come from GetQueueAttributes.
+export const fetchSQSQueues = async (): Promise<SQSQueue[]> => {
+  const listed = await awsJson10<{ QueueUrls?: string[] }>("sqs", "AmazonSQS.ListQueues", {});
+  const queues: SQSQueue[] = [];
+  for (const queueUrl of listed.QueueUrls ?? []) {
+    const attributes = await awsJson10<{ Attributes?: Record<string, string> }>("sqs", "AmazonSQS.GetQueueAttributes", {
+      QueueUrl: queueUrl,
+      AttributeNames: ["All"],
+    });
+    const values = attributes.Attributes ?? {};
+    queues.push({
+      queueUrl,
+      name: sqsQueueName(queueUrl),
+      arn: values.QueueArn ?? "",
+      approximateNumberOfMessages: Number(values.ApproximateNumberOfMessages ?? "0"),
+      approximateNumberOfMessagesNotVisible: Number(values.ApproximateNumberOfMessagesNotVisible ?? "0"),
+      createdTimestamp: Number(values.CreatedTimestamp ?? "0"),
+      visibilityTimeout: Number(values.VisibilityTimeout ?? "0"),
+    });
+  }
+  return queues;
+};
+
+export const createSQSQueue = async (queueName: string): Promise<void> => {
+  await awsJson10("sqs", "AmazonSQS.CreateQueue", { QueueName: queueName });
+};
+
+export const deleteSQSQueue = async (queueUrl: string): Promise<void> => {
+  await awsJson10("sqs", "AmazonSQS.DeleteQueue", { QueueUrl: queueUrl });
+};
+
+// ---------------------------------------------------------------------------
+// Amazon EventBridge — awsjson1.1, X-Amz-Target AWSEvents.<Op>.
+// ---------------------------------------------------------------------------
+
+export interface EventBus {
+  name: string;
+  arn: string;
+  description: string;
+}
+
+export const fetchEventBuses = async (): Promise<EventBus[]> => {
+  const listed = await awsJson<{ EventBuses?: { Name?: string; Arn?: string; Description?: string }[] }>(
+    "events",
+    "AWSEvents.ListEventBuses",
+    {},
+  );
+  return (listed.EventBuses ?? []).map((bus) => ({
+    name: bus.Name ?? "",
+    arn: bus.Arn ?? "",
+    description: bus.Description ?? "",
+  }));
+};
+
+export interface EventBridgeRule {
+  name: string;
+  arn: string;
+  eventBusName: string;
+  state: string;
+  scheduleExpression: string;
+  description: string;
+}
+
+export const fetchEventBridgeRules = async (): Promise<EventBridgeRule[]> => {
+  const listed = await awsJson<{
+    Rules?: {
+      Name?: string;
+      Arn?: string;
+      EventBusName?: string;
+      State?: string;
+      ScheduleExpression?: string;
+      Description?: string;
+    }[];
+  }>("events", "AWSEvents.ListRules", {});
+  return (listed.Rules ?? []).map((rule) => ({
+    name: rule.Name ?? "",
+    arn: rule.Arn ?? "",
+    eventBusName: rule.EventBusName ?? "default",
+    state: rule.State ?? "",
+    scheduleExpression: rule.ScheduleExpression ?? "",
+    description: rule.Description ?? "",
+  }));
+};
+
+// EnableRule and DisableRule are the two lifecycle actions the real console's
+// Rules table offers alongside Delete.
+export const setEventBridgeRuleState = async (name: string, enabled: boolean): Promise<void> => {
+  await awsJson("events", `AWSEvents.${enabled ? "EnableRule" : "DisableRule"}`, { Name: name });
+};
+
+export const deleteEventBridgeRule = async (name: string): Promise<void> => {
+  await awsJson("events", "AWSEvents.DeleteRule", { Name: name });
+};
+
+// ---------------------------------------------------------------------------
+// Amazon EventBridge Scheduler — the REST-JSON protocol (GET /schedules).
+// ---------------------------------------------------------------------------
+
+export interface Schedule {
+  name: string;
+  arn: string;
+  groupName: string;
+  state: string;
+  targetArn: string;
+  creationDate: string;
+  lastModificationDate: string;
+}
+
+export const fetchSchedules = async (): Promise<Schedule[]> => {
+  const listed = await awsRestJson<{
+    Schedules?: {
+      Name?: string;
+      Arn?: string;
+      GroupName?: string;
+      State?: string;
+      Target?: { Arn?: string };
+      CreationDate?: string;
+      LastModificationDate?: string;
+    }[];
+  }>("scheduler", "/schedules");
+  return (listed.Schedules ?? []).map((schedule) => ({
+    name: schedule.Name ?? "",
+    arn: schedule.Arn ?? "",
+    groupName: schedule.GroupName ?? "",
+    state: schedule.State ?? "",
+    targetArn: schedule.Target?.Arn ?? "",
+    creationDate: schedule.CreationDate ?? "",
+    lastModificationDate: schedule.LastModificationDate ?? "",
+  }));
+};
+
+export interface ScheduleGroup {
+  name: string;
+  arn: string;
+  state: string;
+  creationDate: string;
+}
+
+export const fetchScheduleGroups = async (): Promise<ScheduleGroup[]> => {
+  const listed = await awsRestJson<{
+    ScheduleGroups?: { Name?: string; Arn?: string; State?: string; CreationDate?: string }[];
+  }>("scheduler", "/schedule-groups");
+  return (listed.ScheduleGroups ?? []).map((group) => ({
+    name: group.Name ?? "",
+    arn: group.Arn ?? "",
+    state: group.State ?? "",
+    creationDate: group.CreationDate ?? "",
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// AWS Step Functions — awsjson1.0, X-Amz-Target AWSStepFunctions.<Op>.
+// ---------------------------------------------------------------------------
+
+export interface StateMachine {
+  stateMachineArn: string;
+  name: string;
+  type: string;
+  creationDate: number;
+}
+
+export const fetchStateMachines = async (): Promise<StateMachine[]> => {
+  const listed = await awsJson10<{
+    stateMachines?: { stateMachineArn?: string; name?: string; type?: string; creationDate?: number }[];
+  }>("states", "AWSStepFunctions.ListStateMachines", {});
+  return (listed.stateMachines ?? []).map((machine) => ({
+    stateMachineArn: machine.stateMachineArn ?? "",
+    name: machine.name ?? "",
+    type: machine.type ?? "",
+    creationDate: machine.creationDate ?? 0,
+  }));
+};
+
+export interface StateMachineDetail extends StateMachine {
+  status: string;
+  roleArn: string;
+  definition: string;
+}
+
+export const fetchStateMachine = async (stateMachineArn: string): Promise<StateMachineDetail> => {
+  const described = await awsJson10<{
+    stateMachineArn?: string;
+    name?: string;
+    type?: string;
+    status?: string;
+    roleArn?: string;
+    definition?: string;
+    creationDate?: number;
+  }>("states", "AWSStepFunctions.DescribeStateMachine", { stateMachineArn });
+  return {
+    stateMachineArn: described.stateMachineArn ?? stateMachineArn,
+    name: described.name ?? "",
+    type: described.type ?? "",
+    status: described.status ?? "",
+    roleArn: described.roleArn ?? "",
+    definition: described.definition ?? "",
+    creationDate: described.creationDate ?? 0,
+  };
+};
+
+export interface StateMachineExecution {
+  executionArn: string;
+  name: string;
+  status: string;
+  startDate: number;
+  stopDate: number;
+}
+
+export const fetchStateMachineExecutions = async (stateMachineArn: string): Promise<StateMachineExecution[]> => {
+  const listed = await awsJson10<{
+    executions?: { executionArn?: string; name?: string; status?: string; startDate?: number; stopDate?: number }[];
+  }>("states", "AWSStepFunctions.ListExecutions", { stateMachineArn });
+  return (listed.executions ?? []).map((execution) => ({
+    executionArn: execution.executionArn ?? "",
+    name: execution.name ?? "",
+    status: execution.status ?? "",
+    startDate: execution.startDate ?? 0,
+    stopDate: execution.stopDate ?? 0,
+  }));
+};
+
+// StartExecution with no input is what the real console's "Start execution"
+// dialog sends when the operator leaves the input at its `{}` default.
+export const startStateMachineExecution = async (stateMachineArn: string, input: string): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.StartExecution", { stateMachineArn, input });
+};
+
+export const deleteStateMachine = async (stateMachineArn: string): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.DeleteStateMachine", { stateMachineArn });
+};
+
+// ---------------------------------------------------------------------------
+// Amazon CloudWatch — the Query protocol (Version=2010-08-01), the metrics and
+// alarms API that sits beside the separate CloudWatch Logs API above.
+// ---------------------------------------------------------------------------
+
+const CLOUDWATCH_VERSION = "2010-08-01";
+
+export interface CWAlarm {
+  alarmName: string;
+  alarmArn: string;
+  stateValue: string;
+  stateReason: string;
+  metricName: string;
+  namespace: string;
+  statistic: string;
+  comparisonOperator: string;
+  threshold: number;
+  stateUpdatedTimestamp: string;
+}
+
+export const fetchCWAlarms = async (): Promise<CWAlarm[]> => {
+  const xml = await awsQuery("monitoring", CLOUDWATCH_VERSION, "DescribeAlarms");
+  return xmlList(xml, "MetricAlarms").map((member) => ({
+    alarmName: childText(member, "AlarmName"),
+    alarmArn: childText(member, "AlarmArn"),
+    stateValue: childText(member, "StateValue"),
+    stateReason: childText(member, "StateReason"),
+    metricName: childText(member, "MetricName"),
+    namespace: childText(member, "Namespace"),
+    statistic: childText(member, "Statistic"),
+    comparisonOperator: childText(member, "ComparisonOperator"),
+    threshold: Number(childText(member, "Threshold") || "0"),
+    stateUpdatedTimestamp: childText(member, "StateUpdatedTimestamp"),
+  }));
+};
+
+export const deleteCWAlarms = async (alarmNames: string[]): Promise<void> => {
+  await awsQuery("monitoring", CLOUDWATCH_VERSION, "DeleteAlarms", xmlIndexedParams("AlarmNames.member", alarmNames));
+};
+
+export interface CWDashboard {
+  dashboardName: string;
+  dashboardArn: string;
+  lastModified: string;
+  size: number;
+}
+
+export const fetchCWDashboards = async (): Promise<CWDashboard[]> => {
+  const xml = await awsQuery("monitoring", CLOUDWATCH_VERSION, "ListDashboards");
+  return xmlList(xml, "DashboardEntries").map((member) => ({
+    dashboardName: childText(member, "DashboardName"),
+    dashboardArn: childText(member, "DashboardArn"),
+    lastModified: childText(member, "LastModified"),
+    size: Number(childText(member, "Size") || "0"),
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// AWS CloudTrail — awsjson1.1, X-Amz-Target CloudTrail_20131101.<Op>.
+// ---------------------------------------------------------------------------
+
+const CLOUDTRAIL_TARGET_PREFIX = "CloudTrail_20131101.";
+
+export interface CloudTrailTrail {
+  name: string;
+  trailARN: string;
+  s3BucketName: string;
+  homeRegion: string;
+  isMultiRegionTrail: boolean;
+  includeGlobalServiceEvents: boolean;
+  logFileValidationEnabled: boolean;
+}
+
+export const fetchCloudTrailTrails = async (): Promise<CloudTrailTrail[]> => {
+  const described = await awsJson<{
+    trailList?: {
+      Name?: string;
+      TrailARN?: string;
+      S3BucketName?: string;
+      HomeRegion?: string;
+      IsMultiRegionTrail?: boolean;
+      IncludeGlobalServiceEvents?: boolean;
+      LogFileValidationEnabled?: boolean;
+    }[];
+  }>("cloudtrail", `${CLOUDTRAIL_TARGET_PREFIX}DescribeTrails`, {});
+  return (described.trailList ?? []).map((trail) => ({
+    name: trail.Name ?? "",
+    trailARN: trail.TrailARN ?? "",
+    s3BucketName: trail.S3BucketName ?? "",
+    homeRegion: trail.HomeRegion ?? "",
+    isMultiRegionTrail: trail.IsMultiRegionTrail ?? false,
+    includeGlobalServiceEvents: trail.IncludeGlobalServiceEvents ?? false,
+    logFileValidationEnabled: trail.LogFileValidationEnabled ?? false,
+  }));
+};
+
+export interface CloudTrailEvent {
+  eventId: string;
+  eventName: string;
+  eventSource: string;
+  eventTime: number;
+  username: string;
+  readOnly: string;
+}
+
+// LookupEvents is the API behind the real console's Event history page.
+export const fetchCloudTrailEvents = async (): Promise<CloudTrailEvent[]> => {
+  const looked = await awsJson<{
+    Events?: {
+      EventId?: string;
+      EventName?: string;
+      EventSource?: string;
+      EventTime?: number;
+      Username?: string;
+      ReadOnly?: string;
+    }[];
+  }>("cloudtrail", `${CLOUDTRAIL_TARGET_PREFIX}LookupEvents`, { MaxResults: 50 });
+  return (looked.Events ?? []).map((event) => ({
+    eventId: event.EventId ?? "",
+    eventName: event.EventName ?? "",
+    eventSource: event.EventSource ?? "",
+    eventTime: event.EventTime ?? 0,
+    username: event.Username ?? "",
+    readOnly: event.ReadOnly ?? "",
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// AWS Systems Manager — awsjson1.1, X-Amz-Target AmazonSSM.<Op>.
+// ---------------------------------------------------------------------------
+
+const SSM_TARGET_PREFIX = "AmazonSSM.";
+
+const ssmJson = <T>(operation: string, input: Record<string, unknown> = {}): Promise<T> =>
+  awsJson<T>("ssm", `${SSM_TARGET_PREFIX}${operation}`, input);
+
+export interface SSMParameter {
+  name: string;
+  type: string;
+  version: number;
+  dataType: string;
+  description: string;
+  lastModifiedDate: number;
+  tier: string;
+}
+
+export const fetchSSMParameters = async (): Promise<SSMParameter[]> => {
+  const described = await ssmJson<{
+    Parameters?: {
+      Name?: string;
+      Type?: string;
+      Version?: number;
+      DataType?: string;
+      Description?: string;
+      LastModifiedDate?: number;
+      Tier?: string;
+    }[];
+  }>("DescribeParameters");
+  return (described.Parameters ?? []).map((parameter) => ({
+    name: parameter.Name ?? "",
+    type: parameter.Type ?? "",
+    version: parameter.Version ?? 0,
+    dataType: parameter.DataType ?? "",
+    description: parameter.Description ?? "",
+    lastModifiedDate: parameter.LastModifiedDate ?? 0,
+    tier: parameter.Tier ?? "",
+  }));
+};
+
+// PutParameter with Overwrite left off is a create — real Systems Manager
+// answers ParameterAlreadyExists when the name is taken, which is exactly what
+// the real console's "Create parameter" form surfaces.
+export const createSSMParameter = async (
+  name: string,
+  value: string,
+  type: "String" | "StringList" | "SecureString",
+): Promise<void> => {
+  await ssmJson("PutParameter", { Name: name, Value: value, Type: type });
+};
+
+export const deleteSSMParameter = async (name: string): Promise<void> => {
+  await ssmJson("DeleteParameter", { Name: name });
+};
+
+export interface SSMDocument {
+  name: string;
+  documentType: string;
+  documentFormat: string;
+  owner: string;
+  documentVersion: string;
+  platformTypes: string[];
+}
+
+export const fetchSSMDocuments = async (): Promise<SSMDocument[]> => {
+  const listed = await ssmJson<{
+    DocumentIdentifiers?: {
+      Name?: string;
+      DocumentType?: string;
+      DocumentFormat?: string;
+      Owner?: string;
+      DocumentVersion?: string;
+      PlatformTypes?: string[];
+    }[];
+  }>("ListDocuments");
+  return (listed.DocumentIdentifiers ?? []).map((document) => ({
+    name: document.Name ?? "",
+    documentType: document.DocumentType ?? "",
+    documentFormat: document.DocumentFormat ?? "",
+    owner: document.Owner ?? "",
+    documentVersion: document.DocumentVersion ?? "",
+    platformTypes: document.PlatformTypes ?? [],
+  }));
+};
+
+// ---------------------------------------------------------------------------
+// AWS Secrets Manager — awsjson1.1, X-Amz-Target secretsmanager.<Op>.
+// ---------------------------------------------------------------------------
+
+export interface Secret {
+  arn: string;
+  name: string;
+  description: string;
+  rotationEnabled: boolean;
+  createdDate: number;
+  lastChangedDate: number;
+}
+
+export const fetchSecrets = async (): Promise<Secret[]> => {
+  const listed = await awsJson<{
+    SecretList?: {
+      ARN?: string;
+      Name?: string;
+      Description?: string;
+      RotationEnabled?: boolean;
+      CreatedDate?: number;
+      LastChangedDate?: number;
+    }[];
+  }>("secretsmanager", "secretsmanager.ListSecrets", {});
+  return (listed.SecretList ?? []).map((secret) => ({
+    arn: secret.ARN ?? "",
+    name: secret.Name ?? "",
+    description: secret.Description ?? "",
+    rotationEnabled: secret.RotationEnabled ?? false,
+    createdDate: secret.CreatedDate ?? 0,
+    lastChangedDate: secret.LastChangedDate ?? 0,
+  }));
+};
+
+export const createSecret = async (name: string, secretString: string, description: string): Promise<void> => {
+  const input: Record<string, unknown> = { Name: name, SecretString: secretString };
+  if (description) input.Description = description;
+  await awsJson("secretsmanager", "secretsmanager.CreateSecret", input);
+};
+
+// DeleteSecret without ForceDeleteWithoutRecovery schedules the deletion after
+// the service's recovery window, which is the behaviour the real console's
+// delete dialog describes and defaults to.
+export const deleteSecret = async (secretId: string): Promise<void> => {
+  await awsJson("secretsmanager", "secretsmanager.DeleteSecret", { SecretId: secretId });
+};
+
+// ---------------------------------------------------------------------------
+// AWS Key Management Service (KMS) — awsjson1.1, X-Amz-Target
+// TrentService.<Op>.
+// ---------------------------------------------------------------------------
+
+export interface KMSKey {
+  keyId: string;
+  arn: string;
+  keyState: string;
+  keyUsage: string;
+  keySpec: string;
+  description: string;
+  enabled: boolean;
+  creationDate: number;
+  aliases: string[];
+}
+
+// ListKeys answers ids; DescribeKey answers each key's metadata and ListAliases
+// the display names — the three calls the real console's Customer managed keys
+// page makes.
+export const fetchKMSKeys = async (): Promise<KMSKey[]> => {
+  const [listed, aliased] = await Promise.all([
+    awsJson<{ Keys?: { KeyId?: string; KeyArn?: string }[] }>("kms", "TrentService.ListKeys", {}),
+    awsJson<{ Aliases?: { AliasName?: string; TargetKeyId?: string }[] }>("kms", "TrentService.ListAliases", {}),
+  ]);
+  const aliasesByKey = new Map<string, string[]>();
+  for (const alias of aliased.Aliases ?? []) {
+    if (!alias.TargetKeyId || !alias.AliasName) continue;
+    aliasesByKey.set(alias.TargetKeyId, [...(aliasesByKey.get(alias.TargetKeyId) ?? []), alias.AliasName]);
+  }
+  const keys: KMSKey[] = [];
+  for (const entry of listed.Keys ?? []) {
+    const keyId = entry.KeyId ?? "";
+    const described = await awsJson<{
+      KeyMetadata?: {
+        KeyId?: string;
+        Arn?: string;
+        KeyState?: string;
+        KeyUsage?: string;
+        KeySpec?: string;
+        Description?: string;
+        Enabled?: boolean;
+        CreationDate?: number;
+      };
+    }>("kms", "TrentService.DescribeKey", { KeyId: keyId });
+    const metadata = described.KeyMetadata ?? {};
+    keys.push({
+      keyId: metadata.KeyId ?? keyId,
+      arn: metadata.Arn ?? entry.KeyArn ?? "",
+      keyState: metadata.KeyState ?? "",
+      keyUsage: metadata.KeyUsage ?? "",
+      keySpec: metadata.KeySpec ?? "",
+      description: metadata.Description ?? "",
+      enabled: metadata.Enabled ?? false,
+      creationDate: metadata.CreationDate ?? 0,
+      aliases: aliasesByKey.get(keyId) ?? [],
+    });
+  }
+  return keys;
+};
+
+export const createKMSKey = async (description: string): Promise<void> => {
+  await awsJson("kms", "TrentService.CreateKey", { Description: description });
+};
+
+// Real KMS never deletes a key immediately: ScheduleKeyDeletion sets a waiting
+// period, and the real console's delete dialog says so.
+export const scheduleKMSKeyDeletion = async (keyId: string, pendingWindowInDays: number): Promise<void> => {
+  await awsJson("kms", "TrentService.ScheduleKeyDeletion", { KeyId: keyId, PendingWindowInDays: pendingWindowInDays });
+};
+
+export const setKMSKeyEnabled = async (keyId: string, enabled: boolean): Promise<void> => {
+  await awsJson("kms", `TrentService.${enabled ? "EnableKey" : "DisableKey"}`, { KeyId: keyId });
+};
+
+// ---------------------------------------------------------------------------
+// AWS Certificate Manager — awsjson1.1, X-Amz-Target CertificateManager.<Op>.
+// ---------------------------------------------------------------------------
+
+export interface ACMCertificate {
+  certificateArn: string;
+  domainName: string;
+  status: string;
+  type: string;
+  keyAlgorithm: string;
+  inUseBy: string[];
+  notAfter: number;
+}
+
+export const fetchACMCertificates = async (): Promise<ACMCertificate[]> => {
+  const listed = await awsJson<{
+    CertificateSummaryList?: {
+      CertificateArn?: string;
+      DomainName?: string;
+      Status?: string;
+      Type?: string;
+      KeyAlgorithm?: string;
+      InUse?: boolean;
+      NotAfter?: number;
+      InUseBy?: string[];
+    }[];
+  }>("acm", "CertificateManager.ListCertificates", {});
+  return (listed.CertificateSummaryList ?? []).map((certificate) => ({
+    certificateArn: certificate.CertificateArn ?? "",
+    domainName: certificate.DomainName ?? "",
+    status: certificate.Status ?? "",
+    type: certificate.Type ?? "",
+    keyAlgorithm: certificate.KeyAlgorithm ?? "",
+    inUseBy: certificate.InUseBy ?? [],
+    notAfter: certificate.NotAfter ?? 0,
+  }));
+};
+
+export const deleteACMCertificate = async (certificateArn: string): Promise<void> => {
+  await awsJson("acm", "CertificateManager.DeleteCertificate", { CertificateArn: certificateArn });
+};
+
+// ---------------------------------------------------------------------------
+// AWS WAF — awsjson1.1, X-Amz-Target AWSWAF_20190729.<Op>. Every WAF read takes
+// a Scope: REGIONAL resources and CloudFront distributions are separate
+// namespaces, which is why the real console makes an operator choose one.
+// ---------------------------------------------------------------------------
+
+export type WAFScope = "REGIONAL" | "CLOUDFRONT";
+
+export interface WAFWebACL {
+  id: string;
+  name: string;
+  arn: string;
+  description: string;
+  lockToken: string;
+}
+
+export const fetchWAFWebACLs = async (scope: WAFScope): Promise<WAFWebACL[]> => {
+  const listed = await awsJson<{
+    WebACLs?: { Id?: string; Name?: string; ARN?: string; Description?: string; LockToken?: string }[];
+  }>("wafv2", "AWSWAF_20190729.ListWebACLs", { Scope: scope });
+  return (listed.WebACLs ?? []).map((acl) => ({
+    id: acl.Id ?? "",
+    name: acl.Name ?? "",
+    arn: acl.ARN ?? "",
+    description: acl.Description ?? "",
+    lockToken: acl.LockToken ?? "",
+  }));
+};
+
+export interface WAFIPSet {
+  id: string;
+  name: string;
+  arn: string;
+  description: string;
+  lockToken: string;
+}
+
+export const fetchWAFIPSets = async (scope: WAFScope): Promise<WAFIPSet[]> => {
+  const listed = await awsJson<{
+    IPSets?: { Id?: string; Name?: string; ARN?: string; Description?: string; LockToken?: string }[];
+  }>("wafv2", "AWSWAF_20190729.ListIPSets", { Scope: scope });
+  return (listed.IPSets ?? []).map((set) => ({
+    id: set.Id ?? "",
+    name: set.Name ?? "",
+    arn: set.ARN ?? "",
+    description: set.Description ?? "",
+    lockToken: set.LockToken ?? "",
+  }));
+};
+
+// DeleteWebACL takes the LockToken the list read returned — WAF's optimistic
+// concurrency control, which the real console carries through the same way.
+export const deleteWAFWebACL = async (acl: WAFWebACL, scope: WAFScope): Promise<void> => {
+  await awsJson("wafv2", "AWSWAF_20190729.DeleteWebACL", {
+    Name: acl.name,
+    Id: acl.id,
+    Scope: scope,
+    LockToken: acl.lockToken,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// AWS Security Token Service (STS) and AWS Budgets. Budgets is scoped to an
+// account id, and the console learns its own the way every AWS client does —
+// GetCallerIdentity — rather than being told one out of band.
+// ---------------------------------------------------------------------------
+
+export interface CallerIdentity {
+  account: string;
+  arn: string;
+  userId: string;
+}
+
+export const fetchCallerIdentity = async (): Promise<CallerIdentity> => {
+  const xml = await awsQuery("sts", "2011-06-15", "GetCallerIdentity");
+  return {
+    account: elementText(xml, "Account"),
+    arn: elementText(xml, "Arn"),
+    userId: elementText(xml, "UserId"),
+  };
+};
+
+export interface Budget {
+  budgetName: string;
+  budgetType: string;
+  timeUnit: string;
+  limitAmount: string;
+  limitUnit: string;
+  actualAmount: string;
+}
+
+export const fetchBudgets = async (): Promise<Budget[]> => {
+  const identity = await fetchCallerIdentity();
+  const described = await awsJson<{
+    Budgets?: {
+      BudgetName?: string;
+      BudgetType?: string;
+      TimeUnit?: string;
+      BudgetLimit?: { Amount?: string; Unit?: string };
+      CalculatedSpend?: { ActualSpend?: { Amount?: string; Unit?: string } };
+    }[];
+  }>("budgets", "AWSBudgetServiceGateway.DescribeBudgets", { AccountId: identity.account });
+  return (described.Budgets ?? []).map((budget) => ({
+    budgetName: budget.BudgetName ?? "",
+    budgetType: budget.BudgetType ?? "",
+    timeUnit: budget.TimeUnit ?? "",
+    limitAmount: budget.BudgetLimit?.Amount ?? "",
+    limitUnit: budget.BudgetLimit?.Unit ?? "",
+    actualAmount: budget.CalculatedSpend?.ActualSpend?.Amount ?? "",
+  }));
+};

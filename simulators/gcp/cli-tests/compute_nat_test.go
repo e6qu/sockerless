@@ -69,3 +69,41 @@ func TestGcloudComputeAddressAndRouterNAT(t *testing.T) {
 		"--quiet").CombinedOutput()
 	require.NoError(t, err, "address delete: %s", out)
 }
+
+// TestGcloudComputeSubnetsList exercises compute.subnetworks.list — the
+// regional list the CLI calls for `gcloud compute networks subnets list
+// --region`:
+//
+//	GET /compute/v1/projects/{project}/regions/{region}/subnetworks
+func TestGcloudComputeSubnetsList(t *testing.T) {
+	requireNetworkHost(t)
+	region := "us-central1"
+	network := "cli-subnet-list-net"
+	subnet := "cli-subnet-list-a"
+
+	out, err := gcloudCLI("compute", "networks", "create", network,
+		"--subnet-mode=custom",
+		"--format=value(name)").CombinedOutput()
+	require.NoError(t, err, "network create: %s", out)
+
+	out, err = gcloudCLI("compute", "networks", "subnets", "create", subnet,
+		"--network="+network,
+		"--region="+region,
+		"--range=10.62.0.0/24",
+		"--format=value(name)").CombinedOutput()
+	require.NoError(t, err, "subnet create: %s", out)
+
+	out, err = gcloudCLI("compute", "networks", "subnets", "list",
+		"--regions="+region,
+		"--format=value(name,ipCidrRange)").CombinedOutput()
+	require.NoError(t, err, "subnet list: %s", out)
+	require.Contains(t, string(out), subnet)
+	require.Contains(t, string(out), "10.62.0.0/24")
+
+	out, err = gcloudCLI("compute", "networks", "subnets", "delete", subnet,
+		"--region="+region, "--quiet").CombinedOutput()
+	require.NoError(t, err, "subnet delete: %s", out)
+
+	out, err = gcloudCLI("compute", "networks", "delete", network, "--quiet").CombinedOutput()
+	require.NoError(t, err, "network delete: %s", out)
+}
