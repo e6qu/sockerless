@@ -27,6 +27,12 @@ import {
   MessageBar,
   MessageBarBody,
   Spinner,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
 } from "@fluentui/react-components";
 import { AzureIcon, type AzureIconName } from "./icons.js";
 
@@ -650,4 +656,68 @@ export function AzureEmptyState({
     </div>
   );
   return loading ? <div role="status">{body}</div> : body;
+}
+
+/**
+ * The delete-confirm surface every resource-DELETE flow in this portal uses —
+ * a real Fluent `Dialog`, which traps focus on open, closes on Escape or an
+ * overlay click via `onOpenChange`, and returns focus to whatever opened it
+ * on close, all Fluent's own behavior rather than something this portal
+ * re-implements. `title` is expected to name the resource (or the count,
+ * when several are selected) and `children` to state the consequence and
+ * that it can't be undone — the caller's copy, not a generic warning this
+ * component supplies, since what a delete destroys differs per resource.
+ */
+export function AzureConfirmDialog({
+  open,
+  title,
+  confirmLabel = "Delete",
+  busy,
+  testid,
+  error,
+  onConfirm,
+  onCancel,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  confirmLabel?: string;
+  busy: boolean;
+  testid: string;
+  error?: ReactNode;
+  onConfirm: () => void;
+  onCancel: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(_, data) => {
+        if (!data.open) onCancel();
+      }}
+    >
+      <DialogSurface data-testid={testid}>
+        <DialogBody>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogContent>
+            {children}
+            {error ? <AzureErrorMessage testid={`${testid}-error`}>{error}</AzureErrorMessage> : null}
+          </DialogContent>
+          <DialogActions>
+            <Button
+              appearance="primary"
+              data-testid={`${testid}-confirm`}
+              disabled={busy}
+              onClick={onConfirm}
+            >
+              {busy ? "Deleting…" : confirmLabel}
+            </Button>
+            <Button data-testid={`${testid}-cancel`} onClick={onCancel} disabled={busy}>
+              Cancel
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
 }

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { GcpResourceTable, type GcpColumn } from "../console/index.js";
 import { GcpDialog } from "../console/GcpDialog.js";
 import { shortName, formatTimestamp } from "../console/format.js";
-import { createGCSBucket, fetchGCSBuckets, type GCSBucket } from "../api.js";
+import { createGCSBucket, deleteGCSBucket, fetchGCSBuckets, type GCSBucket } from "../api.js";
 import { useProject } from "../console/project.js";
 
 const columns: GcpColumn<GCSBucket>[] = [
@@ -18,6 +18,51 @@ const columns: GcpColumn<GCSBucket>[] = [
   { id: "storageClass", header: "Storage class", cell: (row) => row.storageClass ?? "—", value: (row) => row.storageClass ?? "" },
   { id: "timeCreated", header: "Created", cell: (row) => formatTimestamp(row.timeCreated ?? ""), value: (row) => row.timeCreated ?? "" },
 ];
+
+// DeleteBucketDialog is shared by the list's per-row action and the bucket
+// detail page's header action — the same real storage.buckets.delete
+// operation (DELETE /storage/v1/b/{bucket}, answered 204 No Content) either
+// way.
+export function DeleteBucketDialog({
+  name,
+  onClose,
+  onDeleted,
+}: {
+  name: string;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const remove = useMutation({
+    mutationFn: () => deleteGCSBucket(name),
+    onSuccess: onDeleted,
+  });
+  return (
+    <GcpDialog title="Delete bucket?" testId="gcs-delete-dialog" onClose={onClose}>
+      <p>
+        Deleting <strong>{name}</strong> permanently removes the bucket and every object it holds.
+        This can't be undone.
+      </p>
+      {remove.isError ? (
+        <div className="gc-message gc-message-error" role="alert">
+          <strong>Couldn't delete the bucket.</strong>{" "}
+          {remove.error instanceof Error ? remove.error.message : "The API did not respond."}
+        </div>
+      ) : null}
+      <div className="gc-dialog-actions">
+        <button type="button" className="gc-button-text" onClick={onClose}>Cancel</button>
+        <button
+          type="button"
+          className="gc-button-primary"
+          data-testid="gcs-delete-confirm"
+          disabled={remove.isPending}
+          onClick={() => remove.mutate()}
+        >
+          {remove.isPending ? "Deleting…" : "Delete"}
+        </button>
+      </div>
+    </GcpDialog>
+  );
+}
 
 // Cloud Storage's bucket-name contract: 3–63 characters, lowercase letters,
 // digits, hyphens, underscores and dots, starting and ending with a letter
@@ -83,6 +128,32 @@ export function GCSBucketsPage() {
   const { project } = useProject();
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["gcs-buckets-real", project] });
+
+  const columnsWithActions: GcpColumn<GCSBucket>[] = [
+    ...columns,
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (row) => {
+        const name = shortName(row.name);
+        return (
+          <button
+            type="button"
+            className="gc-button-text"
+            data-testid={`gcs-delete-${name}`}
+            aria-label={`Delete ${name}`}
+            onClick={() => setDeleting(name)}
+          >
+            Delete
+          </button>
+        );
+      },
+      value: () => "",
+    },
+  ];
 
   return (
     <>
@@ -92,7 +163,7 @@ export function GCSBucketsPage() {
         actions={[
           { label: "Create bucket", icon: "add", primary: true, testId: "gcs-create-bucket", onSelect: () => setCreating(true) },
         ]}
-        columns={columns}
+        columns={columnsWithActions}
         queryKey={["gcs-buckets-real", project]}
         queryFn={() => fetchGCSBuckets(project)}
         filterPlaceholder="Filter buckets"
@@ -110,7 +181,17 @@ export function GCSBucketsPage() {
           onClose={() => setCreating(false)}
           onCreated={() => {
             setCreating(false);
-            void queryClient.invalidateQueries({ queryKey: ["gcs-buckets-real", project] });
+            refresh();
+          }}
+        />
+      ) : null}
+      {deleting ? (
+        <DeleteBucketDialog
+          name={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
+            refresh();
           }}
         />
       ) : null}

@@ -1,7 +1,7 @@
 import { type ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { GcpPageHeader } from "./GcpConsole.js";
+import { GcpPageHeader, type GcpPageAction } from "./GcpConsole.js";
 
 export interface GcpDetailProperty {
   label: string;
@@ -20,6 +20,7 @@ export function GcpResourceDetail<T>({
   queryFn,
   properties,
   extra,
+  actions,
 }: {
   title: string;
   description: string;
@@ -29,6 +30,10 @@ export function GcpResourceDetail<T>({
   queryFn: () => Promise<T>;
   properties: (resource: T) => GcpDetailProperty[];
   extra?: (resource: T) => ReactNode;
+  /** Header actions (e.g. Delete) that don't depend on the resource having
+   *  loaded — the same way the list page's "Create …" header action renders
+   *  regardless of whether the list read has succeeded. */
+  actions?: GcpPageAction[];
 }) {
   const query = useQuery({ queryKey, queryFn });
 
@@ -37,7 +42,13 @@ export function GcpResourceDetail<T>({
       <div className="gc-detail-back">
         <Link to={backTo}>‹ {backLabel}</Link>
       </div>
-      <GcpPageHeader title={title} description={description} onRefresh={() => void query.refetch()} refreshing={query.isFetching} />
+      <GcpPageHeader
+        title={title}
+        description={description}
+        actions={actions}
+        onRefresh={() => void query.refetch()}
+        refreshing={query.isFetching}
+      />
 
       {query.isError ? (
         <div className="gc-message gc-message-error" role="alert">

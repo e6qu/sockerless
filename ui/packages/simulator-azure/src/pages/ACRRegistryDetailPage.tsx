@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { useParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useParams } from "react-router";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Button, Text } from "@fluentui/react-components";
 import {
   AzureCommandBar,
+  AzureConfirmDialog,
   AzureEssentials,
   AzureStatus,
   AzureErrorMessage,
@@ -12,7 +13,7 @@ import {
 } from "../portal/AzurePortal.js";
 import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
-import { fetchACRRegistry, fetchACRRepositories, fetchACRTags } from "../api.js";
+import { deleteACRRegistry, fetchACRRegistry, fetchACRRepositories, fetchACRTags } from "../api.js";
 
 // The Container registry blade: the real Microsoft.ContainerRegistry
 // Essentials, and its repositories/tags read from the registry's own data
@@ -22,9 +23,15 @@ import { fetchACRRegistry, fetchACRRepositories, fetchACRTags } from "../api.js"
 // `az acr repository list` and `docker login` use, not a synthetic reader.
 export function ACRRegistryDetailPage() {
   const { name = "" } = useParams();
+  const navigate = useNavigate();
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const registry = useQuery({ queryKey: ["acr-registry", name], queryFn: () => fetchACRRegistry(name) });
+  const remove = useMutation({
+    mutationFn: () => deleteACRRegistry(registry.data!.id),
+    onSuccess: () => navigate("/ui/acr"),
+  });
   const repositories = useQuery({
     queryKey: ["acr-repositories", registry.data?.id],
     queryFn: () => fetchACRRepositories(registry.data!),
@@ -41,6 +48,13 @@ export function ACRRegistryDetailPage() {
       <AzureCommandBar
         commands={[
           {
+            label: "Delete",
+            icon: "delete",
+            testid: "acr-registry-delete",
+            disabled: !registry.data || remove.isPending,
+            onSelect: () => setDeleting(true),
+          },
+          {
             label: "Refresh",
             icon: "refresh",
             onSelect: () => {
@@ -53,6 +67,29 @@ export function ACRRegistryDetailPage() {
           { label: "Feedback", icon: "feedback" },
         ]}
       />
+      {registry.data ? (
+        <AzureConfirmDialog
+          open={deleting}
+          title={`Delete ${registry.data.name}?`}
+          busy={remove.isPending}
+          testid="acr-registry-delete-dialog"
+          error={
+            remove.isError ? (
+              <>
+                <strong>Could not delete.</strong>{" "}
+                {remove.error instanceof Error ? remove.error.message : "Azure Resource Manager did not respond."}
+              </>
+            ) : undefined
+          }
+          onConfirm={() => remove.mutate()}
+          onCancel={() => setDeleting(false)}
+        >
+          <Text as="p">
+            Deleting a container registry is permanent and removes every repository and image it holds. This action
+            can&rsquo;t be undone.
+          </Text>
+        </AzureConfirmDialog>
+      ) : null}
       <div className="az-main" data-testid="acr-registry-detail">
         {registry.isError ? (
           <AzureErrorMessage testid="acr-registry-error">

@@ -472,6 +472,19 @@ async function assertCreatedGCSBucket(page, app) {
   await page.getByTestId("gcs-create-name").fill(bucketName);
   await page.getByTestId("gcs-create-submit").click();
   await page.getByRole("link", { name: bucketName }).waitFor({ state: "visible" });
+
+  // Delete the bucket through its detail page and confirm it leaves the list —
+  // the create → delete round trip through the real storage.buckets APIs.
+  await page.getByRole("link", { name: bucketName }).click();
+  await page.getByTestId("gcs-bucket-delete").click();
+  await page.getByTestId("gcs-delete-confirm").click();
+  await page.goto(`${origin}/ui/gcs`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("gcs-create-bucket").waitFor({ state: "visible" });
+  assert.equal(
+    await page.getByRole("link", { name: bucketName }).count(),
+    0,
+    `${app.name} deleted Cloud Storage bucket still appears in the list`,
+  );
 }
 
 // assertCreatedACRRegistry proves the Azure portal's create flow end to end for
@@ -487,6 +500,20 @@ async function assertCreatedACRRegistry(page, app) {
   await page.getByTestId("acr-create-name").fill(registryName);
   await page.getByTestId("acr-create-submit").click();
   await page.getByRole("link", { name: registryName }).waitFor({ state: "visible" });
+
+  // Delete the registry through its detail blade and confirm it leaves the list
+  // — the create → delete round trip through the real Azure Resource Manager
+  // container-registry APIs.
+  await page.getByRole("link", { name: registryName }).click();
+  await page.getByTestId("acr-registry-delete").click();
+  await page.getByTestId("acr-registry-delete-dialog-confirm").click();
+  await page.goto(`${origin}/ui/acr`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("acr-create").waitFor({ state: "visible" });
+  assert.equal(
+    await page.getByRole("link", { name: registryName }).count(),
+    0,
+    `${app.name} deleted container registry still appears in the list`,
+  );
 }
 
 // assertCreatedECRRepository proves the AWS console's resource-creation flow end

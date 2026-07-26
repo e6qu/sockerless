@@ -1,9 +1,11 @@
-import { Link, useParams } from "react-router";
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { GcpPageHeader, GcpStatus } from "../console/GcpConsole.js";
 import { GcpTabs } from "../console/GcpTabs.js";
 import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchCloudRunJob, fetchCloudRunJobExecutions, type CloudRunExecution, type CloudRunJob } from "../api.js";
+import { DeleteJobDialog } from "./CloudRunJobsPage.js";
 import { useProject } from "../console/project.js";
 
 // jobState reads the Job resource's own terminal condition rather than
@@ -83,6 +85,8 @@ export function ExecutionsTable({ executions }: { executions: CloudRunExecution[
 export function CloudRunJobDetailPage() {
   const { name = "" } = useParams();
   const { project } = useProject();
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState(false);
   const job = useQuery({ queryKey: ["cloudrun-job", project, name], queryFn: () => fetchCloudRunJob(project, name) });
   const executions = useQuery({
     queryKey: ["cloudrun-job-executions", project, name],
@@ -90,14 +94,23 @@ export function CloudRunJobDetailPage() {
     enabled: Boolean(job.data),
   });
 
+  // Deletion addresses the job by the id in the route, not the loaded
+  // resource, so the action is available (and testable) even before the read
+  // settles — the same way the list page's "Create job" action doesn't wait
+  // on a successful list read.
+  const deleteAction = [{ label: "Delete", testId: "cloudrun-job-delete", onSelect: () => setDeleting(true) }];
+
   if (job.isError) {
     return (
       <>
-        <GcpPageHeader title={name} description="Cloud Run job" />
+        <GcpPageHeader title={name} description="Cloud Run job" actions={deleteAction} />
         <div className="gc-message gc-message-error" role="alert">
           <strong>Couldn't load this job.</strong>{" "}
           {job.error instanceof Error ? job.error.message : "The simulator did not respond."}
         </div>
+        {deleting ? (
+          <DeleteJobDialog project={project} jobId={name} onClose={() => setDeleting(false)} onDeleted={() => navigate("/ui/cloudrun")} />
+        ) : null}
       </>
     );
   }
@@ -126,6 +139,7 @@ export function CloudRunJobDetailPage() {
       <GcpPageHeader
         title={shortName(name)}
         description="Cloud Run job"
+        actions={deleteAction}
         onRefresh={() => { void job.refetch(); void executions.refetch(); }}
         refreshing={job.isFetching || executions.isFetching}
       />
@@ -182,6 +196,9 @@ export function CloudRunJobDetailPage() {
           ]}
         />
       )}
+      {deleting ? (
+        <DeleteJobDialog project={project} jobId={name} onClose={() => setDeleting(false)} onDeleted={() => navigate("/ui/cloudrun")} />
+      ) : null}
     </>
   );
 }

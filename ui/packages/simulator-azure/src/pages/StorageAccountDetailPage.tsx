@@ -1,11 +1,18 @@
 import { useState } from "react";
-import { useParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useParams } from "react-router";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Button, Text } from "@fluentui/react-components";
-import { AzureCommandBar, AzureEssentials, AzureStatus, AzureErrorMessage, AzureEmptyState } from "../portal/AzurePortal.js";
+import {
+  AzureCommandBar,
+  AzureConfirmDialog,
+  AzureEssentials,
+  AzureStatus,
+  AzureErrorMessage,
+  AzureEmptyState,
+} from "../portal/AzurePortal.js";
 import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
-import { fetchStorageAccount, fetchBlobContainers, fetchBlobs } from "../api.js";
+import { deleteStorageAccount, fetchStorageAccount, fetchBlobContainers, fetchBlobs } from "../api.js";
 
 // The Storage account blade: the real Microsoft.Storage Essentials, and its
 // blob containers/blobs read from the account's own blob data plane —
@@ -14,9 +21,15 @@ import { fetchStorageAccount, fetchBlobContainers, fetchBlobs } from "../api.js"
 // Storage Browser uses.
 export function StorageAccountDetailPage() {
   const { name = "" } = useParams();
+  const navigate = useNavigate();
   const [selectedContainer, setSelectedContainer] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const account = useQuery({ queryKey: ["storage-account", name], queryFn: () => fetchStorageAccount(name) });
+  const remove = useMutation({
+    mutationFn: () => deleteStorageAccount(account.data!.id),
+    onSuccess: () => navigate("/ui/storage"),
+  });
   const containers = useQuery({
     queryKey: ["storage-containers", account.data?.id],
     queryFn: () => fetchBlobContainers(account.data!),
@@ -33,6 +46,13 @@ export function StorageAccountDetailPage() {
       <AzureCommandBar
         commands={[
           {
+            label: "Delete",
+            icon: "delete",
+            testid: "storage-account-delete",
+            disabled: !account.data || remove.isPending,
+            onSelect: () => setDeleting(true),
+          },
+          {
             label: "Refresh",
             icon: "refresh",
             onSelect: () => {
@@ -45,6 +65,29 @@ export function StorageAccountDetailPage() {
           { label: "Feedback", icon: "feedback" },
         ]}
       />
+      {account.data ? (
+        <AzureConfirmDialog
+          open={deleting}
+          title={`Delete ${account.data.name}?`}
+          busy={remove.isPending}
+          testid="storage-account-delete-dialog"
+          error={
+            remove.isError ? (
+              <>
+                <strong>Could not delete.</strong>{" "}
+                {remove.error instanceof Error ? remove.error.message : "Azure Resource Manager did not respond."}
+              </>
+            ) : undefined
+          }
+          onConfirm={() => remove.mutate()}
+          onCancel={() => setDeleting(false)}
+        >
+          <Text as="p">
+            Deleting a storage account is permanent and removes every container, blob, file share, table, and queue
+            it holds. This action can&rsquo;t be undone.
+          </Text>
+        </AzureConfirmDialog>
+      ) : null}
       <div className="az-main" data-testid="storage-account-detail">
         {account.isError ? (
           <AzureErrorMessage testid="storage-account-error">

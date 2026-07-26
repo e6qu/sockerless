@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import { AzureResourceTable, type AzureColumn } from "../portal/index.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
-import { fetchFunctionSites, type FunctionSite } from "../api.js";
+import { deleteFunctionApp, fetchFunctionSites, type FunctionSite } from "../api.js";
 
 const columns: AzureColumn<FunctionSite>[] = [
   {
@@ -31,6 +31,13 @@ export function AzureFunctionsPage() {
         { label: "Function Apps", value: String(rows.length) },
         { label: "Locations", value: new Set(rows.map((row) => row.location)).size || "—" },
       ]}
+      onDelete={async (sites) => {
+        for (const site of sites) {
+          await deleteFunctionApp(site.id);
+        }
+      }}
+      deleteWarning="Deleting a Function App is permanent and removes every function deployed to it. This action can't be undone."
+      deleteTestId="fn-delete"
     />
   );
 }

@@ -4,7 +4,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { GcpResourceTable, type GcpColumn } from "../console/index.js";
 import { GcpDialog } from "../console/GcpDialog.js";
 import { shortName, formatTimestamp } from "../console/format.js";
-import { CONSOLE_REGION, createARRepository, fetchARRepos, waitArOperation, type ARRepo } from "../api.js";
+import {
+  CONSOLE_REGION,
+  createARRepository,
+  deleteARRepository,
+  fetchARRepos,
+  waitArOperation,
+  type ARRepo,
+} from "../api.js";
 import { useProject } from "../console/project.js";
 
 const columns: GcpColumn<ARRepo>[] = [
@@ -96,10 +103,83 @@ export function CreateRepoDialog({
   );
 }
 
+// DeleteRepoDialog is shared by the list's per-row action and the repository
+// detail page's header action — the same real
+// projects.locations.repositories.delete long-running operation, driven
+// through the same operations.get poll (waitArOperation) the create flow uses.
+export function DeleteRepoDialog({
+  project,
+  repositoryId,
+  onClose,
+  onDeleted,
+}: {
+  project: string;
+  repositoryId: string;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const remove = useMutation({
+    mutationFn: async () => waitArOperation(await deleteARRepository(project, repositoryId)),
+    onSuccess: onDeleted,
+  });
+  return (
+    <GcpDialog title="Delete repository?" testId="ar-delete-dialog" onClose={onClose}>
+      <p>
+        Deleting <strong>{repositoryId}</strong> permanently removes the repository and every image,
+        package, and file it holds. This can't be undone.
+      </p>
+      {remove.isError ? (
+        <div className="gc-message gc-message-error" role="alert">
+          <strong>Couldn't delete the repository.</strong>{" "}
+          {remove.error instanceof Error ? remove.error.message : "The API did not respond."}
+        </div>
+      ) : null}
+      <div className="gc-dialog-actions">
+        <button type="button" className="gc-button-text" onClick={onClose}>Cancel</button>
+        <button
+          type="button"
+          className="gc-button-primary"
+          data-testid="ar-delete-confirm"
+          disabled={remove.isPending}
+          onClick={() => remove.mutate()}
+        >
+          {remove.isPending ? "Deleting…" : "Delete"}
+        </button>
+      </div>
+    </GcpDialog>
+  );
+}
+
 export function ArtifactRegistryPage() {
   const { project } = useProject();
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["ar-repos-real", project] });
+
+  const columnsWithActions: GcpColumn<ARRepo>[] = [
+    ...columns,
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (row) => {
+        const id = shortName(row.name);
+        return (
+          <button
+            type="button"
+            className="gc-button-text"
+            data-testid={`ar-delete-${id}`}
+            aria-label={`Delete ${id}`}
+            onClick={() => setDeleting(id)}
+          >
+            Delete
+          </button>
+        );
+      },
+      value: () => "",
+    },
+  ];
 
   return (
     <>
@@ -109,7 +189,7 @@ export function ArtifactRegistryPage() {
         actions={[
           { label: "Create repository", icon: "add", primary: true, testId: "ar-create-repo", onSelect: () => setCreating(true) },
         ]}
-        columns={columns}
+        columns={columnsWithActions}
         queryKey={["ar-repos-real", project]}
         queryFn={() => fetchARRepos(project)}
         filterPlaceholder="Filter repositories"
@@ -127,7 +207,18 @@ export function ArtifactRegistryPage() {
           onClose={() => setCreating(false)}
           onCreated={() => {
             setCreating(false);
-            void queryClient.invalidateQueries({ queryKey: ["ar-repos-real", project] });
+            refresh();
+          }}
+        />
+      ) : null}
+      {deleting ? (
+        <DeleteRepoDialog
+          project={project}
+          repositoryId={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
+            refresh();
           }}
         />
       ) : null}

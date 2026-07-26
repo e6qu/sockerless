@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   makeStyles,
   tokens,
@@ -17,6 +17,7 @@ import {
 import { ChevronLeftRegular, ChevronRightRegular } from "@fluentui/react-icons";
 import {
   AzureCommandBar,
+  AzureConfirmDialog,
   AzureEssentials,
   AzureEmptyState,
   AzureErrorMessage,
@@ -51,6 +52,25 @@ export interface AzureResourceTableProps<T> {
   /** Content rendered between Essentials and the filter/table — a page's own
    *  inline create form or mutation-error banner. */
   banner?: ReactNode;
+  /** Deletes the given rows through the resource's real ARM DELETE
+   *  operation — one call per row, the same shape the real portal's
+   *  multi-select delete and `az` bulk delete both use. When provided, the
+   *  table's Delete command becomes real: it opens a confirm dialog naming
+   *  the selected rows, then on confirm calls this, clears the selection,
+   *  and refetches the list. Omitted keeps Delete disabled, exactly as it
+   *  was before this prop existed. */
+  onDelete?: (rows: T[]) => Promise<void>;
+  /** The consequence copy the confirm dialog shows beneath its title —
+   *  specific to what deleting this resource destroys (e.g. "removes every
+   *  repository and image it holds"). Required alongside `onDelete`. */
+  deleteWarning?: ReactNode;
+  /** The base test id for the delete command and its confirm dialog
+   *  (`{deleteTestId}`, `{deleteTestId}-confirm`, `{deleteTestId}-cancel`,
+   *  `{deleteTestId}-error`). Required alongside `onDelete`. */
+  deleteTestId?: string;
+  /** How the confirm dialog names a row; defaults to the first column's
+   *  cell text (every caller's first column is the resource name). */
+  rowLabel?: (row: T) => string;
 }
 
 const PAGE_SIZE = 10;
@@ -136,13 +156,34 @@ export function AzureResourceTable<T>({
   resourceNoun,
   extraCommands,
   banner,
+  onDelete,
+  deleteWarning,
+  deleteTestId,
+  rowLabel,
 }: AzureResourceTableProps<T>) {
   const styles = useStyles();
+  const queryClient = useQueryClient();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({ queryKey, queryFn });
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ column: string; ascending: boolean } | null>(null);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+
+  const labelOf = rowLabel ?? ((row: T) => columns[0]?.value(row) ?? rowKey(row));
+  const selectedRows = useMemo(() => (data ?? []).filter((row) => selected.has(rowKey(row))), [data, selected, rowKey]);
+
+  const remove = useMutation({
+    mutationFn: async () => {
+      if (!onDelete) return;
+      await onDelete(selectedRows);
+    },
+    onSuccess: () => {
+      setSelected(new Set());
+      setDeleting(false);
+      void queryClient.invalidateQueries({ queryKey });
+    },
+  });
 
   const rows = useMemo(() => {
     const all = data ?? [];
@@ -178,7 +219,13 @@ export function AzureResourceTable<T>({
         commands={[
           ...(extraCommands ?? []),
           { label: "Refresh", icon: "refresh", onSelect: () => void refetch(), disabled: isFetching },
-          { label: "Delete", icon: "delete", disabled: selected.size === 0 },
+          {
+            label: "Delete",
+            icon: "delete",
+            testid: deleteTestId,
+            disabled: selected.size === 0 || !onDelete,
+            onSelect: onDelete ? () => setDeleting(true) : undefined,
+          },
           { label: "Assign tags", icon: "tag", disabled: selected.size === 0 },
           { label: "Export to CSV", icon: "download", disabled: rows.length === 0 },
           { label: "Feedback", icon: "feedback" },
@@ -306,6 +353,37 @@ export function AzureResourceTable<T>({
           </TableBody>
         </Table>
       </div>
+      {onDelete && deleteTestId ? (
+        <AzureConfirmDialog
+          open={deleting}
+          title={
+            selectedRows.length === 1
+              ? `Delete ${labelOf(selectedRows[0])}?`
+              : `Delete ${selectedRows.length} ${resourceNoun}?`
+          }
+          busy={remove.isPending}
+          testid={deleteTestId}
+          error={
+            remove.isError ? (
+              <>
+                <strong>Could not delete.</strong>{" "}
+                {remove.error instanceof Error ? remove.error.message : "Azure Resource Manager did not respond."}
+              </>
+            ) : undefined
+          }
+          onConfirm={() => remove.mutate()}
+          onCancel={() => setDeleting(false)}
+        >
+          <Text as="p">{deleteWarning}</Text>
+          <ul>
+            {selectedRows.map((row) => (
+              <li key={rowKey(row)}>
+                <code>{labelOf(row)}</code>
+              </li>
+            ))}
+          </ul>
+        </AzureConfirmDialog>
+      ) : null}
     </>
   );
 }

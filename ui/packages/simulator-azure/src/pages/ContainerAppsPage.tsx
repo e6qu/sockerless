@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import { AzureResourceTable, type AzureColumn } from "../portal/index.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
-import { fetchContainerAppJobs, type ContainerAppJob } from "../api.js";
+import { deleteContainerAppJob, fetchContainerAppJobs, type ContainerAppJob } from "../api.js";
 
 const columns: AzureColumn<ContainerAppJob>[] = [
   {
@@ -31,6 +31,13 @@ export function ContainerAppsPage() {
         { label: "Jobs", value: String(rows.length) },
         { label: "Locations", value: new Set(rows.map((row) => row.location)).size || "—" },
       ]}
+      onDelete={async (jobs) => {
+        for (const job of jobs) {
+          await deleteContainerAppJob(job.id);
+        }
+      }}
+      deleteWarning="Deleting a Container Apps job is permanent and removes its execution history. This action can't be undone."
+      deleteTestId="ca-delete"
     />
   );
 }

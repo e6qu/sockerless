@@ -1,10 +1,19 @@
-import { useParams } from "react-router";
+import { useState } from "react";
+import { useNavigate, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Text } from "@fluentui/react-components";
-import { AzureCommandBar, AzureEssentials, AzureStatus, AzureErrorMessage, AzureEmptyState } from "../portal/AzurePortal.js";
+import {
+  AzureCommandBar,
+  AzureConfirmDialog,
+  AzureEssentials,
+  AzureStatus,
+  AzureErrorMessage,
+  AzureEmptyState,
+} from "../portal/AzurePortal.js";
 import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
 import {
+  deleteContainerAppJob,
   fetchContainerAppJob,
   fetchContainerAppJobExecutions,
   startContainerAppJobExecution,
@@ -19,7 +28,9 @@ import {
 // list), all read and driven through real Azure Resource Manager calls.
 export function ContainerAppDetailPage() {
   const { name = "" } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [deleting, setDeleting] = useState(false);
 
   const job = useQuery({ queryKey: ["ca-job", name], queryFn: () => fetchContainerAppJob(name) });
   const jobId = job.data?.id;
@@ -39,6 +50,10 @@ export function ContainerAppDetailPage() {
   const stop = useMutation({
     mutationFn: () => stopContainerAppJobExecutions(jobId!),
     onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteContainerAppJob(jobId!),
+    onSuccess: () => navigate("/ui/container-apps"),
   });
 
   const mutationError = start.error ?? stop.error;
@@ -70,8 +85,38 @@ export function ContainerAppDetailPage() {
             },
             disabled: job.isFetching,
           },
+          {
+            label: "Delete",
+            icon: "delete",
+            testid: "ca-job-delete",
+            disabled: !jobId || remove.isPending,
+            onSelect: () => setDeleting(true),
+          },
         ]}
       />
+      {job.data ? (
+        <AzureConfirmDialog
+          open={deleting}
+          title={`Delete ${job.data.name}?`}
+          busy={remove.isPending}
+          testid="ca-job-delete-dialog"
+          error={
+            remove.isError ? (
+              <>
+                <strong>Could not delete.</strong>{" "}
+                {remove.error instanceof Error ? remove.error.message : "Azure Resource Manager did not respond."}
+              </>
+            ) : undefined
+          }
+          onConfirm={() => remove.mutate()}
+          onCancel={() => setDeleting(false)}
+        >
+          <Text as="p">
+            Deleting a Container Apps job is permanent and removes its execution history. This action can&rsquo;t be
+            undone.
+          </Text>
+        </AzureConfirmDialog>
+      ) : null}
       <div className="az-main" data-testid="ca-job-detail">
         {job.isError ? (
           <AzureErrorMessage testid="ca-job-error">
