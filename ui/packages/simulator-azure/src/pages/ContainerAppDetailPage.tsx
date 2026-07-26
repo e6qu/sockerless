@@ -9,16 +9,22 @@ import {
   AzureStatus,
   AzureErrorMessage,
   AzureEmptyState,
-} from "../portal/AzurePortal.js";
+  TagsEditor,
+} from "../portal/index.js";
 import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
-import { resourceGroupOf, locationLabel } from "../portal/format.js";
+import { resourceGroupOf, locationLabel, tagsSummary } from "../portal/format.js";
 import {
+  API_VERSION,
   deleteContainerAppJob,
   fetchContainerAppJob,
   fetchContainerAppJobExecutions,
   startContainerAppJobExecution,
   stopContainerAppJobExecutions,
+  updateContainerAppJob,
+  updateResourceTags,
+  type ContainerAppJobConfigInput,
 } from "../api.js";
+import { ContainerAppJobEditForm } from "./ContainerAppJobForms.js";
 
 // The Container Apps blade this console lists (ContainerAppsPage) reads the
 // real Microsoft.App/jobs resource — Container Apps' run-to-completion
@@ -31,6 +37,7 @@ export function ContainerAppDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
+  const [panel, setPanel] = useState<"config" | "tags" | null>(null);
 
   const job = useQuery({ queryKey: ["ca-job", name], queryFn: () => fetchContainerAppJob(name) });
   const jobId = job.data?.id;
@@ -55,6 +62,25 @@ export function ContainerAppDetailPage() {
     mutationFn: () => deleteContainerAppJob(jobId!),
     onSuccess: () => navigate("/ui/container-apps"),
   });
+  const invalidateJob = () => {
+    void queryClient.invalidateQueries({ queryKey: ["ca-job", name] });
+    void queryClient.invalidateQueries({ queryKey: ["ca-jobs"] });
+  };
+  const editJob = useMutation({
+    mutationFn: (config: ContainerAppJobConfigInput) =>
+      updateContainerAppJob(job.data!.id, job.data!.location, job.data!.environmentId, config),
+    onSuccess: () => {
+      setPanel(null);
+      invalidateJob();
+    },
+  });
+  const saveTags = useMutation({
+    mutationFn: (tags: Record<string, string>) => updateResourceTags(job.data!.id, API_VERSION.jobs, tags),
+    onSuccess: () => {
+      setPanel(null);
+      invalidateJob();
+    },
+  });
 
   const mutationError = start.error ?? stop.error;
 
@@ -75,6 +101,20 @@ export function ContainerAppDetailPage() {
             testid: "ca-job-stop",
             disabled: !jobId || stop.isPending,
             onSelect: () => stop.mutate(),
+          },
+          {
+            label: "Edit",
+            icon: "edit",
+            testid: "ca-job-edit",
+            disabled: !jobId || editJob.isPending,
+            onSelect: () => setPanel((current) => (current === "config" ? null : "config")),
+          },
+          {
+            label: "Edit tags",
+            icon: "tag",
+            testid: "ca-job-tags",
+            disabled: !jobId || saveTags.isPending,
+            onSelect: () => setPanel((current) => (current === "tags" ? null : "tags")),
           },
           {
             label: "Refresh",
@@ -138,8 +178,44 @@ export function ContainerAppDetailPage() {
                   label: "Environment",
                   value: job.data.environmentId ? (job.data.environmentId.split("/").pop() ?? "—") : "—",
                 },
+                { label: "Parallelism", value: job.data.parallelism ? String(job.data.parallelism) : "—" },
+                { label: "Tags", value: tagsSummary(job.data.tags) },
               ]}
             />
+
+            {panel === "config" ? (
+              <ContainerAppJobEditForm
+                job={job.data}
+                busy={editJob.isPending}
+                error={
+                  editJob.isError ? (
+                    <>
+                      <strong>The job could not be updated.</strong>{" "}
+                      {editJob.error instanceof Error ? editJob.error.message : "Azure Resource Manager did not respond."}
+                    </>
+                  ) : undefined
+                }
+                onSave={(config) => editJob.mutate(config)}
+                onDismiss={() => setPanel(null)}
+              />
+            ) : null}
+            {panel === "tags" ? (
+              <TagsEditor
+                tags={job.data.tags}
+                busy={saveTags.isPending}
+                testidPrefix="ca-job-tags"
+                error={
+                  saveTags.isError ? (
+                    <>
+                      <strong>The tags could not be saved.</strong>{" "}
+                      {saveTags.error instanceof Error ? saveTags.error.message : "Azure Resource Manager did not respond."}
+                    </>
+                  ) : undefined
+                }
+                onSave={(tags) => saveTags.mutate(tags)}
+                onDismiss={() => setPanel(null)}
+              />
+            ) : null}
 
             {mutationError ? (
               <AzureErrorMessage testid="ca-job-action-error">

@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { GcpResourceDetail, GcpStatus } from "../console/index.js";
 import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchCloudFunction, type CloudFunction } from "../api.js";
-import { DeleteFunctionDialog } from "./CloudFunctionsPage.js";
+import { DeleteFunctionDialog, EditFunctionDialog } from "./CloudFunctionsPage.js";
 import { useProject } from "../console/project.js";
 
 export function CloudFunctionDetailPage() {
@@ -13,6 +13,20 @@ export function CloudFunctionDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+
+  // GcpResourceDetail reads the function under this same key; a second read
+  // here shares its cache (react-query dedupes by key, so no extra request) and
+  // lets the Edit action prefill its form from the loaded resource. Editing
+  // therefore appears once the read succeeds, the way the list's Create action
+  // needs no read but the detail's Edit does.
+  const fn = useQuery({ queryKey: ["cloud-function", project, name], queryFn: () => fetchCloudFunction(project, name) });
+
+  const deleteAction = { label: "Delete", testId: "function-delete", onSelect: () => setDeleting(true) };
+  const actions = fn.data
+    ? [{ label: "Edit", icon: "edit" as const, testId: "function-edit", onSelect: () => setEditing(true) }, deleteAction]
+    : [deleteAction];
+
   return (
     <>
       <GcpResourceDetail<CloudFunction>
@@ -23,9 +37,9 @@ export function CloudFunctionDetailPage() {
         queryKey={["cloud-function", project, name]}
         queryFn={() => fetchCloudFunction(project, name)}
         // Deletion addresses the function by the id in the route, not the
-        // loaded resource, so the action is available (and testable) even
-        // before the read settles.
-        actions={[{ label: "Delete", testId: "function-delete", onSelect: () => setDeleting(true) }]}
+        // loaded resource, so it is available even before the read settles;
+        // Edit prefills from the loaded resource, so it appears once it does.
+        actions={actions}
         properties={(fn) => [
           { label: "State", value: <GcpStatus status={fn.state ?? "UNKNOWN"} /> },
           { label: "Environment", value: fn.environment ?? "—" },
@@ -94,6 +108,17 @@ export function CloudFunctionDetailPage() {
           onDeleted={() => {
             void queryClient.invalidateQueries({ queryKey: ["cloud-functions-real", project] });
             navigate("/ui/functions");
+          }}
+        />
+      ) : null}
+      {editing && fn.data ? (
+        <EditFunctionDialog
+          project={project}
+          fn={fn.data}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            void fn.refetch();
           }}
         />
       ) : null}

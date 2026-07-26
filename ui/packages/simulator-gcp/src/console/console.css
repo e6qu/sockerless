@@ -175,6 +175,29 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 }
 .gc-drawer-title { font-size: 16px; font-weight: 500; font-family: var(--gc-font-display); }
 .gc-drawer-note { font-size: 12.5px; color: var(--gc-fg-secondary); margin: 12px 20px; }
+.gc-drawer-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 8px;
+  padding: 0 12px;
+  height: 40px;
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius-control);
+  background: var(--gc-surface);
+}
+.gc-drawer-search:focus-within { outline: 2px solid var(--gc-primary); outline-offset: 1px; }
+.gc-drawer-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--gc-fg);
+  padding: 8px 0;
+}
+.gc-drawer-search input:focus-visible { outline: none; }
 .gc-drawer-group { padding: 8px 0; border-top: 1px solid var(--gc-border-subtle); }
 .gc-drawer-group:first-of-type { border-top: 0; }
 .gc-drawer-group-label {
@@ -371,6 +394,8 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 .gc-table td a, .gc-table .gc-cell-link { color: var(--gc-link); text-decoration: none; }
 .gc-table td a:hover { text-decoration: underline; }
 .gc-table-state { padding: 0; }
+/* Several per-row text actions sit in a single cell with a little spacing. */
+.gc-row-actions { display: inline-flex; align-items: center; gap: 12px; }
 
 /* States ----------------------------------------------------------------- */
 .gc-loading { padding: 40px 16px; text-align: center; color: var(--gc-fg-secondary); }
@@ -497,6 +522,27 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 }
 .gc-button-text:hover { background: var(--gc-surface-alt); }
 .gc-button-text:disabled { color: var(--gc-fg-disabled); cursor: default; background: transparent; }
+
+/* Labels editor ------------------------------------------------------------
+ * The key/value row editor for a resource's `labels` map, reused by every
+ * edit flow that touches labels. */
+.gc-labels-editor { margin: 0 0 16px; }
+.gc-labels-editor > .gc-field { display: block; margin: 0 0 8px; }
+.gc-labels-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.gc-label-row { display: flex; align-items: center; gap: 8px; }
+.gc-label-row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--gc-fg);
+  background: var(--gc-surface);
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius-control);
+  padding: 8px 10px;
+}
+.gc-label-remove { width: 32px; height: 32px; flex-shrink: 0; }
+.gc-label-add { padding-left: 0; }
 
 /* Inline code / CLI usage -------------------------------------------------- */
 .gc-code-inline {

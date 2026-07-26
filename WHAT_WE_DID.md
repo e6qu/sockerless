@@ -4,6 +4,51 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — Simulator consoles reach full functional parity (one pass)
+
+A single comprehensive pass brought all three consoles to full functional
+parity with their real cloud consoles — completing CRUD (adding the Update verb),
+lifecycle actions, and the complex compute-resource creation deferred through the
+incremental passes. Every flow uses real cloud APIs over the existing federated
+data plane (federation/broker/signing logic untouched — only `api.ts` functions
+were added); no simulator operation needed adding (the audit confirmed every
+update/action/create op already existed).
+
+- **AWS (real Cloudscape)** — Update: Lambda config (memory/timeout/env),
+  CloudWatch retention, S3 versioning + tags, ECR tag-mutability/scan-on-push,
+  and a reusable tags editor via `TagResource`/`UntagResource`. Actions: Lambda
+  Test (Invoke). Creates: Create Lambda function (container-image or Zip-from-S3)
+  and ECS Run task (existing family or an inline task definition).
+- **Google Cloud (hand-built Material)** — Update: GCS bucket (storage class +
+  labels), Artifact Registry (labels), Cloud Function config, Cloud Run job
+  config, via real `PATCH` (with a reusable `LabelsEditor`). Actions: Cloud Run
+  job Run (`jobs.run` → a real execution). Creates: Create Cloud Run job and
+  Create Cloud Function. Plus a nav-drawer product search for flyout parity with
+  AWS. Long-running operations driven through real `operations.get` polls.
+- **Microsoft Azure (real Fluent)** — Update: a reusable tags editor via ARM
+  `PATCH` on ACR/Storage/Container Apps/Functions, plus Container App job config,
+  Storage account SKU/access-tier, and ACR SKU/admin-user. Actions: Function App
+  start/stop/restart; Container App job Run/Stop. Creates: Create Container App
+  job (ensuring the resource group + managed environment first) and Create
+  Function App (ensuring a Consumption plan + runtime).
+
+Held the bar throughout: real design tokens, light and dark at WCAG AA, axe
+zero-violations on every new dialog/form/action surface in both themes, the
+federated data plane untouched, real APIs only with honest error surfacing and
+no fakes. Verified: all three packages typecheck/knip/build clean; new vitest
+covering request shaping + form behavior for every flow (AWS 67, GCP 103, Azure
+86); the package Playwright suites green with axe both themes (AWS 108, GCP 91,
+Azure 77); and the Shauth relying-party matrix now runs the complete
+authenticated story across all three consoles — including create → update (ECR
+scan config; ACR admin) and compute-create → run (a Cloud Run job creating a
+real execution). Filed BUG-2644 (an existing Azure ACR/Container-Apps PATCH
+test-contract gap the work surfaced).
+
+All three consoles are now faithful in look (real design systems on AWS/Azure,
+faithful Material on GCP) and functionality (Create, Read, Update, Delete plus
+lifecycle actions and compute-resource creation) against real cloud APIs.
+
+
 ## 2026-07-26 — Google Cloud and Azure console resource-deletion flows
 
 Completed the consoles' create/read/delete parity: the AWS console already

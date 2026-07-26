@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Text } from "@fluentui/react-components";
 import {
   AzureCommandBar,
@@ -9,10 +9,20 @@ import {
   AzureStatus,
   AzureErrorMessage,
   AzureEmptyState,
-} from "../portal/AzurePortal.js";
+  TagsEditor,
+} from "../portal/index.js";
 import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
-import { resourceGroupOf, locationLabel } from "../portal/format.js";
-import { deleteFunctionApp, fetchFunctionApp, fetchFunctionAppSettings, fetchFunctions } from "../api.js";
+import { resourceGroupOf, locationLabel, tagsSummary } from "../portal/format.js";
+import {
+  deleteFunctionApp,
+  fetchFunctionApp,
+  fetchFunctionAppSettings,
+  fetchFunctions,
+  restartFunctionApp,
+  startFunctionApp,
+  stopFunctionApp,
+  updateFunctionAppTags,
+} from "../api.js";
 
 // The Function App blade: the real Microsoft.Web/sites Essentials, the
 // site's application settings (read through the real `/list` action, since
@@ -21,14 +31,29 @@ import { deleteFunctionApp, fetchFunctionApp, fetchFunctionAppSettings, fetchFun
 export function FunctionAppDetailPage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
+  const [editingTags, setEditingTags] = useState(false);
 
   const site = useQuery({ queryKey: ["fn-site", name], queryFn: () => fetchFunctionApp(name) });
   const siteId = site.data?.id;
+  const invalidateSite = () => void queryClient.invalidateQueries({ queryKey: ["fn-site", name] });
   const remove = useMutation({
     mutationFn: () => deleteFunctionApp(siteId!),
     onSuccess: () => navigate("/ui/functions"),
   });
+  const start = useMutation({ mutationFn: () => startFunctionApp(siteId!), onSuccess: invalidateSite });
+  const stop = useMutation({ mutationFn: () => stopFunctionApp(siteId!), onSuccess: invalidateSite });
+  const restart = useMutation({ mutationFn: () => restartFunctionApp(siteId!), onSuccess: invalidateSite });
+  const saveTags = useMutation({
+    mutationFn: (tags: Record<string, string>) => updateFunctionAppTags(siteId!, tags, site.data!.httpsOnly),
+    onSuccess: () => {
+      setEditingTags(false);
+      invalidateSite();
+      void queryClient.invalidateQueries({ queryKey: ["fn-sites"] });
+    },
+  });
+  const lifecycleError = start.error ?? stop.error ?? restart.error;
   const settings = useQuery({
     queryKey: ["fn-site-settings", siteId],
     queryFn: () => fetchFunctionAppSettings(siteId!),
@@ -45,6 +70,34 @@ export function FunctionAppDetailPage() {
       <AzureCommandBar
         commands={[
           {
+            label: "Start",
+            icon: "play",
+            testid: "fn-site-start",
+            disabled: !siteId || start.isPending,
+            onSelect: () => start.mutate(),
+          },
+          {
+            label: "Stop",
+            icon: "stop",
+            testid: "fn-site-stop",
+            disabled: !siteId || stop.isPending,
+            onSelect: () => stop.mutate(),
+          },
+          {
+            label: "Restart",
+            icon: "refresh",
+            testid: "fn-site-restart",
+            disabled: !siteId || restart.isPending,
+            onSelect: () => restart.mutate(),
+          },
+          {
+            label: "Edit tags",
+            icon: "tag",
+            testid: "fn-site-tags",
+            disabled: !siteId || saveTags.isPending,
+            onSelect: () => setEditingTags((current) => !current),
+          },
+          {
             label: "Delete",
             icon: "delete",
             testid: "fn-site-delete",
@@ -54,6 +107,7 @@ export function FunctionAppDetailPage() {
           {
             label: "Refresh",
             icon: "refresh",
+            testid: "fn-site-refresh",
             onSelect: () => {
               void site.refetch();
               void settings.refetch();
@@ -105,8 +159,33 @@ export function FunctionAppDetailPage() {
                 { label: "Status", value: <AzureStatus status={site.data.state || (site.data.enabled ? "Running" : "Stopped")} /> },
                 { label: "Default domain", value: site.data.defaultHostName ? <code>{site.data.defaultHostName}</code> : "—" },
                 { label: "HTTPS only", value: site.data.httpsOnly ? "Enabled" : "Disabled" },
+                { label: "Tags", value: tagsSummary(site.data.tags) },
               ]}
             />
+
+            {lifecycleError ? (
+              <AzureErrorMessage testid="fn-site-action-error">
+                <strong>The Function App operation failed.</strong>{" "}
+                {lifecycleError instanceof Error ? lifecycleError.message : "Azure Resource Manager did not respond."}
+              </AzureErrorMessage>
+            ) : null}
+            {editingTags ? (
+              <TagsEditor
+                tags={site.data.tags}
+                busy={saveTags.isPending}
+                testidPrefix="fn-site-tags"
+                error={
+                  saveTags.isError ? (
+                    <>
+                      <strong>The tags could not be saved.</strong>{" "}
+                      {saveTags.error instanceof Error ? saveTags.error.message : "Azure Resource Manager did not respond."}
+                    </>
+                  ) : undefined
+                }
+                onSave={(tags) => saveTags.mutate(tags)}
+                onDismiss={() => setEditingTags(false)}
+              />
+            ) : null}
 
             <section className="az-blade-section" aria-label="Application settings">
               <Text as="h2" weight="semibold" block>

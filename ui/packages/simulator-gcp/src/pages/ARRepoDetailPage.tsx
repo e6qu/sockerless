@@ -5,7 +5,7 @@ import { GcpPageHeader } from "../console/GcpConsole.js";
 import { GcpTabs } from "../console/GcpTabs.js";
 import { shortName, formatTimestamp, splitImageDigest } from "../console/format.js";
 import { fetchARRepo, fetchARImages, type ARDockerImage } from "../api.js";
-import { DeleteRepoDialog } from "./ArtifactRegistryPage.js";
+import { DeleteRepoDialog, EditRepoDialog } from "./ArtifactRegistryPage.js";
 import { useProject } from "../console/project.js";
 
 // ImagesTable is the Images tab's table, presentational so the digest/tag
@@ -58,6 +58,7 @@ export function ARRepoDetailPage() {
   const { project } = useProject();
   const navigate = useNavigate();
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
   const repo = useQuery({ queryKey: ["ar-repo", project, name], queryFn: () => fetchARRepo(project, name) });
   const images = useQuery({
     queryKey: ["ar-repo-images", project, name],
@@ -68,8 +69,12 @@ export function ARRepoDetailPage() {
   // Deletion addresses the repository by the id in the route, not the loaded
   // resource, so the action is available (and testable) even before the read
   // settles — the same way the list page's "Create repository" action
-  // doesn't wait on a successful list read.
+  // doesn't wait on a successful list read. Editing prefills the form from the
+  // loaded resource, so its action appears once the read succeeds.
   const deleteAction = [{ label: "Delete", testId: "ar-repo-delete", onSelect: () => setDeleting(true) }];
+  const headerActions = repo.data
+    ? [{ label: "Edit", icon: "edit" as const, testId: "ar-repo-edit", onSelect: () => setEditing(true) }, ...deleteAction]
+    : deleteAction;
 
   if (repo.isError) {
     return (
@@ -102,7 +107,7 @@ export function ARRepoDetailPage() {
       <GcpPageHeader
         title={shortName(name)}
         description="Artifact Registry repository"
-        actions={deleteAction}
+        actions={headerActions}
         onRefresh={() => { void repo.refetch(); void images.refetch(); }}
         refreshing={repo.isFetching || images.isFetching}
       />
@@ -172,6 +177,17 @@ export function ARRepoDetailPage() {
           repositoryId={name}
           onClose={() => setDeleting(false)}
           onDeleted={() => navigate("/ui/ar")}
+        />
+      ) : null}
+      {editing && data ? (
+        <EditRepoDialog
+          project={project}
+          repo={data}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            void repo.refetch();
+          }}
         />
       ) : null}
     </>

@@ -18,7 +18,7 @@ interface ArmResource {
 
 // API versions for each provider — the ones the real Azure Resource Manager
 // serves these list operations at.
-const API_VERSION = {
+export const API_VERSION = {
   subscriptions: "2022-12-01",
   // Microsoft.Subscription — the alias (subscription creation) API and the
   // cancel/rename/enable subscription actions.
@@ -68,6 +68,11 @@ function subscriptionOf(sub: ArmSubscription): Subscription {
     state: sub.state ?? "",
   };
 }
+
+// A resource's ARM tags map. Every ARM resource carries the same `tags`
+// top-level object; the portal's reusable tags editor reads and writes it the
+// same way for every resource type.
+export type ResourceTags = Record<string, string>;
 
 // armSend writes to an Azure Resource Manager path and surfaces ARM's own
 // error message rather than masking it.
@@ -182,6 +187,28 @@ async function ensureResourceGroup(subscriptionId: string, resourceGroup: string
     },
   );
 }
+
+// armPatch merges a partial body into an existing resource through ARM's real
+// PATCH verb — the same request `az resource update` and the vendor SDKs'
+// BeginUpdate send. Every resource type below settles it synchronously (HTTP
+// 200 with the merged resource), so the console awaits the response directly.
+async function armPatch(id: string, apiVersion: string, body: unknown): Promise<Response> {
+  return armSend(`${id}?api-version=${apiVersion}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+// updateResourceTags writes a resource's `tags` map through its real ARM PATCH
+// — every ARM resource carries the same top-level `tags` object, and the real
+// portal's "Tags" blade edits it with exactly this partial PATCH. The caller
+// passes the resource-type api-version the tags PATCH is served at (the same
+// one its GET/PUT use). The Function App site is the one exception (its PATCH
+// handler needs httpsOnly preserved) — see updateFunctionAppTags.
+export const updateResourceTags = async (id: string, apiVersion: string, tags: ResourceTags): Promise<void> => {
+  await armPatch(id, apiVersion, { tags });
+};
 
 async function listAcrossSubscriptions<T extends ArmResource>(provider: string, apiVersion: string): Promise<T[]> {
   const subs = await subscriptionIds();
@@ -379,54 +406,96 @@ async function resourceIdByName(provider: string, apiVersion: string, name: stri
 // executions list) — the Container Apps Jobs equivalent of a Cloud Run job's
 // executions.
 
+export interface ContainerAppJobEnvVar {
+  name: string;
+  value: string;
+}
+
 export interface ContainerAppJobContainer {
   name: string;
   image: string;
   command: string[];
   args: string[];
+  env: ContainerAppJobEnvVar[];
 }
 
 export interface ContainerAppJobDetail {
   id: string;
   name: string;
   location: string;
+  tags: ResourceTags;
   provisioningState: string;
   environmentId: string;
   triggerType: string;
   replicaTimeout: number;
   replicaRetryLimit: number;
+  // parallelism / cronExpression live under the trigger-type-specific config
+  // block (manualTriggerConfig / scheduleTriggerConfig / eventTriggerConfig).
+  // The detail surfaces them flattened so the edit form can round-trip them
+  // back into the right block on a full-resource PUT.
+  parallelism: number;
+  cronExpression: string;
   containers: ContainerAppJobContainer[];
+}
+
+interface ArmTriggerConfig {
+  parallelism?: number;
+  replicaCompletionCount?: number;
+  cronExpression?: string;
 }
 
 interface ArmContainerAppJob {
   id?: string;
   name?: string;
   location?: string;
+  tags?: ResourceTags;
   properties?: {
     provisioningState?: string;
     environmentId?: string;
-    configuration?: { triggerType?: string; replicaTimeout?: number; replicaRetryLimit?: number };
+    configuration?: {
+      triggerType?: string;
+      replicaTimeout?: number;
+      replicaRetryLimit?: number;
+      manualTriggerConfig?: ArmTriggerConfig;
+      scheduleTriggerConfig?: ArmTriggerConfig;
+      eventTriggerConfig?: ArmTriggerConfig;
+    };
     template?: {
-      containers?: { name?: string; image?: string; command?: string[]; args?: string[] }[];
+      containers?: {
+        name?: string;
+        image?: string;
+        command?: string[];
+        args?: string[];
+        env?: { name?: string; value?: string }[];
+      }[];
     };
   };
 }
 
 function containerAppJobOf(job: ArmContainerAppJob): ContainerAppJobDetail {
+  const configuration = job.properties?.configuration;
+  const trigger =
+    configuration?.manualTriggerConfig ??
+    configuration?.scheduleTriggerConfig ??
+    configuration?.eventTriggerConfig;
   return {
     id: job.id ?? "",
     name: job.name ?? "",
     location: job.location ?? "",
+    tags: job.tags ?? {},
     provisioningState: job.properties?.provisioningState ?? "",
     environmentId: job.properties?.environmentId ?? "",
-    triggerType: job.properties?.configuration?.triggerType ?? "",
-    replicaTimeout: job.properties?.configuration?.replicaTimeout ?? 0,
-    replicaRetryLimit: job.properties?.configuration?.replicaRetryLimit ?? 0,
+    triggerType: configuration?.triggerType ?? "",
+    replicaTimeout: configuration?.replicaTimeout ?? 0,
+    replicaRetryLimit: configuration?.replicaRetryLimit ?? 0,
+    parallelism: trigger?.parallelism ?? 0,
+    cronExpression: configuration?.scheduleTriggerConfig?.cronExpression ?? "",
     containers: (job.properties?.template?.containers ?? []).map((container) => ({
       name: container.name ?? "",
       image: container.image ?? "",
       command: container.command ?? [],
       args: container.args ?? [],
+      env: (container.env ?? []).map((entry) => ({ name: entry.name ?? "", value: entry.value ?? "" })),
     })),
   };
 }
@@ -485,6 +554,142 @@ export const deleteContainerAppJob = async (jobId: string): Promise<void> => {
   await armSend(`${jobId}?api-version=${API_VERSION.jobs}`, { method: "DELETE" });
 };
 
+// --- Container Apps job create + config update (Microsoft.App/jobs PUT) ---
+
+export const containerAppTriggerTypes = ["Manual", "Schedule", "Event"] as const;
+
+export interface ContainerAppJobConfigInput {
+  triggerType: string;
+  replicaTimeout: number;
+  replicaRetryLimit: number;
+  parallelism: number;
+  cronExpression: string;
+  containers: ContainerAppJobContainer[];
+}
+
+// jobBody assembles the Microsoft.App/jobs resource body a create or a
+// full-resource update PUTs. The parallelism (and cron, for Schedule triggers)
+// belong in the trigger-type-specific config block the real armappcontainers
+// v3 model nests them under — the same shape `az containerapp job create` and
+// the azurerm_container_app_job resource send.
+function jobBody(location: string, environmentId: string, config: ContainerAppJobConfigInput): unknown {
+  const triggerBlock =
+    config.triggerType === "Schedule"
+      ? {
+          scheduleTriggerConfig: {
+            parallelism: config.parallelism,
+            replicaCompletionCount: config.parallelism,
+            cronExpression: config.cronExpression,
+          },
+        }
+      : config.triggerType === "Event"
+        ? { eventTriggerConfig: { parallelism: config.parallelism, replicaCompletionCount: config.parallelism } }
+        : { manualTriggerConfig: { parallelism: config.parallelism, replicaCompletionCount: config.parallelism } };
+  return {
+    location,
+    properties: {
+      environmentId,
+      configuration: {
+        triggerType: config.triggerType,
+        replicaTimeout: config.replicaTimeout,
+        replicaRetryLimit: config.replicaRetryLimit,
+        ...triggerBlock,
+      },
+      template: {
+        containers: config.containers.map((container) => ({
+          name: container.name,
+          image: container.image,
+          ...(container.command.length ? { command: container.command } : {}),
+          ...(container.args.length ? { args: container.args } : {}),
+          ...(container.env.length ? { env: container.env } : {}),
+        })),
+      },
+    },
+  };
+}
+
+// ensureManagedEnvironment PUTs the Container Apps managed environment a job
+// runs in — idempotent, the same call `az containerapp env create` issues
+// before a job that references it. Real Azure Resource Manager requires the
+// environment to exist for a job to run in it; the console creates it the way
+// any real client does. Returns the environment's ARM resource ID for the
+// job's environmentId.
+async function ensureManagedEnvironment(
+  subscriptionId: string,
+  resourceGroup: string,
+  envName: string,
+  location: string,
+): Promise<string> {
+  const response = await armSend(
+    `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/managedEnvironments/${envName}?api-version=${API_VERSION.jobs}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location, properties: {} }),
+    },
+  );
+  const env = (await response.json()) as ArmResource;
+  return env.id ?? "";
+}
+
+export interface CreateContainerAppJobInput {
+  subscriptionId: string;
+  resourceGroup: string;
+  name: string;
+  location: string;
+  environmentName: string;
+  config: ContainerAppJobConfigInput;
+}
+
+// createContainerAppJob drives the real Microsoft.App/jobs PUT — the same
+// request `az containerapp job create` and the azurerm_container_app_job
+// resource send. It provisions the scoping resource group and managed
+// environment first (the same order a real client uses), then PUTs the job.
+// The simulator settles the PUT synchronously (HTTP 200/201, provisioningState
+// "Succeeded"), so the console awaits the PUT response directly.
+export const createContainerAppJob = async (input: CreateContainerAppJobInput): Promise<ContainerAppJob> => {
+  await ensureResourceGroup(input.subscriptionId, input.resourceGroup, input.location);
+  const environmentId = await ensureManagedEnvironment(
+    input.subscriptionId,
+    input.resourceGroup,
+    input.environmentName,
+    input.location,
+  );
+  const response = await armSend(
+    `/subscriptions/${input.subscriptionId}/resourceGroups/${input.resourceGroup}/providers/Microsoft.App/jobs/${input.name}?api-version=${API_VERSION.jobs}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(jobBody(input.location, environmentId, input.config)),
+    },
+  );
+  const job = (await response.json()) as ArmResource;
+  return {
+    id: job.id ?? "",
+    name: job.name ?? "",
+    location: job.location ?? "",
+    type: job.type ?? "Microsoft.App/jobs",
+  };
+};
+
+// updateContainerAppJob re-PUTs the whole job with the edited configuration and
+// template — the full-resource update the way the create does. A Container Apps
+// job PUT replaces the resource, so the caller passes the preserved
+// environmentId/triggerType alongside the edited replica timeout, parallelism,
+// and container image/env, and the console awaits the synchronous PUT response.
+export const updateContainerAppJob = async (
+  id: string,
+  location: string,
+  environmentId: string,
+  config: ContainerAppJobConfigInput,
+): Promise<void> => {
+  await armSend(`${id}?api-version=${API_VERSION.jobs}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(jobBody(location, environmentId, config)),
+  });
+};
+
 // --- Function App detail: app settings + functions ---
 
 export interface FunctionAppDetail {
@@ -492,6 +697,7 @@ export interface FunctionAppDetail {
   name: string;
   location: string;
   kind: string;
+  tags: ResourceTags;
   state: string;
   defaultHostName: string;
   httpsOnly: boolean;
@@ -503,6 +709,7 @@ interface ArmSite {
   name?: string;
   location?: string;
   kind?: string;
+  tags?: ResourceTags;
   properties?: { state?: string; defaultHostName?: string; httpsOnly?: boolean; enabled?: boolean };
 }
 
@@ -512,6 +719,7 @@ function functionAppOf(site: ArmSite): FunctionAppDetail {
     name: site.name ?? "",
     location: site.location ?? "",
     kind: site.kind ?? "",
+    tags: site.tags ?? {},
     state: site.properties?.state ?? "",
     defaultHostName: site.properties?.defaultHostName ?? "",
     httpsOnly: site.properties?.httpsOnly ?? false,
@@ -531,6 +739,87 @@ export const fetchFunctionApp = async (name: string): Promise<FunctionAppDetail>
 // console awaits the DELETE response directly.
 export const deleteFunctionApp = async (id: string): Promise<void> => {
   await armSend(`${id}?api-version=${API_VERSION.sites}`, { method: "DELETE" });
+};
+
+// start/stop/restartFunctionApp drive the real Microsoft.Web/sites lifecycle
+// actions — the same POSTs `az functionapp start` / `stop` / `restart` issue,
+// each transitioning the site's state (start → Running, stop → Stopped) or
+// cycling it (restart). Synchronous on this simulator.
+export const startFunctionApp = async (id: string): Promise<void> => {
+  await armSend(`${id}/start?api-version=${API_VERSION.sites}`, { method: "POST" });
+};
+
+export const stopFunctionApp = async (id: string): Promise<void> => {
+  await armSend(`${id}/stop?api-version=${API_VERSION.sites}`, { method: "POST" });
+};
+
+export const restartFunctionApp = async (id: string): Promise<void> => {
+  await armSend(`${id}/restart?api-version=${API_VERSION.sites}`, { method: "POST" });
+};
+
+// updateFunctionAppTags writes a Function App's tags through the real
+// Microsoft.Web/sites PATCH. The site PATCH merges tags but reads httpsOnly
+// unconditionally, so the console re-sends the current httpsOnly to preserve
+// it (exactly what the real portal's Tags blade does — it PATCHes the object
+// it read) rather than letting a tags-only edit clear it.
+export const updateFunctionAppTags = async (
+  id: string,
+  tags: ResourceTags,
+  httpsOnly: boolean,
+): Promise<void> => {
+  await armPatch(id, API_VERSION.sites, { tags, properties: { httpsOnly } });
+};
+
+export const functionAppRuntimes = ["dotnet", "node", "python", "java", "powershell"] as const;
+
+export interface CreateFunctionAppInput {
+  subscriptionId: string;
+  resourceGroup: string;
+  name: string;
+  location: string;
+  runtime: string;
+  planName: string;
+}
+
+// createFunctionApp drives the real Microsoft.Web/sites PUT — the same request
+// `az functionapp create` and the azurerm_linux_function_app resource send. It
+// provisions the scoping resource group and the App Service (hosting) plan
+// first, then PUTs the site referencing the plan, carrying the selected
+// runtime as the FUNCTIONS_WORKER_RUNTIME app setting the real create sends.
+// Synchronous (HTTP 200, state "Running"), so the console awaits the PUT.
+export const createFunctionApp = async (input: CreateFunctionAppInput): Promise<FunctionSite> => {
+  await ensureResourceGroup(input.subscriptionId, input.resourceGroup, input.location);
+  const planResponse = await armSend(
+    `/subscriptions/${input.subscriptionId}/resourceGroups/${input.resourceGroup}/providers/Microsoft.Web/serverfarms/${input.planName}?api-version=${API_VERSION.sites}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location: input.location, sku: { name: "Y1", tier: "Dynamic" }, properties: {} }),
+    },
+  );
+  const plan = (await planResponse.json()) as ArmResource;
+  const response = await armSend(
+    `/subscriptions/${input.subscriptionId}/resourceGroups/${input.resourceGroup}/providers/Microsoft.Web/sites/${input.name}?api-version=${API_VERSION.sites}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: input.location,
+        kind: "functionapp",
+        properties: {
+          serverFarmId: plan.id ?? "",
+          siteConfig: {
+            appSettings: [
+              { name: "FUNCTIONS_WORKER_RUNTIME", value: input.runtime },
+              { name: "FUNCTIONS_EXTENSION_VERSION", value: "~4" },
+            ],
+          },
+        },
+      }),
+    },
+  );
+  const site = (await response.json()) as ArmResource;
+  return { id: site.id ?? "", name: site.name ?? "", location: site.location ?? "", kind: site.kind ?? "functionapp" };
 };
 
 // fetchFunctionAppSettings reads app settings the real way: Microsoft.Web
@@ -572,6 +861,7 @@ export interface ACRRegistryDetail {
   id: string;
   name: string;
   location: string;
+  tags: ResourceTags;
   loginServer: string;
   skuName: string;
   skuTier: string;
@@ -583,6 +873,7 @@ interface ArmRegistry {
   id?: string;
   name?: string;
   location?: string;
+  tags?: ResourceTags;
   sku?: { name?: string; tier?: string };
   properties?: { loginServer?: string; adminUserEnabled?: boolean; provisioningState?: string };
 }
@@ -592,6 +883,7 @@ function acrRegistryOf(registry: ArmRegistry): ACRRegistryDetail {
     id: registry.id ?? "",
     name: registry.name ?? "",
     location: registry.location ?? "",
+    tags: registry.tags ?? {},
     loginServer: registry.properties?.loginServer ?? "",
     skuName: registry.sku?.name ?? "",
     skuTier: registry.sku?.tier ?? "",
@@ -603,6 +895,27 @@ function acrRegistryOf(registry: ArmRegistry): ACRRegistryDetail {
 export const fetchACRRegistry = async (name: string): Promise<ACRRegistryDetail> => {
   const id = await resourceIdByName("Microsoft.ContainerRegistry/registries", API_VERSION.registries, name);
   return acrRegistryOf(await authorizedJSON<ArmRegistry>(`${id}?api-version=${API_VERSION.registries}`));
+};
+
+// The sku.name choices the real registry "Update" blade offers.
+export const acrRegistrySkus = ["Basic", "Standard", "Premium"] as const;
+
+export interface UpdateACRRegistryInput {
+  skuName: string;
+  adminUserEnabled: boolean;
+}
+
+// updateACRRegistry drives the real Microsoft.ContainerRegistry registry PATCH
+// — the same request `az acr update --sku …/--admin-enabled …` and the
+// azurerm_container_registry update both send. The simulator settles it
+// synchronously (HTTP 200 with the merged registry), so the console awaits the
+// PATCH response directly. Enabling the admin user is what makes the registry's
+// admin credentials (and its repository browsing on this console) available.
+export const updateACRRegistry = async (id: string, input: UpdateACRRegistryInput): Promise<void> => {
+  await armPatch(id, API_VERSION.registries, {
+    sku: { name: input.skuName },
+    properties: { adminUserEnabled: input.adminUserEnabled },
+  });
 };
 
 interface ACRAdminCredentials {
@@ -674,6 +987,7 @@ export interface StorageAccountDetail {
   name: string;
   location: string;
   kind: string;
+  tags: ResourceTags;
   skuName: string;
   provisioningState: string;
   accessTier: string;
@@ -685,6 +999,7 @@ interface ArmStorageAccount {
   name?: string;
   location?: string;
   kind?: string;
+  tags?: ResourceTags;
   sku?: { name?: string };
   properties?: { provisioningState?: string; accessTier?: string; primaryEndpoints?: { blob?: string } };
 }
@@ -695,6 +1010,7 @@ function storageAccountOf(account: ArmStorageAccount): StorageAccountDetail {
     name: account.name ?? "",
     location: account.location ?? "",
     kind: account.kind ?? "",
+    tags: account.tags ?? {},
     skuName: account.sku?.name ?? "",
     provisioningState: account.properties?.provisioningState ?? "",
     accessTier: account.properties?.accessTier ?? "",
@@ -705,6 +1021,28 @@ function storageAccountOf(account: ArmStorageAccount): StorageAccountDetail {
 export const fetchStorageAccount = async (name: string): Promise<StorageAccountDetail> => {
   const id = await resourceIdByName("Microsoft.Storage/storageAccounts", API_VERSION.storage, name);
   return storageAccountOf(await authorizedJSON<ArmStorageAccount>(`${id}?api-version=${API_VERSION.storage}`));
+};
+
+// The replication (sku.name) and access-tier choices the real storage account
+// "Configuration" blade edits.
+export const storageAccountSkus = ["Standard_LRS", "Standard_GRS", "Standard_RAGRS", "Standard_ZRS", "Premium_LRS"] as const;
+export const storageAccessTiers = ["Hot", "Cool"] as const;
+
+export interface UpdateStorageAccountInput {
+  skuName: string;
+  accessTier: string;
+}
+
+// updateStorageAccount drives the real Microsoft.Storage storage-account PATCH
+// — the same request `az storage account update --sku …/--access-tier …` and
+// the azurerm_storage_account update both send. The simulator merges only the
+// keys present (settling synchronously, HTTP 200 with the merged account), so
+// the console awaits the PATCH response directly.
+export const updateStorageAccount = async (id: string, input: UpdateStorageAccountInput): Promise<void> => {
+  await armPatch(id, API_VERSION.storage, {
+    sku: { name: input.skuName },
+    properties: { accessTier: input.accessTier },
+  });
 };
 
 // mintAccountSas calls the real `ListAccountSas` ARM action — the same

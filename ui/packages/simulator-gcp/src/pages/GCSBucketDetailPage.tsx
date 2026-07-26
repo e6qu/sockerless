@@ -5,7 +5,7 @@ import { GcpPageHeader } from "../console/GcpConsole.js";
 import { GcpTabs } from "../console/GcpTabs.js";
 import { shortName, formatTimestamp, formatBytes } from "../console/format.js";
 import { fetchGCSBucket, fetchGCSObjects, type GCSObject } from "../api.js";
-import { DeleteBucketDialog } from "./GCSBucketsPage.js";
+import { DeleteBucketDialog, EditBucketDialog } from "./GCSBucketsPage.js";
 
 // ObjectsTable is the Objects tab's table, presentational so the size/type
 // rendering is testable apart from the queries that feed it.
@@ -55,6 +55,7 @@ export function GCSBucketDetailPage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
   const bucket = useQuery({ queryKey: ["gcs-bucket", name], queryFn: () => fetchGCSBucket(name) });
   const objects = useQuery({
     queryKey: ["gcs-bucket-objects", name],
@@ -65,8 +66,12 @@ export function GCSBucketDetailPage() {
   // Deletion addresses the bucket by the name in the route, not the loaded
   // resource, so the action is available (and testable) even before the read
   // settles — the same way the list page's "Create bucket" action doesn't
-  // wait on a successful list read.
+  // wait on a successful list read. Editing prefills the form from the loaded
+  // resource, so its action appears once the read succeeds.
   const deleteAction = [{ label: "Delete", testId: "gcs-bucket-delete", onSelect: () => setDeleting(true) }];
+  const headerActions = bucket.data
+    ? [{ label: "Edit", icon: "edit" as const, testId: "gcs-bucket-edit", onSelect: () => setEditing(true) }, ...deleteAction]
+    : deleteAction;
 
   if (bucket.isError) {
     return (
@@ -93,7 +98,7 @@ export function GCSBucketDetailPage() {
       <GcpPageHeader
         title={shortName(name)}
         description="Cloud Storage bucket"
-        actions={deleteAction}
+        actions={headerActions}
         onRefresh={() => { void bucket.refetch(); void objects.refetch(); }}
         refreshing={bucket.isFetching || objects.isFetching}
       />
@@ -122,20 +127,35 @@ export function GCSBucketDetailPage() {
               id: "details",
               label: "Details",
               content: (
-                <dl className="gc-detail-grid">
-                  {[
-                    { label: "Location", value: data.location ?? "—" },
-                    { label: "Storage class", value: data.storageClass ?? "—" },
-                    { label: "Created", value: formatTimestamp(data.timeCreated ?? "") },
-                    { label: "Updated", value: formatTimestamp(data.updated ?? "") },
-                    { label: "Bucket ID", value: data.id ?? "—" },
-                  ].map((property) => (
-                    <div className="gc-detail-pair" key={property.label}>
-                      <dt>{property.label}</dt>
-                      <dd>{property.value}</dd>
-                    </div>
-                  ))}
-                </dl>
+                <>
+                  <dl className="gc-detail-grid">
+                    {[
+                      { label: "Location", value: data.location ?? "—" },
+                      { label: "Storage class", value: data.storageClass ?? "—" },
+                      { label: "Created", value: formatTimestamp(data.timeCreated ?? "") },
+                      { label: "Updated", value: formatTimestamp(data.updated ?? "") },
+                      { label: "Bucket ID", value: data.id ?? "—" },
+                    ].map((property) => (
+                      <div className="gc-detail-pair" key={property.label}>
+                        <dt>{property.label}</dt>
+                        <dd>{property.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {Object.keys(data.labels ?? {}).length > 0 ? (
+                    <>
+                      <h2 className="gc-detail-heading">Labels</h2>
+                      <dl className="gc-detail-grid" data-testid="gcs-bucket-labels">
+                        {Object.entries(data.labels ?? {}).map(([key, value]) => (
+                          <div className="gc-detail-pair" key={key}>
+                            <dt>{key}</dt>
+                            <dd>{value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </>
+                  ) : null}
+                </>
               ),
             },
           ]}
@@ -143,6 +163,16 @@ export function GCSBucketDetailPage() {
       )}
       {deleting ? (
         <DeleteBucketDialog name={name} onClose={() => setDeleting(false)} onDeleted={() => navigate("/ui/gcs")} />
+      ) : null}
+      {editing && data ? (
+        <EditBucketDialog
+          bucket={data}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            void bucket.refetch();
+          }}
+        />
       ) : null}
     </>
   );

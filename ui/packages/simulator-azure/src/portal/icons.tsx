@@ -23,6 +23,8 @@ import {
   AlertRegular,
   QuestionCircleRegular,
   CloudSyncRegular,
+  EditRegular,
+  SettingsRegular,
 } from "@fluentui/react-icons";
 
 // The real Fluent System Icons set (@fluentui/react-icons, Microsoft,
@@ -58,6 +60,8 @@ const ICONS = {
   notifications: AlertRegular,
   help: QuestionCircleRegular,
   cloud_shell: CloudSyncRegular,
+  edit: EditRegular,
+  settings: SettingsRegular,
 } satisfies Record<string, FluentIcon>;
 
 export type AzureIconName = keyof typeof ICONS;

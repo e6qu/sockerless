@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Link, NavLink } from "react-router";
 import { Icon } from "./icons.js";
 import { CATALOG } from "./catalog.js";
@@ -29,6 +29,19 @@ export function GcpNavDrawer({ open, onClose, triggerRef }: {
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [filter, setFilter] = useState("");
+
+  // The real console's product menu filters the catalog live as the operator
+  // types, matching the AWS console's services flyout. Groups with no match
+  // drop out; an empty result says so rather than showing a blank panel.
+  const groups = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return CATALOG;
+    return CATALOG.map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.name.toLowerCase().includes(needle)),
+    })).filter((group) => group.items.length > 0);
+  }, [filter]);
 
   useEffect(() => {
     if (!open) return;
@@ -83,7 +96,21 @@ export function GcpNavDrawer({ open, onClose, triggerRef }: {
           This simulator implements a slice of Google Cloud. Supported products open their page; the
           rest are marked <NotSupportedChip />.
         </p>
-        {CATALOG.map((group) => (
+        <div className="gc-drawer-search">
+          <Icon name="search" size="1.25em" style={{ color: "var(--gc-fg-secondary)" }} />
+          <input
+            type="search"
+            aria-label="Search products"
+            placeholder="Search products"
+            data-testid="nav-drawer-search"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </div>
+        {groups.length === 0 ? (
+          <p className="gc-drawer-note" data-testid="nav-drawer-empty">No products match “{filter}”.</p>
+        ) : null}
+        {groups.map((group) => (
           <div className="gc-drawer-group" key={group.label}>
             <h3 className="gc-drawer-group-label" id={`drawer-group-${group.label}`}>{group.label}</h3>
             <ul aria-labelledby={`drawer-group-${group.label}`}>

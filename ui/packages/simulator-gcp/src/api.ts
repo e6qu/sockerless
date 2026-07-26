@@ -1,4 +1,9 @@
-import { authorizedJSON, authorizedJSONDelete, authorizedJSONPost } from "./console/federation.js";
+import {
+  authorizedJSON,
+  authorizedJSONDelete,
+  authorizedJSONPatch,
+  authorizedJSONPost,
+} from "./console/federation.js";
 
 // The console reads one project and region at a time, the way the real console
 // shows the selected project and region. The region is a console coordinate; a
@@ -19,6 +24,36 @@ export interface CloudRunJobCondition {
   message?: string;
 }
 
+// The Cloud Run v2 execution/task template, as the API nests it under a Job.
+// The console reads and round-trips the real shape so an edit or create carries
+// the same fields a real client (gcloud, terraform-provider-google) sends.
+export interface CloudRunEnvVar {
+  name: string;
+  value?: string;
+}
+
+export interface CloudRunContainer {
+  name?: string;
+  image: string;
+  command?: string[];
+  args?: string[];
+  env?: CloudRunEnvVar[];
+  resources?: { limits?: Record<string, string> };
+}
+
+export interface CloudRunTaskTemplate {
+  containers?: CloudRunContainer[];
+  timeout?: string;
+  maxRetries?: number;
+  serviceAccount?: string;
+}
+
+export interface CloudRunExecutionTemplate {
+  parallelism?: number;
+  taskCount?: number;
+  template?: CloudRunTaskTemplate;
+}
+
 export interface CloudRunJob {
   name: string;
   uid?: string;
@@ -29,6 +64,7 @@ export interface CloudRunJob {
   reconciling?: boolean;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
+  template?: CloudRunExecutionTemplate;
   terminalCondition?: CloudRunJobCondition;
   conditions?: CloudRunJobCondition[];
   latestCreatedExecution?: { name?: string; createTime?: string; completionTime?: string };
@@ -64,6 +100,68 @@ export const fetchCloudRunJobExecutions = async (project: string, name: string):
 // the same operations.get poll waitV2Operation runs for Cloud Functions.
 export const deleteCloudRunJob = (project: string, name: string): Promise<CrmOperation> =>
   authorizedJSONDelete<CrmOperation>(`${jobsParent(project)}/${name}`);
+
+// The fields the Create job / Edit job forms collect. The console composes
+// them into the real Cloud Run v2 Job body (a nested execution + task
+// template) rather than a flattened sockerless shape.
+export interface CloudRunJobConfig {
+  image: string;
+  taskCount: number;
+  timeoutSeconds: number;
+  env: CloudRunEnvVar[];
+}
+
+// jobBodyFromConfig builds the real projects.locations.jobs Job body from the
+// form's fields — the same nested template shape gcloud and
+// terraform-provider-google send.
+const jobBodyFromConfig = (config: CloudRunJobConfig, labels?: Record<string, string>): CloudRunJob => ({
+  name: "",
+  ...(labels && Object.keys(labels).length > 0 ? { labels } : {}),
+  template: {
+    taskCount: config.taskCount,
+    template: {
+      timeout: `${config.timeoutSeconds}s`,
+      containers: [
+        {
+          image: config.image,
+          ...(config.env.length > 0 ? { env: config.env } : {}),
+        },
+      ],
+    },
+  },
+});
+
+// projects.locations.jobs.create — POST ?jobId=, a long-running operation the
+// console drives to completion through the same operations.get poll
+// (waitV2Operation) the delete flow uses.
+export const createCloudRunJob = (
+  project: string,
+  jobId: string,
+  config: CloudRunJobConfig,
+): Promise<CrmOperation> =>
+  authorizedJSONPost<CrmOperation>(
+    `${jobsParent(project)}?jobId=${encodeURIComponent(jobId)}`,
+    jobBodyFromConfig(config),
+  );
+
+// projects.locations.jobs.run — POST {job}:run creates an execution and
+// returns a long-running Operation. The `:run` verb rides on the resource path
+// (not query), so the job name is templated in directly rather than
+// URL-encoded (which would escape the colon).
+export const runCloudRunJob = (project: string, name: string): Promise<CrmOperation> =>
+  authorizedJSONPost<CrmOperation>(`${jobsParent(project)}/${name}:run`, {});
+
+// projects.locations.jobs.patch — UpdateJob replaces the full mutable
+// resource (the real API and the simulator both round-trip the whole Job), so
+// the console reads the loaded job, applies the edited template fields, and
+// sends the complete Job back rather than a partial patch that would drop the
+// rest of the template. Returns a long-running Operation.
+export const updateCloudRunJob = (
+  project: string,
+  name: string,
+  job: CloudRunJob,
+): Promise<CrmOperation> =>
+  authorizedJSONPatch<CrmOperation>(`${jobsParent(project)}/${name}`, job);
 
 // Cloud Functions (Gen2) lifecycle states.
 export type CloudFunctionState =
@@ -126,6 +224,7 @@ export interface GCSBucket {
   storageClass?: string;
   timeCreated?: string;
   updated?: string;
+  labels?: Record<string, string>;
 }
 
 // The real Cloud Storage object resource (storage#object).
@@ -185,6 +284,50 @@ export const fetchCloudFunction = (project: string, name: string): Promise<Cloud
 // through the same operations.get poll waitV2Operation runs for Cloud Run jobs.
 export const deleteCloudFunction = (project: string, name: string): Promise<CrmOperation> =>
   authorizedJSONDelete<CrmOperation>(`${functionsParent(project)}/${name}`);
+
+// projects.locations.functions.patch — UpdateFunction, a long-running
+// operation. The updateMask names the serviceConfig fields the form edits; the
+// body carries the full merged serviceConfig (the whole object is replaced at
+// serviceConfig granularity), so the caller passes the loaded function's
+// serviceConfig with the edited fields applied to avoid dropping the rest.
+export const updateCloudFunction = (
+  project: string,
+  name: string,
+  serviceConfig: CloudFunction["serviceConfig"],
+): Promise<CrmOperation> => {
+  const mask = [
+    "serviceConfig.availableMemory",
+    "serviceConfig.timeoutSeconds",
+    "serviceConfig.minInstanceCount",
+    "serviceConfig.maxInstanceCount",
+    "serviceConfig.environmentVariables",
+  ].join(",");
+  return authorizedJSONPatch<CrmOperation>(
+    `${functionsParent(project)}/${name}?updateMask=${encodeURIComponent(mask)}`,
+    { serviceConfig },
+  );
+};
+
+// The fields the Create function form collects. Image-based deploys are the
+// simplest faithful path against the simulator, but the real console's form
+// leads with runtime + entry point, so the console collects those.
+export interface CloudFunctionCreateConfig {
+  runtime: string;
+  entryPoint: string;
+}
+
+// projects.locations.functions.create — POST ?functionId=, a long-running
+// operation. The console sends the real buildConfig (runtime + entry point)
+// the way the create form collects it.
+export const createCloudFunction = (
+  project: string,
+  functionId: string,
+  config: CloudFunctionCreateConfig,
+): Promise<CrmOperation> =>
+  authorizedJSONPost<CrmOperation>(
+    `${functionsParent(project)}?functionId=${encodeURIComponent(functionId)}`,
+    { buildConfig: { runtime: config.runtime, entryPoint: config.entryPoint }, environment: "GEN_2" },
+  );
 
 // operations.get for the /v2/projects/.../locations/.../operations/{id}
 // collection Cloud Functions and Cloud Run Jobs LROs live under — the v2
@@ -256,6 +399,17 @@ export const waitArOperation = async (operation: CrmOperation): Promise<CrmOpera
 export const deleteARRepository = (project: string, repo: string): Promise<CrmOperation> =>
   authorizedJSONDelete<CrmOperation>(`${repositoriesParent(project)}/${repo}`);
 
+// projects.locations.repositories.patch — UpdateRepository. Unlike create and
+// delete (which are long-running operations), UpdateRepository is synchronous:
+// the real API (and the simulator) return the updated Repository directly, so
+// there is no operation to poll.
+export const updateARRepository = (
+  project: string,
+  repo: string,
+  patch: { labels?: Record<string, string>; description?: string },
+): Promise<ARRepo> =>
+  authorizedJSONPatch<ARRepo>(`${repositoriesParent(project)}/${repo}`, patch);
+
 // projects.locations.repositories.dockerImages.list — the repository's
 // stored images, the real console's "Images" tab.
 export const fetchARImages = async (project: string, repo: string): Promise<ARDockerImage[]> =>
@@ -282,6 +436,16 @@ export const fetchGCSBucket = (name: string): Promise<GCSBucket> =>
 // answers 204 No Content, which authorizedJSONDelete surfaces as void.
 export const deleteGCSBucket = (name: string): Promise<void> =>
   authorizedJSONDelete<void>(`/storage/v1/b/${name}`);
+
+// storage.buckets.patch — a synchronous update (the real API returns the
+// updated bucket, not an operation). Bucket names are global, so (like the
+// read) this addresses the bucket directly. `labels` is deep-merged by the
+// API — a null value removes a label key — and the default storage class is
+// overwritten wholesale.
+export const updateGCSBucket = (
+  name: string,
+  patch: { labels?: Record<string, string | null>; storageClass?: string },
+): Promise<GCSBucket> => authorizedJSONPatch<GCSBucket>(`/storage/v1/b/${name}`, patch);
 
 // objects.list — the bucket's stored objects, the real console's "Objects" tab.
 export const fetchGCSObjects = async (bucket: string): Promise<GCSObject[]> =>

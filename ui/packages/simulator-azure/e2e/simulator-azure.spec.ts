@@ -336,9 +336,17 @@ test.describe("Microsoft Entra ID: App registrations", () => {
 // create→list-appears round trip belongs in the relying-party suite
 // (ui/e2e/shauth-rps.mjs), the same split those forms document.
 test.describe("Resource creation", () => {
+  // Storage accounts, Container registries, Container Apps jobs, and Function
+  // Apps each offer a real "Create" command-bar action opening an inline Fluent
+  // form wired to the resource's real ARM PUT (matching the Subscriptions "Add"
+  // and App registrations "New registration" forms): the command and the form
+  // render before (and regardless of) any cloud read, so they are assertable
+  // here without an identity provider. The authenticated create→list-appears
+  // round trip belongs in the relying-party suite (ui/e2e/shauth-rps.mjs).
   const cases = [
     { path: "/ui/storage", formTestId: "storage-create-form", nameTestId: "storage-create-name", submitTestId: "storage-create-submit", validName: "mynewstorageacct1" },
     { path: "/ui/acr", formTestId: "acr-create-form", nameTestId: "acr-create-name", submitTestId: "acr-create-submit", validName: "mynewregistry1" },
+    { path: "/ui/functions", formTestId: "fn-create-form", nameTestId: "fn-create-name", submitTestId: "fn-create-submit", validName: "mynewfuncapp1" },
   ];
 
   for (const { path, formTestId, nameTestId, submitTestId, validName } of cases) {
@@ -357,6 +365,53 @@ test.describe("Resource creation", () => {
       await expect(form.getByTestId(submitTestId)).toBeEnabled();
       await form.getByRole("button", { name: "Cancel" }).click();
       await expect(page.getByTestId(formTestId)).toHaveCount(0);
+    });
+  }
+
+  // The Container Apps job create form needs a name AND a container image
+  // before it will submit, so it gets a dedicated case rather than the
+  // name-only pattern above.
+  test("/ui/container-apps offers Create and gates submit on a valid name and image", async ({ page }) => {
+    await page.goto("/ui/container-apps");
+    await page.getByRole("toolbar", { name: "Commands" }).getByRole("button", { name: "Create", exact: true }).click();
+    const form = page.getByTestId("ca-job-create-form");
+    await expect(form).toBeVisible();
+    await expect(form.getByTestId("ca-job-create-submit")).toBeDisabled();
+    await form.getByTestId("ca-job-create-name").fill("mynewjob1");
+    // Name alone is not enough — the image is required too.
+    await expect(form.getByTestId("ca-job-create-submit")).toBeDisabled();
+    await form.getByTestId("ca-job-create-image").fill("alpine:3.20");
+    await expect(form.getByTestId("ca-job-create-submit")).toBeEnabled();
+    await form.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByTestId("ca-job-create-form")).toHaveCount(0);
+  });
+});
+
+// Every resource detail blade now carries the real portal's UPDATE and
+// lifecycle command-bar actions (Update/Configuration, Edit tags, the Function
+// App Start/Stop/Restart, the Container Apps job Edit). Opening the editor or
+// firing an action needs a successfully loaded resource — an authenticated
+// cloud read this lightweight suite (no identity provider) never gets — so,
+// matching the Delete-command convention above, this pins that each action
+// renders, and disabled, on its blade. The authenticated open→edit→PATCH/PUT
+// and open→action→POST round trips run in the mocked-fetch vitest suite
+// (ResourceUpdateFlows.test.tsx) and the relying-party suite.
+test.describe("Resource update and lifecycle actions", () => {
+  const ACTION_COMMANDS: { path: string; testids: string[] }[] = [
+    { path: "/ui/acr/structuraltestregistry", testids: ["acr-registry-update", "acr-registry-tags"] },
+    { path: "/ui/storage/structuraltestaccount", testids: ["storage-account-config", "storage-account-tags"] },
+    { path: "/ui/container-apps/structural-test-job", testids: ["ca-job-edit", "ca-job-tags"] },
+    { path: "/ui/functions/structural-test-site", testids: ["fn-site-start", "fn-site-stop", "fn-site-restart", "fn-site-tags"] },
+  ];
+
+  for (const { path, testids } of ACTION_COMMANDS) {
+    test(`${path} offers real, initially-disabled update/lifecycle commands`, async ({ page }) => {
+      await page.goto(path);
+      for (const testid of testids) {
+        const command = page.getByTestId(testid);
+        await expect(command).toBeVisible();
+        await expect(command).toBeDisabled();
+      }
     });
   }
 });
@@ -760,12 +815,16 @@ test.describe("Automated accessibility audit", () => {
       expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
     });
 
-    // The Storage accounts / Container registries Create forms are the other
-    // surface this pass added — measured the same way rather than trusted
-    // because they reuse existing Fluent Field/Input/Select/Button tokens.
+    // The Create forms (Storage accounts, Container registries, Container Apps
+    // jobs, Function Apps) are reachable without an identity provider — they
+    // render before any cloud read — so each is axe-audited open, in both
+    // themes, the same way rather than trusted because they reuse existing
+    // Fluent Field/Input/Select/Switch/Button tokens.
     for (const { path, formTestId } of [
       { path: "/ui/storage", formTestId: "storage-create-form" },
       { path: "/ui/acr", formTestId: "acr-create-form" },
+      { path: "/ui/functions", formTestId: "fn-create-form" },
+      { path: "/ui/container-apps", formTestId: "ca-job-create-form" },
     ]) {
       test(`the ${formTestId} create form has no detectable violations (${theme})`, async ({ page }) => {
         await page.goto(path);
