@@ -245,3 +245,20 @@ export async function awsRestXmlDelete(service: string, path: string): Promise<v
     throw new Error(code ? `${code}: ${message}` : `DELETE ${path} returned HTTP ${response.status}`);
   }
 }
+
+// awsRestXmlPut calls an AWS REST-XML PUT operation (S3's CreateBucket) that
+// answers 200 with a Location header on success and S3's XML `<Error>` body —
+// Code and Message — on failure (BucketAlreadyOwnedByYou when the bucket
+// already exists outside us-east-1, the same condition the real console
+// reports). The body is the operation's XML payload, or empty for a
+// CreateBucket in this console's own Region (us-east-1 accepts no
+// LocationConstraint — sending one there is itself a service error).
+export async function awsRestXmlPut(service: string, path: string, body = ""): Promise<void> {
+  const response = await awsFetch({ service, method: "PUT", path, body });
+  if (!response.ok) {
+    const xml = new DOMParser().parseFromString(await response.text(), "text/xml");
+    const code = xmlText(xml, "Code");
+    const message = xmlText(xml, "Message");
+    throw new Error(code ? `${code}: ${message}` : `PUT ${path} returned HTTP ${response.status}`);
+  }
+}

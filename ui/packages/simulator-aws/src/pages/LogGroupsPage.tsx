@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import Input from "@cloudscape-design/components/input";
+import FormField from "@cloudscape-design/components/form-field";
 import { AwsButton, AwsErrorAlert, AwsModal, AwsResourceTable, AwsRowLink, type AwsColumn } from "../console/index.js";
 import { formatBytes, formatEpoch, formatRetention } from "../console/format.js";
-import { deleteCWLogGroup, fetchCWLogGroups, type CWLogGroup } from "../api.js";
+import { createCWLogGroup, deleteCWLogGroup, fetchCWLogGroups, type CWLogGroup } from "../api.js";
 
 // Amazon CloudWatch Logs — Log groups. The list and Delete both go through
 // the real CloudWatch Logs awsjson1.1 API (DescribeLogGroups for the table,
@@ -21,6 +23,59 @@ const columns: AwsColumn<CWLogGroup>[] = [
   { id: "storedBytes", header: "Stored", cell: (row) => formatBytes(row.storedBytes), value: (row) => String(row.storedBytes) },
   { id: "creationTime", header: "Created at", cell: (row) => formatEpoch(row.creationTime), value: (row) => String(row.creationTime) },
 ];
+
+// The name shape real CloudWatch Logs enforces on CreateLogGroup: 1–512
+// characters of letters, numbers, and `. - _ / #` — validating it inline is
+// what the real console does before it lets the request go out.
+const LOG_GROUP_NAME_PATTERN = /^[.\-_/#A-Za-z0-9]{1,512}$/;
+
+function CreateLogGroupModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const create = useMutation({
+    mutationFn: createCWLogGroup,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["log-groups"] });
+      onClose();
+    },
+  });
+  const trimmed = name.trim();
+  const valid = LOG_GROUP_NAME_PATTERN.test(trimmed);
+  return (
+    <AwsModal
+      title="Create log group"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton
+            variant="primary"
+            data-testid="logs-create-log-group-submit"
+            disabled={!valid || create.isPending}
+            onClick={() => create.mutate(trimmed)}
+          >
+            {create.isPending ? "Creating…" : "Create log group"}
+          </AwsButton>
+        </>
+      }
+    >
+      <p>A log group is a container for log streams that share the same retention and access-control settings.</p>
+      <FormField label="Log group name" constraintText="Up to 512 characters. Letters, numbers, and . - _ / # are allowed.">
+        <Input
+          value={name}
+          onChange={(event) => setName(event.detail.value)}
+          nativeInputAttributes={{ "data-testid": "logs-log-group-name-input" }}
+        />
+      </FormField>
+      {create.isError && (
+        <AwsErrorAlert>
+          <strong>Could not create the log group.</strong>{" "}
+          {create.error instanceof Error ? create.error.message : "The request failed."}
+        </AwsErrorAlert>
+      )}
+    </AwsModal>
+  );
+}
 
 export function DeleteLogGroupsModal({
   groups,
@@ -85,6 +140,7 @@ export function DeleteLogGroupsModal({
 
 export function LogGroupsPage() {
   const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<{ groups: CWLogGroup[]; clearSelection: () => void } | null>(null);
   return (
     <>
@@ -118,9 +174,13 @@ export function LogGroupsPage() {
             <AwsButton onClick={refetch} disabled={isFetching}>
               {isFetching ? "Refreshing…" : "Refresh"}
             </AwsButton>
+            <AwsButton variant="primary" data-testid="logs-create-log-group" onClick={() => setCreating(true)}>
+              Create log group
+            </AwsButton>
           </>
         )}
       />
+      {creating && <CreateLogGroupModal onClose={() => setCreating(false)} />}
       {deleting && (
         <DeleteLogGroupsModal
           groups={deleting.groups}

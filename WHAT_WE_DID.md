@@ -4,6 +4,42 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — AWS console resource-creation flows
+
+Functional-parity pass: the AWS console could list and inspect S3 buckets, ECR
+repositories, and CloudWatch log groups but not create them (unlike IAM and
+Organizations, which already had create flows, and unlike the real AWS console).
+Added a create flow to each, built with the real Cloudscape components the
+console now runs on:
+
+- **S3 — Create bucket**: `PUT /{bucket}` (CreateBucket, REST-XML) via a new
+  `createS3Bucket`, with DNS-name validation and `BucketAlreadyOwnedByYou`
+  surfaced.
+- **ECR — Create repository**: `CreateRepository` (awsjson1.1) via
+  `createECRRepository`, `RepositoryAlreadyExistsException` surfaced.
+- **CloudWatch Logs — Create log group**: `CreateLogGroup` (awsjson1.1) via
+  `createCWLogGroup`, `ResourceAlreadyExistsException` surfaced.
+
+Each is a primary "Create …" button in the table header actions opening a
+Cloudscape `Modal`/`FormField`/`Input`, `useMutation` over the federated SigV4
+path (a new `awsRestXmlPut` helper joined the existing rest/json helpers;
+`federation.ts`/`sigv4.ts` signing logic untouched), invalidating the list on
+success so the new resource appears. Matches the existing IAM/Organizations
+create-modal template exactly (focus trap, error `Alert`, testids).
+
+Verified: typecheck/knip clean; vitest (6 new tests — a success and an
+error-surfacing path per resource against a mocked federated transport);
+Playwright 97/97 with axe zero-violations on all three create modals in both
+themes; and the Shauth relying-party matrix green — it now creates an ECR
+repository as the signed-in operator through the real CreateRepository API and
+sees it appear in the list, proving the authenticated create → list-refresh
+round trip end to end (the per-package e2e can't, having no identity provider —
+its unsigned writes are correctly 403'd by the simulator's IAM enforcement).
+
+The GCS-bucket / Artifact-Registry-repo (Google Cloud) and storage-account / ACR
+(Azure) equivalents are the natural follow-ups.
+
+
 ## 2026-07-26 — Azure portal adopts the real Fluent component library
 
 Mirroring the AWS console's Cloudscape migration, the Azure simulator portal

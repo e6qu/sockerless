@@ -277,6 +277,85 @@ describe("LambdaFunctionsPage", () => {
 describe("ECRReposPage", () => {
   const repoName = "my-repo";
 
+  it("creates a repository through the real CreateRepository operation and shows it once the list refreshes", async () => {
+    let sentBody: string | null = null;
+    let listedAfterCreate = false;
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerRegistry_V20150921.DescribeRepositories",
+        respond: () => {
+          if (!sentBody) return jsonResponse({ repositories: [] });
+          listedAfterCreate = true;
+          return jsonResponse({
+            repositories: [
+              {
+                repositoryName: repoName,
+                repositoryUri: `123456789012.dkr.ecr.us-east-1.amazonaws.com/${repoName}`,
+                createdAt: 1750000000,
+              },
+            ],
+          });
+        },
+      },
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerRegistry_V20150921.CreateRepository",
+        respond: (init) => {
+          sentBody = typeof init?.body === "string" ? init.body : null;
+          return jsonResponse({
+            repository: {
+              repositoryName: repoName,
+              repositoryUri: `123456789012.dkr.ecr.us-east-1.amazonaws.com/${repoName}`,
+              createdAt: 1750000000,
+            },
+          });
+        },
+      },
+    ]);
+    renderWithQuery(<ECRReposPage />);
+    await screen.findByText("No repositories");
+
+    fireEvent.click(screen.getByTestId("ecr-create-repo"));
+    const dialog = await screen.findByRole("dialog", { name: "Create repository" });
+    expect((within(dialog).getByTestId("ecr-create-repo-submit") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByTestId("ecr-repo-name-input"), { target: { value: repoName } });
+    expect((within(dialog).getByTestId("ecr-create-repo-submit") as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(within(dialog).getByTestId("ecr-create-repo-submit"));
+
+    await waitFor(() => expect(sentBody).not.toBeNull());
+    expect(JSON.parse(sentBody!)).toEqual({ repositoryName: repoName });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(listedAfterCreate).toBe(true));
+    expect(await screen.findByText(repoName)).toBeTruthy();
+  });
+
+  it("surfaces ECR's RepositoryAlreadyExistsException rather than closing the create dialog", async () => {
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerRegistry_V20150921.DescribeRepositories",
+        respond: () => jsonResponse({ repositories: [] }),
+      },
+      {
+        when: (_url, init) => targetOf(init) === "AmazonEC2ContainerRegistry_V20150921.CreateRepository",
+        respond: () =>
+          jsonResponse(
+            { __type: "RepositoryAlreadyExistsException", message: `The repository with name '${repoName}' already exists` },
+            400,
+          ),
+      },
+    ]);
+    renderWithQuery(<ECRReposPage />);
+    await screen.findByText("No repositories");
+
+    fireEvent.click(screen.getByTestId("ecr-create-repo"));
+    const dialog = await screen.findByRole("dialog", { name: "Create repository" });
+    fireEvent.change(within(dialog).getByTestId("ecr-repo-name-input"), { target: { value: repoName } });
+    fireEvent.click(within(dialog).getByTestId("ecr-create-repo-submit"));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain("RepositoryAlreadyExistsException");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
   it("deletes the selected repository through DeleteRepository with force", async () => {
     let sentBody: string | null = null;
     installFetch([
@@ -345,6 +424,70 @@ describe("ECRReposPage", () => {
 describe("S3BucketsPage", () => {
   const bucketName = "my-bucket";
 
+  it("creates a bucket through the real CreateBucket operation and shows it once the list refreshes", async () => {
+    let created: { method?: string; url: string } | null = null;
+    let listedAfterCreate = false;
+    installFetch([
+      {
+        when: (url, init) => url === "/" && (init?.method ?? "GET") === "GET",
+        respond: () => {
+          if (!created) return xmlResponse(`<ListAllMyBucketsResult><Buckets></Buckets></ListAllMyBucketsResult>`);
+          listedAfterCreate = true;
+          return xmlResponse(
+            `<ListAllMyBucketsResult><Buckets><Bucket><Name>${bucketName}</Name><CreationDate>2026-01-01T00:00:00.000Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>`,
+          );
+        },
+      },
+      {
+        when: (url, init) => url === `/${bucketName}` && init?.method === "PUT",
+        respond: (init) => {
+          created = { method: init?.method, url: `/${bucketName}` };
+          return new Response(null, { status: 200, headers: { Location: `/${bucketName}` } });
+        },
+      },
+    ]);
+    renderWithQuery(<S3BucketsPage />);
+    await screen.findByText("No buckets");
+
+    fireEvent.click(screen.getByTestId("s3-create-bucket"));
+    const dialog = await screen.findByRole("dialog", { name: "Create bucket" });
+    expect((within(dialog).getByTestId("s3-create-bucket-submit") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByTestId("s3-bucket-name-input"), { target: { value: bucketName } });
+    expect((within(dialog).getByTestId("s3-create-bucket-submit") as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(within(dialog).getByTestId("s3-create-bucket-submit"));
+
+    await waitFor(() => expect(created).not.toBeNull());
+    expect(created!.method).toBe("PUT");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(listedAfterCreate).toBe(true));
+    expect(await screen.findByText(bucketName)).toBeTruthy();
+  });
+
+  it("surfaces S3's BucketAlreadyOwnedByYou error rather than closing the create dialog", async () => {
+    installFetch([
+      {
+        when: (url, init) => url === "/" && (init?.method ?? "GET") === "GET",
+        respond: () => xmlResponse(`<ListAllMyBucketsResult><Buckets></Buckets></ListAllMyBucketsResult>`),
+      },
+      {
+        when: (url, init) => url === `/${bucketName}` && init?.method === "PUT",
+        respond: () =>
+          xmlError("BucketAlreadyOwnedByYou", "Your previous request to create the named bucket succeeded", 409),
+      },
+    ]);
+    renderWithQuery(<S3BucketsPage />);
+    await screen.findByText("No buckets");
+
+    fireEvent.click(screen.getByTestId("s3-create-bucket"));
+    const dialog = await screen.findByRole("dialog", { name: "Create bucket" });
+    fireEvent.change(within(dialog).getByTestId("s3-bucket-name-input"), { target: { value: bucketName } });
+    fireEvent.click(within(dialog).getByTestId("s3-create-bucket-submit"));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain("BucketAlreadyOwnedByYou");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
   it("surfaces S3's BucketNotEmpty error rather than closing the dialog", async () => {
     installFetch([
       {
@@ -395,6 +538,73 @@ describe("S3BucketsPage", () => {
 
 describe("LogGroupsPage", () => {
   const logGroupName = "/ecs/my-task";
+
+  it("creates a log group through the real CreateLogGroup operation and shows it once the list refreshes", async () => {
+    let sentBody: string | null = null;
+    let listedAfterCreate = false;
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "Logs_20140328.DescribeLogGroups",
+        respond: () => {
+          if (!sentBody) return jsonResponse({ logGroups: [] });
+          listedAfterCreate = true;
+          return jsonResponse({
+            logGroups: [{ logGroupName, creationTime: 1750000000000, retentionInDays: 0, storedBytes: 0 }],
+          });
+        },
+      },
+      {
+        when: (_url, init) => targetOf(init) === "Logs_20140328.CreateLogGroup",
+        respond: (init) => {
+          sentBody = typeof init?.body === "string" ? init.body : null;
+          return jsonResponse({});
+        },
+      },
+    ]);
+    renderWithQuery(<LogGroupsPage />);
+    await screen.findByText("No log groups");
+
+    fireEvent.click(screen.getByTestId("logs-create-log-group"));
+    const dialog = await screen.findByRole("dialog", { name: "Create log group" });
+    expect((within(dialog).getByTestId("logs-create-log-group-submit") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByTestId("logs-log-group-name-input"), { target: { value: logGroupName } });
+    expect((within(dialog).getByTestId("logs-create-log-group-submit") as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(within(dialog).getByTestId("logs-create-log-group-submit"));
+
+    await waitFor(() => expect(sentBody).not.toBeNull());
+    expect(JSON.parse(sentBody!)).toEqual({ logGroupName });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(listedAfterCreate).toBe(true));
+    expect(await screen.findByText(logGroupName)).toBeTruthy();
+  });
+
+  it("surfaces CloudWatch Logs' ResourceAlreadyExistsException rather than closing the create dialog", async () => {
+    installFetch([
+      {
+        when: (_url, init) => targetOf(init) === "Logs_20140328.DescribeLogGroups",
+        respond: () => jsonResponse({ logGroups: [] }),
+      },
+      {
+        when: (_url, init) => targetOf(init) === "Logs_20140328.CreateLogGroup",
+        respond: () =>
+          jsonResponse(
+            { __type: "ResourceAlreadyExistsException", message: `The specified log group already exists: ${logGroupName}` },
+            400,
+          ),
+      },
+    ]);
+    renderWithQuery(<LogGroupsPage />);
+    await screen.findByText("No log groups");
+
+    fireEvent.click(screen.getByTestId("logs-create-log-group"));
+    const dialog = await screen.findByRole("dialog", { name: "Create log group" });
+    fireEvent.change(within(dialog).getByTestId("logs-log-group-name-input"), { target: { value: logGroupName } });
+    fireEvent.click(within(dialog).getByTestId("logs-create-log-group-submit"));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain("ResourceAlreadyExistsException");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
 
   it("deletes the selected log group through the real DeleteLogGroup operation", async () => {
     let sentBody: string | null = null;

@@ -43,6 +43,7 @@ try {
       await assertFederatedAwsCredentials(context, page, app);
       await assertMintedIAMAccessKey(page, app);
       await assertCreatedOrganizationAccount(page, app);
+      await assertCreatedECRRepository(page, app);
     }
     if (app.name === "Sockerless Microsoft Azure simulator") {
       await assertFederatedAzureToken(context, page, app);
@@ -456,6 +457,24 @@ async function assertMintedServiceAccountKey(page, app) {
   );
 }
 
+
+// assertCreatedECRRepository proves the AWS console's resource-creation flow end
+// to end for the signed-in operator: open Elastic Container Registry, create a
+// repository through the real ECR CreateRepository API over the federated SigV4
+// path, and see it appear in the list. This exercises an authenticated
+// create → list-refresh round trip the per-package e2e cannot (that suite has
+// no identity provider, so the simulator rejects its unsigned writes with 403).
+async function assertCreatedECRRepository(page, app) {
+  const origin = new URL(app.launch).origin;
+  const repoName = `rps-repo-${Date.now() % 1_000_000}`;
+  await page.goto(`${origin}/ui/ecr`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("ecr-create-repo").click();
+  await page.getByTestId("ecr-repo-name-input").fill(repoName);
+  await page.getByTestId("ecr-create-repo-submit").click();
+  // The created repository appears in the list; its name column is a link to the
+  // repository detail.
+  await page.getByRole("link", { name: repoName }).waitFor({ state: "visible" });
+}
 
 // assertCreatedOrganizationAccount drives the AWS Organizations console page
 // as the signed-in operator: create the organization when none exists, then

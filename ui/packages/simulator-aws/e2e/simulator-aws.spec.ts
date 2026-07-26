@@ -274,6 +274,80 @@ test.describe("AWS Organizations account management", () => {
   });
 });
 
+// Amazon S3, Amazon ECR, and CloudWatch Logs used to be read-only in this
+// console — list and detail, no way to create a resource, even though the
+// real console lets an operator create a bucket, a repository, or a log
+// group from the same page. Each now offers a real "Create …" header action
+// that opens a Cloudscape Modal wired to the real CreateBucket /
+// CreateRepository / CreateLogGroup operation, matching the IAM "Create
+// user" and Organizations "Add an AWS account" dialogs above: the header
+// action and the dialog render before (and regardless of) any cloud read, so
+// they are assertable here without an identity provider. The authenticated
+// create→list-appears loop is exercised by the mocked-federated-fetch suite
+// (ResourceHeaderActions.test.tsx), the same split the IAM/Organizations
+// dialogs above document.
+test.describe("Resource creation", () => {
+  const cases = [
+    {
+      path: "/ui/s3",
+      createTestId: "s3-create-bucket",
+      dialogName: "Create bucket",
+      inputTestId: "s3-bucket-name-input",
+      submitTestId: "s3-create-bucket-submit",
+      validName: "my-new-bucket",
+    },
+    {
+      path: "/ui/ecr",
+      createTestId: "ecr-create-repo",
+      dialogName: "Create repository",
+      inputTestId: "ecr-repo-name-input",
+      submitTestId: "ecr-create-repo-submit",
+      validName: "my-new-repo",
+    },
+    {
+      path: "/ui/logs",
+      createTestId: "logs-create-log-group",
+      dialogName: "Create log group",
+      inputTestId: "logs-log-group-name-input",
+      submitTestId: "logs-create-log-group-submit",
+      validName: "/ecs/my-new-task",
+    },
+  ];
+
+  for (const { path, createTestId, dialogName, inputTestId, submitTestId, validName } of cases) {
+    test(`${path} offers ${dialogName} and opens the create dialog with an initially-disabled submit`, async ({
+      page,
+    }) => {
+      await page.goto(path);
+      const create = page.getByTestId(createTestId);
+      await expect(create).toBeVisible();
+      await create.click();
+      const dialog = page.getByRole("dialog", { name: dialogName });
+      await expect(dialog).toBeVisible();
+      const input = dialog.getByTestId(inputTestId);
+      await expect(input).toBeVisible();
+      // An empty or invalid name must not be submittable.
+      await expect(dialog.getByTestId(submitTestId)).toBeDisabled();
+      await input.fill(validName);
+      await expect(dialog.getByTestId(submitTestId)).toBeEnabled();
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    });
+
+    test(`${path} traps focus in the ${dialogName} dialog and returns it to the trigger on Escape`, async ({ page }) => {
+      await page.goto(path);
+      const trigger = page.getByTestId(createTestId);
+      await trigger.click();
+      const dialog = page.getByRole("dialog", { name: dialogName });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Close" })).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    });
+  }
+});
+
 // The Amazon ECS, AWS Lambda, Amazon ECR, Amazon S3, and CloudWatch Logs
 // pages used to render AwsTable's default "View details" and "Delete" header
 // actions — enabled, but with no handler wired (BUG-2637). Each page now
@@ -959,6 +1033,26 @@ test.describe("Automated accessibility audit", () => {
       const results = await new AxeBuilder({ page }).analyze();
       expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
     });
+
+    const CREATE_DIALOGS = [
+      { path: "/ui/s3", createTestId: "s3-create-bucket", dialogName: "Create bucket" },
+      { path: "/ui/ecr", createTestId: "ecr-create-repo", dialogName: "Create repository" },
+      { path: "/ui/logs", createTestId: "logs-create-log-group", dialogName: "Create log group" },
+    ];
+    for (const { path, createTestId, dialogName } of CREATE_DIALOGS) {
+      test(`the ${dialogName} dialog has no detectable violations (${theme})`, async ({ page }) => {
+        await page.goto(path);
+        if (theme === "dark") await ensureTheme(page, "dark");
+        await page.getByTestId(createTestId).click();
+        await expect(page.getByRole("dialog", { name: dialogName })).toBeVisible();
+        // Cloudscape's Modal has a brief open transition; sampling colours
+        // mid-transition reads a transient, partially-composited blend rather
+        // than the settled result.
+        await page.waitForTimeout(400);
+        const results = await new AxeBuilder({ page }).analyze();
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
   }
 });
 
