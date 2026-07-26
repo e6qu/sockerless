@@ -196,6 +196,19 @@ var allowedNonSpecGCPRoutes = map[string]string{
 	"GET /{path...}":        "GCS XML API bucket-host read path",
 	"/{path...}":            "GCS XML API bucket-host data plane",
 
+	// Artifact Registry Docker/OCI registry data plane: the shared OCI
+	// registry mounts one per-method subtree at /v2/ and dispatches the
+	// repository/blob/manifest paths itself (the OCI distribution spec, not
+	// Discovery). Only these five subtree mounts are outside Discovery —
+	// every other /v2/… route the simulator serves (Cloud Run v2, Cloud
+	// Functions v2, Cloud Logging v2, …) is a real Discovery method and is
+	// checked as one.
+	"GET /v2/":    "OCI distribution data plane subtree (Artifact Registry)",
+	"POST /v2/":   "OCI distribution data plane subtree (Artifact Registry)",
+	"PUT /v2/":    "OCI distribution data plane subtree (Artifact Registry)",
+	"PATCH /v2/":  "OCI distribution data plane subtree (Artifact Registry)",
+	"DELETE /v2/": "OCI distribution data plane subtree (Artifact Registry)",
+
 	// GCS resumable upload protocol: Discovery describes only the
 	// initiating POST (uploadType=resumable); the follow-up chunk PUTs
 	// go to the returned session URI on the same /upload path. Real,
@@ -206,7 +219,6 @@ var allowedNonSpecGCPRoutes = map[string]string{
 var allowedNonSpecGCPPrefixes = map[string]string{
 	"/sim/v1/":             "simulator control + dashboard surface (sockerless-specific)",
 	"/computeMetadata/":    "GCE metadata server (documented Google surface; no Discovery document)",
-	"/v2/":                 "Artifact Registry Docker/OCI registry data plane (OCI distribution spec, not Discovery)",
 	"/v2-functions-invoke": "deterministic Cloud Functions invoke host surface (run.app/cloudfunctions.net URL emulation)",
 	"/v2-services-invoke":  "deterministic Cloud Run service invoke host surface (run.app URL emulation)",
 	"/sockerless/":         "simulator-internal host-dispatch surface",

@@ -30,6 +30,10 @@ type WorkerPoolV2 struct {
 	CreateTime            string                      `json:"createTime,omitempty"`
 	UpdateTime            string                      `json:"updateTime,omitempty"`
 	LaunchStage           enumString                  `json:"launchStage,omitempty"`
+	Client                string                      `json:"client,omitempty"`
+	ClientVersion         string                      `json:"clientVersion,omitempty"`
+	CustomAudiences       []string                    `json:"customAudiences,omitempty"`
+	BinaryAuthorization   *BinaryAuthorization        `json:"binaryAuthorization,omitempty"`
 	Template              *WorkerPoolRevisionTemplate `json:"template,omitempty"`
 	Scaling               *WorkerPoolScaling          `json:"scaling,omitempty"`
 	InstanceSplits        []InstanceSplit             `json:"instanceSplits,omitempty"`
@@ -48,14 +52,21 @@ type WorkerPoolV2 struct {
 // for a worker pool. Unlike a Service's RevisionTemplate there is no
 // per-revision scaling (worker-pool scaling is manual, at the pool level).
 type WorkerPoolRevisionTemplate struct {
-	Labels         map[string]string `json:"labels,omitempty"`
-	Annotations    map[string]string `json:"annotations,omitempty"`
-	Revision       string            `json:"revision,omitempty"`
-	Containers     []Container       `json:"containers,omitempty"`
-	Volumes        []Volume          `json:"volumes,omitempty"`
-	VpcAccess      *VpcAccess        `json:"vpcAccess,omitempty"`
-	ServiceAccount string            `json:"serviceAccount,omitempty"`
-	NodeSelector   *NodeSelector     `json:"nodeSelector,omitempty"`
+	Labels                        map[string]string `json:"labels,omitempty"`
+	Annotations                   map[string]string `json:"annotations,omitempty"`
+	Revision                      string            `json:"revision,omitempty"`
+	Containers                    []Container       `json:"containers,omitempty"`
+	Volumes                       []Volume          `json:"volumes,omitempty"`
+	VpcAccess                     *VpcAccess        `json:"vpcAccess,omitempty"`
+	ServiceAccount                string            `json:"serviceAccount,omitempty"`
+	NodeSelector                  *NodeSelector     `json:"nodeSelector,omitempty"`
+	ServiceMesh                   *ServiceMesh      `json:"serviceMesh,omitempty"`
+	Client                        string            `json:"client,omitempty"`
+	ClientVersion                 string            `json:"clientVersion,omitempty"`
+	EncryptionKey                 string            `json:"encryptionKey,omitempty"`
+	EncryptionKeyRevocationAction enumString        `json:"encryptionKeyRevocationAction,omitempty"`
+	EncryptionKeyShutdownDuration string            `json:"encryptionKeyShutdownDuration,omitempty"`
+	GpuZonalRedundancyDisabled    bool              `json:"gpuZonalRedundancyDisabled,omitempty"`
 }
 
 // NodeSelector mirrors google.cloud.run.v2.NodeSelector — the GPU
@@ -121,8 +132,7 @@ func registerCloudRunWorkerPoolsV2(srv *sim.Server) {
 		poolParam := sim.PathParam(r, "workerPool")
 		if id, action, found := strings.Cut(poolParam, ":"); found {
 			if action == "getIamPolicy" {
-				handleResourceIAM(w, r, gcpResourceIAMStore(),
-					fmt.Sprintf("projects/%s/locations/%s/workerPools/%s", project, location, id), action)
+				workerPoolIAM(w, r, pools, project, location, id, action)
 				return
 			}
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on worker pool %q", action, id)
@@ -175,16 +185,7 @@ func registerCloudRunWorkerPoolsV2(srv *sim.Server) {
 			return
 		}
 		if mask := r.URL.Query().Get("updateMask"); mask != "" {
-			fields := strings.Split(mask, ",")
-			has := func(p string) bool {
-				for _, f := range fields {
-					f = strings.TrimSpace(f)
-					if f == p || strings.HasPrefix(f, p+".") {
-						return true
-					}
-				}
-				return false
-			}
+			has := func(p string) bool { return updateMaskHas(mask, p) }
 			merged := existing
 			if has("template") {
 				merged.Template = update.Template
@@ -206,6 +207,12 @@ func registerCloudRunWorkerPoolsV2(srv *sim.Server) {
 			}
 			if has("launchStage") || has("launch_stage") {
 				merged.LaunchStage = update.LaunchStage
+			}
+			if has("customAudiences") || has("custom_audiences") {
+				merged.CustomAudiences = update.CustomAudiences
+			}
+			if has("binaryAuthorization") || has("binary_authorization") {
+				merged.BinaryAuthorization = update.BinaryAuthorization
 			}
 			update = merged
 		}
@@ -314,12 +321,61 @@ func registerCloudRunWorkerPoolsV2(srv *sim.Server) {
 		}
 		switch action {
 		case "setIamPolicy", "testIamPermissions":
-			handleResourceIAM(w, r, gcpResourceIAMStore(),
-				fmt.Sprintf("projects/%s/locations/%s/workerPools/%s", project, location, id), action)
+			workerPoolIAM(w, r, pools, project, location, id, action)
 		default:
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on worker pool %q", action, id)
 		}
 	})
+
+	// --- Cloud Run Admin v1 worker-pool IAM verbs ---
+	// The Cloud Run Admin v1 API exposes the same worker pool resource's IAM
+	// policy under a lowercase `workerpools` collection
+	// (run.projects.locations.workerpools.{getIamPolicy,setIamPolicy,
+	// testIamPermissions}). It is the surface the gcloud CLI's
+	// `gcloud run worker-pools {get,set}-iam-policy` and
+	// `{add,remove}-iam-policy-binding` commands call. Both API versions
+	// address one resource, so the policy is stored under the v2 resource
+	// name and a policy written through either version reads back through
+	// the other.
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/workerpools/{workerPool}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		id, action, found := strings.Cut(sim.PathParam(r, "workerPool"), ":")
+		if !found || action != "getIamPolicy" {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on worker pool %q", action, id)
+			return
+		}
+		workerPoolIAM(w, r, pools, project, location, id, action)
+	})
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/workerpools/{workerPoolAction}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		id, action, found := strings.Cut(sim.PathParam(r, "workerPoolAction"), ":")
+		if !found {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action on worker pool %q", id)
+			return
+		}
+		switch action {
+		case "setIamPolicy", "testIamPermissions":
+			workerPoolIAM(w, r, pools, project, location, id, action)
+		default:
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on worker pool %q", action, id)
+		}
+	})
+}
+
+// workerPoolIAM serves an AIP-141 IAM verb against a worker pool. The policy
+// is keyed on the v2 resource name so the v1 (`workerpools`) and v2
+// (`workerPools`) collections address one resource's single policy. An IAM
+// verb on a worker pool that does not exist is NOT_FOUND, as on a real Cloud
+// Run project — never an empty policy for a name that was never deployed.
+func workerPoolIAM(w http.ResponseWriter, r *http.Request, pools sim.Store[WorkerPoolV2], project, location, id, action string) {
+	name := fmt.Sprintf("projects/%s/locations/%s/workerPools/%s", project, location, id)
+	if _, ok := pools.Get(name); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "worker pool %q not found", name)
+		return
+	}
+	handleResourceIAM(w, r, gcpResourceIAMStore(), name, action)
 }
 
 func seedWorkerPoolV2Defaults(pool WorkerPoolV2, project, location, poolID string) WorkerPoolV2 {

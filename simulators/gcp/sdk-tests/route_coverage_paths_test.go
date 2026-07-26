@@ -464,10 +464,11 @@ package gcp_sdk_test
 //   POST /v3/tagValues/{valAction}
 
 // Cloud Run v2 ratchet: worker pools, instances, job update, execution
-// delete, and tasks. These routes are driven by the run/apiv2 clients (and
-// raw-HTTP for the instance IAM verbs the SDK does not wrap) in
-// cloudrun_more_test.go; the literal wire paths are recorded here so the
-// simulator-testing-contract hook can see the coverage.
+// delete, and tasks. These routes are driven by the run/apiv2 clients in
+// cloudrun_more_test.go and by the Discovery REST clients
+// (google.golang.org/api/run/v2 and /run/v1) in
+// cloudrun_v2_workerpools_instances_rest_test.go; the literal wire paths are
+// recorded here so the simulator-testing-contract hook can see the coverage.
 //
 //   POST /v2/projects/{project}/locations/{location}/workerPools
 //   GET /v2/projects/{project}/locations/{location}/workerPools/{workerPool}
@@ -478,9 +479,12 @@ package gcp_sdk_test
 //   GET /v2/projects/{project}/locations/{location}/workerPools/{workerPool}/revisions
 //   DELETE /v2/projects/{project}/locations/{location}/workerPools/{workerPool}/revisions/{revision}
 //   POST /v2/projects/{project}/locations/{location}/workerPools/{workerPoolAction}
+//   GET /v1/projects/{project}/locations/{location}/workerpools/{workerPool}
+//   POST /v1/projects/{project}/locations/{location}/workerpools/{workerPoolAction}
 //   POST /v2/projects/{project}/locations/{location}/instances
 //   GET /v2/projects/{project}/locations/{location}/instances/{instance}
 //   GET /v2/projects/{project}/locations/{location}/instances
+//   PATCH /v2/projects/{project}/locations/{location}/instances/{instance}
 //   DELETE /v2/projects/{project}/locations/{location}/instances/{instance}
 //   POST /v2/projects/{project}/locations/{location}/instances/{instanceAction}
 //   PATCH /v2/projects/{project}/locations/{location}/jobs/{job}

@@ -12,19 +12,14 @@ import (
 // Cloud Map types
 
 type CMNamespace struct {
-	Id          string                 `json:"Id"`
-	Arn         string                 `json:"Arn"`
-	Name        string                 `json:"Name"`
-	Type        string                 `json:"Type"`
-	Description string                 `json:"Description,omitempty"`
-	Properties  *CMNamespaceProperties `json:"Properties,omitempty"`
-	CreateDate  int64                  `json:"CreateDate"`
-	// DockerNetworkName is the name of the real Docker user-defined
-	// network created when a container-backed registration needs DNS.
-	// Pure Cloud Map control-plane resources do not create Docker
-	// resources; the network is just the local realization of private
-	// namespace DNS for running ECS task containers.
-	DockerNetworkName string `json:"DockerNetworkName,omitempty"`
+	Id               string                 `json:"Id"`
+	Arn              string                 `json:"Arn"`
+	Name             string                 `json:"Name"`
+	Type             string                 `json:"Type"`
+	Description      string                 `json:"Description,omitempty"`
+	Properties       *CMNamespaceProperties `json:"Properties,omitempty"`
+	CreateDate       int64                  `json:"CreateDate"`
+	CreatorRequestId string                 `json:"CreatorRequestId,omitempty"`
 }
 
 type CMNamespaceProperties struct {
@@ -44,22 +39,31 @@ type CMDnsProperties struct {
 }
 
 type CMService struct {
-	Id                string               `json:"Id"`
-	Arn               string               `json:"Arn"`
-	Name              string               `json:"Name"`
-	NamespaceId       string               `json:"NamespaceId"`
-	Description       string               `json:"Description,omitempty"`
-	DnsConfig         *CMDnsConfig         `json:"DnsConfig,omitempty"`
-	HealthCheckConfig *CMHealthCheckConfig `json:"HealthCheckConfig,omitempty"`
-	Type              string               `json:"Type,omitempty"`
-	CreateDate        int64                `json:"CreateDate"`
-	InstanceCount     int                  `json:"InstanceCount"`
+	Id                      string                     `json:"Id"`
+	Arn                     string                     `json:"Arn"`
+	Name                    string                     `json:"Name"`
+	NamespaceId             string                     `json:"NamespaceId"`
+	Description             string                     `json:"Description,omitempty"`
+	DnsConfig               *CMDnsConfig               `json:"DnsConfig,omitempty"`
+	HealthCheckConfig       *CMHealthCheckConfig       `json:"HealthCheckConfig,omitempty"`
+	HealthCheckCustomConfig *CMHealthCheckCustomConfig `json:"HealthCheckCustomConfig,omitempty"`
+	Type                    string                     `json:"Type,omitempty"`
+	CreateDate              int64                      `json:"CreateDate"`
+	InstanceCount           int                        `json:"InstanceCount"`
+	CreatorRequestId        string                     `json:"CreatorRequestId,omitempty"`
 }
 
 type CMHealthCheckConfig struct {
 	Type             string `json:"Type,omitempty"`
 	ResourcePath     string `json:"ResourcePath,omitempty"`
 	FailureThreshold int    `json:"FailureThreshold,omitempty"`
+}
+
+// CMHealthCheckCustomConfig is the HealthCheckCustomConfig shape: a service
+// whose instance health is reported by the caller through
+// UpdateInstanceCustomHealthStatus rather than by a Route 53 health check.
+type CMHealthCheckCustomConfig struct {
+	FailureThreshold int `json:"FailureThreshold,omitempty"`
 }
 
 type CMDnsConfig struct {
@@ -80,6 +84,7 @@ type CMInstance struct {
 	// instance whose service uses a HealthCheckCustomConfig (the value
 	// UpdateInstanceCustomHealthStatus writes: HEALTHY or UNHEALTHY).
 	CustomHealthStatus string `json:"CustomHealthStatus,omitempty"`
+	CreatorRequestId   string `json:"CreatorRequestId,omitempty"`
 }
 
 type CMOperation struct {
@@ -89,6 +94,8 @@ type CMOperation struct {
 	NamespaceId string            `json:"NamespaceId,omitempty"`
 	ServiceId   string            `json:"ServiceId,omitempty"`
 	Targets     map[string]string `json:"Targets,omitempty"`
+	CreateDate  int64             `json:"CreateDate,omitempty"`
+	UpdateDate  int64             `json:"UpdateDate,omitempty"`
 }
 
 // State stores
@@ -105,7 +112,20 @@ var (
 	// incremented on every RegisterInstance/DeregisterInstance and returned
 	// by DiscoverInstancesRevision. Keyed by service ID.
 	cmServiceRevisions sim.Store[int64]
+	// cmTags holds the tags of every taggable Cloud Map resource, keyed by the
+	// resource ARN — the key TagResource/UntagResource/ListTagsForResource
+	// address a resource by.
+	cmTags sim.Store[map[string]string]
+	// cmNamespaceNetworks records the Docker user-defined network that locally
+	// realizes a private namespace's DNS, keyed by namespace ID. It is the
+	// simulator's realization mechanism, not part of the Cloud Map API, so it
+	// lives beside the namespace record rather than inside the wire shape.
+	cmNamespaceNetworks sim.Store[string]
 )
+
+// cmMaxTagsPerResource is the Cloud Map per-resource tag limit; exceeding it is
+// a TooManyTagsException.
+const cmMaxTagsPerResource = 50
 
 func cmArn(resourceType, id string) string {
 	return fmt.Sprintf("arn:aws:servicediscovery:%s:%s:%s/%s", awsRegion(), awsAccountID(), resourceType, id)
@@ -113,6 +133,155 @@ func cmArn(resourceType, id string) string {
 
 func cmInstanceKey(serviceId, instanceId string) string {
 	return serviceId + ":" + instanceId
+}
+
+// cmTag is the wire Tag shape carried by the Create* requests and the tagging
+// operations.
+type cmTag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
+// cmPutResourceTags stores the tags a Create* request carried for a new
+// resource. Cloud Map tags every namespace and service by ARN, and
+// ListTagsForResource reads them back — the same tags an operator (or the ECS
+// backend's network-state recovery) filters on.
+func cmPutResourceTags(arn string, tags []cmTag) {
+	if len(tags) == 0 {
+		return
+	}
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t.Key] = t.Value
+	}
+	cmTags.Put(arn, m)
+}
+
+// cmResourceExists reports whether an ARN addresses a live namespace or
+// service — the two taggable Cloud Map resource types.
+func cmResourceExists(arn string) bool {
+	for _, ns := range cmNamespaces.List() {
+		if ns.Arn == arn {
+			return true
+		}
+	}
+	for _, svc := range cmServices.List() {
+		if svc.Arn == arn {
+			return true
+		}
+	}
+	return false
+}
+
+// cmNamespaceServiceCount counts the services in a namespace — the
+// ServiceCount member of the Namespace and NamespaceSummary shapes.
+func cmNamespaceServiceCount(namespaceId string) int {
+	n := 0
+	for _, svc := range cmServices.List() {
+		if svc.NamespaceId == namespaceId {
+			n++
+		}
+	}
+	return n
+}
+
+// cmNamespaceSummary projects a stored namespace onto the NamespaceSummary
+// shape returned by ListNamespaces.
+func cmNamespaceSummary(ns CMNamespace) map[string]any {
+	out := map[string]any{
+		"Id":           ns.Id,
+		"Arn":          ns.Arn,
+		"Name":         ns.Name,
+		"Type":         ns.Type,
+		"CreateDate":   ns.CreateDate,
+		"ServiceCount": cmNamespaceServiceCount(ns.Id),
+	}
+	if ns.Description != "" {
+		out["Description"] = ns.Description
+	}
+	if ns.Properties != nil {
+		out["Properties"] = ns.Properties
+	}
+	return out
+}
+
+// cmNamespaceView projects a stored namespace onto the Namespace shape
+// returned by GetNamespace — the summary plus CreatorRequestId.
+func cmNamespaceView(ns CMNamespace) map[string]any {
+	out := cmNamespaceSummary(ns)
+	if ns.CreatorRequestId != "" {
+		out["CreatorRequestId"] = ns.CreatorRequestId
+	}
+	return out
+}
+
+// cmInstanceSummary projects a stored instance onto the InstanceSummary shape
+// ListInstances returns: the registered ID and attributes only. The custom
+// health status and the owning service ID are simulator bookkeeping, not wire
+// members, and InstanceSummary has no CreatorRequestId member.
+func cmInstanceSummary(inst CMInstance) map[string]any {
+	attrs := inst.Attributes
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
+	return map[string]any{
+		"Id":         inst.Id,
+		"Attributes": attrs,
+	}
+}
+
+// cmInstanceView projects a stored instance onto the Instance shape GetInstance
+// returns — the summary members plus the CreatorRequestId of the registration.
+func cmInstanceView(inst CMInstance) map[string]any {
+	out := cmInstanceSummary(inst)
+	if inst.CreatorRequestId != "" {
+		out["CreatorRequestId"] = inst.CreatorRequestId
+	}
+	return out
+}
+
+// cmServiceInstances returns every instance registered under a service, sorted
+// by instance ID so pagination is stable. Registrations are keyed by
+// service+instance, so the record returned is the one this service registered:
+// the same instance ID may back several services with different attributes.
+func cmServiceInstances(serviceId string) []CMInstance {
+	seen := make(map[string]struct{})
+	var out []CMInstance
+	for _, inst := range cmInstances.List() {
+		if _, dup := seen[inst.Id]; dup {
+			continue
+		}
+		stored, ok := cmInstances.Get(cmInstanceKey(serviceId, inst.Id))
+		if !ok {
+			continue
+		}
+		seen[inst.Id] = struct{}{}
+		out = append(out, stored)
+	}
+	return sortBy(out, func(inst CMInstance) string { return inst.Id })
+}
+
+// cmFilterMatch applies one Cloud Map list filter to a resource's actual value.
+// EQ (the default) and IN both match any of the filter's values; BEGINS_WITH
+// matches a prefix. BETWEEN is only meaningful for the UPDATE_DATE operation
+// filter, which the operation-filter path handles separately.
+func cmFilterMatch(condition string, values []string, actual string) bool {
+	switch condition {
+	case "BEGINS_WITH":
+		for _, v := range values {
+			if strings.HasPrefix(actual, v) {
+				return true
+			}
+		}
+		return false
+	default: // EQ, IN, or unset
+		for _, v := range values {
+			if actual == v {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 func registerCloudMap(r *sim.AWSRouter, srv *sim.Server) {
@@ -123,6 +292,8 @@ func registerCloudMap(r *sim.AWSRouter, srv *sim.Server) {
 	cmOperations = sim.MakeStore[CMOperation](srv.DB(), "cloudmap_operations")
 	cmServiceAttributes = sim.MakeStore[map[string]string](srv.DB(), "cloudmap_service_attributes")
 	cmServiceRevisions = sim.MakeStore[int64](srv.DB(), "cloudmap_service_revisions")
+	cmTags = sim.MakeStore[map[string]string](srv.DB(), "cloudmap_tags")
+	cmNamespaceNetworks = sim.MakeStore[string](srv.DB(), "cloudmap_namespace_networks")
 
 	r.Register("Route53AutoNaming_v20170314.CreatePrivateDnsNamespace", handleCMCreatePrivateDnsNamespace)
 	r.Register("Route53AutoNaming_v20170314.CreatePublicDnsNamespace", handleCMCreatePublicDnsNamespace)
@@ -156,11 +327,70 @@ func registerCloudMap(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("Route53AutoNaming_v20170314.UntagResource", handleCMUntagResource)
 }
 
+// cmSOAProperties is the SOA carried by the Create*Namespace Properties member
+// (PrivateDnsNamespaceProperties / PublicDnsNamespaceProperties).
+type cmSOAProperties struct {
+	DnsProperties *struct {
+		SOA *struct {
+			TTL int64 `json:"TTL"`
+		} `json:"SOA"`
+	} `json:"DnsProperties"`
+}
+
+// cmDnsPropertiesFor builds a new DNS namespace's DnsProperties: a fresh
+// hosted zone plus the SOA the request configured, if any.
+func cmDnsPropertiesFor(props *cmSOAProperties) *CMDnsProperties {
+	dns := &CMDnsProperties{HostedZoneId: "Z" + generateUUID()[:12]}
+	if props != nil && props.DnsProperties != nil && props.DnsProperties.SOA != nil {
+		dns.SOA = &struct {
+			TTL int64 `json:"TTL"`
+		}{TTL: props.DnsProperties.SOA.TTL}
+	}
+	return dns
+}
+
+// cmNamespaceNameTaken reports whether a namespace with this name already
+// exists — Cloud Map namespace names are unique per account and region.
+func cmNamespaceNameTaken(name string) bool {
+	for _, ns := range cmNamespaces.List() {
+		if ns.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// cmCreateNamespace stores a new namespace, its tags and the SUCCESS
+// CREATE_NAMESPACE operation, then writes the OperationId response the three
+// Create*Namespace operations share.
+func cmCreateNamespace(w http.ResponseWriter, ns CMNamespace, tags []cmTag) {
+	cmNamespaces.Put(ns.Id, ns)
+	cmPutResourceTags(ns.Arn, tags)
+
+	operationId := generateUUID()
+	now := time.Now().Unix()
+	cmOperations.Put(operationId, CMOperation{
+		OperationId: operationId,
+		Status:      "SUCCESS",
+		Type:        "CREATE_NAMESPACE",
+		NamespaceId: ns.Id,
+		Targets:     map[string]string{"NAMESPACE": ns.Id},
+		CreateDate:  now,
+		UpdateDate:  now,
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"OperationId": operationId,
+	})
+}
+
 func handleCMCreatePrivateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"Name"`
-		Vpc         string `json:"Vpc"`
-		Description string `json:"Description"`
+		Name             string           `json:"Name"`
+		Vpc              string           `json:"Vpc"`
+		Description      string           `json:"Description"`
+		CreatorRequestId string           `json:"CreatorRequestId"`
+		Properties       *cmSOAProperties `json:"Properties"`
+		Tags             []cmTag          `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidInput", "Invalid request body", http.StatusBadRequest)
@@ -170,37 +400,30 @@ func handleCMCreatePrivateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidInput", "Name is required", http.StatusBadRequest)
 		return
 	}
+	if req.Vpc == "" {
+		sim.AWSError(w, "InvalidInput", "Vpc is required", http.StatusBadRequest)
+		return
+	}
+	if cmNamespaceNameTaken(req.Name) {
+		sim.AWSErrorf(w, "NamespaceAlreadyExists", http.StatusBadRequest,
+			"A namespace with the name '%s' already exists", req.Name)
+		return
+	}
 
 	nsId := "ns-" + generateUUID()[:16]
-	operationId := generateUUID()
-
-	ns := CMNamespace{
-		Id:          nsId,
-		Arn:         cmArn("namespace", nsId),
-		Name:        req.Name,
-		Type:        "DNS_PRIVATE",
-		Description: req.Description,
+	cmNamespaceVPCs.Put(nsId, req.Vpc)
+	cmCreateNamespace(w, CMNamespace{
+		Id:               nsId,
+		Arn:              cmArn("namespace", nsId),
+		Name:             req.Name,
+		Type:             "DNS_PRIVATE",
+		Description:      req.Description,
+		CreatorRequestId: req.CreatorRequestId,
 		Properties: &CMNamespaceProperties{
-			DnsProperties: &CMDnsProperties{
-				HostedZoneId: "Z" + generateUUID()[:12],
-			},
+			DnsProperties: cmDnsPropertiesFor(req.Properties),
 		},
 		CreateDate: time.Now().Unix(),
-	}
-	cmNamespaces.Put(nsId, ns)
-	cmNamespaceVPCs.Put(nsId, req.Vpc)
-
-	cmOperations.Put(operationId, CMOperation{
-		OperationId: operationId,
-		Status:      "SUCCESS",
-		Type:        "CREATE_NAMESPACE",
-		NamespaceId: nsId,
-		Targets:     map[string]string{"NAMESPACE": nsId},
-	})
-
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"OperationId": operationId,
-	})
+	}, req.Tags)
 }
 
 // handleCMCreatePublicDnsNamespace creates a DNS_PUBLIC namespace. Public DNS
@@ -208,8 +431,11 @@ func handleCMCreatePrivateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 // modeled identically to a private one minus the VPC association.
 func handleCMCreatePublicDnsNamespace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"Name"`
-		Description string `json:"Description"`
+		Name             string           `json:"Name"`
+		Description      string           `json:"Description"`
+		CreatorRequestId string           `json:"CreatorRequestId"`
+		Properties       *cmSOAProperties `json:"Properties"`
+		Tags             []cmTag          `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidInput", "Invalid request body", http.StatusBadRequest)
@@ -219,36 +445,25 @@ func handleCMCreatePublicDnsNamespace(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidInput", "Name is required", http.StatusBadRequest)
 		return
 	}
+	if cmNamespaceNameTaken(req.Name) {
+		sim.AWSErrorf(w, "NamespaceAlreadyExists", http.StatusBadRequest,
+			"A namespace with the name '%s' already exists", req.Name)
+		return
+	}
 
 	nsId := "ns-" + generateUUID()[:16]
-	operationId := generateUUID()
-
-	ns := CMNamespace{
-		Id:          nsId,
-		Arn:         cmArn("namespace", nsId),
-		Name:        req.Name,
-		Type:        "DNS_PUBLIC",
-		Description: req.Description,
+	cmCreateNamespace(w, CMNamespace{
+		Id:               nsId,
+		Arn:              cmArn("namespace", nsId),
+		Name:             req.Name,
+		Type:             "DNS_PUBLIC",
+		Description:      req.Description,
+		CreatorRequestId: req.CreatorRequestId,
 		Properties: &CMNamespaceProperties{
-			DnsProperties: &CMDnsProperties{
-				HostedZoneId: "Z" + generateUUID()[:12],
-			},
+			DnsProperties: cmDnsPropertiesFor(req.Properties),
 		},
 		CreateDate: time.Now().Unix(),
-	}
-	cmNamespaces.Put(nsId, ns)
-
-	cmOperations.Put(operationId, CMOperation{
-		OperationId: operationId,
-		Status:      "SUCCESS",
-		Type:        "CREATE_NAMESPACE",
-		NamespaceId: nsId,
-		Targets:     map[string]string{"NAMESPACE": nsId},
-	})
-
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"OperationId": operationId,
-	})
+	}, req.Tags)
 }
 
 // handleCMCreateHttpNamespace creates an HTTP namespace. HTTP namespaces have
@@ -256,8 +471,10 @@ func handleCMCreatePublicDnsNamespace(w http.ResponseWriter, r *http.Request) {
 // an HttpProperties.HttpName (defaulting to the namespace name).
 func handleCMCreateHttpNamespace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"Name"`
-		Description string `json:"Description"`
+		Name             string  `json:"Name"`
+		Description      string  `json:"Description"`
+		CreatorRequestId string  `json:"CreatorRequestId"`
+		Tags             []cmTag `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidInput", "Invalid request body", http.StatusBadRequest)
@@ -267,34 +484,25 @@ func handleCMCreateHttpNamespace(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidInput", "Name is required", http.StatusBadRequest)
 		return
 	}
+	if cmNamespaceNameTaken(req.Name) {
+		sim.AWSErrorf(w, "NamespaceAlreadyExists", http.StatusBadRequest,
+			"A namespace with the name '%s' already exists", req.Name)
+		return
+	}
 
 	nsId := "ns-" + generateUUID()[:16]
-	operationId := generateUUID()
-
-	ns := CMNamespace{
-		Id:          nsId,
-		Arn:         cmArn("namespace", nsId),
-		Name:        req.Name,
-		Type:        "HTTP",
-		Description: req.Description,
+	cmCreateNamespace(w, CMNamespace{
+		Id:               nsId,
+		Arn:              cmArn("namespace", nsId),
+		Name:             req.Name,
+		Type:             "HTTP",
+		Description:      req.Description,
+		CreatorRequestId: req.CreatorRequestId,
 		Properties: &CMNamespaceProperties{
 			HttpProperties: &CMHttpProperties{HttpName: req.Name},
 		},
 		CreateDate: time.Now().Unix(),
-	}
-	cmNamespaces.Put(nsId, ns)
-
-	cmOperations.Put(operationId, CMOperation{
-		OperationId: operationId,
-		Status:      "SUCCESS",
-		Type:        "CREATE_NAMESPACE",
-		NamespaceId: nsId,
-		Targets:     map[string]string{"NAMESPACE": nsId},
-	})
-
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"OperationId": operationId,
-	})
+	}, req.Tags)
 }
 
 func handleCMGetNamespace(w http.ResponseWriter, r *http.Request) {
@@ -318,7 +526,7 @@ func handleCMGetNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Namespace": ns,
+		"Namespace": cmNamespaceView(ns),
 	})
 }
 
@@ -335,7 +543,8 @@ func handleCMDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := cmNamespaces.Get(req.Id); !ok {
+	ns, ok := cmNamespaces.Get(req.Id)
+	if !ok {
 		sim.AWSErrorf(w, "NamespaceNotFound", http.StatusBadRequest,
 			"Namespace '%s' not found", req.Id)
 		return
@@ -348,10 +557,18 @@ func handleCMDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 
 	cmNamespaces.Delete(req.Id)
 	cmNamespaceVPCs.Delete(req.Id)
+	cmNamespaceNetworks.Delete(req.Id)
+	cmTags.Delete(ns.Arn)
 	operationId := generateUUID()
+	now := time.Now().Unix()
 	cmOperations.Put(operationId, CMOperation{
 		OperationId: operationId,
 		Status:      "SUCCESS",
+		Type:        "DELETE_NAMESPACE",
+		NamespaceId: req.Id,
+		Targets:     map[string]string{"NAMESPACE": req.Id},
+		CreateDate:  now,
+		UpdateDate:  now,
 	})
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -363,12 +580,15 @@ func handleCMDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 // the OperationId response shared by all three Update*Namespace ops.
 func cmUpdateNamespaceOp(w http.ResponseWriter, nsId string) {
 	operationId := generateUUID()
+	now := time.Now().Unix()
 	cmOperations.Put(operationId, CMOperation{
 		OperationId: operationId,
 		Status:      "SUCCESS",
 		Type:        "UPDATE_NAMESPACE",
 		NamespaceId: nsId,
 		Targets:     map[string]string{"NAMESPACE": nsId},
+		CreateDate:  now,
+		UpdateDate:  now,
 	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"OperationId": operationId,
@@ -463,12 +683,15 @@ func handleCMUpdateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 
 func handleCMCreateService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name              string               `json:"Name"`
-		NamespaceId       string               `json:"NamespaceId"`
-		Description       string               `json:"Description"`
-		DnsConfig         *CMDnsConfig         `json:"DnsConfig"`
-		HealthCheckConfig *CMHealthCheckConfig `json:"HealthCheckConfig"`
-		Type              string               `json:"Type"`
+		Name                    string                     `json:"Name"`
+		NamespaceId             string                     `json:"NamespaceId"`
+		Description             string                     `json:"Description"`
+		CreatorRequestId        string                     `json:"CreatorRequestId"`
+		DnsConfig               *CMDnsConfig               `json:"DnsConfig"`
+		HealthCheckConfig       *CMHealthCheckConfig       `json:"HealthCheckConfig"`
+		HealthCheckCustomConfig *CMHealthCheckCustomConfig `json:"HealthCheckCustomConfig"`
+		Type                    string                     `json:"Type"`
+		Tags                    []cmTag                    `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidInput", "Invalid request body", http.StatusBadRequest)
@@ -490,20 +713,31 @@ func handleCMCreateService(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Service names are unique within a namespace.
+	for _, existing := range cmServices.List() {
+		if existing.NamespaceId == namespaceId && existing.Name == req.Name {
+			sim.AWSErrorf(w, "ServiceAlreadyExists", http.StatusBadRequest,
+				"A service with the name '%s' already exists in namespace '%s'", req.Name, namespaceId)
+			return
+		}
+	}
 
 	svcId := "srv-" + generateUUID()[:16]
 	svc := CMService{
-		Id:                svcId,
-		Arn:               cmArn("service", svcId),
-		Name:              req.Name,
-		NamespaceId:       namespaceId,
-		Description:       req.Description,
-		DnsConfig:         req.DnsConfig,
-		HealthCheckConfig: req.HealthCheckConfig,
-		Type:              cmServiceType(req.Type, namespaceId, req.DnsConfig),
-		CreateDate:        time.Now().Unix(),
+		Id:                      svcId,
+		Arn:                     cmArn("service", svcId),
+		Name:                    req.Name,
+		NamespaceId:             namespaceId,
+		Description:             req.Description,
+		CreatorRequestId:        req.CreatorRequestId,
+		DnsConfig:               req.DnsConfig,
+		HealthCheckConfig:       req.HealthCheckConfig,
+		HealthCheckCustomConfig: req.HealthCheckCustomConfig,
+		Type:                    cmServiceType(req.Type, namespaceId, req.DnsConfig),
+		CreateDate:              time.Now().Unix(),
 	}
 	cmServices.Put(svcId, svc)
+	cmPutResourceTags(svc.Arn, req.Tags)
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Service": svc,
@@ -598,6 +832,7 @@ func handleCMUpdateService(w http.ResponseWriter, r *http.Request) {
 	})
 
 	operationId := generateUUID()
+	now := time.Now().Unix()
 	cmOperations.Put(operationId, CMOperation{
 		OperationId: operationId,
 		Status:      "SUCCESS",
@@ -605,6 +840,8 @@ func handleCMUpdateService(w http.ResponseWriter, r *http.Request) {
 		NamespaceId: svc.NamespaceId,
 		ServiceId:   req.Id,
 		Targets:     map[string]string{"SERVICE": req.Id},
+		CreateDate:  now,
+		UpdateDate:  now,
 	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"OperationId": operationId,
@@ -707,9 +944,10 @@ func handleCMDeleteServiceAttributes(w http.ResponseWriter, r *http.Request) {
 
 func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ServiceId  string            `json:"ServiceId"`
-		InstanceId string            `json:"InstanceId"`
-		Attributes map[string]string `json:"Attributes"`
+		ServiceId        string            `json:"ServiceId"`
+		InstanceId       string            `json:"InstanceId"`
+		Attributes       map[string]string `json:"Attributes"`
+		CreatorRequestId string            `json:"CreatorRequestId"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidInput", "Invalid request body", http.StatusBadRequest)
@@ -739,8 +977,9 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 	// services — i.e. resolve under several DNS names that all point at its IP.
 	// The realization paths gather the full set of names for the container.
 	instance := CMInstance{
-		Id:         req.InstanceId,
-		Attributes: req.Attributes,
+		Id:               req.InstanceId,
+		Attributes:       req.Attributes,
+		CreatorRequestId: req.CreatorRequestId,
 	}
 	key := cmInstanceKey(req.ServiceId, req.InstanceId)
 	_, existed := cmInstances.Get(key)
@@ -788,7 +1027,32 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	cmWriteInstanceOperation(w, "REGISTER_INSTANCE", svc, req.InstanceId)
+}
+
+// cmWriteInstanceOperation records the SUCCESS instance operation
+// (REGISTER_INSTANCE / DEREGISTER_INSTANCE) a caller polls with GetOperation
+// and writes the OperationId response.
+func cmWriteInstanceOperation(w http.ResponseWriter, opType string, svc CMService, instanceId string) {
 	operationId := generateUUID()
+	now := time.Now().Unix()
+	targets := map[string]string{
+		"INSTANCE": instanceId,
+		"SERVICE":  svc.Id,
+	}
+	if svc.NamespaceId != "" {
+		targets["NAMESPACE"] = svc.NamespaceId
+	}
+	cmOperations.Put(operationId, CMOperation{
+		OperationId: operationId,
+		Status:      "SUCCESS",
+		Type:        opType,
+		NamespaceId: svc.NamespaceId,
+		ServiceId:   svc.Id,
+		Targets:     targets,
+		CreateDate:  now,
+		UpdateDate:  now,
+	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"OperationId": operationId,
 	})
@@ -826,10 +1090,7 @@ func cmDockerAliasesForContainer(namespaceID, containerName string) []string {
 		if svc.NamespaceId != namespaceID {
 			continue
 		}
-		for _, inst := range cmInstances.List() {
-			if _, ok := cmInstances.Get(cmInstanceKey(svc.Id, inst.Id)); !ok {
-				continue
-			}
+		for _, inst := range cmServiceInstances(svc.Id) {
 			if instanceContainers[inst.Id] != containerName {
 				continue
 			}
@@ -1021,13 +1282,8 @@ func syncCMNamespaceHosts(namespaceID string) error {
 		if svc.NamespaceId != namespaceID {
 			continue
 		}
-		for _, inst := range cmInstances.List() {
-			key := cmInstanceKey(svc.Id, inst.Id)
-			stored, exists := cmInstances.Get(key)
-			if !exists {
-				continue
-			}
-			ip := stored.Attributes["AWS_INSTANCE_IPV4"]
+		for _, inst := range cmServiceInstances(svc.Id) {
+			ip := inst.Attributes["AWS_INSTANCE_IPV4"]
 			if ip == "" {
 				continue
 			}
@@ -1089,6 +1345,11 @@ func handleCMDeregisterInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, ok := cmServices.Get(req.ServiceId); !ok {
+		sim.AWSErrorf(w, "ServiceNotFound", http.StatusBadRequest,
+			"Service '%s' not found", req.ServiceId)
+		return
+	}
 	key := cmInstanceKey(req.ServiceId, req.InstanceId)
 	if !cmInstances.Delete(key) {
 		sim.AWSErrorf(w, "InstanceNotFound", http.StatusBadRequest,
@@ -1104,15 +1365,17 @@ func handleCMDeregisterInstance(w http.ResponseWriter, r *http.Request) {
 	})
 	cmBumpServiceRevision(req.ServiceId)
 
-	if svc, ok := cmServices.Get(req.ServiceId); ok {
+	svc, svcOk := cmServices.Get(req.ServiceId)
+	if svcOk {
 		containerName := resolveTaskContainerForInstance(req.InstanceId)
+		networkName, _ := cmNamespaceNetworks.Get(svc.NamespaceId)
 		if cmContainerUsesHostEntries(containerName) || cmNamespaceHasHostEntryTargets(svc.NamespaceId) {
 			if err := syncCMNamespaceHosts(svc.NamespaceId); err != nil {
 				sim.AWSErrorf(w, "InternalFailure", http.StatusInternalServerError,
 					"failed to update Cloud Map task hosts: %v", err)
 				return
 			}
-		} else if ns, nsOk := cmNamespaces.Get(svc.NamespaceId); nsOk && ns.DockerNetworkName != "" {
+		} else if ns, nsOk := cmNamespaces.Get(svc.NamespaceId); nsOk && networkName != "" {
 			// Re-realize the container's REMAINING aliases: it may still back
 			// other services in the namespace, so a plain disconnect would drop
 			// names that are still registered. realizeCMContainerDockerAliases
@@ -1123,15 +1386,14 @@ func handleCMDeregisterInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	operationId := generateUUID()
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"OperationId": operationId,
-	})
+	cmWriteInstanceOperation(w, "DEREGISTER_INSTANCE", svc, req.InstanceId)
 }
 
 func handleCMListInstances(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ServiceId string `json:"ServiceId"`
+		ServiceId  string `json:"ServiceId"`
+		MaxResults *int32 `json:"MaxResults"`
+		NextToken  string `json:"NextToken"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidInput", "Invalid request body", http.StatusBadRequest)
@@ -1141,42 +1403,84 @@ func handleCMListInstances(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidInput", "ServiceId is required", http.StatusBadRequest)
 		return
 	}
-
-	instances := cmInstances.Filter(func(inst CMInstance) bool {
-		// Since keys are serviceId:instanceId, we filter by checking
-		// all instances that belong to this service
-		return true
-	})
-
-	// Collect matching instances by iterating known instance IDs.
-	var result []CMInstance
-	seen := make(map[string]bool)
-	for _, inst := range instances {
-		key := cmInstanceKey(req.ServiceId, inst.Id)
-		if _, ok := cmInstances.Get(key); ok && !seen[inst.Id] {
-			seen[inst.Id] = true
-			result = append(result, inst)
-		}
+	if _, ok := cmServices.Get(req.ServiceId); !ok {
+		sim.AWSErrorf(w, "ServiceNotFound", http.StatusBadRequest,
+			"Service '%s' not found", req.ServiceId)
+		return
 	}
 
-	if result == nil {
-		result = []CMInstance{}
+	page, next := awsPage(cmServiceInstances(req.ServiceId), req.NextToken, awsMaxResults(req.MaxResults), 100)
+	summaries := make([]map[string]any, 0, len(page))
+	for _, inst := range page {
+		summaries = append(summaries, cmInstanceSummary(inst))
 	}
-
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Instances": result,
-	})
+	out := map[string]any{"Instances": summaries}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleCMListNamespaces(w http.ResponseWriter, r *http.Request) {
-	namespaces := cmNamespaces.List()
-	if namespaces == nil {
-		namespaces = []CMNamespace{}
+	var req struct {
+		Filters []struct {
+			Name      string   `json:"Name"`
+			Values    []string `json:"Values"`
+			Condition string   `json:"Condition"`
+		} `json:"Filters"`
+		MaxResults *int32 `json:"MaxResults"`
+		NextToken  string `json:"NextToken"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidInput", http.StatusBadRequest, "invalid request body: %v", err)
+		return
 	}
 
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Namespaces": namespaces,
-	})
+	namespaces := sortBy(cmNamespaces.List(), func(ns CMNamespace) string { return ns.Id })
+	if len(req.Filters) > 0 {
+		filtered := make([]CMNamespace, 0, len(namespaces))
+		for _, ns := range namespaces {
+			match := true
+			for _, f := range req.Filters {
+				var actual string
+				switch f.Name {
+				case "TYPE":
+					actual = ns.Type
+				case "NAME":
+					actual = ns.Name
+				case "HTTP_NAME":
+					if ns.Properties != nil && ns.Properties.HttpProperties != nil {
+						actual = ns.Properties.HttpProperties.HttpName
+					}
+				case "RESOURCE_OWNER":
+					actual = awsAccountID()
+				default:
+					sim.AWSErrorf(w, "InvalidInput", http.StatusBadRequest,
+						"'%s' is not a valid namespace filter name", f.Name)
+					return
+				}
+				if !cmFilterMatch(f.Condition, f.Values, actual) {
+					match = false
+					break
+				}
+			}
+			if match {
+				filtered = append(filtered, ns)
+			}
+		}
+		namespaces = filtered
+	}
+
+	page, next := awsPage(namespaces, req.NextToken, awsMaxResults(req.MaxResults), 100)
+	summaries := make([]map[string]any, 0, len(page))
+	for _, ns := range page {
+		summaries = append(summaries, cmNamespaceSummary(ns))
+	}
+	out := map[string]any{"Namespaces": summaries}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleCMListServices(w http.ResponseWriter, r *http.Request) {
@@ -1186,36 +1490,35 @@ func handleCMListServices(w http.ResponseWriter, r *http.Request) {
 			Values    []string `json:"Values"`
 			Condition string   `json:"Condition"`
 		} `json:"Filters"`
+		MaxResults *int32 `json:"MaxResults"`
+		NextToken  string `json:"NextToken"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
-		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		sim.AWSErrorf(w, "InvalidInput", http.StatusBadRequest, "invalid request body: %v", err)
 		return
 	}
 
-	services := cmServices.List()
+	services := sortBy(cmServices.List(), func(svc CMService) string { return svc.Id })
 
-	// Apply filters if provided
 	if len(req.Filters) > 0 {
-		var filtered []CMService
+		filtered := make([]CMService, 0, len(services))
 		for _, svc := range services {
 			match := true
 			for _, f := range req.Filters {
+				var actual string
 				switch f.Name {
 				case "NAMESPACE_ID":
-					if len(f.Values) > 0 {
-						found := false
-						for _, v := range f.Values {
-							if svc.NamespaceId == v {
-								found = true
-								break
-							}
-						}
-						if f.Condition == "EQ" || f.Condition == "" {
-							if !found {
-								match = false
-							}
-						}
-					}
+					actual = svc.NamespaceId
+				case "RESOURCE_OWNER":
+					actual = awsAccountID()
+				default:
+					sim.AWSErrorf(w, "InvalidInput", http.StatusBadRequest,
+						"'%s' is not a valid service filter name", f.Name)
+					return
+				}
+				if !cmFilterMatch(f.Condition, f.Values, actual) {
+					match = false
+					break
 				}
 			}
 			if match {
@@ -1225,13 +1528,16 @@ func handleCMListServices(w http.ResponseWriter, r *http.Request) {
 		services = filtered
 	}
 
-	summaries := make([]map[string]any, 0, len(services))
-	for _, svc := range services {
+	page, next := awsPage(services, req.NextToken, awsMaxResults(req.MaxResults), 100)
+	summaries := make([]map[string]any, 0, len(page))
+	for _, svc := range page {
 		summaries = append(summaries, cmServiceSummary(svc))
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Services": summaries,
-	})
+	out := map[string]any{"Services": summaries}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 // cmServiceSummary projects a stored service onto the ServiceSummary
@@ -1255,6 +1561,9 @@ func cmServiceSummary(svc CMService) map[string]any {
 	if svc.HealthCheckConfig != nil {
 		out["HealthCheckConfig"] = svc.HealthCheckConfig
 	}
+	if svc.HealthCheckCustomConfig != nil {
+		out["HealthCheckCustomConfig"] = svc.HealthCheckCustomConfig
+	}
 	if svc.Type != "" {
 		out["Type"] = svc.Type
 	}
@@ -1274,7 +1583,8 @@ func handleCMDeleteService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := cmServices.Get(req.Id); !ok {
+	svc, ok := cmServices.Get(req.Id)
+	if !ok {
 		sim.AWSErrorf(w, "ServiceNotFound", http.StatusBadRequest,
 			"Service '%s' not found", req.Id)
 		return
@@ -1286,21 +1596,22 @@ func handleCMDeleteService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cmServices.Delete(req.Id)
+	cmServiceAttributes.Delete(req.Id)
+	cmServiceRevisions.Delete(req.Id)
+	cmTags.Delete(svc.Arn)
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 func ensureCMNamespaceDockerNetwork(ns CMNamespace) (string, error) {
-	if ns.DockerNetworkName != "" {
-		return ns.DockerNetworkName, nil
+	if existing, ok := cmNamespaceNetworks.Get(ns.Id); ok && existing != "" {
+		return existing, nil
 	}
 	networkName := "sim-" + ns.Id
 	if _, err := sim.EnsureDockerNetwork(networkName); err != nil {
 		return "", err
 	}
-	cmNamespaces.Update(ns.Id, func(stored *CMNamespace) {
-		stored.DockerNetworkName = networkName
-	})
+	cmNamespaceNetworks.Put(ns.Id, networkName)
 	return networkName, nil
 }
 
@@ -1331,18 +1642,29 @@ func handleCMGetOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.OperationId == "" {
+		sim.AWSError(w, "InvalidInput", "OperationId is required", http.StatusBadRequest)
+		return
+	}
 	op, ok := cmOperations.Get(req.OperationId)
 	if !ok {
-		// Unknown operations are assumed to be completed
-		op = CMOperation{
-			OperationId: req.OperationId,
-			Status:      "SUCCESS",
-		}
+		sim.AWSErrorf(w, "OperationNotFound", http.StatusBadRequest,
+			"Operation '%s' not found", req.OperationId)
+		return
 	}
 
 	result := map[string]any{
 		"Id":     op.OperationId,
 		"Status": op.Status,
+	}
+	if op.Type != "" {
+		result["Type"] = op.Type
+	}
+	if op.CreateDate != 0 {
+		result["CreateDate"] = op.CreateDate
+	}
+	if op.UpdateDate != 0 {
+		result["UpdateDate"] = op.UpdateDate
 	}
 	if len(op.Targets) > 0 {
 		result["Targets"] = op.Targets
@@ -1353,36 +1675,111 @@ func handleCMGetOperation(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCMListTagsForResource(w http.ResponseWriter, r *http.Request) {
-	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
-		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+	var req struct {
+		ResourceARN string `json:"ResourceARN"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidInput", http.StatusBadRequest, "invalid request body: %v", err)
 		return
 	}
+	if req.ResourceARN == "" {
+		sim.AWSError(w, "InvalidInput", "ResourceARN is required", http.StatusBadRequest)
+		return
+	}
+	if !cmResourceExists(req.ResourceARN) {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Resource '%s' not found", req.ResourceARN)
+		return
+	}
+	stored, _ := cmTags.Get(req.ResourceARN)
+	tags := make([]cmTag, 0, len(stored))
+	for k, v := range stored {
+		tags = append(tags, cmTag{Key: k, Value: v})
+	}
+	sortBy(tags, func(t cmTag) string { return t.Key })
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Tags": []any{},
+		"Tags": tags,
 	})
 }
 
 func handleCMTagResource(w http.ResponseWriter, r *http.Request) {
-	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
-		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+	var req struct {
+		ResourceARN string  `json:"ResourceARN"`
+		Tags        []cmTag `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidInput", http.StatusBadRequest, "invalid request body: %v", err)
 		return
 	}
+	if req.ResourceARN == "" {
+		sim.AWSError(w, "InvalidInput", "ResourceARN is required", http.StatusBadRequest)
+		return
+	}
+	if !cmResourceExists(req.ResourceARN) {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Resource '%s' not found", req.ResourceARN)
+		return
+	}
+	stored, _ := cmTags.Get(req.ResourceARN)
+	merged := make(map[string]string, len(stored)+len(req.Tags))
+	for k, v := range stored {
+		merged[k] = v
+	}
+	for _, t := range req.Tags {
+		if t.Key == "" {
+			sim.AWSError(w, "InvalidInput", "Tag keys can't be empty", http.StatusBadRequest)
+			return
+		}
+		merged[t.Key] = t.Value
+	}
+	if len(merged) > cmMaxTagsPerResource {
+		sim.AWSErrorf(w, "TooManyTagsException", http.StatusBadRequest,
+			"Resource '%s' would exceed the limit of %d tags", req.ResourceARN, cmMaxTagsPerResource)
+		return
+	}
+	cmTags.Put(req.ResourceARN, merged)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 func handleCMUntagResource(w http.ResponseWriter, r *http.Request) {
-	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
-		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+	var req struct {
+		ResourceARN string   `json:"ResourceARN"`
+		TagKeys     []string `json:"TagKeys"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidInput", http.StatusBadRequest, "invalid request body: %v", err)
 		return
+	}
+	if req.ResourceARN == "" {
+		sim.AWSError(w, "InvalidInput", "ResourceARN is required", http.StatusBadRequest)
+		return
+	}
+	if !cmResourceExists(req.ResourceARN) {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Resource '%s' not found", req.ResourceARN)
+		return
+	}
+	if stored, ok := cmTags.Get(req.ResourceARN); ok {
+		next := make(map[string]string, len(stored))
+		for k, v := range stored {
+			next[k] = v
+		}
+		for _, k := range req.TagKeys {
+			delete(next, k)
+		}
+		cmTags.Put(req.ResourceARN, next)
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 func handleCMDiscoverInstances(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		NamespaceName string `json:"NamespaceName"`
-		ServiceName   string `json:"ServiceName"`
-		HealthStatus  string `json:"HealthStatus"`
+		NamespaceName      string            `json:"NamespaceName"`
+		ServiceName        string            `json:"ServiceName"`
+		HealthStatus       string            `json:"HealthStatus"`
+		MaxResults         *int32            `json:"MaxResults"`
+		QueryParameters    map[string]string `json:"QueryParameters"`
+		OptionalParameters map[string]string `json:"OptionalParameters"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidInput", "Invalid request body", http.StatusBadRequest)
@@ -1423,23 +1820,25 @@ func handleCMDiscoverInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Collect all instances for this service
-	// Each instance reports its real health (the AWS_INIT_HEALTH_STATUS attribute
-	// it registered with, default HEALTHY) — not a hardcoded value — and the
+	// Collect the service's instances. Each reports its effective health — the
+	// custom health status a caller set, else the AWS_INIT_HEALTH_STATUS
+	// attribute it registered with, defaulting to HEALTHY — and the
 	// HealthStatus request filter scopes the result the way real Cloud Map does.
 	type discovered struct {
 		entry  map[string]any
 		health string
 	}
 	var all []discovered
-	for _, inst := range cmInstances.List() {
-		key := cmInstanceKey(targetSvc.Id, inst.Id)
-		if _, ok := cmInstances.Get(key); !ok {
+	for _, inst := range cmServiceInstances(targetSvc.Id) {
+		// QueryParameters restrict discovery to instances carrying every
+		// listed attribute with the listed value.
+		if !cmInstanceMatchesParams(inst, req.QueryParameters) {
 			continue
 		}
-		health := "HEALTHY"
-		if h := inst.Attributes["AWS_INIT_HEALTH_STATUS"]; h != "" {
-			health = h
+		health := cmInstanceHealth(inst)
+		attrs := inst.Attributes
+		if attrs == nil {
+			attrs = map[string]string{}
 		}
 		all = append(all, discovered{
 			entry: map[string]any{
@@ -1447,10 +1846,24 @@ func handleCMDiscoverInstances(w http.ResponseWriter, r *http.Request) {
 				"NamespaceName": req.NamespaceName,
 				"ServiceName":   req.ServiceName,
 				"HealthStatus":  health,
-				"Attributes":    inst.Attributes,
+				"Attributes":    attrs,
 			},
 			health: health,
 		})
+	}
+	// OptionalParameters narrow the result only when at least one instance
+	// matches them; otherwise the unnarrowed set is returned.
+	if len(req.OptionalParameters) > 0 {
+		var preferred []discovered
+		for _, d := range all {
+			attrs, _ := d.entry["Attributes"].(map[string]string)
+			if cmAttributesMatchParams(attrs, req.OptionalParameters) {
+				preferred = append(preferred, d)
+			}
+		}
+		if len(preferred) > 0 {
+			all = preferred
+		}
 	}
 	pick := func(keep func(string) bool) []map[string]any {
 		out := []map[string]any{}
@@ -1475,10 +1888,31 @@ func handleCMDiscoverInstances(w http.ResponseWriter, r *http.Request) {
 			httpInstances = pick(func(string) bool { return true })
 		}
 	}
+	if max := awsMaxResults(req.MaxResults); max > 0 && len(httpInstances) > max {
+		httpInstances = httpInstances[:max]
+	}
 
+	revision, _ := cmServiceRevisions.Get(targetSvc.Id)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Instances": httpInstances,
+		"Instances":         httpInstances,
+		"InstancesRevision": revision,
 	})
+}
+
+// cmInstanceMatchesParams reports whether an instance carries every attribute
+// in params with the same value — the DiscoverInstances QueryParameters /
+// OptionalParameters matching rule.
+func cmInstanceMatchesParams(inst CMInstance, params map[string]string) bool {
+	return cmAttributesMatchParams(inst.Attributes, params)
+}
+
+func cmAttributesMatchParams(attrs, params map[string]string) bool {
+	for k, v := range params {
+		if attrs[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // cmBumpServiceRevision increments a service's instance-list revision. The
@@ -1527,15 +1961,8 @@ func handleCMGetInstance(w http.ResponseWriter, r *http.Request) {
 			"Instance '%s' not found", req.InstanceId)
 		return
 	}
-	attrs := inst.Attributes
-	if attrs == nil {
-		attrs = map[string]string{}
-	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Instance": map[string]any{
-			"Id":         inst.Id,
-			"Attributes": attrs,
-		},
+		"Instance": cmInstanceView(inst),
 	})
 }
 
@@ -1557,7 +1984,8 @@ func handleCMUpdateInstanceCustomHealthStatus(w http.ResponseWriter, r *http.Req
 		sim.AWSError(w, "InvalidInput", "Status must be HEALTHY or UNHEALTHY", http.StatusBadRequest)
 		return
 	}
-	if _, ok := cmServices.Get(req.ServiceId); !ok {
+	svc, ok := cmServices.Get(req.ServiceId)
+	if !ok {
 		sim.AWSErrorf(w, "ServiceNotFound", http.StatusBadRequest,
 			"Service '%s' not found", req.ServiceId)
 		return
@@ -1566,6 +1994,13 @@ func handleCMUpdateInstanceCustomHealthStatus(w http.ResponseWriter, r *http.Req
 	if _, ok := cmInstances.Get(key); !ok {
 		sim.AWSErrorf(w, "InstanceNotFound", http.StatusBadRequest,
 			"Instance '%s' not found", req.InstanceId)
+		return
+	}
+	// Only a service configured with HealthCheckCustomConfig reports health
+	// through this operation.
+	if svc.HealthCheckCustomConfig == nil {
+		sim.AWSErrorf(w, "CustomHealthNotFound", http.StatusBadRequest,
+			"Service '%s' does not have a custom health check", req.ServiceId)
 		return
 	}
 	cmInstances.Update(key, func(inst *CMInstance) {
@@ -1577,8 +2012,10 @@ func handleCMUpdateInstanceCustomHealthStatus(w http.ResponseWriter, r *http.Req
 
 func handleCMGetInstancesHealthStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ServiceId string   `json:"ServiceId"`
-		Instances []string `json:"Instances"`
+		ServiceId  string   `json:"ServiceId"`
+		Instances  []string `json:"Instances"`
+		MaxResults *int32   `json:"MaxResults"`
+		NextToken  string   `json:"NextToken"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidInput", "Invalid request body", http.StatusBadRequest)
@@ -1597,21 +2034,39 @@ func handleCMGetInstancesHealthStatus(w http.ResponseWriter, r *http.Request) {
 	for _, id := range req.Instances {
 		want[id] = true
 	}
-	status := map[string]string{}
-	for _, inst := range cmInstances.List() {
-		key := cmInstanceKey(req.ServiceId, inst.Id)
-		stored, ok := cmInstances.Get(key)
-		if !ok {
-			continue
-		}
+	selected := make([]CMInstance, 0)
+	for _, inst := range cmServiceInstances(req.ServiceId) {
 		if len(want) > 0 && !want[inst.Id] {
 			continue
 		}
-		status[inst.Id] = cmInstanceHealth(stored)
+		selected = append(selected, inst)
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Status": status,
-	})
+	// A named instance that isn't registered under the service is an error,
+	// not a silently missing map entry.
+	if len(want) > 0 && len(selected) != len(want) {
+		found := map[string]bool{}
+		for _, inst := range selected {
+			found[inst.Id] = true
+		}
+		for _, id := range req.Instances {
+			if !found[id] {
+				sim.AWSErrorf(w, "InstanceNotFound", http.StatusBadRequest,
+					"Instance '%s' not found", id)
+				return
+			}
+		}
+	}
+
+	page, next := awsPage(selected, req.NextToken, awsMaxResults(req.MaxResults), 100)
+	status := map[string]string{}
+	for _, inst := range page {
+		status[inst.Id] = cmInstanceHealth(inst)
+	}
+	out := map[string]any{"Status": status}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleCMDiscoverInstancesRevision(w http.ResponseWriter, r *http.Request) {
@@ -1666,6 +2121,8 @@ func handleCMListOperations(w http.ResponseWriter, r *http.Request) {
 			Values    []string `json:"Values"`
 			Condition string   `json:"Condition"`
 		} `json:"Filters"`
+		MaxResults *int32 `json:"MaxResults"`
+		NextToken  string `json:"NextToken"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidInput", http.StatusBadRequest, "invalid request body: %v", err)
@@ -1691,31 +2148,31 @@ func handleCMListOperations(w http.ResponseWriter, r *http.Request) {
 			default:
 				continue
 			}
-			found := false
-			for _, v := range f.Values {
-				if actual == v {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !cmFilterMatch(f.Condition, f.Values, actual) {
 				return false
 			}
 		}
 		return true
 	}
 
-	operations := []map[string]any{}
-	for _, op := range cmOperations.List() {
+	selected := make([]CMOperation, 0)
+	for _, op := range sortBy(cmOperations.List(), func(op CMOperation) string { return op.OperationId }) {
 		if !matches(op) {
 			continue
 		}
+		selected = append(selected, op)
+	}
+	page, next := awsPage(selected, req.NextToken, awsMaxResults(req.MaxResults), 100)
+	operations := make([]map[string]any, 0, len(page))
+	for _, op := range page {
 		operations = append(operations, map[string]any{
 			"Id":     op.OperationId,
 			"Status": op.Status,
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Operations": operations,
-	})
+	out := map[string]any{"Operations": operations}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }

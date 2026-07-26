@@ -15,7 +15,8 @@ import (
 // TestTerraformApplyDestroy provisions the full GCP-sim coverage stack
 // (compute network + disk + subnet + VPC Access connector + firewall +
 // regional address + Cloud NAT + global HTTP load balancer, public + private
-// DNS zones, Artifact Registry, Cloud Run v2 Service + Job, Cloud Functions v2,
+// DNS zones, Artifact Registry, Cloud Run v2 Service + Job + Worker Pool,
+// Cloud Functions v2,
 // Pub/Sub, Cloud Build trigger, Cloud Storage bucket + object, Cloud Logging
 // sink/metric, BigQuery dataset/table, Firestore document, Memorystore Redis,
 // Cloud SQL instance/database/user, Eventarc trigger, Secret Manager, IAM service
@@ -30,7 +31,7 @@ import (
 //   - vpcaccess.googleapis.com (connectors)
 //   - dns.googleapis.com (public + private managedZones + record sets via Changes)
 //   - artifactregistry.googleapis.com (Docker repository)
-//   - run.googleapis.com v2 (Service + Job)
+//   - run.googleapis.com v2 (Service + Job + Worker Pool + worker-pool IAM member)
 //   - cloudfunctions.googleapis.com v2 (Function)
 //   - eventarc.googleapis.com (Trigger)
 //   - pubsub.googleapis.com (Topic + Subscription)
@@ -94,6 +95,22 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	crJobID := outputs.must(t, "cloud_run_v2_job_id")
 	require.Contains(t, crJobID, "projects/test-project/locations/us-central1/jobs/tf-crv2-job",
 		"Cloud Run v2 job id must round-trip the full resource path; got %s", crJobID)
+
+	crWorkerPoolID := outputs.must(t, "cloud_run_v2_worker_pool_id")
+	require.Contains(t, crWorkerPoolID, "projects/test-project/locations/us-central1/workerPools/tf-crv2-worker-pool",
+		"Cloud Run v2 worker pool id must round-trip the full resource path; got %s", crWorkerPoolID)
+
+	// A worker pool deploy materializes a revision and reports it ready — the
+	// value a caller reads to know which revision is serving.
+	crWorkerPoolRevision := outputs.must(t, "cloud_run_v2_worker_pool_latest_ready_revision")
+	require.Contains(t, crWorkerPoolRevision,
+		"projects/test-project/locations/us-central1/workerPools/tf-crv2-worker-pool/revisions/tf-crv2-worker-pool-",
+		"Cloud Run v2 worker pool must report a ready revision under its own resource path; got %s", crWorkerPoolRevision)
+
+	crWorkerPoolIAMID := outputs.must(t, "cloud_run_v2_worker_pool_iam_member_id")
+	require.Contains(t, crWorkerPoolIAMID,
+		"projects/test-project/locations/us-central1/workerPools/tf-crv2-worker-pool/roles/run.invoker/",
+		"Cloud Run v2 worker pool IAM member id must bind the role on the pool resource; got %s", crWorkerPoolIAMID)
 
 	gcfFunctionID := outputs.must(t, "cloudfunctions2_function_id")
 	require.Contains(t, gcfFunctionID, "projects/test-project/locations/us-central1/functions/tf-gcfv2-function",

@@ -183,8 +183,17 @@ type RevisionScaling struct {
 // internal-ingress IP. The backend sets this when Config.VPCConnector
 // is non-empty.
 type VpcAccess struct {
-	Connector string          `json:"connector,omitempty"`
-	Egress    vpcEgressString `json:"egress,omitempty"`
+	Connector         string             `json:"connector,omitempty"`
+	Egress            vpcEgressString    `json:"egress,omitempty"`
+	NetworkInterfaces []NetworkInterface `json:"networkInterfaces,omitempty"`
+}
+
+// NetworkInterface mirrors google.cloud.run.v2.NetworkInterface — one direct
+// VPC egress attachment on a revision.
+type NetworkInterface struct {
+	Network    string   `json:"network,omitempty"`
+	Subnetwork string   `json:"subnetwork,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 }
 
 // TrafficTarget is one entry in the Service's traffic-split list.

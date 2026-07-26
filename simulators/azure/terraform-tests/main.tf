@@ -500,6 +500,20 @@ resource "azurerm_container_app_job" "az_caj" {
   }
 }
 
+# Container App Environment storage — the Azure Files mount definition an ACA
+# app or job references by name to get a shared volume. Sockerless's ACA backend
+# provisions one of these whenever a docker volume is bound into a container, so
+# the managedEnvironments/{env}/storages sub-resource is driven here through the
+# real azurerm resource rather than only through the SDK and CLI.
+resource "azurerm_container_app_environment_storage" "az_cae_storage" {
+  name                         = "tfazrmcaestorage"
+  container_app_environment_id = azurerm_container_app_environment.az_cae.id
+  account_name                 = azurerm_storage_account.az_st.name
+  share_name                   = "tfazrmshare"
+  access_key                   = azurerm_storage_account.az_st.primary_access_key
+  access_mode                  = "ReadWrite"
+}
+
 # Logic App workflow — runner orchestration stacks often use Logic Apps for
 # webhook fan-in around Azure-hosted jobs. This drives Microsoft.Logic/workflows
 # through the real azurerm resource.
@@ -912,6 +926,10 @@ output "azrm_container_app_id" {
 
 output "azrm_container_app_job_id" {
   value = azurerm_container_app_job.az_caj.id
+}
+
+output "azrm_container_app_env_storage_id" {
+  value = azurerm_container_app_environment_storage.az_cae_storage.id
 }
 
 output "azrm_logic_app_workflow_id" {

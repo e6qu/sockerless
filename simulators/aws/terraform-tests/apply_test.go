@@ -90,6 +90,11 @@ import (
 //     AddPermission, GetPolicy, RemovePermission,
 //     CreateFunctionUrlConfig, GetFunctionUrlConfig, DeleteFunctionUrlConfig,
 //     Invoke
+//   - Cloud Map (servicediscovery): CreatePrivateDnsNamespace,
+//     CreateHttpNamespace, GetNamespace, DeleteNamespace, GetOperation,
+//     CreateService, GetService, DeleteService,
+//     RegisterInstance, GetInstance, DeregisterInstance,
+//     ListTagsForResource, TagResource, UntagResource
 //
 // What this proves end-to-end:
 //   - WAFv2 association resource_arn == CloudFront distribution ARN
@@ -231,6 +236,33 @@ func TestStackProductionShape(t *testing.T) {
 
 	require.Equal(t, "tf-asg", outputs.must(t, "autoscaling_group_name"),
 		"Auto Scaling group name must round-trip through provider refresh")
+
+	cmNamespaceARN := outputs.must(t, "service_discovery_namespace_arn")
+	require.Contains(t, cmNamespaceARN, ":namespace/ns-",
+		"Cloud Map namespace ARN must use the namespace resource path; got %s", cmNamespaceARN)
+	require.Equal(t, "terraform", outputs.must(t, "service_discovery_namespace_tag_env"),
+		"Cloud Map namespace tags must round-trip through TagResource + ListTagsForResource")
+	cmServiceARN := outputs.must(t, "service_discovery_service_arn")
+	require.Contains(t, cmServiceARN, ":service/srv-",
+		"Cloud Map service ARN must use the service resource path; got %s", cmServiceARN)
+	require.Equal(t, "web", outputs.must(t, "service_discovery_service_tag_tier"),
+		"Cloud Map service tags must round-trip through TagResource + ListTagsForResource")
+	require.Equal(t, "tf-instance", outputs.must(t, "service_discovery_instance_id"),
+		"Cloud Map instance must round-trip through RegisterInstance + GetInstance")
+	cmHTTPNamespaceARN := outputs.must(t, "service_discovery_http_namespace_arn")
+	require.Contains(t, cmHTTPNamespaceARN, ":namespace/ns-",
+		"Cloud Map HTTP namespace ARN must use the namespace resource path; got %s", cmHTTPNamespaceARN)
+	require.Equal(t, "2", outputs.must(t, "service_discovery_http_service_failure_threshold"),
+		"Cloud Map HealthCheckCustomConfig must round-trip through CreateService + GetService")
+	require.Equal(t, outputs.must(t, "service_discovery_namespace_id"),
+		outputs.must(t, "service_discovery_namespace_lookup_id"),
+		"the DNS-namespace data source must find the namespace through ListNamespaces (TYPE + NAME filters)")
+	require.Equal(t, outputs.must(t, "service_discovery_http_namespace_id"),
+		outputs.must(t, "service_discovery_http_namespace_lookup_id"),
+		"the HTTP-namespace data source must find the namespace through ListNamespaces (HTTP_NAME filter)")
+	require.Equal(t, outputs.must(t, "service_discovery_service_id"),
+		outputs.must(t, "service_discovery_service_lookup_id"),
+		"the service data source must find the service through ListServices (NAMESPACE_ID filter)")
 
 	cloudTrailARN := outputs.must(t, "cloudtrail_arn")
 	require.Contains(t, cloudTrailARN, ":trail/tf-trail",

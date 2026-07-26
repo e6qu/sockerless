@@ -453,8 +453,14 @@ resource "aws_ecr_repository" "tf_repo" {
 # resources; the simulator creates a Docker user-defined network later,
 # only when an ECS task registration needs private DNS at runtime.
 resource "aws_service_discovery_private_dns_namespace" "tf_svc_net" {
-  name = "tf-svc-net.local"
-  vpc  = "vpc-sim"
+  name        = "tf-svc-net.local"
+  vpc         = "vpc-sim"
+  description = "terraform private namespace"
+
+  tags = {
+    env     = "terraform"
+    purpose = "service-discovery"
+  }
 }
 
 resource "aws_service_discovery_service" "tf_svc" {
@@ -469,6 +475,59 @@ resource "aws_service_discovery_service" "tf_svc" {
       type = "A"
     }
   }
+
+  tags = {
+    tier = "web"
+  }
+}
+
+# A Cloud Map instance registered in the private-DNS service: the provider
+# drives RegisterInstance on create, GetInstance on read and DeregisterInstance
+# on destroy.
+resource "aws_service_discovery_instance" "tf_svc_instance" {
+  instance_id = "tf-instance"
+  service_id  = aws_service_discovery_service.tf_svc.id
+
+  attributes = {
+    AWS_INSTANCE_IPV4 = "10.20.30.40"
+  }
+}
+
+# An HTTP namespace — discovery through the DiscoverInstances API rather than
+# DNS records — carrying a service whose health is caller-reported.
+resource "aws_service_discovery_http_namespace" "tf_http_ns" {
+  name        = "tf-http-ns"
+  description = "terraform http namespace"
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_service_discovery_service" "tf_http_svc" {
+  name         = "tf-http-svc"
+  namespace_id = aws_service_discovery_http_namespace.tf_http_ns.id
+
+  health_check_custom_config {
+    failure_threshold = 2
+  }
+}
+
+# The Cloud Map data sources look their resource up through the list APIs:
+# ListNamespaces filtered by TYPE / NAME (DNS namespace), by HTTP_NAME (HTTP
+# namespace) and ListServices filtered by NAMESPACE_ID.
+data "aws_service_discovery_dns_namespace" "tf_svc_net_lookup" {
+  name = aws_service_discovery_private_dns_namespace.tf_svc_net.name
+  type = "DNS_PRIVATE"
+}
+
+data "aws_service_discovery_http_namespace" "tf_http_ns_lookup" {
+  name = aws_service_discovery_http_namespace.tf_http_ns.name
+}
+
+data "aws_service_discovery_service" "tf_svc_lookup" {
+  name         = aws_service_discovery_service.tf_svc.name
+  namespace_id = aws_service_discovery_private_dns_namespace.tf_svc_net.id
 }
 
 # Exercise the CloudFront REST + XML wire on the simulator.
@@ -1773,4 +1832,56 @@ output "budgets_budget_limit_amount" {
 
 output "budgets_budget_tag_env" {
   value = aws_budgets_budget.tf_monthly.tags["env"]
+}
+
+output "service_discovery_namespace_arn" {
+  value = aws_service_discovery_private_dns_namespace.tf_svc_net.arn
+}
+
+output "service_discovery_namespace_tag_env" {
+  value = aws_service_discovery_private_dns_namespace.tf_svc_net.tags["env"]
+}
+
+output "service_discovery_service_arn" {
+  value = aws_service_discovery_service.tf_svc.arn
+}
+
+output "service_discovery_service_tag_tier" {
+  value = aws_service_discovery_service.tf_svc.tags["tier"]
+}
+
+output "service_discovery_instance_id" {
+  value = aws_service_discovery_instance.tf_svc_instance.instance_id
+}
+
+output "service_discovery_http_namespace_arn" {
+  value = aws_service_discovery_http_namespace.tf_http_ns.arn
+}
+
+output "service_discovery_http_service_failure_threshold" {
+  value = tostring(aws_service_discovery_service.tf_http_svc.health_check_custom_config[0].failure_threshold)
+}
+
+output "service_discovery_namespace_lookup_id" {
+  value = data.aws_service_discovery_dns_namespace.tf_svc_net_lookup.id
+}
+
+output "service_discovery_http_namespace_lookup_id" {
+  value = data.aws_service_discovery_http_namespace.tf_http_ns_lookup.id
+}
+
+output "service_discovery_service_lookup_id" {
+  value = data.aws_service_discovery_service.tf_svc_lookup.id
+}
+
+output "service_discovery_namespace_id" {
+  value = aws_service_discovery_private_dns_namespace.tf_svc_net.id
+}
+
+output "service_discovery_http_namespace_id" {
+  value = aws_service_discovery_http_namespace.tf_http_ns.id
+}
+
+output "service_discovery_service_id" {
+  value = aws_service_discovery_service.tf_svc.id
 }

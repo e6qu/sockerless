@@ -60,7 +60,8 @@ type TaskTemplate struct {
 	ServiceAccount string      `json:"serviceAccount,omitempty"`
 }
 
-// Container represents a container within a task.
+// Container mirrors google.cloud.run.v2.Container — one container of a
+// revision, execution or instance.
 type Container struct {
 	Name         string                `json:"name,omitempty"`
 	Image        string                `json:"image"`
@@ -70,6 +71,9 @@ type Container struct {
 	Resources    *ResourceRequirements `json:"resources,omitempty"`
 	Ports        []ContainerPort       `json:"ports,omitempty"`
 	VolumeMounts []VolumeMount         `json:"volumeMounts,omitempty"`
+	WorkingDir   string                `json:"workingDir,omitempty"`
+	DependsOn    []string              `json:"dependsOn,omitempty"`
+	BaseImageURI string                `json:"baseImageUri,omitempty"`
 }
 
 // EnvVar represents an environment variable.
@@ -97,9 +101,11 @@ func (e *EnvVar) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ResourceRequirements describes compute resource requirements.
+// ResourceRequirements mirrors google.cloud.run.v2.ResourceRequirements.
 type ResourceRequirements struct {
-	Limits map[string]string `json:"limits,omitempty"`
+	Limits          map[string]string `json:"limits,omitempty"`
+	CPUIdle         bool              `json:"cpuIdle,omitempty"`
+	StartupCPUBoost bool              `json:"startupCpuBoost,omitempty"`
 }
 
 // ContainerPort represents a port on a container.
@@ -108,15 +114,29 @@ type ContainerPort struct {
 	ContainerPort int32  `json:"containerPort"`
 }
 
-// Volume represents a volume available to containers. Cloud Run's real
-// API supports gcs / secret / cloudSqlInstance / nfs sources; we
-// implement gcs here — additional sources stay nil-able so
-// serialisation round-trips match real API responses.
+// Volume mirrors google.cloud.run.v2.Volume — a volume available to the
+// containers of a revision, execution or instance. Exactly one source is set;
+// each of the five the API defines round-trips.
 type Volume struct {
-	Name   string              `json:"name"`
-	Gcs    *GcsVolumeSource    `json:"gcs,omitempty"`
-	Nfs    *NfsVolumeSource    `json:"nfs,omitempty"`
-	Secret *SecretVolumeSource `json:"secret,omitempty"`
+	Name             string                `json:"name"`
+	CloudSQLInstance *CloudSQLInstance     `json:"cloudSqlInstance,omitempty"`
+	EmptyDir         *EmptyDirVolumeSource `json:"emptyDir,omitempty"`
+	Gcs              *GcsVolumeSource      `json:"gcs,omitempty"`
+	Nfs              *NfsVolumeSource      `json:"nfs,omitempty"`
+	Secret           *SecretVolumeSource   `json:"secret,omitempty"`
+}
+
+// EmptyDirVolumeSource mirrors google.cloud.run.v2.EmptyDirVolumeSource —
+// an in-memory or on-disk scratch volume shared by a revision's containers.
+type EmptyDirVolumeSource struct {
+	Medium    string `json:"medium,omitempty"`
+	SizeLimit string `json:"sizeLimit,omitempty"`
+}
+
+// CloudSQLInstance mirrors google.cloud.run.v2.CloudSqlInstance — the Cloud
+// SQL connections mounted into a revision.
+type CloudSQLInstance struct {
+	Instances []string `json:"instances,omitempty"`
 }
 
 // GcsVolumeSource mirrors google.cloud.run.v2.GCSVolumeSource.
@@ -135,14 +155,38 @@ type NfsVolumeSource struct {
 
 // SecretVolumeSource mirrors google.cloud.run.v2.SecretVolumeSource.
 type SecretVolumeSource struct {
-	Secret      string `json:"secret"`
-	DefaultMode int32  `json:"defaultMode,omitempty"`
+	Secret      string          `json:"secret"`
+	DefaultMode int32           `json:"defaultMode,omitempty"`
+	Items       []VersionToPath `json:"items,omitempty"`
 }
 
-// VolumeMount represents a volume mount in a container.
+// VersionToPath mirrors google.cloud.run.v2.VersionToPath — one secret
+// version projected onto a path inside a secret volume.
+type VersionToPath struct {
+	Path    string `json:"path"`
+	Version string `json:"version,omitempty"`
+	Mode    int32  `json:"mode,omitempty"`
+}
+
+// VolumeMount mirrors google.cloud.run.v2.VolumeMount.
 type VolumeMount struct {
 	Name      string `json:"name"`
 	MountPath string `json:"mountPath"`
+	SubPath   string `json:"subPath,omitempty"`
+}
+
+// BinaryAuthorization mirrors google.cloud.run.v2.BinaryAuthorization — the
+// deploy-time image-attestation settings a Cloud Run resource carries.
+type BinaryAuthorization struct {
+	BreakglassJustification string `json:"breakglassJustification,omitempty"`
+	Policy                  string `json:"policy,omitempty"`
+	UseDefault              bool   `json:"useDefault,omitempty"`
+}
+
+// ServiceMesh mirrors google.cloud.run.v2.ServiceMesh — the Cloud Service Mesh
+// a revision joins.
+type ServiceMesh struct {
+	Mesh string `json:"mesh,omitempty"`
 }
 
 // Execution represents a Cloud Run Job execution.
