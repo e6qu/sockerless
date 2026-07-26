@@ -715,7 +715,10 @@ func registerCompute(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to delete real VPC network fabric: %v", err)
 			return
 		}
-		op := newComputeOp(project, "global", selfLink)
+		// Real Compute Engine stamps a delete operation `operationType: "delete"`;
+		// gcloud keys off it to report the resource as deleted instead of
+		// re-fetching it (which then 404s and fails the command).
+		op := newComputeOpWithType(project, "global", selfLink, "delete")
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
 
@@ -928,7 +931,10 @@ func registerCompute(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to delete real subnet network fabric: %v", err)
 			return
 		}
-		op := newComputeOp(project, "regions/"+region, selfLink)
+		// Real Compute Engine stamps a delete operation `operationType: "delete"`;
+		// gcloud keys off it to report the resource as deleted instead of
+		// re-fetching it (which then 404s and fails the command).
+		op := newComputeOpWithType(project, "regions/"+region, selfLink, "delete")
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
 
@@ -1016,7 +1022,10 @@ func registerCompute(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to apply real firewall filters: %v", err)
 			return
 		}
-		op := newComputeOp(project, "global", selfLink)
+		// Real Compute Engine stamps a delete operation `operationType: "delete"`;
+		// gcloud keys off it to report the resource as deleted instead of
+		// re-fetching it (which then 404s and fails the command).
+		op := newComputeOpWithType(project, "global", selfLink, "delete")
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
 

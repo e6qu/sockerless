@@ -5,6 +5,22 @@ import AxeBuilder from "@axe-core/playwright";
  * colour-scheme preference or a prior test left it in, so a theme-fidelity
  * assertion never passes by accident. */
 async function ensureTheme(page: Page, theme: "light" | "dark") {
+  // Cloudscape animates its surface colours when the mode flips. A contrast
+  // audit that samples mid-transition reads a transient blend of the two
+  // themes — the side navigation's own background is still the lighter
+  // surface while its link colour has already switched — and reports a
+  // contrast failure for a pairing that never actually paints. Suppressing
+  // transitions makes the flip instantaneous, so colours are measured at their
+  // settled values deterministically rather than by out-waiting an animation,
+  // which races the machine's speed and fails on a loaded CI runner.
+  await page.evaluate(() => {
+    const id = "e2e-disable-transitions";
+    if (document.getElementById(id)) return;
+    const style = document.createElement("style");
+    style.id = id;
+    style.textContent = "*, *::before, *::after { transition: none !important; animation: none !important; }";
+    document.head.append(style);
+  });
   const isDark = await page.evaluate(() => document.documentElement.classList.contains("dark"));
   if ((theme === "dark") !== isDark) {
     await page.getByRole("button", { name: /Switch to (light|dark) theme/ }).click();
@@ -12,13 +28,6 @@ async function ensureTheme(page: Page, theme: "light" | "dark") {
   await expect
     .poll(() => page.evaluate(() => document.documentElement.classList.contains("dark")))
     .toBe(theme === "dark");
-  // Cloudscape animates its surface colours when the mode flips. A contrast
-  // audit that samples mid-transition reads a transient blend of the two
-  // themes — the side navigation's own background is still the lighter
-  // surface while its link colour has already switched — and reports a
-  // contrast failure for a pairing that never actually paints. Waiting the
-  // transition out measures the settled result.
-  await page.waitForTimeout(400);
 }
 
 const SERVICES = [
