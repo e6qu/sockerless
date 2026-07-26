@@ -117,6 +117,9 @@ func handleS3PutBucketDispatch(w http.ResponseWriter, r *http.Request) {
 	case q.Has("metadataJournalTable"):
 		handleS3UpdateBucketMetadataJournalTable(w, r)
 		return
+	case q.Has("metadataAnnotationTable"):
+		handleS3UpdateBucketMetadataAnnotationTable(w, r)
+		return
 	case q.Has("abac"):
 		handleS3PutBucketAbac(w, r)
 		return

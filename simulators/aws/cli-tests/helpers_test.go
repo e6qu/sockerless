@@ -127,22 +127,36 @@ var (
 	awsCLIVersion          string
 )
 
+// requiredAWSCLIOperations are the AWS Command Line Interface subcommands this
+// suite invokes that only a recent botocore knows. They are a *requirement*, not
+// a capability probe: every one of them is exercised unconditionally, so a CLI
+// that lacks any of them is provisioned (installLatestAWSCLI) before the suite
+// runs, and a CLI that still lacks one after provisioning is a hard failure.
+// Keep a row here whenever a test drives a newly-launched operation, so the
+// requirement is declared in one place instead of degrading into a per-test skip.
+var requiredAWSCLIOperations = [][2]string{
+	{"cloudfront", "list-connection-groups"},
+	{"cloudfront", "create-connection-function"},
+	{"cloudwatch", "put-alarm-mute-rule"},
+	{"cloudwatch", "put-managed-insight-rules"},
+	{"cloudwatch", "get-insight-rule-report"},
+	{"cloudwatch", "get-metric-widget-image"},
+	{"cloudwatch", "put-log-alarm"},
+	{"acm", "tag-resource"},
+	{"ssm", "create-cloud-connector"},
+	{"s3api", "put-object-annotation"},
+	{"s3api", "update-bucket-metadata-annotation-table-configuration"},
+}
+
 func TestMain(m *testing.M) {
 	// Some CI / host images ship an AWS Command Line Interface that predates
-	// simulator-tested surfaces. Use the host binary only when it supports a
-	// known recent operation; otherwise install the current v2 release into a
-	// temporary directory so the suite runs instead of skipping capability gaps.
+	// simulator-tested surfaces. Use the host binary only when it knows every
+	// operation the suite drives and speaks the current Amazon CloudWatch
+	// protocol; otherwise install the current v2 release into a temporary
+	// directory so the suite always runs against a capable client.
 	awsPath, err := exec.LookPath("aws")
-	if err != nil || !awsCLIHasOperation(awsPath, "cloudfront", "list-connection-groups") {
+	if err != nil || len(missingAWSCLIOperations(awsPath)) > 0 || !cloudWatchCLIUsesAwsJSON(awsPath) {
 		awsPath = installLatestAWSCLI()
-	}
-	if out, err := exec.Command(awsPath, "--version").CombinedOutput(); err == nil {
-		awsCLIVersion = strings.TrimSpace(string(out))
-	} else {
-		awsPath = installLatestAWSCLI()
-		if out, err := exec.Command(awsPath, "--version").CombinedOutput(); err == nil {
-			awsCLIVersion = strings.TrimSpace(string(out))
-		}
 	}
 
 	// Prepend the chosen CLI's directory to PATH so awsCLI() picks it up.
@@ -150,6 +164,24 @@ func TestMain(m *testing.M) {
 	// host-CLI case too.
 	if dir := filepath.Dir(awsPath); dir != "" {
 		os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+
+	out, err := exec.Command(awsPath, "--version").CombinedOutput()
+	if err != nil {
+		log.Fatalf("aws CLI at %s does not run: %v\n%s", awsPath, err, out)
+	}
+	awsCLIVersion = strings.TrimSpace(string(out))
+
+	// The provisioned CLI must satisfy every requirement. Failing here is the
+	// point: a suite that silently skipped these surfaces would report green
+	// while testing nothing.
+	if missing := missingAWSCLIOperations(awsPath); len(missing) > 0 {
+		log.Fatalf("%s (%s) lacks required operation(s) %v — the cli-tests drive them unconditionally. Install a newer AWS CLI v2.",
+			awsCLIVersion, awsPath, missing)
+	}
+	if !cloudWatchCLIUsesAwsJSON(awsPath) {
+		log.Fatalf("%s (%s) still sends Amazon CloudWatch over the legacy awsQuery protocol; the simulator serves the awsJson1.0 surface the current API uses. Install a newer AWS CLI v2.",
+			awsCLIVersion, awsPath)
 	}
 
 	// Build simulator
@@ -308,6 +340,41 @@ func awsCLIHasOperation(awsPath, service, operation string) bool {
 	cmd := exec.Command(awsPath, service, operation, "--generate-cli-skeleton", "input")
 	cmd.Env = append(os.Environ(), "AWS_PAGER=")
 	return cmd.Run() == nil
+}
+
+// missingAWSCLIOperations returns the requiredAWSCLIOperations rows the given
+// aws binary does not know, as "service operation" strings.
+func missingAWSCLIOperations(awsPath string) []string {
+	var missing []string
+	for _, op := range requiredAWSCLIOperations {
+		if !awsCLIHasOperation(awsPath, op[0], op[1]) {
+			missing = append(missing, op[0]+" "+op[1])
+		}
+	}
+	return missing
+}
+
+// cloudWatchCLIUsesAwsJSON reports whether the given aws binary sends Amazon
+// CloudWatch operations over awsJson1.0 (X-Amz-Target
+// GraniteServiceVersion20100801.<Op>), the protocol the service uses today and
+// the one the simulator's awsJson router serves. A botocore old enough to still
+// emit the legacy awsQuery form would reach a router these operations are not
+// registered on; TestMain provisions a current CLI rather than tolerating it.
+//
+// list-metrics needs no required arguments, so botocore builds and logs the
+// request against an unreachable port and we read only the --debug log of what
+// it constructed. All CloudWatch operations share one protocol, so list-metrics
+// is a faithful probe for the whole service.
+func cloudWatchCLIUsesAwsJSON(awsPath string) bool {
+	if awsPath == "" {
+		return false
+	}
+	cmd := exec.Command(awsPath, "cloudwatch", "list-metrics",
+		"--endpoint-url", "http://127.0.0.1:1", "--region", "us-east-1", "--debug")
+	cmd.Env = append(os.Environ(),
+		"AWS_ACCESS_KEY_ID=test", "AWS_SECRET_ACCESS_KEY=test", "AWS_PAGER=")
+	out, _ := cmd.CombinedOutput()
+	return strings.Contains(string(out), "GraniteServiceVersion20100801.")
 }
 
 func parseJSON(t *testing.T, data string, target any) {

@@ -4,6 +4,59 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — Refreshed every vendored cloud specification, and fixed the check that hid the drift
+
+The freshness check reported every vendored specification as drifted, which is
+what prompted this pass — but the check itself was the larger defect. The fetch
+scripts recorded a specification's pin as the *branch tip*, while the check
+compared that pin against the newest commit that touched *that file's path*. For
+a stable specification those are never the same commit, so every freshly
+vendored file reported drift the moment it was vendored and genuine staleness
+was indistinguishable from bookkeeping noise: 117 of 117 Azure rows read drift
+while 116 of those files were already byte-current. Both fetch scripts now
+default to the commit that last touched the file's own upstream path, so a pin
+means what the check tests.
+
+With that understood, every specification was refreshed: 38 AWS Smithy models
+(21 changed content), 29 Google Cloud Discovery documents (several a month or
+more behind), and 118 Azure REST specifications. AWS and Azure now report no
+drift at all.
+
+The newer contracts did real work on AWS, where 31 newly modelled operations
+appeared. CloudWatch `PutLogAlarm`, five S3 object-annotation operations and six
+Systems Manager cloud-connector operations were implemented against real
+behaviour — the log alarm provisions a genuine scheduled query and evaluates its
+state by running the configured query through the same Insights engine
+`StartQuery` uses, and connector validation derives findings from real IAM state
+rather than returning a canned verdict. The 19 ACM ACME operations were
+classified rather than implemented and filed as BUG-2657: an ACME endpoint is
+the control plane of an RFC 8555 certificate authority, so serving the CRUD
+alone would advertise an endpoint resolving to nothing.
+
+Three fidelity defects surfaced and were fixed: AWS Certificate Manager had no
+tagging operations at all — masked because the conformance harness folds the
+query router's unversioned bucket into every versioned service and was crediting
+ACM with CloudWatch's; CloudWatch Logs Insights `count(*)` always returned zero;
+and `RenameObject` dropped object annotations. Google Cloud and Azure recorded
+zero spec-shape violations against the newer contracts, and Azure additionally
+moved role definitions off a preview api-version that no client sends onto the
+stable one they do, verified against the SDK, the CLI and observed traffic.
+
+The vendor-tool-version skips are gone too. Eight conditionals had kept
+CloudFront and CloudWatch surfaces untested on any host whose `aws` predated an
+operation. The suite now declares the operations it requires, installs the AWS
+CLI when the host binary lacks any, re-verifies and fails loudly if the
+provisioned CLI still falls short. Only the sanctioned kernel-capability gates
+remain.
+
+What the pass could not close is recorded rather than glossed: Google serves
+several Discovery revisions concurrently, so the freshness check still cannot
+gate a build without flapping (BUG-2652); the coverage ratchet counts a method
+as covered whenever any route pattern merely shape-matches it, so floors can
+rise on documentation growth alone (BUG-2651); and the checked-in surface tables
+have drifted from their generator (BUG-2659).
+
+
 ## 2026-07-26 — The consoles now tell the truth about what the simulators support
 
 The three simulator consoles were badging most of their cloud's catalogue "Not

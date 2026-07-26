@@ -26,6 +26,12 @@ import (
 // gcpMethodFloor locks the implemented-method COUNT per Discovery document
 // (keyed by file name without the .discovery.json.gz suffix). Implement a
 // method (or grow the vendored doc) and the matching floor must move with it.
+//
+// A count moves for one of two reasons, and both must be spelled out where the
+// count changes: the simulator implemented (or lost) a method, or the vendored
+// document itself added or withdrew one. Google withdraws methods — a count
+// that drops purely because a method left the document is not a simulator
+// regression, and the comment on that entry says which method left.
 var gcpMethodFloor = map[string]int{
 	"compute-v1":              1110,
 	"logging-v2":              480,
@@ -38,22 +44,36 @@ var gcpMethodFloor = map[string]int{
 	"iam-v1":                  264,
 	"bigquery-v2":             86,
 	"dns-v1":                  74,
-	"storage-v1":              84,
-	"artifactregistry-v1":     144,
-	"cloudkms-v1":             157,
-	"eventarc-v1":             124,
-	"cloudfunctions-v2":       31,
-	"cloudbuild-v1":           130,
-	"redis-v1":                90,
-	"firestore-v1":            112,
-	"pubsub-v1":               86,
-	"secretmanager-v1":        60,
-	"sqladmin-v1":             148,
-	"spanner-v1":              198,
-	"apigateway-v1":           57,
-	"iamcredentials-v1":       14,
-	"vpcaccess-v1":            16,
-	"serviceusage-v1":         20,
+	// Storage v1 no longer describes objects.watchAll (Object Change
+	// Notification): every method the document still describes is served, so
+	// this count is the whole document.
+	"storage-v1":          83,
+	"artifactregistry-v1": 144,
+	// Cloud KMS: folders.showEffectiveAutokeyConfig and the cryptoKeyVersions
+	// trusted-key-wrapped import/export pair are described but not served;
+	// three of their six spellings still fall under mounted patterns, which is
+	// what this count measures.
+	"cloudkms-v1":       160,
+	"eventarc-v1":       124,
+	"cloudfunctions-v2": 31,
+	"cloudbuild-v1":     130,
+	// Memorystore: aclPolicies.revisions list/get are described but not
+	// served; their {+name}/{+parent} spellings fall under mounted patterns,
+	// their expanded flatPath spellings do not.
+	"redis-v1":     92,
+	"firestore-v1": 112,
+	"pubsub-v1":    86,
+	// Secret Manager: secrets.rotateSecret and secrets.enableManagedRotation
+	// (global and regional surface) are described but not served; all eight
+	// spellings fall under the colon-verb fan-in patterns, which answer
+	// NOT_FOUND for an unrecognised verb.
+	"secretmanager-v1":  68,
+	"sqladmin-v1":       148,
+	"spanner-v1":        198,
+	"apigateway-v1":     57,
+	"iamcredentials-v1": 14,
+	"vpcaccess-v1":      16,
+	"serviceusage-v1":   20,
 }
 
 // gcpSimRoute is one registered simulator route, pre-split into normalized

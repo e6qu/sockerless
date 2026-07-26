@@ -351,6 +351,17 @@ func handleCWJSONDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 		}
 		resp["CompositeAlarms"] = comps
 	}
+	if cwWantAlarmType(req.AlarmTypes, "LogAlarm") {
+		logs := make([]map[string]any, 0)
+		for _, la := range cwListLogAlarms(req.AlarmNames) {
+			view := cwJSONLogAlarm(la, now)
+			if req.StateValue != "" && view["StateValue"] != req.StateValue {
+				continue
+			}
+			logs = append(logs, view)
+		}
+		resp["LogAlarms"] = logs
+	}
 	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -680,6 +691,17 @@ func handleCWCBORDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 		}
 		resp["CompositeAlarms"] = comps
 	}
+	if cwWantAlarmType(req.AlarmTypes, "LogAlarm") {
+		logs := make([]cborLogAlarm, 0)
+		for _, la := range cwListLogAlarms(req.AlarmNames) {
+			view := cborLogAlarmOf(la, now)
+			if req.StateValue != "" && req.StateValue != view.StateValue {
+				continue
+			}
+			logs = append(logs, view)
+		}
+		resp["LogAlarms"] = logs
+	}
 	cwWriteCBOR(w, resp)
 }
 
@@ -770,20 +792,25 @@ func handleCWCBORDeleteAlarms(w http.ResponseWriter, r *http.Request) {
 	cwWriteCBOR(w, map[string]any{})
 }
 
-// cwAlarmExists reports whether a name resolves to a metric or composite alarm.
+// cwAlarmExists reports whether a name resolves to a metric, composite or log
+// alarm — the three alarm types DeleteAlarms accepts.
 func cwAlarmExists(name string) bool {
 	if _, ok := cwAlarms.Get(name); ok {
 		return true
 	}
-	_, ok := cwCompositeAlarms.Get(name)
+	if _, ok := cwCompositeAlarms.Get(name); ok {
+		return true
+	}
+	_, ok := cwLogAlarms.Get(name)
 	return ok
 }
 
-// cwDeleteAlarms removes the named metric and composite alarms.
+// cwDeleteAlarms removes the named metric, composite and log alarms.
 func cwDeleteAlarms(names []string) {
 	for _, n := range names {
 		cwAlarms.Delete(n)
 		cwCompositeAlarms.Delete(n)
+		cwDeleteLogAlarm(n)
 	}
 }
 
@@ -954,9 +981,53 @@ func handleCWQueryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 			composites.WriteString("</member>")
 		}
 	}
+	var logAlarms strings.Builder
+	if cwWantAlarmType(alarmTypes, "LogAlarm") {
+		for _, la := range cwListLogAlarms(names) {
+			state, reason, evalState := cwEvaluateLogAlarmState(la)
+			if stateFilter != "" && stateFilter != state {
+				continue
+			}
+			logAlarms.WriteString("<member>")
+			fmt.Fprintf(&logAlarms, "<AlarmName>%s</AlarmName><AlarmArn>%s</AlarmArn>", xmlEscape(la.AlarmName), xmlEscape(la.AlarmArn))
+			if la.AlarmDescription != "" {
+				fmt.Fprintf(&logAlarms, "<AlarmDescription>%s</AlarmDescription>", xmlEscape(la.AlarmDescription))
+			}
+			logAlarms.WriteString("<ScheduledQueryConfiguration>")
+			fmt.Fprintf(&logAlarms, "<QueryString>%s</QueryString><QueryARN>%s</QueryARN><ScheduledQueryRoleARN>%s</ScheduledQueryRoleARN><AggregationExpression>%s</AggregationExpression>",
+				xmlEscape(la.QueryString), xmlEscape(la.QueryARN), xmlEscape(la.ScheduledQueryRoleARN), xmlEscape(la.AggregationExpression))
+			logAlarms.WriteString("<LogGroupIdentifiers>")
+			for _, g := range la.LogGroupIdentifiers {
+				fmt.Fprintf(&logAlarms, "<member>%s</member>", xmlEscape(g))
+			}
+			logAlarms.WriteString("</LogGroupIdentifiers>")
+			fmt.Fprintf(&logAlarms, "<ScheduleConfiguration><ScheduleExpression>%s</ScheduleExpression><StartTimeOffset>%d</StartTimeOffset><EndTimeOffset>%d</EndTimeOffset></ScheduleConfiguration>",
+				xmlEscape(la.ScheduleExpression), la.StartTimeOffset, la.EndTimeOffset)
+			logAlarms.WriteString("</ScheduledQueryConfiguration>")
+			fmt.Fprintf(&logAlarms, "<QueryResultsToEvaluate>%d</QueryResultsToEvaluate><QueryResultsToAlarm>%d</QueryResultsToAlarm>",
+				la.QueryResultsToEvaluate, la.QueryResultsToAlarm)
+			fmt.Fprintf(&logAlarms, "<Threshold>%s</Threshold><ComparisonOperator>%s</ComparisonOperator>",
+				cwFormatFloat(la.Threshold), xmlEscape(la.ComparisonOperator))
+			if la.TreatMissingData != "" {
+				fmt.Fprintf(&logAlarms, "<TreatMissingData>%s</TreatMissingData>", xmlEscape(la.TreatMissingData))
+			}
+			fmt.Fprintf(&logAlarms, "<ActionsEnabled>%t</ActionsEnabled>", la.ActionsEnabled)
+			logAlarms.WriteString("<AlarmActions>")
+			for _, act := range la.AlarmActions {
+				fmt.Fprintf(&logAlarms, "<member>%s</member>", xmlEscape(act))
+			}
+			logAlarms.WriteString("</AlarmActions>")
+			if evalState != "" {
+				fmt.Fprintf(&logAlarms, "<EvaluationState>%s</EvaluationState>", xmlEscape(evalState))
+			}
+			fmt.Fprintf(&logAlarms, "<StateValue>%s</StateValue><StateReason>%s</StateReason><StateUpdatedTimestamp>%s</StateUpdatedTimestamp>",
+				state, xmlEscape(reason), now.Format(time.RFC3339))
+			logAlarms.WriteString("</member>")
+		}
+	}
 	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<DescribeAlarmsResponse %s><DescribeAlarmsResult><MetricAlarms>%s</MetricAlarms><CompositeAlarms>%s</CompositeAlarms></DescribeAlarmsResult><ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata></DescribeAlarmsResponse>`,
-		cwQueryXmlns, members.String(), composites.String(), generateUUID())
+	fmt.Fprintf(w, `<DescribeAlarmsResponse %s><DescribeAlarmsResult><MetricAlarms>%s</MetricAlarms><CompositeAlarms>%s</CompositeAlarms><LogAlarms>%s</LogAlarms></DescribeAlarmsResult><ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata></DescribeAlarmsResponse>`,
+		cwQueryXmlns, members.String(), composites.String(), logAlarms.String(), generateUUID())
 }
 
 func handleCWQueryDeleteAlarms(w http.ResponseWriter, r *http.Request) {

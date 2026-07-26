@@ -126,6 +126,8 @@ func handleS3PutObjectDispatch(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case q.Has("uploadId") && q.Has("partNumber"):
 		handleS3UploadPart(w, r)
+	case q.Has("annotation"):
+		handleS3PutObjectAnnotation(w, r)
 	case q.Has("tagging"):
 		handleS3PutObjectTagging(w, r)
 	case q.Has("acl"):
@@ -151,6 +153,12 @@ func handleS3GetOrHeadObjectDispatch(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case q.Has("uploadId"):
 		handleS3ListParts(w, r)
+	case q.Has("annotation"):
+		if q.Get("annotationName") != "" {
+			handleS3GetObjectAnnotation(w, r)
+		} else {
+			handleS3ListObjectAnnotations(w, r)
+		}
 	case q.Has("tagging"):
 		handleS3GetObjectTagging(w, r)
 	case q.Has("acl"):
@@ -180,6 +188,8 @@ func handleS3DeleteObjectDispatch(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case q.Has("uploadId"):
 		handleS3AbortMultipart(w, r)
+	case q.Has("annotation"):
+		handleS3DeleteObjectAnnotation(w, r)
 	case q.Has("tagging"):
 		handleS3DeleteObjectTagging(w, r)
 	default:
@@ -788,6 +798,7 @@ func handleS3MultiObjectDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, o := range req.Objects {
 		s3Objects.Delete(bucket + "/" + o.Key)
+		s3DeleteObjectAnnotations(bucket, o.Key)
 		if !req.Quiet {
 			out.Deleted = append(out.Deleted, deleted{Key: o.Key})
 		}
