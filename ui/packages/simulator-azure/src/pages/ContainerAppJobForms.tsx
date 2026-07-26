@@ -12,7 +12,7 @@ import {
 } from "../api.js";
 
 /**
- * The Create and Edit forms for a Container Apps job — real Fluent inline
+ * The Create and Edit forms for a Container App job — real Fluent inline
  * forms, the same Field/Input/Select shape the other resource forms use. Both
  * build a `ContainerAppJobConfigInput` (the configuration + template a
  * Microsoft.App/jobs PUT carries): replica timeout, parallelism, trigger type,
@@ -47,9 +47,9 @@ const useStyles = makeStyles({
   envRow: { display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: "8px", alignItems: "end" },
 });
 
-// Azure Container Apps job names: 2–32 chars, lowercase letters, digits, and
+// Azure Container App job names: 2–32 chars, lowercase letters, digits, and
 // hyphens; must start with a letter and end alphanumeric — the same rule the
-// real "Create Container Apps job" blade validates before the request goes out.
+// real "Create Container App job" blade validates before the request goes out.
 const JOB_NAME_PATTERN = /^[a-z][a-z0-9-]{0,30}[a-z0-9]$/;
 export function isValidContainerAppJobName(name: string): boolean {
   return JOB_NAME_PATTERN.test(name);
@@ -210,7 +210,7 @@ export function ContainerAppJobEditForm({ job, busy, error, onSave, onDismiss }:
   );
 }
 
-// --- Create form: a whole new Container Apps job. ---
+// --- Create form: a whole new Container App job. ---
 
 export interface ContainerAppJobCreateFormProps {
   subscriptions: Subscription[];
@@ -221,7 +221,12 @@ export interface ContainerAppJobCreateFormProps {
 
 export function ContainerAppJobCreateForm({ subscriptions, busy, onCreate, onDismiss }: ContainerAppJobCreateFormProps) {
   const styles = useStyles();
-  const [subscriptionId, setSubscriptionId] = useState(subscriptions[0]?.subscriptionId ?? "");
+  // The subscription list arrives asynchronously, so the chosen value cannot be
+  // frozen at mount: a form opened before the query resolves would hold an
+  // empty subscription forever and leave its submit permanently disabled.
+  // An explicit choice wins; otherwise the first loaded subscription is used.
+  const [chosenSubscriptionId, setSubscriptionId] = useState("");
+  const subscriptionId = chosenSubscriptionId || subscriptions[0]?.subscriptionId || "";
   const [resourceGroup, setResourceGroup] = useState("sockerless-console");
   const [name, setName] = useState("");
   const [location, setLocation] = useState("eastus");
@@ -276,7 +281,7 @@ export function ContainerAppJobCreateForm({ subscriptions, busy, onCreate, onDis
       }}
     >
       <Text as="h2" weight="semibold">
-        Create Container Apps job
+        Create Container App job
       </Text>
       <Field label="Subscription">
         <Select

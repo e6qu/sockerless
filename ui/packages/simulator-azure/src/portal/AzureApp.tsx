@@ -27,6 +27,7 @@ const azureDarkTheme: Theme = {
   colorBrandBackgroundSelected: "#106ebe",
 };
 import { SERVICE_CATALOG, catalogItemForPath } from "../catalog.js";
+import { SERVICE_BLADES } from "../services.js";
 import {
   AzureBreadcrumbs,
   AzureHeader,
@@ -57,10 +58,19 @@ interface Pane {
   parent?: { label: string; to: string };
 }
 
+// Every descriptor-driven service blade contributes its own listing pane and,
+// through paneFor below, its resource pane — so a blade added to services.ts
+// carries a correct breadcrumb and resource title without a second table here
+// to keep in step.
+const BLADE_PANES: Record<string, Pane> = Object.fromEntries(
+  SERVICE_BLADES.map((blade) => [`/ui/${blade.slug}`, { crumb: blade.label, title: blade.label, kind: blade.kind }]),
+);
+
 const PANE: Record<string, Pane> = {
+  ...BLADE_PANES,
   "/ui/": { crumb: "Overview", title: "Simulator", kind: "Subscription" },
   "/ui/subscriptions": { crumb: "Subscriptions", title: "Subscriptions", kind: "Subscription" },
-  "/ui/container-apps": { crumb: "Container Apps", title: "Container Apps", kind: "Container Apps job" },
+  "/ui/container-apps": { crumb: "Container App jobs", title: "Container App jobs", kind: "Container Apps job" },
   "/ui/functions": { crumb: "Function Apps", title: "Function Apps", kind: "Function App" },
   "/ui/acr": { crumb: "Container registries", title: "Container registries", kind: "Container registry" },
   "/ui/storage": { crumb: "Storage accounts", title: "Storage accounts", kind: "Storage account" },
@@ -75,6 +85,16 @@ const PANE: Record<string, Pane> = {
 function paneFor(pathname: string): Pane {
   const exact = PANE[pathname];
   if (exact) return exact;
+  for (const blade of SERVICE_BLADES) {
+    if (pathname.startsWith(`/ui/${blade.slug}/`)) {
+      return {
+        crumb: blade.detailKind,
+        title: blade.detailKind,
+        kind: blade.kind,
+        parent: { label: blade.label, to: `/ui/${blade.slug}` },
+      };
+    }
+  }
   if (pathname.startsWith("/ui/subscriptions/")) {
     return {
       crumb: "Subscription",
@@ -88,7 +108,7 @@ function paneFor(pathname: string): Pane {
       crumb: "Job",
       title: "Container Apps job",
       kind: "Container Apps job",
-      parent: { label: "Container Apps", to: "/ui/container-apps" },
+      parent: { label: "Container App jobs", to: "/ui/container-apps" },
     };
   }
   if (pathname.startsWith("/ui/functions/")) {

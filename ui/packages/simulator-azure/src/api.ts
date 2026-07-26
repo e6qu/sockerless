@@ -34,6 +34,29 @@ export const API_VERSION = {
   resourceGroups: "2021-04-01",
 } as const;
 
+// API versions for the provider surfaces the service blades read. Each is the
+// version the real Azure Resource Manager serves that provider's list/get at,
+// and the one the vendored Azure REST specification for it is published under.
+export const BLADE_API_VERSION = {
+  virtualMachines: "2022-03-01",
+  network: "2025-03-01",
+  dns: "2018-05-01",
+  privateDns: "2024-06-01",
+  keyVault: "2023-07-01",
+  redis: "2024-11-01",
+  postgresql: "2025-08-01",
+  cosmos: "2024-08-15",
+  serviceBus: "2021-11-01",
+  serviceBusNamespaces: "2024-01-01",
+  eventHub: "2024-01-01",
+  eventGrid: "2022-06-15",
+  apiManagement: "2022-08-01",
+  logic: "2019-05-01",
+  applicationInsights: "2020-02-02",
+  containerInstance: "2021-10-01",
+  managedIdentity: "2024-11-30",
+} as const;
+
 // Azure resources live under subscriptions; the portal enumerates them the way
 // the real portal does before listing a provider's resources across them.
 export async function subscriptionIds(): Promise<string[]> {
@@ -391,20 +414,22 @@ async function resourceIdByName(provider: string, apiVersion: string, name: stri
   return match.id;
 }
 
-// --- Container Apps job detail: containers + execution history ---
+// --- Container App job detail: containers + execution history ---
 //
-// The Container Apps blade this console lists (ContainerAppsPage) reads the
-// real Microsoft.App/jobs resource — Azure Container Apps' run-to-completion
+// The Container App jobs blade this console lists (ContainerAppsPage) reads
+// the real Microsoft.App/jobs resource — Azure Container Apps' run-to-completion
 // model, the one sockerless deploys container tasks onto. The sim also
 // implements the separate Microsoft.App/containerApps ("Apps") resource
-// type, which is where `latestRevisionName` / `latestRevisionFqdn` live —
-// but pass 1 never gave that resource type a list page or a menu entry, so
-// nothing on this console reaches it today. This detail blade stays on the
-// resource type the list page already shows: its own real Essentials
-// (provisioning state, trigger type, replica timeout, environment), its own
-// containers (from the job's template), and its own run history (the real
-// executions list) — the Container Apps Jobs equivalent of a Cloud Run job's
-// executions.
+// type, which is where `latestRevisionName` / `latestRevisionFqdn` live — it
+// has its own descriptor-driven blade (services.ts's "Container Apps" entry,
+// at /ui/containerapps) rather than reusing this one, because a container app
+// and a container app job are different ARM resource types with different
+// shapes (revisions and ingress vs. trigger configuration and executions).
+// This detail blade stays on the resource type the list page already shows:
+// its own real Essentials (provisioning state, trigger type, replica timeout,
+// environment), its own containers (from the job's template), and its own run
+// history (the real executions list) — the Container Apps Jobs equivalent of
+// a Cloud Run job's executions.
 
 export interface ContainerAppJobEnvVar {
   name: string;
@@ -1316,3 +1341,175 @@ export const removeClientSecret = async (objectId: string, keyId: string): Promi
     body: JSON.stringify({ keyId }),
   });
 };
+
+// --- The generic Azure Resource Manager envelope every service blade reads ---
+//
+// Every ARM resource — a virtual machine, a Cosmos DB account, a Service Bus
+// namespace — is returned in the same envelope: `id`, `name`, `type`,
+// `location`, `kind`, `sku`, `tags`, and a provider-specific `properties`
+// object. The service blades below read that envelope directly from the
+// provider's own real List/Get operations rather than through a
+// per-resource-type mapper, which is what lets one blade implementation serve
+// every provider while still rendering the true response shape: the columns
+// and Essentials of each blade name the exact `properties` path the real Azure
+// REST specification documents for that resource.
+
+export interface ArmSku {
+  name?: string;
+  tier?: string;
+  family?: string;
+  size?: string;
+  capacity?: number;
+}
+
+export interface ArmGenericResource {
+  id: string;
+  name: string;
+  type: string;
+  location: string;
+  kind: string;
+  sku: ArmSku;
+  tags: ResourceTags;
+  properties: Record<string, unknown>;
+}
+
+interface ArmEnvelope {
+  id?: string;
+  name?: string;
+  type?: string;
+  location?: string;
+  kind?: string;
+  sku?: ArmSku;
+  tags?: ResourceTags;
+  properties?: Record<string, unknown>;
+}
+
+interface ArmPage<T> {
+  value?: T[];
+  nextLink?: string;
+}
+
+function armResourceOf(resource: ArmEnvelope): ArmGenericResource {
+  return {
+    id: resource.id ?? "",
+    name: resource.name ?? "",
+    type: resource.type ?? "",
+    location: resource.location ?? "",
+    kind: resource.kind ?? "",
+    sku: resource.sku ?? {},
+    tags: resource.tags ?? {},
+    properties: resource.properties ?? {},
+  };
+}
+
+// nextLinkPath turns ARM's absolute `nextLink` into the path this portal's
+// cloud coordinate is prefixed onto. Real ARM emits the continuation as a
+// fully-qualified URL on the same host the list was read from, so keeping its
+// path and query — and letting authorizedFetch re-apply the configured cloud
+// base — reaches exactly the resource ARM pointed at, whether that base is the
+// portal's own origin or a separate Azure Resource Manager host.
+function nextLinkPath(nextLink: string): string {
+  const url = new URL(nextLink, "http://arm.invalid");
+  return `${url.pathname}${url.search}`;
+}
+
+// armList reads one ARM list operation to exhaustion, following `nextLink` the
+// way every real ARM client (the SDK pagers, `az`, the portal itself) does
+// rather than silently rendering only the first page.
+async function armList(path: string): Promise<ArmGenericResource[]> {
+  const resources: ArmGenericResource[] = [];
+  let next: string | undefined = path;
+  // ARM guarantees termination by never repeating a continuation token; a
+  // page count bound would silently truncate, so this follows the links.
+  while (next) {
+    const page: ArmPage<ArmEnvelope> = await authorizedJSON<ArmPage<ArmEnvelope>>(next);
+    resources.push(...(page.value ?? []).map(armResourceOf));
+    next = page.nextLink ? nextLinkPath(page.nextLink) : undefined;
+  }
+  return resources;
+}
+
+// fetchArmResources reads a provider's real subscription-wide List operation
+// (`GET /subscriptions/{id}/providers/{provider}?api-version=…`) across every
+// subscription this directory can reach — the same request `az <service> list`
+// and the provider's SDK ListBySubscription pager send.
+export const fetchArmResources = async (provider: string, apiVersion: string): Promise<ArmGenericResource[]> => {
+  const subs = await subscriptionIds();
+  const pages = await Promise.all(
+    subs.map((sub) => armList(`/subscriptions/${sub}/providers/${provider}?api-version=${apiVersion}`)),
+  );
+  return pages.flat();
+};
+
+// fetchArmResourceByName resolves a resource from the short name a blade route
+// carries to its full ARM resource ID, then reads the resource's own real Get
+// operation at that ID. ARM's Get needs the subscription- and
+// resource-group-scoped path a name alone doesn't have; the subscription-wide
+// List the listing blade already reads supplies it.
+export const fetchArmResourceByName = async (
+  provider: string,
+  apiVersion: string,
+  name: string,
+): Promise<ArmGenericResource> => {
+  const matches = await fetchArmResources(provider, apiVersion);
+  const match = matches.find((resource) => resource.name === name);
+  if (!match) {
+    throw new Error(`${provider}/${name} was not found in any subscription this directory can reach.`);
+  }
+  return armResourceOf(await authorizedJSON<ArmEnvelope>(`${match.id}?api-version=${apiVersion}`));
+};
+
+// fetchArmChildren reads a resource's real sub-resource List operation — the
+// child collection ARM nests under the parent's own resource ID (a virtual
+// network's `subnets`, a Service Bus namespace's `queues`, a Cosmos DB
+// account's `sqlDatabases`), each its own documented ARM operation.
+export const fetchArmChildren = async (
+  parentId: string,
+  childPath: string,
+  apiVersion: string,
+): Promise<ArmGenericResource[]> => armList(`${parentId}/${childPath}?api-version=${apiVersion}`);
+
+// deleteArmResource drives a resource's real ARM DELETE — the same request
+// `az <service> delete` and the azurerm provider's destroy both send.
+export const deleteArmResource = async (id: string, apiVersion: string): Promise<void> => {
+  await armSend(`${id}?api-version=${apiVersion}`, { method: "DELETE" });
+};
+
+// postArmAction drives a resource's real ARM action POST — the lifecycle verbs
+// ARM models as `POST {resourceId}/{action}` (a virtual machine's
+// `start`/`restart`/`powerOff`/`deallocate`, a PostgreSQL flexible server's
+// `start`/`stop`/`restart`, a container group's `start`/`stop`/`restart`).
+export const postArmAction = async (id: string, action: string, apiVersion: string): Promise<void> => {
+  await armSend(`${id}/${action}?api-version=${apiVersion}`, { method: "POST" });
+};
+
+// --- Resource groups (Microsoft.Resources) ---
+//
+// Resource groups are not a provider resource: ARM serves them at
+// `/subscriptions/{id}/resourceGroups`, its own path, which is why they read
+// through their own function rather than fetchArmResources.
+
+export const fetchResourceGroups = async (): Promise<ArmGenericResource[]> => {
+  const subs = await subscriptionIds();
+  const pages = await Promise.all(
+    subs.map((sub) => armList(`/subscriptions/${sub}/resourceGroups?api-version=${API_VERSION.resourceGroups}`)),
+  );
+  return pages.flat();
+};
+
+export const fetchResourceGroup = async (name: string): Promise<ArmGenericResource> => {
+  const groups = await fetchResourceGroups();
+  const match = groups.find((group) => group.name === name);
+  if (!match) {
+    throw new Error(`Resource group ${name} was not found in any subscription this directory can reach.`);
+  }
+  return armResourceOf(await authorizedJSON<ArmEnvelope>(`${match.id}?api-version=${API_VERSION.resourceGroups}`));
+};
+
+// fetchResourceGroupResources reads the resource group's real
+// `Resources_ListByResourceGroup` operation — the same request
+// `az resource list --resource-group` sends — so the group's blade shows what
+// ARM says the group actually holds rather than a count assembled per
+// provider.
+export const fetchResourceGroupResources = async (groupId: string): Promise<ArmGenericResource[]> =>
+  armList(`${groupId}/resources?api-version=${API_VERSION.resourceGroups}`);

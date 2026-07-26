@@ -16,7 +16,7 @@ const SERVICES = [
     columns: ["Subscription name", "Subscription ID", "Status"],
     rowHeaderColumn: undefined as string | undefined,
   },
-  { path: "/ui/container-apps", menu: "Container Apps", columns: ["Name", "Resource group", "Type"], rowHeaderColumn: "Name" },
+  { path: "/ui/container-apps", menu: "Container App jobs", columns: ["Name", "Resource group", "Type"], rowHeaderColumn: "Name" },
   { path: "/ui/functions", menu: "Function Apps", columns: ["Name", "Resource group", "App kind"], rowHeaderColumn: "Name" },
   { path: "/ui/acr", menu: "Container registries", columns: ["Name", "Login server"], rowHeaderColumn: "Name" },
   { path: "/ui/storage", menu: "Storage accounts", columns: ["Name", "Kind"], rowHeaderColumn: "Name" },
@@ -27,6 +27,46 @@ const SERVICES = [
     columns: ["Display name", "Application (client) ID", "Object ID"],
     rowHeaderColumn: "Display name",
   },
+];
+
+// The descriptor-driven service blades (src/services.ts). Each reads one real
+// Azure Resource Manager subscription-wide List operation and opens a resource
+// on that provider's real Get. `column` is a distinctive header from the
+// blade's own column set — one that names a property the resource's Azure REST
+// specification documents, so a blade silently losing its real shape fails
+// here. These are pinned literally rather than imported from src so this suite
+// stays a black-box check of what the built portal actually renders.
+const BLADE_SERVICES = [
+  { path: "/ui/resource-groups", menu: "Resource groups", column: "Provisioning state", testid: "rg", detailKind: "Resource group" },
+  { path: "/ui/virtual-machines", menu: "Virtual machines", column: "Size", testid: "vm", detailKind: "Virtual machine" },
+  { path: "/ui/app-service", menu: "App Service", column: "Default domain", testid: "webapp", detailKind: "App Service" },
+  { path: "/ui/app-service-plans", menu: "App Service plans", column: "Pricing tier", testid: "plan", detailKind: "App Service plan" },
+  { path: "/ui/containerapps", menu: "Container Apps", column: "Environment", testid: "capp", detailKind: "Container App" },
+  { path: "/ui/container-instances", menu: "Container instances", column: "OS type", testid: "aci", detailKind: "Container group" },
+  { path: "/ui/container-app-environments", menu: "Container Apps environments", column: "Provisioning state", testid: "cae", detailKind: "Container Apps environment" },
+  { path: "/ui/cosmos-db", menu: "Azure Cosmos DB", column: "API", testid: "cosmos", detailKind: "Cosmos DB account" },
+  { path: "/ui/postgresql", menu: "Azure Database for PostgreSQL", column: "Version", testid: "pg", detailKind: "PostgreSQL flexible server" },
+  { path: "/ui/redis", menu: "Azure Cache for Redis", column: "Pricing tier", testid: "redis", detailKind: "Azure Cache for Redis" },
+  { path: "/ui/virtual-networks", menu: "Virtual networks", column: "Address space", testid: "vnet", detailKind: "Virtual network" },
+  { path: "/ui/load-balancers", menu: "Load balancers", column: "Pricing tier", testid: "lb", detailKind: "Load balancer" },
+  { path: "/ui/network-security-groups", menu: "Network security groups", column: "Provisioning state", testid: "nsg", detailKind: "Network security group" },
+  { path: "/ui/public-ip-addresses", menu: "Public IP addresses", column: "IP address", testid: "pip", detailKind: "Public IP address" },
+  { path: "/ui/network-interfaces", menu: "Network interfaces", column: "MAC address", testid: "nic", detailKind: "Network interface" },
+  { path: "/ui/route-tables", menu: "Route tables", column: "Provisioning state", testid: "rt", detailKind: "Route table" },
+  { path: "/ui/nat-gateways", menu: "NAT gateways", column: "Pricing tier", testid: "nat", detailKind: "NAT gateway" },
+  { path: "/ui/dns-zones", menu: "DNS zones", column: "Record sets", testid: "dns", detailKind: "DNS zone" },
+  { path: "/ui/private-dns-zones", menu: "Private DNS zones", column: "Virtual network links", testid: "pdns", detailKind: "Private DNS zone" },
+  { path: "/ui/key-vaults", menu: "Key vaults", column: "Vault URI", testid: "kv", detailKind: "Key vault" },
+  { path: "/ui/service-bus", menu: "Service Bus", column: "Pricing tier", testid: "sb", detailKind: "Service Bus namespace" },
+  { path: "/ui/event-hubs", menu: "Event Hubs", column: "Pricing tier", testid: "eh", detailKind: "Event Hubs namespace" },
+  { path: "/ui/event-grid-topics", menu: "Event Grid topics", column: "Endpoint", testid: "egt", detailKind: "Event Grid topic" },
+  { path: "/ui/event-grid-domains", menu: "Event Grid domains", column: "Endpoint", testid: "egd", detailKind: "Event Grid domain" },
+  { path: "/ui/event-grid-system-topics", menu: "Event Grid system topics", column: "Topic type", testid: "egs", detailKind: "Event Grid system topic" },
+  { path: "/ui/api-management", menu: "API Management services", column: "Pricing tier", testid: "apim", detailKind: "API Management service" },
+  { path: "/ui/logic-apps", menu: "Logic apps", column: "Status", testid: "logic", detailKind: "Logic app" },
+  { path: "/ui/application-insights", menu: "Application Insights", column: "Application type", testid: "appi", detailKind: "Application Insights resource" },
+  { path: "/ui/log-analytics", menu: "Log Analytics workspaces", column: "Workspace ID", testid: "law", detailKind: "Log Analytics workspace" },
+  { path: "/ui/managed-identities", menu: "Managed Identities", column: "Client ID", testid: "msi", detailKind: "User-assigned managed identity" },
 ];
 
 test.describe("Azure portal shell", () => {
@@ -163,7 +203,9 @@ test.describe("Service menu", () => {
       "Storage",
       "Databases",
       "Networking",
+      "Integration",
       "Monitoring + management",
+      "Identity",
       "Microsoft Entra ID",
       "Security",
       "DevOps",
@@ -172,15 +214,19 @@ test.describe("Service menu", () => {
     }
   });
 
+  // The Containers group holds "Container Apps" (Microsoft.App/containerApps),
+  // "Container App jobs" (Microsoft.App/jobs), and "Container Apps
+  // environments" (Microsoft.App/managedEnvironments), so this matches the
+  // exact accessible name rather than a prefix of it.
   test("collapses a group without losing the others", async ({ page }) => {
     await page.goto("/ui/");
     const menu = page.getByRole("navigation", { name: "Service" });
-    await expect(menu.getByRole("link", { name: "Container Apps" })).toBeVisible();
+    await expect(menu.getByRole("link", { name: "Container Apps", exact: true })).toBeVisible();
     await menu.getByRole("button", { name: "Containers" }).click();
-    await expect(menu.getByRole("link", { name: "Container Apps" })).toHaveCount(0);
+    await expect(menu.getByRole("link", { name: "Container Apps", exact: true })).toHaveCount(0);
     await expect(menu.getByRole("link", { name: "Storage accounts" })).toBeVisible();
     await menu.getByRole("button", { name: "Containers" }).click();
-    await expect(menu.getByRole("link", { name: "Container Apps" })).toBeVisible();
+    await expect(menu.getByRole("link", { name: "Container Apps", exact: true })).toBeVisible();
   });
 
   test("narrows to what a search matches, opening a collapsed group to show it", async ({ page }) => {
@@ -198,13 +244,20 @@ test.describe("Service menu", () => {
 // would make the menu look like a different, smaller product — every
 // service Azure offers that this simulator doesn't implement stays in the
 // menu, marked honestly.
+//
+// The badge is a claim about the simulator, so it is held to exactly the
+// services with no Azure Resource Manager surface here at all. Azure
+// Kubernetes Service is one: the simulator serves no Microsoft.ContainerService
+// routes. Services it does serve — virtual machines, Cosmos DB, key vaults,
+// virtual networks, Service Bus, and the rest — carry real blades and must
+// never carry this badge; the vitest catalog suite pins that list exactly.
 test.describe("Not supported services", () => {
   test("marks an unimplemented service with a non-color badge and an accessible name that says so", async ({ page }) => {
     await page.goto("/ui/");
     const menu = page.getByRole("navigation", { name: "Service" });
     // Every group opens expanded by default — a click here would collapse
-    // "Compute", not open it.
-    const link = menu.getByRole("link", { name: "Virtual machines, not supported in this simulator" });
+    // "Containers", not open it.
+    const link = menu.getByRole("link", { name: "Azure Kubernetes Service, not supported in this simulator" });
     await expect(link).toBeVisible();
     // The badge is real text content, not a colour swatch — a screen reader
     // announces "Not supported" whether or not it renders the icon in front
@@ -216,17 +269,49 @@ test.describe("Not supported services", () => {
   test("still navigates — to a small, honest explanation — rather than a dead end", async ({ page }) => {
     await page.goto("/ui/");
     const menu = page.getByRole("navigation", { name: "Service" });
-    await menu.getByRole("link", { name: "Virtual machines, not supported in this simulator" }).click();
-    await expect(page).toHaveURL(/\/ui\/not-supported\/virtual-machines$/);
+    await menu.getByRole("link", { name: "Azure Kubernetes Service, not supported in this simulator" }).click();
+    await expect(page).toHaveURL(/\/ui\/not-supported\/azure-kubernetes-service$/);
     const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
-    await expect(crumbs).toContainText("Virtual machines");
-    await expect(page.getByRole("heading", { name: "Virtual machines" })).toBeVisible();
+    await expect(crumbs).toContainText("Azure Kubernetes Service");
+    await expect(page.getByRole("heading", { name: "Azure Kubernetes Service" })).toBeVisible();
     await expect(page.getByTestId("not-supported-message")).toContainText(
-      "Virtual machines is not implemented by the Sockerless simulator.",
+      "Azure Kubernetes Service is not implemented by the Sockerless simulator.",
     );
     // The Essentials panel still leads the pane, carrying the badge as a
     // real Essentials value rather than a special-cased layout.
     await expect(page.getByRole("region", { name: "Essentials" })).toContainText("Not supported");
+  });
+
+  // The badge's accuracy in the other direction: a service the simulator
+  // really does implement must reach a real blade, never the honest-but-wrong
+  // "not implemented" page.
+  test("never badges a service this simulator serves Azure Resource Manager routes for", async ({ page }) => {
+    await page.goto("/ui/");
+    const menu = page.getByRole("navigation", { name: "Service" });
+    for (const service of BLADE_SERVICES) {
+      await expect(menu.getByRole("link", { name: service.menu, exact: true })).toHaveAttribute(
+        "href",
+        service.path,
+      );
+      await expect(
+        menu.getByRole("link", { name: `${service.menu}, not supported in this simulator` }),
+      ).toHaveCount(0);
+    }
+  });
+
+  test("keeps the not-supported badge to the services with no simulated provider at all", async ({ page }) => {
+    await page.goto("/ui/");
+    const menu = page.getByRole("navigation", { name: "Service" });
+    const badged = await menu.locator(".az-service-link-unsupported .az-service-label").allTextContents();
+    expect(badged.map((label) => label.trim())).toEqual([
+      "Management groups",
+      "Azure Kubernetes Service",
+      "Azure SQL",
+      "Front Door and CDN profiles",
+      "Cost Management + Billing",
+      "Microsoft Defender for Cloud",
+      "Azure DevOps organizations",
+    ]);
   });
 
   test("keeps every catalog service reachable by keyboard, supported or not", async ({ page }) => {
@@ -336,7 +421,7 @@ test.describe("Microsoft Entra ID: App registrations", () => {
 // create→list-appears round trip belongs in the relying-party suite
 // (ui/e2e/shauth-rps.mjs), the same split those forms document.
 test.describe("Resource creation", () => {
-  // Storage accounts, Container registries, Container Apps jobs, and Function
+  // Storage accounts, Container registries, Container App jobs, and Function
   // Apps each offer a real "Create" command-bar action opening an inline Fluent
   // form wired to the resource's real ARM PUT (matching the Subscriptions "Add"
   // and App registrations "New registration" forms): the command and the form
@@ -368,7 +453,7 @@ test.describe("Resource creation", () => {
     });
   }
 
-  // The Container Apps job create form needs a name AND a container image
+  // The Container App job create form needs a name AND a container image
   // before it will submit, so it gets a dedicated case rather than the
   // name-only pattern above.
   test("/ui/container-apps offers Create and gates submit on a valid name and image", async ({ page }) => {
@@ -389,7 +474,7 @@ test.describe("Resource creation", () => {
 
 // Every resource detail blade now carries the real portal's UPDATE and
 // lifecycle command-bar actions (Update/Configuration, Edit tags, the Function
-// App Start/Stop/Restart, the Container Apps job Edit). Opening the editor or
+// App Start/Stop/Restart, the Container App job Edit). Opening the editor or
 // firing an action needs a successfully loaded resource — an authenticated
 // cloud read this lightweight suite (no identity provider) never gets — so,
 // matching the Delete-command convention above, this pins that each action
@@ -424,7 +509,7 @@ test.describe("Resource update and lifecycle actions", () => {
 // only succeed once the shell's Essentials data loads are covered by the
 // relying-party suite (ui/e2e/shauth-rps.mjs).
 const DETAIL_BLADES = [
-  { path: "/ui/container-apps/structural-test-job", parent: "Container Apps", testid: "ca-job-error", command: "Run now", deleteTestId: "ca-job-delete" },
+  { path: "/ui/container-apps/structural-test-job", parent: "Container App jobs", testid: "ca-job-error", command: "Run now", deleteTestId: "ca-job-delete" },
   { path: "/ui/functions/structural-test-site", parent: "Function Apps", testid: "fn-site-error", command: "Refresh", deleteTestId: "fn-site-delete" },
   { path: "/ui/acr/structuraltestregistry", parent: "Container registries", testid: "acr-registry-error", command: "Refresh", deleteTestId: "acr-registry-delete" },
   { path: "/ui/storage/structuraltestaccount", parent: "Storage accounts", testid: "storage-account-error", command: "Refresh", deleteTestId: "storage-account-delete" },
@@ -482,6 +567,80 @@ test.describe("Resource delete actions", () => {
       await expect(command).toBeVisible();
       await expect(command).toHaveText("Delete");
       await expect(command).toBeDisabled();
+    });
+  }
+});
+
+// The service blades this pass added. Each is a real Azure Resource Manager
+// blade — a subscription-wide List on the listing pane, the provider's own Get
+// plus its sub-resource Lists on the resource pane — for a service the
+// simulator implements and the menu previously marked "Not supported". This
+// lightweight suite has no identity provider, so every read reaches the
+// enforcing simulator unauthenticated: the structure below (Essentials, the
+// blade's real columns, the command bar, and a loud HTTP 401) is what is
+// assertable without live data, matching the convention the rest of this file
+// follows. The authenticated read → render round trips run in the mocked-fetch
+// vitest suite (ServiceBlades.test.tsx) and the relying-party suite.
+test.describe("Service blades", () => {
+  for (const service of BLADE_SERVICES) {
+    test(`${service.path} renders Essentials, its real columns, and a Delete command`, async ({ page }) => {
+      await page.goto(service.path);
+      await expect(page.getByRole("region", { name: "Essentials" })).toBeVisible();
+      // Fluent's TableSelectionCell precedes the first header cell, mapping it
+      // to rowheader; the rest stay columnheaders.
+      await expect(page.getByRole("rowheader", { name: "Name", exact: true })).toBeVisible();
+      await expect(page.getByRole("columnheader", { name: service.column, exact: true })).toBeVisible();
+      const remove = page.getByTestId(`${service.testid}-delete`);
+      await expect(remove).toBeVisible();
+      await expect(remove).toHaveText("Delete");
+      await expect(remove).toBeDisabled();
+    });
+
+    test(`${service.path} opens a resource pane with a breadcrumb and a loud unauthenticated error`, async ({ page }) => {
+      await page.goto(`${service.path}/structural-test-resource`);
+      const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+      await expect(crumbs).toContainText(service.menu);
+      await expect(crumbs).toContainText(service.detailKind);
+      await expect(page.getByRole("toolbar", { name: "Commands" }).getByRole("button", { name: "Refresh" })).toBeVisible();
+      const error = page.getByTestId(`${service.testid}-detail-error`);
+      await expect(error).toBeVisible();
+      await expect(error).toContainText("HTTP 401");
+      // The blade's write and lifecycle commands stay visible but gated on a
+      // resource that never loaded, rather than disappearing.
+      await expect(page.getByTestId(`${service.testid}-tags`)).toBeDisabled();
+      await expect(page.getByTestId(`${service.testid}-detail-delete`)).toBeDisabled();
+    });
+  }
+
+  test("reaches every service blade from the menu and updates the breadcrumb", async ({ page }) => {
+    await page.goto("/ui/");
+    const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+    for (const service of BLADE_SERVICES) {
+      await page.getByRole("link", { name: service.menu, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`${service.path}$`));
+      await expect(crumbs).toContainText(service.menu);
+    }
+  });
+
+  // The lifecycle actions Azure Resource Manager models as action POSTs on the
+  // resource — a virtual machine's start/restart/power-off/deallocate, a
+  // PostgreSQL flexible server's and a container group's start/stop/restart.
+  const LIFECYCLE = [
+    { path: "/ui/virtual-machines/structural-test-resource", testids: ["vm-start", "vm-restart", "vm-poweroff", "vm-deallocate"] },
+    { path: "/ui/postgresql/structural-test-resource", testids: ["pg-start", "pg-restart", "pg-stop"] },
+    { path: "/ui/container-instances/structural-test-resource", testids: ["aci-start", "aci-restart", "aci-stop"] },
+    { path: "/ui/app-service/structural-test-resource", testids: ["webapp-start", "webapp-restart", "webapp-stop"] },
+    { path: "/ui/containerapps/structural-test-resource", testids: ["capp-start", "capp-stop"] },
+  ];
+
+  for (const { path, testids } of LIFECYCLE) {
+    test(`${path} offers real, initially-disabled lifecycle commands`, async ({ page }) => {
+      await page.goto(path);
+      for (const testid of testids) {
+        const command = page.getByTestId(testid);
+        await expect(command).toBeVisible();
+        await expect(command).toBeDisabled();
+      }
     });
   }
 });
@@ -574,7 +733,7 @@ test.describe("Contrast", () => {
   // surface this pass added; they get the same measured-not-assumed check
   // rather than trusting the palette comment in tokens.css.
   test("the not-supported badge and its service-menu label clear WCAG AA in both themes", async ({ page }) => {
-    await page.goto("/ui/not-supported/virtual-machines");
+    await page.goto("/ui/not-supported/azure-kubernetes-service");
     const results = await page.evaluate(() => {
       const parse = (c: string) => {
         const m = (c.match(/[\d.]+/g) ?? []).map(Number);
@@ -696,7 +855,8 @@ test.describe("ARIA landmarks and keyboard state", () => {
   test("marks the active service with aria-current, and only the active one", async ({ page }) => {
     await page.goto("/ui/container-apps");
     const menu = page.getByRole("navigation", { name: "Service" });
-    await expect(menu.getByRole("link", { name: "Container Apps", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(menu.getByRole("link", { name: "Container App jobs", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(menu.getByRole("link", { name: "Container Apps", exact: true })).not.toHaveAttribute("aria-current", "page");
     await expect(menu.getByRole("link", { name: "Function Apps", exact: true })).not.toHaveAttribute("aria-current", "page");
   });
 
@@ -786,8 +946,14 @@ test.describe("Automated accessibility audit", () => {
   for (const theme of ["light", "dark"] as const) {
     for (const target of [
       "/ui/container-apps",
-      "/ui/not-supported/virtual-machines",
+      "/ui/not-supported/azure-kubernetes-service",
       ...DETAIL_BLADES.map((blade) => blade.path),
+      // Every service blade this pass added, listing pane and resource pane,
+      // audited in both themes rather than sampled — the panes are generated
+      // from one implementation, but each renders its own columns, Essentials,
+      // sub-resource tables and command set.
+      ...BLADE_SERVICES.map((service) => service.path),
+      ...BLADE_SERVICES.map((service) => `${service.path}/structural-test-resource`),
     ]) {
       test(`${target} has no detectable violations (${theme})`, async ({ page }) => {
         await page.goto(target);
@@ -815,7 +981,7 @@ test.describe("Automated accessibility audit", () => {
       expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
     });
 
-    // The Create forms (Storage accounts, Container registries, Container Apps
+    // The Create forms (Storage accounts, Container registries, Container App
     // jobs, Function Apps) are reachable without an identity provider — they
     // render before any cloud read — so each is axe-audited open, in both
     // themes, the same way rather than trusted because they reuse existing

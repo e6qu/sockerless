@@ -15,7 +15,7 @@ import {
 // service page reads, so the board reflects the subscription rather than a
 // separate summary endpoint.
 const RESOURCES = [
-  { label: "Container Apps jobs", to: "/ui/container-apps", queryKey: ["ca-jobs"], queryFn: fetchContainerAppJobs },
+  { label: "Container App jobs", to: "/ui/container-apps", queryKey: ["ca-jobs"], queryFn: fetchContainerAppJobs },
   { label: "Function Apps", to: "/ui/functions", queryKey: ["fn-sites"], queryFn: fetchFunctionSites },
   { label: "Container registries", to: "/ui/acr", queryKey: ["acr-registries"], queryFn: fetchACRRegistries },
   { label: "Storage accounts", to: "/ui/storage", queryKey: ["storage-accounts"], queryFn: fetchStorageAccounts },

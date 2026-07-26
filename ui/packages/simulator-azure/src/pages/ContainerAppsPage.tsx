@@ -24,7 +24,7 @@ const columns: AzureColumn<ContainerAppJob>[] = [
   { id: "type", header: "Type", cell: (row) => row.type, value: (row) => row.type },
 ];
 
-// The Container Apps jobs blade: the real Microsoft.App/jobs list across every
+// The Container App jobs blade: the real Microsoft.App/jobs list across every
 // subscription this directory can reach, and a Create flow that provisions a
 // new job (its resource group and managed environment first, the same order
 // `az containerapp job create` uses) through the real jobs PUT.
@@ -47,8 +47,8 @@ export function ContainerAppsPage() {
       queryKey={["ca-jobs"]}
       queryFn={fetchContainerAppJobs}
       filterPlaceholder="Filter by name"
-      resourceNoun="Container Apps jobs"
-      emptyTitle="No Container Apps jobs to display"
+      resourceNoun="Container App jobs"
+      emptyTitle="No Container App jobs to display"
       emptyDescription="Jobs created in this subscription appear here."
       rowKey={(row) => row.id}
       essentials={(rows) => [
@@ -62,13 +62,13 @@ export function ContainerAppsPage() {
           await deleteContainerAppJob(job.id);
         }
       }}
-      deleteWarning="Deleting a Container Apps job is permanent and removes its execution history. This action can't be undone."
+      deleteWarning="Deleting a Container App job is permanent and removes its execution history. This action can't be undone."
       deleteTestId="ca-delete"
       banner={
         <>
           {create.isError ? (
             <AzureErrorMessage testid="ca-create-error">
-              <strong>The Container Apps job could not be created.</strong>{" "}
+              <strong>The Container App job could not be created.</strong>{" "}
               {create.error instanceof Error ? create.error.message : "Azure Resource Manager did not respond."}
             </AzureErrorMessage>
           ) : null}

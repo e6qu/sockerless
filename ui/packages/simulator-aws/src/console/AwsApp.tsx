@@ -6,6 +6,9 @@ import { AwsBreadcrumbs, AwsHeader, AwsSideNavigation } from "./AwsConsole.js";
 import { REGION } from "./federation.js";
 import { findNavService, NAV_GROUPS } from "./serviceCatalog.js";
 
+// Every service route's breadcrumb label, keyed by its own route. The labels
+// are the services' real, fully-qualified AWS names, matching the side
+// navigation's own entries in serviceCatalog.ts.
 const CRUMBS: Record<string, string> = {
   "/ui/": "Overview",
   "/ui/ecs": "Elastic Container Service",
@@ -15,6 +18,36 @@ const CRUMBS: Record<string, string> = {
   "/ui/logs": "CloudWatch Logs",
   "/ui/organizations": "AWS Organizations",
   "/ui/iam": "Identity and Access Management",
+  "/ui/ec2": "EC2",
+  "/ui/autoscaling": "EC2 Auto Scaling",
+  "/ui/batch": "AWS Batch",
+  "/ui/efs": "Elastic File System",
+  "/ui/rds": "RDS",
+  "/ui/dynamodb": "DynamoDB",
+  "/ui/elasticache": "ElastiCache",
+  "/ui/vpc": "VPC",
+  "/ui/cloudfront": "CloudFront",
+  "/ui/route53": "Route 53",
+  "/ui/apigateway": "API Gateway",
+  "/ui/elb": "Elastic Load Balancing",
+  "/ui/cloudmap": "AWS Cloud Map",
+  "/ui/codebuild": "CodeBuild",
+  "/ui/amplify": "AWS Amplify",
+  "/ui/kinesis": "Kinesis Data Streams",
+  "/ui/glue": "AWS Glue",
+  "/ui/sns": "Simple Notification Service",
+  "/ui/sqs": "Simple Queue Service",
+  "/ui/eventbridge": "Amazon EventBridge",
+  "/ui/scheduler": "Amazon EventBridge Scheduler",
+  "/ui/stepfunctions": "AWS Step Functions",
+  "/ui/cloudwatch": "CloudWatch",
+  "/ui/cloudtrail": "AWS CloudTrail",
+  "/ui/ssm": "Systems Manager",
+  "/ui/secretsmanager": "Secrets Manager",
+  "/ui/kms": "Key Management Service",
+  "/ui/acm": "AWS Certificate Manager",
+  "/ui/waf": "AWS WAF",
+  "/ui/budgets": "AWS Budgets",
 };
 
 const IAM_USER_PREFIX = "/ui/iam/users/";
@@ -30,6 +63,12 @@ const RESOURCE_DETAIL_PREFIXES: { prefix: string; service: string; to: string }[
   { prefix: "/ui/ecr/", service: "Elastic Container Registry", to: "/ui/ecr" },
   { prefix: "/ui/s3/", service: "Simple Storage Service", to: "/ui/s3" },
   { prefix: "/ui/logs/", service: "CloudWatch Logs", to: "/ui/logs" },
+  { prefix: "/ui/ec2/", service: "EC2", to: "/ui/ec2" },
+  { prefix: "/ui/vpc/", service: "VPC", to: "/ui/vpc" },
+  { prefix: "/ui/dynamodb/", service: "DynamoDB", to: "/ui/dynamodb" },
+  { prefix: "/ui/efs/", service: "Elastic File System", to: "/ui/efs" },
+  { prefix: "/ui/route53/", service: "Route 53", to: "/ui/route53" },
+  { prefix: "/ui/stepfunctions/", service: "AWS Step Functions", to: "/ui/stepfunctions" },
 ];
 
 function crumbTrail(pathname: string): { label: string; to?: string }[] {

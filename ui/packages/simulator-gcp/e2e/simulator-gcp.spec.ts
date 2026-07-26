@@ -11,6 +11,64 @@ const SERVICES = [
   { path: "/ui/logging", nav: "Logs Explorer", title: "Logs Explorer", columns: ["Timestamp", "Severity", "Log name"] },
 ];
 
+// Every product the simulator serves a real API for, and the page the catalog
+// links it to. The list is the honest map the "Not supported" chip is checked
+// against: a product here must never carry the chip, and its page must render
+// its own shell (title, description and table columns) rather than a stub.
+const DRAWER_PRODUCTS = [
+  { id: "compute-engine", href: "/ui/compute", title: "VM instances", columns: ["Name", "Status", "Zone", "Machine type", "Internal IP", "Created", "Actions"] },
+  { id: "eventarc", href: "/ui/eventarc", title: "Eventarc triggers", columns: ["Name", "Event type", "Destination", "Created", "Actions"] },
+  { id: "cloud-sql", href: "/ui/sql", title: "Cloud SQL instances", columns: ["Instance ID", "Status", "Database version", "Location", "IP address", "Actions"] },
+  { id: "firestore", href: "/ui/firestore", title: "Firestore databases", columns: ["Database ID", "Database type", "Location", "Concurrency mode", "Created"] },
+  { id: "spanner", href: "/ui/spanner", title: "Spanner instances", columns: ["Instance ID", "Instance name", "Configuration", "Nodes", "Status", "Actions"] },
+  { id: "bigtable", href: "/ui/bigtable", title: "Bigtable instances", columns: ["Instance ID", "Instance name", "Instance type", "Status", "Actions"] },
+  { id: "memorystore", href: "/ui/memorystore", title: "Memorystore for Redis", columns: ["Instance ID", "Status", "Tier", "Capacity", "Version", "Primary endpoint", "Actions"] },
+  { id: "vpc-network", href: "/ui/vpc", title: "VPC networks", columns: ["Name", "Subnet creation mode", "Dynamic routing mode", "Created"] },
+  { id: "cloud-load-balancing", href: "/ui/loadbalancing", title: "Load balancing", columns: [] },
+  { id: "cloud-dns", href: "/ui/dns", title: "Cloud DNS", columns: ["Zone name", "DNS name", "Zone type", "Description", "Actions"] },
+  { id: "serverless-vpc-access", href: "/ui/vpcaccess", title: "Serverless VPC Access", columns: ["Name", "Status", "Network", "IP range", "Machine type", "Instances", "Actions"] },
+  { id: "bigquery", href: "/ui/bigquery", title: "BigQuery datasets", columns: ["Dataset ID", "Location", "Display name", "Created", "Actions"] },
+  { id: "pub-sub", href: "/ui/pubsub", title: "Pub/Sub topics", columns: ["Topic ID", "Message retention", "Encryption key", "Actions"] },
+  { id: "dataflow", href: "/ui/dataflow", title: "Dataflow jobs", columns: ["Name", "Status", "Type", "Start time", "Region", "Actions"] },
+  { id: "cloud-build", href: "/ui/cloudbuild", title: "Cloud Build history", columns: ["Build", "Status", "Created", "Duration", "Steps", "Actions"] },
+  { id: "api-gateway", href: "/ui/apigateway", title: "API Gateway", columns: ["Gateway ID", "Display name", "Status", "API config", "Gateway URL"] },
+  { id: "enabled-apis", href: "/ui/apis", title: "Enabled APIs & services", columns: ["Service", "Service name", "Status", "Actions"] },
+  { id: "cloud-kms", href: "/ui/kms", title: "Cloud KMS key rings", columns: ["Key ring", "Location", "Created"] },
+  { id: "secret-manager", href: "/ui/secrets", title: "Secret Manager", columns: ["Name", "Replication", "Created", "Actions"] },
+  { id: "iam", href: "/ui/iam", title: "IAM", columns: [] },
+  // Already covered by the product navigation above; listed so the chip check
+  // sweeps the whole catalog rather than only the pages this pass added.
+  { id: "cloud-run", href: "/ui/cloudrun", title: "Cloud Run jobs", columns: [] },
+  { id: "cloud-run-functions", href: "/ui/functions", title: "Cloud Run functions", columns: [] },
+  { id: "cloud-storage", href: "/ui/gcs", title: "Cloud Storage", columns: [] },
+  { id: "artifact-registry", href: "/ui/ar", title: "Artifact Registry", columns: [] },
+  { id: "service-accounts", href: "/ui/serviceaccounts", title: "Service accounts", columns: [] },
+  { id: "manage-resources", href: "/ui/projects", title: "Manage resources", columns: [] },
+  { id: "logging", href: "/ui/logging", title: "Logs Explorer", columns: [] },
+];
+
+// The detail routes this pass added. Like the existing detail pages, this
+// suite has no identity provider, so each read reaches the enforcing simulator
+// unauthenticated; the assertion is that the page shell renders honestly
+// (breadcrumb plus the API's own error) rather than crashing or fabricating.
+const DRAWER_DETAIL_PAGES = [
+  "/ui/compute/us-central1-a/example-vm",
+  "/ui/vpc/example-network",
+  "/ui/dns/example-zone",
+  "/ui/sql/example-instance",
+  "/ui/spanner/example-instance",
+  "/ui/bigtable/example-instance",
+  "/ui/memorystore/example-instance",
+  "/ui/bigquery/example_dataset",
+  "/ui/pubsub/example-topic",
+  "/ui/dataflow/example-job",
+  "/ui/cloudbuild/example-build",
+  "/ui/eventarc/example-trigger",
+  "/ui/kms/example-ring",
+  "/ui/kms/example-ring/example-key",
+  "/ui/secrets/example-secret",
+];
+
 test.describe("Google Cloud console shell", () => {
   test("presents the header with project chip, central search and pill navigation", async ({ page }) => {
     await page.goto("/ui/");
@@ -191,6 +249,7 @@ test.describe("Product catalog navigation drawer", () => {
     await expect(drawer.getByRole("heading", { name: "IAM & Admin" })).toBeVisible();
     await expect(drawer.getByTestId("drawer-item-cloud-run")).toBeVisible();
     await expect(drawer.getByTestId("drawer-item-compute-engine")).toBeVisible();
+    await expect(drawer.getByTestId("drawer-item-kubernetes-engine")).toBeVisible();
   });
 
   test("links a supported product to its real page and closes the drawer", async ({ page }) => {
@@ -205,28 +264,43 @@ test.describe("Product catalog navigation drawer", () => {
   test("marks an unsupported product with a Not supported chip conveyed in text, not colour alone", async ({ page }) => {
     await page.goto("/ui/");
     await page.getByRole("button", { name: "Main menu" }).click();
-    const item = page.getByTestId("drawer-item-compute-engine");
+    const item = page.getByTestId("drawer-item-kubernetes-engine");
     await expect(item.locator(".gc-chip-unsupported")).toHaveText("Not supported");
     // The link carries an explicit aria-label so the accessible name reads as a
     // single clean phrase ("<product>, not supported in this simulator"),
     // matching the AWS and Azure consoles; the visible "Not supported" chip
     // conveys the same meaning in text, not colour alone.
-    await expect(item).toHaveAccessibleName("Compute Engine, not supported in this simulator");
+    await expect(item).toHaveAccessibleName("Kubernetes Engine, not supported in this simulator");
+  });
+
+  // The chip is a claim about the simulator, so it must appear only where the
+  // simulator serves no API for the product. Every product whose real REST
+  // surface the simulator answers links to its own page instead — asserted
+  // here so a page can never regress back into a "Not supported" link.
+  test("never marks a product the simulator implements as unsupported", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Main menu" }).click();
+    const drawer = page.getByRole("dialog", { name: "Google Cloud products" });
+    for (const { id, href } of DRAWER_PRODUCTS) {
+      const item = drawer.getByTestId(`drawer-item-${id}`);
+      await expect(item).toHaveAttribute("href", href);
+      await expect(item.locator(".gc-chip-unsupported")).toHaveCount(0);
+    }
   });
 
   test("routes an unsupported product to a short, honest explanation instead of a dead link", async ({ page }) => {
     await page.goto("/ui/");
     await page.getByRole("button", { name: "Main menu" }).click();
-    await page.getByTestId("drawer-item-compute-engine").click();
-    await expect(page).toHaveURL(/\/ui\/not-supported\/compute-engine$/);
-    await expect(page.getByRole("heading", { name: "Compute Engine", exact: true })).toBeVisible();
+    await page.getByTestId("drawer-item-kubernetes-engine").click();
+    await expect(page).toHaveURL(/\/ui\/not-supported\/kubernetes-engine$/);
+    await expect(page.getByRole("heading", { name: "Kubernetes Engine", exact: true })).toBeVisible();
     await expect(page.getByText(/isn't implemented by the Sockerless simulator/)).toBeVisible();
     await expect(page.getByRole("link", { name: "Back to Overview" })).toBeVisible();
 
     // A direct visit (not only a drawer click) resolves the same way, and an
     // unrecognised slug still renders honestly rather than crashing.
-    await page.goto("/ui/not-supported/kubernetes-engine");
-    await expect(page.getByRole("heading", { name: "Kubernetes Engine", exact: true })).toBeVisible();
+    await page.goto("/ui/not-supported/vertex-ai");
+    await expect(page.getByRole("heading", { name: "Vertex AI", exact: true })).toBeVisible();
   });
 
   test("closes on Escape and returns focus to the hamburger", async ({ page }) => {
@@ -374,7 +448,7 @@ test.describe("Contrast", () => {
   });
 
   test("the not-supported page clears WCAG AA in both themes", async ({ page }) => {
-    await page.goto("/ui/not-supported/compute-engine");
+    await page.goto("/ui/not-supported/kubernetes-engine");
     const results = await page.evaluate(sampleContrast, [
       ".gc-page-header h1",
       ".gc-page-description",
@@ -837,7 +911,20 @@ test.describe("Automated accessibility audit", () => {
   // walks up to the actually-painted background rather than axe's own
   // heuristic).
   for (const theme of ["light", "dark"] as const) {
-    for (const target of ["/ui/cloudrun", "/ui/logging", "/ui/not-supported/compute-engine", "/ui/cloudrun/example-job"]) {
+    // Deduplicated: DRAWER_PRODUCTS carries the whole catalog, including the
+    // products the product navigation already lists, so the base entries would
+    // otherwise repeat a test title.
+    const AXE_TARGETS = [
+      ...new Set([
+        "/ui/cloudrun",
+        "/ui/logging",
+        "/ui/not-supported/kubernetes-engine",
+        "/ui/cloudrun/example-job",
+        ...DRAWER_PRODUCTS.map((product) => product.href),
+        ...DRAWER_DETAIL_PAGES,
+      ]),
+    ];
+    for (const target of AXE_TARGETS) {
       test(`${target} has no detectable violations (${theme})`, async ({ page }) => {
         await page.goto(target);
         if (theme === "dark") {
@@ -907,5 +994,186 @@ test.describe("Automated accessibility audit", () => {
         expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
       });
     }
+  }
+});
+
+
+// Every product page the corrected catalog links to renders its own real
+// shell. The list reads are authenticated (this suite has no identity
+// provider, so the enforcing simulator rejects them and the table reports the
+// API's own error) — the page title, description and column headers are the
+// console's own and render regardless, which is exactly what a "Not supported"
+// stub would not do.
+test.describe("Products the simulator implements", () => {
+  for (const product of DRAWER_PRODUCTS.filter((candidate) => candidate.columns.length > 0)) {
+    test(`${product.href} renders ${product.title} with its real table columns`, async ({ page }) => {
+      await page.goto(product.href);
+      await expect(page.getByRole("heading", { name: product.title, exact: true })).toBeVisible();
+      await expect(page.locator(".gc-page-description").first()).toBeVisible();
+      for (const column of product.columns) {
+        await expect(page.getByRole("columnheader", { name: column, exact: true }).first()).toBeVisible();
+      }
+    });
+  }
+
+  // Load balancing and IAM are tab-strip pages rather than a single table, so
+  // they assert their own tabs instead of column headers.
+  test("/ui/loadbalancing presents the five Cloud Load Balancing collections as tabs", async ({ page }) => {
+    await page.goto("/ui/loadbalancing");
+    await expect(page.getByRole("heading", { name: "Load balancing" })).toBeVisible();
+    for (const tab of ["Frontends", "Target proxies", "URL maps", "Backends", "Health checks"]) {
+      await expect(page.getByRole("tab", { name: tab })).toBeVisible();
+    }
+  });
+
+  test("/ui/iam presents the allow policy and roles tabs", async ({ page }) => {
+    await page.goto("/ui/iam");
+    await expect(page.getByRole("heading", { name: "IAM" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Permissions" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Roles" })).toBeVisible();
+  });
+
+  test("reaches every implemented product from the catalog drawer", async ({ page }) => {
+    for (const product of DRAWER_PRODUCTS) {
+      await page.goto("/ui/");
+      await page.getByRole("button", { name: "Main menu" }).click();
+      await page.getByTestId(`drawer-item-${product.id}`).click();
+      await expect(page).toHaveURL(new RegExp(`${product.href}$`));
+      await expect(page.getByRole("heading", { name: product.title, exact: true })).toBeVisible();
+      await expect(page.getByTestId("nav-drawer")).toHaveCount(0);
+    }
+  });
+
+  for (const detail of DRAWER_DETAIL_PAGES) {
+    test(`${detail} renders its detail shell on an unauthenticated read`, async ({ page }) => {
+      await page.goto(detail);
+      await expect(page.locator(".gc-detail-back a")).toBeVisible();
+      await expect(page.locator(".gc-message-error, .gc-loading").first()).toBeVisible();
+    });
+  }
+});
+
+// The create/delete dialogs this pass added get the same treatment as the
+// existing ones: they render before (and regardless of) any cloud read, so
+// their structure, validation, Escape handling and focus return are provable
+// here, and their contrast and axe cleanliness are asserted in both themes.
+const NEW_CREATE_DIALOGS = [
+  { path: "/ui/dns", openTestId: "dns-create-zone", dialogTestId: "dns-create-dialog", name: "Create a DNS zone", submitTestId: "dns-create-submit", fill: [["dns-create-name", "example-zone"], ["dns-create-dnsname", "example.com."]] },
+  { path: "/ui/sql", openTestId: "sql-create-instance", dialogTestId: "sql-create-dialog", name: "Create a Cloud SQL instance", submitTestId: "sql-create-submit", fill: [["sql-create-id", "example-instance"]] },
+  { path: "/ui/firestore", openTestId: "firestore-create", dialogTestId: "firestore-create-dialog", name: "Create a Firestore database", submitTestId: "firestore-create-submit", fill: [] },
+  { path: "/ui/spanner", openTestId: "spanner-create-instance", dialogTestId: "spanner-create-dialog", name: "Create a Spanner instance", submitTestId: "spanner-create-submit", fill: [["spanner-create-id", "example-instance"], ["spanner-create-name", "Example"]] },
+  { path: "/ui/bigtable", openTestId: "bigtable-create-instance", dialogTestId: "bigtable-create-dialog", name: "Create a Bigtable instance", submitTestId: "bigtable-create-submit", fill: [["bigtable-create-id", "example-instance"], ["bigtable-create-name", "Example"]] },
+  { path: "/ui/memorystore", openTestId: "memorystore-create-instance", dialogTestId: "memorystore-create-dialog", name: "Create a Redis instance", submitTestId: "memorystore-create-submit", fill: [["memorystore-create-id", "example-instance"]] },
+  { path: "/ui/bigquery", openTestId: "bigquery-create-dataset", dialogTestId: "bigquery-create-dialog", name: "Create dataset", submitTestId: "bigquery-create-submit", fill: [["bigquery-create-id", "example_dataset"]] },
+  { path: "/ui/pubsub", openTestId: "pubsub-create-topic", dialogTestId: "pubsub-create-topic-dialog", name: "Create a topic", submitTestId: "pubsub-create-topic-submit", fill: [["pubsub-create-topic-id", "example-topic"]] },
+  { path: "/ui/apis", openTestId: "apis-enable", dialogTestId: "apis-enable-dialog", name: "Enable an API", submitTestId: "apis-enable-submit", fill: [["apis-enable-name", "run.googleapis.com"]] },
+  { path: "/ui/kms", openTestId: "kms-create-ring", dialogTestId: "kms-create-ring-dialog", name: "Create key ring", submitTestId: "kms-create-ring-submit", fill: [["kms-create-ring-id", "example-ring"]] },
+  { path: "/ui/secrets", openTestId: "secrets-create", dialogTestId: "secrets-create-dialog", name: "Create secret", submitTestId: "secrets-create-submit", fill: [["secrets-create-id", "example-secret"]] },
+];
+
+const NEW_DETAIL_DIALOGS = [
+  { path: "/ui/compute/us-central1-a/example-vm", openTestId: "compute-instance-start", dialogTestId: "compute-start-dialog", name: "Start VM instance?" },
+  { path: "/ui/compute/us-central1-a/example-vm", openTestId: "compute-instance-stop", dialogTestId: "compute-stop-dialog", name: "Stop VM instance?" },
+  { path: "/ui/compute/us-central1-a/example-vm", openTestId: "compute-instance-delete", dialogTestId: "compute-delete-dialog", name: "Delete VM instance?" },
+  { path: "/ui/dns/example-zone", openTestId: "dns-zone-delete", dialogTestId: "dns-delete-dialog", name: "Delete DNS zone?" },
+  { path: "/ui/sql/example-instance", openTestId: "sql-instance-delete", dialogTestId: "sql-delete-dialog", name: "Delete instance?" },
+  { path: "/ui/sql/example-instance", openTestId: "sql-instance-create-db", dialogTestId: "sql-create-db-dialog", name: "Create a database" },
+  { path: "/ui/spanner/example-instance", openTestId: "spanner-instance-delete", dialogTestId: "spanner-delete-dialog", name: "Delete instance?" },
+  { path: "/ui/bigtable/example-instance", openTestId: "bigtable-instance-delete", dialogTestId: "bigtable-delete-dialog", name: "Delete instance?" },
+  { path: "/ui/bigquery/example_dataset", openTestId: "bigquery-dataset-delete", dialogTestId: "bigquery-delete-dialog", name: "Delete dataset?" },
+  { path: "/ui/pubsub/example-topic", openTestId: "pubsub-topic-delete", dialogTestId: "pubsub-delete-topic-dialog", name: "Delete topic?" },
+  { path: "/ui/pubsub/example-topic", openTestId: "pubsub-topic-create-sub", dialogTestId: "pubsub-create-sub-dialog", name: "Create a subscription" },
+  { path: "/ui/eventarc/example-trigger", openTestId: "eventarc-trigger-delete", dialogTestId: "eventarc-delete-dialog", name: "Delete trigger?" },
+  { path: "/ui/secrets/example-secret", openTestId: "secrets-detail-delete", dialogTestId: "secrets-delete-dialog", name: "Delete secret?" },
+  { path: "/ui/secrets/example-secret", openTestId: "secrets-detail-add-version", dialogTestId: "secrets-add-version-dialog", name: "Add new version" },
+];
+
+test.describe("New product write flows", () => {
+  for (const dialog of NEW_CREATE_DIALOGS) {
+    test(`${dialog.path} offers "${dialog.name}" with a submit that validates first`, async ({ page }) => {
+      await page.goto(dialog.path);
+      const trigger = page.getByTestId(dialog.openTestId);
+      await expect(trigger).toBeVisible();
+      await trigger.click();
+      const panel = page.getByTestId(dialog.dialogTestId);
+      await expect(panel).toBeVisible();
+      await expect(panel).toHaveAccessibleName(dialog.name);
+      if (dialog.fill.length > 0) {
+        await expect(panel.getByTestId(dialog.submitTestId)).toBeDisabled();
+        for (const [testId, value] of dialog.fill) {
+          await panel.getByTestId(testId).fill(value);
+        }
+      }
+      await expect(panel.getByTestId(dialog.submitTestId)).toBeEnabled();
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId(dialog.dialogTestId)).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    });
+  }
+
+  for (const dialog of NEW_DETAIL_DIALOGS) {
+    test(`${dialog.path} opens "${dialog.name}" and returns focus on Escape`, async ({ page }) => {
+      await page.goto(dialog.path);
+      const trigger = page.getByTestId(dialog.openTestId);
+      await expect(trigger).toBeVisible();
+      await trigger.click();
+      const panel = page.getByTestId(dialog.dialogTestId);
+      await expect(panel).toBeVisible();
+      await expect(panel).toHaveAccessibleName(dialog.name);
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId(dialog.dialogTestId)).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    });
+  }
+});
+
+test.describe("New product surfaces contrast and accessibility", () => {
+  test("every new product page clears WCAG AA in both themes", async ({ page }) => {
+    for (const product of DRAWER_PRODUCTS) {
+      await page.goto(product.href);
+      const results = await page.evaluate(sampleContrast, [
+        ".gc-page-header h1",
+        ".gc-page-description",
+        ".gc-refresh",
+        ".gc-filter-chip",
+        ".gc-table th",
+        ".gc-detail-heading",
+        ".gc-tab",
+        ".gc-tab-active",
+      ]);
+      assertAA(results);
+    }
+  });
+
+  test("every new dialog clears WCAG AA in both themes", async ({ page }) => {
+    for (const dialog of [...NEW_CREATE_DIALOGS, ...NEW_DETAIL_DIALOGS]) {
+      await page.goto(dialog.path);
+      await page.getByTestId(dialog.openTestId).click();
+      await expect(page.getByTestId(dialog.dialogTestId)).toBeVisible();
+      const results = await page.evaluate(sampleContrast, [
+        ".gc-dialog-title",
+        ".gc-dialog p",
+        ".gc-field",
+        ".gc-field-hint",
+        ".gc-button-text",
+        ".gc-button-primary",
+      ]);
+      assertAA(results);
+    }
+  });
+
+  for (const theme of ["light", "dark"] as const) {
+    test(`every new dialog has no detectable axe violations (${theme})`, async ({ page }) => {
+      for (const dialog of [...NEW_CREATE_DIALOGS, ...NEW_DETAIL_DIALOGS]) {
+        await page.goto(dialog.path);
+        if (theme === "dark") {
+          await page.evaluate(() => document.documentElement.classList.add("dark"));
+        }
+        await page.getByTestId(dialog.openTestId).click();
+        await expect(page.getByTestId(dialog.dialogTestId)).toBeVisible();
+        const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+        expect(results.violations, `${dialog.path} (${theme}): ${JSON.stringify(results.violations, null, 2)}`).toEqual([]);
+      }
+    });
   }
 });

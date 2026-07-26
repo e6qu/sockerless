@@ -612,3 +612,62 @@ func TestCompute_ListNetworks_Pagination(t *testing.T) {
 		assert.True(t, seen[n], "network %s should appear via pagination", n)
 	}
 }
+
+// TestCompute_ListSubnetworks exercises compute.subnetworks.list — the
+// regional list method, distinct from subnetworks.aggregatedList:
+//
+//	GET /compute/v1/projects/{project}/regions/{region}/subnetworks
+//
+// It answers a SubnetworkList (`kind` plus `items`) rather than the
+// scope-keyed map the aggregated form returns, and it is the read behind
+// `gcloud compute networks subnets list --region` and the console's VPC
+// network detail page.
+func TestCompute_ListSubnetworks(t *testing.T) {
+	requireNetworkHost(t)
+	svc := computeService(t)
+	const project = "test-project"
+	const region = "us-central1"
+
+	network := &compute.Network{Name: "subnet-list-net", AutoCreateSubnetworks: false}
+	_, err := svc.Networks.Insert(project, network).Context(ctx).Do()
+	require.NoError(t, err)
+
+	subnet := &compute.Subnetwork{
+		Name:        "subnet-list-a",
+		IpCidrRange: "10.61.0.0/24",
+		Network:     "projects/test-project/global/networks/subnet-list-net",
+		Region:      region,
+	}
+	_, err = svc.Subnetworks.Insert(project, region, subnet).Context(ctx).Do()
+	require.NoError(t, err)
+
+	resp, err := svc.Subnetworks.List(project, region).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "compute#subnetworkList", resp.Kind)
+
+	var found *compute.Subnetwork
+	for _, item := range resp.Items {
+		if item.Name == subnet.Name {
+			found = item
+		}
+	}
+	require.NotNil(t, found, "subnetworks.list did not return the inserted subnet")
+	assert.Equal(t, subnet.IpCidrRange, found.IpCidrRange)
+	assert.Contains(t, found.Network, "subnet-list-net")
+
+}
+
+// TestCompute_ListSubnetworks_EmptyRegion proves the same regional list route
+//
+//	GET /compute/v1/projects/{project}/regions/{region}/subnetworks
+//
+// answers a well-formed, empty SubnetworkList for a region that holds no
+// subnets rather than a 404. The read touches no real-execution host
+// capability, so unlike the round trip above it runs on every host.
+func TestCompute_ListSubnetworks_EmptyRegion(t *testing.T) {
+	svc := computeService(t)
+	resp, err := svc.Subnetworks.List("test-project", "europe-west4").Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "compute#subnetworkList", resp.Kind)
+	assert.Empty(t, resp.Items)
+}

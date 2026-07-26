@@ -20,6 +20,10 @@
   --gc-header-bg: #ffffff;
   --gc-header-fg: #1f1f1f;           /* 15.6:1 on the header */
   --gc-header-border: #c4c7c5;
+  /* The global search field's own fill. It must be a token, not a literal: the
+   * field's text follows --gc-fg, so a fixed light fill leaves near-white text
+   * on a pale background in dark mode. */
+  --gc-header-search-bg: #eef3fb;    /* 14.8:1 against --gc-fg */
 
   --gc-layout-bg: #f0f5fe;           /* the app frame's blue-tinted background */
   --gc-surface: #ffffff;             /* the working area is white */
@@ -58,6 +62,7 @@
   --gc-header-bg: #202124;
   --gc-header-fg: #e8eaed;           /* 13.4:1 on the dark header */
   --gc-header-border: #3c4043;
+  --gc-header-search-bg: #303134;    /* 10.4:1 against --gc-fg */
 
   --gc-layout-bg: #202124;
   --gc-surface: #292a2d;
