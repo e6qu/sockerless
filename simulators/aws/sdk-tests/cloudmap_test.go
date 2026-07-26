@@ -16,16 +16,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// cmClient is a stock Cloud Map client pointed at the simulator's
+// servicediscovery endpoint coordinate. Nothing about the client is
+// reconfigured: DiscoverInstances and DiscoverInstancesRevision carry a modeled
+// `data-` endpoint host prefix, so the SDK sends and signs them against
+// `data-servicediscovery.localhost` exactly as it sends them to
+// `data-servicediscovery.us-east-1.amazonaws.com` against real AWS.
 func cmClient() *servicediscovery.Client {
-	cfg := sdkConfig()
-	// Use the legacy EndpointResolver with HostnameImmutable=true to prevent
-	// the SDK from prepending "data-" to the hostname for DiscoverInstances.
-	return servicediscovery.NewFromConfig(cfg, func(o *servicediscovery.Options) {
-		o.BaseEndpoint = aws.String(baseURL)
-		//nolint:staticcheck // EndpointResolver is deprecated but needed to make hostname immutable
-		o.EndpointResolver = servicediscovery.EndpointResolverFromURL(baseURL, func(e *aws.Endpoint) {
-			e.HostnameImmutable = true
-		})
+	return servicediscovery.NewFromConfig(sdkConfig(), func(o *servicediscovery.Options) {
+		o.BaseEndpoint = aws.String(simEndpoint("servicediscovery"))
 	})
 }
 
@@ -246,6 +245,83 @@ func TestCloudMap_RegisterAndDiscoverInstances(t *testing.T) {
 	})
 	_, _ = client.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: aws.String(svcID)})
 	_, _ = client.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{Id: aws.String(nsID)})
+}
+
+// TestCloudMap_DataPlaneUsesModeledHostPrefix proves the two Cloud Map
+// data-plane operations reach the simulator over the `data-` prefixed host the
+// servicediscovery model puts on them, and that the control plane keeps the
+// bare service host. The captured Authorization header shows the SigV4
+// signature covers that host, and the simulator verifies the signature before
+// answering — so a 200 here is only reachable if client and simulator agree on
+// `data-servicediscovery.<endpoint>`, exactly as they would on
+// `data-servicediscovery.us-east-1.amazonaws.com`.
+func TestCloudMap_DataPlaneUsesModeledHostPrefix(t *testing.T) {
+	client := cmClient()
+
+	createOut, err := client.CreateHttpNamespace(ctx, &servicediscovery.CreateHttpNamespaceInput{
+		Name: aws.String("host-prefix-ns"),
+	})
+	require.NoError(t, err)
+	nsID := cmNamespaceIDFromOp(t, client, createOut.OperationId)
+	t.Cleanup(func() {
+		_, _ = client.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{Id: aws.String(nsID)})
+	})
+
+	svcOut, err := client.CreateService(ctx, &servicediscovery.CreateServiceInput{
+		Name:        aws.String("host-prefix-svc"),
+		NamespaceId: aws.String(nsID),
+	})
+	require.NoError(t, err)
+	svcID := aws.ToString(svcOut.Service.Id)
+	t.Cleanup(func() {
+		_, _ = client.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: aws.String(svcID)})
+	})
+
+	_, err = client.RegisterInstance(ctx, &servicediscovery.RegisterInstanceInput{
+		ServiceId:  aws.String(svcID),
+		InstanceId: aws.String("host-prefix-inst"),
+		Attributes: map[string]string{"AWS_INSTANCE_IPV4": "10.9.0.1"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = client.DeregisterInstance(ctx, &servicediscovery.DeregisterInstanceInput{
+			ServiceId: aws.String(svcID), InstanceId: aws.String("host-prefix-inst"),
+		})
+	})
+
+	dataHost := fmt.Sprintf("data-servicediscovery.localhost:%d", simPort)
+	capture := func(rec *capturedRequest) func(*servicediscovery.Options) {
+		return func(o *servicediscovery.Options) {
+			o.APIOptions = append(o.APIOptions, captureSignedRequest(rec))
+		}
+	}
+
+	var discovered capturedRequest
+	discoverOut, err := client.DiscoverInstances(ctx, &servicediscovery.DiscoverInstancesInput{
+		NamespaceName: aws.String("host-prefix-ns"),
+		ServiceName:   aws.String("host-prefix-svc"),
+	}, capture(&discovered))
+	require.NoError(t, err)
+	require.Len(t, discoverOut.Instances, 1)
+	assert.Equal(t, dataHost, discovered.host, "DiscoverInstances must address the modeled data- host")
+	assert.Contains(t, discovered.signedHeaders(), "host", "the SigV4 signature must cover the data- host")
+	assert.Contains(t, discovered.authorization, "/us-east-1/servicediscovery/aws4_request")
+
+	var revised capturedRequest
+	revOut, err := client.DiscoverInstancesRevision(ctx, &servicediscovery.DiscoverInstancesRevisionInput{
+		NamespaceName: aws.String("host-prefix-ns"),
+		ServiceName:   aws.String("host-prefix-svc"),
+	}, capture(&revised))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), aws.ToInt64(revOut.InstancesRevision))
+	assert.Equal(t, dataHost, revised.host, "DiscoverInstancesRevision must address the modeled data- host")
+	assert.Contains(t, revised.signedHeaders(), "host")
+
+	// A control-plane operation carries no host prefix.
+	var controlPlane capturedRequest
+	_, err = client.GetService(ctx, &servicediscovery.GetServiceInput{Id: aws.String(svcID)}, capture(&controlPlane))
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("servicediscovery.localhost:%d", simPort), controlPlane.host)
 }
 
 // TestECS_CrossTaskDNS exercises cross-task DNS: Cloud Map registrations for

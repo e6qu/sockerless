@@ -2,25 +2,21 @@ package aws_cli_test
 
 import (
 	"fmt"
-	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// cmDataEndpoint returns an endpoint URL whose host stays in the `*.localhost`
-// family after botocore prepends the `data-` host prefix that DiscoverInstances
-// and DiscoverInstancesRevision carry, so the request still reaches the
-// loopback sim. On Linux CI `data-servicediscovery.localhost` resolves to
-// 127.0.0.1; on platforms where it does not resolve the caller skips.
+// cmDataEndpoint returns the simulator's servicediscovery endpoint coordinate.
+// It has the same shape as the real endpoint a CLI resolves
+// (`servicediscovery.us-east-1.amazonaws.com`), so botocore prepends the `data-`
+// host prefix that DiscoverInstances and DiscoverInstancesRevision carry and
+// sends the request to `data-servicediscovery.localhost`. Callers pair it with
+// awsCLIHostPrefixed, which is what makes that name reach the loopback sim.
 func cmDataEndpoint(t *testing.T) string {
 	t.Helper()
-	port := portFromBaseURL(t)
-	if _, err := net.LookupHost("data-servicediscovery.localhost"); err != nil {
-		t.Skipf("data-servicediscovery.localhost does not resolve on this platform: %v", err)
-	}
-	return fmt.Sprintf("http://servicediscovery.localhost:%s", port)
+	return fmt.Sprintf("http://servicediscovery.localhost:%s", portFromBaseURL(t))
 }
 
 // cmCLIHTTPNamespace creates an HTTP namespace via the CLI and returns its ID.
@@ -275,7 +271,7 @@ func TestCloudMapDiscoverInstancesCLI(t *testing.T) {
 		})
 	}
 
-	out := runCLI(t, awsCLI("servicediscovery", "discover-instances",
+	out := runCLI(t, awsCLIHostPrefixed("servicediscovery", "discover-instances",
 		"--endpoint-url", endpoint,
 		"--namespace-name", "cli-discover-ns",
 		"--service-name", "cli-discover-svc",
@@ -301,7 +297,7 @@ func TestCloudMapDiscoverInstancesCLI(t *testing.T) {
 	}
 
 	// QueryParameters narrow discovery to the matching attribute.
-	out = runCLI(t, awsCLI("servicediscovery", "discover-instances",
+	out = runCLI(t, awsCLIHostPrefixed("servicediscovery", "discover-instances",
 		"--endpoint-url", endpoint,
 		"--namespace-name", "cli-discover-ns",
 		"--service-name", "cli-discover-svc",
@@ -311,7 +307,7 @@ func TestCloudMapDiscoverInstancesCLI(t *testing.T) {
 	require.Len(t, discovered.Instances, 1)
 	assert.Equal(t, "cli-disc-1", discovered.Instances[0].InstanceId)
 
-	out = runCLI(t, awsCLI("servicediscovery", "discover-instances-revision",
+	out = runCLI(t, awsCLIHostPrefixed("servicediscovery", "discover-instances-revision",
 		"--endpoint-url", endpoint,
 		"--namespace-name", "cli-discover-ns",
 		"--service-name", "cli-discover-svc", "--output", "json"))

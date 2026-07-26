@@ -269,6 +269,57 @@ resource "google_cloud_run_v2_service" "tf_crv2_svc" {
         name  = "TF_TEST"
         value = "true"
       }
+
+      # Environment variable sourced from Secret Manager rather than a literal
+      # (Container.env[].valueSource.secretKeyRef on the v2 wire).
+      env {
+        name = "TF_TEST_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.tf_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      startup_probe {
+        initial_delay_seconds = 3
+        timeout_seconds       = 2
+        period_seconds        = 10
+        failure_threshold     = 4
+
+        tcp_socket {
+          port = 8080
+        }
+      }
+
+      liveness_probe {
+        initial_delay_seconds = 5
+        timeout_seconds       = 1
+        period_seconds        = 15
+        failure_threshold     = 2
+
+        http_get {
+          path = "/healthz"
+          port = 8080
+
+          http_headers {
+            name  = "X-Probe"
+            value = "liveness"
+          }
+        }
+      }
+
+      readiness_probe {
+        timeout_seconds   = 1
+        period_seconds    = 5
+        failure_threshold = 3
+
+        grpc {
+          port    = 8080
+          service = "health.v1.Health"
+        }
+      }
     }
 
     scaling {
@@ -290,8 +341,13 @@ resource "google_cloud_run_v2_worker_pool" "tf_crv2_worker_pool" {
 
   labels = { managed_by = "terraform" }
 
+  # Automatic scaling: scaling_mode/min_instance_count/max_instance_count are
+  # members the pinned Cloud Run Discovery revision does not publish but the
+  # provider sends and reads back (see specs/SIM_SURFACE_TABLES/gcp-cloudrun.md).
   scaling {
-    manual_instance_count = 2
+    scaling_mode       = "AUTOMATIC"
+    min_instance_count = 1
+    max_instance_count = 5
   }
 
   binary_authorization {
@@ -312,6 +368,45 @@ resource "google_cloud_run_v2_worker_pool" "tf_crv2_worker_pool" {
       env {
         name  = "TF_TEST"
         value = "true"
+      }
+
+      env {
+        name = "TF_TEST_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.tf_secret.secret_id
+            version = "1"
+          }
+        }
+      }
+
+      startup_probe {
+        initial_delay_seconds = 2
+        timeout_seconds       = 3
+        period_seconds        = 12
+        failure_threshold     = 5
+
+        http_get {
+          path = "/startup"
+          port = 9090
+
+          http_headers {
+            name  = "X-Probe"
+            value = "startup"
+          }
+        }
+      }
+
+      liveness_probe {
+        initial_delay_seconds = 4
+        timeout_seconds       = 2
+        period_seconds        = 20
+        failure_threshold     = 6
+
+        grpc {
+          port    = 9090
+          service = "worker.v1.Health"
+        }
       }
 
       resources {
@@ -366,6 +461,27 @@ resource "google_cloud_run_v2_job" "tf_crv2_job" {
     template {
       containers {
         image = "us-central1-docker.pkg.dev/test-project/tf-ar-docker/job:latest"
+
+        env {
+          name = "TF_TEST_SECRET"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.tf_secret.secret_id
+              version = "latest"
+            }
+          }
+        }
+
+        startup_probe {
+          initial_delay_seconds = 6
+          timeout_seconds       = 4
+          period_seconds        = 30
+          failure_threshold     = 2
+
+          tcp_socket {
+            port = 7070
+          }
+        }
       }
     }
   }
@@ -832,6 +948,54 @@ output "cloud_run_v2_worker_pool_latest_ready_revision" {
 
 output "cloud_run_v2_worker_pool_iam_member_id" {
   value = google_cloud_run_v2_worker_pool_iam_member.tf_crv2_worker_pool_invoker.id
+}
+
+# Automatic-scaling members the provider sends on the v2 wire; a simulator that
+# drops them re-plans the worker pool on every run.
+output "cloud_run_v2_worker_pool_scaling_mode" {
+  value = google_cloud_run_v2_worker_pool.tf_crv2_worker_pool.scaling[0].scaling_mode
+}
+
+output "cloud_run_v2_worker_pool_min_instance_count" {
+  value = google_cloud_run_v2_worker_pool.tf_crv2_worker_pool.scaling[0].min_instance_count
+}
+
+output "cloud_run_v2_worker_pool_max_instance_count" {
+  value = google_cloud_run_v2_worker_pool.tf_crv2_worker_pool.scaling[0].max_instance_count
+}
+
+# Container probes and secret-sourced environment variables, read back from
+# state after apply: each must be the value the configuration set.
+output "cloud_run_v2_service_startup_probe" {
+  value = google_cloud_run_v2_service.tf_crv2_svc.template[0].containers[0].startup_probe[0]
+}
+
+output "cloud_run_v2_service_liveness_probe" {
+  value = google_cloud_run_v2_service.tf_crv2_svc.template[0].containers[0].liveness_probe[0]
+}
+
+output "cloud_run_v2_service_readiness_probe" {
+  value = google_cloud_run_v2_service.tf_crv2_svc.template[0].containers[0].readiness_probe[0]
+}
+
+output "cloud_run_v2_service_secret_env" {
+  value = one([for e in google_cloud_run_v2_service.tf_crv2_svc.template[0].containers[0].env : e if e.name == "TF_TEST_SECRET"])
+}
+
+output "cloud_run_v2_job_startup_probe" {
+  value = google_cloud_run_v2_job.tf_crv2_job.template[0].template[0].containers[0].startup_probe[0]
+}
+
+output "cloud_run_v2_job_secret_env" {
+  value = one([for e in google_cloud_run_v2_job.tf_crv2_job.template[0].template[0].containers[0].env : e if e.name == "TF_TEST_SECRET"])
+}
+
+output "cloud_run_v2_worker_pool_liveness_probe" {
+  value = google_cloud_run_v2_worker_pool.tf_crv2_worker_pool.template[0].containers[0].liveness_probe[0]
+}
+
+output "cloud_run_v2_worker_pool_secret_env" {
+  value = one([for e in google_cloud_run_v2_worker_pool.tf_crv2_worker_pool.template[0].containers[0].env : e if e.name == "TF_TEST_SECRET"])
 }
 
 output "cloudfunctions2_function_id" {

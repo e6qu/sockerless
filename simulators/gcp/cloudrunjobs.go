@@ -63,30 +63,107 @@ type TaskTemplate struct {
 // Container mirrors google.cloud.run.v2.Container — one container of a
 // revision, execution or instance.
 type Container struct {
-	Name         string                `json:"name,omitempty"`
-	Image        string                `json:"image"`
-	Command      []string              `json:"command,omitempty"`
-	Args         []string              `json:"args,omitempty"`
-	Env          []EnvVar              `json:"env,omitempty"`
-	Resources    *ResourceRequirements `json:"resources,omitempty"`
-	Ports        []ContainerPort       `json:"ports,omitempty"`
-	VolumeMounts []VolumeMount         `json:"volumeMounts,omitempty"`
-	WorkingDir   string                `json:"workingDir,omitempty"`
-	DependsOn    []string              `json:"dependsOn,omitempty"`
-	BaseImageURI string                `json:"baseImageUri,omitempty"`
+	Name           string                `json:"name,omitempty"`
+	Image          string                `json:"image"`
+	Command        []string              `json:"command,omitempty"`
+	Args           []string              `json:"args,omitempty"`
+	Env            []EnvVar              `json:"env,omitempty"`
+	Resources      *ResourceRequirements `json:"resources,omitempty"`
+	Ports          []ContainerPort       `json:"ports,omitempty"`
+	VolumeMounts   []VolumeMount         `json:"volumeMounts,omitempty"`
+	WorkingDir     string                `json:"workingDir,omitempty"`
+	LivenessProbe  *Probe                `json:"livenessProbe,omitempty"`
+	StartupProbe   *Probe                `json:"startupProbe,omitempty"`
+	ReadinessProbe *Probe                `json:"readinessProbe,omitempty"`
+	DependsOn      []string              `json:"dependsOn,omitempty"`
+	BaseImageURI   string                `json:"baseImageUri,omitempty"`
 }
 
-// EnvVar represents an environment variable.
-type EnvVar struct {
+// Probe mirrors google.cloud.run.v2.Probe — a health check performed against a
+// container to decide whether it is alive or ready to receive traffic. Exactly
+// one of HTTPGet, TCPSocket or GRPC carries the action.
+type Probe struct {
+	InitialDelaySeconds int32            `json:"initialDelaySeconds,omitempty"`
+	TimeoutSeconds      int32            `json:"timeoutSeconds,omitempty"`
+	PeriodSeconds       int32            `json:"periodSeconds,omitempty"`
+	FailureThreshold    int32            `json:"failureThreshold,omitempty"`
+	HTTPGet             *HTTPGetAction   `json:"httpGet,omitempty"`
+	TCPSocket           *TCPSocketAction `json:"tcpSocket,omitempty"`
+	GRPC                *GRPCAction      `json:"grpc,omitempty"`
+}
+
+// HTTPGetAction mirrors google.cloud.run.v2.HTTPGetAction.
+type HTTPGetAction struct {
+	Path        string       `json:"path,omitempty"`
+	HTTPHeaders []HTTPHeader `json:"httpHeaders,omitempty"`
+	Port        int32        `json:"port,omitempty"`
+}
+
+// HTTPHeader mirrors google.cloud.run.v2.HTTPHeader — one custom header sent
+// with an HTTP probe.
+type HTTPHeader struct {
 	Name  string `json:"name"`
-	Value string `json:"value"`
+	Value string `json:"value,omitempty"`
+}
+
+// TCPSocketAction mirrors google.cloud.run.v2.TCPSocketAction.
+type TCPSocketAction struct {
+	Port int32 `json:"port,omitempty"`
+}
+
+// GRPCAction mirrors google.cloud.run.v2.GRPCAction.
+type GRPCAction struct {
+	Port    int32  `json:"port,omitempty"`
+	Service string `json:"service,omitempty"`
+}
+
+// EnvVar represents an environment variable. Either a literal Value or a
+// ValueSource is set; the API models them as alternatives on the same member.
+type EnvVar struct {
+	Name        string        `json:"name"`
+	Value       string        `json:"value"`
+	ValueSource *EnvVarSource `json:"valueSource,omitempty"`
+}
+
+// EnvVarSource mirrors google.cloud.run.v2.EnvVarSource — where an environment
+// variable's value comes from when it is not a literal.
+type EnvVarSource struct {
+	SecretKeyRef *SecretKeySelector `json:"secretKeyRef,omitempty"`
+}
+
+// SecretKeySelector mirrors google.cloud.run.v2.SecretKeySelector — a Cloud
+// Secret Manager secret and the version to read.
+type SecretKeySelector struct {
+	Secret  string `json:"secret"`
+	Version string `json:"version,omitempty"`
+}
+
+// MarshalJSON writes the proto-JSON form of google.cloud.run.v2.EnvVar's
+// `values` oneof: only the member that is set. An environment variable sourced
+// from Secret Manager carries `valueSource` and no `value`; a literal one
+// carries `value` — including the empty string, which is a literal a client can
+// set explicitly and which the oneof therefore still reports.
+func (e EnvVar) MarshalJSON() ([]byte, error) {
+	wire := struct {
+		Name        string        `json:"name"`
+		Value       *string       `json:"value,omitempty"`
+		ValueSource *EnvVarSource `json:"valueSource,omitempty"`
+	}{Name: e.Name}
+	if e.ValueSource != nil {
+		wire.ValueSource = e.ValueSource
+	} else {
+		value := e.Value
+		wire.Value = &value
+	}
+	return json.Marshal(wire)
 }
 
 func (e *EnvVar) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Name   string `json:"name"`
-		Value  string `json:"value"`
-		Values *struct {
+		Name        string        `json:"name"`
+		Value       string        `json:"value"`
+		ValueSource *EnvVarSource `json:"valueSource"`
+		Values      *struct {
 			Value string `json:"value"`
 		} `json:"values"`
 	}
@@ -95,6 +172,7 @@ func (e *EnvVar) UnmarshalJSON(data []byte) error {
 	}
 	e.Name = raw.Name
 	e.Value = raw.Value
+	e.ValueSource = raw.ValueSource
 	if e.Value == "" && raw.Values != nil {
 		e.Value = raw.Values.Value
 	}

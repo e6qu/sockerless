@@ -245,6 +245,26 @@ func awsCLI(args ...string) *exec.Cmd {
 	return cmd
 }
 
+// awsCLIHostPrefixed is awsCLI for an operation that carries a modeled endpoint
+// host prefix — Cloud Map's `data-`, Step Functions' `sync-`. botocore builds
+// and signs the prefixed host from the endpoint URL, and the prefixed name has
+// to resolve to the simulator's loopback listener. `*.localhost` resolves to
+// 127.0.0.1 on Linux but not on macOS, and the CLI has no resolver hook, so the
+// loopback listener is reached through the proxy coordinate every HTTP client
+// honours. The request botocore emits is unchanged — same Host header, same
+// SigV4 signature over it — only where the bytes land differs, exactly as for
+// an operator whose AWS traffic egresses through a corporate proxy.
+func awsCLIHostPrefixed(args ...string) *exec.Cmd {
+	cmd := awsCLI(args...)
+	cmd.Env = append(cmd.Env,
+		"HTTP_PROXY="+baseURL,
+		"http_proxy="+baseURL,
+		"NO_PROXY=",
+		"no_proxy=",
+	)
+	return cmd
+}
+
 func runCLI(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
 	const perCmdTimeout = 60 * time.Second

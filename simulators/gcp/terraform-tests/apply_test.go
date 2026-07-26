@@ -112,6 +112,57 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"projects/test-project/locations/us-central1/workerPools/tf-crv2-worker-pool/roles/run.invoker/",
 		"Cloud Run v2 worker pool IAM member id must bind the role on the pool resource; got %s", crWorkerPoolIAMID)
 
+	// Worker-pool automatic scaling. scaling_mode / min_instance_count /
+	// max_instance_count are members the provider sends on the v2 wire that the
+	// pinned Discovery revision does not publish; a simulator that dropped them
+	// would re-plan the pool forever (the clean `plan -detailed-exitcode` above
+	// is the other half of that proof).
+	require.Equal(t, "AUTOMATIC", outputs.must(t, "cloud_run_v2_worker_pool_scaling_mode"))
+	require.Equal(t, float64(1), outputs.mustNumber(t, "cloud_run_v2_worker_pool_min_instance_count"))
+	require.Equal(t, float64(5), outputs.mustNumber(t, "cloud_run_v2_worker_pool_max_instance_count"))
+
+	// Container probes round-trip through create and read on all three
+	// resources that carry them, across all three handler kinds.
+	svcStartup := outputs.mustObject(t, "cloud_run_v2_service_startup_probe")
+	require.Equal(t, float64(3), svcStartup["initial_delay_seconds"])
+	require.Equal(t, float64(2), svcStartup["timeout_seconds"])
+	require.Equal(t, float64(10), svcStartup["period_seconds"])
+	require.Equal(t, float64(4), svcStartup["failure_threshold"])
+	require.Equal(t, float64(8080), mustBlock(t, svcStartup, "tcp_socket")["port"])
+
+	svcLiveness := outputs.mustObject(t, "cloud_run_v2_service_liveness_probe")
+	svcLivenessGet := mustBlock(t, svcLiveness, "http_get")
+	require.Equal(t, "/healthz", svcLivenessGet["path"])
+	require.Equal(t, float64(8080), svcLivenessGet["port"])
+	require.Equal(t, []any{map[string]any{"name": "X-Probe", "value": "liveness"}}, svcLivenessGet["http_headers"])
+
+	svcReadiness := outputs.mustObject(t, "cloud_run_v2_service_readiness_probe")
+	svcReadinessGRPC := mustBlock(t, svcReadiness, "grpc")
+	require.Equal(t, float64(8080), svcReadinessGRPC["port"])
+	require.Equal(t, "health.v1.Health", svcReadinessGRPC["service"])
+
+	jobStartup := outputs.mustObject(t, "cloud_run_v2_job_startup_probe")
+	require.Equal(t, float64(6), jobStartup["initial_delay_seconds"])
+	require.Equal(t, float64(7070), mustBlock(t, jobStartup, "tcp_socket")["port"])
+
+	wpLiveness := outputs.mustObject(t, "cloud_run_v2_worker_pool_liveness_probe")
+	require.Equal(t, float64(20), wpLiveness["period_seconds"])
+	require.Equal(t, "worker.v1.Health", mustBlock(t, wpLiveness, "grpc")["service"])
+
+	// Environment variables sourced from Secret Manager
+	// (Container.env[].valueSource.secretKeyRef) round-trip on every resource.
+	for output, wantVersion := range map[string]string{
+		"cloud_run_v2_service_secret_env":     "latest",
+		"cloud_run_v2_job_secret_env":         "latest",
+		"cloud_run_v2_worker_pool_secret_env": "1",
+	} {
+		env := outputs.mustObject(t, output)
+		require.Equal(t, "TF_TEST_SECRET", env["name"], "%s", output)
+		ref := mustBlock(t, mustBlock(t, env, "value_source"), "secret_key_ref")
+		require.Equal(t, "tf-test-secret", ref["secret"], "%s", output)
+		require.Equal(t, wantVersion, ref["version"], "%s", output)
+	}
+
 	gcfFunctionID := outputs.must(t, "cloudfunctions2_function_id")
 	require.Contains(t, gcfFunctionID, "projects/test-project/locations/us-central1/functions/tf-gcfv2-function",
 		"Cloud Functions v2 id must round-trip the full resource path; got %s", gcfFunctionID)
@@ -311,6 +362,41 @@ func (o tfOutputs) must(t *testing.T, key string) string {
 	require.True(t, ok, "output %q is not a string (got %T)", key, v.Value)
 	require.NotEmpty(t, s, "output %q is empty", key)
 	return s
+}
+
+// mustNumber reads a numeric output (terraform encodes every number as a JSON
+// float).
+func (o tfOutputs) mustNumber(t *testing.T, key string) float64 {
+	t.Helper()
+	v, ok := o[key]
+	require.True(t, ok, "output %q missing from terraform state", key)
+	n, ok := v.Value.(float64)
+	require.True(t, ok, "output %q is not a number (got %T)", key, v.Value)
+	return n
+}
+
+// mustObject reads an object-typed output — a nested configuration block such
+// as a container probe or an environment variable — as a decoded map.
+func (o tfOutputs) mustObject(t *testing.T, key string) map[string]any {
+	t.Helper()
+	v, ok := o[key]
+	require.True(t, ok, "output %q missing from terraform state", key)
+	m, ok := v.Value.(map[string]any)
+	require.True(t, ok, "output %q is not an object (got %T)", key, v.Value)
+	return m
+}
+
+// mustBlock reads the single element of a max_items=1 nested block that
+// terraform represents as a one-element list (probe handlers, value_source,
+// secret_key_ref).
+func mustBlock(t *testing.T, obj map[string]any, key string) map[string]any {
+	t.Helper()
+	list, ok := obj[key].([]any)
+	require.True(t, ok, "block %q is not a list (got %T)", key, obj[key])
+	require.Len(t, list, 1, "block %q must carry exactly one element", key)
+	m, ok := list[0].(map[string]any)
+	require.True(t, ok, "block %q element is not an object (got %T)", key, list[0])
+	return m
 }
 
 func readOutputs(t *testing.T) tfOutputs {

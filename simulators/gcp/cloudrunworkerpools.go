@@ -75,9 +75,23 @@ type NodeSelector struct {
 	Accelerator string `json:"accelerator,omitempty"`
 }
 
-// WorkerPoolScaling mirrors google.cloud.run.v2.WorkerPoolScaling.
+// WorkerPoolScaling mirrors google.cloud.run.v2.WorkerPoolScaling — how many
+// instances a worker pool runs, either pinned (MANUAL) or autoscaled between a
+// floor and a ceiling (AUTOMATIC).
+//
+// The pinned Cloud Run Discovery document publishes only manualInstanceCount:
+// Google has not yet released the automatic-scaling members into the public
+// Discovery/REST reference, even though the API serves them and the official
+// google Terraform provider sends and reads them back as scaling.scalingMode,
+// scaling.minInstanceCount and scaling.maxInstanceCount. Dropping them would
+// make every worker pool configured for automatic scaling drift on the next
+// plan, so they are modelled from the wire the official clients speak. See
+// specs/SIM_SURFACE_TABLES/gcp-cloudrun.md for the revision mismatch.
 type WorkerPoolScaling struct {
-	ManualInstanceCount int32 `json:"manualInstanceCount,omitempty"`
+	ScalingMode         enumString `json:"scalingMode,omitempty"`
+	MinInstanceCount    int32      `json:"minInstanceCount,omitempty"`
+	MaxInstanceCount    int32      `json:"maxInstanceCount,omitempty"`
+	ManualInstanceCount int32      `json:"manualInstanceCount,omitempty"`
 }
 
 // InstanceSplit mirrors google.cloud.run.v2.InstanceSplit (and the

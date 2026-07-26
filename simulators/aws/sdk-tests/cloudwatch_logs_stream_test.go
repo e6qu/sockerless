@@ -1,34 +1,25 @@
 package aws_sdk_test
 
 import (
-	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
-	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// cwLogsStreamClient builds a CloudWatch Logs client whose StartLiveTail /
-// GetLogObject calls reach the simulator's single host. Both ops carry the
-// smithy `@endpoint(hostPrefix: "stream-")` trait, so the SDK would otherwise
-// rewrite the host to `stream-<host>` — unreachable behind a custom endpoint.
-// Disabling endpoint host-prefix injection is the same option a real consumer
-// targeting a custom CloudWatch Logs endpoint (a VPC endpoint, LocalStack) uses.
+// cwLogsStreamClient is a stock CloudWatch Logs client pointed at the
+// simulator's logs endpoint coordinate. StartLiveTail and GetLogObject carry
+// the modeled `@endpoint(hostPrefix: "stream-")` trait, so the SDK sends and
+// signs them against `stream-logs.localhost` exactly as it sends them to
+// `stream-logs.us-east-1.amazonaws.com` against real AWS.
 func cwLogsStreamClient() *cloudwatchlogs.Client {
 	return cloudwatchlogs.NewFromConfig(sdkConfig(), func(o *cloudwatchlogs.Options) {
-		o.BaseEndpoint = aws.String(baseURL)
-		o.APIOptions = append(o.APIOptions, func(st *middleware.Stack) error {
-			return st.Initialize.Add(middleware.InitializeMiddlewareFunc("disableEndpointHostPrefix",
-				func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
-					return next.HandleInitialize(smithyhttp.DisableEndpointHostPrefix(ctx, true), in)
-				}), middleware.Before)
-		})
+		o.BaseEndpoint = aws.String(simEndpoint("logs"))
 	})
 }
 
@@ -81,10 +72,18 @@ func TestLogs_StartLiveTail(t *testing.T) {
 		"second live tail line",
 	})
 
+	// StartLiveTail carries the modeled `stream-` endpoint host prefix, so the
+	// request the SDK signs and sends addresses stream-logs.<endpoint> — the
+	// same host shape real AWS serves it on.
+	var sent capturedRequest
 	out, err := cw.StartLiveTail(ctx, &cloudwatchlogs.StartLiveTailInput{
 		LogGroupIdentifiers: []string{groupArn},
+	}, func(o *cloudwatchlogs.Options) {
+		o.APIOptions = append(o.APIOptions, captureSignedRequest(&sent))
 	})
 	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("stream-logs.localhost:%d", simPort), sent.host)
+	assert.Contains(t, sent.signedHeaders(), "host")
 
 	es := out.GetStream()
 	defer es.Close()

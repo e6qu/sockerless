@@ -1,34 +1,15 @@
 package aws_sdk_test
 
 import (
-	"context"
+	"fmt"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	sfntypes "github.com/aws/aws-sdk-go-v2/service/sfn/types"
-	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// disableHostPrefix turns off the SDK's `sync-` host-prefix injection on
-// StartSyncExecution so the request still targets the sim's BaseEndpoint
-// instead of an unresolvable `sync-127.0.0.1` host. The SDK's host-prefix
-// serializer skips its mutation when GetHostnameImmutable(ctx) is true, so an
-// Initialize middleware sets that flag before serialization runs.
-func disableHostPrefix(o *sfn.Options) {
-	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
-		return stack.Initialize.Add(
-			middleware.InitializeMiddlewareFunc("disableHostPrefix",
-				func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
-					return next.HandleInitialize(smithyhttp.SetHostnameImmutable(ctx, true), in)
-				}),
-			middleware.Before,
-		)
-	})
-}
 
 // TestSFN_Activities_SDK covers CreateActivity / DescribeActivity /
 // ListActivities / DeleteActivity and the GetActivityTask + SendTask*
@@ -158,7 +139,7 @@ func TestSFN_TestState_SDK(t *testing.T) {
 		Definition: aws.String(`{"Type":"Pass","Result":{"hello":"world"},"End":true}`),
 		Input:      aws.String(`{"x":1}`),
 		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
-	}, disableHostPrefix)
+	})
 	require.NoError(t, err)
 	assert.Equal(t, sfntypes.TestExecutionStatusSucceeded, out.Status)
 	assert.JSONEq(t, `{"hello":"world"}`, aws.ToString(out.Output))
@@ -180,14 +161,22 @@ func TestSFN_StartSyncExecution_SDK(t *testing.T) {
 		_, _ = c.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: sm.StateMachineArn})
 	})
 
+	// StartSyncExecution carries the modeled `sync-` endpoint host prefix, so
+	// the request the SDK signs and sends addresses sync-states.<endpoint> —
+	// the same host shape real AWS serves it on.
+	var sent capturedRequest
 	out, err := c.StartSyncExecution(ctx, &sfn.StartSyncExecutionInput{
 		StateMachineArn: sm.StateMachineArn,
 		Input:           aws.String(`{}`),
-	}, disableHostPrefix)
+	}, func(o *sfn.Options) {
+		o.APIOptions = append(o.APIOptions, captureSignedRequest(&sent))
+	})
 	require.NoError(t, err)
 	assert.Equal(t, sfntypes.SyncExecutionStatusSucceeded, out.Status)
 	assert.JSONEq(t, `{"ok":true}`, aws.ToString(out.Output))
 	require.NotEmpty(t, aws.ToString(out.ExecutionArn))
+	assert.Equal(t, fmt.Sprintf("sync-states.localhost:%d", simPort), sent.host)
+	assert.Contains(t, sent.signedHeaders(), "host")
 }
 
 // TestSFN_DescribeStateMachineForExecution_SDK + RedriveExecution.
