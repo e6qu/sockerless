@@ -214,8 +214,11 @@ func TestCloudMapInstanceHealthCLI(t *testing.T) {
 	nsID := cmCLINamespaceID(t, nsCreate.OperationId)
 	defer runCLIIgnore(awsCLI("servicediscovery", "delete-namespace", "--id", nsID))
 
+	// update-instance-custom-health-status only applies to a service whose
+	// health is caller-reported, so the service carries a custom health config.
 	out = runCLI(t, awsCLI("servicediscovery", "create-service",
-		"--name", "cli-inst-svc", "--namespace-id", nsID, "--output", "json"))
+		"--name", "cli-inst-svc", "--namespace-id", nsID,
+		"--health-check-custom-config", "FailureThreshold=1", "--output", "json"))
 	var svcCreate struct {
 		Service struct {
 			Id string `json:"Id"`

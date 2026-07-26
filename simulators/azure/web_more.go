@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -841,6 +842,13 @@ func registerWebBasicPubCreds(both, slot func(string, string, http.HandlerFunc))
 }
 
 // patchWebSite merges a PATCH body's tags/properties into the stored row.
+//
+// ARM PATCH is a merge, not a replace: a field the client omits keeps its
+// stored value. Presence is therefore decided by whether the JSON key is
+// present in the request body, not by whether the decoded Go value is
+// non-zero — the two disagree for every field whose zero value is meaningful
+// (`httpsOnly: false`, `enabled: false`), and a struct-only decode would let a
+// tags-only PATCH silently clear them.
 func patchWebSite(w http.ResponseWriter, r *http.Request, store sim.Store[Site]) {
 	id := webResourceID(r)
 	row, ok := store.Get(id)
@@ -848,24 +856,49 @@ func patchWebSite(w http.ResponseWriter, r *http.Request, store sim.Store[Site])
 		webMissing(w, r)
 		return
 	}
-	var req Site
-	if err := sim.ReadJSON(r, &req); err != nil {
+	var raw map[string]json.RawMessage
+	if err := sim.ReadJSON(r, &raw); err != nil {
 		sim.AzureError(w, "InvalidRequestContent", err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.Tags != nil {
-		row.Tags = req.Tags
+
+	props := map[string]json.RawMessage{}
+	if rawProps, present := raw["properties"]; present {
+		if err := json.Unmarshal(rawProps, &props); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
-	if req.Kind != "" {
-		row.Kind = req.Kind
+
+	// applyIfPresent decodes one key into dst only when the client sent it, so
+	// an absent key leaves the stored value untouched and a present key is
+	// applied even when its value is the type's zero.
+	bad := false
+	applyIfPresent := func(body map[string]json.RawMessage, key string, dst any) {
+		if bad {
+			return
+		}
+		v, present := body[key]
+		if !present {
+			return
+		}
+		if err := json.Unmarshal(v, dst); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", err.Error(), http.StatusBadRequest)
+			bad = true
+		}
 	}
-	if req.Properties.ServerFarmID != "" {
-		row.Properties.ServerFarmID = req.Properties.ServerFarmID
+
+	applyIfPresent(raw, "tags", &row.Tags)
+	applyIfPresent(raw, "kind", &row.Kind)
+	applyIfPresent(props, "serverFarmId", &row.Properties.ServerFarmID)
+	applyIfPresent(props, "siteConfig", &row.Properties.SiteConfig)
+	applyIfPresent(props, "httpsOnly", &row.Properties.HTTPSOnly)
+	applyIfPresent(props, "enabled", &row.Properties.Enabled)
+	applyIfPresent(props, "clientCertMode", &row.Properties.ClientCertMode)
+	if bad {
+		return
 	}
-	if req.Properties.SiteConfig != nil {
-		row.Properties.SiteConfig = req.Properties.SiteConfig
-	}
-	row.Properties.HTTPSOnly = req.Properties.HTTPSOnly
+
 	store.Put(id, row)
 	sim.WriteJSON(w, http.StatusOK, row)
 }

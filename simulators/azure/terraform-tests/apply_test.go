@@ -223,6 +223,11 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmCAJ, "/providers/Microsoft.App/jobs/tf-azrm-caj",
 		"azurerm Container App Job id must include canonical ARM path; got %s", azrmCAJ)
 
+	azrmCAEStorage := outputs.must(t, "azrm_container_app_env_storage_id")
+	require.Contains(t, azrmCAEStorage,
+		"/providers/Microsoft.App/managedEnvironments/tf-azrm-cae/storages/tfazrmcaestorage",
+		"azurerm Container App Environment storage id must include canonical ARM path; got %s", azrmCAEStorage)
+
 	azrmLogic := outputs.must(t, "azrm_logic_app_workflow_id")
 	require.Contains(t, azrmLogic, "/providers/Microsoft.Logic/workflows/tf-azrm-logic",
 		"azurerm Logic App workflow id must include canonical ARM path; got %s", azrmLogic)

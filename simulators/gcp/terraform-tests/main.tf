@@ -280,6 +280,83 @@ resource "google_cloud_run_v2_service" "tf_crv2_svc" {
   depends_on = [google_artifact_registry_repository.tf_ar_docker]
 }
 
+resource "google_cloud_run_v2_worker_pool" "tf_crv2_worker_pool" {
+  name                = "tf-crv2-worker-pool"
+  location            = "us-central1"
+  deletion_protection = false
+  description         = "terraform-managed Cloud Run worker pool"
+  launch_stage        = "GA"
+  custom_audiences    = ["https://worker.tf-test.example.com"]
+
+  labels = { managed_by = "terraform" }
+
+  scaling {
+    manual_instance_count = 2
+  }
+
+  binary_authorization {
+    use_default              = true
+    breakglass_justification = "simulator coverage"
+  }
+
+  template {
+    service_account = google_service_account.tf_sa.email
+
+    containers {
+      name        = "worker"
+      image       = "us-central1-docker.pkg.dev/test-project/tf-ar-docker/worker:latest"
+      command     = ["/worker"]
+      args        = ["--mode", "pull"]
+      working_dir = "/srv"
+
+      env {
+        name  = "TF_TEST"
+        value = "true"
+      }
+
+      resources {
+        limits = {
+          cpu    = "1000m"
+          memory = "512Mi"
+        }
+      }
+
+      volume_mounts {
+        name       = "scratch"
+        mount_path = "/scratch"
+      }
+    }
+
+    containers {
+      name       = "sidecar"
+      image      = "us-central1-docker.pkg.dev/test-project/tf-ar-docker/sidecar:latest"
+      depends_on = ["worker"]
+    }
+
+    volumes {
+      name = "scratch"
+      empty_dir {
+        medium     = "MEMORY"
+        size_limit = "128Mi"
+      }
+    }
+
+    vpc_access {
+      connector = google_vpc_access_connector.tf_connector.id
+      egress    = "ALL_TRAFFIC"
+    }
+  }
+
+  depends_on = [google_artifact_registry_repository.tf_ar_docker]
+}
+
+resource "google_cloud_run_v2_worker_pool_iam_member" "tf_crv2_worker_pool_invoker" {
+  location = google_cloud_run_v2_worker_pool.tf_crv2_worker_pool.location
+  name     = google_cloud_run_v2_worker_pool.tf_crv2_worker_pool.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.tf_sa.email}"
+}
+
 resource "google_cloud_run_v2_job" "tf_crv2_job" {
   name                = "tf-crv2-job"
   location            = "us-central1"
@@ -743,6 +820,18 @@ output "cloud_run_v2_service_uri" {
 
 output "cloud_run_v2_job_id" {
   value = google_cloud_run_v2_job.tf_crv2_job.id
+}
+
+output "cloud_run_v2_worker_pool_id" {
+  value = google_cloud_run_v2_worker_pool.tf_crv2_worker_pool.id
+}
+
+output "cloud_run_v2_worker_pool_latest_ready_revision" {
+  value = google_cloud_run_v2_worker_pool.tf_crv2_worker_pool.latest_ready_revision
+}
+
+output "cloud_run_v2_worker_pool_iam_member_id" {
+  value = google_cloud_run_v2_worker_pool_iam_member.tf_crv2_worker_pool_invoker.id
 }
 
 output "cloudfunctions2_function_id" {

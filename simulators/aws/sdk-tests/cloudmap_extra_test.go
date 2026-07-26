@@ -191,9 +191,12 @@ func TestCloudMap_InstanceHealthAndRevision(t *testing.T) {
 		_, _ = client.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{Id: aws.String(nsID)})
 	}()
 
+	// UpdateInstanceCustomHealthStatus only applies to a service whose health
+	// is caller-reported, so the service carries a HealthCheckCustomConfig.
 	svcOut, err := client.CreateService(ctx, &servicediscovery.CreateServiceInput{
-		Name:        aws.String("health-svc"),
-		NamespaceId: aws.String(nsID),
+		Name:                    aws.String("health-svc"),
+		NamespaceId:             aws.String(nsID),
+		HealthCheckCustomConfig: &sdtypes.HealthCheckCustomConfig{FailureThreshold: aws.Int32(1)},
 	})
 	require.NoError(t, err)
 	svcID := aws.ToString(svcOut.Service.Id)

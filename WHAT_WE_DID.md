@@ -4,6 +4,62 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — Closed the simulator test-contract gaps, uncovering 31 fidelity bugs
+
+`scripts/check-simulator-tests.sh` only enforces *newly added* `Register`/
+`HandleFunc` lines, so handlers written before the hook could carry no SDK, CLI,
+or Terraform coverage at all. Pointing the real clients at those never-exercised
+surfaces is what made this pass valuable: it surfaced 31 genuine fidelity bugs,
+several of which were breaking real code paths.
+
+- **AWS Cloud Map (`cloudmap.go`) — 17 bugs.** Tagging was entirely fake
+  (`TagResource`/`UntagResource` discarded input, `ListTagsForResource` always
+  returned empty), which broke the ECS backend's network-state recovery — it
+  finds its namespace by the `sockerless:network-id` tag. `ListNamespaces`
+  ignored `Filters`, so the same backend's `TYPE=DNS_PRIVATE` query matched
+  everything. `GetOperation` fabricated `SUCCESS` for any unknown operation id
+  (pure synthetic behaviour) and Register/DeregisterInstance returned operation
+  ids that were never stored — the two defects concealed each other. Also fixed:
+  a simulator-internal Docker network name leaking onto the Namespace wire
+  shape, missing pagination on five list operations, `DiscoverInstances`
+  ignoring custom health status, dropped `HealthCheckCustomConfig`/SOA TTL/
+  `CreatorRequestId`, missing uniqueness and validation errors, wrong
+  not-found error selection, and state left behind on delete. All 30 operations
+  in the servicediscovery model now have SDK coverage, 30 have CLI coverage, and
+  the Terraform stack gained tags, an instance resource, a public HTTP
+  namespace, and three data sources.
+- **Google Cloud Run (`cloudrunworkerpools.go`, `cloudruninstances.go`) — 13
+  bugs.** `instances.patch` was not implemented at all despite being in the
+  Discovery document. Nine dropped-field bugs (found by running a real
+  `terraform apply` → `plan -detailed-exitcode` cycle and watching it never
+  converge) restored `Volume.emptyDir`/`cloudSqlInstance`,
+  `SecretVolumeSource.items`, `Container.workingDir`/`dependsOn`/`baseImageUri`,
+  `ResourceRequirements.cpuIdle`/`startupCpuBoost`, `VolumeMount.subPath`,
+  `VpcAccess.networkInterfaces`, and several worker-pool/instance top-level
+  fields. IAM verbs on a nonexistent resource returned an empty policy instead
+  of `NOT_FOUND`. Most consequentially, the spec-conformance test allow-listed
+  the entire `/v2/` prefix as "Artifact Registry OCI data plane", silently
+  exempting every Cloud Run v2, Cloud Functions v2, and Logging v2 route from
+  Discovery conformance — narrowed to the five real OCI subtree mounts, with the
+  suite still green, so those routes are now genuinely checked.
+- **Azure — one real bug plus the BUG-2644 coverage.** `patchWebSite` set
+  `HTTPSOnly` unconditionally, so a tags-only PATCH silently cleared it; it is
+  now presence-aware (absent stays unchanged, explicit `false` still applies)
+  and honours the previously-ignored `enabled`/`clientCertMode`. The ACR-registry
+  and Container-Apps-job PATCH handlers — correct but untested — gained SDK and
+  CLI coverage, as did the Container Apps environment `/storages` sub-resource,
+  ten undriven Logic Apps clients, and the capital-`F` `serverFarms` routes.
+
+An audit heuristic that keyed on file names overstated the gap: several files it
+flagged as untested were already covered, and each agent verified the real state
+before working. Filed BUG-2645 (a Cloud Run v1 instances IAM alias blocked by a
+collapsed-port route collision with Memorystore Redis), BUG-2646 (worker-pool
+scaling fields newer than the pinned Discovery revision), BUG-2647 (Cloud Run
+container probes and `EnvVar.valueSource` unmodelled), and BUG-2648 (a Cloud Map
+SDK-test client pinning `HostnameImmutable` to dodge the modeled `data-` host
+prefix).
+
+
 ## 2026-07-26 — Simulator consoles reach full functional parity (one pass)
 
 A single comprehensive pass brought all three consoles to full functional
