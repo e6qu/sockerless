@@ -369,10 +369,10 @@ test.describe("Resource creation", () => {
 // only succeed once the shell's Essentials data loads are covered by the
 // relying-party suite (ui/e2e/shauth-rps.mjs).
 const DETAIL_BLADES = [
-  { path: "/ui/container-apps/structural-test-job", parent: "Container Apps", testid: "ca-job-error", command: "Run now" },
-  { path: "/ui/functions/structural-test-site", parent: "Function Apps", testid: "fn-site-error", command: "Refresh" },
-  { path: "/ui/acr/structuraltestregistry", parent: "Container registries", testid: "acr-registry-error", command: "Refresh" },
-  { path: "/ui/storage/structuraltestaccount", parent: "Storage accounts", testid: "storage-account-error", command: "Refresh" },
+  { path: "/ui/container-apps/structural-test-job", parent: "Container Apps", testid: "ca-job-error", command: "Run now", deleteTestId: "ca-job-delete" },
+  { path: "/ui/functions/structural-test-site", parent: "Function Apps", testid: "fn-site-error", command: "Refresh", deleteTestId: "fn-site-delete" },
+  { path: "/ui/acr/structuraltestregistry", parent: "Container registries", testid: "acr-registry-error", command: "Refresh", deleteTestId: "acr-registry-delete" },
+  { path: "/ui/storage/structuraltestaccount", parent: "Storage accounts", testid: "storage-account-error", command: "Refresh", deleteTestId: "storage-account-delete" },
 ];
 
 test.describe("Resource detail blades", () => {
@@ -384,6 +384,49 @@ test.describe("Resource detail blades", () => {
       await expect(page.getByRole("toolbar", { name: "Commands" }).getByRole("button", { name: blade.command })).toBeVisible();
       await expect(page.getByTestId(blade.testid)).toBeVisible();
       await expect(page.getByTestId(blade.testid)).toContainText("HTTP 401");
+    });
+  }
+});
+
+// Every resource-DELETE flow this pass added (list-page multi-select Delete,
+// detail-blade Delete) is real: a real Fluent confirm `Dialog`, a real ARM
+// DELETE on confirm. Opening that dialog needs a selected row (list) or a
+// successfully loaded resource (detail) — both require an authenticated
+// cloud read, which this lightweight suite (no identity provider) never
+// gets. So, matching the AWS console's identical constraint (see
+// simulator-aws.spec.ts's "Resource header actions" / "Resource detail
+// pages"), this suite pins only what's reachable without live data: the
+// Delete command renders, and disabled, on every list and detail page. The
+// dialog itself — structure, confirm→DELETE, error surfacing, and
+// Escape-to-close — is proven in the mocked-fetch vitest suite
+// (ResourceDeleteFlows.test.tsx); the authenticated
+// select→confirm→delete→gone round trip belongs in the relying-party suite
+// (ui/e2e/shauth-rps.mjs).
+test.describe("Resource delete actions", () => {
+  const LIST_DELETES = [
+    { path: "/ui/acr", testid: "acr-delete" },
+    { path: "/ui/storage", testid: "storage-delete" },
+    { path: "/ui/container-apps", testid: "ca-delete" },
+    { path: "/ui/functions", testid: "fn-delete" },
+  ];
+
+  for (const { path, testid } of LIST_DELETES) {
+    test(`${path} offers a real, initially-disabled Delete command`, async ({ page }) => {
+      await page.goto(path);
+      const command = page.getByTestId(testid);
+      await expect(command).toBeVisible();
+      await expect(command).toHaveText("Delete");
+      await expect(command).toBeDisabled();
+    });
+  }
+
+  for (const blade of DETAIL_BLADES) {
+    test(`${blade.path} offers a real, initially-disabled Delete command`, async ({ page }) => {
+      await page.goto(blade.path);
+      const command = page.getByTestId(blade.deleteTestId);
+      await expect(command).toBeVisible();
+      await expect(command).toHaveText("Delete");
+      await expect(command).toBeDisabled();
     });
   }
 });

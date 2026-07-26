@@ -1,10 +1,18 @@
-import { useParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useNavigate, useParams } from "react-router";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Text } from "@fluentui/react-components";
-import { AzureCommandBar, AzureEssentials, AzureStatus, AzureErrorMessage, AzureEmptyState } from "../portal/AzurePortal.js";
+import {
+  AzureCommandBar,
+  AzureConfirmDialog,
+  AzureEssentials,
+  AzureStatus,
+  AzureErrorMessage,
+  AzureEmptyState,
+} from "../portal/AzurePortal.js";
 import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
-import { fetchFunctionApp, fetchFunctionAppSettings, fetchFunctions } from "../api.js";
+import { deleteFunctionApp, fetchFunctionApp, fetchFunctionAppSettings, fetchFunctions } from "../api.js";
 
 // The Function App blade: the real Microsoft.Web/sites Essentials, the
 // site's application settings (read through the real `/list` action, since
@@ -12,9 +20,15 @@ import { fetchFunctionApp, fetchFunctionAppSettings, fetchFunctions } from "../a
 // deployed functions — all real Azure Resource Manager reads.
 export function FunctionAppDetailPage() {
   const { name = "" } = useParams();
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState(false);
 
   const site = useQuery({ queryKey: ["fn-site", name], queryFn: () => fetchFunctionApp(name) });
   const siteId = site.data?.id;
+  const remove = useMutation({
+    mutationFn: () => deleteFunctionApp(siteId!),
+    onSuccess: () => navigate("/ui/functions"),
+  });
   const settings = useQuery({
     queryKey: ["fn-site-settings", siteId],
     queryFn: () => fetchFunctionAppSettings(siteId!),
@@ -31,6 +45,13 @@ export function FunctionAppDetailPage() {
       <AzureCommandBar
         commands={[
           {
+            label: "Delete",
+            icon: "delete",
+            testid: "fn-site-delete",
+            disabled: !siteId || remove.isPending,
+            onSelect: () => setDeleting(true),
+          },
+          {
             label: "Refresh",
             icon: "refresh",
             onSelect: () => {
@@ -43,6 +64,29 @@ export function FunctionAppDetailPage() {
           { label: "Feedback", icon: "feedback" },
         ]}
       />
+      {site.data ? (
+        <AzureConfirmDialog
+          open={deleting}
+          title={`Delete ${site.data.name}?`}
+          busy={remove.isPending}
+          testid="fn-site-delete-dialog"
+          error={
+            remove.isError ? (
+              <>
+                <strong>Could not delete.</strong>{" "}
+                {remove.error instanceof Error ? remove.error.message : "Azure Resource Manager did not respond."}
+              </>
+            ) : undefined
+          }
+          onConfirm={() => remove.mutate()}
+          onCancel={() => setDeleting(false)}
+        >
+          <Text as="p">
+            Deleting a Function App is permanent and removes every function deployed to it. This action can&rsquo;t
+            be undone.
+          </Text>
+        </AzureConfirmDialog>
+      ) : null}
       <div className="az-main" data-testid="fn-site-detail">
         {site.isError ? (
           <AzureErrorMessage testid="fn-site-error">

@@ -6,6 +6,7 @@ import { AzureResourceTable, AzureErrorMessage, type AzureColumn } from "../port
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
 import {
   createStorageAccount,
+  deleteStorageAccount,
   fetchStorageAccounts,
   fetchSubscriptions,
   type CreateStorageAccountInput,
@@ -195,6 +196,13 @@ export function StorageAccountsPage() {
         { label: "Locations", value: new Set(rows.map((row) => row.location)).size || "—" },
       ]}
       extraCommands={[{ label: "Create", icon: "add", testid: "storage-create", onSelect: () => setCreating(true) }]}
+      onDelete={async (accounts) => {
+        for (const account of accounts) {
+          await deleteStorageAccount(account.id);
+        }
+      }}
+      deleteWarning="Deleting a storage account is permanent and removes every container, blob, file share, table, and queue it holds. This action can't be undone."
+      deleteTestId="storage-delete"
       banner={
         <>
           {create.isError ? (

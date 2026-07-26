@@ -4,6 +4,45 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — Google Cloud and Azure console resource-deletion flows
+
+Completed the consoles' create/read/delete parity: the AWS console already
+deleted every resource, but the Google Cloud and Azure consoles could only
+delete admin resources (projects/service accounts; app registrations/
+subscriptions) — their compute and storage pages had no delete, which the real
+consoles all have. Added delete (a list-page multi-select action and a
+detail-page action, each opening a confirm surface that names the resource and
+warns the action is irreversible) to:
+
+- **Google Cloud** — Cloud Storage buckets (`storage.buckets.delete`, real 204),
+  Artifact Registry repositories, Cloud Functions, and Cloud Run jobs (each a
+  long-running operation driven through the real `operations.get` poll, reusing
+  the create flow's machinery — a new `waitV2Operation` for the `/v2` functions/
+  jobs collection). Fixed a real bug the delete surfaced: `authorizedJSONDelete`
+  always called `response.json()`, which throws on the 204 No-Content body a
+  bucket delete returns — it now returns undefined for 204 while still throwing
+  the real error body on failure.
+- **Microsoft Azure** — Container registries, Storage accounts, Container Apps
+  jobs, and Function Apps via real ARM `DELETE` (all synchronous — the handlers
+  return 200 when the resource existed or 204 when already gone, so no LRO
+  polling). A shared real-Fluent `AzureConfirmDialog` backs every confirm.
+
+Both follow the AWS delete template, preserve the federated bearer/broker/
+endpoint logic (only delete functions added to api.ts), and hold the bar: light
+and dark at WCAG AA, axe zero-violations on the confirm surfaces, existing tests
+intact.
+
+Verified: both packages typecheck/knip/build clean; new vitest (delete request
+shaping incl. the 204-as-success handling, the LRO poll loop, and error
+surfacing; plus full select→confirm→delete→invalidate round trips against a
+mocked federated transport); the GCP (77) and Azure (67) package Playwright
+suites green; and the Shauth relying-party matrix now runs a full create →
+delete → gone round trip as the signed-in operator for a Cloud Storage bucket
+and a Container registry through the real APIs, proving the authenticated delete
+end to end. All three consoles now have real, end-to-end-proven Create, Read,
+and Delete for these resources (Update remains the deferred piece).
+
+
 ## 2026-07-26 — Google Cloud and Azure console resource-creation flows
 
 Extended the resource-creation parity started on the AWS console to the other

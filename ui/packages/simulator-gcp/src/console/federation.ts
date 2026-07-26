@@ -149,11 +149,17 @@ export async function authorizedJSONPost<T>(path: string, body: unknown): Promis
 }
 
 // authorizedJSONDelete deletes a real Google Cloud API resource, raising the
-// API's own error rather than masking it.
+// API's own error rather than masking it. Most Google Cloud deletes answer
+// with a JSON body (an Empty `{}`, or a long-running Operation); a few —
+// storage.buckets.delete among them — answer 204 No Content with nothing to
+// parse, which the caller reads as an empty value rather than a parse error.
 export async function authorizedJSONDelete<T>(path: string): Promise<T> {
   const response = await authorizedFetch(path, { method: "DELETE" });
   if (!response.ok) {
     throw await gcpErrorFromResponse(path, response);
+  }
+  if (response.status === 204) {
+    return undefined as T;
   }
   return (await response.json()) as T;
 }

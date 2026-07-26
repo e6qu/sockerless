@@ -60,6 +60,11 @@ export const fetchCloudRunJobExecutions = async (project: string, name: string):
   return page.executions ?? [];
 };
 
+// projects.locations.jobs.delete — a long-running operation, driven through
+// the same operations.get poll waitV2Operation runs for Cloud Functions.
+export const deleteCloudRunJob = (project: string, name: string): Promise<CrmOperation> =>
+  authorizedJSONDelete<CrmOperation>(`${jobsParent(project)}/${name}`);
+
 // Cloud Functions (Gen2) lifecycle states.
 export type CloudFunctionState =
   | "ACTIVE"
@@ -176,6 +181,32 @@ export const fetchCloudFunctions = async (project: string): Promise<CloudFunctio
 export const fetchCloudFunction = (project: string, name: string): Promise<CloudFunction> =>
   authorizedJSON<CloudFunction>(`${functionsParent(project)}/${name}`);
 
+// projects.locations.functions.delete — a long-running operation, driven
+// through the same operations.get poll waitV2Operation runs for Cloud Run jobs.
+export const deleteCloudFunction = (project: string, name: string): Promise<CrmOperation> =>
+  authorizedJSONDelete<CrmOperation>(`${functionsParent(project)}/${name}`);
+
+// operations.get for the /v2/projects/.../locations/.../operations/{id}
+// collection Cloud Functions and Cloud Run Jobs LROs live under — the v2
+// counterpart to fetchArOperation's v1 collection.
+export const fetchV2Operation = (name: string): Promise<CrmOperation> =>
+  authorizedJSON<CrmOperation>(`/v2/${name}`);
+
+// waitV2Operation drives a returned Operation to completion the way every
+// real client does: poll operations.get until done, then surface the
+// operation's own error if it failed.
+export const waitV2Operation = async (operation: CrmOperation): Promise<CrmOperation> => {
+  let current = operation;
+  while (!current.done) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    current = await fetchV2Operation(current.name);
+  }
+  if (current.error) {
+    throw new Error(current.error.message ?? `operation ${current.name} failed`);
+  }
+  return current;
+};
+
 export const fetchARRepos = async (project: string): Promise<ARRepo[]> =>
   (await authorizedJSON<{ repositories?: ARRepo[] }>(repositoriesParent(project))).repositories ?? [];
 
@@ -220,6 +251,11 @@ export const waitArOperation = async (operation: CrmOperation): Promise<CrmOpera
   return current;
 };
 
+// projects.locations.repositories.delete — a long-running operation, driven
+// through the same operations.get poll (waitArOperation) the create flow uses.
+export const deleteARRepository = (project: string, repo: string): Promise<CrmOperation> =>
+  authorizedJSONDelete<CrmOperation>(`${repositoriesParent(project)}/${repo}`);
+
 // projects.locations.repositories.dockerImages.list — the repository's
 // stored images, the real console's "Images" tab.
 export const fetchARImages = async (project: string, repo: string): Promise<ARDockerImage[]> =>
@@ -240,6 +276,12 @@ export const createGCSBucket = (project: string, name: string): Promise<GCSBucke
 // directly, without a project segment.
 export const fetchGCSBucket = (name: string): Promise<GCSBucket> =>
   authorizedJSON<GCSBucket>(`/storage/v1/b/${name}`);
+
+// storage.buckets.delete — bucket names are global, so (like the read) this
+// addresses the bucket directly, without a project segment. The real API
+// answers 204 No Content, which authorizedJSONDelete surfaces as void.
+export const deleteGCSBucket = (name: string): Promise<void> =>
+  authorizedJSONDelete<void>(`/storage/v1/b/${name}`);
 
 // objects.list — the bucket's stored objects, the real console's "Objects" tab.
 export const fetchGCSObjects = async (bucket: string): Promise<GCSObject[]> =>

@@ -1,9 +1,11 @@
-import { Link, useParams } from "react-router";
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { GcpPageHeader } from "../console/GcpConsole.js";
 import { GcpTabs } from "../console/GcpTabs.js";
 import { shortName, formatTimestamp, formatBytes } from "../console/format.js";
 import { fetchGCSBucket, fetchGCSObjects, type GCSObject } from "../api.js";
+import { DeleteBucketDialog } from "./GCSBucketsPage.js";
 
 // ObjectsTable is the Objects tab's table, presentational so the size/type
 // rendering is testable apart from the queries that feed it.
@@ -51,6 +53,8 @@ export function ObjectsTable({ objects }: { objects: GCSObject[] }) {
 
 export function GCSBucketDetailPage() {
   const { name = "" } = useParams();
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState(false);
   const bucket = useQuery({ queryKey: ["gcs-bucket", name], queryFn: () => fetchGCSBucket(name) });
   const objects = useQuery({
     queryKey: ["gcs-bucket-objects", name],
@@ -58,14 +62,23 @@ export function GCSBucketDetailPage() {
     enabled: Boolean(bucket.data),
   });
 
+  // Deletion addresses the bucket by the name in the route, not the loaded
+  // resource, so the action is available (and testable) even before the read
+  // settles — the same way the list page's "Create bucket" action doesn't
+  // wait on a successful list read.
+  const deleteAction = [{ label: "Delete", testId: "gcs-bucket-delete", onSelect: () => setDeleting(true) }];
+
   if (bucket.isError) {
     return (
       <>
-        <GcpPageHeader title={shortName(name)} description="Cloud Storage bucket" />
+        <GcpPageHeader title={shortName(name)} description="Cloud Storage bucket" actions={deleteAction} />
         <div className="gc-message gc-message-error" role="alert">
           <strong>Couldn't load this bucket.</strong>{" "}
           {bucket.error instanceof Error ? bucket.error.message : "The simulator did not respond."}
         </div>
+        {deleting ? (
+          <DeleteBucketDialog name={name} onClose={() => setDeleting(false)} onDeleted={() => navigate("/ui/gcs")} />
+        ) : null}
       </>
     );
   }
@@ -80,6 +93,7 @@ export function GCSBucketDetailPage() {
       <GcpPageHeader
         title={shortName(name)}
         description="Cloud Storage bucket"
+        actions={deleteAction}
         onRefresh={() => { void bucket.refetch(); void objects.refetch(); }}
         refreshing={bucket.isFetching || objects.isFetching}
       />
@@ -127,6 +141,9 @@ export function GCSBucketDetailPage() {
           ]}
         />
       )}
+      {deleting ? (
+        <DeleteBucketDialog name={name} onClose={() => setDeleting(false)} onDeleted={() => navigate("/ui/gcs")} />
+      ) : null}
     </>
   );
 }

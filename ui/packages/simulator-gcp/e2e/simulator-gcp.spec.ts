@@ -2,10 +2,10 @@ import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 const SERVICES = [
-  { path: "/ui/cloudrun", nav: "Cloud Run jobs", title: "Cloud Run jobs", columns: ["Name", "Status of last execution", "Created", "Executions", "Launch stage"] },
-  { path: "/ui/functions", nav: "Cloud Run functions", title: "Cloud Run functions", columns: ["Name", "State", "Environment"] },
-  { path: "/ui/ar", nav: "Artifact Registry", title: "Artifact Registry", columns: ["Name", "Format", "Created"] },
-  { path: "/ui/gcs", nav: "Cloud Storage", title: "Cloud Storage", columns: ["Name"] },
+  { path: "/ui/cloudrun", nav: "Cloud Run jobs", title: "Cloud Run jobs", columns: ["Name", "Status of last execution", "Created", "Executions", "Launch stage", "Actions"] },
+  { path: "/ui/functions", nav: "Cloud Run functions", title: "Cloud Run functions", columns: ["Name", "State", "Environment", "Actions"] },
+  { path: "/ui/ar", nav: "Artifact Registry", title: "Artifact Registry", columns: ["Name", "Format", "Created", "Actions"] },
+  { path: "/ui/gcs", nav: "Cloud Storage", title: "Cloud Storage", columns: ["Name", "Actions"] },
   { path: "/ui/serviceaccounts", nav: "Service accounts", title: "Service accounts", columns: ["Email", "Status", "Name", "Description", "Actions"] },
   { path: "/ui/projects", nav: "Manage resources", title: "Manage resources", columns: ["Name", "ID", "Number", "State", "Created", "Actions"] },
   { path: "/ui/logging", nav: "Logs Explorer", title: "Logs Explorer", columns: ["Timestamp", "Severity", "Log name"] },
@@ -422,6 +422,25 @@ test.describe("Contrast", () => {
     ]);
     assertAA(arResults);
   });
+
+  // The delete-confirm dialogs this pass added to every resource detail page
+  // get the same empirical guard: their title, warning copy and Cancel/Delete
+  // controls.
+  test("the resource-deletion dialogs clear WCAG AA in both themes", async ({ page }) => {
+    const cases = [
+      { path: "/ui/gcs/example-bucket", openTestId: "gcs-bucket-delete", dialogTestId: "gcs-delete-dialog" },
+      { path: "/ui/ar/example-repo", openTestId: "ar-repo-delete", dialogTestId: "ar-delete-dialog" },
+      { path: "/ui/functions/example-function", openTestId: "function-delete", dialogTestId: "function-delete-dialog" },
+      { path: "/ui/cloudrun/example-job", openTestId: "cloudrun-job-delete", dialogTestId: "cloudrun-delete-dialog" },
+    ];
+    for (const { path, openTestId, dialogTestId } of cases) {
+      await page.goto(path);
+      await page.getByTestId(openTestId).click();
+      await expect(page.getByTestId(dialogTestId)).toBeVisible();
+      const results = await page.evaluate(sampleContrast, [".gc-dialog-title", ".gc-dialog p", ".gc-button-text", ".gc-button-primary"]);
+      assertAA(results);
+    }
+  });
 });
 
 // Cloud Storage buckets and Artifact Registry repositories used to render a
@@ -498,6 +517,58 @@ test.describe("Resource creation", () => {
     await expect(format).toHaveValue("DOCKER");
     await expect(format.locator("option")).toHaveCount(8);
   });
+});
+
+// Cloud Storage buckets, Artifact Registry repositories, Cloud Run functions
+// and Cloud Run jobs used to have no delete affordance in this console, even
+// though the real console (and the AWS console, which deletes every
+// resource) lets an operator delete each of them. Every detail page now
+// offers a real "Delete" header action that opens a GcpDialog confirm — wired
+// to the real storage.buckets.delete / projects.locations.repositories.delete
+// / projects.locations.functions.delete / projects.locations.jobs.delete
+// operation — and, unlike the resource itself, doesn't wait on a successful
+// read to render: it addresses the resource by the id in the route, the same
+// way the list pages' "Create …" header action doesn't wait on a successful
+// list read. That is what makes the dialog reachable in this unauthenticated
+// suite. The list pages' equivalent per-row "Delete" action needs a loaded
+// row and so is exercised in the mocked-fetch suite
+// (src/__tests__/ResourceDeleteFlows.test.tsx) instead; the authenticated
+// delete round trip against a live identity provider (list and detail) is
+// covered by the Shauth relying-party suite (ui/e2e/shauth-rps.mjs).
+test.describe("Resource deletion", () => {
+  const DELETE_DIALOGS = [
+    { path: "/ui/gcs/example-bucket", openTestId: "gcs-bucket-delete", dialogTestId: "gcs-delete-dialog", dialogName: "Delete bucket?" },
+    { path: "/ui/ar/example-repo", openTestId: "ar-repo-delete", dialogTestId: "ar-delete-dialog", dialogName: "Delete repository?" },
+    { path: "/ui/functions/example-function", openTestId: "function-delete", dialogTestId: "function-delete-dialog", dialogName: "Delete function?" },
+    { path: "/ui/cloudrun/example-job", openTestId: "cloudrun-job-delete", dialogTestId: "cloudrun-delete-dialog", dialogName: "Delete job?" },
+  ];
+
+  for (const { path, openTestId, dialogTestId, dialogName } of DELETE_DIALOGS) {
+    test(`${path} offers a Delete action and opens "${dialogName}" with Cancel and Delete controls`, async ({ page }) => {
+      await page.goto(path);
+      const trigger = page.getByTestId(openTestId);
+      await expect(trigger).toBeVisible();
+      await trigger.click();
+      const dialog = page.getByTestId(dialogTestId);
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toHaveAccessibleName(dialogName);
+      await expect(dialog.getByRole("button", { name: "Cancel" })).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Delete" })).toBeVisible();
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(page.getByTestId(dialogTestId)).toHaveCount(0);
+    });
+
+    test(`${path} closes "${dialogName}" on Escape and returns focus to its trigger`, async ({ page }) => {
+      await page.goto(path);
+      const trigger = page.getByTestId(openTestId);
+      await trigger.click();
+      const dialog = page.getByTestId(dialogTestId);
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId(dialogTestId)).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    });
+  }
 });
 
 test.describe("Resource detail pages", () => {
@@ -626,6 +697,25 @@ test.describe("Automated accessibility audit", () => {
           await page.evaluate(() => document.documentElement.classList.add("dark"));
         }
         await page.getByTestId(createTestId).click();
+        await expect(page.getByTestId(dialogTestId)).toBeVisible();
+        const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
+
+    const DELETE_DIALOGS = [
+      { path: "/ui/gcs/example-bucket", openTestId: "gcs-bucket-delete", dialogTestId: "gcs-delete-dialog" },
+      { path: "/ui/ar/example-repo", openTestId: "ar-repo-delete", dialogTestId: "ar-delete-dialog" },
+      { path: "/ui/functions/example-function", openTestId: "function-delete", dialogTestId: "function-delete-dialog" },
+      { path: "/ui/cloudrun/example-job", openTestId: "cloudrun-job-delete", dialogTestId: "cloudrun-delete-dialog" },
+    ];
+    for (const { path, openTestId, dialogTestId } of DELETE_DIALOGS) {
+      test(`the ${dialogTestId} dialog has no detectable violations (${theme})`, async ({ page }) => {
+        await page.goto(path);
+        if (theme === "dark") {
+          await page.evaluate(() => document.documentElement.classList.add("dark"));
+        }
+        await page.getByTestId(openTestId).click();
         await expect(page.getByTestId(dialogTestId)).toBeVisible();
         const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
         expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);

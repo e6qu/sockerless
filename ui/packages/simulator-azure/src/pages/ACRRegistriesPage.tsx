@@ -6,6 +6,7 @@ import { AzureResourceTable, AzureErrorMessage, type AzureColumn } from "../port
 import { resourceGroupOf, locationLabel } from "../portal/format.js";
 import {
   createACRRegistry,
+  deleteACRRegistry,
   fetchACRRegistries,
   fetchSubscriptions,
   type ACRRegistry,
@@ -180,6 +181,13 @@ export function ACRRegistriesPage() {
         { label: "Locations", value: new Set(rows.map((row) => row.location)).size || "—" },
       ]}
       extraCommands={[{ label: "Create", icon: "add", testid: "acr-create", onSelect: () => setCreating(true) }]}
+      onDelete={async (registries) => {
+        for (const registry of registries) {
+          await deleteACRRegistry(registry.id);
+        }
+      }}
+      deleteWarning="Deleting a container registry is permanent and removes every repository and image it holds. This action can't be undone."
+      deleteTestId="acr-delete"
       banner={
         <>
           {create.isError ? (

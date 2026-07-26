@@ -245,6 +245,16 @@ export const fetchACRRegistries = async (): Promise<ACRRegistry[]> => {
   }));
 };
 
+// deleteACRRegistry drives the real Microsoft.ContainerRegistry registry
+// DELETE — the same request `az acr delete` and the azurerm provider's
+// destroy both send. The simulator settles this synchronously (HTTP 200 when
+// the registry existed, 204 when it didn't — ARM's own idempotent-delete
+// shape) rather than as a polled LRO, so the console awaits the DELETE
+// response directly.
+export const deleteACRRegistry = async (id: string): Promise<void> => {
+  await armSend(`${id}?api-version=${API_VERSION.registries}`, { method: "DELETE" });
+};
+
 export interface CreateACRRegistryInput {
   subscriptionId: string;
   resourceGroup: string;
@@ -292,6 +302,15 @@ export const fetchStorageAccounts = async (): Promise<StorageAccount[]> => {
     location: account.location ?? "",
     kind: account.kind ?? "",
   }));
+};
+
+// deleteStorageAccount drives the real Microsoft.Storage storage-account
+// DELETE — the same request `az storage account delete` and the azurerm
+// provider's destroy both send. Synchronous on this simulator (HTTP 200 when
+// the account existed, 204 when it didn't), so the console awaits the
+// DELETE response directly.
+export const deleteStorageAccount = async (id: string): Promise<void> => {
+  await armSend(`${id}?api-version=${API_VERSION.storage}`, { method: "DELETE" });
 };
 
 export interface CreateStorageAccountInput {
@@ -457,6 +476,15 @@ export const stopContainerAppJobExecutions = async (jobId: string): Promise<void
   await armSend(`${jobId}/stop?api-version=${API_VERSION.jobs}`, { method: "POST" });
 };
 
+// deleteContainerAppJob drives the real Microsoft.App/jobs DELETE — the same
+// request `az containerapp job delete` and the azurerm provider's destroy
+// both send, which also removes the job's execution history. Synchronous on
+// this simulator (HTTP 200 when the job existed, 204 when it didn't), so the
+// console awaits the DELETE response directly.
+export const deleteContainerAppJob = async (jobId: string): Promise<void> => {
+  await armSend(`${jobId}?api-version=${API_VERSION.jobs}`, { method: "DELETE" });
+};
+
 // --- Function App detail: app settings + functions ---
 
 export interface FunctionAppDetail {
@@ -494,6 +522,15 @@ function functionAppOf(site: ArmSite): FunctionAppDetail {
 export const fetchFunctionApp = async (name: string): Promise<FunctionAppDetail> => {
   const id = await resourceIdByName("Microsoft.Web/sites", API_VERSION.sites, name);
   return functionAppOf(await authorizedJSON<ArmSite>(`${id}?api-version=${API_VERSION.sites}`));
+};
+
+// deleteFunctionApp drives the real Microsoft.Web/sites DELETE — the same
+// request `az functionapp delete` and the azurerm provider's destroy both
+// send, which also removes the app's deployed functions. Synchronous on this
+// simulator (HTTP 200 when the site existed, 204 when it didn't), so the
+// console awaits the DELETE response directly.
+export const deleteFunctionApp = async (id: string): Promise<void> => {
+  await armSend(`${id}?api-version=${API_VERSION.sites}`, { method: "DELETE" });
 };
 
 // fetchFunctionAppSettings reads app settings the real way: Microsoft.Web

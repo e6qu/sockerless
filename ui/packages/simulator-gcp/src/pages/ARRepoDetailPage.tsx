@@ -1,9 +1,11 @@
-import { Link, useParams } from "react-router";
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { GcpPageHeader } from "../console/GcpConsole.js";
 import { GcpTabs } from "../console/GcpTabs.js";
 import { shortName, formatTimestamp, splitImageDigest } from "../console/format.js";
 import { fetchARRepo, fetchARImages, type ARDockerImage } from "../api.js";
+import { DeleteRepoDialog } from "./ArtifactRegistryPage.js";
 import { useProject } from "../console/project.js";
 
 // ImagesTable is the Images tab's table, presentational so the digest/tag
@@ -54,6 +56,8 @@ export function ImagesTable({ images }: { images: ARDockerImage[] }) {
 export function ARRepoDetailPage() {
   const { name = "" } = useParams();
   const { project } = useProject();
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState(false);
   const repo = useQuery({ queryKey: ["ar-repo", project, name], queryFn: () => fetchARRepo(project, name) });
   const images = useQuery({
     queryKey: ["ar-repo-images", project, name],
@@ -61,14 +65,28 @@ export function ARRepoDetailPage() {
     enabled: Boolean(repo.data),
   });
 
+  // Deletion addresses the repository by the id in the route, not the loaded
+  // resource, so the action is available (and testable) even before the read
+  // settles — the same way the list page's "Create repository" action
+  // doesn't wait on a successful list read.
+  const deleteAction = [{ label: "Delete", testId: "ar-repo-delete", onSelect: () => setDeleting(true) }];
+
   if (repo.isError) {
     return (
       <>
-        <GcpPageHeader title={shortName(name)} description="Artifact Registry repository" />
+        <GcpPageHeader title={shortName(name)} description="Artifact Registry repository" actions={deleteAction} />
         <div className="gc-message gc-message-error" role="alert">
           <strong>Couldn't load this repository.</strong>{" "}
           {repo.error instanceof Error ? repo.error.message : "The simulator did not respond."}
         </div>
+        {deleting ? (
+          <DeleteRepoDialog
+            project={project}
+            repositoryId={name}
+            onClose={() => setDeleting(false)}
+            onDeleted={() => navigate("/ui/ar")}
+          />
+        ) : null}
       </>
     );
   }
@@ -84,6 +102,7 @@ export function ARRepoDetailPage() {
       <GcpPageHeader
         title={shortName(name)}
         description="Artifact Registry repository"
+        actions={deleteAction}
         onRefresh={() => { void repo.refetch(); void images.refetch(); }}
         refreshing={repo.isFetching || images.isFetching}
       />
@@ -147,6 +166,14 @@ export function ARRepoDetailPage() {
           ]}
         />
       )}
+      {deleting ? (
+        <DeleteRepoDialog
+          project={project}
+          repositoryId={name}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => navigate("/ui/ar")}
+        />
+      ) : null}
     </>
   );
 }
