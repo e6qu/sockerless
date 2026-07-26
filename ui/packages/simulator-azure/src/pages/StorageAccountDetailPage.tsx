@@ -1,7 +1,20 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Button, Text } from "@fluentui/react-components";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  makeStyles,
+  tokens,
+  Field,
+  Select,
+  Table,
+  TableHeader,
+  TableRow,
+  TableHeaderCell,
+  TableBody,
+  TableCell,
+  Button,
+  Text,
+} from "@fluentui/react-components";
 import {
   AzureCommandBar,
   AzureConfirmDialog,
@@ -9,10 +22,102 @@ import {
   AzureStatus,
   AzureErrorMessage,
   AzureEmptyState,
-} from "../portal/AzurePortal.js";
+  TagsEditor,
+} from "../portal/index.js";
 import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
-import { resourceGroupOf, locationLabel } from "../portal/format.js";
-import { deleteStorageAccount, fetchStorageAccount, fetchBlobContainers, fetchBlobs } from "../api.js";
+import { resourceGroupOf, locationLabel, tagsSummary } from "../portal/format.js";
+import {
+  deleteStorageAccount,
+  fetchStorageAccount,
+  fetchBlobContainers,
+  fetchBlobs,
+  storageAccessTiers,
+  storageAccountSkus,
+  updateResourceTags,
+  updateStorageAccount,
+  type StorageAccountDetail,
+  API_VERSION,
+} from "../api.js";
+
+const useStyles = makeStyles({
+  form: {
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: "14px 16px",
+    margin: "12px 0",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    maxWidth: "480px",
+  },
+  actions: { display: "flex", gap: "8px" },
+});
+
+// StorageAccountConfigForm is the account "Configuration" blade: the
+// redundancy (sku.name) and access tier the real Microsoft.Storage PATCH edits.
+export function StorageAccountConfigForm({
+  account,
+  busy,
+  error,
+  onSave,
+  onDismiss,
+}: {
+  account: StorageAccountDetail;
+  busy: boolean;
+  error?: React.ReactNode;
+  onSave: (skuName: string, accessTier: string) => void;
+  onDismiss: () => void;
+}) {
+  const styles = useStyles();
+  const [skuName, setSkuName] = useState(account.skuName || storageAccountSkus[0]);
+  const [accessTier, setAccessTier] = useState(account.accessTier || storageAccessTiers[0]);
+  return (
+    <form
+      className={styles.form}
+      data-testid="storage-config-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave(skuName, accessTier);
+      }}
+    >
+      <Text as="h2" weight="semibold">
+        Configuration
+      </Text>
+      <Field label="Redundancy">
+        <Select data-testid="storage-config-sku" value={skuName} onChange={(event) => setSkuName(event.target.value)}>
+          {storageAccountSkus.map((sku) => (
+            <option key={sku} value={sku}>
+              {sku}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Access tier">
+        <Select
+          data-testid="storage-config-tier"
+          value={accessTier}
+          onChange={(event) => setAccessTier(event.target.value)}
+        >
+          {storageAccessTiers.map((tier) => (
+            <option key={tier} value={tier}>
+              {tier}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {error ? <AzureErrorMessage testid="storage-config-error">{error}</AzureErrorMessage> : null}
+      <div className={styles.actions}>
+        <Button type="submit" appearance="primary" data-testid="storage-config-save" disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </Button>
+        <Button type="button" onClick={onDismiss} disabled={busy}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
 
 // The Storage account blade: the real Microsoft.Storage Essentials, and its
 // blob containers/blobs read from the account's own blob data plane —
@@ -22,13 +127,34 @@ import { deleteStorageAccount, fetchStorageAccount, fetchBlobContainers, fetchBl
 export function StorageAccountDetailPage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedContainer, setSelectedContainer] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [panel, setPanel] = useState<"config" | "tags" | null>(null);
 
   const account = useQuery({ queryKey: ["storage-account", name], queryFn: () => fetchStorageAccount(name) });
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["storage-account", name] });
+    void queryClient.invalidateQueries({ queryKey: ["storage-accounts"] });
+  };
   const remove = useMutation({
     mutationFn: () => deleteStorageAccount(account.data!.id),
     onSuccess: () => navigate("/ui/storage"),
+  });
+  const update = useMutation({
+    mutationFn: ({ skuName, accessTier }: { skuName: string; accessTier: string }) =>
+      updateStorageAccount(account.data!.id, { skuName, accessTier }),
+    onSuccess: () => {
+      setPanel(null);
+      invalidate();
+    },
+  });
+  const saveTags = useMutation({
+    mutationFn: (tags: Record<string, string>) => updateResourceTags(account.data!.id, API_VERSION.storage, tags),
+    onSuccess: () => {
+      setPanel(null);
+      invalidate();
+    },
   });
   const containers = useQuery({
     queryKey: ["storage-containers", account.data?.id],
@@ -45,6 +171,20 @@ export function StorageAccountDetailPage() {
     <>
       <AzureCommandBar
         commands={[
+          {
+            label: "Configuration",
+            icon: "settings",
+            testid: "storage-account-config",
+            disabled: !account.data || update.isPending,
+            onSelect: () => setPanel((current) => (current === "config" ? null : "config")),
+          },
+          {
+            label: "Edit tags",
+            icon: "tag",
+            testid: "storage-account-tags",
+            disabled: !account.data || saveTags.isPending,
+            onSelect: () => setPanel((current) => (current === "tags" ? null : "tags")),
+          },
           {
             label: "Delete",
             icon: "delete",
@@ -107,8 +247,43 @@ export function StorageAccountDetailPage() {
                 { label: "Access tier", value: account.data.accessTier || "—" },
                 { label: "Provisioning state", value: <AzureStatus status={account.data.provisioningState || "Unknown"} /> },
                 { label: "Blob service endpoint", value: account.data.blobEndpoint ? <code>{account.data.blobEndpoint}</code> : "—" },
+                { label: "Tags", value: tagsSummary(account.data.tags) },
               ]}
             />
+
+            {panel === "config" ? (
+              <StorageAccountConfigForm
+                account={account.data}
+                busy={update.isPending}
+                error={
+                  update.isError ? (
+                    <>
+                      <strong>The storage account could not be updated.</strong>{" "}
+                      {update.error instanceof Error ? update.error.message : "Azure Resource Manager did not respond."}
+                    </>
+                  ) : undefined
+                }
+                onSave={(skuName, accessTier) => update.mutate({ skuName, accessTier })}
+                onDismiss={() => setPanel(null)}
+              />
+            ) : null}
+            {panel === "tags" ? (
+              <TagsEditor
+                tags={account.data.tags}
+                busy={saveTags.isPending}
+                testidPrefix="storage-account-tags"
+                error={
+                  saveTags.isError ? (
+                    <>
+                      <strong>The tags could not be saved.</strong>{" "}
+                      {saveTags.error instanceof Error ? saveTags.error.message : "Azure Resource Manager did not respond."}
+                    </>
+                  ) : undefined
+                }
+                onSave={(tags) => saveTags.mutate(tags)}
+                onDismiss={() => setPanel(null)}
+              />
+            ) : null}
 
             <section className="az-blade-section" aria-label="Containers">
               <Text as="h2" weight="semibold" block>

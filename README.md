@@ -9,7 +9,7 @@
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
 [![Go](https://img.shields.io/badge/Go-367.6k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
-[![TypeScript](https://img.shields.io/badge/TypeScript-34.9k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-41.4k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
 [![Tests](https://img.shields.io/badge/Tests-217.8k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-45-informational)](#module-sizes)

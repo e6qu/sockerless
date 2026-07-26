@@ -39,6 +39,7 @@ try {
       await assertMintedServiceAccountKey(page, app);
       await assertCreatedProject(page);
       await assertCreatedGCSBucket(page, app);
+      await assertRanCloudRunJob(page, app);
     }
     if (app.name === "Sockerless AWS simulator") {
       await assertFederatedAwsCredentials(context, page, app);
@@ -460,6 +461,29 @@ async function assertMintedServiceAccountKey(page, app) {
 }
 
 
+// assertRanCloudRunJob proves the Google Cloud console's compute-create and
+// lifecycle-action flows end to end for the signed-in operator: create a Cloud
+// Run job through the real jobs.create API, then Run it (real jobs.run, which
+// creates an execution). Both are long-running operations the console drives
+// through real operations.get polling.
+async function assertRanCloudRunJob(page, app) {
+  const origin = new URL(app.launch).origin;
+  const jobId = `rps-job-${Date.now() % 1_000_000}`;
+  await page.goto(`${origin}/ui/cloudrun`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("cloudrun-create-job").click();
+  await page.getByTestId("cloudrun-create-id").fill(jobId);
+  await page.getByTestId("cloudrun-create-image").fill("alpine:latest");
+  await page.getByTestId("cloudrun-create-submit").click();
+  await page.getByRole("link", { name: jobId }).waitFor({ state: "visible" });
+
+  // Run the created job from its detail page; the confirm dialog closing without
+  // error confirms the real jobs.run operation completed.
+  await page.getByRole("link", { name: jobId }).click();
+  await page.getByTestId("cloudrun-job-run").click();
+  await page.getByTestId("cloudrun-run-confirm").click();
+  await page.getByTestId("cloudrun-run-confirm").waitFor({ state: "detached" });
+}
+
 // assertCreatedGCSBucket proves the Google Cloud console's create flow end to
 // end for the signed-in operator: open Cloud Storage, create a bucket through
 // the real storage.buckets.insert API over the federated bearer path, and see
@@ -501,10 +525,17 @@ async function assertCreatedACRRegistry(page, app) {
   await page.getByTestId("acr-create-submit").click();
   await page.getByRole("link", { name: registryName }).waitFor({ state: "visible" });
 
-  // Delete the registry through its detail blade and confirm it leaves the list
-  // — the create → delete round trip through the real Azure Resource Manager
-  // container-registry APIs.
+  // Open the registry's detail blade and edit it (Update) — toggle admin-user
+  // through the real ARM PATCH; the dialog closing confirms the write.
   await page.getByRole("link", { name: registryName }).click();
+  await page.getByTestId("acr-registry-update").click();
+  await page.getByTestId("acr-update-admin").click();
+  await page.getByTestId("acr-update-save").click();
+  await page.getByTestId("acr-update-save").waitFor({ state: "detached" });
+
+  // Delete the registry from the same detail blade and confirm it leaves the
+  // list — completing the create → update → delete round trip through the real
+  // Azure Resource Manager container-registry APIs.
   await page.getByTestId("acr-registry-delete").click();
   await page.getByTestId("acr-registry-delete-dialog-confirm").click();
   await page.goto(`${origin}/ui/acr`, { waitUntil: "domcontentloaded" });
@@ -532,6 +563,15 @@ async function assertCreatedECRRepository(page, app) {
   // The created repository appears in the list; its name column is a link to the
   // repository detail.
   await page.getByRole("link", { name: repoName }).waitFor({ state: "visible" });
+
+  // Edit the repository's settings (Update) — toggle scan-on-push through the
+  // real PutImageScanningConfiguration API; the dialog closing without error
+  // confirms the authenticated write round-tripped.
+  await page.getByRole("link", { name: repoName }).click();
+  await page.getByTestId("ecr-repo-edit").click();
+  await page.getByTestId("ecr-scan-toggle").click();
+  await page.getByTestId("ecr-repo-settings-save").click();
+  await page.getByTestId("ecr-repo-settings-save").waitFor({ state: "detached" });
 }
 
 // assertCreatedOrganizationAccount drives the AWS Organizations console page

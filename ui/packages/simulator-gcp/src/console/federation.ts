@@ -148,6 +148,22 @@ export async function authorizedJSONPost<T>(path: string, body: unknown): Promis
   return (await response.json()) as T;
 }
 
+// authorizedJSONPatch sends a partial update to a real Google Cloud API path —
+// the shape storage.buckets.patch, artifactregistry repositories.patch,
+// functions.patch and jobs.patch take. The update mask, where the operation
+// uses one, rides on the path's query string the way the real API expects it.
+export async function authorizedJSONPatch<T>(path: string, body: unknown): Promise<T> {
+  const response = await authorizedFetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw await gcpErrorFromResponse(path, response);
+  }
+  return (await response.json()) as T;
+}
+
 // authorizedJSONDelete deletes a real Google Cloud API resource, raising the
 // API's own error rather than masking it. Most Google Cloud deletes answer
 // with a JSON body (an Empty `{}`, or a long-running Operation); a few —

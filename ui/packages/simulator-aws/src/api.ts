@@ -1,4 +1,6 @@
 import {
+  awsFetch,
+  AwsApiError,
   awsJson,
   awsQuery,
   awsRestJson,
@@ -7,6 +9,50 @@ import {
   awsRestXmlDelete,
   awsRestXmlPut,
 } from "./console/federation.js";
+
+// restJson issues an AWS REST-JSON request that carries a JSON body and reads a
+// JSON (or empty 204) response — the shape Lambda's CreateFunction,
+// UpdateFunctionConfiguration, and TagResource operations speak. It signs
+// through the same federated awsFetch every other reader uses; only the request
+// shaping lives here. A failure carries the protocol's `__type` error code
+// (stripped of any `namespace#` prefix, the way SDKs resolve it) so the operator
+// reads the real service error, exactly as awsJson does for the awsjson1.1
+// services.
+async function restJson<T>(
+  service: string,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const hasBody = body !== undefined && method !== "GET" && method !== "HEAD";
+  const response = await awsFetch({
+    service,
+    method,
+    path,
+    headers: hasBody ? { "content-type": "application/json" } : undefined,
+    body: hasBody ? JSON.stringify(body) : undefined,
+  });
+  const operation = path;
+  if (!response.ok) {
+    const text = await response.text();
+    let type = "";
+    let message = "";
+    try {
+      const parsed = JSON.parse(text) as { __type?: string; message?: string; Message?: string };
+      type = parsed.__type ?? "";
+      message = parsed.message ?? parsed.Message ?? "";
+    } catch {
+      // Not the protocol's JSON error shape — the HTTP status is all there is.
+    }
+    const code = type.slice(type.lastIndexOf("#") + 1);
+    throw new AwsApiError(
+      code ? `${operation}: ${code}: ${message}` : `${operation} returned HTTP ${response.status}`,
+      code,
+    );
+  }
+  const text = await response.text();
+  return (text ? JSON.parse(text) : {}) as T;
+}
 
 // The console reads the real AWS APIs — ECS, Lambda, ECR, S3, CloudWatch Logs,
 // IAM, and AWS Organizations — over federated, SigV4-signed requests, rendering
@@ -289,6 +335,93 @@ export const fetchECSTaskDefinition = async (taskDefinitionArn: string): Promise
   };
 };
 
+// ECS clusters and task-definition families — ListClusters and
+// ListTaskDefinitionFamilies feed the "Run task" form's cluster and task
+// definition pickers, the same reads the real console's Run task wizard makes
+// to populate its dropdowns.
+export const fetchECSClusters = async (): Promise<string[]> => {
+  const listed = await awsJson<{ clusterArns?: string[] }>(
+    "ecs",
+    "AmazonEC2ContainerServiceV20141113.ListClusters",
+    {},
+  );
+  return listed.clusterArns ?? [];
+};
+
+export const fetchECSTaskDefinitionFamilies = async (): Promise<string[]> => {
+  const listed = await awsJson<{ families?: string[] }>(
+    "ecs",
+    "AmazonEC2ContainerServiceV20141113.ListTaskDefinitionFamilies",
+    { status: "ACTIVE" },
+  );
+  return listed.families ?? [];
+};
+
+// RegisterTaskDefinition — the console registers a minimal single-container
+// task definition inline when the operator chooses to define one in the Run
+// task form, the same operation the real console's inline task-definition
+// authoring drives. Returns the family:revision reference RunTask accepts.
+export interface RegisterTaskDefinitionInput {
+  family: string;
+  image: string;
+  cpu: string;
+  memory: string;
+  launchType: "EC2" | "FARGATE";
+}
+
+export const registerECSTaskDefinition = async (input: RegisterTaskDefinitionInput): Promise<string> => {
+  const requiresCompatibilities = input.launchType === "FARGATE" ? ["FARGATE"] : ["EC2"];
+  const body: Record<string, unknown> = {
+    family: input.family,
+    requiresCompatibilities,
+    networkMode: input.launchType === "FARGATE" ? "awsvpc" : "bridge",
+    containerDefinitions: [
+      {
+        name: input.family,
+        image: input.image,
+        essential: true,
+        ...(input.cpu ? { cpu: Number(input.cpu) } : {}),
+        ...(input.memory ? { memory: Number(input.memory) } : {}),
+      },
+    ],
+  };
+  // Fargate requires task-level cpu and memory; EC2 does not, so the console
+  // sends them only when the operator supplied them.
+  if (input.cpu) body.cpu = input.cpu;
+  if (input.memory) body.memory = input.memory;
+  const registered = await awsJson<{ taskDefinition?: { family?: string; revision?: number } }>(
+    "ecs",
+    "AmazonEC2ContainerServiceV20141113.RegisterTaskDefinition",
+    body,
+  );
+  const td = registered.taskDefinition;
+  if (!td?.family || td.revision === undefined) throw new Error("RegisterTaskDefinition returned no task definition");
+  return `${td.family}:${td.revision}`;
+};
+
+// RunTask — launches the given task definition on the chosen cluster, the same
+// operation the real console's "Run task" wizard drives.
+export interface RunTaskInput {
+  cluster: string;
+  taskDefinition: string;
+  launchType: "EC2" | "FARGATE";
+  count: number;
+}
+
+export const runECSTask = async (input: RunTaskInput): Promise<string[]> => {
+  const run = await awsJson<{ tasks?: { taskArn?: string }[] }>(
+    "ecs",
+    "AmazonEC2ContainerServiceV20141113.RunTask",
+    {
+      cluster: input.cluster,
+      taskDefinition: input.taskDefinition,
+      launchType: input.launchType,
+      count: input.count,
+    },
+  );
+  return (run.tasks ?? []).map((task) => task.taskArn ?? "");
+};
+
 export type LambdaState = "Pending" | "Active" | "Inactive" | "Failed";
 
 export interface LambdaFunction {
@@ -431,17 +564,158 @@ export const fetchLambdaFunctionDetail = async (
   };
 };
 
+// UpdateFunctionConfiguration — PUT /2015-03-31/functions/{name}/configuration,
+// the real Lambda operation the console's "Edit configuration" flow drives.
+// The console sends only the fields the operator edited (memory, timeout,
+// description, environment); real Lambda leaves any omitted field unchanged,
+// so the caller passes exactly what changed.
+export interface LambdaConfigurationUpdate {
+  memorySize?: number;
+  timeout?: number;
+  description?: string;
+  environment?: { name: string; value: string }[];
+}
+
+export const updateLambdaFunctionConfiguration = async (
+  functionName: string,
+  update: LambdaConfigurationUpdate,
+): Promise<void> => {
+  const body: Record<string, unknown> = {};
+  if (update.memorySize !== undefined) body.MemorySize = update.memorySize;
+  if (update.timeout !== undefined) body.Timeout = update.timeout;
+  if (update.description !== undefined) body.Description = update.description;
+  if (update.environment !== undefined) {
+    body.Environment = {
+      Variables: Object.fromEntries(update.environment.map((entry) => [entry.name, entry.value])),
+    };
+  }
+  await restJson(
+    "lambda",
+    "PUT",
+    `/2015-03-31/functions/${encodeURIComponent(functionName)}/configuration`,
+    body,
+  );
+};
+
+// CreateFunction — POST /2015-03-31/functions. The console offers the two
+// package types real Lambda accepts: a container image (Code.ImageUri, the
+// simplest faithful path) or a Zip archive staged in Amazon S3 (Code.S3Bucket
+// / Code.S3Key with a runtime and handler), matching what the real console's
+// "Create function" wizard collects.
+export interface CreateLambdaFunctionInput {
+  functionName: string;
+  role: string;
+  memorySize: number;
+  timeout: number;
+  description?: string;
+  packageType: "Image" | "Zip";
+  imageUri?: string;
+  runtime?: string;
+  handler?: string;
+  s3Bucket?: string;
+  s3Key?: string;
+}
+
+export const createLambdaFunction = async (input: CreateLambdaFunctionInput): Promise<void> => {
+  const body: Record<string, unknown> = {
+    FunctionName: input.functionName,
+    Role: input.role,
+    MemorySize: input.memorySize,
+    Timeout: input.timeout,
+    PackageType: input.packageType,
+  };
+  if (input.description) body.Description = input.description;
+  if (input.packageType === "Image") {
+    body.Code = { ImageUri: input.imageUri };
+  } else {
+    body.Runtime = input.runtime;
+    body.Handler = input.handler;
+    body.Code = { S3Bucket: input.s3Bucket, S3Key: input.s3Key };
+  }
+  await restJson("lambda", "POST", "/2015-03-31/functions", body);
+};
+
+export interface LambdaInvokeResult {
+  payload: string;
+  functionError: string;
+}
+
+// Invoke — POST /2015-03-31/functions/{name}/invocations. A RequestResponse
+// invocation returns the function's raw response payload; real Lambda reports a
+// handler error out-of-band in the X-Amz-Function-Error response header (the
+// payload then carries the error document), which the console surfaces exactly
+// as the real console's "Test" tab does.
+export const invokeLambdaFunction = async (
+  functionName: string,
+  payload: string,
+): Promise<LambdaInvokeResult> => {
+  const response = await awsFetch({
+    service: "lambda",
+    method: "POST",
+    path: `/2015-03-31/functions/${encodeURIComponent(functionName)}/invocations`,
+    headers: { "content-type": "application/json" },
+    body: payload,
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let type = "";
+    let message = "";
+    try {
+      const parsed = JSON.parse(text) as { __type?: string; message?: string; Message?: string };
+      type = parsed.__type ?? "";
+      message = parsed.message ?? parsed.Message ?? "";
+    } catch {
+      // Not the protocol's JSON error shape — the HTTP status is all there is.
+    }
+    const code = type.slice(type.lastIndexOf("#") + 1);
+    throw new AwsApiError(
+      code ? `Invoke: ${code}: ${message}` : `Invoke returned HTTP ${response.status}`,
+      code,
+    );
+  }
+  return { payload: text, functionError: response.headers.get("X-Amz-Function-Error") ?? "" };
+};
+
+// Lambda resource tagging — TagResource (POST /2017-03-31/tags/{arn}) sets or
+// updates the given tags; UntagResource (DELETE …?tagKeys=…) removes keys. The
+// current tags are read from GetFunction (fetchLambdaFunctionDetail), so the
+// console diffs the operator's edits against them to make exactly these two
+// calls, the way the real console's Tags editor does.
+export const tagLambdaResource = async (arn: string, tags: Record<string, string>): Promise<void> => {
+  await restJson("lambda", "POST", `/2017-03-31/tags/${encodeURIComponent(arn)}`, { Tags: tags });
+};
+
+export const untagLambdaResource = async (arn: string, tagKeys: string[]): Promise<void> => {
+  const query = tagKeys.map((key) => `tagKeys=${encodeURIComponent(key)}`).join("&");
+  await restJson("lambda", "DELETE", `/2017-03-31/tags/${encodeURIComponent(arn)}?${query}`);
+};
+
 export interface ECRRepo {
   name: string;
+  arn: string;
   uri: string;
   createdAt: number;
+  imageTagMutability: string;
+  scanOnPush: boolean;
 }
 
 interface ECRRepository {
   repositoryName?: string;
+  repositoryArn?: string;
   repositoryUri?: string;
   createdAt?: number;
+  imageTagMutability?: string;
+  imageScanningConfiguration?: { scanOnPush?: boolean };
 }
+
+const ecrRepoFromWire = (repo: ECRRepository, fallbackName: string): ECRRepo => ({
+  name: repo.repositoryName ?? fallbackName,
+  arn: repo.repositoryArn ?? "",
+  uri: repo.repositoryUri ?? "",
+  createdAt: repo.createdAt ?? 0,
+  imageTagMutability: repo.imageTagMutability ?? "MUTABLE",
+  scanOnPush: repo.imageScanningConfiguration?.scanOnPush ?? false,
+});
 
 export const fetchECRRepos = async (): Promise<ECRRepo[]> => {
   const described = await awsJson<{ repositories?: ECRRepository[] }>(
@@ -449,11 +723,7 @@ export const fetchECRRepos = async (): Promise<ECRRepo[]> => {
     "AmazonEC2ContainerRegistry_V20150921.DescribeRepositories",
     {},
   );
-  return (described.repositories ?? []).map((repo) => ({
-    name: repo.repositoryName ?? "",
-    uri: repo.repositoryUri ?? "",
-    createdAt: repo.createdAt ?? 0,
-  }));
+  return (described.repositories ?? []).map((repo) => ecrRepoFromWire(repo, ""));
 };
 
 // CreateRepository — the real console's "Create repository" dialog collects
@@ -467,7 +737,7 @@ export const createECRRepository = async (repositoryName: string): Promise<ECRRe
   );
   const repo = created.repository;
   if (!repo) throw new Error("CreateRepository returned no repository");
-  return { name: repo.repositoryName ?? repositoryName, uri: repo.repositoryUri ?? "", createdAt: repo.createdAt ?? 0 };
+  return ecrRepoFromWire(repo, repositoryName);
 };
 
 // DeleteRepository with force: true — the real console's delete dialog warns
@@ -492,7 +762,54 @@ export const fetchECRRepo = async (repositoryName: string): Promise<ECRRepo> => 
   );
   const repo = described.repositories?.[0];
   if (!repo) throw new Error(`DescribeRepositories returned no repository for ${repositoryName}`);
-  return { name: repo.repositoryName ?? repositoryName, uri: repo.repositoryUri ?? "", createdAt: repo.createdAt ?? 0 };
+  return ecrRepoFromWire(repo, repositoryName);
+};
+
+// PutImageTagMutability and PutImageScanningConfiguration — the two real ECR
+// operations the console's "Edit" flow drives for a repository's registry
+// settings, matching what the real console's repository settings page changes.
+export const putECRImageTagMutability = async (
+  repositoryName: string,
+  imageTagMutability: "MUTABLE" | "IMMUTABLE",
+): Promise<void> => {
+  await awsJson("ecr", "AmazonEC2ContainerRegistry_V20150921.PutImageTagMutability", {
+    repositoryName,
+    imageTagMutability,
+  });
+};
+
+export const putECRImageScanningConfiguration = async (
+  repositoryName: string,
+  scanOnPush: boolean,
+): Promise<void> => {
+  await awsJson("ecr", "AmazonEC2ContainerRegistry_V20150921.PutImageScanningConfiguration", {
+    repositoryName,
+    imageScanningConfiguration: { scanOnPush },
+  });
+};
+
+// ECR resource tagging — ListTagsForResource reads the current tags,
+// TagResource sets/updates them, and UntagResource removes keys, all keyed by
+// the repository ARN, the same three operations the real console's Tags tab
+// drives.
+export const fetchECRTags = async (resourceArn: string): Promise<Record<string, string>> => {
+  const listed = await awsJson<{ tags?: { Key?: string; Value?: string }[] }>(
+    "ecr",
+    "AmazonEC2ContainerRegistry_V20150921.ListTagsForResource",
+    { resourceArn },
+  );
+  return Object.fromEntries((listed.tags ?? []).map((tag) => [tag.Key ?? "", tag.Value ?? ""]));
+};
+
+export const tagECRResource = async (resourceArn: string, tags: Record<string, string>): Promise<void> => {
+  await awsJson("ecr", "AmazonEC2ContainerRegistry_V20150921.TagResource", {
+    resourceArn,
+    tags: Object.entries(tags).map(([Key, Value]) => ({ Key, Value })),
+  });
+};
+
+export const untagECRResource = async (resourceArn: string, tagKeys: string[]): Promise<void> => {
+  await awsJson("ecr", "AmazonEC2ContainerRegistry_V20150921.UntagResource", { resourceArn, tagKeys });
 };
 
 export interface ECRImage {
@@ -581,6 +898,77 @@ export const fetchS3Objects = async (bucketName: string): Promise<S3Object[]> =>
     etag: (entry.getElementsByTagName("ETag")[0]?.textContent ?? "").replace(/^"|"$/g, ""),
   }));
 };
+
+const S3_XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/";
+
+// GetBucketVersioning — GET /{bucket}?versioning. An unversioned bucket answers
+// an empty `<VersioningConfiguration/>` (no Status element), the same shape the
+// real console reads before it shows the versioning toggle as off.
+export type S3VersioningStatus = "Enabled" | "Suspended" | "Disabled";
+
+export const fetchS3BucketVersioning = async (bucketName: string): Promise<S3VersioningStatus> => {
+  const xml = await awsRestXml("s3", `/${encodeURIComponent(bucketName)}?versioning`);
+  const status = xml.getElementsByTagName("Status")[0]?.textContent?.trim();
+  return status === "Enabled" || status === "Suspended" ? status : "Disabled";
+};
+
+// PutBucketVersioning — PUT /{bucket}?versioning. Real S3 never removes
+// versioning once enabled: it is Enabled or Suspended, so the console's toggle
+// sends exactly those two, matching the real console.
+export const putS3BucketVersioning = async (
+  bucketName: string,
+  status: "Enabled" | "Suspended",
+): Promise<void> => {
+  const body = `<VersioningConfiguration xmlns="${S3_XMLNS}"><Status>${status}</Status></VersioningConfiguration>`;
+  await awsRestXmlPut("s3", `/${encodeURIComponent(bucketName)}?versioning`, body);
+};
+
+// GetBucketTagging — GET /{bucket}?tagging. A bucket with no tag set answers
+// S3's NoSuchTagSet error rather than an empty document; the real console reads
+// that as "no tags", so the console does the same rather than surfacing it as a
+// load failure.
+export const fetchS3BucketTagging = async (bucketName: string): Promise<Record<string, string>> => {
+  const response = await awsFetch({ service: "s3", method: "GET", path: `/${encodeURIComponent(bucketName)}?tagging` });
+  const text = await response.text();
+  const xml = new DOMParser().parseFromString(text, "text/xml");
+  if (!response.ok) {
+    const code = xml.getElementsByTagName("Code")[0]?.textContent ?? "";
+    if (code === "NoSuchTagSet") return {};
+    const message = xml.getElementsByTagName("Message")[0]?.textContent ?? "";
+    throw new Error(code ? `${code}: ${message}` : `GET /${bucketName}?tagging returned HTTP ${response.status}`);
+  }
+  const tags: Record<string, string> = {};
+  for (const tag of Array.from(xml.getElementsByTagName("Tag"))) {
+    const key = tag.getElementsByTagName("Key")[0]?.textContent ?? "";
+    if (key) tags[key] = tag.getElementsByTagName("Value")[0]?.textContent ?? "";
+  }
+  return tags;
+};
+
+// PutBucketTagging replaces the whole tag set (S3 tagging has no per-key add);
+// clearing every tag is DeleteBucketTagging, the same two operations the real
+// console's bucket Tags editor drives.
+export const putS3BucketTagging = async (bucketName: string, tags: Record<string, string>): Promise<void> => {
+  const entries = Object.entries(tags);
+  if (entries.length === 0) {
+    await awsRestXmlDelete("s3", `/${encodeURIComponent(bucketName)}?tagging`);
+    return;
+  }
+  const tagXml = entries
+    .map(([key, value]) => `<Tag><Key>${escapeXml(key)}</Key><Value>${escapeXml(value)}</Value></Tag>`)
+    .join("");
+  const body = `<Tagging xmlns="${S3_XMLNS}"><TagSet>${tagXml}</TagSet></Tagging>`;
+  await awsRestXmlPut("s3", `/${encodeURIComponent(bucketName)}?tagging`, body);
+};
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
 
 export interface CWLogGroup {
   name: string;
@@ -834,6 +1222,21 @@ export const createCWLogGroup = async (logGroupName: string): Promise<void> => {
 
 export const deleteCWLogGroup = async (logGroupName: string): Promise<void> => {
   await awsJson("logs", "Logs_20140328.DeleteLogGroup", { logGroupName });
+};
+
+// Retention — PutRetentionPolicy sets a fixed retention in days;
+// DeleteRetentionPolicy clears it so events never expire. CloudWatch has no
+// "0 days" retention, so "Never expire" is the delete, matching what the real
+// console's retention editor does.
+export const putCWLogGroupRetention = async (
+  logGroupName: string,
+  retentionInDays: number,
+): Promise<void> => {
+  if (retentionInDays <= 0) {
+    await awsJson("logs", "Logs_20140328.DeleteRetentionPolicy", { logGroupName });
+    return;
+  }
+  await awsJson("logs", "Logs_20140328.PutRetentionPolicy", { logGroupName, retentionInDays });
 };
 
 // CloudWatch Logs log group detail — DescribeLogGroups has no singular

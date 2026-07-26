@@ -5,7 +5,7 @@ import { GcpPageHeader, GcpStatus } from "../console/GcpConsole.js";
 import { GcpTabs } from "../console/GcpTabs.js";
 import { shortName, formatTimestamp } from "../console/format.js";
 import { fetchCloudRunJob, fetchCloudRunJobExecutions, type CloudRunExecution, type CloudRunJob } from "../api.js";
-import { DeleteJobDialog } from "./CloudRunJobsPage.js";
+import { DeleteJobDialog, EditJobDialog, RunJobDialog } from "./CloudRunJobsPage.js";
 import { useProject } from "../console/project.js";
 
 // jobState reads the Job resource's own terminal condition rather than
@@ -87,6 +87,8 @@ export function CloudRunJobDetailPage() {
   const { project } = useProject();
   const navigate = useNavigate();
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [running, setRunning] = useState(false);
   const job = useQuery({ queryKey: ["cloudrun-job", project, name], queryFn: () => fetchCloudRunJob(project, name) });
   const executions = useQuery({
     queryKey: ["cloudrun-job-executions", project, name],
@@ -94,22 +96,37 @@ export function CloudRunJobDetailPage() {
     enabled: Boolean(job.data),
   });
 
-  // Deletion addresses the job by the id in the route, not the loaded
-  // resource, so the action is available (and testable) even before the read
+  // Run and Delete address the job by the id in the route, not the loaded
+  // resource, so they are available (and testable) even before the read
   // settles — the same way the list page's "Create job" action doesn't wait
-  // on a successful list read.
-  const deleteAction = [{ label: "Delete", testId: "cloudrun-job-delete", onSelect: () => setDeleting(true) }];
+  // on a successful list read. Edit prefills the form from the loaded resource,
+  // so it appears once the read succeeds.
+  const runDeleteActions = [
+    { label: "Run", icon: "play_arrow" as const, testId: "cloudrun-job-run", onSelect: () => setRunning(true) },
+    { label: "Delete", testId: "cloudrun-job-delete", onSelect: () => setDeleting(true) },
+  ];
+  const headerActions = job.data
+    ? [{ label: "Edit", icon: "edit" as const, testId: "cloudrun-job-edit", onSelect: () => setEditing(true) }, ...runDeleteActions]
+    : runDeleteActions;
 
   if (job.isError) {
     return (
       <>
-        <GcpPageHeader title={name} description="Cloud Run job" actions={deleteAction} />
+        <GcpPageHeader title={name} description="Cloud Run job" actions={runDeleteActions} />
         <div className="gc-message gc-message-error" role="alert">
           <strong>Couldn't load this job.</strong>{" "}
           {job.error instanceof Error ? job.error.message : "The simulator did not respond."}
         </div>
         {deleting ? (
           <DeleteJobDialog project={project} jobId={name} onClose={() => setDeleting(false)} onDeleted={() => navigate("/ui/cloudrun")} />
+        ) : null}
+        {running ? (
+          <RunJobDialog
+            project={project}
+            jobId={name}
+            onClose={() => setRunning(false)}
+            onRan={() => setRunning(false)}
+          />
         ) : null}
       </>
     );
@@ -139,7 +156,7 @@ export function CloudRunJobDetailPage() {
       <GcpPageHeader
         title={shortName(name)}
         description="Cloud Run job"
-        actions={deleteAction}
+        actions={headerActions}
         onRefresh={() => { void job.refetch(); void executions.refetch(); }}
         refreshing={job.isFetching || executions.isFetching}
       />
@@ -198,6 +215,29 @@ export function CloudRunJobDetailPage() {
       )}
       {deleting ? (
         <DeleteJobDialog project={project} jobId={name} onClose={() => setDeleting(false)} onDeleted={() => navigate("/ui/cloudrun")} />
+      ) : null}
+      {running ? (
+        <RunJobDialog
+          project={project}
+          jobId={name}
+          onClose={() => setRunning(false)}
+          onRan={() => {
+            setRunning(false);
+            void job.refetch();
+            void executions.refetch();
+          }}
+        />
+      ) : null}
+      {editing && data ? (
+        <EditJobDialog
+          project={project}
+          job={data}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            void job.refetch();
+          }}
+        />
       ) : null}
     </>
   );

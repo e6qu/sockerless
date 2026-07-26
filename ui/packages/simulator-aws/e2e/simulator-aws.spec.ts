@@ -348,6 +348,97 @@ test.describe("Resource creation", () => {
   }
 });
 
+// The console full-parity pass added the compute-resource creates the earlier
+// passes deferred: AWS Lambda "Create function" (CreateFunction) and Amazon ECS
+// "Run new task" (RegisterTaskDefinition + RunTask). Like the storage creates
+// above, the header action and the dialog render before (and regardless of) any
+// cloud read, so the shell — the trigger, the form fields, the initially
+// disabled submit, and focus management — is assertable here without an
+// identity provider. The authenticated create→appears-in-list loop belongs to
+// the Shauth relying-party suite; the request shaping is pinned in the
+// per-package vitest suite (ResourceEditActions.test.tsx).
+test.describe("Compute resource creation", () => {
+  test("Lambda offers Create function and validates the container-image form", async ({ page }) => {
+    await page.goto("/ui/lambda");
+    const create = page.getByTestId("lambda-create-function");
+    await expect(create).toBeVisible();
+    await create.click();
+    const dialog = page.getByRole("dialog", { name: "Create function" });
+    await expect(dialog).toBeVisible();
+    // Container image is the default package type; name + image URI + role are
+    // all required before CreateFunction can go out.
+    await expect(dialog.getByTestId("lambda-create-function-submit")).toBeDisabled();
+    await dialog.getByTestId("lambda-function-name-input").fill("my-fn");
+    await dialog.getByTestId("lambda-image-uri-input").fill("123456789012.dkr.ecr.us-east-1.amazonaws.com/app:latest");
+    await expect(dialog.getByTestId("lambda-create-function-submit")).toBeDisabled();
+    await dialog.getByTestId("lambda-role-input").fill("arn:aws:iam::123456789012:role/lambda-role");
+    await expect(dialog.getByTestId("lambda-create-function-submit")).toBeEnabled();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
+  test("Lambda Create function traps focus and returns it to the trigger on Escape", async ({ page }) => {
+    await page.goto("/ui/lambda");
+    const trigger = page.getByTestId("lambda-create-function");
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "Create function" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+
+  test("ECS offers Run new task and opens the run-task form with an initially disabled submit", async ({ page }) => {
+    await page.goto("/ui/ecs");
+    const run = page.getByTestId("ecs-run-task");
+    await expect(run).toBeVisible();
+    await run.click();
+    const dialog = page.getByRole("dialog", { name: "Run new task" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId("ecs-run-task-cluster")).toBeVisible();
+    await expect(dialog.getByTestId("ecs-run-task-launch-type")).toBeVisible();
+    // No cluster is selectable without a cloud read, so RunTask can never fire
+    // from this unauthenticated shell — the submit stays disabled.
+    await expect(dialog.getByTestId("ecs-run-task-submit")).toBeDisabled();
+    // Switching to the inline task-definition mode reveals its fields.
+    await dialog.getByRole("radio", { name: "Define a new task definition" }).click();
+    await expect(dialog.getByTestId("ecs-run-task-new-family")).toBeVisible();
+    await expect(dialog.getByTestId("ecs-run-task-image")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+});
+
+// Every resource detail page grew the real update and lifecycle actions its
+// service's console offers — Lambda Test/Edit/Manage tags, CloudWatch Logs Edit
+// retention, S3 Edit versioning/Manage tags, ECR Edit/Manage tags — alongside
+// the existing Delete/Stop. Each opens a Cloudscape dialog wired to a real
+// cloud operation once the resource has loaded. This unauthenticated suite has
+// no identity provider, so the read is rejected and the actions render disabled
+// (they gate on a successful read); this pins that they render, in the right
+// disabled state, without a live cloud read. The authenticated open→edit→save
+// loops belong to the Shauth relying-party suite, and the request shaping to
+// the per-package vitest suite (ResourceEditActions.test.tsx).
+test.describe("Resource detail update actions", () => {
+  const cases = [
+    { path: "/ui/lambda/my-fn", testIds: ["lambda-function-test", "lambda-function-edit", "lambda-function-delete"] },
+    { path: "/ui/logs/" + encodeURIComponent("/ecs/my-task"), testIds: ["logs-log-group-edit-retention", "logs-log-group-delete"] },
+    { path: "/ui/s3/my-bucket", testIds: ["s3-bucket-edit-versioning", "s3-bucket-manage-tags", "s3-bucket-delete"] },
+    { path: "/ui/ecr/my-repo", testIds: ["ecr-repo-edit", "ecr-repo-manage-tags", "ecr-repo-delete"] },
+  ];
+  for (const { path, testIds } of cases) {
+    test(`${path} renders its real, initially-disabled update actions without a live cloud read`, async ({ page }) => {
+      await page.goto(path);
+      for (const testId of testIds) {
+        const action = page.getByTestId(testId);
+        await expect(action).toBeVisible();
+        await expect(action).toBeDisabled();
+      }
+    });
+  }
+});
+
 // The Amazon ECS, AWS Lambda, Amazon ECR, Amazon S3, and CloudWatch Logs
 // pages used to render AwsTable's default "View details" and "Delete" header
 // actions — enabled, but with no handler wired (BUG-2637). Each page now
@@ -1038,6 +1129,8 @@ test.describe("Automated accessibility audit", () => {
       { path: "/ui/s3", createTestId: "s3-create-bucket", dialogName: "Create bucket" },
       { path: "/ui/ecr", createTestId: "ecr-create-repo", dialogName: "Create repository" },
       { path: "/ui/logs", createTestId: "logs-create-log-group", dialogName: "Create log group" },
+      { path: "/ui/lambda", createTestId: "lambda-create-function", dialogName: "Create function" },
+      { path: "/ui/ecs", createTestId: "ecs-run-task", dialogName: "Run new task" },
     ];
     for (const { path, createTestId, dialogName } of CREATE_DIALOGS) {
       test(`the ${dialogName} dialog has no detectable violations (${theme})`, async ({ page }) => {

@@ -1,5 +1,6 @@
 export { AzureApp } from "./AzureApp.js";
 export {
+  AzureCommandBar,
   AzureEssentials,
   AzureStatus,
   AzureNotSupportedBadge,
@@ -15,3 +16,4 @@ export {
   AzureTableEmptyRow,
   type AzureColumn,
 } from "./AzureTable.js";
+export { TagsEditor, type TagsEditorProps } from "./TagsEditor.js";

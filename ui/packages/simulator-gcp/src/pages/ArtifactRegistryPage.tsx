@@ -3,12 +3,14 @@ import { Link } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { GcpResourceTable, type GcpColumn } from "../console/index.js";
 import { GcpDialog } from "../console/GcpDialog.js";
+import { LabelsEditor, labelsToPairs, pairsToLabels, type LabelPair } from "../console/LabelsEditor.js";
 import { shortName, formatTimestamp } from "../console/format.js";
 import {
   CONSOLE_REGION,
   createARRepository,
   deleteARRepository,
   fetchARRepos,
+  updateARRepository,
   waitArOperation,
   type ARRepo,
 } from "../api.js";
@@ -97,6 +99,53 @@ export function CreateRepoDialog({
           onClick={() => create.mutate()}
         >
           {create.isPending ? "Creating…" : "Create"}
+        </button>
+      </div>
+    </GcpDialog>
+  );
+}
+
+// EditRepoDialog edits a repository's labels through the real
+// projects.locations.repositories.patch operation (UpdateRepository, which the
+// real API answers synchronously — no operation to poll). Shared by the
+// repository detail page's Edit action.
+export function EditRepoDialog({
+  project,
+  repo,
+  onClose,
+  onSaved,
+}: {
+  project: string;
+  repo: ARRepo;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [pairs, setPairs] = useState<LabelPair[]>(labelsToPairs(repo.labels));
+
+  const save = useMutation({
+    mutationFn: () => updateARRepository(project, shortName(repo.name), { labels: pairsToLabels(pairs) }),
+    onSuccess: onSaved,
+  });
+
+  return (
+    <GcpDialog title="Edit repository" testId="ar-edit-dialog" onClose={onClose}>
+      <LabelsEditor pairs={pairs} onChange={setPairs} idPrefix="ar-edit" />
+      {save.isError ? (
+        <div className="gc-message gc-message-error" role="alert">
+          <strong>Couldn't save the repository.</strong>{" "}
+          {save.error instanceof Error ? save.error.message : "The API did not respond."}
+        </div>
+      ) : null}
+      <div className="gc-dialog-actions">
+        <button type="button" className="gc-button-text" onClick={onClose}>Cancel</button>
+        <button
+          type="button"
+          className="gc-button-primary"
+          data-testid="ar-edit-submit"
+          disabled={save.isPending}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? "Saving…" : "Save"}
         </button>
       </div>
     </GcpDialog>

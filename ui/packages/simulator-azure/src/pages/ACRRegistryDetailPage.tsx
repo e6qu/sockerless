@@ -1,7 +1,21 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Button, Text } from "@fluentui/react-components";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  makeStyles,
+  tokens,
+  Field,
+  Select,
+  Switch,
+  Table,
+  TableHeader,
+  TableRow,
+  TableHeaderCell,
+  TableBody,
+  TableCell,
+  Button,
+  Text,
+} from "@fluentui/react-components";
 import {
   AzureCommandBar,
   AzureConfirmDialog,
@@ -10,10 +24,94 @@ import {
   AzureErrorMessage,
   AzureEmptyState,
   AzureWarningMessage,
-} from "../portal/AzurePortal.js";
+  TagsEditor,
+} from "../portal/index.js";
 import { AzureTableErrorRow, AzureTableLoadingRow, AzureTableEmptyRow } from "../portal/AzureTable.js";
-import { resourceGroupOf, locationLabel } from "../portal/format.js";
-import { deleteACRRegistry, fetchACRRegistry, fetchACRRepositories, fetchACRTags } from "../api.js";
+import { resourceGroupOf, locationLabel, tagsSummary } from "../portal/format.js";
+import {
+  acrRegistrySkus,
+  deleteACRRegistry,
+  fetchACRRegistry,
+  fetchACRRepositories,
+  fetchACRTags,
+  updateACRRegistry,
+  updateResourceTags,
+  type ACRRegistryDetail,
+  API_VERSION,
+} from "../api.js";
+
+const useStyles = makeStyles({
+  form: {
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: "14px 16px",
+    margin: "12px 0",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    maxWidth: "480px",
+  },
+  actions: { display: "flex", gap: "8px" },
+});
+
+// ACRRegistryUpdateForm is the registry "Update" blade: the SKU and admin-user
+// toggle the real Microsoft.ContainerRegistry PATCH edits.
+export function ACRRegistryUpdateForm({
+  registry,
+  busy,
+  error,
+  onSave,
+  onDismiss,
+}: {
+  registry: ACRRegistryDetail;
+  busy: boolean;
+  error?: React.ReactNode;
+  onSave: (skuName: string, adminUserEnabled: boolean) => void;
+  onDismiss: () => void;
+}) {
+  const styles = useStyles();
+  const [skuName, setSkuName] = useState(registry.skuName || acrRegistrySkus[0]);
+  const [adminUserEnabled, setAdminUserEnabled] = useState(registry.adminUserEnabled);
+  return (
+    <form
+      className={styles.form}
+      data-testid="acr-update-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave(skuName, adminUserEnabled);
+      }}
+    >
+      <Text as="h2" weight="semibold">
+        Update container registry
+      </Text>
+      <Field label="SKU">
+        <Select data-testid="acr-update-sku" value={skuName} onChange={(event) => setSkuName(event.target.value)}>
+          {acrRegistrySkus.map((sku) => (
+            <option key={sku} value={sku}>
+              {sku}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Switch
+        data-testid="acr-update-admin"
+        label="Admin user"
+        checked={adminUserEnabled}
+        onChange={(_, data) => setAdminUserEnabled(data.checked)}
+      />
+      {error ? <AzureErrorMessage testid="acr-update-error">{error}</AzureErrorMessage> : null}
+      <div className={styles.actions}>
+        <Button type="submit" appearance="primary" data-testid="acr-update-save" disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </Button>
+        <Button type="button" onClick={onDismiss} disabled={busy}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
 
 // The Container registry blade: the real Microsoft.ContainerRegistry
 // Essentials, and its repositories/tags read from the registry's own data
@@ -24,13 +122,35 @@ import { deleteACRRegistry, fetchACRRegistry, fetchACRRepositories, fetchACRTags
 export function ACRRegistryDetailPage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [panel, setPanel] = useState<"config" | "tags" | null>(null);
 
   const registry = useQuery({ queryKey: ["acr-registry", name], queryFn: () => fetchACRRegistry(name) });
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["acr-registry", name] });
+    void queryClient.invalidateQueries({ queryKey: ["acr-registries"] });
+  };
   const remove = useMutation({
     mutationFn: () => deleteACRRegistry(registry.data!.id),
     onSuccess: () => navigate("/ui/acr"),
+  });
+  const update = useMutation({
+    mutationFn: ({ skuName, adminUserEnabled }: { skuName: string; adminUserEnabled: boolean }) =>
+      updateACRRegistry(registry.data!.id, { skuName, adminUserEnabled }),
+    onSuccess: () => {
+      setPanel(null);
+      invalidate();
+    },
+  });
+  const saveTags = useMutation({
+    mutationFn: (tags: Record<string, string>) =>
+      updateResourceTags(registry.data!.id, API_VERSION.registries, tags),
+    onSuccess: () => {
+      setPanel(null);
+      invalidate();
+    },
   });
   const repositories = useQuery({
     queryKey: ["acr-repositories", registry.data?.id],
@@ -47,6 +167,20 @@ export function ACRRegistryDetailPage() {
     <>
       <AzureCommandBar
         commands={[
+          {
+            label: "Update",
+            icon: "settings",
+            testid: "acr-registry-update",
+            disabled: !registry.data || update.isPending,
+            onSelect: () => setPanel((current) => (current === "config" ? null : "config")),
+          },
+          {
+            label: "Edit tags",
+            icon: "tag",
+            testid: "acr-registry-tags",
+            disabled: !registry.data || saveTags.isPending,
+            onSelect: () => setPanel((current) => (current === "tags" ? null : "tags")),
+          },
           {
             label: "Delete",
             icon: "delete",
@@ -108,8 +242,43 @@ export function ACRRegistryDetailPage() {
                 { label: "SKU", value: registry.data.skuTier || registry.data.skuName || "—" },
                 { label: "Admin user", value: registry.data.adminUserEnabled ? "Enabled" : "Disabled" },
                 { label: "Provisioning state", value: <AzureStatus status={registry.data.provisioningState || "Unknown"} /> },
+                { label: "Tags", value: tagsSummary(registry.data.tags) },
               ]}
             />
+
+            {panel === "config" ? (
+              <ACRRegistryUpdateForm
+                registry={registry.data}
+                busy={update.isPending}
+                error={
+                  update.isError ? (
+                    <>
+                      <strong>The registry could not be updated.</strong>{" "}
+                      {update.error instanceof Error ? update.error.message : "Azure Resource Manager did not respond."}
+                    </>
+                  ) : undefined
+                }
+                onSave={(skuName, adminUserEnabled) => update.mutate({ skuName, adminUserEnabled })}
+                onDismiss={() => setPanel(null)}
+              />
+            ) : null}
+            {panel === "tags" ? (
+              <TagsEditor
+                tags={registry.data.tags}
+                busy={saveTags.isPending}
+                testidPrefix="acr-registry-tags"
+                error={
+                  saveTags.isError ? (
+                    <>
+                      <strong>The tags could not be saved.</strong>{" "}
+                      {saveTags.error instanceof Error ? saveTags.error.message : "Azure Resource Manager did not respond."}
+                    </>
+                  ) : undefined
+                }
+                onSave={(tags) => saveTags.mutate(tags)}
+                onDismiss={() => setPanel(null)}
+              />
+            ) : null}
 
             <section className="az-blade-section" aria-label="Repositories">
               <Text as="h2" weight="semibold" block>

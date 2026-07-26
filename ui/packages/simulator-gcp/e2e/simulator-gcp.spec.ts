@@ -423,6 +423,52 @@ test.describe("Contrast", () => {
     assertAA(arResults);
   });
 
+  // The compute create dialogs (Cloud Run job / Cloud Function) and the job's
+  // Execute confirm this pass added get the same empirical guard, including the
+  // reusable key/value labels editor embedded in the Create job dialog.
+  test("the compute create and run dialogs clear WCAG AA in both themes", async ({ page }) => {
+    await page.goto("/ui/cloudrun");
+    await page.getByTestId("cloudrun-create-job").click();
+    await expect(page.getByTestId("cloudrun-create-dialog")).toBeVisible();
+    await page.getByTestId("cloudrun-create-env-label-add").click();
+    const jobResults = await page.evaluate(sampleContrast, [
+      ".gc-dialog-title",
+      ".gc-field",
+      ".gc-field-hint",
+      ".gc-labels-editor .gc-field",
+      ".gc-button-text",
+      ".gc-button-primary",
+    ]);
+    assertAA(jobResults);
+
+    await page.goto("/ui/functions");
+    await page.getByTestId("function-create").click();
+    await expect(page.getByTestId("function-create-dialog")).toBeVisible();
+    const fnResults = await page.evaluate(sampleContrast, [
+      ".gc-dialog-title",
+      ".gc-field",
+      ".gc-field-hint",
+      ".gc-button-text",
+      ".gc-button-primary",
+    ]);
+    assertAA(fnResults);
+
+    await page.goto("/ui/cloudrun/example-job");
+    await page.getByTestId("cloudrun-job-run").click();
+    await expect(page.getByTestId("cloudrun-run-dialog")).toBeVisible();
+    const runResults = await page.evaluate(sampleContrast, [".gc-dialog-title", ".gc-dialog p", ".gc-button-text", ".gc-button-primary"]);
+    assertAA(runResults);
+  });
+
+  // The drawer's product search is this pass's new shell surface.
+  test("the product catalog search field clears WCAG AA in both themes", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Main menu" }).click();
+    await expect(page.getByTestId("nav-drawer")).toBeVisible();
+    const results = await page.evaluate(sampleContrast, [".gc-drawer-search input", ".gc-drawer-title"]);
+    assertAA(results);
+  });
+
   // The delete-confirm dialogs this pass added to every resource detail page
   // get the same empirical guard: their title, warning copy and Cancel/Delete
   // controls.
@@ -571,6 +617,122 @@ test.describe("Resource deletion", () => {
   }
 });
 
+// Cloud Run jobs and Cloud Run functions were deferred as read-only-plus-delete;
+// the real console creates both, and Cloud Run jobs are executed on demand. The
+// list pages now offer a real "Create job" / "Create function" header action
+// (rendered before, and regardless of, any list read) and the jobs list a
+// per-row / detail "Run" action (which addresses the job by the id in the
+// route, so it is reachable without a successful read). Those are assertable in
+// this unauthenticated suite; the Edit header actions on the detail pages need
+// the loaded resource to prefill their form, so — like the empty state — they
+// are exercised over an authenticated read in the relying-party suite
+// (ui/e2e/shauth-rps.mjs) and against mocked auth in
+// src/__tests__/ResourceEditFlows.test.tsx.
+test.describe("Compute resource creation", () => {
+  test("Cloud Run jobs offers Create job with a form that validates before submitting", async ({ page }) => {
+    await page.goto("/ui/cloudrun");
+    const create = page.getByTestId("cloudrun-create-job");
+    await expect(create).toBeVisible();
+    await create.click();
+    const dialog = page.getByTestId("cloudrun-create-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAccessibleName("Create job");
+    await expect(dialog.getByTestId("cloudrun-create-region")).toHaveValue("us-central1");
+    await expect(dialog.getByTestId("cloudrun-create-submit")).toBeDisabled();
+    await dialog.getByTestId("cloudrun-create-id").fill("my-job");
+    await expect(dialog.getByTestId("cloudrun-create-submit")).toBeDisabled();
+    await dialog.getByTestId("cloudrun-create-image").fill("gcr.io/p/img");
+    await expect(dialog.getByTestId("cloudrun-create-submit")).toBeEnabled();
+    // The environment-variable editor (the reusable labels editor) adds a row.
+    await dialog.getByTestId("cloudrun-create-env-label-add").click();
+    await expect(dialog.getByTestId("cloudrun-create-env-label-key-0")).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByTestId("cloudrun-create-dialog")).toHaveCount(0);
+  });
+
+  test("Cloud Run job Create dialog closes on Escape and returns focus to its trigger", async ({ page }) => {
+    await page.goto("/ui/cloudrun");
+    const trigger = page.getByTestId("cloudrun-create-job");
+    await trigger.click();
+    await expect(page.getByTestId("cloudrun-create-dialog")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("cloudrun-create-dialog")).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+
+  test("Cloud Run functions offers Create function with a form that validates before submitting", async ({ page }) => {
+    await page.goto("/ui/functions");
+    const create = page.getByTestId("function-create");
+    await expect(create).toBeVisible();
+    await create.click();
+    const dialog = page.getByTestId("function-create-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAccessibleName("Create function");
+    await expect(dialog.getByTestId("function-create-region")).toHaveValue("us-central1");
+    await expect(dialog.getByTestId("function-create-runtime")).toHaveValue("nodejs20");
+    await expect(dialog.getByTestId("function-create-submit")).toBeDisabled();
+    await dialog.getByTestId("function-create-id").fill("my-fn");
+    await expect(dialog.getByTestId("function-create-submit")).toBeDisabled();
+    await dialog.getByTestId("function-create-entrypoint").fill("handler");
+    await expect(dialog.getByTestId("function-create-submit")).toBeEnabled();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByTestId("function-create-dialog")).toHaveCount(0);
+  });
+
+  test("Cloud Function Create dialog closes on Escape and returns focus to its trigger", async ({ page }) => {
+    await page.goto("/ui/functions");
+    const trigger = page.getByTestId("function-create");
+    await trigger.click();
+    await expect(page.getByTestId("function-create-dialog")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("function-create-dialog")).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+});
+
+test.describe("Cloud Run job execution", () => {
+  // The Run action addresses the job by the id in the route, so — like the
+  // Delete action — it is reachable on a failed (unauthenticated) detail read.
+  test("offers a Run action that opens an Execute confirm with Execute and Cancel controls", async ({ page }) => {
+    await page.goto("/ui/cloudrun/example-job");
+    const trigger = page.getByTestId("cloudrun-job-run");
+    await expect(trigger).toBeVisible();
+    await trigger.click();
+    const dialog = page.getByTestId("cloudrun-run-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAccessibleName("Execute job?");
+    await expect(dialog.getByRole("button", { name: "Execute" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("cloudrun-run-dialog")).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+});
+
+test.describe("Product catalog search", () => {
+  // The drawer's product search filters the catalog live, matching the AWS
+  // console's services flyout, while keeping unsupported products honest.
+  test("filters the product catalog live and keeps unsupported products honest", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.getByRole("button", { name: "Main menu" }).click();
+    const drawer = page.getByRole("dialog", { name: "Google Cloud products" });
+    await expect(drawer).toBeVisible();
+    await drawer.getByTestId("nav-drawer-search").fill("storage");
+    await expect(drawer.getByTestId("drawer-item-cloud-storage")).toBeVisible();
+    await expect(drawer.getByTestId("drawer-item-cloud-run")).toHaveCount(0);
+    await expect(drawer.getByTestId("drawer-item-compute-engine")).toHaveCount(0);
+
+    await drawer.getByTestId("nav-drawer-search").fill("kubernetes");
+    // An unsupported product still surfaces (and keeps its chip).
+    const item = drawer.getByTestId("drawer-item-kubernetes-engine");
+    await expect(item).toBeVisible();
+    await expect(item.locator(".gc-chip-unsupported")).toHaveText("Not supported");
+
+    await drawer.getByTestId("nav-drawer-search").fill("zzz-nothing");
+    await expect(drawer.getByTestId("nav-drawer-empty")).toBeVisible();
+  });
+});
+
 test.describe("Resource detail pages", () => {
   // This lightweight suite has no identity provider (see the Overview and
   // Project picker describes above), so every detail read reaches the
@@ -717,6 +879,30 @@ test.describe("Automated accessibility audit", () => {
         }
         await page.getByTestId(openTestId).click();
         await expect(page.getByTestId(dialogTestId)).toBeVisible();
+        const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
+
+    // The compute create dialogs (with the embedded labels editor) and the Run
+    // confirm this pass added get the same automated audit in both themes.
+    const COMPUTE_DIALOGS = [
+      { path: "/ui/cloudrun", openTestId: "cloudrun-create-job", dialogTestId: "cloudrun-create-dialog", addEnv: true },
+      { path: "/ui/functions", openTestId: "function-create", dialogTestId: "function-create-dialog", addEnv: false },
+      { path: "/ui/cloudrun/example-job", openTestId: "cloudrun-job-run", dialogTestId: "cloudrun-run-dialog", addEnv: false },
+    ];
+    for (const { path, openTestId, dialogTestId, addEnv } of COMPUTE_DIALOGS) {
+      test(`the ${dialogTestId} dialog has no detectable violations (${theme})`, async ({ page }) => {
+        await page.goto(path);
+        if (theme === "dark") {
+          await page.evaluate(() => document.documentElement.classList.add("dark"));
+        }
+        await page.getByTestId(openTestId).click();
+        await expect(page.getByTestId(dialogTestId)).toBeVisible();
+        if (addEnv) {
+          // Exercise a populated labels/env editor row so its inputs are audited.
+          await page.getByTestId("cloudrun-create-env-label-add").click();
+        }
         const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
         expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
       });
