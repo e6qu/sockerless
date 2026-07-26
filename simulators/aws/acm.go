@@ -203,6 +203,112 @@ func registerACM(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("CertificateManager.GetAccountConfiguration", handleACMGetAccountConfiguration)
 	r.Register("CertificateManager.PutAccountConfiguration", handleACMPutAccountConfiguration)
 	r.Register("CertificateManager.SearchCertificates", handleACMSearchCertificates)
+	r.Register("CertificateManager.TagResource", handleACMTagResource)
+	r.Register("CertificateManager.UntagResource", handleACMUntagResource)
+	r.Register("CertificateManager.ListTagsForResource", handleACMListTagsForResource)
+}
+
+// ---------- Cross-resource tagging API ----------
+//
+// TagResource / UntagResource / ListTagsForResource address any ACM resource by
+// ARN. Certificates are the taggable ACM resource the simulator hosts, so an
+// ARN that does not resolve to one is answered with ResourceNotFoundException —
+// the same answer real ACM gives for an ARN it does not own.
+
+type acmResourceTagReq struct {
+	ResourceArn string   `json:"ResourceArn"`
+	Tags        []acmTag `json:"Tags"`
+	TagKeys     []string `json:"TagKeys"`
+}
+
+// acmTaggedResource resolves an ACM resource ARN to its stored certificate.
+func acmTaggedResource(arn string) (id string, stored acmStoredCert, ok bool) {
+	id = acmARNToID(arn)
+	if id == "" {
+		return "", acmStoredCert{}, false
+	}
+	stored, ok = acmCertificates.Get(id)
+	return id, stored, ok
+}
+
+func handleACMTagResource(w http.ResponseWriter, r *http.Request) {
+	var req acmResourceTagReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		acmWriteError(w, "ValidationException", "could not decode request: "+err.Error())
+		return
+	}
+	if req.ResourceArn == "" {
+		acmWriteError(w, "ValidationException", "ResourceArn is required")
+		return
+	}
+	id, stored, ok := acmTaggedResource(req.ResourceArn)
+	if !ok {
+		acmWriteError(w, "ResourceNotFoundException", "Could not find resource "+req.ResourceArn)
+		return
+	}
+	tagMap := map[string]string{}
+	for _, t := range stored.Tags {
+		tagMap[t.Key] = t.Value
+	}
+	for _, t := range req.Tags {
+		tagMap[t.Key] = t.Value
+	}
+	keys := make([]string, 0, len(tagMap))
+	for k := range tagMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	merged := make([]acmTag, 0, len(tagMap))
+	for _, k := range keys {
+		merged = append(merged, acmTag{Key: k, Value: tagMap[k]})
+	}
+	stored.Tags = merged
+	acmCertificates.Put(id, stored)
+	acmWriteJSON(w, http.StatusOK, struct{}{})
+}
+
+func handleACMUntagResource(w http.ResponseWriter, r *http.Request) {
+	var req acmResourceTagReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		acmWriteError(w, "ValidationException", "could not decode request: "+err.Error())
+		return
+	}
+	id, stored, ok := acmTaggedResource(req.ResourceArn)
+	if !ok {
+		acmWriteError(w, "ResourceNotFoundException", "Could not find resource "+req.ResourceArn)
+		return
+	}
+	drop := map[string]bool{}
+	for _, k := range req.TagKeys {
+		drop[k] = true
+	}
+	kept := make([]acmTag, 0, len(stored.Tags))
+	for _, t := range stored.Tags {
+		if !drop[t.Key] {
+			kept = append(kept, t)
+		}
+	}
+	stored.Tags = kept
+	acmCertificates.Put(id, stored)
+	acmWriteJSON(w, http.StatusOK, struct{}{})
+}
+
+func handleACMListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req acmResourceTagReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		acmWriteError(w, "ValidationException", "could not decode request: "+err.Error())
+		return
+	}
+	_, stored, ok := acmTaggedResource(req.ResourceArn)
+	if !ok {
+		acmWriteError(w, "ResourceNotFoundException", "Could not find resource "+req.ResourceArn)
+		return
+	}
+	tags := stored.Tags
+	if tags == nil {
+		tags = []acmTag{}
+	}
+	acmWriteJSON(w, http.StatusOK, map[string][]acmTag{"Tags": tags})
 }
 
 // acmAccountConfig holds the account-level certificate configuration set by

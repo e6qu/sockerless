@@ -34,6 +34,12 @@ type s3MetadataConfig struct {
 	// ConfigurationState (ENABLED/DISABLED), empty when no inventory
 	// table was requested.
 	InventoryState string
+	// AnnotationState mirrors the AnnotationTableConfiguration's
+	// ConfigurationState (ENABLED/DISABLED), empty when no annotation
+	// table was requested. AnnotationRole is the Role the configuration
+	// names for the annotation table.
+	AnnotationState string
+	AnnotationRole  string
 }
 
 // s3MetadataTableConfig holds the legacy V1 S3 Metadata table
@@ -166,6 +172,19 @@ func handleS3GetBucketMetadataConfiguration(w http.ResponseWriter, r *http.Reque
 		}
 		sb.WriteString(`</InventoryTableConfigurationResult>`)
 	}
+	if cfg.AnnotationState != "" {
+		sb.WriteString(`<AnnotationTableConfigurationResult>`)
+		fmt.Fprintf(&sb, `<ConfigurationState>%s</ConfigurationState>`, xmlEscape(cfg.AnnotationState))
+		if strings.EqualFold(cfg.AnnotationState, "ENABLED") {
+			sb.WriteString(`<TableStatus>ACTIVE</TableStatus>`)
+			fmt.Fprintf(&sb, `<TableName>%s-annotation</TableName>`, bucket)
+			fmt.Fprintf(&sb, `<TableArn>%s/table/%s-annotation</TableArn>`, tableBucketArn, bucket)
+		}
+		if cfg.AnnotationRole != "" {
+			fmt.Fprintf(&sb, `<Role>%s</Role>`, xmlEscape(cfg.AnnotationRole))
+		}
+		sb.WriteString(`</AnnotationTableConfigurationResult>`)
+	}
 	sb.WriteString(`</MetadataConfigurationResult>`)
 	sb.WriteString(`</GetBucketMetadataConfigurationResult>`)
 
@@ -223,6 +242,54 @@ func handleS3UpdateBucketMetadataInventoryTable(w http.ResponseWriter, r *http.R
 		}
 	}
 	cfg.InventoryState = doc.ConfigurationState
+	s3MetadataConfigsMu.Lock()
+	s3MetadataConfigs[bucket] = cfg
+	s3MetadataConfigsMu.Unlock()
+	w.WriteHeader(http.StatusOK)
+}
+
+// UpdateBucketMetadataAnnotationTableConfiguration turns the annotation table
+// of an existing metadata configuration on or off (?metadataAnnotationTable).
+
+type s3AnnotationTableUpdateBody struct {
+	XMLName            xml.Name `xml:"AnnotationTableConfiguration"`
+	ConfigurationState string   `xml:"ConfigurationState"`
+	Role               string   `xml:"Role"`
+}
+
+func handleS3UpdateBucketMetadataAnnotationTable(w http.ResponseWriter, r *http.Request) {
+	bucket := sim.PathParam(r, "bucket")
+	if _, ok := s3Buckets_.Get(bucket); !ok {
+		sim.S3ErrorXML(w, "NoSuchBucket", "The specified bucket does not exist",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	}
+	s3MetadataConfigsMu.Lock()
+	cfg, ok := s3MetadataConfigs[bucket]
+	s3MetadataConfigsMu.Unlock()
+	if !ok {
+		sim.S3ErrorXML(w, "MetadataTableConfigNotFoundError",
+			"The metadata configuration does not exist for this bucket.",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	}
+	defer r.Body.Close()
+	body, _ := io.ReadAll(r.Body)
+	var doc s3AnnotationTableUpdateBody
+	if len(body) > 0 {
+		if err := xml.Unmarshal(body, &doc); err != nil {
+			sim.S3ErrorXML(w, "MalformedXML", "The XML you provided was not well-formed: "+err.Error(),
+				bucket, sim.RequestID(r.Context()), http.StatusBadRequest)
+			return
+		}
+	}
+	if doc.ConfigurationState == "" {
+		sim.S3ErrorXML(w, "MalformedXML", "AnnotationTableConfiguration requires a ConfigurationState.",
+			bucket, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
+	cfg.AnnotationState = doc.ConfigurationState
+	cfg.AnnotationRole = doc.Role
 	s3MetadataConfigsMu.Lock()
 	s3MetadataConfigs[bucket] = cfg
 	s3MetadataConfigsMu.Unlock()
@@ -476,11 +543,18 @@ func handleS3RenameObject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Move: write under the new key, delete the old.
+	// Move: write under the new key, delete the old. The object's annotations
+	// travel with it — a rename moves the object, it does not strip metadata.
+	annotations := s3ObjectAnnotationsOf(bucket, srcKey)
 	obj.Key = s3ObjectKey(bucket, destKey)
 	obj.LastModified = time.Now()
 	s3Objects.Put(obj.Key, obj)
 	s3Objects.Delete(srcStoreKey)
+	for _, ann := range annotations {
+		s3ObjectAnnotations.Delete(s3AnnotationKey(bucket, srcKey, ann.Name))
+		ann.Owner = s3ObjectKey(bucket, destKey)
+		s3ObjectAnnotations.Put(s3AnnotationKey(bucket, destKey, ann.Name), ann)
+	}
 
 	w.WriteHeader(http.StatusOK)
 }

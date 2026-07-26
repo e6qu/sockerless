@@ -1,22 +1,9 @@
 package aws_cli_test
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
-
-// cwCLIHasSubcommand reports whether the installed aws CLI knows a cloudwatch
-// subcommand. The alarm-mute-rule operations are very recent additions; an older
-// botocore (e.g. the macOS-bundled 2.26.x) predates them, so the test that
-// exercises them skips rather than failing on "Invalid choice". The simulator
-// still implements them faithfully for the SDK and a current CLI.
-func cwCLIHasSubcommand(sub string) bool {
-	cmd := exec.Command("aws", "cloudwatch", "help")
-	cmd.Env = append(cmd.Environ(), "PAGER=cat", "MANPAGER=cat", "AWS_PAGER=")
-	out, _ := cmd.CombinedOutput()
-	return strings.Contains(string(out), sub)
-}
 
 // TestCloudWatchCLI_AlarmActionsAndState covers enable/disable-alarm-actions,
 // set-alarm-state and describe-alarm-history over the CLI surface.
@@ -193,9 +180,6 @@ func TestCloudWatchCLI_GetMetricData(t *testing.T) {
 
 // TestCloudWatchCLI_AlarmMuteRules covers put / get / list / delete.
 func TestCloudWatchCLI_AlarmMuteRules(t *testing.T) {
-	if !cwCLIHasSubcommand("put-alarm-mute-rule") {
-		t.Skip("installed aws CLI predates the alarm-mute-rule operations")
-	}
 	name := "cli-mute"
 	runCLI(t, awsCLI("cloudwatch", "put-alarm-mute-rule",
 		"--name", name, "--description", "maint",

@@ -23,6 +23,7 @@ if [ $# -lt 1 ] || [ $# -gt 2 ]; then
 fi
 
 MODEL="$1"
+REF_EXPLICIT="${2:-}"
 REF="${2:-main}"
 REPO="aws/aws-sdk-go-v2"
 UPSTREAM_PATH="codegen/sdk-codegen/aws-models/${MODEL}.json"
@@ -33,7 +34,19 @@ DEST="$DEST_DIR/${MODEL}.smithy.json.gz"
 SOURCES="$DEST_DIR/SOURCES.md"
 mkdir -p "$DEST_DIR"
 
-SHA="$(gh api "repos/$REPO/commits/$REF" --jq .sha)"
+# Pin the commit that last touched THIS file, not the branch tip. The freshness
+# check compares a pin against `commits?path=…`, so pinning the tip made every
+# freshly vendored spec report drift immediately and buried genuine staleness in
+# bookkeeping noise. An explicit ref argument still wins.
+if [ -n "${REF_EXPLICIT:-}" ]; then
+  SHA="$(gh api "repos/$REPO/commits/$REF" --jq .sha)"
+else
+  SHA="$(gh api "repos/$REPO/commits?path=$UPSTREAM_PATH&per_page=1" --jq '.[0].sha')"
+  if [ -z "$SHA" ] || [ "$SHA" = "null" ]; then
+    echo "no upstream commit found for $UPSTREAM_PATH in $REPO" >&2
+    exit 1
+  fi
+fi
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT

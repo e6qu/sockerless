@@ -385,7 +385,9 @@ func cwParseAggs(s string) []cwAgg {
 func cwComputeAgg(a cwAgg, grp []cwInsightsRecord) string {
 	switch a.fn {
 	case "count":
-		if a.field == "" {
+		// `count(*)` and a bare `count` count every record in the group; a
+		// named field counts the records that carry it.
+		if a.field == "" || a.field == "*" {
 			return strconv.Itoa(len(grp))
 		}
 		n := 0

@@ -4,24 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
-
-// cloudfrontSupportsCLI reports whether the aws CLI on PATH knows the given
-// cloudfront subcommand. Older CLIs predate the connection-function ops; the
-// EDGE-shard CI runs a current CLI that supports them all. We probe rather than
-// hard-skip so the connection-function block runs wherever the CLI supports it.
-func cloudfrontSupportsCLI(sub string) bool {
-	out, _ := exec.Command("aws", "cloudfront", sub, "help").CombinedOutput()
-	s := string(out)
-	return !strings.Contains(s, "Invalid choice") && !strings.Contains(s, "invalid choice")
-}
 
 // writeTempFile writes content to a temp file and returns its path, for the
 // CLI's fileb:// blob arguments (connection-function code, event objects).
@@ -35,9 +23,6 @@ func writeTempFile(t *testing.T, name string, content []byte) string {
 // TestCloudFront_ConnectionFunction_CLI exercises the connection-function CRUD +
 // lifecycle through the real aws CLI.
 func TestCloudFront_ConnectionFunction_CLI(t *testing.T) {
-	if !cloudfrontSupportsCLI("create-connection-function") {
-		t.Skip("aws CLI on PATH predates cloudfront connection functions")
-	}
 	name := "clifn-" + time.Now().Format("150405.000000")
 	codePath := writeTempFile(t, "code.js", []byte("function handler(event) { return event; }"))
 	objPath := writeTempFile(t, "obj.json", []byte(`{"request":{}}`))

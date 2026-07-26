@@ -126,6 +126,7 @@ func registerS3(srv *sim.Server) {
 		"AbortMultipartUpload")
 	s3Buckets_ = sim.MakeStore[S3Bucket](srv.DB(), "s3_buckets")
 	s3Objects = sim.MakeStore[S3Object](srv.DB(), "s3_objects")
+	s3ObjectAnnotations = sim.MakeStore[s3Annotation](srv.DB(), "s3_object_annotations")
 
 	mux := srv
 
@@ -246,6 +247,8 @@ func s3BucketOperationName(r *http.Request, _ []byte) string {
 			return "UpdateBucketMetadataInventoryTableConfiguration"
 		case q.Has("metadataJournalTable"):
 			return "UpdateBucketMetadataJournalTableConfiguration"
+		case q.Has("metadataAnnotationTable"):
+			return "UpdateBucketMetadataAnnotationTableConfiguration"
 		case q.Has("abac"):
 			return "PutBucketAbac"
 		}
@@ -351,6 +354,8 @@ func s3ObjectOperationName(r *http.Request, _ []byte) string {
 			return "CopyObject"
 		case q.Has("uploadId") && q.Has("partNumber"):
 			return "UploadPart"
+		case q.Has("annotation"):
+			return "PutObjectAnnotation"
 		case q.Has("tagging"):
 			return "PutObjectTagging"
 		case q.Has("acl"):
@@ -366,6 +371,13 @@ func s3ObjectOperationName(r *http.Request, _ []byte) string {
 		switch {
 		case q.Has("uploadId"):
 			return "ListParts"
+		case q.Has("annotation"):
+			// The annotation subresource resolves to the single-annotation
+			// read when AnnotationName names one, and to the list otherwise.
+			if q.Get("annotationName") != "" {
+				return "GetObjectAnnotation"
+			}
+			return "ListObjectAnnotations"
 		case q.Has("tagging"):
 			return "GetObjectTagging"
 		case q.Has("acl"):
@@ -396,6 +408,8 @@ func s3ObjectOperationName(r *http.Request, _ []byte) string {
 		switch {
 		case q.Has("uploadId"):
 			return "AbortMultipartUpload"
+		case q.Has("annotation"):
+			return "DeleteObjectAnnotation"
 		case q.Has("tagging"):
 			return "DeleteObjectTagging"
 		default:
@@ -1011,6 +1025,7 @@ func handleS3DeleteObject(w http.ResponseWriter, r *http.Request) {
 	storeKey := s3ObjectKey(bucket, key)
 	existing, existed := s3Objects.Get(storeKey)
 	s3Objects.Delete(storeKey)
+	s3DeleteObjectAnnotations(bucket, key)
 
 	if existed {
 		s3FireObjectNotifications(bucket, key, "ObjectRemoved:Delete", existing.ETag, existing.Size)

@@ -39,7 +39,7 @@ func s3ImplementedOps() map[string]bool {
 		"intelligent-tiering", "inventory", "analytics", "metrics",
 		"uploads", "versions", "location", "policyStatus", "delete",
 		"metadataConfiguration", "metadataTable", "metadataInventoryTable",
-		"metadataJournalTable", "abac",
+		"metadataJournalTable", "metadataAnnotationTable", "abac",
 	}
 	for _, m := range []string{"GET", "PUT", "DELETE", "HEAD", "POST"} {
 		add(bucketReq(m, ""))
@@ -55,6 +55,9 @@ func s3ImplementedOps() map[string]bool {
 		"", "tagging=", "uploads=", "uploadId=x", "uploadId=x&partNumber=1",
 		"acl=", "retention=", "legal-hold=", "attributes=", "torrent=", "restore=", "select=",
 		"renameObject=", "encryption=",
+		// ?annotation resolves to the single-annotation ops when annotationName
+		// names one, and to ListObjectAnnotations when it does not.
+		"annotation=", "annotation=&annotationName=a",
 	}
 	for _, m := range []string{"GET", "PUT", "DELETE", "HEAD", "POST"} {
 		for _, q := range objQueries {
@@ -114,10 +117,41 @@ var serviceConformanceCatalog = map[string][]string{
 	// associations + automation + run command + ops-items + sessions + activations +
 	// inventory + compliance + nodes + ops-metadata + resource policies).
 	"AmazonSSM": {},
-	// Step Functions / ACM / Secrets Manager / Application Auto Scaling: all
+	// Step Functions / Secrets Manager / Application Auto Scaling: all
 	// operations implemented (conformance-complete).
-	"AWSStepFunctions":        {},
-	"CertificateManager":      {},
+	"AWSStepFunctions": {},
+	// AWS Certificate Manager: the certificate surface (request / import /
+	// describe / export / renew / revoke / search / account configuration /
+	// tagging) is implemented. The gap is the ACME sub-surface: an ACME
+	// endpoint is the control plane of an RFC 8555 certificate authority, and
+	// its resources only come into existence when an ACME client registers
+	// against the endpoint's EndpointUrl and drives newNonce / newAccount /
+	// newOrder / authz / challenge / finalize against it. Implementing these
+	// operations without that server would emit an EndpointUrl resolving to
+	// nothing and a permanently-empty ListAcmeAccounts — synthetic behavior the
+	// project forbids. Closing this entry means serving the ACME protocol at
+	// the advertised endpoint, then wiring these operations to it.
+	"CertificateManager": {
+		"CreateAcmeDomainValidation",
+		"CreateAcmeEndpoint",
+		"CreateAcmeExternalAccountBinding",
+		"DeleteAcmeDomainValidation",
+		"DeleteAcmeEndpoint",
+		"DeleteAcmeExternalAccountBinding",
+		"DescribeAcmeAccount",
+		"DescribeAcmeDomainValidation",
+		"DescribeAcmeEndpoint",
+		"DescribeAcmeExternalAccountBinding",
+		"GetAcmeExternalAccountBindingCredentials",
+		"ListAcmeAccounts",
+		"ListAcmeDomainValidations",
+		"ListAcmeEndpoints",
+		"ListAcmeExternalAccountBindings",
+		"RevokeAcmeAccount",
+		"RevokeAcmeExternalAccountBinding",
+		"UpdateAcmeDomainValidation",
+		"UpdateAcmeEndpoint",
+	},
 	"secretsmanager":          {},
 	"AnyScaleFrontendService": {},
 	// Kinesis: all operations implemented (SubscribeToShard streams over vnd.amazon.eventstream).
