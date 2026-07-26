@@ -85,12 +85,51 @@ export async function authorizedFetch(path: string, init: RequestInit = {}): Pro
   return fetch(`${config.cloudApiEndpoint ?? ""}${path}`, { ...init, headers, credentials: "include" });
 }
 
+// A Google Cloud API failure with the service's own `status` (the enum GCP's
+// JSON error body carries, e.g. "ALREADY_EXISTS", "NOT_FOUND") and HTTP
+// `code`, so a page can act on the specific condition — the Cloud Storage
+// bucket-name-taken 409 and the Artifact Registry repository-already-exists
+// 409 both read the real `error.message` — instead of a bare HTTP status.
+export class GcpApiError extends Error {
+  readonly status: number;
+  readonly reason: string;
+  constructor(message: string, status: number, reason: string) {
+    super(message);
+    this.name = "GcpApiError";
+    this.status = status;
+    this.reason = reason;
+  }
+}
+
+// Every Google Cloud JSON API answers a failure as
+// `{"error": {"code", "message", "status", "details"}}` (GCPError in the
+// simulator, the same shape the real API's googleapi.Error unmarshals).
+// Shared so every caller reports the real service message rather than a bare
+// status code.
+async function gcpErrorFromResponse(path: string, response: Response): Promise<GcpApiError> {
+  let message = "";
+  let reason = "";
+  try {
+    const parsed = (await response.json()) as { error?: { message?: string; status?: string } };
+    message = parsed.error?.message ?? "";
+    reason = parsed.error?.status ?? "";
+  } catch {
+    // The body was not the API's JSON error shape (a proxy error page, an
+    // empty body); the HTTP status below is all the information there is.
+  }
+  return new GcpApiError(
+    message ? `${path}: ${message}` : `${path} returned HTTP ${response.status}`,
+    response.status,
+    reason,
+  );
+}
+
 // authorizedJSON reads a real Google Cloud API path as JSON, raising the API's
 // own error rather than masking it.
 export async function authorizedJSON<T>(path: string): Promise<T> {
   const response = await authorizedFetch(path);
   if (!response.ok) {
-    throw new Error(`${path} returned HTTP ${response.status}`);
+    throw await gcpErrorFromResponse(path, response);
   }
   return (await response.json()) as T;
 }
@@ -104,7 +143,7 @@ export async function authorizedJSONPost<T>(path: string, body: unknown): Promis
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(`${path} returned HTTP ${response.status}`);
+    throw await gcpErrorFromResponse(path, response);
   }
   return (await response.json()) as T;
 }
@@ -114,7 +153,7 @@ export async function authorizedJSONPost<T>(path: string, body: unknown): Promis
 export async function authorizedJSONDelete<T>(path: string): Promise<T> {
   const response = await authorizedFetch(path, { method: "DELETE" });
   if (!response.ok) {
-    throw new Error(`${path} returned HTTP ${response.status}`);
+    throw await gcpErrorFromResponse(path, response);
   }
   return (await response.json()) as T;
 }

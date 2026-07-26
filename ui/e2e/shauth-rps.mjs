@@ -38,6 +38,7 @@ try {
       await assertFederatedCloudToken(context, page, app);
       await assertMintedServiceAccountKey(page, app);
       await assertCreatedProject(page);
+      await assertCreatedGCSBucket(page, app);
     }
     if (app.name === "Sockerless AWS simulator") {
       await assertFederatedAwsCredentials(context, page, app);
@@ -49,6 +50,7 @@ try {
       await assertFederatedAzureToken(context, page, app);
       await assertMintedEntraClientSecret(page, app);
       await assertResourceDetailBladeRendersLiveData(page, app);
+      await assertCreatedACRRegistry(page, app);
     }
     await logoutFromApplication(page, context, app);
     assert.deepEqual(failures, [], `${app.name} direct login emitted browser failures`);
@@ -457,6 +459,35 @@ async function assertMintedServiceAccountKey(page, app) {
   );
 }
 
+
+// assertCreatedGCSBucket proves the Google Cloud console's create flow end to
+// end for the signed-in operator: open Cloud Storage, create a bucket through
+// the real storage.buckets.insert API over the federated bearer path, and see
+// it appear in the list.
+async function assertCreatedGCSBucket(page, app) {
+  const origin = new URL(app.launch).origin;
+  const bucketName = `rps-bucket-${Date.now() % 1_000_000}`;
+  await page.goto(`${origin}/ui/gcs`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("gcs-create-bucket").click();
+  await page.getByTestId("gcs-create-name").fill(bucketName);
+  await page.getByTestId("gcs-create-submit").click();
+  await page.getByRole("link", { name: bucketName }).waitFor({ state: "visible" });
+}
+
+// assertCreatedACRRegistry proves the Azure portal's create flow end to end for
+// the signed-in operator: open Container registries, create a registry through
+// the real Azure Resource Manager PUT over the federated broker path, and see it
+// appear in the list. The name is the only required field — subscription,
+// resource group, location, and SKU carry defaults.
+async function assertCreatedACRRegistry(page, app) {
+  const origin = new URL(app.launch).origin;
+  const registryName = `rpsreg${Date.now() % 1_000_000}`;
+  await page.goto(`${origin}/ui/acr`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("acr-create").click();
+  await page.getByTestId("acr-create-name").fill(registryName);
+  await page.getByTestId("acr-create-submit").click();
+  await page.getByRole("link", { name: registryName }).waitFor({ state: "visible" });
+}
 
 // assertCreatedECRRepository proves the AWS console's resource-creation flow end
 // to end for the signed-in operator: open Elastic Container Registry, create a

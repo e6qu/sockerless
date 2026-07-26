@@ -142,6 +142,10 @@ export interface GcpPageAction {
   onSelect?: () => void;
   disabled?: boolean;
   primary?: boolean;
+  /** Distinguishes the header action from an empty-state primary button that
+   *  carries the same label — both can be on screen at once (an empty list
+   *  renders its own "Create …" button alongside this one). */
+  testId?: string;
 }
 
 /** The console puts inline text actions beside the page title rather than in a
@@ -170,6 +174,7 @@ export function GcpPageHeader({
               key={action.label}
               type="button"
               className={action.primary ? "gc-text-action gc-text-action-primary" : "gc-text-action"}
+              data-testid={action.testId}
               onClick={action.onSelect}
               disabled={action.disabled}
             >
