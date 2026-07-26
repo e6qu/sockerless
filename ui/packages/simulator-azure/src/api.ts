@@ -28,6 +28,10 @@ const API_VERSION = {
   registries: "2023-07-01",
   storage: "2023-01-01",
   workspaces: "2022-10-01",
+  // Microsoft.Resources/resourceGroups — the api-version armresources'
+  // ResourceGroupsClient sends (go-azure-sdk / azurerm provider both pin the
+  // same stable version).
+  resourceGroups: "2021-04-01",
 } as const;
 
 // Azure resources live under subscriptions; the portal enumerates them the way
@@ -162,6 +166,23 @@ export const enableSubscription = async (subscriptionId: string): Promise<void> 
   );
 };
 
+// ensureResourceGroup PUTs the resource group a new resource is created
+// into — idempotent, the same call `az group create` (or Terraform's
+// azurerm_resource_group) issues before creating a resource inside it. Real
+// Azure Resource Manager rejects a resource create against a resource group
+// that doesn't already exist; the console creates it the way any real client
+// does rather than assuming one is already there.
+async function ensureResourceGroup(subscriptionId: string, resourceGroup: string, location: string): Promise<void> {
+  await armSend(
+    `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}?api-version=${API_VERSION.resourceGroups}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location }),
+    },
+  );
+}
+
 async function listAcrossSubscriptions<T extends ArmResource>(provider: string, apiVersion: string): Promise<T[]> {
   const subs = await subscriptionIds();
   const pages = await Promise.all(
@@ -224,6 +245,35 @@ export const fetchACRRegistries = async (): Promise<ACRRegistry[]> => {
   }));
 };
 
+export interface CreateACRRegistryInput {
+  subscriptionId: string;
+  resourceGroup: string;
+  name: string;
+  location: string;
+  skuName: string;
+}
+
+// createACRRegistry drives the real Microsoft.ContainerRegistry registry PUT
+// — the same request `az acr create` and the azurerm provider's
+// azurerm_container_registry resource send. The simulator settles this
+// synchronously (HTTP 200, provisioningState "Succeeded" — go-azure-sdk
+// treats the PUT itself as the completed operation) rather than as a polled
+// Azure-AsyncOperation LRO, so the console awaits the PUT response directly
+// instead of polling.
+export const createACRRegistry = async (input: CreateACRRegistryInput): Promise<ACRRegistry> => {
+  await ensureResourceGroup(input.subscriptionId, input.resourceGroup, input.location);
+  const response = await armSend(
+    `/subscriptions/${input.subscriptionId}/resourceGroups/${input.resourceGroup}/providers/Microsoft.ContainerRegistry/registries/${input.name}?api-version=${API_VERSION.registries}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location: input.location, sku: { name: input.skuName } }),
+    },
+  );
+  const registry = (await response.json()) as ArmResource;
+  return { id: registry.id ?? "", name: registry.name ?? "", location: registry.location ?? "" };
+};
+
 export interface StorageAccount {
   id: string;
   name: string;
@@ -242,6 +292,41 @@ export const fetchStorageAccounts = async (): Promise<StorageAccount[]> => {
     location: account.location ?? "",
     kind: account.kind ?? "",
   }));
+};
+
+export interface CreateStorageAccountInput {
+  subscriptionId: string;
+  resourceGroup: string;
+  name: string;
+  location: string;
+  skuName: string;
+  kind: string;
+}
+
+// createStorageAccount drives the real Microsoft.Storage storage-account PUT
+// — the same request `az storage account create` and the azurerm provider's
+// azurerm_storage_account resource send. A real storage-account create on
+// Azure itself runs as a polled Azure-AsyncOperation long-running PUT, but
+// this simulator settles it synchronously (HTTP 200, provisioningState
+// "Succeeded" — the comment on the sim's own handler notes go-azure-sdk
+// treats it as a completed sync LRO), so the console awaits the PUT response
+// directly rather than polling a provisioningState.
+export const createStorageAccount = async (input: CreateStorageAccountInput): Promise<StorageAccount> => {
+  await ensureResourceGroup(input.subscriptionId, input.resourceGroup, input.location);
+  const response = await armSend(
+    `/subscriptions/${input.subscriptionId}/resourceGroups/${input.resourceGroup}/providers/Microsoft.Storage/storageAccounts/${input.name}?api-version=${API_VERSION.storage}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: input.location,
+        sku: { name: input.skuName },
+        kind: input.kind,
+      }),
+    },
+  );
+  const account = (await response.json()) as ArmResource;
+  return { id: account.id ?? "", name: account.name ?? "", location: account.location ?? "", kind: account.kind ?? "" };
 };
 
 // resourceIdByName resolves a resource's real ARM resource ID from its short

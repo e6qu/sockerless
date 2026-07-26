@@ -393,6 +393,111 @@ test.describe("Contrast", () => {
     const results = await page.evaluate(sampleContrast, [".gc-log-query-field", '[data-testid="log-query-run"]']);
     assertAA(results);
   });
+
+  // The Create bucket / Create repository dialogs are this pass's new
+  // surface: their labels, hints and the Artifact Registry format select
+  // get the same empirical guard as the rest of the shell.
+  test("the resource-creation dialogs clear WCAG AA in both themes", async ({ page }) => {
+    await page.goto("/ui/gcs");
+    await page.getByTestId("gcs-create-bucket").click();
+    await expect(page.getByTestId("gcs-create-dialog")).toBeVisible();
+    const gcsResults = await page.evaluate(sampleContrast, [
+      ".gc-dialog-title",
+      ".gc-field",
+      ".gc-field-hint",
+      ".gc-button-text",
+      ".gc-button-primary",
+    ]);
+    assertAA(gcsResults);
+
+    await page.goto("/ui/ar");
+    await page.getByTestId("ar-create-repo").click();
+    await expect(page.getByTestId("ar-create-dialog")).toBeVisible();
+    const arResults = await page.evaluate(sampleContrast, [
+      ".gc-dialog-title",
+      ".gc-field",
+      ".gc-field-hint",
+      ".gc-button-text",
+      ".gc-button-primary",
+    ]);
+    assertAA(arResults);
+  });
+});
+
+// Cloud Storage buckets and Artifact Registry repositories used to render a
+// disabled "Create …" action even though the real console lets an operator
+// create either from the same page. Each now offers a real "Create …" header
+// action and empty-state primary that open a GcpDialog with client-side name
+// validation, wired to the real storage.buckets.insert / Artifact Registry
+// create operation. The header action and the dialog it opens render before
+// (and regardless of) any cloud read, so they are assertable here without an
+// identity provider; this suite's unauthenticated read is rejected by the
+// enforcing simulator (see the Visual fidelity describe above), so the
+// empty-state primary — which only renders on a successful empty read — and
+// the authenticated create→appears round trip are exercised by the
+// mocked-fetch suite (src/__tests__/ResourceCreateFlows.test.tsx), the same
+// split the AWS console's ECR/S3/CloudWatch Logs create dialogs document.
+test.describe("Resource creation", () => {
+  const cases = [
+    {
+      path: "/ui/gcs",
+      createTestId: "gcs-create-bucket",
+      dialogTestId: "gcs-create-dialog",
+      dialogName: "Create a bucket",
+      inputTestId: "gcs-create-name",
+      submitTestId: "gcs-create-submit",
+      validName: "my-new-bucket",
+    },
+    {
+      path: "/ui/ar",
+      createTestId: "ar-create-repo",
+      dialogTestId: "ar-create-dialog",
+      dialogName: "Create repository",
+      inputTestId: "ar-create-id",
+      submitTestId: "ar-create-submit",
+      validName: "my-new-repo",
+    },
+  ];
+
+  for (const { path, createTestId, dialogTestId, dialogName, inputTestId, submitTestId, validName } of cases) {
+    test(`${path} offers ${dialogName} and opens the create dialog with an initially-disabled submit`, async ({ page }) => {
+      await page.goto(path);
+      const create = page.getByTestId(createTestId);
+      await expect(create).toBeVisible();
+      await create.click();
+      const dialog = page.getByTestId(dialogTestId);
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toHaveAccessibleName(dialogName);
+      const input = dialog.getByTestId(inputTestId);
+      await expect(input).toBeVisible();
+      // An empty or invalid name must not be submittable.
+      await expect(dialog.getByTestId(submitTestId)).toBeDisabled();
+      await input.fill(validName);
+      await expect(dialog.getByTestId(submitTestId)).toBeEnabled();
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(page.getByTestId(dialogTestId)).toHaveCount(0);
+    });
+
+    test(`${path} closes ${dialogName} on Escape and returns focus to its trigger`, async ({ page }) => {
+      await page.goto(path);
+      const trigger = page.getByTestId(createTestId);
+      await trigger.click();
+      const dialog = page.getByTestId(dialogTestId);
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId(dialogTestId)).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    });
+  }
+
+  test("the Create repository dialog offers a format picker defaulting to DOCKER", async ({ page }) => {
+    await page.goto("/ui/ar");
+    await page.getByTestId("ar-create-repo").click();
+    const dialog = page.getByTestId("ar-create-dialog");
+    const format = dialog.getByTestId("ar-create-format");
+    await expect(format).toHaveValue("DOCKER");
+    await expect(format.locator("option")).toHaveCount(8);
+  });
 });
 
 test.describe("Resource detail pages", () => {
@@ -505,6 +610,23 @@ test.describe("Automated accessibility audit", () => {
         if (theme === "dark") {
           await page.evaluate(() => document.documentElement.classList.add("dark"));
         }
+        const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
+
+    const CREATE_DIALOGS = [
+      { path: "/ui/gcs", createTestId: "gcs-create-bucket", dialogTestId: "gcs-create-dialog" },
+      { path: "/ui/ar", createTestId: "ar-create-repo", dialogTestId: "ar-create-dialog" },
+    ];
+    for (const { path, createTestId, dialogTestId } of CREATE_DIALOGS) {
+      test(`the ${dialogTestId} dialog has no detectable violations (${theme})`, async ({ page }) => {
+        await page.goto(path);
+        if (theme === "dark") {
+          await page.evaluate(() => document.documentElement.classList.add("dark"));
+        }
+        await page.getByTestId(createTestId).click();
+        await expect(page.getByTestId(dialogTestId)).toBeVisible();
         const results = await new AxeBuilder({ page }).disableRules(["color-contrast"]).analyze();
         expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
       });

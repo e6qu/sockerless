@@ -324,6 +324,43 @@ test.describe("Microsoft Entra ID: App registrations", () => {
   });
 });
 
+// Storage accounts and Container registries used to be read-only in this
+// console — list and detail, no way to create a resource, even though the
+// real portal lets an operator create a storage account or registry from
+// the same blade. Each now offers a real "Create" command-bar action that
+// opens an inline Fluent form wired to the real Microsoft.Storage /
+// Microsoft.ContainerRegistry PUT, matching the Subscriptions "Add" and
+// App registrations "New registration" forms above: the command and the
+// form render before (and regardless of) any cloud read, so they are
+// assertable here without an identity provider. The authenticated
+// create→list-appears round trip belongs in the relying-party suite
+// (ui/e2e/shauth-rps.mjs), the same split those forms document.
+test.describe("Resource creation", () => {
+  const cases = [
+    { path: "/ui/storage", formTestId: "storage-create-form", nameTestId: "storage-create-name", submitTestId: "storage-create-submit", validName: "mynewstorageacct1" },
+    { path: "/ui/acr", formTestId: "acr-create-form", nameTestId: "acr-create-name", submitTestId: "acr-create-submit", validName: "mynewregistry1" },
+  ];
+
+  for (const { path, formTestId, nameTestId, submitTestId, validName } of cases) {
+    test(`${path} offers Create and opens the create form with an initially-disabled submit`, async ({ page }) => {
+      await page.goto(path);
+      const create = page.getByRole("toolbar", { name: "Commands" }).getByRole("button", { name: "Create", exact: true });
+      await expect(create).toBeVisible();
+      await create.click();
+      const form = page.getByTestId(formTestId);
+      await expect(form).toBeVisible();
+      const input = form.getByTestId(nameTestId);
+      await expect(input).toBeVisible();
+      // An empty or invalid name must not be submittable.
+      await expect(form.getByTestId(submitTestId)).toBeDisabled();
+      await input.fill(validName);
+      await expect(form.getByTestId(submitTestId)).toBeEnabled();
+      await form.getByRole("button", { name: "Cancel" }).click();
+      await expect(page.getByTestId(formTestId)).toHaveCount(0);
+    });
+  }
+});
+
 // The four resource detail blades pass 2 added. This lightweight suite has
 // no identity provider (see the Subscriptions/Entra suites above), so each
 // read reaches the enforcing simulator unauthenticated and surfaces a loud
@@ -679,5 +716,27 @@ test.describe("Automated accessibility audit", () => {
         .analyze();
       expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
     });
+
+    // The Storage accounts / Container registries Create forms are the other
+    // surface this pass added — measured the same way rather than trusted
+    // because they reuse existing Fluent Field/Input/Select/Button tokens.
+    for (const { path, formTestId } of [
+      { path: "/ui/storage", formTestId: "storage-create-form" },
+      { path: "/ui/acr", formTestId: "acr-create-form" },
+    ]) {
+      test(`the ${formTestId} create form has no detectable violations (${theme})`, async ({ page }) => {
+        await page.goto(path);
+        if (theme === "dark") {
+          await page.evaluate(() => document.documentElement.classList.add("dark"));
+        }
+        await page.getByRole("toolbar", { name: "Commands" }).getByRole("button", { name: "Create", exact: true }).click();
+        await expect(page.getByTestId(formTestId)).toBeVisible();
+        const results = await new AxeBuilder({ page })
+          .disableRules(["color-contrast"])
+          .exclude(TABSTER_DUMMY)
+          .analyze();
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
   }
 });

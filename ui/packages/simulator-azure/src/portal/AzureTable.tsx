@@ -15,7 +15,14 @@ import {
   Text,
 } from "@fluentui/react-components";
 import { ChevronLeftRegular, ChevronRightRegular } from "@fluentui/react-icons";
-import { AzureCommandBar, AzureEssentials, AzureEmptyState, AzureErrorMessage, type EssentialsProperty } from "./AzurePortal.js";
+import {
+  AzureCommandBar,
+  AzureEssentials,
+  AzureEmptyState,
+  AzureErrorMessage,
+  type EssentialsProperty,
+  type PortalCommand,
+} from "./AzurePortal.js";
 
 export interface AzureColumn<T> {
   id: string;
@@ -36,6 +43,14 @@ export interface AzureResourceTableProps<T> {
   /** Resource-level properties the portal leads the pane with. */
   essentials: (rows: T[]) => EssentialsProperty[];
   resourceNoun: string;
+  /** Extra command-bar entries a page contributes ahead of the table's own
+   *  Refresh/Delete/Assign tags/Export/Feedback set — e.g. a page's own
+   *  "Create" entry point. Without it the bar carries only the standard
+   *  commands, exactly as it did before this prop existed. */
+  extraCommands?: PortalCommand[];
+  /** Content rendered between Essentials and the filter/table — a page's own
+   *  inline create form or mutation-error banner. */
+  banner?: ReactNode;
 }
 
 const PAGE_SIZE = 10;
@@ -119,6 +134,8 @@ export function AzureResourceTable<T>({
   rowKey,
   essentials,
   resourceNoun,
+  extraCommands,
+  banner,
 }: AzureResourceTableProps<T>) {
   const styles = useStyles();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({ queryKey, queryFn });
@@ -159,6 +176,7 @@ export function AzureResourceTable<T>({
     <>
       <AzureCommandBar
         commands={[
+          ...(extraCommands ?? []),
           { label: "Refresh", icon: "refresh", onSelect: () => void refetch(), disabled: isFetching },
           { label: "Delete", icon: "delete", disabled: selected.size === 0 },
           { label: "Assign tags", icon: "tag", disabled: selected.size === 0 },
@@ -168,6 +186,7 @@ export function AzureResourceTable<T>({
       />
       <div className="az-main">
         <AzureEssentials properties={essentials(data ?? [])} />
+        {banner}
         <div className={styles.tools}>
           <Input
             className={styles.filter}

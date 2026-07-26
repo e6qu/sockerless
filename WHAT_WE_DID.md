@@ -4,6 +4,43 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-26 — Google Cloud and Azure console resource-creation flows
+
+Extended the resource-creation parity started on the AWS console to the other
+two, so all three consoles can create their simple resources (not just list and
+inspect them):
+
+- **Google Cloud** — the "Create bucket" (Cloud Storage) and "Create
+  repository" (Artifact Registry) buttons had been disabled placeholders; they
+  now open a Material `GcpDialog` wired to real `storage.buckets.insert`
+  (`POST /storage/v1/b`) and `projects.locations.repositories.create`
+  (`POST …/repositories`), the latter driven through a real `operations.get`
+  long-running-operation poll loop the way a real client does — not an
+  assume-done shortcut. GCP's wire helpers also gained a `GcpApiError` that
+  parses Google's real `{"error":{code,message,status}}` body, so conflicts
+  surface the real service message.
+- **Microsoft Azure** — Storage accounts and Container registries gained a
+  Fluent create form wired to real ARM PUTs (each idempotently ensuring the
+  resource group first, as a real client does), settled synchronously the way
+  the simulator's storage/ACR handlers return them (200 / provisioningState
+  Succeeded). Errors surface ARM's own `error.message`.
+
+Both follow the AWS create-flow template (a Create control opening the form,
+`useMutation` over the federated path, invalidate-on-success so the resource
+appears), preserve the federated bearer/broker/endpoint logic, and hold the
+bar: light and dark at WCAG AA, axe zero-violations on the open create surfaces
+in both themes, existing tests intact.
+
+Verified: both packages typecheck/knip/build clean; new vitest for the request
+shaping + form behavior + conflict surfacing; the GCP (60) and Azure (59)
+package Playwright suites green; and the Shauth relying-party matrix now creates
+a Cloud Storage bucket and a Container registry as the signed-in operator
+through the real APIs and sees each appear in the list — the authenticated
+create → list-refresh round trip the per-package suites cannot prove (no
+identity provider) — alongside the AWS ECR-repository create proof. All three
+consoles now have real, end-to-end-proven resource creation for these services.
+
+
 ## 2026-07-26 — AWS console resource-creation flows
 
 Functional-parity pass: the AWS console could list and inspect S3 buckets, ECR

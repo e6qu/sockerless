@@ -182,6 +182,44 @@ export const fetchARRepos = async (project: string): Promise<ARRepo[]> =>
 export const fetchARRepo = (project: string, name: string): Promise<ARRepo> =>
   authorizedJSON<ARRepo>(`${repositoriesParent(project)}/${name}`);
 
+// projects.locations.repositories.create — a long-running operation. The
+// simulator (like real Artifact Registry for a plain repository create)
+// settles it synchronously and returns it already `done`, but the console
+// drives it through the same operations.get poll loop a real client uses
+// (waitArOperation below) rather than assuming immediate completion.
+export const createARRepository = (
+  project: string,
+  location: string,
+  repositoryId: string,
+  format = "DOCKER",
+): Promise<CrmOperation> =>
+  authorizedJSONPost<CrmOperation>(
+    `/v1/projects/${project}/locations/${location}/repositories?repositoryId=${encodeURIComponent(repositoryId)}`,
+    { format },
+  );
+
+// operations.get for the /v1/projects/.../locations/.../operations/{id}
+// collection Artifact Registry (and Cloud Run Jobs/Services) LROs live
+// under — distinct from the Cloud Resource Manager v3 operations collection
+// fetchCrmOperation reads.
+export const fetchArOperation = (name: string): Promise<CrmOperation> =>
+  authorizedJSON<CrmOperation>(`/v1/${name}`);
+
+// waitArOperation drives a returned Operation to completion the way every
+// real client does: poll operations.get until done, then surface the
+// operation's own error if it failed.
+export const waitArOperation = async (operation: CrmOperation): Promise<CrmOperation> => {
+  let current = operation;
+  while (!current.done) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    current = await fetchArOperation(current.name);
+  }
+  if (current.error) {
+    throw new Error(current.error.message ?? `operation ${current.name} failed`);
+  }
+  return current;
+};
+
 // projects.locations.repositories.dockerImages.list — the repository's
 // stored images, the real console's "Images" tab.
 export const fetchARImages = async (project: string, repo: string): Promise<ARDockerImage[]> =>
@@ -191,6 +229,12 @@ export const fetchARImages = async (project: string, repo: string): Promise<ARDo
 
 export const fetchGCSBuckets = async (project: string): Promise<GCSBucket[]> =>
   (await authorizedJSON<{ items?: GCSBucket[] }>(`/storage/v1/b?project=${project}`)).items ?? [];
+
+// storage.buckets.insert — the wire body is just `{ "name": <name> }`; the
+// simulator (and real GCS) fill in the rest (id, selfLink, timeCreated,
+// location defaulting to "US", storageClass defaulting to "STANDARD").
+export const createGCSBucket = (project: string, name: string): Promise<GCSBucket> =>
+  authorizedJSONPost<GCSBucket>(`/storage/v1/b?project=${encodeURIComponent(project)}`, { name });
 
 // Bucket names are global in Cloud Storage; the read addresses the bucket
 // directly, without a project segment.

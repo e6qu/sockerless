@@ -465,6 +465,7 @@ body:has(.gcp) { background: var(--gc-layout-bg); }
 /* Forms ------------------------------------------------------------------- */
 .gc-field { display: block; margin: 0 0 16px; font-size: 13px; color: var(--gc-fg-secondary); }
 .gc-field input,
+.gc-field select,
 .gc-field textarea {
   display: block;
   width: 100%;
