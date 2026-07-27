@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,8 +43,8 @@ import (
 
 // FileShareData is a share's data-plane projection. Distinct from
 // the ARM FileShare type (in files.go) which stores ARM-control-plane
-// metadata. The data plane stores per-share metadata + the actual
-// per-file blob contents under the data-plane host.
+// metadata. The data plane stores per-share metadata; the share's files live in
+// the share's backing directory (FileShareHostDir).
 type FileShareData struct {
 	Account  string
 	Name     string
@@ -52,15 +54,19 @@ type FileShareData struct {
 	ETag     string
 }
 
+// FileObject carries the properties of one file in a share that a filesystem
+// cannot express — its content type and its user-defined metadata. The file's
+// existence, size, contents and modification time are the filesystem's, read
+// from the share's backing directory, because that directory is what a
+// Container Apps workload mounting the share sees: a file written through this
+// data plane is readable inside the container, and a file the container writes
+// is readable through this data plane.
 type FileObject struct {
-	Account      string
-	Share        string
-	Path         string // forward-slash separated; "" = share root
-	Data         []byte
-	ContentType  string
-	ETag         string
-	LastModified string
-	Metadata     map[string]string
+	Account     string
+	Share       string
+	Path        string // forward-slash separated; "" = share root
+	ContentType string
+	Metadata    map[string]string
 }
 
 var (
@@ -166,6 +172,22 @@ func registerStorageDataPlane(srv *sim.Server) {
 				handleTablesDataPlane(w, r, parts[0])
 				return
 			}
+			// Azure Storage static website (`{account}.web.…`) and Azure Data
+			// Lake Storage Gen2 (`{account}.dfs.…`) are two more data planes of
+			// the same storage account, and the ARM storage-account response
+			// advertises both endpoints because real Azure serves them. The
+			// simulator implements neither, so every request that arrives at
+			// those hostnames is answered with the same declared gap the served
+			// planes use for an operation they do not implement — a storage
+			// error a real SDK surfaces as a typed failure, never a bare 200.
+			if strings.Contains(host, ".web.") {
+				writeStorageOperationNotImplemented(w, r, "static website")
+				return
+			}
+			if strings.Contains(host, ".dfs.") {
+				writeStorageOperationNotImplemented(w, r, "Data Lake Storage Gen2")
+				return
+			}
 			// Path-style fallback for SDKs configured with a non-
 			// `*.core.windows.net` endpoint (Azurite-compatible).
 			// Sockerless runs on a single port, so the service is
@@ -211,23 +233,6 @@ func registerStorageDataPlane(srv *sim.Server) {
 				handleTablesDataPlane(w, r, account)
 				return
 			}
-			// `.web.` (static website) and `.dfs.` (Data Lake Gen2)
-			// advertise canonical endpoints in StoragePrimaryEndpoints
-			// for wire-fidelity with real Azure, but the sim does not
-			// implement either data plane today. Respond with a clear
-			// 501 NotImplemented so SDK callers see a typed error
-			// rather than 404 — the runner path doesn't reach these
-			// surfaces. File a BUG and add real handlers when a runner
-			// scenario lands.
-			if strings.Contains(host, ".web.") || strings.Contains(host, ".dfs.") {
-				surface := "static-website"
-				if strings.Contains(host, ".dfs.") {
-					surface = "data-lake-gen2"
-				}
-				sim.AzureErrorf(w, "NotImplemented", http.StatusNotImplemented,
-					"Storage %s data plane (host %q) is not implemented by the simulator", surface, host)
-				return
-			}
 			next.ServeHTTP(w, r)
 		})
 	})
@@ -268,55 +273,119 @@ func fileObjectKey(account, share, p string) string {
 	return account + "/" + share + "/" + p
 }
 
+// handleFilesDataPlane dispatches one Files data-plane request. As on the Blob
+// plane the operation comes from the `restype` + `comp` query pair, and these
+// combinations are the complete set the simulator serves:
+//
+//	GET    /?comp=list                                   ListShares
+//	PUT    /{share}?restype=share                         CreateShare
+//	GET    /{share}?restype=share                         GetShareProperties
+//	HEAD   /{share}?restype=share                         GetShareProperties
+//	DELETE /{share}?restype=share                         DeleteShare
+//	GET    /{share}?restype=directory&comp=list           ListFilesAndDirectories (share root)
+//	PUT    /{share}/{path}                                CreateFile (x-ms-content-length)
+//	PUT    /{share}/{path}?comp=range                     UploadRange
+//	GET    /{share}/{path}                                DownloadFile
+//	HEAD   /{share}/{path}                                GetFileProperties
+//	DELETE /{share}/{path}                                DeleteFile
+//
+// Everything else — the share ACL / lease / snapshot / permission / statistics
+// verbs, every directory operation below the share root, file leases, handles,
+// range lists, renames, hard and symbolic links — is a declared gap. The
+// directory verbs matter most here: without the check, `PUT /{share}/{dir}
+// ?restype=directory` (Create Directory) would land on Create File and answer
+// 201 for a directory that was never created.
 func handleFilesDataPlane(w http.ResponseWriter, r *http.Request, account string) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	q := r.URL.Query()
-	restype := q.Get("restype")
+	restype, comp := q.Get("restype"), q.Get("comp")
 
-	// List Shares: GET /?comp=list
-	if path == "" && q.Get("comp") == "list" {
-		handleFilesListShares(w, r, account)
+	// Service level: /?comp=list
+	if path == "" {
+		if r.Method == http.MethodGet && restype == "" && comp == "list" {
+			handleFilesListShares(w, r, account)
+			return
+		}
+		writeStorageOperationNotImplemented(w, r, "Files")
 		return
 	}
 
-	// Share-level ops: /{share}?restype=share[&comp=...]
-	if !strings.Contains(path, "/") && path != "" && restype == "share" {
-		switch r.Method {
-		case http.MethodPut:
-			handleFilesCreateShare(w, r, account, path)
-		case http.MethodDelete:
-			handleFilesDeleteShare(w, r, account, path)
-		case http.MethodGet, http.MethodHead:
-			handleFilesGetShareProperties(w, r, account, path)
+	// Share level: /{share}?restype=share, plus the share root addressed as a
+	// directory (?restype=directory&comp=list).
+	if !strings.Contains(path, "/") {
+		switch restype {
+		case "share":
+			if comp != "" {
+				writeStorageOperationNotImplemented(w, r, "Files")
+				return
+			}
+			switch r.Method {
+			case http.MethodPut:
+				handleFilesCreateShare(w, r, account, path)
+			case http.MethodDelete:
+				handleFilesDeleteShare(w, r, account, path)
+			case http.MethodGet, http.MethodHead:
+				handleFilesGetShareProperties(w, r, account, path)
+			default:
+				writeStorageOperationNotImplemented(w, r, "Files")
+			}
+		case "directory":
+			if r.Method == http.MethodGet && comp == "list" {
+				handleFilesListFiles(w, r, account, path)
+				return
+			}
+			writeStorageOperationNotImplemented(w, r, "Files")
 		default:
-			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeStorageOperationNotImplemented(w, r, "Files")
 		}
 		return
 	}
-	// Directory-list: /{share}?restype=directory&comp=list
-	if !strings.Contains(path, "/") && path != "" && restype == "directory" && q.Get("comp") == "list" {
-		handleFilesListFiles(w, r, account, path)
+
+	// File level: /{share}/{path...}. restype selects a directory, hard-link or
+	// symbolic-link operation, none of which the simulator implements.
+	i := strings.Index(path, "/")
+	share, filePath := path[:i], path[i+1:]
+	if restype != "" || filePath == "" {
+		writeStorageOperationNotImplemented(w, r, "Files")
 		return
 	}
-	// File-level ops: /{share}/{file...}
-	if i := strings.Index(path, "/"); i > 0 {
-		share := path[:i]
-		filePath := path[i+1:]
-		switch r.Method {
-		case http.MethodPut:
-			handleFilesPutFile(w, r, account, share, filePath)
-		case http.MethodGet:
-			handleFilesGetFile(w, r, account, share, filePath)
-		case http.MethodHead:
-			handleFilesHeadFile(w, r, account, share, filePath)
-		case http.MethodDelete:
-			handleFilesDeleteFile(w, r, account, share, filePath)
+	switch r.Method {
+	case http.MethodPut:
+		switch comp {
+		case "":
+			handleFilesCreateFile(w, r, account, share, filePath)
+		case "range":
+			// Upload Range writes the request body; Upload Range From URL names
+			// a source in x-ms-copy-source and is a different operation.
+			if r.Header.Get("x-ms-copy-source") != "" {
+				writeStorageOperationNotImplemented(w, r, "Files")
+				return
+			}
+			handleFilesUploadRange(w, r, account, share, filePath)
 		default:
-			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeStorageOperationNotImplemented(w, r, "Files")
 		}
-		return
+	case http.MethodGet:
+		if comp != "" {
+			writeStorageOperationNotImplemented(w, r, "Files")
+			return
+		}
+		handleFilesGetFile(w, r, account, share, filePath)
+	case http.MethodHead:
+		if comp != "" {
+			writeStorageOperationNotImplemented(w, r, "Files")
+			return
+		}
+		handleFilesHeadFile(w, r, account, share, filePath)
+	case http.MethodDelete:
+		if comp != "" {
+			writeStorageOperationNotImplemented(w, r, "Files")
+			return
+		}
+		handleFilesDeleteFile(w, r, account, share, filePath)
+	default:
+		writeStorageOperationNotImplemented(w, r, "Files")
 	}
-	writeStorageError(w, "InvalidUri", "Unrecognized Files data-plane path", http.StatusBadRequest)
 }
 
 func handleFilesCreateShare(w http.ResponseWriter, r *http.Request, account, share string) {
@@ -325,30 +394,53 @@ func handleFilesCreateShare(w http.ResponseWriter, r *http.Request, account, sha
 		writeStorageError(w, "ShareAlreadyExists", "The specified share already exists.", http.StatusConflict)
 		return
 	}
+	if !isStoragePathSegment(account) || !isStoragePathSegment(share) {
+		writeStorageError(w, "InvalidResourceName",
+			"The specified resource name contains invalid characters.", http.StatusBadRequest)
+		return
+	}
+	quota := 5120
+	if raw := r.Header.Get("x-ms-share-quota"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			writeStorageError(w, "InvalidHeaderValue",
+				"The value for one of the HTTP headers is not in the correct format: x-ms-share-quota.",
+				http.StatusBadRequest)
+			return
+		}
+		quota = n
+	}
+	// A share that has just been created holds no files, so its backing
+	// directory starts empty whatever an earlier share of the same name left in
+	// it — the share metadata lives in this process, the directory outlives it.
+	if err := resetFileShareHostDir(account, share); err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s := FileShareData{
-		Account: account, Name: share, Quota: 5120,
+		Account: account, Name: share, Quota: quota,
 		Metadata: collectMetadata(r),
 		Created:  time.Now().UTC().Format(http.TimeFormat),
 		ETag:     `"` + generateUUID() + `"`,
 	}
 	fileShareData.Put(key, s)
+	upsertFileShareARMProjection(account, share, s.Quota, s.Metadata)
 	w.Header().Set("Last-Modified", s.Created)
 	w.Header().Set("ETag", s.ETag)
 	w.WriteHeader(http.StatusCreated)
 }
 
 func handleFilesDeleteShare(w http.ResponseWriter, r *http.Request, account, share string) {
-	key := fileShareKey(account, share)
-	if !fileShareData.Delete(key) {
+	if !fileShareData.Delete(fileShareKey(account, share)) {
 		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
 		return
 	}
-	prefix := account + "/" + share + "/"
-	for _, f := range fileObjects.List() {
-		if strings.HasPrefix(fileObjectKey(f.Account, f.Share, f.Path), prefix) {
-			fileObjects.Delete(fileObjectKey(f.Account, f.Share, f.Path))
-		}
+	deleteFileObjectProperties(account, share)
+	if err := removeFileShareHostDir(account, share); err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
 	}
+	deleteFileShareARMProjection(account, share)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -398,100 +490,351 @@ func handleFilesListShares(w http.ResponseWriter, r *http.Request, account strin
 	writeStorageXML(w, http.StatusOK, out)
 }
 
+// handleFilesListFiles is List Directories and Files on the share root. It
+// enumerates the share's backing directory, so it names both what was written
+// through this data plane and what a container mounting the share created.
 func handleFilesListFiles(w http.ResponseWriter, r *http.Request, account, share string) {
 	if _, ok := fileShareData.Get(fileShareKey(account, share)); !ok {
 		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
 		return
 	}
-	type fileEntry struct {
-		Name       string `xml:"Name"`
-		Properties struct {
-			ContentLength int `xml:"Content-Length"`
-		} `xml:"Properties"`
-	}
-	type enum struct {
-		XMLName xml.Name    `xml:"EnumerationResults"`
-		Files   []fileEntry `xml:"Entries>File"`
-	}
-	out := enum{}
-	prefix := account + "/" + share + "/"
-	for _, f := range fileObjects.List() {
-		if strings.HasPrefix(fileObjectKey(f.Account, f.Share, f.Path), prefix) {
-			fe := fileEntry{Name: f.Path}
-			fe.Properties.ContentLength = len(f.Data)
-			out.Files = append(out.Files, fe)
-		}
-	}
-	writeStorageXML(w, http.StatusOK, out)
-}
-
-func handleFilesPutFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
-	if _, ok := fileShareData.Get(fileShareKey(account, share)); !ok {
-		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+	if !isStoragePathSegment(account) || !isStoragePathSegment(share) {
+		writeStorageError(w, "InvalidResourceName",
+			"The specified resource name contains invalid characters.", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
-	body, err := openStreamingBody(r)
-	if err != nil {
-		writeStorageError(w, "UnsupportedHeader", err.Error(), http.StatusUnsupportedMediaType)
-		return
-	}
-	data, err := io.ReadAll(body)
+	entries, err := os.ReadDir(FileShareHostDir(account, share))
 	if err != nil {
 		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC1123)
-	etag := `"` + generateUUID() + `"`
-	f := FileObject{
-		Account: account, Share: share, Path: filePath,
-		Data:         data,
-		ContentType:  r.Header.Get("Content-Type"),
-		ETag:         etag,
-		LastModified: now,
-		Metadata:     collectMetadata(r),
+	type fileProperties struct {
+		ContentLength int64 `xml:"Content-Length"`
 	}
-	fileObjects.Put(fileObjectKey(account, share, filePath), f)
-	w.Header().Set("ETag", etag)
-	w.Header().Set("Last-Modified", now)
+	type fileEntry struct {
+		Name       string         `xml:"Name"`
+		Properties fileProperties `xml:"Properties"`
+	}
+	type directoryEntry struct {
+		Name string `xml:"Name"`
+	}
+	type enum struct {
+		XMLName     xml.Name         `xml:"EnumerationResults"`
+		Directories []directoryEntry `xml:"Entries>Directory"`
+		Files       []fileEntry      `xml:"Entries>File"`
+	}
+	out := enum{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			out.Directories = append(out.Directories, directoryEntry{Name: entry.Name()})
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out.Files = append(out.Files, fileEntry{
+			Name:       entry.Name(),
+			Properties: fileProperties{ContentLength: info.Size()},
+		})
+	}
+	writeStorageXML(w, http.StatusOK, out)
+}
+
+// handleFilesCreateFile is Create File: it allocates a file of the size the
+// REQUIRED x-ms-content-length header declares, zero-filled, and discards any
+// request body — that is what the operation does on real Azure Files, where
+// content arrives afterwards through Upload Range. A file that already exists
+// is replaced.
+func handleFilesCreateFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
+	if _, ok := fileShareData.Get(fileShareKey(account, share)); !ok {
+		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+		return
+	}
+	raw := r.Header.Get("x-ms-content-length")
+	if raw == "" {
+		writeStorageError(w, "MissingRequiredHeader",
+			"An HTTP header that's mandatory for this request is not specified: x-ms-content-length.",
+			http.StatusBadRequest)
+		return
+	}
+	size, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || size < 0 {
+		writeStorageError(w, "InvalidHeaderValue",
+			"The value for one of the HTTP headers is not in the correct format: x-ms-content-length.",
+			http.StatusBadRequest)
+		return
+	}
+	hostPath, ok := fileShareHostPath(account, share, filePath)
+	if !ok {
+		writeStorageError(w, "InvalidResourceName",
+			"The specified resource name contains invalid characters.", http.StatusBadRequest)
+		return
+	}
+	// Azure Files creates a file only inside a directory that already exists;
+	// Create Directory is the operation that makes one.
+	if parent, err := os.Stat(filepath.Dir(hostPath)); err != nil || !parent.IsDir() {
+		if err != nil && !os.IsNotExist(err) {
+			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeStorageError(w, "ParentNotFound",
+			"The specified parent path does not exist.", http.StatusNotFound)
+		return
+	}
+	defer r.Body.Close()
+	f, err := os.OpenFile(hostPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
+	if err != nil {
+		writeStorageError(w, "ResourceAlreadyExists",
+			"The specified resource already exists.", http.StatusConflict)
+		return
+	}
+	defer f.Close()
+	if err := f.Truncate(size); err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// A real Azure Files share is mounted with CIFS file_mode 0777, so a
+	// non-root workload can write a file the data plane created; chmod past the
+	// process umask so the materialized file matches.
+	if err := os.Chmod(hostPath, 0o666); err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	info, err := f.Stat()
+	if err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	contentType := r.Header.Get("x-ms-content-type")
+	if contentType == "" {
+		contentType = r.Header.Get("Content-Type")
+	}
+	fileObjects.Put(fileObjectKey(account, share, filePath), FileObject{
+		Account: account, Share: share, Path: filePath,
+		ContentType: contentType,
+		Metadata:    collectMetadata(r),
+	})
+	w.Header().Set("ETag", fileETag(info))
+	w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
 	w.WriteHeader(http.StatusCreated)
 }
 
-func handleFilesGetFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
-	f, ok := fileObjects.Get(fileObjectKey(account, share, filePath))
+// handleFilesUploadRange is Upload Range: it writes the request body into the
+// byte range the x-ms-range (or Range) header names, or zeroes that range when
+// x-ms-write is "clear". The range must lie inside the file the preceding
+// Create File allocated — Azure Files never grows a file through Upload Range.
+func handleFilesUploadRange(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
+	hostPath, info, _, ok := statShareFile(w, account, share, filePath)
 	if !ok {
-		writeStorageError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
 		return
 	}
-	writeFileHeaders(w, f)
-	_, _ = w.Write(f.Data)
+	rangeHeader := r.Header.Get("x-ms-range")
+	if rangeHeader == "" {
+		rangeHeader = r.Header.Get("Range")
+	}
+	if rangeHeader == "" {
+		writeStorageError(w, "MissingRequiredHeader",
+			"An HTTP header that's mandatory for this request is not specified: x-ms-range.",
+			http.StatusBadRequest)
+		return
+	}
+	start, end, ok := parseAzureFileRange(rangeHeader)
+	if !ok {
+		writeStorageError(w, "InvalidHeaderValue",
+			"The value for one of the HTTP headers is not in the correct format: x-ms-range.",
+			http.StatusBadRequest)
+		return
+	}
+	if end >= info.Size() {
+		writeStorageError(w, "InvalidRange",
+			"The range specified is invalid for the current size of the resource.",
+			http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+	length := end - start + 1
+
+	defer r.Body.Close()
+	data := make([]byte, length)
+	if !strings.EqualFold(r.Header.Get("x-ms-write"), "clear") {
+		// "update" is the default write mode: the body supplies the bytes.
+		body, err := openStreamingBody(r)
+		if err != nil {
+			writeStorageError(w, "UnsupportedHeader", err.Error(), http.StatusUnsupportedMediaType)
+			return
+		}
+		data, err = io.ReadAll(body)
+		if err != nil {
+			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if int64(len(data)) != length {
+			writeStorageError(w, "InvalidHeaderValue",
+				"The value for one of the HTTP headers is not in the correct format: Content-Length does not match x-ms-range.",
+				http.StatusBadRequest)
+			return
+		}
+	}
+
+	f, err := os.OpenFile(hostPath, os.O_RDWR, 0)
+	if err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	if _, err := f.WriteAt(data, start); err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	written, err := f.Stat()
+	if err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", fileETag(written))
+	w.Header().Set("Last-Modified", written.ModTime().UTC().Format(http.TimeFormat))
+	w.WriteHeader(http.StatusCreated)
+}
+
+// parseAzureFileRange parses the "bytes=start-end" form Azure Files requires on
+// x-ms-range / Range. Both bounds are mandatory and inclusive — the open-ended
+// "bytes=start-" spelling is not valid for Upload Range.
+func parseAzureFileRange(raw string) (start, end int64, ok bool) {
+	spec, found := strings.CutPrefix(strings.TrimSpace(raw), "bytes=")
+	if !found {
+		return 0, 0, false
+	}
+	lo, hi, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, 0, false
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	end, err = strconv.ParseInt(strings.TrimSpace(hi), 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	if start < 0 || end < start {
+		return 0, 0, false
+	}
+	return start, end, true
+}
+
+// statShareFile resolves one file in a share to its on-disk path, the
+// filesystem's record of it, and the properties only this data plane knows
+// (content type, user metadata). It writes the Azure Storage error and reports
+// false when the share, the name or the file itself does not hold up.
+func statShareFile(w http.ResponseWriter, account, share, filePath string) (string, os.FileInfo, FileObject, bool) {
+	if _, ok := fileShareData.Get(fileShareKey(account, share)); !ok {
+		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+		return "", nil, FileObject{}, false
+	}
+	hostPath, ok := fileShareHostPath(account, share, filePath)
+	if !ok {
+		writeStorageError(w, "InvalidResourceName",
+			"The specified resource name contains invalid characters.", http.StatusBadRequest)
+		return "", nil, FileObject{}, false
+	}
+	info, err := os.Stat(hostPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+			return "", nil, FileObject{}, false
+		}
+		writeStorageError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
+		return "", nil, FileObject{}, false
+	}
+	// A directory is a different resource type, addressed with
+	// restype=directory; it is not a file this operation can act on.
+	if info.IsDir() {
+		writeStorageError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
+		return "", nil, FileObject{}, false
+	}
+	props, _ := fileObjects.Get(fileObjectKey(account, share, filePath))
+	return hostPath, info, props, true
+}
+
+func handleFilesGetFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
+	hostPath, info, props, ok := statShareFile(w, account, share, filePath)
+	if !ok {
+		return
+	}
+	start, end, partial, ok := azureStorageReadRange(w, r, info.Size())
+	if !ok {
+		return // azureStorageReadRange has written the error.
+	}
+	f, err := os.Open(hostPath)
+	if err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	writeFileHeaders(w, props, info)
+	if !partial {
+		_, _ = io.Copy(w, f)
+		return
+	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", end-start+1))
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, info.Size()))
+	w.WriteHeader(http.StatusPartialContent)
+	_, _ = io.Copy(w, io.NewSectionReader(f, start, end-start+1))
 }
 
 func handleFilesHeadFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
-	f, ok := fileObjects.Get(fileObjectKey(account, share, filePath))
+	_, info, props, ok := statShareFile(w, account, share, filePath)
 	if !ok {
-		writeStorageError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
 		return
 	}
-	writeFileHeaders(w, f)
+	writeFileHeaders(w, props, info)
 }
 
 func handleFilesDeleteFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
-	if !fileObjects.Delete(fileObjectKey(account, share, filePath)) {
-		writeStorageError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
+	hostPath, _, _, ok := statShareFile(w, account, share, filePath)
+	if !ok {
 		return
 	}
+	if err := os.Remove(hostPath); err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fileObjects.Delete(fileObjectKey(account, share, filePath))
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func writeFileHeaders(w http.ResponseWriter, f FileObject) {
-	if f.ContentType != "" {
-		w.Header().Set("Content-Type", f.ContentType)
+// deleteFileObjectProperties drops the properties rows of every file in a share
+// that no longer exists.
+func deleteFileObjectProperties(account, share string) {
+	prefix := account + "/" + share + "/"
+	for _, f := range fileObjects.List() {
+		if key := fileObjectKey(f.Account, f.Share, f.Path); strings.HasPrefix(key, prefix) {
+			fileObjects.Delete(key)
+		}
 	}
-	w.Header().Set("ETag", f.ETag)
-	w.Header().Set("Last-Modified", f.LastModified)
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(f.Data)))
-	for k, v := range f.Metadata {
+}
+
+// fileETag derives a file's entity tag from what the filesystem records about
+// it, so the tag moves whenever the bytes do — including on a write from a
+// container that mounts the share, which no store in this process witnesses.
+func fileETag(info os.FileInfo) string {
+	return fmt.Sprintf(`"0x%X%X"`, info.ModTime().UTC().UnixNano(), info.Size())
+}
+
+func writeFileHeaders(w http.ResponseWriter, props FileObject, info os.FileInfo) {
+	contentType := props.ContentType
+	if contentType == "" {
+		// Azure Files reports this for a file whose content type was never set,
+		// which is every file a mounting container writes.
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("ETag", fileETag(info))
+	w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+	w.Header().Set("x-ms-type", "File")
+	for k, v := range props.Metadata {
 		w.Header().Set("x-ms-meta-"+k, v)
 	}
 }
@@ -500,44 +843,93 @@ func writeFileHeaders(w http.ResponseWriter, f FileObject) {
 
 func queueKey(account, queue string) string { return account + "/" + queue }
 
+// handleQueuesDataPlane dispatches one Queues data-plane request. The served
+// set:
+//
+//	GET    /?comp=list                             ListQueues
+//	GET    /?restype=service&comp=properties        GetServiceProperties
+//	HEAD   /?restype=service&comp=properties        GetServiceProperties
+//	PUT    /{queue}                                 CreateQueue
+//	DELETE /{queue}                                 DeleteQueue
+//	GET    /{queue}?comp=metadata                   GetQueueProperties
+//	HEAD   /{queue}?comp=metadata                   GetQueueProperties
+//	PUT    /{queue}?comp=metadata                   SetQueueMetadata
+//	POST   /{queue}/messages                        PutMessage
+//	GET    /{queue}/messages                        GetMessages
+//	GET    /{queue}/messages?peekonly=true          PeekMessages
+//	DELETE /{queue}/messages                        ClearMessages
+//	DELETE /{queue}/messages/{messageid}            DeleteMessage
+//
+// Set Service Properties, Get Service Statistics, the queue access policy
+// (comp=acl) and Update Message are declared gaps. Set Service Properties in
+// particular used to be answered by the GET handler — the caller was handed the
+// unchanged properties document and a 200, as though its write had taken
+// effect.
 func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account string) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	q := r.URL.Query()
+	restype, comp := q.Get("restype"), q.Get("comp")
 
-	// List Queues: GET /?comp=list
-	if path == "" && q.Get("comp") == "list" {
-		handleQueuesList(w, r, account)
-		return
-	}
-	if path == "" && q.Get("restype") == "service" && q.Get("comp") == "properties" {
-		writeStorageXML(w, http.StatusOK, defaultStorageServiceProperties())
-		return
-	}
-
-	segs := strings.Split(path, "/")
-	if len(segs) == 0 || segs[0] == "" {
-		writeStorageError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
-		return
-	}
-	queue := segs[0]
-
-	if len(segs) == 1 {
-		switch r.Method {
-		case http.MethodPut:
-			handleQueueCreate(w, r, account, queue)
-		case http.MethodDelete:
-			handleQueueDelete(w, r, account, queue)
-		case http.MethodGet, http.MethodHead:
-			handleQueueGetMetadata(w, r, account, queue)
+	// Service level: /?comp=…
+	if path == "" {
+		switch {
+		case r.Method == http.MethodGet && restype == "" && comp == "list":
+			handleQueuesList(w, r, account)
+		case (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			restype == "service" && comp == "properties":
+			writeStorageXML(w, http.StatusOK, defaultStorageServiceProperties())
 		default:
-			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeStorageOperationNotImplemented(w, r, "Queues")
 		}
 		return
 	}
 
-	// Messages: /{queue}/messages or /{queue}/messages/{messageid}
+	segs := strings.Split(path, "/")
+	queue := segs[0]
+	if queue == "" {
+		writeStorageError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
+		return
+	}
+
+	if len(segs) == 1 {
+		switch r.Method {
+		case http.MethodPut:
+			switch comp {
+			case "":
+				handleQueueCreate(w, r, account, queue)
+			case "metadata":
+				handleQueueSetMetadata(w, r, account, queue)
+			default:
+				writeStorageOperationNotImplemented(w, r, "Queues")
+			}
+		case http.MethodDelete:
+			if comp != "" {
+				writeStorageOperationNotImplemented(w, r, "Queues")
+				return
+			}
+			handleQueueDelete(w, r, account, queue)
+		case http.MethodGet, http.MethodHead:
+			// Get Queue Metadata is the only documented read on the queue
+			// itself, and Azure addresses it with comp=metadata.
+			if comp != "metadata" {
+				writeStorageOperationNotImplemented(w, r, "Queues")
+				return
+			}
+			handleQueueGetMetadata(w, r, account, queue)
+		default:
+			writeStorageOperationNotImplemented(w, r, "Queues")
+		}
+		return
+	}
+
+	// Messages: /{queue}/messages or /{queue}/messages/{messageid}. No
+	// documented message operation carries restype or comp.
 	if segs[1] != "messages" {
 		writeStorageError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
+		return
+	}
+	if restype != "" || comp != "" {
+		writeStorageOperationNotImplemented(w, r, "Queues")
 		return
 	}
 	if len(segs) == 2 {
@@ -553,18 +945,19 @@ func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 		case http.MethodDelete:
 			handleQueueClearMessages(w, r, account, queue)
 		default:
-			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeStorageOperationNotImplemented(w, r, "Queues")
 		}
 		return
 	}
 	if len(segs) == 3 {
 		messageID := segs[2]
-		switch r.Method {
-		case http.MethodDelete:
+		if r.Method == http.MethodDelete {
 			handleQueueDeleteMessage(w, r, account, queue, messageID)
-		default:
-			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			return
 		}
+		// PUT /{queue}/messages/{messageid} is Update Message, which the
+		// simulator does not implement.
+		writeStorageOperationNotImplemented(w, r, "Queues")
 		return
 	}
 	writeStorageError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
@@ -584,6 +977,22 @@ func handleQueueCreate(w http.ResponseWriter, r *http.Request, account, queue st
 	}
 	queueData.Put(key, q)
 	w.WriteHeader(http.StatusCreated)
+}
+
+// handleQueueSetMetadata is Set Queue Metadata: the x-ms-meta-* headers replace
+// the queue's metadata wholesale, and Get Queue Metadata reads back exactly what
+// was set.
+func handleQueueSetMetadata(w http.ResponseWriter, r *http.Request, account, queue string) {
+	key := queueKey(account, queue)
+	if _, ok := queueData.Get(key); !ok {
+		writeStorageError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
+		return
+	}
+	metadata := collectMetadata(r)
+	queueData.Update(key, func(q *QueueData) {
+		q.Metadata = metadata
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleQueueDelete(w http.ResponseWriter, r *http.Request, account, queue string) {

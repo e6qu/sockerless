@@ -46,6 +46,10 @@ provider "google" {
   # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
   iam_beta_custom_endpoint = "${var.endpoint}/v1/"
 
+  # iam_custom_endpoint routes the handwritten IAM client that backs
+  # `google_service_account_key` (projects.serviceAccounts.keys.create/.get).
+  iam_custom_endpoint = "${var.endpoint}/v1/"
+
   # google_project speaks the Cloud Resource Manager v1 wire (create +
   # operation wait + read + delete) and reads Cloud Billing's
   # projects.getBillingInfo on every Read — the handwritten cloudbilling
@@ -892,6 +896,17 @@ resource "google_service_account" "tf_sa" {
   display_name = "tf-test runner service account"
 }
 
+# A service-account key is the credential a non-interactive client — the gcloud
+# CLI's `auth activate-service-account`, a backend reading
+# GOOGLE_APPLICATION_CREDENTIALS — authenticates with. The provider creates it
+# through IAM's projects.serviceAccounts.keys.create and reads it back through
+# keys.get, so private_key carries the base64 PKCS#8 credential file the API
+# returns once at creation, and public_key carries the registered public half.
+resource "google_service_account_key" "tf_sa_key" {
+  service_account_id = google_service_account.tf_sa.name
+  key_algorithm      = "KEY_ALG_RSA_2048"
+}
+
 # Project lifecycle via the Cloud Resource Manager v1 wire: create returns an
 # operation the provider waits on (GET /v1/operations/{op}), Read is the v1
 # GetProject plus Cloud Billing's getBillingInfo, and destroy performs the
@@ -1092,6 +1107,22 @@ output "service_account_email" {
 
 output "service_account_name" {
   value = google_service_account.tf_sa.name
+}
+
+output "service_account_key_name" {
+  value = google_service_account_key.tf_sa_key.name
+}
+
+# The base64 PKCS#8 credential file IAM returns once, at creation. The apply
+# test decodes it and checks it is the shape a Google client can authenticate
+# with.
+output "service_account_key_private_key" {
+  value     = google_service_account_key.tf_sa_key.private_key
+  sensitive = true
+}
+
+output "service_account_key_algorithm" {
+  value = google_service_account_key.tf_sa_key.key_algorithm
 }
 
 output "bigquery_table_id" {

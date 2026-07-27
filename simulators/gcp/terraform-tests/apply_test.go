@@ -1,6 +1,7 @@
 package gcp_tf_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"os"
@@ -256,6 +257,29 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	saName := outputs.must(t, "service_account_name")
 	require.Equal(t, "projects/test-project/serviceAccounts/tf-test-runner-sa@test-project.iam.gserviceaccount.com", saName,
 		"service-account name must include the canonical projects/{project}/serviceAccounts/{email} resource path; got %s", saName)
+
+	// A service-account key is the credential a non-interactive Google client
+	// authenticates with, so the provider's key resource must yield a usable
+	// one: the canonical {sa}/keys/{keyId} resource name, and a private_key
+	// that decodes to the credential file Google issues.
+	saKeyName := outputs.must(t, "service_account_key_name")
+	require.Contains(t, saKeyName, saName+"/keys/",
+		"service-account key name must include the canonical {serviceAccount}/keys/{keyId} path; got %s", saKeyName)
+	require.Equal(t, "KEY_ALG_RSA_2048", outputs.must(t, "service_account_key_algorithm"))
+
+	keyFileJSON, err := base64.StdEncoding.DecodeString(outputs.must(t, "service_account_key_private_key"))
+	require.NoError(t, err, "private_key must be the base64 credential file IAM returns")
+	var keyFile map[string]string
+	require.NoError(t, json.Unmarshal(keyFileJSON, &keyFile),
+		"the decoded private_key must be the JSON credential file: %s", keyFileJSON)
+	require.Equal(t, "service_account", keyFile["type"])
+	require.Equal(t, "test-project", keyFile["project_id"])
+	require.Equal(t, "tf-test-runner-sa@test-project.iam.gserviceaccount.com", keyFile["client_email"])
+	require.Contains(t, keyFile["private_key"], "BEGIN PRIVATE KEY",
+		"the credential file must carry a PEM private key a client can sign an assertion with")
+	require.Equal(t, saKeyName[strings.LastIndex(saKeyName, "/")+1:], keyFile["private_key_id"],
+		"the credential file's private_key_id must be the key id the resource name carries")
+	require.NotEmpty(t, keyFile["token_uri"], "the credential file must name the token endpoint to exchange the assertion at")
 
 	bigtableInstanceID := outputs.must(t, "bigtable_instance_id")
 	require.Contains(t, bigtableInstanceID, "projects/test-project/instances/tf-bt1",

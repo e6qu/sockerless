@@ -339,6 +339,8 @@ func TestStackProductionShape(t *testing.T) {
 		"aws_ecs_service must converge (ACTIVE, runningCount==desiredCount) via the ECS Service family")
 	require.Equal(t, "FARGATE,FARGATE_SPOT", outputs.must(t, "ecs_cluster_capacity_providers"),
 		"PutClusterCapacityProviders must round-trip through DescribeClusters")
+	require.Equal(t, "bridge", outputs.must(t, "ecs_task_definition_bridge_network_mode"),
+		"RegisterTaskDefinition must round-trip a non-awsvpc networkMode through DescribeTaskDefinition")
 
 	kmsAliasARN := outputs.must(t, "kms_alias_arn")
 	require.Contains(t, kmsAliasARN, ":alias/tf-test-runner",

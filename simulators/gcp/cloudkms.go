@@ -542,7 +542,16 @@ func registerCloudKMS(srv *sim.Server) {
 
 	// GetCryptoKeyVersion: GET .../cryptoKeyVersions/{cryptoKeyVersion}
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys/{cryptoKey}/cryptoKeyVersions/{cryptoKeyVersion}", func(w http.ResponseWriter, r *http.Request) {
-		name := kmsCryptoKeyName(r) + "/cryptoKeyVersions/" + sim.PathParam(r, "cryptoKeyVersion")
+		versionID, _, isCustomMethod := gcpCustomMethod(sim.PathParam(r, "cryptoKeyVersion"))
+		if isCustomMethod {
+			// The one GET custom method Cloud KMS publishes on a
+			// CryptoKeyVersion is exportTrustedKeyWrappedCryptoKeyVersion,
+			// which the simulator does not serve; reporting the version as
+			// missing would hide that the method itself is unrouted.
+			gcpMethodNotFound(w)
+			return
+		}
+		name := kmsCryptoKeyName(r) + "/cryptoKeyVersions/" + versionID
 		v, ok := kmsCryptoKeyVersions.Get(name)
 		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "CryptoKeyVersion %s not found", name)

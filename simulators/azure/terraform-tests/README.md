@@ -26,6 +26,20 @@ Resources covered (azurerm — sim ships custom cloud metadata + OAuth2 token en
 - `azurerm_service_plan` + `azurerm_linux_function_app` (the AZF runner backend host + workload)
 - `azurerm_api_management` + API + product + subscription
 
+### Instance discovery is not on the azurerm authentication path
+
+The simulator serves Microsoft Entra ID instance discovery
+(`GET /common/discovery/instance`), but no Terraform resource exercises it and
+none can. The azurerm provider authenticates through `go-azure-sdk`, which
+performs a plain OAuth2 client-credentials exchange against the Active
+Directory endpoint named by `metadata_host` — it never builds an MSAL authority
+and so never calls instance discovery. The proof is in this harness itself: it
+points the provider at an `http://` endpoint, which MSAL rejects outright
+because it requires an https authority, and the apply still succeeds.
+
+That endpoint's client surfaces are therefore the CLI (`simulators/azure/cli-tests/az_login_test.go`)
+and the SDK (`simulators/azure/sdk-tests/auth_instance_discovery_test.go`).
+
 ## Running
 
 These tests require Terraform and Docker. On Linux, direct `go test` runs Terraform locally. On macOS, the harness delegates the same test command into the shared Linux Docker test image because Go's Security.framework-backed trust store ignores `SSL_CERT_FILE`.

@@ -1040,6 +1040,14 @@ func registerVirtualMachines(srv *sim.Server) {
 		if vm.Properties.VMID == "" {
 			vm.Properties.VMID = generateUUID()
 		}
+		// Request validation precedes provisioning, as it does in Azure: a
+		// networkProfile the Compute resource provider cannot accept is the
+		// client's error, reported as 400/404, not as the 503 that a host that
+		// failed to boot the machine earns.
+		if fault := azureValidateVMNetworkProfile(vm); fault != nil {
+			sim.AzureError(w, fault.code, fault.message, fault.status)
+			return
+		}
 		if err := azureStartRealVM(r.Context(), vm); err != nil {
 			logger.Error().
 				Err(err).

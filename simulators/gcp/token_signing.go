@@ -376,7 +376,7 @@ func isAuthExempt(r *http.Request) bool {
 		return true
 	case p == "/":
 		return true
-	case r.Method == http.MethodPost && (p == "/token" || p == "/oauth2/v4/token" || p == "/v1/token"):
+	case r.Method == http.MethodPost && (p == "/token" || p == "/oauth2/v4/token" || p == "/o/oauth2/token" || p == "/v1/token"):
 		// Token minters: how a client obtains a token in the first place.
 		return true
 	case r.Method == http.MethodPost && p == "/v1/introspect":

@@ -25,10 +25,23 @@ import (
 type discoveryMethod struct {
 	HTTPMethod string
 	Path       string // basePath-joined flatPath (preferred) or path
+	// PathParams maps each path parameter of the method to the Discovery
+	// document's "pattern" for it (empty when the document constrains none).
+	// A reserved-expansion parameter ({+name}) stands for several URI
+	// segments and the pattern is the document's only description of that
+	// shape, so rendering a concrete request URI for the coverage probe
+	// needs it.
+	PathParams map[string]string
 }
 
 type discoveryDoc struct {
-	File    string
+	File string
+	// Host is the service's own API host from the document's rootUrl
+	// (run.googleapis.com, redis.googleapis.com, …). Real Google gives each
+	// service its own hostname and the simulator resolves the two services
+	// that share a URI path by the Host header a real client sends, so a
+	// probe must send the document's host to reach that document's service.
+	Host    string
 	Methods []discoveryMethod
 }
 
@@ -39,11 +52,16 @@ func loadDiscoveryDocs(t *testing.T) []*discoveryDoc {
 		t.Fatalf("no vendored Discovery documents found (glob err: %v) — run scripts/fetch-gcp-discovery.sh", err)
 	}
 
+	type rawParameter struct {
+		Location string `json:"location"`
+		Pattern  string `json:"pattern"`
+	}
 	type rawMethod struct {
-		HTTPMethod              string `json:"httpMethod"`
-		Path                    string `json:"path"`
-		FlatPath                string `json:"flatPath"`
-		UseMediaDownloadService bool   `json:"useMediaDownloadService"`
+		HTTPMethod              string                  `json:"httpMethod"`
+		Path                    string                  `json:"path"`
+		FlatPath                string                  `json:"flatPath"`
+		Parameters              map[string]rawParameter `json:"parameters"`
+		UseMediaDownloadService bool                    `json:"useMediaDownloadService"`
 		MediaUpload             *struct {
 			Protocols struct {
 				Simple struct {
@@ -69,6 +87,7 @@ func loadDiscoveryDocs(t *testing.T) []*discoveryDoc {
 		}
 		var doc struct {
 			BasePath  string                 `json:"basePath"`
+			RootURL   string                 `json:"rootUrl"`
 			Methods   map[string]rawMethod   `json:"methods"`
 			Resources map[string]rawResource `json:"resources"`
 		}
@@ -79,13 +98,26 @@ func loadDiscoveryDocs(t *testing.T) []*discoveryDoc {
 			t.Fatalf("decode %s: %v", p, err)
 		}
 
-		d := &discoveryDoc{File: filepath.Base(p)}
+		host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(doc.RootURL, "https://"), "http://"), "/")
+		if i := strings.Index(host, "/"); i >= 0 {
+			host = host[:i]
+		}
+		if host == "" {
+			t.Fatalf("%s: document has no rootUrl — the service's API host is unknown", p)
+		}
+		d := &discoveryDoc{File: filepath.Base(p), Host: host}
 		join := func(rel string) string {
 			return "/" + strings.TrimPrefix(strings.TrimSuffix(doc.BasePath, "/")+"/"+strings.TrimPrefix(rel, "/"), "/")
 		}
 		addMethod := func(m rawMethod) {
 			if m.HTTPMethod == "" {
 				return
+			}
+			pathParams := map[string]string{}
+			for name, param := range m.Parameters {
+				if param.Location == "path" {
+					pathParams[name] = param.Pattern
+				}
 			}
 			// Both the expanded flatPath and the {+param} template path
 			// are real, equivalent descriptions of the method URI;
@@ -94,17 +126,17 @@ func loadDiscoveryDocs(t *testing.T) []*discoveryDoc {
 				if rel == "" {
 					continue
 				}
-				d.Methods = append(d.Methods, discoveryMethod{HTTPMethod: m.HTTPMethod, Path: join(rel)})
+				d.Methods = append(d.Methods, discoveryMethod{HTTPMethod: m.HTTPMethod, Path: join(rel), PathParams: pathParams})
 				// Media-download variant: alt=media requests ride the
 				// /download-prefixed service path.
 				if m.UseMediaDownloadService {
-					d.Methods = append(d.Methods, discoveryMethod{HTTPMethod: m.HTTPMethod, Path: "/download" + join(rel)})
+					d.Methods = append(d.Methods, discoveryMethod{HTTPMethod: m.HTTPMethod, Path: "/download" + join(rel), PathParams: pathParams})
 				}
 			}
 			// Media-upload variant rides its own absolute path
 			// (/upload/storage/v1/b/{bucket}/o).
 			if m.MediaUpload != nil && m.MediaUpload.Protocols.Simple.Path != "" {
-				d.Methods = append(d.Methods, discoveryMethod{HTTPMethod: m.HTTPMethod, Path: m.MediaUpload.Protocols.Simple.Path})
+				d.Methods = append(d.Methods, discoveryMethod{HTTPMethod: m.HTTPMethod, Path: m.MediaUpload.Protocols.Simple.Path, PathParams: pathParams})
 			}
 		}
 		var walk func(res rawResource)
@@ -172,6 +204,7 @@ var allowedNonSpecGCPRoutes = map[string]string{
 	// not part of any service Discovery document.
 	"POST /token":           "OAuth2 token endpoint (oauth2.googleapis.com)",
 	"POST /oauth2/v4/token": "legacy OAuth2 token endpoint",
+	"POST /o/oauth2/token":  "original OAuth2 token endpoint (accounts.google.com/o/oauth2/token)",
 	// Security Token Service token exchange (sts.googleapis.com /v1/token) —
 	// the Workforce Identity Federation surface, described by the STS service's
 	// own Discovery rather than any resource service's document.
@@ -181,6 +214,12 @@ var allowedNonSpecGCPRoutes = map[string]string{
 	// workforce principal against after `gcloud auth login --cred-file`; same
 	// STS surface as /v1/token, outside any resource service's Discovery.
 	"POST /v1/introspect": "Security Token Service token introspection (sts.googleapis.com)",
+
+	// The metadata server's own version directory, addressed without its
+	// trailing slash so the server answers the 301 real Google answers. The
+	// rest of the tree sits under the /computeMetadata/ prefix allowlist
+	// below; this one pattern is the prefix itself, minus the slash.
+	"GET /computeMetadata": "GCE metadata server version directory (documented Google surface; no Discovery document)",
 
 	// OpenID Connect discovery + JSON Web Key Set publishing the simulator's
 	// access-token signing key — the well-known material a resource server uses

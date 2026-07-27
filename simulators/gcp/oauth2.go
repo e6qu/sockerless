@@ -79,6 +79,13 @@ func registerOAuth2(srv *sim.Server) {
 	}
 	srv.HandleFunc("POST /token", handler)
 	srv.HandleFunc("POST /oauth2/v4/token", handler)
+	// Google publishes the same grant on three token endpoints — the current
+	// `oauth2.googleapis.com/token`, the versioned
+	// `www.googleapis.com/oauth2/v4/token`, and the original
+	// `accounts.google.com/o/oauth2/token` that older clients and
+	// `auth/token_host` overrides still name. All three take the same form
+	// body and return the same token, so all three are the same handler.
+	srv.HandleFunc("POST /o/oauth2/token", handler)
 }
 
 // oauth2GrantError is an RFC 6749 token-endpoint failure: the `error` code and

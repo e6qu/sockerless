@@ -279,18 +279,59 @@ func azureApplyRealNSGsToNIC(ctx context.Context, armNIC NetworkInterface) error
 	return nil
 }
 
-func azureStartRealVM(ctx context.Context, vm VirtualMachine) error {
-	if len(vm.Properties.NetworkProfile.NetworkInterfaces) != 1 {
-		return fmt.Errorf("firecracker-backed Azure VM slice requires exactly one network interface, got %d", len(vm.Properties.NetworkProfile.NetworkInterfaces))
+// azureVMRequestFault is a virtual-machine write the client cannot fix by
+// retrying: the request's networkProfile names no usable network interface, so
+// no amount of host health makes it succeed. Azure rejects these during request
+// validation — 400 InvalidParameter for a networkProfile the Compute resource
+// provider cannot accept, 404 ResourceNotFound for a referenced interface that
+// does not exist. Reporting them as the 503 OperationNotAllowed that a genuine
+// host failure earns would make an SDK retry policy retry forever.
+type azureVMRequestFault struct {
+	code    string
+	status  int
+	message string
+}
+
+func (f *azureVMRequestFault) Error() string { return f.message }
+
+// azureValidateVMNetworkProfile applies those request-validation rules. It
+// reads only ARM state, never the host, so a create with an unusable
+// networkProfile is rejected identically on every host.
+func azureValidateVMNetworkProfile(vm VirtualMachine) *azureVMRequestFault {
+	nics := vm.Properties.NetworkProfile.NetworkInterfaces
+	if len(nics) != 1 {
+		return &azureVMRequestFault{
+			code:   "InvalidParameter",
+			status: http.StatusBadRequest,
+			message: fmt.Sprintf("The value of parameter properties.networkProfile.networkInterfaces is invalid: exactly one network interface is required, got %d.",
+				len(nics)),
+		}
 	}
-	nicID := vm.Properties.NetworkProfile.NetworkInterfaces[0].ID
-	armNIC, ok := azureNICs.Get(nicID)
+	armNIC, ok := azureNICs.Get(nics[0].ID)
 	if !ok {
-		return fmt.Errorf("network interface %s not found", nicID)
+		return &azureVMRequestFault{
+			code:    "ResourceNotFound",
+			status:  http.StatusNotFound,
+			message: fmt.Sprintf("The Resource %q referenced by properties.networkProfile.networkInterfaces was not found.", nics[0].ID),
+		}
 	}
 	if len(armNIC.Properties.IPConfigurations) == 0 || armNIC.Properties.IPConfigurations[0].Properties.Subnet == nil {
-		return fmt.Errorf("network interface %s requires a primary IP configuration with a subnet", nicID)
+		return &azureVMRequestFault{
+			code:   "InvalidParameter",
+			status: http.StatusBadRequest,
+			message: fmt.Sprintf("The value of parameter properties.networkProfile.networkInterfaces is invalid: network interface %s requires a primary IP configuration with a subnet.",
+				nics[0].ID),
+		}
 	}
+	return nil
+}
+
+func azureStartRealVM(ctx context.Context, vm VirtualMachine) error {
+	if fault := azureValidateVMNetworkProfile(vm); fault != nil {
+		return fault
+	}
+	nicID := vm.Properties.NetworkProfile.NetworkInterfaces[0].ID
+	armNIC, _ := azureNICs.Get(nicID)
 	ipconf := armNIC.Properties.IPConfigurations[0]
 	subnetID := ipconf.Properties.Subnet.ID
 	requestedIP := ipconf.Properties.PrivateIPAddress

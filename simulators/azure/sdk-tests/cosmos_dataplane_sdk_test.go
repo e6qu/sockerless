@@ -2,6 +2,8 @@ package azure_sdk_test
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -124,4 +126,37 @@ func TestCosmos_RealSDKDataPlane(t *testing.T) {
 	require.NoError(t, err, "DeleteItem")
 	_, err = container.ReadItem(ctx, pk, "c", nil)
 	require.Error(t, err, "deleted item must not be readable")
+}
+
+// TestCosmos_AccountRootServesOnlyCosmosClients pins both halves of the API root
+// Azure Cosmos DB owns. The azcosmos SDK's global endpoint manager reads the
+// account root on its first request, so the route must keep answering account
+// properties for a real Cosmos client; a request carrying none of Cosmos's
+// data-plane markers is not addressed to Cosmos and must not be answered with
+// them. That second half is what lets the simulator hand a browser at the bare
+// origin to the console instead of a bare 404, without Cosmos losing the root.
+func TestCosmos_AccountRootServesOnlyCosmosClients(t *testing.T) {
+	// A real Cosmos client: CreateDatabase drives account discovery first.
+	client := newCosmosSDKClient(t, baseURL+"/")
+	_, err := client.CreateDatabase(ctx, azcosmos.DatabaseProperties{ID: "rootdiscoverydb"}, nil)
+	require.NoError(t, err, "CreateDatabase must still drive account discovery on GET /{$}")
+
+	// A plain client with none of Cosmos's markers. Redirects are not followed:
+	// where the console is registered the answer is a redirect to it, and where
+	// it is not the root is genuinely nothing — neither may be Cosmos's.
+	plain := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/", nil)
+	require.NoError(t, err)
+	resp, err := plain.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(body), "writableLocations",
+		"a request without Cosmos data-plane markers was answered with Cosmos account properties")
+	assert.NotContains(t, string(body), "databaseAccountEndpoint",
+		"a request without Cosmos data-plane markers was answered with Cosmos account properties")
 }

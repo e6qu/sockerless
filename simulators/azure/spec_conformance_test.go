@@ -28,6 +28,81 @@ import (
 type swaggerPath struct {
 	Method string
 	Segs   []string
+	// Raw is the basePath-joined path split into segments with the original
+	// casing and the swagger parameter names intact ("{resourceGroupName}").
+	// Segs normalizes both away for shape comparison; the coverage probe needs
+	// them back to synthesize a concrete request the mux can route.
+	Raw []string
+	// APIVersion is the document's info.version — the api-version every ARM
+	// request must carry.
+	APIVersion string
+	// PathEnums maps a path parameter name to the closed set of values the
+	// specification declares for it ("recordType" → A, AAAA, CNAME, …;
+	// "BlobServicesName" → default). Those are the only legal spellings of the
+	// operation, so they are what the coverage probe puts in the slot.
+	PathEnums map[string][]string
+	// PathScopes names the path parameters the specification marks
+	// x-ms-skip-url-encoding — ARM scopes and full resource IDs, whose values
+	// are resource paths spanning several URL segments rather than one.
+	PathScopes map[string]bool
+	// Query is the operation discriminator an x-ms-paths key carries
+	// ("restype=container&comp=list"). On the storage and Cosmos DB data
+	// planes the query string — not the path — selects the operation, so a
+	// probe that drops it is not asking about the documented operation at all.
+	// Routing ignores it, which is why the route gates use the path alone.
+	Query string
+}
+
+// swaggerParameter is the subset of a Swagger 2.0 parameter object the
+// coverage probe needs: where the value goes, what it is called, the closed set
+// of values it accepts, and the local "#/parameters/..." reference form.
+type swaggerParameter struct {
+	Name string   `json:"name"`
+	In   string   `json:"in"`
+	Enum []string `json:"enum"`
+	Ref  string   `json:"$ref"`
+	// SkipURLEncoding marks a path parameter whose value is itself a resource
+	// path — an ARM scope or a full resource ID — and therefore spans several
+	// URL segments. Azure sets it precisely on those parameters, so it is the
+	// specification's own statement that the slot is multi-segment.
+	SkipURLEncoding bool `json:"x-ms-skip-url-encoding"`
+}
+
+// swaggerPathEnums extracts, from one parameter list, the path parameters that
+// declare an enum. A "$ref" entry points at the document's own parameters
+// section; cross-document references are the shared ARM parameters
+// (subscriptionId, api-version), none of which are enumerated.
+func swaggerPathEnums(defs map[string]swaggerParameter, raw json.RawMessage) (enums map[string][]string, scopes map[string]bool) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var list []swaggerParameter
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, nil
+	}
+	enums, scopes = map[string][]string{}, map[string]bool{}
+	for _, p := range list {
+		if p.Ref != "" {
+			name, ok := strings.CutPrefix(p.Ref, "#/parameters/")
+			if !ok {
+				continue
+			}
+			p, ok = defs[name]
+			if !ok {
+				continue
+			}
+		}
+		if p.In != "path" || p.Name == "" {
+			continue
+		}
+		if len(p.Enum) > 0 {
+			enums[p.Name] = p.Enum
+		}
+		if p.SkipURLEncoding {
+			scopes[p.Name] = true
+		}
+	}
+	return enums, scopes
 }
 
 func loadSwaggerPaths(t *testing.T) (all []swaggerPath, byFile map[string][]swaggerPath) {
@@ -48,9 +123,13 @@ func loadSwaggerPaths(t *testing.T) (all []swaggerPath, byFile map[string][]swag
 			t.Fatalf("gunzip %s: %v", p, err)
 		}
 		var doc struct {
-			BasePath string                                `json:"basePath"`
-			Paths    map[string]map[string]json.RawMessage `json:"paths"`
-			XMSPaths map[string]map[string]json.RawMessage `json:"x-ms-paths"`
+			BasePath string `json:"basePath"`
+			Info     struct {
+				Version string `json:"version"`
+			} `json:"info"`
+			Parameters map[string]swaggerParameter           `json:"parameters"`
+			Paths      map[string]map[string]json.RawMessage `json:"paths"`
+			XMSPaths   map[string]map[string]json.RawMessage `json:"x-ms-paths"`
 		}
 		err = json.NewDecoder(gz).Decode(&doc)
 		_ = gz.Close()
@@ -76,8 +155,12 @@ func loadSwaggerPaths(t *testing.T) (all []swaggerPath, byFile map[string][]swag
 		}
 		add := func(rawPath string, methods map[string]json.RawMessage) {
 			// x-ms-paths keys may carry a query discriminator
-			// ("/path?comp=list"); routing matches on the path part.
+			// ("/path?comp=list"); routing matches on the path part, while the
+			// coverage probe replays the query so the operation it asks about
+			// is the documented one.
+			query := ""
 			if i := strings.Index(rawPath, "?"); i >= 0 {
+				query = rawPath[i+1:]
 				rawPath = rawPath[:i]
 			}
 			full := rawPath
@@ -85,10 +168,41 @@ func loadSwaggerPaths(t *testing.T) (all []swaggerPath, byFile map[string][]swag
 				full = strings.TrimSuffix(doc.BasePath, "/") + "/" + strings.TrimPrefix(rawPath, "/")
 			}
 			segs := splitAzureSegs(full)
-			for method := range methods {
+			raw := rawAzureSegs(full)
+			// Path-item parameters apply to every operation under the key.
+			sharedEnums, sharedScopes := swaggerPathEnums(doc.Parameters, methods["parameters"])
+			for method, rawOp := range methods {
 				switch method {
 				case "get", "put", "post", "patch", "delete", "head", "options":
-					sp := swaggerPath{Method: strings.ToUpper(method), Segs: segs}
+					enums := map[string][]string{}
+					scopes := map[string]bool{}
+					for k, v := range sharedEnums {
+						enums[k] = v
+					}
+					for k := range sharedScopes {
+						scopes[k] = true
+					}
+					var op struct {
+						Parameters json.RawMessage `json:"parameters"`
+					}
+					if json.Unmarshal(rawOp, &op) == nil {
+						opEnums, opScopes := swaggerPathEnums(doc.Parameters, op.Parameters)
+						for k, v := range opEnums {
+							enums[k] = v
+						}
+						for k := range opScopes {
+							scopes[k] = true
+						}
+					}
+					sp := swaggerPath{
+						Method:     strings.ToUpper(method),
+						Segs:       segs,
+						Raw:        raw,
+						APIVersion: doc.Info.Version,
+						PathEnums:  enums,
+						PathScopes: scopes,
+						Query:      query,
+					}
 					all = append(all, sp)
 					byFile[file] = append(byFile[file], sp)
 				}

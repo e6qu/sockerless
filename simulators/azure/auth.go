@@ -120,6 +120,14 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
+		// Instance discovery: GET /common/discovery/instance. Entra serves this
+		// only under /common — a tenant-scoped spelling is a 404 there — so the
+		// match is exact rather than a suffix.
+		if r.Method == http.MethodGet && path == "/common/discovery/instance" {
+			handleAzureInstanceDiscovery(w, r)
+			return
+		}
+
 		// Authorization endpoint: GET /{tenantId}/oauth2/v2.0/authorize
 		if r.Method == http.MethodGet && strings.Contains(path, "/oauth2/v2.0/authorize") {
 			handleAzureAuthorize(w, r, path)

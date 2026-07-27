@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // s3ImplementedOps enumerates the S3 operations the sim implements. S3 is REST:
@@ -170,30 +172,189 @@ var serviceConformanceCatalog = map[string][]string{
 	"AmazonEC2ContainerServiceV20141113": {},
 }
 
+// legacyQueryRegistrars maps a service's Smithy service-shape name to the
+// registration entry point that mounts that service's query-protocol actions.
+//
+// The AWSQueryRouter's unversioned bucket (version "") holds every action
+// registered through Register(action, handler) rather than RegisterVersioned:
+// services whose action names are globally unique across AWS (Amazon EC2, AWS
+// Identity and Access Management, AWS Security Token Service, and Amazon
+// CloudWatch's query surface) mount there. That bucket carries NO service
+// identity of its own — the key is the empty string, not a service — so the
+// only way to learn which service owns an action in it is to observe which
+// registration entry point mounted it. Each entry point below is therefore run
+// against a FRESH router and the actions it mounts in the unversioned bucket
+// are recorded as that service's (see legacyQueryOwnership). An action nobody
+// here claims stays unattributed and is credited to NO service, so a service
+// can never be credited with an operation it does not serve.
+var legacyQueryRegistrars = map[string]func(r *sim.AWSQueryRouter, srv *sim.Server){
+	"AmazonEC2":                        registerEC2,
+	"AWSIdentityManagementV20100508":   registerIAM,
+	"AWSSecurityTokenServiceV20110615": registerSTS,
+	// Amazon CloudWatch's query surface is split across several registrars;
+	// together they are the service's unversioned-bucket registration.
+	"GraniteServiceVersion20100801": func(r *sim.AWSQueryRouter, _ *sim.Server) {
+		registerCloudWatchMetricsQuery(r)
+		registerCloudWatchAlarmsQuery(r)
+		registerCloudWatchAlarmOpsQuery(r)
+		registerCloudWatchMetricStreamsQuery(r)
+		registerCloudWatchAnomalyInsightQuery(r)
+		registerCloudWatchMiscQuery(r)
+		registerCloudWatchDashboardsQuery(r)
+	},
+}
+
+// legacyQueryOwnership measures who owns each action in the query router's
+// unversioned bucket. It returns action → owning service shape for every action
+// exactly one registrar mounts; `unattributed` lists the bucket's actions no
+// registrar in legacyQueryRegistrars claims, and `ambiguous` lists actions more
+// than one registrar mounts (the last registration wins at runtime, so the sim
+// cannot serve both — neither service is credited).
+func legacyQueryOwnership(t *testing.T, srv *sim.Server, bucket []string) (owner map[string]string, unattributed, ambiguous []string) {
+	t.Helper()
+	owner = map[string]string{}
+	claimedBy := map[string][]string{}
+	for shape, register := range legacyQueryRegistrars {
+		probe := sim.NewAWSQueryRouter()
+		register(probe, srv)
+		for _, action := range probe.VersionedActions()[""] {
+			claimedBy[action] = append(claimedBy[action], shape)
+		}
+	}
+	contested := map[string]bool{}
+	for action, shapes := range claimedBy {
+		if len(shapes) > 1 {
+			sort.Strings(shapes)
+			contested[action] = true
+			ambiguous = append(ambiguous, action+" ("+strings.Join(shapes, ", ")+")")
+			continue
+		}
+		owner[action] = shapes[0]
+	}
+	for _, action := range bucket {
+		if _, ok := owner[action]; !ok && !contested[action] {
+			unattributed = append(unattributed, action)
+		}
+	}
+	sort.Strings(unattributed)
+	sort.Strings(ambiguous)
+	return owner, unattributed, ambiguous
+}
+
+// conformanceRouters is the measured registration surface the conformance gate
+// reads: the awsJson targets, the query router's (version → actions) table, and
+// the measured ownership of the query router's unversioned bucket.
+type conformanceRouters struct {
+	jsonTargets  []string
+	versioned    map[string][]string
+	legacyOwners map[string]string
+}
+
+// conformanceRegistrations builds the simulator and measures its registration
+// surface, including honest ownership of the unversioned query bucket.
+func conformanceRegistrations(t *testing.T) conformanceRouters {
+	t.Helper()
+	srv, jsonRouter, queryRouter := buildConformanceSimulator(t)
+	versioned := queryRouter.VersionedActions()
+	owners, _, _ := legacyQueryOwnership(t, srv, versioned[""])
+	return conformanceRouters{
+		jsonTargets:  jsonRouter.Targets(),
+		versioned:    versioned,
+		legacyOwners: owners,
+	}
+}
+
+// TestServiceConformance_LegacyQueryAttribution keeps the unversioned query
+// bucket honest: every action in it must be attributable to exactly one
+// service. A new service that starts mounting actions there without being
+// listed in legacyQueryRegistrars fails here rather than silently going
+// uncredited (or, worse, being credited to everyone).
+func TestServiceConformance_LegacyQueryAttribution(t *testing.T) {
+	srv, _, queryRouter := buildConformanceSimulator(t)
+	_, unattributed, ambiguous := legacyQueryOwnership(t, srv, queryRouter.VersionedActions()[""])
+	if len(unattributed) > 0 {
+		t.Errorf("%d unversioned query action(s) belong to no registrar in legacyQueryRegistrars — add the owning service's registration entry point: %v",
+			len(unattributed), unattributed)
+	}
+	if len(ambiguous) > 0 {
+		t.Errorf("%d unversioned query action(s) are mounted by more than one service — one handler shadows the other at runtime; give the collision-prone action a RegisterVersioned registration: %v",
+			len(ambiguous), ambiguous)
+	}
+}
+
+// TestServiceConformance_LegacyQueryShadowing guards the wire consequence of
+// the unversioned bucket: AWSQueryRouter.ServeHTTP falls back to it when the
+// request's Version has no handler for the action, so an operation a
+// query-protocol service does NOT register for its own API version, but which
+// another service owns in the unversioned bucket, is answered by that other
+// service's handler. The caller then gets a well-formed response from the wrong
+// service instead of the InvalidAction its unimplemented operation should
+// produce — and the gap looks implemented. Every such operation must get the
+// owning service's own RegisterVersioned registration.
+func TestServiceConformance_LegacyQueryShadowing(t *testing.T) {
+	models := loadSmithyModels(t)
+	routers := conformanceRegistrations(t)
+	for _, m := range models {
+		if m.Version == "" || len(routers.versioned[m.Version]) == 0 {
+			continue
+		}
+		own := map[string]bool{}
+		for _, a := range routers.versioned[m.Version] {
+			own[a] = true
+		}
+		var shadowed []string
+		for op := range m.Ops {
+			if own[op] {
+				continue
+			}
+			if owner, ok := routers.legacyOwners[op]; ok && owner != m.ShapeName {
+				shadowed = append(shadowed, op+" (would be served by "+owner+")")
+			}
+		}
+		sort.Strings(shadowed)
+		if len(shadowed) > 0 {
+			t.Errorf("%s (Version=%s): %d operation(s) fall through to another service's unversioned handler — register them with RegisterVersioned(%q, …): %v",
+				m.ShapeName, m.Version, len(shadowed), m.Version, shadowed)
+		}
+	}
+}
+
 // serviceRegisteredOps returns the set of operations the sim registers for the
 // given Smithy model, across the awsJson (X-Amz-Target) and awsQuery routers.
-func serviceRegisteredOps(m *smithyService, jsonTargets []string, versioned map[string][]string) map[string]bool {
+func serviceRegisteredOps(m *smithyService, r conformanceRouters) map[string]bool {
 	out := map[string]bool{}
-	for _, target := range jsonTargets {
+	for _, target := range r.jsonTargets {
 		i := strings.LastIndex(target, ".")
 		if i < 0 {
 			continue
 		}
 		prefix, op := target[:i], target[i+1:]
-		if prefix == m.ShapeName || (strings.Contains(prefix, ".") && prefix[strings.LastIndex(prefix, ".")+1:] == m.ShapeName) || strings.HasPrefix(prefix, m.ShapeName+"_") {
+		// The target prefix is the service shape name, either bare (what the Go
+		// SDK sends) or namespace-qualified (what botocore sends for services
+		// whose legacy targetPrefix is the java-style name,
+		// com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101). Both forms
+		// identify exactly one service, which is what makes awsJson targets
+		// self-attributing; a looser match would credit one service's target to
+		// another whose shape name merely resembles it.
+		// TestJSONTargetsExistInSmithyModels holds every registered target to
+		// this same resolution.
+		if prefix == m.ShapeName || (strings.Contains(prefix, ".") && prefix[strings.LastIndex(prefix, ".")+1:] == m.ShapeName) {
 			out[op] = true
 		}
 	}
-	for _, a := range versioned[m.Version] {
-		out[a] = true
-	}
-	// The query router's legacy bucket (version "") holds actions registered
-	// without an explicit API version — EC2, STS, and other services use the
-	// unversioned r.Register. Intersecting it with the model's own op set (in
-	// serviceCoverage) attributes those actions to the right service.
+	// The versioned bucket is keyed by the service's own API version, so it is
+	// self-attributing. The empty-string key is the unversioned bucket, not a
+	// service's version — never read it here.
 	if m.Version != "" {
-		for _, a := range versioned[""] {
+		for _, a := range r.versioned[m.Version] {
 			out[a] = true
+		}
+	}
+	// The unversioned bucket is attributed by measured ownership: an action
+	// counts for this service only if this service's registrar mounted it.
+	for action, owner := range r.legacyOwners {
+		if owner == m.ShapeName {
+			out[action] = true
 		}
 	}
 	return out
@@ -201,8 +362,8 @@ func serviceRegisteredOps(m *smithyService, jsonTargets []string, versioned map[
 
 // serviceCoverage computes a model's operation coverage: the ops registered and
 // the ops still missing (model ∖ registered), sorted.
-func serviceCoverage(m *smithyService, jsonTargets []string, versioned map[string][]string) (registered, missing []string) {
-	reg := serviceRegisteredOps(m, jsonTargets, versioned)
+func serviceCoverage(m *smithyService, r conformanceRouters) (registered, missing []string) {
+	reg := serviceRegisteredOps(m, r)
 	for op := range m.Ops {
 		if reg[op] {
 			registered = append(registered, op)
@@ -233,7 +394,7 @@ var restConformanceSources = map[string]string{
 
 // serviceImplementedCount returns how many of a model's operations the sim
 // implements — from restRegisteredOps for a REST service, else from the routers.
-func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned map[string][]string) int {
+func serviceImplementedCount(m *smithyService, r conformanceRouters) int {
 	if src, ok := restConformanceSources[m.ShapeName]; ok {
 		n := 0
 		for op := range m.Ops {
@@ -243,7 +404,7 @@ func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned m
 		}
 		return n
 	}
-	registered, _ := serviceCoverage(m, jsonTargets, versioned)
+	registered, _ := serviceCoverage(m, r)
 	return len(registered)
 }
 
@@ -252,7 +413,10 @@ func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned m
 // (Amazon EC2, RDS, Glue, …) whose hundreds of unimplemented ops would bloat the
 // catalog, and the REST services (Route 53, EFS) measured via restRegisteredOps.
 // The count must EQUAL the floor — a drop is a regression; implementing more ops
-// must bump the floor (the ratchet ratchets up).
+// must bump the floor (the ratchet ratchets up). Every count here is the number
+// of operations THIS service registers: an operation another service mounts in
+// the query router's unversioned bucket is never counted for it (see
+// legacyQueryRegistrars).
 var serviceCoverageFloor = map[string]int{
 	"AmazonEC2":                            769, // ec2Query
 	"AWSSecurityTokenServiceV20110615":     11,  // STS (awsQuery, unversioned)
@@ -284,12 +448,10 @@ var serviceCoverageFloor = map[string]int{
 // coverage-tracked services (see serviceCoverageFloor).
 func TestServiceConformance_CoverageFloor(t *testing.T) {
 	models := loadSmithyModels(t)
-	_, jsonRouter, queryRouter := buildConformanceSimulator(t)
-	jsonTargets := jsonRouter.Targets()
-	versioned := queryRouter.VersionedActions()
+	routers := conformanceRegistrations(t)
 	for shape, floor := range serviceCoverageFloor {
 		m := serviceModel(t, models, shape)
-		impl := serviceImplementedCount(m, jsonTargets, versioned)
+		impl := serviceImplementedCount(m, routers)
 		if impl != floor {
 			t.Errorf("%s: coverage %d/%d != floor %d — update serviceCoverageFloor (a drop is a regression; more is a ratchet-up).", shape, impl, len(m.Ops), floor)
 		}
@@ -311,13 +473,11 @@ func serviceModel(t *testing.T, models []*smithyService, shapeName string) *smit
 // of its real operations the sim implements — a measured number, logged.
 func TestServiceConformance_Coverage(t *testing.T) {
 	models := loadSmithyModels(t)
-	_, jsonRouter, queryRouter := buildConformanceSimulator(t)
-	jsonTargets := jsonRouter.Targets()
-	versioned := queryRouter.VersionedActions()
+	routers := conformanceRegistrations(t)
 
 	for shape := range serviceConformanceCatalog {
 		m := serviceModel(t, models, shape)
-		registered, missing := serviceCoverage(m, jsonTargets, versioned)
+		registered, missing := serviceCoverage(m, routers)
 		t.Logf("%s: %d/%d operations implemented; missing (%d): %v",
 			shape, len(registered), len(m.Ops), len(missing), missing)
 	}
@@ -397,13 +557,11 @@ func TestServiceConformance_S3Coverage(t *testing.T) {
 // "is service X complete?" a measured, enforced number instead of a claim.
 func TestServiceConformance_Ratchet(t *testing.T) {
 	models := loadSmithyModels(t)
-	_, jsonRouter, queryRouter := buildConformanceSimulator(t)
-	jsonTargets := jsonRouter.Targets()
-	versioned := queryRouter.VersionedActions()
+	routers := conformanceRegistrations(t)
 
 	for shape, want := range serviceConformanceCatalog {
 		m := serviceModel(t, models, shape)
-		_, missing := serviceCoverage(m, jsonTargets, versioned)
+		_, missing := serviceCoverage(m, routers)
 		wantSet := map[string]bool{}
 		for _, op := range want {
 			wantSet[op] = true

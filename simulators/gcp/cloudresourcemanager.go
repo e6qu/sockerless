@@ -307,6 +307,24 @@ func crmGetOperation(w http.ResponseWriter, r *http.Request) {
 	sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "operation %q not found", name)
 }
 
+// crmV1ProjectPOSTMethods are the POST custom methods the simulator serves on
+// a Cloud Resource Manager v1 project.
+var crmV1ProjectPOSTMethods = map[string]bool{
+	"undelete":           true,
+	"getIamPolicy":       true,
+	"setIamPolicy":       true,
+	"testIamPermissions": true,
+}
+
+// The v3 sibling set. v3 adds projects.move to the methods v1 serves.
+var crmV3ProjectPOSTMethods = map[string]bool{
+	"move":               true,
+	"undelete":           true,
+	"getIamPolicy":       true,
+	"setIamPolicy":       true,
+	"testIamPermissions": true,
+}
+
 // registerCloudResourceManagerV1 mounts the v1 projects lifecycle surface,
 // the operations.get polls of both API versions, and the Cloud Billing
 // project billing-info read. The v1 GetProject read stays in registerCRMv3
@@ -421,11 +439,24 @@ func registerCloudResourceManagerV1(srv *sim.Server, projectPolicies sim.Store[I
 	// projects colon-verbs (v1): undelete + the IAM triple gcloud projects
 	// get-iam-policy / set-iam-policy speak. The policy store is shared
 	// with the v3 verbs, so both API versions address one policy.
+	//
+	// crmV1ProjectPOSTMethods is that served set. Cloud Resource Manager v1
+	// documents more POST custom methods on a project — getAncestry and the
+	// org-policy family (getOrgPolicy, setOrgPolicy, clearOrgPolicy,
+	// getEffectiveOrgPolicy, listOrgPolicies, listAvailableOrgPolicyConstraints)
+	// — that the simulator does not serve.
 	srv.HandleFunc("POST /v1/projects/{projectAction}", func(w http.ResponseWriter, r *http.Request) {
 		idAction := sim.PathParam(r, "projectAction")
-		id, action, found := strings.Cut(idAction, ":")
-		if !found {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported project action %q", idAction)
+		id, action, found := gcpCustomMethod(idAction)
+		// Resolve the method before the project, the way Google's frontend
+		// does. This pattern receives every POST custom method addressed to a
+		// project — including other services' (Cloud SQL Admin's
+		// projects:pointInTimeRestore) and the org-policy methods this
+		// simulator does not serve — and answering those with the project's
+		// 403 would claim the project is inaccessible when the method is
+		// simply not routed.
+		if !found || !crmV1ProjectPOSTMethods[action] {
+			gcpMethodNotFound(w)
 			return
 		}
 		p, ok := crmResolveProject(id)
@@ -436,20 +467,17 @@ func registerCloudResourceManagerV1(srv *sim.Server, projectPolicies sim.Store[I
 		if crmIamVerb(w, r, projectPolicies, p.ProjectId+":"+action, "project") {
 			return
 		}
-		switch action {
-		case "undelete":
-			if p.State != "DELETE_REQUESTED" {
-				sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Project \"%s\" has lifecycle state %s; undelete requires DELETE_REQUESTED", p.ProjectId, p.State)
-				return
-			}
-			p.State = "ACTIVE"
-			p.DeleteTime = ""
-			p.UpdateTime = nowTimestamp()
-			crmProjects.Put(p.ProjectId, p)
-			sim.WriteJSON(w, http.StatusOK, map[string]any{})
-		default:
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported project action %q", action)
+		// crmIamVerb served the IAM triple, so undelete is the only method
+		// crmV1ProjectPOSTMethods still admits here.
+		if p.State != "DELETE_REQUESTED" {
+			sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Project \"%s\" has lifecycle state %s; undelete requires DELETE_REQUESTED", p.ProjectId, p.State)
+			return
 		}
+		p.State = "ACTIVE"
+		p.DeleteTime = ""
+		p.UpdateTime = nowTimestamp()
+		crmProjects.Put(p.ProjectId, p)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
 
 	// operations.get — v1 (gcloud's create waiter, terraform's

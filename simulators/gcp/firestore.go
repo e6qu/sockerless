@@ -230,6 +230,16 @@ func handleFSPostDocuments(w http.ResponseWriter, r *http.Request) {
 		handleFSRunQuery(w, r, strings.TrimSuffix(path, ":runQuery"))
 		return
 	}
+	// A ":verb" on the last segment names an AIP-136 custom method, not a
+	// collection to create a document in. runQuery above is the one the
+	// simulator serves on a document path; the others Firestore documents
+	// there — listCollectionIds, partitionQuery, runAggregationQuery — are
+	// unrouted, and creating a document in a collection named after the method
+	// would silently invent data.
+	if last := path[strings.LastIndex(path, "/")+1:]; strings.Contains(last, ":") {
+		gcpMethodNotFound(w)
+		return
+	}
 	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
 	docID := r.URL.Query().Get("documentId")
 	if docID == "" {

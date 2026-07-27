@@ -904,7 +904,17 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 	// the v1 read. A project the sim has never seen is a real 403 — the
 	// API never discloses whether an inaccessible project exists.
 	srv.HandleFunc("GET /v1/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
-		p, ok := crmResolveProject(sim.PathParam(r, "project"))
+		project, _, isCustomMethod := gcpCustomMethod(sim.PathParam(r, "project"))
+		if isCustomMethod {
+			// A ":verb" suffix names a GET custom method on a project. This
+			// pattern receives every service's — Cloud KMS publishes
+			// projects:showEffectiveAutokeyConfig and the two Key Access
+			// Justifications config reads — and the simulator serves none, so
+			// the answer is a method-routing failure, not the project's 403.
+			gcpMethodNotFound(w)
+			return
+		}
+		p, ok := crmResolveProject(project)
 		if !ok {
 			crmProjectPermissionDenied(w)
 			return
@@ -1033,9 +1043,14 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 	// projects colon-verbs: move / undelete / IAM triple.
 	srv.HandleFunc("POST /v3/projects/{projectAction}", func(w http.ResponseWriter, r *http.Request) {
 		idAction := sim.PathParam(r, "projectAction")
-		id, action, found := strings.Cut(idAction, ":")
-		if !found {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported project action %q", idAction)
+		id, action, found := gcpCustomMethod(idAction)
+		// Resolve the method before the project, the way Google's frontend
+		// does, so a method this simulator does not serve is answered as an
+		// unrouted method rather than with the project's 403 — which would
+		// claim the project is inaccessible when the method simply is not
+		// mounted here.
+		if !found || !crmV3ProjectPOSTMethods[action] {
+			gcpMethodNotFound(w)
 			return
 		}
 		p, ok := crmResolveProject(id)
@@ -1069,7 +1084,9 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 			projects.Put(p.ProjectId, p)
 			sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject, crmMetaUndeleteProject))
 		default:
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported project action %q", action)
+			// crmIamVerb served the IAM triple, so move and undelete above are
+			// the only methods crmV3ProjectPOSTMethods still admits here.
+			gcpMethodNotFound(w)
 		}
 	})
 

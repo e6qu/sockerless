@@ -43,6 +43,17 @@ Content-Type: application/json
 
 Token is obtained via OAuth2 from `https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token` with scope `https://management.azure.com/.default`. The simulator also honors data-plane token audiences the same way Azure AD does: OAuth v2 `scope={resource}/.default` mints `aud={resource}`, OAuth v1 `resource={resource}` mints `aud={resource}`, and omitted audience fields default to ARM.
 
+The simulator also serves the authority discovery endpoints an OpenID Connect client walks before it asks for a token:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /common/discovery/instance?api-version={1.0\|1.1}&authorization_endpoint={url}` | Instance discovery. Answers whether an authority host belongs to this identity service and returns its `tenant_discovery_endpoint`; `api-version=1.1` adds the `metadata` alias table. Rejects an authority the simulator does not serve with `400 invalid_instance` (AADSTS50049), exactly one of `issuer`/`authorization_endpoint` with `AADSTS500502`, and a bad `api-version` with `AADSTS500501`. Served under `/common` only, as on Entra. |
+| `GET /{tenantId}/v2.0/.well-known/openid-configuration` | Tenant OpenID metadata (v2.0 issuer). |
+| `GET /{tenantId}/.well-known/openid-configuration` | Tenant OpenID metadata (v1 issuer). |
+| `GET /{tenantId}/discovery/v2.0/keys` | JWKS for the RS256 key the simulator signs tokens with. |
+
+MSAL-based clients (the Azure CLI, `azidentity`) send instance discovery to `login.microsoftonline.com` for any authority host outside their own hard-coded table, never to the configured authority. To point the Azure CLI at the simulator, register the Active Directory endpoint in the AD FS shape Azure Stack Hub deployments use — `az cloud register --endpoint-active-directory https://{host}/adfs` — which is the one authority shape MSAL resolves against the configured host.
+
 ### 1.3 Common ARM Request Headers
 
 | Header | Required | Description |

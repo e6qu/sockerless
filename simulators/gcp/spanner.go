@@ -168,7 +168,12 @@ func handleSpannerInstanceChild(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 5 && parts[1] == "databases" && parts[3] == "sessions" && r.Method == http.MethodDelete:
 		handleSpannerDeleteSession(w, r)
 	default:
-		sim.GCPError(w, http.StatusNotFound, "not found", "NOT_FOUND")
+		// The "{rest...}" mount routes the tail itself, so this arm is the
+		// sub-router's own miss: no Cloud Spanner method the simulator serves
+		// has this shape (the session data-plane custom methods — executeSql,
+		// streamingRead, commit, partitionQuery … — are served over gRPC).
+		// Google's frontend answers an unmatched URI the same way.
+		gcpMethodNotFound(w)
 	}
 }
 

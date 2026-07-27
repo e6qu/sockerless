@@ -236,11 +236,11 @@ this order.
 - **BUG-1345 AzureAD Terraform provider upstream blocker:** add AzureAD Terraform tests only after the provider supports a Microsoft Graph endpoint override.
 - **BUG-2441 current `knip`/Node deprecation warning:** the unused-export gate passed, but the current `knip` 6.23.0 release still emitted Node's `DEP0205 module.register()` warning.
 - **Issue #363 versioned releases + GitHub Container Registry images:** still a release/distribution task.
-- **Simulator service ratchets:** AWS/GCP/Azure have operation-coverage gates; continue ratcheting uncovered cloud services when Bleephub focus is not the immediate task.
+- **Simulator service ratchets:** AWS/GCP/Azure have operation-coverage gates that measure served surface (BUG-2651); continue ratcheting uncovered cloud services when Bleephub focus is not the immediate task. The honest floors make the remaining gaps legible — Spanner's REST session data plane, Cloud Billing, and the Azure Blob/File/Queue operations that now declare a `501` gap are the largest.
 
 ## Compressed Foundation Summary
 
 - The cloud backend family is Docker-API-shaped and stateless across Docker passthrough, Amazon Elastic Container Service, AWS Lambda-class, Google Cloud Run, Google Cloud Run Functions, Azure Container Apps, and Azure Functions.
 - GitHub Actions runner and GitLab docker-executor topologies are sim-proven across the container-capable backends, including container jobs, service containers, artifacts, and dispatcher-spawned runners.
 - FaaS multi-container pod semantics were assembled from cloud primitives, including shared-loopback networking and shared workspace behavior.
-- AWS, GCP, and Azure simulators have conformance/coverage gates and many service slices ratcheted to 100%; historical per-service detail lives in the merged PRs.
+- AWS, GCP, and Azure simulators have conformance/coverage gates that measure served surface: a documented operation counts only when a probe of the running simulator reaches a handler that answers, or — on Amazon Web Services — when the registrar that mounted it is the service being credited. Earlier per-service "100%" figures predate that measurement and were inflated by pattern collisions; the current floors are the honest ones. Historical per-service detail lives in the merged PRs.

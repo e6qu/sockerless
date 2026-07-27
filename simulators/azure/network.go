@@ -398,6 +398,20 @@ func registerNetwork(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/%s/subnets/%s",
 			sub, rg, vnetName, subnetName)
 
+		// A subnet is a child of its virtual network: Azure rejects the write
+		// with the parent's ResourceNotFound before the Network resource
+		// provider realizes anything. The check belongs ahead of every
+		// provisioning path below — reaching the host fabric first would turn
+		// a permanent client error into a 503 that an SDK retry policy retries
+		// forever, and would build fabric for a network that does not exist.
+		vnetID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/%s",
+			sub, rg, vnetName)
+		if _, ok := vnets.Get(vnetID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Network/virtualNetworks/%s' under resource group '%s' was not found.", vnetName, rg)
+			return
+		}
+
 		privateEndpointPolicies := req.Properties.PrivateEndpointNetworkPolicies
 		if privateEndpointPolicies == "" {
 			privateEndpointPolicies = "Disabled"

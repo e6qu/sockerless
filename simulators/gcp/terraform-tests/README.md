@@ -22,6 +22,7 @@ Resources covered:
 - `google_bigtable_instance` + `google_bigtable_table`
 - `google_secret_manager_secret` + `google_secret_manager_secret_version`
 - `google_service_account` (via `iam_beta_custom_endpoint`)
+- `google_service_account_key` (via `iam_custom_endpoint`)
 
 `google_compute_instance` is covered by the cross-cloud VM compute parity phase. Instance templates remain out of the foundational slice until a real sockerless flow or provider path requires them.
 

@@ -45,6 +45,13 @@ type Server struct {
 	// (specs/cloud-api/), so all service registration must go through
 	// those two methods rather than the raw mux.
 	routePatterns []string
+
+	// uiRoot redirects a visitor at the bare origin to the console. It is set
+	// whenever a console is registered, including when a service owns the API
+	// root and the redirect therefore cannot be mounted on the mux; that
+	// service hands the request here via ServeUIRoot when the request is not
+	// addressed to it. nil when no console is registered.
+	uiRoot http.HandlerFunc
 }
 
 // NewServer creates a new simulator server with the given configuration.
@@ -270,10 +277,25 @@ func (s *Server) ListenAndServe() error {
 	return err
 }
 
+// ServeUIRoot redirects a request at the bare origin to the console, and
+// reports whether it did. A service that owns the API root calls this when the
+// request is not addressed to its own API — an operator who types the bare
+// origin into a browser then reaches the console instead of a bare 404, while
+// the service keeps the root for its real clients. It reports false, writing
+// nothing, when no console is registered.
+func (s *Server) ServeUIRoot(w http.ResponseWriter, r *http.Request) bool {
+	if s.uiRoot == nil {
+		return false
+	}
+	s.uiRoot(w, r)
+	return true
+}
+
 // RegisterUI registers an embedded SPA at /ui/ and redirects GET / to /ui/.
 // When a simulated service already owns the API root ("GET /{$}"), the API
-// surface wins: registering the redirect anyway would panic the mux at startup,
-// and the UI stays reachable at /ui/ directly.
+// surface wins — registering the redirect anyway would panic the mux at
+// startup — and that service delegates the requests it declines to
+// ServeUIRoot, so the bare origin still reaches the console.
 func (s *Server) RegisterUI(fsys fs.FS) {
 	identityEndpoint, logoutEndpoint := "", ""
 	federationSubject := ""
@@ -319,10 +341,11 @@ func (s *Server) RegisterUI(fsys fs.FS) {
 	})
 	s.mux.Handle("GET /ui/config.json", s.uiAuth.Protect(configHandler))
 	s.mux.Handle("GET /ui/", s.uiAuth.Protect(spaHandler(fsys, "/ui/")))
+	s.uiRoot = func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
+	}
 	if !slices.Contains(s.routePatterns, "GET /{$}") {
-		s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
-		})
+		s.mux.HandleFunc("GET /{$}", s.uiRoot)
 	}
 	s.logger.Info().Msg("UI registered at /ui/")
 }

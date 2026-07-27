@@ -52,6 +52,12 @@ var (
 	sbAMQPEndpoint     string
 	ctx                = context.Background()
 	subscriptionID     = "00000000-0000-0000-0000-000000000001"
+
+	// azureFilesDataDir is where the simulator materializes every Azure Files
+	// share: <dir>/<account>/<share>. It is the directory a Container Apps
+	// workload's Volume{StorageType: AzureFile} bind-mounts, so it is where a
+	// file written through the Files data plane has to land.
+	azureFilesDataDir string
 )
 
 type fakeCredential struct{}
@@ -169,15 +175,20 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		log.Fatalf("Failed to create Service Bus AMQP cert dir: %v", err)
 	}
-	defer os.RemoveAll(certDir)
 	certPath, keyPath := writeServiceBusAMQPCert(certDir)
 
 	simCmd = exec.Command(binaryPath)
 	advertisedEndpoints := fmt.Sprintf(
 		`{"storage":{"blob":"http://{account}.blob.shim.localhost:%d/","file":"http://{account}.file.shim.localhost:%d/","queue":"http://{account}.queue.shim.localhost:%d/","table":"http://{account}.table.shim.localhost:%d/","web":"http://{account}.web.shim.localhost:%d/","dfs":"http://{account}.dfs.shim.localhost:%d/"},"keyVault":"https://{vault}.vault.shim.localhost:%d/","serviceBus":"https://{namespace}.servicebus.shim.localhost:%d/","acr":"http://{name}.azurecr.shim.localhost:%d/"}`,
 		port, port, port, port, port, port, port, port, port)
+	azureFilesDataDir, err = os.MkdirTemp("", "sockerless-sim-azure-files-*")
+	if err != nil {
+		log.Fatalf("Failed to create Azure Files data dir: %v", err)
+	}
+
 	simCmd.Env = append(os.Environ(),
 		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port),
+		fmt.Sprintf("SIM_AZURE_FILES_DATA_DIR=%s", azureFilesDataDir),
 		fmt.Sprintf("SIM_SERVICEBUS_AMQP_LISTEN_ADDR=:%d", amqpPort),
 		fmt.Sprintf("SIM_SERVICEBUS_AMQP_TLS_CERT=%s", certPath),
 		fmt.Sprintf("SIM_SERVICEBUS_AMQP_TLS_KEY=%s", keyPath),
@@ -206,6 +217,10 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	simCmd.Process.Kill()
 	simCmd.Wait()
+	// os.Exit skips deferred cleanup, so the directories this run created are
+	// removed here.
+	os.RemoveAll(azureFilesDataDir)
+	os.RemoveAll(certDir)
 	os.Exit(code)
 }
 

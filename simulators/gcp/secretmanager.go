@@ -339,9 +339,12 @@ func secretManagerSecretGetAction(w http.ResponseWriter, r *http.Request, parent
 // resource: `:addVersion`, `:setIamPolicy`, `:testIamPermissions`.
 func secretManagerSecretPostAction(w http.ResponseWriter, r *http.Request, parent string) {
 	secretAction := sim.PathParam(r, "secretAction")
-	secretID, action, found := strings.Cut(secretAction, ":")
-	if !found {
-		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown secret action %q", secretAction)
+	secretID, action, found := gcpCustomMethod(secretAction)
+	// The method is resolved before the secret, the way Google's frontend
+	// resolves it: a POST custom method this handler does not serve is a
+	// method-routing failure, not a statement about the secret.
+	if !found || !secretManagerSecretPOSTMethods[action] {
+		gcpMethodNotFound(w)
 		return
 	}
 	secretName := parent + "/" + secretID
@@ -354,9 +357,17 @@ func secretManagerSecretPostAction(w http.ResponseWriter, r *http.Request, paren
 		secretManagerAddVersion(w, r, secretName)
 	case "setIamPolicy", "testIamPermissions":
 		handleResourceIAM(w, r, gcpResourceIAMStore(), secretName, action)
-	default:
-		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown secret action %q", secretAction)
 	}
+}
+
+// secretManagerSecretPOSTMethods are the POST custom methods the simulator
+// serves on a secret. Secret Manager documents two more — rotateSecret and
+// enableManagedRotation — that the simulator does not implement; they are
+// answered as unrouted methods rather than pretended into existence.
+var secretManagerSecretPOSTMethods = map[string]bool{
+	"addVersion":         true,
+	"setIamPolicy":       true,
+	"testIamPermissions": true,
 }
 
 func secretManagerAddVersion(w http.ResponseWriter, r *http.Request, secretName string) {

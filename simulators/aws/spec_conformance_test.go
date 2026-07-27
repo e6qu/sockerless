@@ -195,33 +195,41 @@ func TestJSONTargetsExistInSmithyModels(t *testing.T) {
 
 func TestQueryActionsExistInSmithyModels(t *testing.T) {
 	models := loadSmithyModels(t)
-	_, _, queryRouter := buildConformanceSimulator(t)
+	srv, _, queryRouter := buildConformanceSimulator(t)
 
 	byVersion := map[string][]*smithyService{}
-	var queryModels []*smithyService
+	byShape := map[string]*smithyService{}
 	for _, m := range models {
+		byShape[m.ShapeName] = m
 		if m.Protocols["awsQuery"] || m.Protocols["ec2Query"] {
 			byVersion[m.Version] = append(byVersion[m.Version], m)
-			queryModels = append(queryModels, m)
 		}
 	}
+	versionedActions := queryRouter.VersionedActions()
+	legacyOwners, _, _ := legacyQueryOwnership(t, srv, versionedActions[""])
 
 	var offenders []string
-	for version, actions := range queryRouter.VersionedActions() {
+	for version, actions := range versionedActions {
 		for _, action := range actions {
 			if version == "" {
-				// Legacy bucket: globally-unique action names (EC2 / IAM /
-				// STS / CloudWatch metrics query). The action must exist in
-				// at least one query-protocol model.
-				found := false
-				for _, m := range queryModels {
-					if _, ok := m.Ops[action]; ok {
-						found = true
-						break
-					}
+				// Unversioned bucket: globally-unique action names (Amazon
+				// EC2 / IAM / STS / Amazon CloudWatch's query surface). The
+				// action must exist in the model of the service that actually
+				// registers it — checking it against "some query-protocol
+				// model" would let one service mount another's action and
+				// still pass.
+				owner, ok := legacyOwners[action]
+				if !ok {
+					offenders = append(offenders, action+"  (no registrar in legacyQueryRegistrars owns this unversioned action)")
+					continue
 				}
-				if !found {
-					offenders = append(offenders, action+"  (no query-protocol model defines this action)")
+				m, ok := byShape[owner]
+				if !ok {
+					offenders = append(offenders, action+"  (owning service "+owner+" has no vendored model)")
+					continue
+				}
+				if _, ok := m.Ops[action]; !ok {
+					offenders = append(offenders, action+"  (not an operation of its registering service "+owner+")")
 				}
 				continue
 			}

@@ -41,6 +41,56 @@ func FileShareHostDir(storageAccount, shareName string) string {
 	return dir
 }
 
+// resetFileShareHostDir empties the share's backing directory. A share that has
+// just been created holds no files, so its directory must not carry whatever a
+// share of the same name left behind — the share metadata lives in the
+// simulator's store, which starts empty on every non-persistent run, while the
+// directory outlives the process.
+func resetFileShareHostDir(storageAccount, shareName string) error {
+	if err := os.RemoveAll(filepath.Join(azureFilesHostRoot(), storageAccount, shareName)); err != nil {
+		return err
+	}
+	FileShareHostDir(storageAccount, shareName)
+	return nil
+}
+
+// removeFileShareHostDir deletes the share's backing directory and everything
+// under it, which is what Delete Share does to a share's contents.
+func removeFileShareHostDir(storageAccount, shareName string) error {
+	return os.RemoveAll(filepath.Join(azureFilesHostRoot(), storageAccount, shareName))
+}
+
+// fileShareHostPath resolves `relPath` inside the share's backing directory —
+// the very directory the Container Apps Jobs / Apps executor bind-mounts for a
+// Volume{StorageType: AzureFile}, so bytes written through the Files data plane
+// are the bytes a mounting container reads.
+//
+// It reports false for any name that would resolve outside that directory. The
+// account comes from the request's Host header and the share and path from its
+// URL, so a name carrying a separator or a parent-directory component must
+// never reach the filesystem.
+func fileShareHostPath(storageAccount, shareName, relPath string) (string, bool) {
+	if !isStoragePathSegment(storageAccount) || !isStoragePathSegment(shareName) {
+		return "", false
+	}
+	segments := strings.Split(relPath, "/")
+	for _, segment := range segments {
+		if !isStoragePathSegment(segment) {
+			return "", false
+		}
+	}
+	return filepath.Join(FileShareHostDir(storageAccount, shareName), filepath.Join(segments...)), true
+}
+
+// isStoragePathSegment reports whether a single account / share / path segment
+// names something inside the share directory rather than a way out of it.
+func isStoragePathSegment(segment string) bool {
+	if segment == "" || segment == "." || segment == ".." {
+		return false
+	}
+	return !strings.ContainsAny(segment, `/\`+"\x00")
+}
+
 // StorageAccount represents an Azure Storage Account.
 type StorageAccount struct {
 	ID         string                   `json:"id"`
@@ -215,15 +265,105 @@ func deleteStorageTableARMProjection(account, table string) {
 	}
 }
 
+// upsertFileShareDataPlaneProjection makes an ARM-created share readable and
+// writable on the Files data plane: the share row the data plane resolves, and
+// the backing directory its files live in.
+func upsertFileShareDataPlaneProjection(account, share string, quota int, metadata map[string]string) error {
+	if !isStoragePathSegment(account) || !isStoragePathSegment(share) {
+		return fmt.Errorf("invalid storage account or share name")
+	}
+	key := fileShareKey(account, share)
+	if existing, ok := fileShareData.Get(key); ok {
+		existing.Quota = quota
+		existing.Metadata = metadata
+		fileShareData.Put(key, existing)
+		return nil
+	}
+	if err := resetFileShareHostDir(account, share); err != nil {
+		return err
+	}
+	fileShareData.Put(key, FileShareData{
+		Account:  account,
+		Name:     share,
+		Quota:    quota,
+		Metadata: metadata,
+		Created:  time.Now().UTC().Format(http.TimeFormat),
+		ETag:     `"` + generateUUID() + `"`,
+	})
+	return nil
+}
+
+// deleteFileShareDataPlaneProjection removes the data-plane share an ARM delete
+// destroyed, along with its files.
+func deleteFileShareDataPlaneProjection(account, share string) error {
+	if !isStoragePathSegment(account) || !isStoragePathSegment(share) {
+		return fmt.Errorf("invalid storage account or share name")
+	}
+	fileShareData.Delete(fileShareKey(account, share))
+	deleteFileObjectProperties(account, share)
+	return removeFileShareHostDir(account, share)
+}
+
+// fileShareResourceIDForAccount builds the ARM resource ID of a share on an
+// ARM-known storage account. A share created on the data plane of an account
+// that ARM has never seen has no ARM identity to project onto.
+func fileShareResourceIDForAccount(account, share string) (string, bool) {
+	if azStorageAccounts == nil {
+		return "", false
+	}
+	for _, acct := range azStorageAccounts.List() {
+		if acct.Name == account {
+			return acct.ID + "/fileServices/default/shares/" + share, true
+		}
+	}
+	return "", false
+}
+
+// upsertFileShareARMProjection mirrors a data-plane share onto ARM, so a share
+// created with `az storage share create` is the same resource
+// `armstorage.NewFileSharesClient` reads back.
+func upsertFileShareARMProjection(account, share string, quota int, metadata map[string]string) {
+	if azFileShares == nil {
+		return
+	}
+	resourceID, ok := fileShareResourceIDForAccount(account, share)
+	if !ok {
+		return
+	}
+	azFileShares.Put(resourceID, FileShare{
+		ID:   resourceID,
+		Name: share,
+		Type: "Microsoft.Storage/storageAccounts/fileServices/shares",
+		Etag: fmt.Sprintf("\"0x%s\"", randomSuffix(16)),
+		Properties: FileShareProperties{
+			ShareQuota:       quota,
+			AccessTier:       "TransactionOptimized",
+			EnabledProtocols: "SMB",
+			LastModifiedTime: time.Now().UTC().Format(time.RFC3339),
+			LeaseStatus:      "Unlocked",
+			LeaseState:       "Available",
+			Metadata:         metadata,
+		},
+	})
+}
+
+// deleteFileShareARMProjection removes the ARM share a data-plane delete
+// destroyed.
+func deleteFileShareARMProjection(account, share string) {
+	if azFileShares == nil {
+		return
+	}
+	if resourceID, ok := fileShareResourceIDForAccount(account, share); ok {
+		azFileShares.Delete(resourceID)
+	}
+}
+
 func registerAzureFiles(srv *sim.Server) {
 	storageAccounts := sim.MakeStore[StorageAccount](srv.DB(), "storage_accounts")
 	azStorageAccounts = storageAccounts
 	fileShares := sim.MakeStore[FileShare](srv.DB(), "file_shares")
 	azFileShares = fileShares
 	storageTables = sim.MakeStore[StorageTable](srv.DB(), "storage_tables")
-	// dataPlaneShares tracks shares created via either ARM or data-plane APIs
-	// so that the data-plane middleware can return 404 for non-existent shares.
-	dataPlaneShares := sim.MakeStore[bool](srv.DB(), "file_data_plane_shares")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Storage"
 
@@ -484,8 +624,16 @@ func registerAzureFiles(srv *sim.Server) {
 		}
 
 		fileShares.Put(shareID, share)
-		// Also register in data-plane store so the middleware knows it exists
-		dataPlaneShares.Put(account+"/"+shareName, true)
+		// A share is one resource with two faces: the ARM entity created here
+		// and the Files data-plane share a client reads and writes. Project the
+		// ARM create onto the data plane so a file written to it lands in the
+		// share's backing directory — the directory a Container Apps workload
+		// mounting this share reads.
+		if err := upsertFileShareDataPlaneProjection(account, shareName, quota, req.Properties.Metadata); err != nil {
+			sim.AzureErrorf(w, "InternalError", http.StatusInternalServerError,
+				"Failed to materialize file share %q: %v", shareName, err)
+			return
+		}
 
 		// go-azure-sdk expects 200 for sync creates
 		sim.WriteJSON(w, http.StatusOK, share)
@@ -522,7 +670,11 @@ func registerAzureFiles(srv *sim.Server) {
 			sub, rg, account, shareName)
 
 		if fileShares.Delete(shareID) {
-			dataPlaneShares.Delete(account + "/" + shareName)
+			if err := deleteFileShareDataPlaneProjection(account, shareName); err != nil {
+				sim.AzureErrorf(w, "InternalError", http.StatusInternalServerError,
+					"Failed to delete file share %q contents: %v", shareName, err)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 		} else {
 			w.WriteHeader(http.StatusNoContent)
@@ -849,42 +1001,6 @@ func registerAzureFiles(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 	})
 
-	// --- Storage Data Plane Middleware ---
-	// The azurerm provider makes data-plane calls to the storage account's
-	// primaryEndpoints using subdomain-format URLs like:
-	//   https://{accountName}.blob.localhost:4568/?restype=service&comp=properties
-	// These requests arrive at the simulator with a Host header containing
-	// the subdomain. The middleware intercepts only Azure Storage service
-	// hosts, based on the Host pattern {accountName}.{service}.localhost.
-	//
-	srv.WrapHandler(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			host := r.Host
-			// Strip port
-			hostname := host
-			if i := strings.LastIndex(hostname, ":"); i >= 0 {
-				hostname = hostname[:i]
-			}
-
-			// Check for {account}.{service}.localhost pattern
-			if strings.Count(hostname, ".") >= 2 && strings.HasSuffix(hostname, ".localhost") {
-				prefix := strings.TrimSuffix(hostname, ".localhost")
-				parts := strings.SplitN(prefix, ".", 2)
-				if len(parts) == 2 {
-					accountName := parts[0]
-					serviceType := parts[1]
-					if !isStorageDataPlaneService(serviceType) {
-						next.ServeHTTP(w, r)
-						return
-					}
-					handleStorageDataPlane(w, r, serviceType, accountName, dataPlaneShares)
-					return
-				}
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	})
 }
 
 // blobServiceResponse builds the ARM blobServices/default resource envelope,
@@ -903,15 +1019,6 @@ func blobServiceResponse(resourceID string, props map[string]any) map[string]any
 	}
 }
 
-func isStorageDataPlaneService(serviceType string) bool {
-	switch serviceType {
-	case "blob", "file", "queue", "table", "web", "dfs":
-		return true
-	default:
-		return false
-	}
-}
-
 func applyStorageAccountEndpoints(r *http.Request, acct *StorageAccount) {
 	acct.Properties.PrimaryEndpoints = &StoragePrimaryEndpoints{
 		File:  azureStorageEndpointURL(r, acct.Name, "file"),
@@ -920,285 +1027,5 @@ func applyStorageAccountEndpoints(r *http.Request, acct *StorageAccount) {
 		Queue: azureStorageEndpointURL(r, acct.Name, "queue"),
 		Web:   azureStorageEndpointURL(r, acct.Name, "web"),
 		Dfs:   azureStorageEndpointURL(r, acct.Name, "dfs"),
-	}
-}
-
-// handleStorageDataPlane returns Azure Storage XML responses for data-plane
-// requests. The azurerm provider reads service properties after creating storage
-// accounts (static website for blob, share retention for file, CORS for queue).
-func handleStorageDataPlane(w http.ResponseWriter, r *http.Request, serviceType, accountName string, shares sim.Store[bool]) {
-	restype := r.URL.Query().Get("restype")
-	comp := r.URL.Query().Get("comp")
-
-	// Service properties: GET ?restype=service&comp=properties
-	if restype == "service" && comp == "properties" {
-		w.Header().Set("Content-Type", "application/xml")
-		switch serviceType {
-		case "blob":
-			fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><StorageServiceProperties><StaticWebsite><Enabled>false</Enabled></StaticWebsite><Cors /><DefaultServiceVersion>2021-12-02</DefaultServiceVersion></StorageServiceProperties>`)
-		case "file":
-			fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><StorageServiceProperties><Cors /><ShareDeleteRetentionPolicy><Enabled>false</Enabled><Days>7</Days></ShareDeleteRetentionPolicy></StorageServiceProperties>`)
-		default:
-			fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><StorageServiceProperties><Cors /></StorageServiceProperties>`)
-		}
-		return
-	}
-
-	// File share operations: ?restype=share
-	if restype == "share" && serviceType == "file" {
-		shareName := strings.TrimPrefix(r.URL.Path, "/")
-		shareKey := accountName + "/" + shareName
-
-		// comp=acl: Set/Get ACLs (always succeeds)
-		if comp == "acl" {
-			w.Header().Set("Content-Type", "application/xml")
-			if r.Method == http.MethodPut {
-				w.WriteHeader(http.StatusOK)
-			} else {
-				// GET returns empty ACLs
-				fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><SignedIdentifiers />`)
-			}
-			return
-		}
-
-		if r.Method == http.MethodPut {
-			shares.Put(shareKey, true)
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusCreated)
-			return
-		}
-
-		if r.Method == http.MethodDelete {
-			shares.Delete(shareKey)
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-
-		// GET/HEAD — only return 200 if the share was created
-		if _, ok := shares.Get(shareKey); !ok {
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><Error><Code>ShareNotFound</Code><Message>The specified share does not exist.</Message></Error>`)
-			return
-		}
-		w.Header().Set("Content-Type", "application/xml")
-		w.Header().Set("x-ms-share-quota", "5120")
-		if r.Method == http.MethodHead {
-			w.WriteHeader(http.StatusOK)
-		} else {
-			fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><Share><Properties><Quota>5120</Quota></Properties></Share>`)
-		}
-		return
-	}
-
-	// Directory + file paths within a share (no restype, or restype=directory).
-	// Real Azure Files REST API:
-	//   PUT  /{share}/{path}?restype=directory                      → create directory
-	//   PUT  /{share}/{path}                                         → create empty file (x-ms-type: file)
-	//   PUT  /{share}/{path}?comp=range, Content-Range: bytes=A-B/* → write file range
-	//   GET  /{share}/{path}                                         → read file
-	//   DELETE /{share}/{path}                                       → delete file/dir
-	//
-	// Persisted to disk under FileShareHostDir(account, share) so an
-	// ACA Job/App that mounts the share via Volume{StorageType:
-	// AzureFile} sees the same bytes as the data-plane caller.
-	if serviceType == "file" {
-		shareName, relPath := splitSharePath(r.URL.Path)
-		if shareName == "" || relPath == "" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		shareKey := accountName + "/" + shareName
-		if _, ok := shares.Get(shareKey); !ok {
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><Error><Code>ShareNotFound</Code><Message>The specified share does not exist.</Message></Error>`)
-			return
-		}
-		hostPath := filepath.Join(FileShareHostDir(accountName, shareName), filepath.FromSlash(relPath))
-		if err := handleAzureFilesPath(w, r, hostPath, restype, comp); err != nil {
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, `<?xml version="1.0" encoding="utf-8"?><Error><Code>InternalError</Code><Message>%s</Message></Error>`, err.Error())
-			return
-		}
-		return
-	}
-
-	// Default: 200 OK (some operations just need a success response)
-	w.WriteHeader(http.StatusOK)
-}
-
-// splitSharePath splits a request path like "/share-1/dir/file.txt"
-// into ("share-1", "dir/file.txt"). Returns empty strings if the path
-// doesn't have the expected shape.
-func splitSharePath(p string) (share, rel string) {
-	p = strings.TrimPrefix(p, "/")
-	idx := strings.Index(p, "/")
-	if idx <= 0 {
-		return "", ""
-	}
-	return p[:idx], p[idx+1:]
-}
-
-// handleAzureFilesPath services the Azure Files data-plane verbs that
-// touch a path within a share. Persists everything under hostPath so
-// the on-disk view matches what an ACA / AZF workload mounting the
-// share sees through Volume{StorageType: AzureFile}.
-func handleAzureFilesPath(w http.ResponseWriter, r *http.Request, hostPath, restype, comp string) error {
-	switch r.Method {
-	case http.MethodPut:
-		if restype == "directory" {
-			if err := os.MkdirAll(hostPath, 0o777); err != nil {
-				return err
-			}
-			w.Header().Set("Content-Type", "application/xml")
-			w.Header().Set("ETag", `"0x8DAZUREFILESDIR"`)
-			w.WriteHeader(http.StatusCreated)
-			return nil
-		}
-		if comp == "range" {
-			return handleAzureFilesPutRange(w, r, hostPath)
-		}
-		// Create file: empty placeholder of x-ms-content-length bytes.
-		if err := os.MkdirAll(filepath.Dir(hostPath), 0o777); err != nil {
-			return err
-		}
-		size := int64(0)
-		if v := r.Header.Get("x-ms-content-length"); v != "" {
-			if _, err := fmt.Sscanf(v, "%d", &size); err != nil {
-				size = 0
-			}
-		}
-		f, err := os.Create(hostPath)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		if size > 0 {
-			if err := f.Truncate(size); err != nil {
-				return err
-			}
-		}
-		w.Header().Set("Content-Type", "application/xml")
-		w.Header().Set("ETag", `"0x8DAZUREFILEEMPTY"`)
-		w.WriteHeader(http.StatusCreated)
-		return nil
-
-	case http.MethodGet, http.MethodHead:
-		body, err := os.ReadFile(hostPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				w.Header().Set("Content-Type", "application/xml")
-				w.WriteHeader(http.StatusNotFound)
-				fmt.Fprint(w, `<?xml version="1.0" encoding="utf-8"?><Error><Code>ResourceNotFound</Code><Message>The specified resource does not exist.</Message></Error>`)
-				return nil
-			}
-			return err
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
-		w.Header().Set("x-ms-type", "File")
-		w.WriteHeader(http.StatusOK)
-		if r.Method == http.MethodGet {
-			_, _ = w.Write(body)
-		}
-		return nil
-
-	case http.MethodDelete:
-		if err := os.Remove(hostPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		w.WriteHeader(http.StatusAccepted)
-		return nil
-	}
-	w.WriteHeader(http.StatusOK)
-	return nil
-}
-
-// handleAzureFilesPutRange writes the request body into hostPath at
-// the offset declared by Content-Range. Real Azure Files supports
-// Content-Range: bytes=A-B/*; we honour A as the offset and write
-// (B-A+1) bytes from the body.
-func handleAzureFilesPutRange(w http.ResponseWriter, r *http.Request, hostPath string) error {
-	cr := r.Header.Get("Content-Range")
-	if cr == "" {
-		// Some clients PUT range with only x-ms-range; fall through and
-		// treat as a write at offset 0.
-		cr = r.Header.Get("x-ms-range")
-	}
-	var start, end int64
-	if cr != "" {
-		// Parse "bytes=A-B/*" or "bytes A-B/*"
-		s := strings.TrimPrefix(cr, "bytes=")
-		s = strings.TrimPrefix(s, "bytes ")
-		if i := strings.Index(s, "/"); i >= 0 {
-			s = s[:i]
-		}
-		parts := strings.SplitN(s, "-", 2)
-		if len(parts) == 2 {
-			if _, err := fmt.Sscanf(parts[0], "%d", &start); err != nil {
-				start = 0
-			}
-			if _, err := fmt.Sscanf(parts[1], "%d", &end); err != nil {
-				end = 0
-			}
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(hostPath), 0o777); err != nil {
-		return err
-	}
-	body, err := readAllRequest(r)
-	if err != nil {
-		return err
-	}
-	want := int64(len(body))
-	if cr != "" {
-		want = end - start + 1
-		if want < 0 {
-			want = int64(len(body))
-		}
-	}
-	f, err := os.OpenFile(hostPath, os.O_RDWR|os.O_CREATE, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	n := want
-	if n > int64(len(body)) {
-		n = int64(len(body))
-	}
-	if _, err := f.WriteAt(body[:n], start); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/xml")
-	w.Header().Set("ETag", `"0x8DAZUREFILERANGE"`)
-	w.WriteHeader(http.StatusCreated)
-	return nil
-}
-
-func readAllRequest(r *http.Request) ([]byte, error) {
-	defer r.Body.Close()
-	body, err := openStreamingBody(r)
-	if err != nil {
-		return nil, err
-	}
-	const max = 1024 * 1024 * 64 // 64 MiB cap per request
-	buf := make([]byte, 0, 4096)
-	tmp := make([]byte, 4096)
-	for {
-		n, err := body.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-			if int64(len(buf)) > max {
-				return nil, fmt.Errorf("request body exceeds %d bytes", max)
-			}
-		}
-		if err != nil {
-			if err.Error() == "EOF" {
-				return buf, nil
-			}
-			return buf, err
-		}
 	}
 }

@@ -1,6 +1,10 @@
 package simulator
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestResolveLocalImage_AR(t *testing.T) {
 	got := ResolveLocalImage("us-central1-docker.pkg.dev/proj/docker-hub/library/alpine:latest")
@@ -88,6 +92,39 @@ func TestParsePlatform(t *testing.T) {
 		}
 		if flat != tc.want {
 			t.Errorf("parsePlatform(%q) = %s, want %s", tc.in, flat, tc.want)
+		}
+	}
+}
+
+// The exact wire text Docker returns when it wires a container onto a bridge
+// network on a kernel whose netfilter build omits the table the direct-access
+// filtering rule needs.
+const dockerMissingRawTableError = `Error response from daemon: failed to set up container networking: ` +
+	`failed to create endpoint sockerless-sim-aws-task-0123456789ab on network bridge: ` +
+	`Unable to enable DIRECT ACCESS FILTERING - DROP rule:  (iptables failed: ` +
+	"iptables --wait -t raw -A PREROUTING -d 172.17.0.2 ! -i docker0 -j DROP: " +
+	"can't initialize iptables table `raw': Table does not exist (do you need to insmod?))"
+
+func TestMissingNetfilterTableHint_NamesTheKernelDependency(t *testing.T) {
+	hint := MissingNetfilterTableHint(errors.New(dockerMissingRawTableError))
+	if hint == "" {
+		t.Fatal("a missing netfilter table must produce an actionable hint")
+	}
+	for _, want := range []string{`"raw"`, "iptable_raw", "CONFIG_IP_NF_RAW"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q does not name %q", hint, want)
+		}
+	}
+}
+
+func TestMissingNetfilterTableHint_IgnoresUnrelatedFailures(t *testing.T) {
+	for _, err := range []error{
+		nil,
+		errors.New("Error response from daemon: No such image: alpine:3.20"),
+		errors.New("Error response from daemon: driver failed programming external connectivity"),
+	} {
+		if hint := MissingNetfilterTableHint(err); hint != "" {
+			t.Errorf("MissingNetfilterTableHint(%v) = %q, want empty", err, hint)
 		}
 	}
 }
