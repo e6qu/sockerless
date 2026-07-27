@@ -170,17 +170,22 @@ var azureMethodFloor = map[string]int{
 	//     ranges, snapshots, undelete, immutability and legal hold, blob query,
 	//     container ACL / metadata / rename / undelete / filter, and the
 	//     service-level batch, filter, statistics, account-info and
-	//     Set/Get Service Properties operations. Blob_StartCopyFromURL and
+	//     Set Service Properties operations. Get Blob Service Properties is
+	//     served: the azurerm provider polls it while waiting for a storage
+	//     account's data plane, so it is part of creating an account.
+	//     Blob_StartCopyFromURL and
 	//     Blob_CopyFromURL count as unserved because the specification
 	//     addresses them at "?comp=copy", a spelling no client sends — the
 	//     simulator serves Copy Blob where Azure documents it, at the bare PUT
 	//     carrying x-ms-copy-source.
-	//   file 10/51 — shares (create/get/delete), the share-root directory
+	//   file 11/51 — shares (create/get/delete), the share-root directory
 	//     listing, and files (create/download/properties/delete/upload-range).
 	//     Unserved: every directory operation below the share root, share ACL /
 	//     lease / snapshot / permission / statistics / metadata / properties /
 	//     undelete, file leases, handles, range lists, renames, copies, hard and
-	//     symbolic links, and the service-level properties operations.
+	//     symbolic links, and Set File Service Properties. Get File Service
+	//     Properties is served, the Files sibling of the operation the Blob and
+	//     Queue planes answer.
 	//     File_UploadRangeFromURL counts as served only because the probe cannot
 	//     send its required x-ms-copy-source header, so it reaches the Upload
 	//     Range handler; with the header the dispatcher declares the gap.
@@ -188,8 +193,8 @@ var azureMethodFloor = map[string]int{
 	//     (enqueue/dequeue/peek/clear/delete). Unserved: Set Service Properties,
 	//     Get Service Statistics, the queue access policy (comp=acl) and Update
 	//     Message.
-	"storage-dataplane-blob-2026-04-06":         17,
-	"storage-dataplane-file-2026-04-06":         10,
+	"storage-dataplane-blob-2026-04-06":         18,
+	"storage-dataplane-file-2026-04-06":         11,
 	"storage-dataplane-queue-2018-03-28":        11,
 	"subscription-arm-subscriptions-2021-10-01": 7,
 	"web-arm-openapi-2025-03-01":                161,

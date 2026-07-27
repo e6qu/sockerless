@@ -306,6 +306,14 @@ func handleFilesDataPlane(w http.ResponseWriter, r *http.Request, account string
 			handleFilesListShares(w, r, account)
 			return
 		}
+		// Get File Service Properties, the Files sibling of the operation the
+		// Blob and Queue planes answer. The azurerm provider polls a service's
+		// properties while waiting for a storage account's data plane.
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			restype == "service" && comp == "properties" {
+			writeStorageXML(w, http.StatusOK, defaultStorageServiceProperties())
+			return
+		}
 		writeStorageOperationNotImplemented(w, r, "Files")
 		return
 	}

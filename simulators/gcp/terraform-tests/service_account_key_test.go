@@ -106,7 +106,11 @@ func assertKeyFileAuthenticates(t *testing.T, keyFile map[string]string) {
 	require.NoError(t, json.Unmarshal(body, &token))
 	require.NotEmpty(t, token.AccessToken)
 
-	req, err := http.NewRequest(http.MethodGet, tfEndpoint+"/v1/projects/test-project/serviceAccounts", nil)
+	// Addressed at baseURL, the simulator's own endpoint, exactly as the token
+	// exchange above is. tfEndpoint is the TLS gateway terraform is pointed at;
+	// these assertions talk to the simulator directly and so do not need the
+	// gateway's certificate authority.
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/v1/projects/test-project/serviceAccounts", nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	read, err := http.DefaultClient.Do(req)

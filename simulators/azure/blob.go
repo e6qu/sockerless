@@ -437,6 +437,8 @@ func blobBlockKey(account, container, blob, blockID string) string {
 // combinations below are the complete set the simulator serves:
 //
 //	GET    /?comp=list                                ListContainers
+//	GET    /?restype=service&comp=properties           GetBlobServiceProperties
+//	HEAD   /?restype=service&comp=properties           GetBlobServiceProperties
 //	PUT    /{container}?restype=container              CreateContainer
 //	GET    /{container}?restype=container              GetContainerProperties
 //	HEAD   /{container}?restype=container              GetContainerProperties
@@ -466,6 +468,15 @@ func handleBlobDataPlane(w http.ResponseWriter, r *http.Request, account string)
 	if path == "" {
 		if r.Method == http.MethodGet && restype == "" && comp == "list" {
 			handleListContainers(w, r, account)
+			return
+		}
+		// Get Blob Service Properties. The azurerm provider polls this while
+		// waiting for a storage account's data plane to come up, so it is part
+		// of creating an account rather than an optional extra. The Queues
+		// plane answers the same operation from the same defaults.
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			restype == "service" && comp == "properties" {
+			writeStorageXML(w, http.StatusOK, defaultStorageServiceProperties())
 			return
 		}
 		writeStorageOperationNotImplemented(w, r, "Blob")

@@ -99,6 +99,14 @@ func TestBlobDataPlaneServedOperations(t *testing.T) {
 	srv := buildStorageTestSim(t)
 	const account, container, blob = "gapblobacct", "served-container", "served.txt"
 
+	// Get Blob Service Properties. The azurerm provider polls this while waiting
+	// for a storage account's data plane to come up, so a gap here fails an
+	// apply rather than merely leaving an operation unimplemented.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "blob", "/?restype=service&comp=properties", nil, nil),
+		http.StatusOK, "GetBlobServiceProperties")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodHead, account, "blob", "/?restype=service&comp=properties", nil, nil),
+		http.StatusOK, "GetBlobServiceProperties (HEAD)")
+
 	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "blob", "/"+container+"?restype=container", nil, nil),
 		http.StatusCreated, "CreateContainer")
 	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "blob", "/"+container+"?restype=container", nil, nil),
@@ -279,7 +287,7 @@ func TestBlobDataPlaneUnservedCompDeclaresGap(t *testing.T) {
 		"/"+container+"/"+blob+"?restype=account&comp=properties", nil, nil), "GET blob ?restype=account")
 
 	// Service level.
-	for _, target := range []string{"/?comp=batch", "/?comp=blobs", "/?restype=service&comp=properties",
+	for _, target := range []string{"/?comp=batch", "/?comp=blobs",
 		"/?restype=service&comp=stats", "/?restype=account&comp=properties", "/"} {
 		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "blob", target, nil, nil),
 			"GET service "+target)
@@ -294,6 +302,11 @@ func TestBlobDataPlaneUnservedCompDeclaresGap(t *testing.T) {
 func TestFilesDataPlaneServedOperations(t *testing.T) {
 	srv := buildStorageTestSim(t)
 	const account, share, file = "gapfileacct", "served-share", "served.txt"
+
+	// Get File Service Properties, the Files sibling of the Blob operation the
+	// azurerm provider polls.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", "/?restype=service&comp=properties", nil, nil),
+		http.StatusOK, "GetFileServiceProperties")
 	payload := []byte("hello files")
 
 	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"?restype=share", nil, nil),
@@ -448,8 +461,6 @@ func TestFilesDataPlaneUnservedCompDeclaresGap(t *testing.T) {
 		"/" + share + "/subdir?comp=listhandles"} {
 		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", target, nil, nil), "GET "+target)
 	}
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "file",
-		"/?restype=service&comp=properties", nil, nil), "GET service properties")
 	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
 		"/?restype=service&comp=properties", []byte("<StorageServiceProperties/>"), nil), "PUT service properties")
 }
