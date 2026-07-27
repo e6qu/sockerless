@@ -31,7 +31,11 @@ The pre-push freshness gate upgraded `github.com/docker/go-connections` to
 v0.8.1 in the Docker backend and all three simulator shared modules. The Docker
 backend's standardized upgrade also advanced its indirect
 `github.com/mattn/go-isatty` dependency to v0.0.24. All four modules passed
-their complete tests.
+their complete tests. The AWS, Google Cloud, and Azure root simulator modules
+were also tidied independently and passed their complete `GOWORK=off` suites,
+so the local workspace no longer masked missing standalone sums. Azure DNS
+dynamic startup retried until its real TCP and UDP listeners shared one
+kernel-assigned port; its DNS suite passed 100 repetitions.
 
 ## Next Recommended Slice
 

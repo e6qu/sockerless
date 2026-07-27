@@ -54,6 +54,20 @@ same branch; the Docker backend's standardized upgrade also advanced its
 indirect `github.com/mattn/go-isatty` dependency to v0.0.24. All four modules
 passed their complete tests.
 
+The first CI fan-out caught what the local workspace had hidden: each root
+simulator module still selected the older indirect dependency when built with
+`GOWORK=off`, so the AWS shards failed on missing v0.8.1 sums. The AWS, Google
+Cloud, and Azure root modules were each tidied and tested independently with
+the exact `GOWORK=off CGO_ENABLED=0 -tags noui` command CI used, and the AWS
+make build passed.
+
+Running those standalone suites concurrently exposed an Azure DNS startup race.
+The server had asked the kernel for a UDP port and then assumed the same number
+was free in the independent TCP port namespace. Dynamic startup now closed the
+partial socket pair and retried a bounded 16 times until both real listeners
+shared a port; an explicitly configured port still failed immediately. The DNS
+tests passed 100 repetitions after the repair.
+
 ## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
 
 The three conformance ratchets counted coverage the simulators did not have.
