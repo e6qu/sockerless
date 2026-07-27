@@ -54,6 +54,12 @@ state inspection, and cleanup; a failed container launch reported the engine's
 real container state instead of consuming the package timeout. The focused
 oracle and all four non-overlapping AWS SDK shards passed.
 
+GitHub Container Registry retention preserved a package version whenever it
+carried any retained release tag. Architecture image builds also stamped the
+full source revision into the OCI config, so byte-identical application output
+from different commits no longer collapsed onto one package version and an
+obsolete tag could not take a current architecture tag with it.
+
 ## Next Recommended Slice
 
 The next recommended AWS fidelity slice remained BUG-2679: Amazon EC2

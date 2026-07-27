@@ -19,6 +19,7 @@ expect_count 1 '          - { platform: linux/amd64, runner: ubuntu-latest, suff
 expect_count 1 '          - { platform: linux/arm64, runner: ubuntu-24.04-arm, suffix: arm64 }'
 expect_count 1 "          tags: ${gha}{{ env.REGISTRY }}/e6qu/${gha}{{ matrix.image.name }}:${gha}{{ needs.prepare.outputs.short_sha }}-${gha}{{ matrix.arch.suffix }}"
 expect_count 1 '          provenance: false'
+expect_count 1 "          labels: org.opencontainers.image.revision=${gha}{{ github.sha }}"
 if [[ "$(grep -Fc "test \"\$MEDIA_TYPE\" = \"application/vnd.oci.image.manifest.v1+json\"" "$workflow")" != 1 ]]; then
 	echo 'publication workflow must verify both architecture tags are direct OCI manifests' >&2
 	exit 1
@@ -64,8 +65,24 @@ jq -n '[
 ]' >"$fixture"
 
 selected="$(jq -r --argjson keep 20 -f "$root/scripts/select-obsolete-container-versions.jq" "$fixture" | sort -n | paste -sd, -)"
-if [[ "$selected" != '0,1,2,10,11,12,997,998,999' ]]; then
+if [[ "$selected" != '0,1,2,10,11,12,997,999' ]]; then
 	echo "retention selector chose unexpected package versions: $selected" >&2
+	exit 1
+fi
+
+shared_fixture="$(mktemp)"
+trap 'rm -f "$fixture" "$shared_fixture"' EXIT
+jq -n '[
+	{id: 1, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["feedfacefeed"]}}},
+	{id: 2, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["feedfacefeed-amd64"]}}},
+	{id: 3, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["feedfacefeed-arm64", "deadbeefdead-arm64"]}}},
+	{id: 4, created_at: "2026-08-01T00:00:00Z", metadata: {container: {tags: ["deadbeefdead"]}}},
+	{id: 5, created_at: "2026-08-01T00:00:00Z", metadata: {container: {tags: ["deadbeefdead-amd64"]}}}
+]' >"$shared_fixture"
+
+selected="$(jq -r --argjson keep 1 -f "$root/scripts/select-obsolete-container-versions.jq" "$shared_fixture" | sort -n | paste -sd, -)"
+if [[ "$selected" != '4,5' ]]; then
+	echo "retention selector did not preserve a retained tag sharing a package version: $selected" >&2
 	exit 1
 fi
 

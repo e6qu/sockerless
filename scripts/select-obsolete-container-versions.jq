@@ -28,6 +28,6 @@
 | ($version.metadata.container.tags // []) as $tags
 | select(
     ($tags | length) == 0
-    or any($tags[]; . as $tag | $keep_tags | index($tag) == null)
+    or all($tags[]; . as $tag | $keep_tags | index($tag) == null)
   )
 | $version.id

@@ -106,6 +106,15 @@ container a deterministic run-local name, and reported the real failed state
 before cleaning it up. After the local engine remounted cleanly, the focused
 oracle and all four non-overlapping AWS SDK shards passed.
 
+Publishing the merged revision exposed a GitHub Container Registry retention
+edge. The unchanged Admin ARM64 image had the old and current release tags on
+one package version; deleting the version because the old tag was obsolete also
+deleted the current tag. The selector now deletes a version only when none of
+its tags belongs to the retained release set, and its contract fixture includes
+that shared-version shape. Every native architecture build also stamps the full
+source revision into its OCI config, making each future release digest distinct
+even when its application bytes are unchanged.
+
 ## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
 
 The three conformance ratchets counted coverage the simulators did not have.
