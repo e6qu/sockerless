@@ -228,7 +228,7 @@ func TestMain(m *testing.M) {
 	baseURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	if err := waitForHealth(baseURL + "/health"); err != nil {
-		simCmd.Process.Kill()
+		shutdownSimulator(simCmd)
 		log.Fatalf("Simulator did not become healthy: %v", err)
 	}
 
@@ -238,10 +238,27 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	simCmd.Process.Kill()
-	simCmd.Wait()
+	shutdownSimulator(simCmd)
 	os.RemoveAll(tmpDir)
 	os.Exit(code)
+}
+
+func shutdownSimulator(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+	_ = cmd.Process.Signal(os.Interrupt)
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		_ = cmd.Process.Kill()
+		<-done
+	}
 }
 
 func waitForHealth(url string) error {

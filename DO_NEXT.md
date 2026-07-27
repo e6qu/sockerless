@@ -4,161 +4,113 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
-`fix/shauth-product-ui-markers` qualified Sockerless through its real product interface. Admin and all three simulator dashboards exposed the authenticated operator and the real sign-out control to the browser matrix, which asserted the rendered username and clicked the product control instead of relying on a protocol-only validation page.
+AWS Lambda image invocations honoured `VpcConfig` at launch. The control plane
+validated that configured subnets and security groups belonged to one Amazon
+Virtual Private Cloud (VPC), and the runtime leased its address from those
+subnets instead of joining Docker's default bridge. Linux execution used a
+pause-container network namespace, a real VPC veth, security-group filters,
+route-driven egress, and a dedicated link-local DNAT endpoint for the AWS Lambda
+Runtime API. Portable execution used the same VPC identifiers and addresses
+through the container engine's VPC network.
 
-`fix/shauth-final-pin-ci-timeouts` had completed the exact Shauth relying-party contract for the same four applications, enforced UI-first release builds and bounded nightly fuzz concurrency, and held every ordinary GitHub Actions job to 15 minutes without dropping any of the 630 AWS CLI tests.
+The official AWS SDK test created an Amazon ECS Fargate task on `awsvpc`,
+invoked a VPC-configured Lambda image, and proved the function reached the task
+at its private address. The AWS CLI and Terraform suites launched
+VPC-configured functions through their normal public surfaces. The complete
+Lambda SDK and CLI suites passed, as did the production-shaped Terraform
+apply/destroy.
 
-The real pinned Shauth, PostgreSQL, Ory Hydra, freshly compiled relying parties, and Chromium matrix passed direct and catalog entry, relying-party and provider logout, application-local signed-out return, reload, reauthentication, global revocation, release identity, anonymous fail-closed behavior, active event-stream readiness, and credential isolation.
+Amazon Cloud Map custom health checks reported AWS's fixed failure threshold of
+`1`; the SDK Create/Get/List paths agreed. The Terraform fixture used supported
+Cloud Map and DynamoDB schema, configured local state through the local backend,
+and validated without deprecation warnings. Normal AWS SDK, CLI, and Terraform
+harness completion terminated the simulator through its cleanup path and left
+no workload containers or simulator VPC networks behind.
 
-## Remaining Work
+The pre-push freshness gate upgraded `github.com/docker/go-connections` to
+v0.8.1 in the Docker backend and all three simulator shared modules. The Docker
+backend's standardized upgrade also advanced its indirect
+`github.com/mattn/go-isatty` dependency to v0.0.24. All four modules passed
+their complete tests. The AWS, Google Cloud, and Azure root simulator modules
+were also tidied independently and passed their complete `GOWORK=off` suites,
+so the local workspace no longer masked missing standalone sums. Azure DNS
+dynamic startup retried until its real TCP and UDP listeners shared one
+kernel-assigned port; its DNS suite passed 100 repetitions.
 
-The Google Cloud, Amazon Web Services, and Microsoft Azure consoles now read
-real cloud APIs over each console's own server-side Shauth federation
-(BUG-2635) *and* present their real visual language, verified against the live
-reference. All three simulator consoles now read only real cloud APIs — no
-`/sim/v1/*` dashboard endpoint remains on any of them. The Azure portal
-exchanged the operator's Shauth assertion through Microsoft Entra Workload
-Identity Federation (`client_credentials` + JWT-bearer `client_assertion`; the
-simulator verifies it against the identity's federated identity credential) and
-read the real Azure Resource Manager and Azure Monitor Log Analytics APIs,
-distinguishing their token audiences; its Fluent-style icon set replaced the
-placeholder glyphs. The method is recorded so it is not repeated from memory:
-compare against the live reference, extract ground-truth tokens, vendor the
-open assets (Material Symbols SVG + Roboto for GCP; Open Sans for AWS; Fluent
-UI System Icons for Azure), pin structural proxies, report honestly.
+Linux validation closed three execution defects. Security-group bridge filters
+allowed ARP before applying IP permissions, so newly attached AWS Lambda and
+Amazon ECS elastic network interfaces no longer depended on a stale neighbor
+cache. Workload callbacks used the container runtime's reported default bridge
+gateway on Linux instead of a Podman-machine alias that pointed at the outer
+host. Amazon Amplify compute and build containers used SELinux-labelled real
+bundle/workspace mounts, preserving read-only compute deployments and writable
+build artifacts. The complete AWS Lambda SDK suite passed on Linux and macOS,
+the Linux real-execution host suite passed, and the focused Amplify compute and
+real-build SDK flows passed on enforcing Linux.
 
-The simulators now enforce credential verification on their data planes
-(BUG-2625 closed): AWS verifies SigV4 signatures at the control plane and S3;
-Google Cloud and Azure verify the bearer they minted (signature, issuer,
-audience, expiry). Every SDK/CLI/Terraform suite, the sockerless backends, and
-the relying-party provisioning authenticate for real, and the console browser
-e2e — which reaches the enforcing simulator unauthenticated — moved its
-data-render assertions to the authenticated relying-party path. The AWS ECS
-Terraform harness terminates deterministically (BUG-2569 closed). The remaining
-console fidelity work is live-cloud (BUG-1075): exercising each console's
-federation and reads against the real cloud, where the proprietary fonts and
-icons (Amazon Ember, Segoe UI) stay honest approximations.
+The AWS SDK client graph used `github.com/aws/smithy-go` v1.27.5. Its
+DynamoDB Local differential harness bounded image inspection, pull, launch,
+state inspection, and cleanup; a failed container launch reported the engine's
+real container state instead of consuming the package timeout. The focused
+oracle and all four non-overlapping AWS SDK shards passed.
 
-BUG-2633 closed: a repository gate (`scripts/check-required-status-checks.sh`,
-pre-commit + the `build-gates` CI job) now enumerates every check name the
-workflows can emit and fails the pull request when a required context in
-`.github/required-status-checks.txt` is no longer emittable, so a matrix job
-rename can no longer silently stall the merge queue.
+GitHub Container Registry retention preserved a package version whenever it
+carried any retained release tag. Architecture image builds also stamped the
+full source revision into the OCI config, so byte-identical application output
+from different commits no longer collapsed onto one package version and an
+obsolete tag could not take a current architecture tag with it.
 
-The skip-if-absent sweep is complete: `scripts/check-no-tool-absent-skips.sh` now
-catches the `LookPath → os.Exit(0)` and print-then-skip shapes (exempting genuine
-platform/capability gates), the GCP `exec.LookPath("gcloud") → os.Exit(0)` skip
-and its Azure counterpart became install-or-fail-loud, and the remaining
-`docker`/`session-manager-plugin`/`git`/`gcloud`/`nsenter` tool-absent skips were
-removed (vestigial) or made `t.Fatal` against CI-provided tools.
+The standalone AWS SDK suite used the AWS Glue SDK v1.150.0 found by the
+freshness gate, and its complete real-simulator test surface passed.
 
-BUG-2651 closed: the coverage ratchets measure served surface rather than pattern
-collisions. Google Cloud and Microsoft Azure probe the running simulator and
-count a documented method only when a handler answers; Amazon Web Services
-credits a legacy query action to the registrar that mounted it. Each cloud has a
-soundness test that fails if the probe stops authenticating or an unmounted URI
-stops reading as a miss, so the gate cannot quietly go blind. The numbers are now
-comparable across passes: Google Cloud 4054 of 5397, Azure 1878 of 2612, and
-every Amazon Web Services floor unchanged. Four reported issues closed with it —
-the Azure bare-origin redirect, the Google Cloud gcloud credential path, the
-Azure Microsoft Entra instance-discovery endpoint, and the Amazon ECS guest-kernel
-requirement — leaving `#394` (AzureAD Terraform provider) as the only open
-reported issue, blocked upstream.
+The AWS SDK workflow stopped scanning the whole hosted-runner filesystem after
+successful shards. Normal diagnostics reported only the volume, test-log size,
+and Docker usage; a disk-budget failure additionally scanned the workspace,
+runner temporary directory, and Firecracker workspace for at most five seconds
+each. The tested workflow-budget gate rejected any future recursive `du /`.
 
-Newly open and actionable, all surfaced by that pass: BUG-2678 (AWS Lambda
-`VpcConfig` is modelled on the control plane but ignored at launch — the same
-synthetic behaviour just fixed for Amazon ECS network modes, and the natural next
-piece of work), BUG-2676 (Cloud Run v1 and v2 keep separate stores for what is one
-service on real Cloud Run), BUG-2677 (Azure Share ACL is a declared gap, which is
-what blocks Terraform coverage of the Azure Files data plane), BUG-2680 (Amazon
-ECS `StartTask` never launches containers), BUG-2681 (the Fargate sandbox profile
-is applied to every launch type), and BUG-2679 (`DeleteSubnet` lacks
-`DependencyViolation`).
+## Next Recommended Slice
 
-Still open and externally gated: BUG-2523 and BUG-2441 (Bleephub product/UI, in
-the separate bleephub repository), BUG-1345 (AzureAD Terraform provider,
-upstream-blocked), and BUG-1075 (live-cloud validation, needs real cloud
-credentials).
+The next recommended AWS fidelity slice remained BUG-2679: Amazon EC2
+`DeleteSubnet` dependency enforcement. Completion meant:
 
-Phase 1 of the console self-service roadmap ([PLAN.md](PLAN.md) § "Console
-Self-Service") shipped: all three consoles mint real CLI credentials for
-Shauth-authenticated operators (AWS IAM access keys, Google Cloud
-service-account key JSON, Microsoft Entra client secrets) over federated
-credentials and real cloud APIs, with CLI tests proving each minted credential
-authenticates the vendor CLI and the Shauth relying-party matrix driving the
-AWS and Google Cloud minting UIs (the Azure browser flow is staged into the
-deployment phase as BUG-2640 — the portal's browser-side federation exchange
-is same-origin-only, so the separately-deployed shape needs the server-side
-broker and faithful CORS). Proving the loops also hardened the GCP token
-endpoint (assertion signatures now verified against registered, revocable
-public keys) and the Entra token endpoint (client secrets validated for
-registered applications), and deleted the invented `/sim/v1/entra/users`
-routes.
+- `DeleteSubnet` returned Amazon EC2's `DependencyViolation` while any elastic
+  network interface remained in the subnet, including interfaces backing
+  Amazon ECS tasks and active AWS Lambda invocations.
+- The dependency decision came from cloud state rather than local container
+  state, and asynchronous task launch could not race subnet deletion into an
+  invalid topology.
+- Official AWS SDK, AWS CLI, and Terraform coverage exercised the refusal and
+  the successful delete after the dependency was removed.
 
-Phase 2 shipped: account and project management — the Google Cloud Resource
-Manager slice (replacing a faked partial v3 surface) with the console's real
-project picker, the Azure Microsoft.Subscription alias API with the portal
-Subscriptions blade (its Terraform coverage as the `tf (azure subscription)`
-shard), and the AWS Organizations console page — all with SDK/CLI/Terraform
-coverage and the relying-party matrix driving the AWS and Google Cloud browser
-flows. Phase 3 shipped: `sockerless login`/`logout` — the RFC 8252 loopback PKCE
-flow against Shauth (public Hydra client, one-time consent), wiring
-vendor-native credentials (AWS `web_identity_token_file` profile with
-`endpoint_url`, GCP workforce `external_account` ADC activated via `gcloud
-auth login --cred-file`, `az login --federated-token` against a TLS simulator
-instance), with the simulator's missing STS introspection slice added
-(BUG-2641) and the relying-party matrix driving the whole terminal story.
+The next related Amazon ECS slices remained BUG-2680 (`StartTask` launched real
+containers through the `RunTask` execution path) and BUG-2681 (sandbox selection
+followed launch type instead of applying Fargate restrictions universally).
 
-Phase 4 shipped, completing the Console Self-Service roadmap: a committed
-`deploy/` recipe (Shauth stack + Admin + three simulators behind a Caddy TLS
-proxy, real-API provisioning, a `make deploy-smoke` gate) and BUG-2640 — the
-Azure portal now federates through the console's server-side broker with
-faithful ARM/Graph CORS, the harness running the Azure console and cloud as
-separate processes, which unblocked the Azure browser minting flow deferred
-since phase 1. All four phases (credential minting; account/project/
-subscription management; `sockerless login`; deployment + Azure federation)
-have merged or are in flight.
+## Other Queued Fidelity Work
 
-The console/simulator fidelity follow-ups filed during the roadmap were closed (BUG-2637 AWS console table actions, BUG-2638 GCP serviceAccounts 409, and BUG-2642 — the Lambda SigV4/IAM enforcement gap found while fixing them). BUG-2639 (Azure implicit grant for unregistered client ids) is now closed: the simulator seeds a bootstrap Entra application and the implicit-client branch was deleted, so an unregistered client id returns the real AADSTS700016. It was a clean single-coordinate consolidation, not the feared mass migration.
-
-Console parity pass 1 raised all three simulator consoles toward their real
-design languages (Cloudscape/AWS, Material/GCP, Fluent/Azure) with faithful
-service navigation + accessible "Not supported" pills on unsupported services,
-correct light and dark modes at WCAG AA (browser-verified), and axe-clean a11y.
-It is pass 1, not literal 100% parity — the shells are hand-built approximations,
-not the vendored component libraries, and the catalogues came from public IA not
-authenticated screenshots. Deeper parity (real component-library adoption,
-per-service page depth, exact catalogue/ordering against real screenshots) is the
-natural follow-up.
-
-Console parity pass 2 added the resource detail views pass 1 deferred: AWS
-gained detail pages for all five supported services (restoring "View
-details"), Azure gained detail blades for Container App jobs/Functions/ACR/
-Storage plus honest header-chrome popovers, and GCP deepened its existing
-detail pages and Logging. BUG-2643 (ACR loginServer hardcoded, not derived
-from the request host) was filed. Deferred: the AWS "All services" mega-menu
-flyout, and authenticated end-to-end detail rendering via the relying-party
-suite (detail data rendering is component- and structurally-tested).
-
-No roadmap phase remains queued. Candidate next work: the staged live-cloud
-validation backlog (BUG-1075), the deployment recipe's real-registry/GHCR
-publish path, or new console surfaces as the product grows — pick with the
-user. Filed follow-ups with fix
-shapes: BUG-2637 (inert default AwsTable actions), BUG-2638 (GCP
-`serviceAccounts.create` overwrite vs 409), BUG-2639 (Entra implicit grant for
-unregistered client ids), BUG-2640 (Azure portal federation deployability).
-
-1. The remaining Shauth catalog applications still needed the same product-interface contract before Shauth's launch-interface assertion could be enabled: SameOldChat, Intraktible, Bleephub, Bleeplab, Sharecrop, ECS Dev Desktop, and the simulator console. E6IRC already carried it.
-2. Shauth still needed its strengthened validator merged last, so that qualification exercised each application's real launch interface and its registration-contract revalidation rather than the technical validation page alone.
-3. The merged revision needed immutable Admin and simulator images published and deployed in the shared development environment, followed by the same exact browser matrix against the live origins.
-4. The standalone Bleeplab GitLab Runner consumer needed another real run against the merged Sockerless revision so its slower two-cycle source-fetch path exercised the corrected wait-channel and CloudWatch stream generation.
-5. BUG-2569 still required deterministic termination of the local Amazon Elastic Container Service Terraform simulator apply/destroy harness without changing the real provider path.
-6. BUG-2625 still required provider-faithful simulator credential issuance and verification for AWS, Google Cloud, and Microsoft Azure, with exact errors and official SDK, command-line interface, and Terraform coverage.
-7. The remaining live-cloud cells in BUG-1075 still required authenticated validation before being marked green.
+- BUG-2676 retained one Google Cloud Run service in two independent v1/v2
+  stores; completion required one cloud resource with two API projections.
+- BUG-2677 retained the Azure Files Share ACL gap that blocked
+  `azurerm_storage_share` coverage.
+- BUG-1075 retained the authenticated real-cloud backend cells that required
+  operator credentials.
+- BUG-2656 retained abnormal-exit cleanup; ordinary AWS harness shutdown was
+  clean, but a process killed before defers ran still required an external
+  run-labelled reaper.
+- BUG-2690 retained Amazon Amplify's synthetic success lifecycle for
+  build-shaped jobs without both a clonable HTTP(S) source and an explicit
+  build specification; completion required real source/default-build
+  resolution or the matching AWS service error.
 
 ## Durable Validation Contract
 
+- Simulator endpoints were exercised through official SDK, vendor CLI, and
+  Terraform surfaces in the same change.
+- Tests differed between simulator and cloud only in endpoint and credential
+  coordinates.
 - Production builds created every frontend before any UI-bearing Go binary.
-- Workflow changes kept every ordinary job at or below 15 minutes and preserved exact AWS CLI shard coverage.
-- Fuzz changes exercised every discovered target and treated a missing module, build failure, target failure, or crasher as a real failure.
-- Shauth changes ran the real PostgreSQL, Ory Hydra, relying-party, and Chromium matrix from the exact pinned provider revision.
+- Workflow changes kept every ordinary job at or below 15 minutes and
+  preserved exact AWS CLI and SDK shard coverage.
+- Every observed failure or warning was fixed or recorded with evidence in
+  [BUGS.md](BUGS.md).

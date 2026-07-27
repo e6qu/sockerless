@@ -15,6 +15,10 @@ finish_job() {
 
 for workflow in "$workflow_dir"/*.yml "$workflow_dir"/*.yaml; do
 	[[ -f "$workflow" ]] || continue
+	if grep -Eq '(^|[[:space:]])du([[:space:]]+[^[:space:]]+)*[[:space:]]+/([[:space:]]|$)' "$workflow"; then
+		echo "$workflow: recursively scanning the whole runner volume can consume the job timeout" >&2
+		failed=1
+	fi
 	in_jobs=0
 	current_job=""
 	has_timeout=0
@@ -68,4 +72,4 @@ if ((failed != 0)); then
 	exit 1
 fi
 
-echo "all GitHub Actions jobs have a verifiable timeout of at most ${maximum} minutes"
+echo "all GitHub Actions jobs have a verifiable timeout of at most ${maximum} minutes and avoid whole-volume scans"

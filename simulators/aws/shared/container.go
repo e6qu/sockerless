@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"sort"
 	"strconv"
@@ -911,4 +912,37 @@ func RuntimeInfo() string {
 		}
 	}
 	return fmt.Sprintf("%s %s", name, info.Version)
+}
+
+// DefaultContainerNetworkGatewayIPv4 returns the host-side gateway of the
+// container runtime's default bridge. A simulator process running directly on
+// Linux listens in the host namespace, so workload containers reach its
+// callback listeners through this address. Standard host aliases can point
+// outside that Linux host (notably inside a Podman machine), whereas the
+// runtime-reported bridge gateway is the actual packet coordinate.
+func DefaultContainerNetworkGatewayIPv4() (string, error) {
+	if dockerClient == nil {
+		return "", fmt.Errorf("docker client not initialized")
+	}
+	networkName := "bridge"
+	if strings.Contains(strings.ToLower(RuntimeInfo()), "podman") {
+		networkName = "podman"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	info, err := dockerClient.NetworkInspect(ctx, networkName, network.InspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("inspect default container network %s: %w", networkName, err)
+	}
+	if info.IPAM.Config == nil {
+		return "", fmt.Errorf("default container network %s has no IPAM configuration", networkName)
+	}
+	for _, config := range info.IPAM.Config {
+		ip := net.ParseIP(strings.TrimSpace(config.Gateway))
+		if ip == nil || ip.To4() == nil {
+			continue
+		}
+		return ip.To4().String(), nil
+	}
+	return "", fmt.Errorf("default container network %s has no IPv4 gateway", networkName)
 }

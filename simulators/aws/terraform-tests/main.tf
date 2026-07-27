@@ -1,4 +1,6 @@
 terraform {
+  backend "local" {}
+
   required_providers {
     aws = {
       source = "hashicorp/aws"
@@ -77,7 +79,7 @@ resource "aws_kinesis_stream" "tf_stream" {
 data "aws_caller_identity" "current" {}
 
 resource "aws_vpc" "tf_ec2_vpc" {
-  cidr_block = "10.88.0.0/16"
+  cidr_block = "10.251.0.0/16"
 }
 
 # data.aws_vpc by vpc-id filter — the fck-nat pattern; reads back the VPC's
@@ -92,12 +94,12 @@ data "aws_vpc" "by_filter" {
 
 resource "aws_subnet" "tf_ec2_subnet" {
   vpc_id     = aws_vpc.tf_ec2_vpc.id
-  cidr_block = "10.88.1.0/24"
+  cidr_block = "10.251.1.0/24"
 }
 
 resource "aws_subnet" "tf_elbv2_subnet" {
   vpc_id            = aws_vpc.tf_ec2_vpc.id
-  cidr_block        = "10.88.2.0/24"
+  cidr_block        = "10.251.2.0/24"
   availability_zone = "us-east-1b"
 }
 
@@ -522,9 +524,7 @@ resource "aws_service_discovery_service" "tf_http_svc" {
   name         = "tf-http-svc"
   namespace_id = aws_service_discovery_http_namespace.tf_http_ns.id
 
-  health_check_custom_config {
-    failure_threshold = 2
-  }
+  health_check_custom_config {}
 }
 
 # The Cloud Map data sources look their resource up through the list APIs:
@@ -900,6 +900,11 @@ resource "aws_lambda_function" "tf_lambda" {
   memory_size   = 128
   timeout       = 3
   publish       = true
+
+  vpc_config {
+    subnet_ids         = [aws_subnet.tf_ec2_subnet.id]
+    security_group_ids = [aws_security_group.tf_ec2_sg.id]
+  }
 
   tags = {
     env = "terraform"
@@ -1341,8 +1346,11 @@ resource "aws_dynamodb_table" "tf_table" {
   # The provider waits for the GSI's IndexStatus to reach ACTIVE; broken GSI
   # modeling hangs apply for ~21 retries then fails.
   global_secondary_index {
-    name            = "GSI1"
-    hash_key        = "GSI1PK"
+    name = "GSI1"
+    key_schema {
+      attribute_name = "GSI1PK"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 }
@@ -1875,8 +1883,8 @@ output "service_discovery_http_namespace_arn" {
   value = aws_service_discovery_http_namespace.tf_http_ns.arn
 }
 
-output "service_discovery_http_service_failure_threshold" {
-  value = tostring(aws_service_discovery_service.tf_http_svc.health_check_custom_config[0].failure_threshold)
+output "service_discovery_http_service_custom_health_configured" {
+  value = tostring(length(aws_service_discovery_service.tf_http_svc.health_check_custom_config) == 1)
 }
 
 output "service_discovery_namespace_lookup_id" {

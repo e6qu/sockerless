@@ -234,12 +234,16 @@ func defaultIMDSRegion(r *http.Request) string {
 // reach the sim's metadata services.
 var simListenAddr string
 
-func simHostMetadataAddr() string {
+func simHostMetadataAddr() (string, error) {
 	port := simListenAddr
 	if idx := strings.LastIndex(simListenAddr, ":"); idx >= 0 {
 		port = simListenAddr[idx+1:]
 	}
-	return workloadCallbackHost() + ":" + port
+	host, err := workloadCallbackHost()
+	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 func simHostMetadataPort() (int, error) {
@@ -359,8 +363,11 @@ func parseDefaultRouteGatewayIPv4(content string) string {
 // The taskID parameter is the sim-side container ID used as the
 // ECS_CONTAINER_METADATA_URI_V4 token. For non-ECS hosts (Lambda)
 // pass empty and the env var is omitted.
-func hostMetadataEnv(taskID string) map[string]string {
-	addr := simHostMetadataAddr()
+func hostMetadataEnv(taskID string) (map[string]string, error) {
+	addr, err := simHostMetadataAddr()
+	if err != nil {
+		return nil, err
+	}
 	env := map[string]string{
 		"AWS_EC2_METADATA_SERVICE_ENDPOINT":      "http://" + addr,
 		"AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE": "IPv4",
@@ -369,7 +376,7 @@ func hostMetadataEnv(taskID string) map[string]string {
 		env["ECS_CONTAINER_METADATA_URI_V4"] = "http://" + addr + "/v4/" + taskID
 		env["ECS_CONTAINER_METADATA_URI"] = "http://" + addr + "/v4/" + taskID
 	}
-	return env
+	return env, nil
 }
 
 func hostMetadataLinkLocalEnv(taskID string) map[string]string {

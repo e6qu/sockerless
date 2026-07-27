@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -474,14 +475,41 @@ func startDynamoDBLocal(t *testing.T) (endpoint string, stop func()) {
 	ln.Close()
 
 	// -inMemory keeps it fast and stateless; each run starts clean.
-	runOut, err := exec.Command("docker", "run", "-d", "--rm",
+	containerName := fmt.Sprintf("sockerless-dynamodb-local-%d", port)
+	runCtx, cancelRun := context.WithTimeout(context.Background(), 2*time.Minute)
+	runOut, err := exec.CommandContext(runCtx, "docker", "run", "-d", "--rm", "--name", containerName,
 		"-p", fmt.Sprintf("127.0.0.1:%d:8000", port),
 		image, "-jar", "DynamoDBLocal.jar", "-inMemory").CombinedOutput()
+	cancelRun()
 	if err != nil {
-		t.Fatalf("start DynamoDB Local: %v\n%s", err, runOut)
+		inspectCtx, cancelInspect := context.WithTimeout(context.Background(), 10*time.Second)
+		stateOut, stateErr := exec.CommandContext(
+			inspectCtx,
+			"docker", "inspect", "--format", "{{json .State}}", containerName,
+		).CombinedOutput()
+		cancelInspect()
+		if stateErr != nil {
+			stateOut = []byte(fmt.Sprintf("unavailable: %v\n%s", stateErr, stateOut))
+		}
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+		_ = exec.CommandContext(cleanupCtx, "docker", "rm", "-f", containerName).Run()
+		cancelCleanup()
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("start DynamoDB Local exceeded 2 minutes\ncontainer state: %s\n%s", stateOut, runOut)
+		}
+		t.Fatalf("start DynamoDB Local: %v\ncontainer state: %s\n%s", err, stateOut, runOut)
 	}
-	id := string(trimNL(runOut))
-	stop = func() { _ = exec.Command("docker", "rm", "-f", id).Run() }
+	if len(trimNL(runOut)) == 0 {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+		_ = exec.CommandContext(cleanupCtx, "docker", "rm", "-f", containerName).Run()
+		cancelCleanup()
+		t.Fatalf("start DynamoDB Local returned no container ID")
+	}
+	stop = func() {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelCleanup()
+		_ = exec.CommandContext(cleanupCtx, "docker", "rm", "-f", containerName).Run()
+	}
 
 	endpoint = fmt.Sprintf("http://127.0.0.1:%d", port)
 	probe := dynamodb.NewFromConfig(sdkConfig(), func(o *dynamodb.Options) {
@@ -507,11 +535,17 @@ func startDynamoDBLocal(t *testing.T) (endpoint string, stop func()) {
 
 func diffDockerPull(image string) bool {
 	// A locally-present image (CI pre-pull or a previous run) needs no network.
-	if exec.Command("docker", "image", "inspect", image).Run() == nil {
+	inspectCtx, cancelInspect := context.WithTimeout(context.Background(), 30*time.Second)
+	inspectErr := exec.CommandContext(inspectCtx, "docker", "image", "inspect", image).Run()
+	cancelInspect()
+	if inspectErr == nil {
 		return true
 	}
 	for attempt := 1; attempt <= 5; attempt++ {
-		if exec.Command("docker", "pull", image).Run() == nil {
+		pullCtx, cancelPull := context.WithTimeout(context.Background(), 2*time.Minute)
+		pullErr := exec.CommandContext(pullCtx, "docker", "pull", image).Run()
+		cancelPull()
+		if pullErr == nil {
 			return true
 		}
 		time.Sleep(time.Duration(attempt*attempt) * time.Second)

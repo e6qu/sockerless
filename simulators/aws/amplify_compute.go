@@ -206,7 +206,10 @@ func amplifyEnsureCompute(app AmplifyApp, br AmplifyBranch, content *amplifyHost
 		Architecture: "linux/" + runtime.GOARCH,
 		Command:      []string{"node", compute.Entrypoint},
 		WorkingDir:   "/bundle/compute/" + compute.Name,
-		Binds:        []string{bundleDir + ":/bundle"},
+		// The deployed bundle is immutable to compute. The shared SELinux
+		// relabel lets the confined workload read the real host directory on
+		// enforcing hosts and is accepted as a no-op by Docker elsewhere.
+		Binds:        []string{bundleDir + ":/bundle:ro,z"},
 		Env:          env,
 		Labels:       map[string]string{"sockerless-amplify-compute": key},
 		PublishPorts: map[int]int{amplifyComputePort: hostPort},

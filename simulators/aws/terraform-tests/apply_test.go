@@ -252,7 +252,7 @@ func TestStackProductionShape(t *testing.T) {
 	cmHTTPNamespaceARN := outputs.must(t, "service_discovery_http_namespace_arn")
 	require.Contains(t, cmHTTPNamespaceARN, ":namespace/ns-",
 		"Cloud Map HTTP namespace ARN must use the namespace resource path; got %s", cmHTTPNamespaceARN)
-	require.Equal(t, "2", outputs.must(t, "service_discovery_http_service_failure_threshold"),
+	require.Equal(t, "true", outputs.must(t, "service_discovery_http_service_custom_health_configured"),
 		"Cloud Map HealthCheckCustomConfig must round-trip through CreateService + GetService")
 	require.Equal(t, outputs.must(t, "service_discovery_namespace_id"),
 		outputs.must(t, "service_discovery_namespace_lookup_id"),
@@ -317,7 +317,7 @@ func TestStackProductionShape(t *testing.T) {
 	require.Contains(t, outputs.must(t, "ecr_repository_url"), ".dkr.ecr.us-east-1.amazonaws.com/tf-runner-repo",
 		"aws_ecr_repository repository_url must use the canonical ECR registry host")
 
-	require.Equal(t, "10.88.0.0/16", outputs.must(t, "data_vpc_cidr"),
+	require.Equal(t, "10.251.0.0/16", outputs.must(t, "data_vpc_cidr"),
 		"data.aws_vpc by vpc-id filter must read the right VPC's CIDR")
 	require.NotEmpty(t, outputs.must(t, "iam_nat_policy_arn"),
 		"aws_iam_policy must apply (and destroy via ListPolicyVersions)")

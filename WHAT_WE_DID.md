@@ -4,6 +4,131 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-27 — AWS Lambda `VpcConfig` became a runtime network
+
+AWS Lambda had described Hyperplane elastic network interfaces on the control
+plane while launching every image function on Docker's default bridge. A
+function therefore reported configured subnets and security groups that its
+workload never used. `CreateFunction` and `UpdateFunctionConfiguration` now
+validated that every subnet existed in one Amazon Virtual Private Cloud (VPC)
+and every security group belonged to that VPC before allocating addresses.
+
+Each VPC-configured invocation leased an address from its configured subnets.
+On a Linux real-execution host, a pause container held the invocation network
+namespace, a VPC veth carried the leased address, nftables enforced the
+configured security groups and route-driven egress, and a unique link-local
+destination DNATed the AWS Lambda Runtime API back to its per-invocation
+listener. Runtime API DNAT tables, veths, pause containers, and leases were
+removed when the invocation ended. Portable hosts represented the same VPC,
+subnet address, and identifiers through the container engine's VPC network;
+the public cloud contract stayed identical and only the local execution
+substrate differed.
+
+The official AWS SDK test built a VPC, subnet, and security group, launched an
+Amazon ECS Fargate task serving HTTP on its private `awsvpc` address, then
+invoked a Lambda image whose handler reached that address. AWS CLI coverage
+created and invoked a VPC-configured function, and the production-shaped
+Terraform stack attached its Lambda function to the same VPC it provisioned.
+The complete SDK and CLI Lambda suites passed, and Terraform completed a full
+apply and destroy.
+
+Validation exposed two adjacent defects and closed them. Amazon Cloud Map had
+round-tripped the deprecated caller-supplied custom-health failure threshold;
+it now reported AWS's fixed value of `1` consistently through Create, Get, and
+List. The Terraform fixture removed that deprecated field, moved DynamoDB's
+global secondary index to `key_schema`, and configured its temporary state
+through the local backend instead of the deprecated `-state` command flag, so
+`terraform validate` completed without warnings.
+
+The AWS SDK, CLI, and Terraform harnesses had also killed the simulator
+directly after tests, bypassing its workload cleanup. Normal completion now
+sent the simulator's termination signal, waited for cleanup, and used forced
+termination only after a bounded grace period. The Terraform VPC moved away
+from Podman's default `10.88.0.0/16` bridge. The passing production-shaped run
+left no Lambda, Amazon ECS, or simulator VPC artifacts on the container host.
+
+The pre-push freshness gate found a newly published
+`github.com/docker/go-connections` patch release. The Docker backend and the
+AWS, Google Cloud, and Azure simulator shared modules upgraded to v0.8.1 in the
+same branch; the Docker backend's standardized upgrade also advanced its
+indirect `github.com/mattn/go-isatty` dependency to v0.0.24. All four modules
+passed their complete tests.
+
+The first CI fan-out caught what the local workspace had hidden: each root
+simulator module still selected the older indirect dependency when built with
+`GOWORK=off`, so the AWS shards failed on missing v0.8.1 sums. The AWS, Google
+Cloud, and Azure root modules were each tidied and tested independently with
+the exact `GOWORK=off CGO_ENABLED=0 -tags noui` command CI used, and the AWS
+make build passed.
+
+Running those standalone suites concurrently exposed an Azure DNS startup race.
+The server had asked the kernel for a UDP port and then assumed the same number
+was free in the independent TCP port namespace. Dynamic startup now closed the
+partial socket pair and retried a bounded 16 times until both real listeners
+shared a port; an explicitly configured port still failed immediately. The DNS
+tests passed 100 repetitions after the repair.
+
+The first Linux run of the new Lambda-to-Amazon-ECS integration exposed that
+the bridge security-group filter dropped ARP as well as disallowed IP packets.
+The target had been reachable in older host tests only because they populated
+the neighbor cache before installing the filter. Security-group enforcement
+now permits ARP before applying IP policy, and the host regression flushes the
+neighbor entry before proving permitted traffic. A fresh VPC-configured Lambda
+invocation then reached the Amazon ECS task's private elastic-network-interface
+address on Linux.
+
+The wider Lambda suite exposed a second coordinate defect specific to Linux
+inside a Podman machine: `host.docker.internal` named the outer macOS host, not
+the Linux VM namespace where the Runtime API listener ran. The shared runtime
+layer now reads the default bridge's IPv4 gateway from Docker or Podman, Linux
+callbacks use that exact address, and launch fails clearly if the required
+coordinate is absent. Ordinary and VPC-configured Lambda invocations passed
+their complete SDK suite on Linux, and the macOS desktop path remained green.
+
+The exact AWS services shard also exercised Amazon Amplify on an
+SELinux-enforcing host. Its compute container could not read the deployed
+bundle and its build container could not write the real artifact workspace
+because neither bind carried a relabel. Compute now mounts the bundle
+read-only with a shared label, while builds mount their workspace writable
+with the same label. Both end-to-end SDK flows passed on enforcing Linux.
+That audit also recorded BUG-2690: build-shaped jobs without a clonable HTTP
+source and explicit build specification still reported a synthetic success
+instead of performing real source/build resolution or returning an AWS error.
+
+The final freshness pass upgraded the standalone AWS SDK graph to
+`github.com/aws/smithy-go` v1.27.5. Running the whole SDK matrix then exposed a
+runner failure that the DynamoDB Local differential harness had hidden:
+Podman's overlay filesystem returned an input/output error while mounting the
+oracle container, but the unbounded `docker run` call waited until the package's
+15-minute timeout and lost the useful container state. The harness now bounded
+image inspection, pull, launch, state inspection, and cleanup, gave each oracle
+container a deterministic run-local name, and reported the real failed state
+before cleaning it up. After the local engine remounted cleanly, the focused
+oracle and all four non-overlapping AWS SDK shards passed.
+
+Publishing the merged revision exposed a GitHub Container Registry retention
+edge. The unchanged Admin ARM64 image had the old and current release tags on
+one package version; deleting the version because the old tag was obsolete also
+deleted the current tag. The selector now deletes a version only when none of
+its tags belongs to the retained release set, and its contract fixture includes
+that shared-version shape. Every native architecture build also stamps the full
+source revision into its OCI config, making each future release digest distinct
+even when its application bytes are unchanged.
+
+The refreshed freshness gate then found AWS Glue SDK v1.150.0. The standalone
+AWS SDK module upgraded from v1.149.0, and its complete real-simulator suite
+passed with the new client model.
+
+That replacement run exposed a workflow-budget defect after every A–M SDK test
+had passed. The success path invoked `du -d 2 /` to report the runner's largest
+filesystem consumers; the recursive scan spent more than nine minutes walking
+the hosted image and crossed the 15-minute job limit. Successful shards now
+report only constant-time filesystem, log, and Docker summaries. The detailed
+consumer diagnostic runs only when the watched disk threshold trips, covers the
+repository workspace, runner temporary directory, and Firecracker workspace,
+and bounds each scan to five seconds. The workflow-budget gate gained a fixture
+that rejects a recursive whole-volume scan.
+
 ## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
 
 The three conformance ratchets counted coverage the simulators did not have.

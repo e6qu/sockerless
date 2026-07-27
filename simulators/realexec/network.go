@@ -374,6 +374,19 @@ func (n *Network) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, t
 	})
 }
 
+// RemoveAddressDNAT removes a previously configured address-specific DNAT
+// table. It is idempotent because callers use it while unwinding short-lived
+// workload control-plane listeners whose parent VPC can disappear concurrently.
+func (n *Network) RemoveAddressDNAT(ctx context.Context, tableName string) error {
+	if tableName == "" {
+		return nil
+	}
+	return withTableLock(tableName, func() error {
+		_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
+		return nil
+	})
+}
+
 func (n *Network) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tableName string) error {
 	return n.ConfigureAddressDNAT(ctx, MetadataIPv4, targetPort, tableName)
 }
@@ -390,6 +403,13 @@ func (s *Subnet) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, ta
 		return fmt.Errorf("subnet is not attached to a network")
 	}
 	return s.network.ConfigureAddressDNAT(ctx, targetIPv4, targetPort, tableName)
+}
+
+func (s *Subnet) RemoveAddressDNAT(ctx context.Context, tableName string) error {
+	if s == nil || s.network == nil {
+		return nil
+	}
+	return s.network.RemoveAddressDNAT(ctx, tableName)
 }
 
 func (n *Network) ConfigureEgressPolicy(ctx context.Context, allowedSourceCIDRs []string, tableName string) error {
@@ -931,6 +951,13 @@ func configureBridgeIngressFilter(ctx context.Context, network *Network, cleanup
 		return err
 	}
 	if err := network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "ct", "state", "established,related", "accept"); err != nil {
+		return err
+	}
+	// Security groups filter IP traffic, not the link-layer neighbor discovery
+	// needed to deliver that traffic. Permit ARP before the per-NIC terminal
+	// drop so a newly attached peer can resolve the destination ENI instead of
+	// depending on a neighbor-cache entry created before the filter existed.
+	if err := network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", devName, "ether", "type", "arp", "accept"); err != nil {
 		return err
 	}
 	for _, rule := range rules {

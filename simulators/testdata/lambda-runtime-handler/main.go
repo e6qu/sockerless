@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,6 +63,39 @@ func main() {
 	// round-trips.
 	payloadStr := string(payload)
 	switch {
+	case strings.Contains(payloadStr, `"action":"http-get"`):
+		var request struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal(payload, &request); err != nil || request.URL == "" {
+			postError(base, requestID, []byte(`{"errorMessage":"http-get requires a valid url","errorType":"HandlerError"}`))
+			break
+		}
+		httpClient := &http.Client{Timeout: 2 * time.Second}
+		targetResponse, err := httpClient.Get(request.URL)
+		if err != nil {
+			errorPayload, _ := json.Marshal(map[string]string{
+				"errorMessage": err.Error(),
+				"errorType":    "HandlerError",
+			})
+			postError(base, requestID, errorPayload)
+			break
+		}
+		targetBody, readErr := io.ReadAll(targetResponse.Body)
+		targetResponse.Body.Close()
+		if readErr != nil {
+			errorPayload, _ := json.Marshal(map[string]string{
+				"errorMessage": readErr.Error(),
+				"errorType":    "HandlerError",
+			})
+			postError(base, requestID, errorPayload)
+			break
+		}
+		responsePayload, _ := json.Marshal(map[string]any{
+			"statusCode": targetResponse.StatusCode,
+			"body":       string(targetBody),
+		})
+		postResponse(base, requestID, responsePayload)
 	case strings.Contains(payloadStr, `"cause":"error"`):
 		errPayload := []byte(`{"errorMessage":"test error from handler","errorType":"HandlerError"}`)
 		postError(base, requestID, errPayload)

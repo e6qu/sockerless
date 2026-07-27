@@ -630,8 +630,8 @@ func TestCloudMap_UniquenessAndCustomHealthErrors(t *testing.T) {
 	})
 	assert.Equal(t, "CustomHealthNotFound", cmAPIErrorCode(t, err))
 
-	// A service configured for custom health round-trips the config and accepts
-	// the status update.
+	// A service configured for custom health reports AWS Cloud Map's fixed
+	// threshold of one and accepts the status update.
 	customOut, err := client.CreateService(ctx, &servicediscovery.CreateServiceInput{
 		Name:                    aws.String("custom-health-svc"),
 		NamespaceId:             aws.String(nsID),
@@ -642,13 +642,13 @@ func TestCloudMap_UniquenessAndCustomHealthErrors(t *testing.T) {
 		_, _ = client.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: customOut.Service.Id})
 	}()
 	require.NotNil(t, customOut.Service.HealthCheckCustomConfig)
-	assert.Equal(t, int32(2), aws.ToInt32(customOut.Service.HealthCheckCustomConfig.FailureThreshold))
+	assert.Equal(t, int32(1), aws.ToInt32(customOut.Service.HealthCheckCustomConfig.FailureThreshold))
 
 	gotSvc, err := client.GetService(ctx, &servicediscovery.GetServiceInput{Id: customOut.Service.Id})
 	require.NoError(t, err)
 	require.NotNil(t, gotSvc.Service.HealthCheckCustomConfig,
 		"GetService must return the HealthCheckCustomConfig CreateService accepted")
-	assert.Equal(t, int32(2), aws.ToInt32(gotSvc.Service.HealthCheckCustomConfig.FailureThreshold))
+	assert.Equal(t, int32(1), aws.ToInt32(gotSvc.Service.HealthCheckCustomConfig.FailureThreshold))
 
 	listed, err := client.ListServices(ctx, &servicediscovery.ListServicesInput{
 		Filters: []sdtypes.ServiceFilter{{
@@ -665,7 +665,7 @@ func TestCloudMap_UniquenessAndCustomHealthErrors(t *testing.T) {
 	}
 	require.NotNil(t, customSummary, "ListServices must include the service")
 	require.NotNil(t, customSummary.HealthCheckCustomConfig)
-	assert.Equal(t, int32(2), aws.ToInt32(customSummary.HealthCheckCustomConfig.FailureThreshold))
+	assert.Equal(t, int32(1), aws.ToInt32(customSummary.HealthCheckCustomConfig.FailureThreshold))
 }
 
 // TestCloudMap_PrivateNamespaceSOARoundTrip proves the SOA a client configures

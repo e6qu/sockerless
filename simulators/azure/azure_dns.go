@@ -109,21 +109,9 @@ func startAzureDNSServer(ctx context.Context, cfg azureDNSConfig) (string, error
 		cfg.TTL = defaultAzureDNSTTL
 	}
 
-	packet, err := net.ListenPacket("udp", cfg.ListenAddr)
+	packet, listener, actualAddr, err := listenAzureDNS(cfg.ListenAddr)
 	if err != nil {
-		return "", fmt.Errorf("listen UDP DNS %s: %w", cfg.ListenAddr, err)
-	}
-	actualAddr := packet.LocalAddr().String()
-	tcpAddr := actualAddr
-	if host, port, err := net.SplitHostPort(actualAddr); err == nil {
-		if parsed := net.ParseIP(host); parsed != nil && parsed.IsUnspecified() {
-			tcpAddr = net.JoinHostPort("", port)
-		}
-	}
-	listener, err := net.Listen("tcp", tcpAddr)
-	if err != nil {
-		_ = packet.Close()
-		return "", fmt.Errorf("listen TCP DNS %s: %w", tcpAddr, err)
+		return "", err
 	}
 
 	mux := dns.NewServeMux()
@@ -161,6 +149,41 @@ func startAzureDNSServer(ctx context.Context, cfg azureDNSConfig) (string, error
 	}()
 
 	return actualAddr, nil
+}
+
+func listenAzureDNS(listenAddr string) (net.PacketConn, net.Listener, string, error) {
+	_, requestedPort, splitErr := net.SplitHostPort(listenAddr)
+	dynamicPort := splitErr == nil && requestedPort == "0"
+	const dynamicPortAttempts = 16
+	var lastTCPError error
+	for attempt := 0; attempt < dynamicPortAttempts; attempt++ {
+		packet, err := net.ListenPacket("udp", listenAddr)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("listen UDP DNS %s: %w", listenAddr, err)
+		}
+		actualAddr := packet.LocalAddr().String()
+		tcpAddr := actualAddr
+		if host, port, err := net.SplitHostPort(actualAddr); err == nil {
+			if parsed := net.ParseIP(host); parsed != nil && parsed.IsUnspecified() {
+				tcpAddr = net.JoinHostPort("", port)
+			}
+		}
+		listener, err := net.Listen("tcp", tcpAddr)
+		if err == nil {
+			return packet, listener, actualAddr, nil
+		}
+		lastTCPError = err
+		_ = packet.Close()
+		if !dynamicPort {
+			return nil, nil, "", fmt.Errorf("listen TCP DNS %s: %w", tcpAddr, err)
+		}
+	}
+	return nil, nil, "", fmt.Errorf(
+		"listen TCP and UDP DNS %s: no shared port available after %d attempts: %w",
+		listenAddr,
+		dynamicPortAttempts,
+		lastTCPError,
+	)
 }
 
 func handleAzureDNSQuery(w dns.ResponseWriter, r *dns.Msg, cfg azureDNSConfig) {

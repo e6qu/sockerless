@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -13,6 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	ec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/stretchr/testify/assert"
@@ -453,6 +457,146 @@ func TestLambda_VpcConfig_AllocatesENIPerSubnet(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(rawConfig), `"SubnetIPv4Allocations"`,
 		"internal IP allocation state must not leak through the public Lambda FunctionConfiguration shape")
+}
+
+// TestLambda_VpcConfig_RuntimeReachesVpcResource proves VpcConfig changes the
+// workload's real network, not just its FunctionConfiguration. An Amazon ECS
+// task serves HTTP on its awsvpc elastic network interface; the AWS Lambda
+// function reaches that private address through its configured subnet and
+// security group using the same public APIs and identifiers used on AWS.
+func TestLambda_VpcConfig_RuntimeReachesVpcResource(t *testing.T) {
+	lc := lambdaClient()
+	ec2c := ec2Client()
+	ecsc := ecsClient()
+
+	vpcOut, err := ec2c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.77.0.0/16")})
+	require.NoError(t, err)
+	vpcID := aws.ToString(vpcOut.Vpc.VpcId)
+	subnetOut, err := ec2c.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:     aws.String(vpcID),
+		CidrBlock: aws.String("10.77.1.0/24"),
+	})
+	require.NoError(t, err)
+	subnetID := aws.ToString(subnetOut.Subnet.SubnetId)
+	sgOut, err := ec2c.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("lambda-vpc-runtime"),
+		Description: aws.String("AWS Lambda VPC runtime integration"),
+		VpcId:       aws.String(vpcID),
+	})
+	require.NoError(t, err)
+	securityGroupID := aws.ToString(sgOut.GroupId)
+	_, err = ec2c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(securityGroupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(8080),
+			ToPort:     aws.Int32(8080),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("10.77.0.0/16")}},
+		}},
+	})
+	require.NoError(t, err)
+
+	clusterName := "lambda-vpc-runtime"
+	_, err = ecsc.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(clusterName)})
+	require.NoError(t, err)
+	tdOut, err := ecsc.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String("lambda-vpc-http-target"),
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:      aws.String("http-target"),
+			Image:     aws.String("public.ecr.aws/docker/library/busybox:latest"),
+			Essential: aws.Bool(true),
+			Command: []string{"sh", "-c",
+				"echo lambda-vpc-ok > /tmp/index.html; exec httpd -f -p 8080 -h /tmp"},
+			PortMappings: []ecstypes.PortMapping{{ContainerPort: aws.Int32(8080)}},
+		}},
+	})
+	require.NoError(t, err)
+	taskDefinitionARN := aws.ToString(tdOut.TaskDefinition.TaskDefinitionArn)
+	t.Cleanup(func() {
+		_, _ = ecsc.DeregisterTaskDefinition(ctx, &ecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: aws.String(taskDefinitionARN),
+		})
+		_, _ = ecsc.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(clusterName)})
+		_, _ = ec2c.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: aws.String(securityGroupID)})
+		_, _ = ec2c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subnetID)})
+		_, _ = ec2c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
+	})
+
+	runOut, err := ecsc.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(clusterName),
+		TaskDefinition: aws.String(taskDefinitionARN),
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+				Subnets:        []string{subnetID},
+				SecurityGroups: []string{securityGroupID},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Tasks, 1)
+	taskARN := aws.ToString(runOut.Tasks[0].TaskArn)
+	t.Cleanup(func() {
+		_, _ = ecsc.StopTask(ctx, &ecs.StopTaskInput{
+			Cluster: aws.String(clusterName),
+			Task:    aws.String(taskARN),
+			Reason:  aws.String("test cleanup"),
+		})
+	})
+	waitForECSTaskStatus(t, ecsc, clusterName, taskARN, "RUNNING")
+	desc, err := ecsc.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(clusterName),
+		Tasks:   []string{taskARN},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Tasks, 1)
+	targetIP := ""
+	for _, attachment := range desc.Tasks[0].Attachments {
+		if aws.ToString(attachment.Type) != "ElasticNetworkInterface" {
+			continue
+		}
+		for _, detail := range attachment.Details {
+			if aws.ToString(detail.Name) == "privateIPv4Address" {
+				targetIP = aws.ToString(detail.Value)
+			}
+		}
+	}
+	require.NotEmpty(t, targetIP)
+
+	fnName := "vpc-runtime-fn"
+	_, err = lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fnName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/lambda-vpc"),
+		PackageType:  lambdatypes.PackageTypeImage,
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(lambdaHandlerImageName)},
+		Timeout:      aws.Int32(10),
+		VpcConfig: &lambdatypes.VpcConfig{
+			SubnetIds:        []string{subnetID},
+			SecurityGroupIds: []string{securityGroupID},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
+	})
+	payload := []byte(fmt.Sprintf(`{"action":"http-get","url":"http://%s:8080/"}`, targetIP))
+	invokeOut, err := lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName: aws.String(fnName),
+		Payload:      payload,
+	})
+	require.NoError(t, err)
+	require.Nil(t, invokeOut.FunctionError, "VPC request failed: %s", invokeOut.Payload)
+	var response struct {
+		StatusCode int    `json:"statusCode"`
+		Body       string `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(invokeOut.Payload, &response))
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, "lambda-vpc-ok\n", response.Body)
 }
 
 // TestLambda_VpcConfig_RejectsUnknownSubnet matches real Lambda's

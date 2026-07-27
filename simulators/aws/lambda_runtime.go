@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -48,20 +49,26 @@ type runtimeAPISidecar struct {
 	listener net.Listener
 	server   *http.Server
 	addr     string // host:port address the container sees
+	port     int
 }
 
 // startRuntimeAPISidecar binds a free port on all interfaces, mounts
 // the Runtime API routes, and starts serving in a background
 // goroutine. Must bind to 0.0.0.0 (not 127.0.0.1) because the
-// function container reaches back via the docker bridge gateway on
-// Linux (172.17.0.1 / host.docker.internal), which is a different
-// interface than loopback. Returns the sidecar so the caller can pass
-// its address into the container and shut the sidecar down after the
+// function container reaches back via the container runtime's bridge gateway
+// on Linux, which is a different interface than loopback. Other platforms use
+// their standard host callback name. Returns the sidecar so the caller can
+// pass its address into the container and shut the sidecar down after the
 // invocation completes.
 func startRuntimeAPISidecar(inv *lambdaInvocation) (*runtimeAPISidecar, error) {
 	ln, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
 		return nil, fmt.Errorf("runtime API listen: %w", err)
+	}
+	host, err := runtimeAPIHost()
+	if err != nil {
+		_ = ln.Close()
+		return nil, err
 	}
 	addr, ok := ln.Addr().(*net.TCPAddr)
 	if !ok {
@@ -74,7 +81,8 @@ func startRuntimeAPISidecar(inv *lambdaInvocation) (*runtimeAPISidecar, error) {
 	s := &runtimeAPISidecar{
 		inv:      inv,
 		listener: ln,
-		addr:     fmt.Sprintf("%s:%d", runtimeAPIHost(), port),
+		addr:     net.JoinHostPort(host, fmt.Sprintf("%d", port)),
+		port:     port,
 	}
 
 	// GET /2018-06-01/runtime/invocation/next
@@ -110,6 +118,10 @@ func (s *runtimeAPISidecar) Shutdown() {
 // this sidecar (via the Docker host-gateway alias).
 func (s *runtimeAPISidecar) ContainerAddr() string {
 	return s.addr
+}
+
+func (s *runtimeAPISidecar) HostPort() int {
+	return s.port
 }
 
 // handleNext serves GET /2018-06-01/runtime/invocation/next. Blocks
@@ -208,15 +220,12 @@ func (s *runtimeAPISidecar) handleInitError(w http.ResponseWriter, r *http.Reque
 	_, _ = w.Write([]byte(`{"status":"OK"}`))
 }
 
-// runtimeAPIHost returns the hostname the container uses to reach the
-// simulator host. Override via SIM_LAMBDA_RUNTIME_HOST; default
-// host.docker.internal which Docker Desktop maps automatically,
-// Podman 4+ maps automatically, and Linux Docker maps via the
-// `--add-host ...:host-gateway` entry in ContainerConfig.ExtraHosts
-// (see runtimeAPIExtraHosts).
-func runtimeAPIHost() string {
+// runtimeAPIHost returns the coordinate the function container uses to reach
+// the simulator host. Linux uses the runtime-reported bridge gateway; desktop
+// runtimes use their standard host callback name.
+func runtimeAPIHost() (string, error) {
 	if v := os.Getenv("SIM_LAMBDA_RUNTIME_HOST"); v != "" {
-		return v
+		return v, nil
 	}
 	return workloadCallbackHost()
 }
@@ -233,6 +242,186 @@ func runtimeAPIExtraHosts() []string {
 		return nil
 	}
 	return []string{"host.docker.internal:host-gateway"}
+}
+
+var (
+	lambdaRuntimeAPIAddressSequence atomic.Uint32
+	lambdaRuntimeIPMu               sync.Mutex
+	lambdaRuntimeIPLeases           = map[string]bool{}
+)
+
+type lambdaInvocationNetwork struct {
+	networkMode    string
+	network        string
+	ipAddress      string
+	runtimeAPIAddr string
+	metadataEnv    map[string]string
+	extraHosts     []string
+	pause          *sim.ContainerHandle
+	invocationID   string
+	leasedIP       string
+}
+
+func (n *lambdaInvocationNetwork) cleanup() {
+	if n == nil {
+		return
+	}
+	if n.pause != nil {
+		n.pause.Cancel()
+		_ = n.pause.Wait()
+		ec2DetachRealLambdaNIC(context.Background(), n.invocationID)
+	}
+	if n.leasedIP != "" {
+		lambdaRuntimeIPMu.Lock()
+		delete(lambdaRuntimeIPLeases, n.leasedIP)
+		lambdaRuntimeIPMu.Unlock()
+	}
+}
+
+func acquireLambdaRuntimeIP(vpc *LambdaVpcConfig) (subnetID, privateIP string, err error) {
+	if vpc == nil || len(vpc.SubnetIds) == 0 {
+		return "", "", fmt.Errorf("AWS Lambda VPC configuration has no subnet")
+	}
+	lambdaRuntimeIPMu.Lock()
+	defer lambdaRuntimeIPMu.Unlock()
+	for i, subnetID := range vpc.SubnetIds {
+		if i >= len(vpc.SubnetIPv4Allocations) {
+			break
+		}
+		ip := vpc.SubnetIPv4Allocations[i]
+		if ip != "" && !lambdaRuntimeIPLeases[ip] {
+			lambdaRuntimeIPLeases[ip] = true
+			return subnetID, ip, nil
+		}
+	}
+	// A Hyperplane ENI supports many simultaneous connections. The local
+	// network substrate needs a distinct interface address for concurrent
+	// containers, so scale the ENI realization from the same configured
+	// subnet rather than falling back to the container runtime's bridge.
+	subnetID = vpc.SubnetIds[0]
+	ip, err := AllocateSubnetIP(subnetID)
+	if err != nil {
+		return "", "", err
+	}
+	lambdaRuntimeIPLeases[ip] = true
+	return subnetID, ip, nil
+}
+
+func lambdaRuntimeLinkLocalAddress() string {
+	// Keep clear of the EC2 instance metadata and Amazon ECS task metadata
+	// addresses. Each active invocation receives a distinct Lambda-service
+	// destination, which is routed to its private Runtime API listener.
+	n := lambdaRuntimeAPIAddressSequence.Add(1) - 1
+	third := 128 + (n/254)%126
+	fourth := 1 + n%254
+	return fmt.Sprintf("169.254.%d.%d", third, fourth)
+}
+
+func startLambdaVpcPauseContainer(invocationID string, sink sim.LogSink) (*sim.ContainerHandle, error) {
+	img := sim.ResolveLocalImage(ecsPauseImage())
+	platform, err := localImagePlatform(context.Background(), img)
+	if err != nil {
+		return nil, fmt.Errorf("resolve AWS Lambda VPC pause image platform: %w", err)
+	}
+	return sim.StartContainerSync(sim.ContainerConfig{
+		Image:        img,
+		Architecture: platform,
+		Command:      []string{"sleep"},
+		Args:         []string{"2147483647"},
+		Name:         fmt.Sprintf("sockerless-sim-aws-lambda-%s-pause", invocationID[:12]),
+		Labels: map[string]string{
+			"sockerless-sim-lambda":       invocationID,
+			"sockerless-sim-lambda-pause": "true",
+		},
+		Sandbox: sim.SandboxLambda,
+	}, sink)
+}
+
+func prepareLambdaInvocationNetwork(
+	fn LambdaFunction,
+	invocationID string,
+	sidecar *runtimeAPISidecar,
+	sink sim.LogSink,
+) (*lambdaInvocationNetwork, error) {
+	metadataEnv, err := hostMetadataEnv("")
+	if err != nil {
+		return nil, fmt.Errorf("resolve AWS Lambda metadata callback: %w", err)
+	}
+	out := &lambdaInvocationNetwork{
+		runtimeAPIAddr: sidecar.ContainerAddr(),
+		metadataEnv:    metadataEnv,
+		extraHosts:     runtimeAPIExtraHosts(),
+		invocationID:   invocationID,
+	}
+	if fn.VpcConfig == nil || len(fn.VpcConfig.SubnetIds) == 0 {
+		return out, nil
+	}
+
+	subnetID, privateIP, err := acquireLambdaRuntimeIP(fn.VpcConfig)
+	if err != nil {
+		return nil, err
+	}
+	out.leasedIP = privateIP
+	subnet, ok := ec2Subnets.Get(subnetID)
+	if !ok {
+		out.cleanup()
+		return nil, fmt.Errorf("AWS Lambda VPC subnet %s no longer exists", subnetID)
+	}
+
+	if ec2ECSRealNetAvailable() {
+		pause, err := startLambdaVpcPauseContainer(invocationID, sink)
+		if err != nil {
+			out.cleanup()
+			return nil, err
+		}
+		out.pause = pause
+		if err := sim.DisconnectContainerNetworks(pause.ContainerID); err != nil {
+			out.cleanup()
+			return nil, fmt.Errorf("disconnect AWS Lambda VPC pause container from Docker networks: %w", err)
+		}
+		pid, err := sim.ContainerPID(pause.ContainerID)
+		if err != nil {
+			out.cleanup()
+			return nil, fmt.Errorf("AWS Lambda VPC pause container PID: %w", err)
+		}
+		runtimeIPv4 := lambdaRuntimeLinkLocalAddress()
+		if err := ec2AttachRealLambdaNIC(
+			context.Background(),
+			invocationID,
+			subnetID,
+			pid,
+			privateIP,
+			fn.VpcConfig.SecurityGroupIds,
+			runtimeIPv4,
+			sidecar.HostPort(),
+		); err != nil {
+			out.cleanup()
+			return nil, fmt.Errorf("attach AWS Lambda invocation to VPC: %w", err)
+		}
+		out.networkMode = "container:" + pause.ContainerID
+		out.runtimeAPIAddr = net.JoinHostPort(runtimeIPv4, "80")
+		out.metadataEnv = hostMetadataLinkLocalEnv("")
+		out.extraHosts = nil
+		return out, nil
+	}
+
+	vpc, ok := ec2Vpcs.Get(subnet.VpcId)
+	if !ok {
+		out.cleanup()
+		return nil, fmt.Errorf("AWS Lambda VPC %s no longer exists", subnet.VpcId)
+	}
+	if vpc.CidrBlock == "" {
+		out.cleanup()
+		return nil, fmt.Errorf("AWS Lambda VPC %s has no CIDR block", subnet.VpcId)
+	}
+	networkName := ecsVPCNetworkName(subnet.VpcId)
+	if _, err := sim.EnsureVPCNetwork(networkName, vpc.CidrBlock); err != nil {
+		out.cleanup()
+		return nil, fmt.Errorf("provision AWS Lambda VPC network for %s: %w", subnet.VpcId, err)
+	}
+	out.network = networkName
+	out.ipAddress = privateIP
+	return out, nil
 }
 
 // invokeLambdaViaRuntimeAPI launches the function container with
@@ -317,6 +506,15 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 	if err != nil {
 		return lambdaErrorPayload(err.Error()), true, 1
 	}
+	invocationNetwork, err := prepareLambdaInvocationNetwork(fn, requestID, sidecar, collectSink)
+	if err != nil {
+		endMs := time.Now().UnixMilli()
+		appendLambdaLog(logKey, endMs, fmt.Sprintf("ERROR RequestId: %s VPC attachment failed: %v", requestID, err))
+		appendLambdaLog(logKey, endMs+1, fmt.Sprintf("END RequestId: %s", requestID))
+		return lambdaErrorPayload(fmt.Sprintf("VPC attachment failed: %v", err)), true, 1
+	}
+	defer invocationNetwork.cleanup()
+	cmdEnv["AWS_LAMBDA_RUNTIME_API"] = invocationNetwork.runtimeAPIAddr
 
 	// Host metadata: Lambda has its Runtime API (above) but workloads
 	// may still query EC2 IMDS for region/SA tokens via the AWS SDK.
@@ -326,16 +524,19 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 		Architecture: platform,
 		Command:      entrypoint,
 		Args:         args,
-		Env:          mergeEnv(cmdEnv, hostMetadataEnv("")),
+		Env:          mergeEnv(cmdEnv, invocationNetwork.metadataEnv),
 		// Timeout is enforced by the sidecar (waiting for /response or
 		// error with a deadline); the container itself is given a
 		// generous wall-clock budget so slow handlers still surface a
 		// proper Lambda timeout instead of a container-level kill.
-		Timeout:    time.Duration(timeoutSec+5) * time.Second,
-		Name:       fmt.Sprintf("sockerless-sim-aws-lambda-%s", requestID[:12]),
-		Labels:     map[string]string{"sockerless-sim-lambda": requestID},
-		ExtraHosts: runtimeAPIExtraHosts(),
-		Sandbox:    sim.SandboxLambda,
+		Timeout:     time.Duration(timeoutSec+5) * time.Second,
+		Name:        fmt.Sprintf("sockerless-sim-aws-lambda-%s", requestID[:12]),
+		Labels:      map[string]string{"sockerless-sim-lambda": requestID},
+		ExtraHosts:  invocationNetwork.extraHosts,
+		Network:     invocationNetwork.network,
+		IPAddress:   invocationNetwork.ipAddress,
+		NetworkMode: invocationNetwork.networkMode,
+		Sandbox:     sim.SandboxLambda,
 	}, collectSink)
 	if err != nil {
 		endMs := time.Now().UnixMilli()

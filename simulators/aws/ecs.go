@@ -1695,7 +1695,11 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		}
 		sharedNetMode = "container:" + pause.ContainerID
 	}
-	metadataEnv := hostMetadataEnv(taskID)
+	metadataEnv, err := hostMetadataEnv(taskID)
+	if err != nil {
+		cleanupECSTaskProcesses(taskID, processes)
+		return nil, fmt.Errorf("resolve Amazon ECS metadata callback: %w", err)
+	}
 	if netnsTier {
 		metadataEnv = hostMetadataLinkLocalEnv(taskID)
 	}

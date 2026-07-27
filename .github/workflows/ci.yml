@@ -470,7 +470,8 @@ jobs:
         # — which destroyed the job log along with it, so nothing identified the
         # writer. Output goes to a file under a watched budget instead: if the
         # log or the volume crosses its threshold, the run stops and reports the
-        # largest consumers while there is still disk to report them on.
+        # largest relevant consumers through bounded scans while there is still
+        # disk to report them on.
         run: |
           set -o pipefail
           cd simulators/aws/sdk-tests
@@ -478,10 +479,21 @@ jobs:
           report() {
             echo "=== volume ==="; df -h /
             echo "=== test output size ==="; du -h "$log" 2>/dev/null || true
-            echo "=== largest consumers ==="
-            sudo du -x -m -d 2 / 2>/dev/null | sort -rn | head -30
             echo "=== docker ==="; docker system df 2>/dev/null || true
           }
+          report_consumers() {
+            echo "=== largest relevant consumers ==="
+            for path in "$GITHUB_WORKSPACE" "$RUNNER_TEMP" /tmp/sockerless-firecracker; do
+              if [ -e "$path" ]; then
+                echo "--- $path ---"
+                sudo timeout 5s du -x -m -d 2 "$path" \
+                  | sort -rn | sed -n '1,10p' \
+                  || echo "::warning::Disk-consumer scan did not complete within 5 seconds: $path"
+              fi
+            done
+          }
+          # The runner shell owns the diagnostic log; only the test process needs root.
+          # shellcheck disable=SC2024
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_AWS_SIMULATOR_BINARY="$GITHUB_WORKSPACE/simulators/aws/simulator-aws" \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-spec-violations.jsonl" \
@@ -496,6 +508,7 @@ jobs:
               echo "--- last 200 lines before the budget was hit ---"
               tail -n 200 "$log" || true
               report
+              report_consumers
               sudo kill -QUIT "$test_pid" 2>/dev/null || true
               sleep 10
               sudo kill -9 "$test_pid" 2>/dev/null || true

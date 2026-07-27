@@ -723,6 +723,11 @@ func handleCMCreateService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	svcId := "srv-" + generateUUID()[:16]
+	if req.HealthCheckCustomConfig != nil {
+		// AWS Cloud Map always uses a failure threshold of one for custom
+		// health checks, regardless of the value supplied by the caller.
+		req.HealthCheckCustomConfig.FailureThreshold = 1
+	}
 	svc := CMService{
 		Id:                      svcId,
 		Arn:                     cmArn("service", svcId),
