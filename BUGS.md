@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2694 filed - 2660 fixed - 18 open - 16 false positives.**
+**2695 filed - 2661 fixed - 18 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -33,6 +33,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2695~~ | P1 | AWS SDK continuous integration budget | successful shard spent nine minutes scanning the whole runner filesystem | Every AWS SDK A–M test had passed before the job's unconditional `du -d 2 /` diagnostic recursively scanned the entire hosted runner for more than nine minutes and crossed the 15-minute job limit. Successful runs now report only constant-time volume, log, and Docker summaries; the detailed consumer scan runs only after the disk budget trips, covers three relevant paths, and bounds each path to five seconds. The workflow-budget gate rejects future whole-volume scans, with a failing fixture proving the guard. |
 | ~~2694~~ | P3 | AWS SDK dependency freshness | AWS Glue published a new SDK release while the pull request was running | The freshness gate found `github.com/aws/aws-sdk-go-v2/service/glue` v1.150.0 after the branch's publication repair. The standalone AWS SDK module upgraded from v1.149.0 in the same pull request, and its complete real-simulator suite passed. |
 | ~~2693~~ | P1 | GitHub Container Registry release retention | deleting one obsolete tag deleted a retained tag sharing its package version | GitHub Container Registry coalesced byte-identical architecture images from different source revisions into one package version. The retention selector had deleted a whole version when any one of its tags was obsolete, which also removed the current release's ARM64 tag. Retention now preserves a package version carrying any retained tag, the contract fixture covers the shared-version shape, and every future architecture image carries its source revision as an OCI label so distinct releases cannot collapse onto the same package version. |
 | ~~2692~~ | P2 | AWS SDK DynamoDB differential harness | unbounded container-engine commands consumed the whole test budget | The DynamoDB Local oracle had invoked Docker image inspection, pull, run, and cleanup without deadlines. A Podman overlay mount input/output error therefore left `docker run` blocked for 13 minutes until the package timeout hid the actual engine state. Every engine operation now had an explicit deadline, the oracle container had a deterministic run-local name, a failed start reported the real container state before bounded cleanup, and the full DynamoDB differential flow passed after the local engine recovered. |

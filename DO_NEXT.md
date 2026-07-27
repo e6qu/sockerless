@@ -63,6 +63,12 @@ obsolete tag could not take a current architecture tag with it.
 The standalone AWS SDK suite used the AWS Glue SDK v1.150.0 found by the
 freshness gate, and its complete real-simulator test surface passed.
 
+The AWS SDK workflow stopped scanning the whole hosted-runner filesystem after
+successful shards. Normal diagnostics reported only the volume, test-log size,
+and Docker usage; a disk-budget failure additionally scanned the workspace,
+runner temporary directory, and Firecracker workspace for at most five seconds
+each. The tested workflow-budget gate rejected any future recursive `du /`.
+
 ## Next Recommended Slice
 
 The next recommended AWS fidelity slice remained BUG-2679: Amazon EC2

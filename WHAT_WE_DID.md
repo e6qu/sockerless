@@ -119,6 +119,16 @@ The refreshed freshness gate then found AWS Glue SDK v1.150.0. The standalone
 AWS SDK module upgraded from v1.149.0, and its complete real-simulator suite
 passed with the new client model.
 
+That replacement run exposed a workflow-budget defect after every A–M SDK test
+had passed. The success path invoked `du -d 2 /` to report the runner's largest
+filesystem consumers; the recursive scan spent more than nine minutes walking
+the hosted image and crossed the 15-minute job limit. Successful shards now
+report only constant-time filesystem, log, and Docker summaries. The detailed
+consumer diagnostic runs only when the watched disk threshold trips, covers the
+repository workspace, runner temporary directory, and Firecracker workspace,
+and bounds each scan to five seconds. The workflow-budget gate gained a fixture
+that rejects a recursive whole-volume scan.
+
 ## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
 
 The three conformance ratchets counted coverage the simulators did not have.

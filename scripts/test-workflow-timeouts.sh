@@ -19,7 +19,7 @@ expect_fail() {
 	fi
 }
 
-mkdir -p "$fixture/pass" "$fixture/too-long" "$fixture/missing" "$fixture/matrix-too-long"
+mkdir -p "$fixture/pass" "$fixture/too-long" "$fixture/missing" "$fixture/matrix-too-long" "$fixture/root-scan"
 cat >"$fixture/pass/ci.yml" <<'YAML'
 name: pass
 jobs:
@@ -66,9 +66,19 @@ jobs:
     runs-on: ubuntu-latest
     steps: []
 YAML
+cat >"$fixture/root-scan/ci.yml" <<'YAML'
+name: root scan
+jobs:
+  test:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - run: sudo du -x -m -d 2 / 2>/dev/null
+YAML
 
 expect_pass "$fixture/pass"
 expect_fail "$fixture/too-long"
 expect_fail "$fixture/missing"
 expect_fail "$fixture/matrix-too-long"
+expect_fail "$fixture/root-scan"
 echo "workflow timeout fixture tests passed"
