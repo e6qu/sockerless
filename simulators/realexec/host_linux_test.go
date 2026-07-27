@@ -269,6 +269,13 @@ func TestNetworkNamespaceNICRoundTrip(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("metadata server did not receive probe")
 	}
+	if err := network.RemoveAddressDNAT(ctx, prefix+"md"); err != nil {
+		t.Fatalf("remove metadata DNAT: %v", err)
+	}
+	if _, err := runner.Output(ctx, "ip", "netns", "exec", first.NamespaceName,
+		"curl", "-fsS", "--max-time", "1", "http://"+MetadataIPv4+"/metadata-probe"); err == nil {
+		t.Fatal("provider metadata address remained reachable after its DNAT table was removed")
+	}
 
 	table := prefix + "tbl"
 	if err := runner.Run(ctx, "nft", "add", "table", "inet", table); err != nil {

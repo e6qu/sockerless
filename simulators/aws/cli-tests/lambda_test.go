@@ -250,12 +250,36 @@ func TestLambda_CLI_InvokeAndCheckLogs(t *testing.T) {
 // and verifies the payload round-trips via /next + /response.
 func TestLambda_InvokeRuntimeAPI_CLI(t *testing.T) {
 	fnName := "cli-runtime-api-fn"
+	vpcID := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-vpc",
+		"--cidr-block", "10.79.0.0/16",
+		"--query", "Vpc.VpcId",
+		"--output", "text",
+	)))
+	subnetID := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-subnet",
+		"--vpc-id", vpcID,
+		"--cidr-block", "10.79.1.0/24",
+		"--query", "Subnet.SubnetId",
+		"--output", "text",
+	)))
+	securityGroupID := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-security-group",
+		"--group-name", "cli-lambda-vpc-runtime",
+		"--description", "AWS Lambda VPC runtime CLI coverage",
+		"--vpc-id", vpcID,
+		"--query", "GroupId",
+		"--output", "text",
+	)))
+	defer func() {
+		runCLI(t, awsCLI("ec2", "delete-security-group", "--group-id", securityGroupID))
+		runCLI(t, awsCLI("ec2", "delete-subnet", "--subnet-id", subnetID))
+		runCLI(t, awsCLI("ec2", "delete-vpc", "--vpc-id", vpcID))
+	}()
 
 	runCLI(t, awsCLI("lambda", "create-function",
 		"--function-name", fnName,
 		"--package-type", "Image",
 		"--role", "arn:aws:iam::123456789012:role/test-role",
 		"--code", "ImageUri="+lambdaHandlerImageName,
+		"--vpc-config", "SubnetIds="+subnetID+",SecurityGroupIds="+securityGroupID,
 	))
 	defer runCLI(t, awsCLI("lambda", "delete-function", "--function-name", fnName))
 

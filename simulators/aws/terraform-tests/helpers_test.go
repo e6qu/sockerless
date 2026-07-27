@@ -157,14 +157,25 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// reapGroup SIGKILLs the whole process group of a Setpgid'd subprocess and
-// reaps it. Safe on a nil / not-yet-started command.
+// reapGroup gives a Setpgid'd subprocess group time to shut down cleanly before
+// forcing it down. The simulator's SIGTERM path removes workload containers
+// and networks, so normal test completion must not bypass it.
 func reapGroup(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	_ = cmd.Wait()
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+	}
 }
 
 // reapSubprocessesOnSignal kills the simulator and HTTPS gateway process groups
@@ -278,15 +289,13 @@ func terraformArgs(args ...string) []string {
 	if len(args) == 0 || tfState == "" {
 		return args
 	}
-	switch args[0] {
-	case "apply", "destroy", "output", "plan", "refresh":
-		out := make([]string, 0, len(args)+1)
-		out = append(out, args[0], "-state="+tfState)
+	if args[0] == "init" {
+		out := make([]string, 0, len(args)+2)
+		out = append(out, args[0], "-backend-config=path="+tfState, "-reconfigure")
 		out = append(out, args[1:]...)
 		return out
-	default:
-		return args
 	}
+	return args
 }
 
 func mustAbs(name string) string {

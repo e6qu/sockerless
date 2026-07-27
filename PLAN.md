@@ -24,23 +24,25 @@ Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator dashbo
 
 Production operation had enforceable resource and artifact contracts. Every ordinary GitHub Actions job was bounded to 15 minutes, the historically over-budget AWS edge and Amazon EC2 command-line interface groups were split without losing any of the 630 tests, nightly fuzz targets ran in bounded parallel batches, and clean production builds created every frontend before compiling all 11 UI-bearing Go binaries. Native release tags remained direct architecture manifests while each short-SHA tag remained an OCI index containing exactly Linux ARM64 and AMD64.
 
-The next fidelity work stayed evidence-driven: deterministic Amazon Elastic Container Service Terraform simulator lifecycle, provider-faithful simulator credential authentication, and authenticated real-cloud validation. Standalone products consumed published Sockerless simulator and backend contracts and retained their own source, deployment modules, and product-specific tests.
+The next fidelity work stayed evidence-driven. AWS Lambda image invocations had joined the configured VPC at runtime, closing the control-plane/runtime split for `VpcConfig`; the remaining local simulator gaps were the Google Cloud Run v1/v2 service store, Azure Files Share ACL, Amazon EC2 subnet dependency enforcement, Amazon ECS `StartTask` execution, and launch-type-specific Amazon ECS sandboxing. Authenticated live-cloud validation remained externally gated. Standalone products consumed published Sockerless simulator and backend contracts and retained their own source, deployment modules, and product-specific tests.
 
 ## Active Branch Priorities
 
-1. Closed the skip-if-absent gate hole: `scripts/check-no-tool-absent-skips.sh` rejected the TestMain-level `LookPath → os.Exit(0)` and print-then-skip shapes beyond `t.Skip`, exempting genuine platform/kernel-capability gates, and every remaining tool-absent skip resolved to install-in-TestMain (Google Cloud CLI) or fail-loud against CI-provided tools (`az`, `docker` guards removed as vestigial, `session-manager-plugin`, `git`, `gcloud`, `nsenter`).
-2. Preserved the exact Shauth browser contract in the real PostgreSQL, Ory Hydra, compiled relying-party, and Chromium matrix.
-3. Kept every ordinary workflow job within the enforced 15-minute ceiling without narrowing test coverage.
-4. Kept production builds and releases incapable of silently omitting embedded web interfaces.
-5. Kept nightly fuzzing bounded, complete across discovered targets, and truthful about missing modules, failures, and crashers.
+1. Closed BUG-2678 by placing AWS Lambda image invocations on the VPC represented by `VpcConfig`, including real Linux network namespaces, subnet address leasing, security-group enforcement, VPC egress policy, and Lambda Runtime API routing.
+2. Proved the runtime path with official AWS SDK, AWS CLI, and Terraform clients, including a function reaching an Amazon ECS task at its private `awsvpc` address.
+3. Aligned Amazon Cloud Map custom health checks with AWS's fixed failure threshold and removed the Terraform provider warnings exposed by the production-shaped test.
+4. Let the AWS SDK, CLI, and Terraform harnesses terminate the simulator through its cleanup path on ordinary completion.
+5. Preserved the exact Shauth browser, production-build, workflow-budget, and fuzzing contracts.
 6. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
-1. BUG-2569 still required deterministic local Amazon Elastic Container Service Terraform simulator apply/destroy completion without changing real-provider coordinates or behavior.
-2. BUG-2625 still required provider-faithful credential issuance and verification across all three simulators.
-3. BUG-1075 still required authenticated validation for the remaining real-cloud backend cells.
-4. The merged authentication and workflow contracts still required publication, deployment, and the exact live-origin browser matrix.
+1. BUG-2679 still required Amazon EC2 `DeleteSubnet` to return `DependencyViolation` while an elastic network interface remained attached.
+2. BUG-2680 still required Amazon ECS `StartTask` to launch containers through the same real execution path as `RunTask`.
+3. BUG-2681 still required Amazon ECS to select its sandbox profile from the task's launch type instead of applying Fargate restrictions universally.
+4. BUG-2676 still required Google Cloud Run v1 and v2 to project one shared service store.
+5. BUG-2677 still required Azure Files Share ACL fidelity before its Terraform resource could cover the data plane.
+6. BUG-1075 still required authenticated validation for the remaining real-cloud backend cells.
 
 ## Simulator Console Parity
 

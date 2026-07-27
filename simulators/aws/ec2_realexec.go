@@ -15,16 +15,17 @@ import (
 )
 
 var (
-	ec2RealHost     = realexec.NewHost()
-	ec2RealMu       sync.Mutex
-	ec2RealVPCs     = map[string]*realexec.Network{}
-	ec2RealSubnets  = map[string]*realexec.Subnet{}
-	ec2RealNICs     = map[string]*realexec.NamespaceNIC{}
-	ec2RealVMNICs   = map[string]*realexec.TapNIC{}
-	ec2RealVMs      = map[string]*realexec.FirecrackerVM{}
-	ec2RealEBSSlots = map[string]map[string]string{}
-	ec2RealNATNICs  = map[string]*realexec.NamespaceNIC{}
-	ec2RealECSNICs  = map[string]*realexec.NamespaceNIC{} // taskID -> veth into the container netns
+	ec2RealHost       = realexec.NewHost()
+	ec2RealMu         sync.Mutex
+	ec2RealVPCs       = map[string]*realexec.Network{}
+	ec2RealSubnets    = map[string]*realexec.Subnet{}
+	ec2RealNICs       = map[string]*realexec.NamespaceNIC{}
+	ec2RealVMNICs     = map[string]*realexec.TapNIC{}
+	ec2RealVMs        = map[string]*realexec.FirecrackerVM{}
+	ec2RealEBSSlots   = map[string]map[string]string{}
+	ec2RealNATNICs    = map[string]*realexec.NamespaceNIC{}
+	ec2RealECSNICs    = map[string]*realexec.NamespaceNIC{} // taskID -> veth into the container netns
+	ec2RealLambdaNICs = map[string]ec2RealLambdaNIC{}       // invocation ID -> Hyperplane ENI realization
 
 	// ec2RealVMStartLocks serializes ec2StartRealVM per instance id so two
 	// concurrent starts of the same instance can't both pass the not-running
@@ -39,6 +40,14 @@ var (
 	// leaking the NIC map entry. RLock allows parallel attaches in the same VPC.
 	ec2RealVPCLocks sync.Map // vpcID -> *sync.RWMutex
 )
+
+type ec2RealLambdaNIC struct {
+	NIC              *realexec.NamespaceNIC
+	SubnetID         string
+	PrivateIP        string
+	SecurityGroupIDs []string
+	RuntimeDNATTable string
+}
 
 func ec2RealVMStartLock(instanceID string) *sync.Mutex {
 	m, _ := ec2RealVMStartLocks.LoadOrStore(instanceID, &sync.Mutex{})
@@ -144,6 +153,100 @@ func ec2DetachRealECSTaskNIC(ctx context.Context, taskID string) {
 	}
 }
 
+// ec2AttachRealLambdaNIC realizes the customer-VPC side of an AWS Lambda
+// Hyperplane elastic network interface inside the invocation's network
+// namespace. The Runtime API remains a Lambda-service endpoint: a dedicated
+// link-local destination is DNATed to the per-invocation listener on the host,
+// independently of the customer subnet's internet routes.
+func ec2AttachRealLambdaNIC(
+	ctx context.Context,
+	invocationID, subnetID string,
+	pid int,
+	eniIP string,
+	securityGroupIDs []string,
+	runtimeIPv4 string,
+	runtimePort int,
+) error {
+	sn, ok := ec2Subnets.Get(subnetID)
+	if !ok {
+		return fmt.Errorf("subnet %s not found", subnetID)
+	}
+	vpcLk := ec2RealVPCLock(sn.VpcId)
+	vpcLk.RLock()
+	defer vpcLk.RUnlock()
+	if err := ec2CreateRealSubnet(ctx, sn); err != nil {
+		return err
+	}
+	ec2RealMu.Lock()
+	subnet := ec2RealSubnets[subnetID]
+	ec2RealMu.Unlock()
+	if subnet == nil {
+		return fmt.Errorf("real subnet %s not provisioned", subnetID)
+	}
+	nic, err := subnet.AttachExternalNamespaceNIC(ctx, realexec.ExternalNamespaceNICSpec{
+		PID:           pid,
+		HostVethName:  ec2RealName("lh", invocationID),
+		GuestVethName: ec2RealName("lg", invocationID),
+		GuestIfName:   "eth0",
+		MAC:           ec2ENIMAC(invocationID),
+		PrivateIP:     net.ParseIP(eniIP),
+	})
+	if err != nil {
+		return err
+	}
+	metadataPort, err := simHostMetadataPort()
+	if err != nil {
+		_ = nic.Close(context.Background())
+		return err
+	}
+	if err := subnet.ConfigureMetadataDNAT(ctx, metadataPort, ec2RealName("imd", sn.VpcId)); err != nil {
+		_ = nic.Close(context.Background())
+		return fmt.Errorf("configure AWS Lambda instance metadata routing for %s: %w", invocationID, err)
+	}
+	runtimeTable := ec2RealName("lrd", invocationID)
+	if err := subnet.ConfigureAddressDNAT(ctx, runtimeIPv4, runtimePort, runtimeTable); err != nil {
+		_ = nic.Close(context.Background())
+		return fmt.Errorf("configure AWS Lambda Runtime API routing for %s: %w", invocationID, err)
+	}
+	if err := ec2ApplyRealVPCEgressPolicy(ctx, sn.VpcId); err != nil {
+		_ = subnet.RemoveAddressDNAT(context.Background(), runtimeTable)
+		_ = nic.Close(context.Background())
+		return fmt.Errorf("configure VPC egress policy for AWS Lambda invocation %s: %w", invocationID, err)
+	}
+	attachment := ec2RealLambdaNIC{
+		NIC:              nic,
+		SubnetID:         subnetID,
+		PrivateIP:        eniIP,
+		SecurityGroupIDs: append([]string(nil), securityGroupIDs...),
+		RuntimeDNATTable: runtimeTable,
+	}
+	ec2RealMu.Lock()
+	ec2RealLambdaNICs[invocationID] = attachment
+	ec2RealMu.Unlock()
+	if err := ec2ApplyRealLambdaSecurityGroups(ctx, invocationID); err != nil {
+		ec2DetachRealLambdaNIC(context.Background(), invocationID)
+		return fmt.Errorf("apply security groups for AWS Lambda invocation %s: %w", invocationID, err)
+	}
+	return nil
+}
+
+func ec2DetachRealLambdaNIC(ctx context.Context, invocationID string) {
+	ec2RealMu.Lock()
+	attachment, ok := ec2RealLambdaNICs[invocationID]
+	delete(ec2RealLambdaNICs, invocationID)
+	subnet := ec2RealSubnets[attachment.SubnetID]
+	ec2RealMu.Unlock()
+	if !ok {
+		return
+	}
+	if subnet != nil {
+		_ = subnet.RemoveAddressDNAT(ctx, attachment.RuntimeDNATTable)
+	}
+	if attachment.NIC != nil {
+		_ = attachment.NIC.Close(ctx)
+	}
+}
+
 const ec2RealEBSMaxSlots = 15
 
 // ec2RealNetHostAvailable reports whether the host can build real EC2 network
@@ -200,6 +303,14 @@ func ec2DeleteRealVPC(ctx context.Context, vpcID string) error {
 		if ec2ECSTaskVPCID(taskID) == vpcID {
 			delete(ec2RealECSNICs, taskID)
 			_ = nic.Close(ctx)
+		}
+	}
+	for invocationID, attachment := range ec2RealLambdaNICs {
+		if subnet, ok := ec2Subnets.Get(attachment.SubnetID); ok && subnet.VpcId == vpcID {
+			delete(ec2RealLambdaNICs, invocationID)
+			if attachment.NIC != nil {
+				_ = attachment.NIC.Close(ctx)
+			}
 		}
 	}
 	for natID, nic := range ec2RealNATNICs {
@@ -406,10 +517,10 @@ func ec2BuildIngressPacketRules(securityGroupIDs []string) []realexec.PacketRule
 }
 
 // ec2SGMemberCIDRs returns the set of IPv4 /32 prefixes currently attached to
-// the supplied security group — every ENI (EC2 instance or standalone) and ECS
-// task whose SG list contains groupID contributes its private IP. Security group
-// references resolve to live member IPs at apply time, since nftables matches on
-// prefixes, not on SG ids.
+// the supplied security group — every ENI (EC2 instance or standalone), Amazon
+// ECS task, and active AWS Lambda Hyperplane ENI whose SG list contains groupID
+// contributes its private IP. Security group references resolve to live member
+// IPs at apply time, since nftables matches on prefixes, not on SG ids.
 func ec2SGMemberCIDRs(groupID string) []string {
 	seen := map[string]bool{}
 	add := func(ip string) {
@@ -449,6 +560,13 @@ func ec2SGMemberCIDRs(groupID string) []string {
 			}
 		}
 	}
+	ec2RealMu.Lock()
+	for _, attachment := range ec2RealLambdaNICs {
+		if stringInSlice(groupID, attachment.SecurityGroupIDs) {
+			add(attachment.PrivateIP)
+		}
+	}
+	ec2RealMu.Unlock()
 	var out []string
 	for cidr := range seen {
 		out = append(out, cidr)
@@ -528,6 +646,19 @@ func ec2ApplyRealECSTaskSecurityGroups(ctx context.Context, taskID string, secur
 		return nic.ClearIngressFilter(ctx)
 	}
 	return nic.ConfigureIngressFilter(ctx, ec2BuildIngressPacketRules(securityGroupIDs))
+}
+
+func ec2ApplyRealLambdaSecurityGroups(ctx context.Context, invocationID string) error {
+	ec2RealMu.Lock()
+	attachment, ok := ec2RealLambdaNICs[invocationID]
+	ec2RealMu.Unlock()
+	if !ok || attachment.NIC == nil {
+		return nil
+	}
+	if len(attachment.SecurityGroupIDs) == 0 {
+		return attachment.NIC.ClearIngressFilter(ctx)
+	}
+	return attachment.NIC.ConfigureIngressFilter(ctx, ec2BuildIngressPacketRules(attachment.SecurityGroupIDs))
 }
 
 func ec2StartRealVM(ctx context.Context, inst EC2Instance) error {
@@ -818,11 +949,12 @@ func ec2RealVMAlive(instanceID string) bool {
 }
 
 // ec2ReapplyRealSecurityGroup reprograms the nftables ingress filter on every
-// network path currently bound to groupID — ENIs attached to EC2 instances and
-// ECS task NICs in the awsvpc netns tier — so an Authorize/Revoke on a running
-// workload takes effect immediately. Hosts without real-exec capabilities skip
-// the call (the per-NIC apply is a no-op when no real NIC exists), and SG rules
-// there remain metadata-only.
+// network path currently bound to groupID — ENIs attached to EC2 instances,
+// Amazon ECS task NICs, and AWS Lambda Hyperplane ENIs in the real network
+// namespace tier — so an Authorize/Revoke on a running workload takes effect
+// immediately. Hosts without real-exec capabilities skip the call (the per-NIC
+// apply is a no-op when no real NIC exists), and SG rules there remain
+// metadata-only.
 func ec2ReapplyRealSecurityGroup(ctx context.Context, groupID string) error {
 	for _, eni := range ec2NetworkInterfaces.List() {
 		for _, attachedGroupID := range eni.SecurityGroupIds {
@@ -844,6 +976,20 @@ func ec2ReapplyRealSecurityGroup(ctx context.Context, groupID string) error {
 			sgIDs = task.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups
 		}
 		if err := ec2ApplyRealECSTaskSecurityGroups(ctx, task.TaskID(), sgIDs); err != nil {
+			return err
+		}
+	}
+	ec2RealMu.Lock()
+	lambdaAttachments := make(map[string]ec2RealLambdaNIC, len(ec2RealLambdaNICs))
+	for invocationID, attachment := range ec2RealLambdaNICs {
+		lambdaAttachments[invocationID] = attachment
+	}
+	ec2RealMu.Unlock()
+	for invocationID, attachment := range lambdaAttachments {
+		if !stringInSlice(groupID, attachment.SecurityGroupIDs) {
+			continue
+		}
+		if err := ec2ApplyRealLambdaSecurityGroups(ctx, invocationID); err != nil {
 			return err
 		}
 	}

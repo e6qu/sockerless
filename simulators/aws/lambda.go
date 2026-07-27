@@ -82,6 +82,44 @@ func lambdaVpcConfiguration(vpc *LambdaVpcConfig) *lambdaVpcConfigConfiguration 
 	}
 }
 
+func prepareLambdaVpcConfig(vpc *LambdaVpcConfig) ([]string, string, error) {
+	if vpc == nil || len(vpc.SubnetIds) == 0 {
+		return nil, "", nil
+	}
+	var vpcID string
+	for _, subnetID := range vpc.SubnetIds {
+		subnet, ok := ec2Subnets.Get(subnetID)
+		if !ok {
+			return nil, "", fmt.Errorf("subnet %q not found", subnetID)
+		}
+		if vpcID == "" {
+			vpcID = subnet.VpcId
+			continue
+		}
+		if subnet.VpcId != vpcID {
+			return nil, "", fmt.Errorf("subnets must belong to the same VPC")
+		}
+	}
+	for _, securityGroupID := range vpc.SecurityGroupIds {
+		group, ok := ec2SecurityGroups.Get(securityGroupID)
+		if !ok {
+			return nil, "", fmt.Errorf("security group %q not found", securityGroupID)
+		}
+		if group.VpcId != vpcID {
+			return nil, "", fmt.Errorf("security group %q and subnet do not belong to the same VPC", securityGroupID)
+		}
+	}
+	allocations := make([]string, 0, len(vpc.SubnetIds))
+	for _, subnetID := range vpc.SubnetIds {
+		ip, err := AllocateSubnetIP(subnetID)
+		if err != nil {
+			return nil, "", err
+		}
+		allocations = append(allocations, ip)
+	}
+	return allocations, vpcID, nil
+}
+
 type LambdaFunctionCode struct {
 	S3Bucket        string `json:"S3Bucket,omitempty"`
 	S3Key           string `json:"S3Key,omitempty"`
@@ -306,23 +344,14 @@ func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 	// allocate one IP per subnet up front so DescribeFunction reflects
 	// the real attached-IP list.
 	vpcConfig := req.VpcConfig
-	if vpcConfig != nil && len(vpcConfig.SubnetIds) > 0 {
-		ips := make([]string, 0, len(vpcConfig.SubnetIds))
-		for _, subnetID := range vpcConfig.SubnetIds {
-			ip, ipErr := AllocateSubnetIP(subnetID)
-			if ipErr != nil {
-				sim.AWSError(w, "InvalidParameterValueException", ipErr.Error(), http.StatusBadRequest)
-				return
-			}
-			ips = append(ips, ip)
+	if vpcConfig != nil {
+		ips, vpcID, vpcErr := prepareLambdaVpcConfig(vpcConfig)
+		if vpcErr != nil {
+			sim.AWSError(w, "InvalidParameterValueException", vpcErr.Error(), http.StatusBadRequest)
+			return
 		}
 		vpcConfig.SubnetIPv4Allocations = ips
-		// Real Lambda echoes the VPC ID back; resolve it from the first
-		// subnet's stored VpcId so the response shape matches CreateFunction
-		// from the AWS SDK.
-		if first, ok := ec2Subnets.Get(vpcConfig.SubnetIds[0]); ok {
-			vpcConfig.VpcId = first.VpcId
-		}
+		vpcConfig.VpcId = vpcID
 	}
 
 	fn := LambdaFunction{
@@ -462,18 +491,12 @@ func handleLambdaUpdateFunctionConfiguration(w http.ResponseWriter, r *http.Requ
 	// half-applied configuration can't slip through.
 	var newAllocations []string
 	var newVpcID string
-	if req.VpcConfig != nil && len(req.VpcConfig.SubnetIds) > 0 {
-		newAllocations = make([]string, 0, len(req.VpcConfig.SubnetIds))
-		for _, subnetID := range req.VpcConfig.SubnetIds {
-			ip, ipErr := AllocateSubnetIP(subnetID)
-			if ipErr != nil {
-				sim.AWSError(w, "InvalidParameterValueException", ipErr.Error(), http.StatusBadRequest)
-				return
-			}
-			newAllocations = append(newAllocations, ip)
-		}
-		if first, ok := ec2Subnets.Get(req.VpcConfig.SubnetIds[0]); ok {
-			newVpcID = first.VpcId
+	if req.VpcConfig != nil {
+		var vpcErr error
+		newAllocations, newVpcID, vpcErr = prepareLambdaVpcConfig(req.VpcConfig)
+		if vpcErr != nil {
+			sim.AWSError(w, "InvalidParameterValueException", vpcErr.Error(), http.StatusBadRequest)
+			return
 		}
 	}
 
@@ -501,9 +524,7 @@ func handleLambdaUpdateFunctionConfiguration(w http.ResponseWriter, r *http.Requ
 		}
 		if req.VpcConfig != nil {
 			req.VpcConfig.SubnetIPv4Allocations = newAllocations
-			if req.VpcConfig.VpcId == "" {
-				req.VpcConfig.VpcId = newVpcID
-			}
+			req.VpcConfig.VpcId = newVpcID
 			fn.VpcConfig = req.VpcConfig
 		}
 		fn.LastModified = time.Now().UTC().Format(time.RFC3339)

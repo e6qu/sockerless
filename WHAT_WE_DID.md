@@ -4,6 +4,49 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-27 — AWS Lambda `VpcConfig` became a runtime network
+
+AWS Lambda had described Hyperplane elastic network interfaces on the control
+plane while launching every image function on Docker's default bridge. A
+function therefore reported configured subnets and security groups that its
+workload never used. `CreateFunction` and `UpdateFunctionConfiguration` now
+validated that every subnet existed in one Amazon Virtual Private Cloud (VPC)
+and every security group belonged to that VPC before allocating addresses.
+
+Each VPC-configured invocation leased an address from its configured subnets.
+On a Linux real-execution host, a pause container held the invocation network
+namespace, a VPC veth carried the leased address, nftables enforced the
+configured security groups and route-driven egress, and a unique link-local
+destination DNATed the AWS Lambda Runtime API back to its per-invocation
+listener. Runtime API DNAT tables, veths, pause containers, and leases were
+removed when the invocation ended. Portable hosts represented the same VPC,
+subnet address, and identifiers through the container engine's VPC network;
+the public cloud contract stayed identical and only the local execution
+substrate differed.
+
+The official AWS SDK test built a VPC, subnet, and security group, launched an
+Amazon ECS Fargate task serving HTTP on its private `awsvpc` address, then
+invoked a Lambda image whose handler reached that address. AWS CLI coverage
+created and invoked a VPC-configured function, and the production-shaped
+Terraform stack attached its Lambda function to the same VPC it provisioned.
+The complete SDK and CLI Lambda suites passed, and Terraform completed a full
+apply and destroy.
+
+Validation exposed two adjacent defects and closed them. Amazon Cloud Map had
+round-tripped the deprecated caller-supplied custom-health failure threshold;
+it now reported AWS's fixed value of `1` consistently through Create, Get, and
+List. The Terraform fixture removed that deprecated field, moved DynamoDB's
+global secondary index to `key_schema`, and configured its temporary state
+through the local backend instead of the deprecated `-state` command flag, so
+`terraform validate` completed without warnings.
+
+The AWS SDK, CLI, and Terraform harnesses had also killed the simulator
+directly after tests, bypassing its workload cleanup. Normal completion now
+sent the simulator's termination signal, waited for cleanup, and used forced
+termination only after a bounded grace period. The Terraform VPC moved away
+from Podman's default `10.88.0.0/16` bridge. The passing production-shaped run
+left no Lambda, Amazon ECS, or simulator VPC artifacts on the container host.
+
 ## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
 
 The three conformance ratchets counted coverage the simulators did not have.

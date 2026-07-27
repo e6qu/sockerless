@@ -374,6 +374,19 @@ func (n *Network) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, t
 	})
 }
 
+// RemoveAddressDNAT removes a previously configured address-specific DNAT
+// table. It is idempotent because callers use it while unwinding short-lived
+// workload control-plane listeners whose parent VPC can disappear concurrently.
+func (n *Network) RemoveAddressDNAT(ctx context.Context, tableName string) error {
+	if tableName == "" {
+		return nil
+	}
+	return withTableLock(tableName, func() error {
+		_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
+		return nil
+	})
+}
+
 func (n *Network) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tableName string) error {
 	return n.ConfigureAddressDNAT(ctx, MetadataIPv4, targetPort, tableName)
 }
@@ -390,6 +403,13 @@ func (s *Subnet) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, ta
 		return fmt.Errorf("subnet is not attached to a network")
 	}
 	return s.network.ConfigureAddressDNAT(ctx, targetIPv4, targetPort, tableName)
+}
+
+func (s *Subnet) RemoveAddressDNAT(ctx context.Context, tableName string) error {
+	if s == nil || s.network == nil {
+		return nil
+	}
+	return s.network.RemoveAddressDNAT(ctx, tableName)
 }
 
 func (n *Network) ConfigureEgressPolicy(ctx context.Context, allowedSourceCIDRs []string, tableName string) error {
