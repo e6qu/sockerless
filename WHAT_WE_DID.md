@@ -115,6 +115,10 @@ that shared-version shape. Every native architecture build also stamps the full
 source revision into its OCI config, making each future release digest distinct
 even when its application bytes are unchanged.
 
+The refreshed freshness gate then found AWS Glue SDK v1.150.0. The standalone
+AWS SDK module upgraded from v1.149.0, and its complete real-simulator suite
+passed with the new client model.
+
 ## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
 
 The three conformance ratchets counted coverage the simulators did not have.

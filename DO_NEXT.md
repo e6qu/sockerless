@@ -60,6 +60,9 @@ full source revision into the OCI config, so byte-identical application output
 from different commits no longer collapsed onto one package version and an
 obsolete tag could not take a current architecture tag with it.
 
+The standalone AWS SDK suite used the AWS Glue SDK v1.150.0 found by the
+freshness gate, and its complete real-simulator test surface passed.
+
 ## Next Recommended Slice
 
 The next recommended AWS fidelity slice remained BUG-2679: Amazon EC2
