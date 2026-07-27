@@ -33,8 +33,9 @@ The next fidelity work stayed evidence-driven. AWS Lambda image invocations had 
 3. Aligned Amazon Cloud Map custom health checks with AWS's fixed failure threshold and removed the Terraform provider warnings exposed by the production-shaped test.
 4. Let the AWS SDK, CLI, and Terraform harnesses terminate the simulator through its cleanup path on ordinary completion.
 5. Bundled the pre-push dependency drift into the branch: every Docker backend and simulator shared-module consumer used `github.com/docker/go-connections` v0.8.1; the three root simulators were independently tidied for standalone `GOWORK=off` builds; and every affected module passed its complete tests.
-6. Preserved the exact Shauth browser, production-build, workflow-budget, and fuzzing contracts.
-7. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+6. Closed the Linux data-plane failures exposed by the official SDK run: security-group filtering preserved ARP neighbor discovery, workload callbacks used the runtime's real bridge gateway, and Amazon Amplify compute/build workspaces carried their required SELinux labels.
+7. Preserved the exact Shauth browser, production-build, workflow-budget, and fuzzing contracts.
+8. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
@@ -43,7 +44,8 @@ The next fidelity work stayed evidence-driven. AWS Lambda image invocations had 
 3. BUG-2681 still required Amazon ECS to select its sandbox profile from the task's launch type instead of applying Fargate restrictions universally.
 4. BUG-2676 still required Google Cloud Run v1 and v2 to project one shared service store.
 5. BUG-2677 still required Azure Files Share ACL fidelity before its Terraform resource could cover the data plane.
-6. BUG-1075 still required authenticated validation for the remaining real-cloud backend cells.
+6. BUG-2690 still required Amazon Amplify to replace its synthetic success path with real source/default-build resolution or a faithful AWS error.
+7. BUG-1075 still required authenticated validation for the remaining real-cloud backend cells.
 
 ## Simulator Console Parity
 

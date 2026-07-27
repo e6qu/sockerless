@@ -953,6 +953,13 @@ func configureBridgeIngressFilter(ctx context.Context, network *Network, cleanup
 	if err := network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "ct", "state", "established,related", "accept"); err != nil {
 		return err
 	}
+	// Security groups filter IP traffic, not the link-layer neighbor discovery
+	// needed to deliver that traffic. Permit ARP before the per-NIC terminal
+	// drop so a newly attached peer can resolve the destination ENI instead of
+	// depending on a neighbor-cache entry created before the filter existed.
+	if err := network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", devName, "ether", "type", "arp", "accept"); err != nil {
+		return err
+	}
 	for _, rule := range rules {
 		args := []string{"ip", "netns", "exec", network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", devName}
 		if rule.SourceCIDR != "" {

@@ -37,6 +37,17 @@ so the local workspace no longer masked missing standalone sums. Azure DNS
 dynamic startup retried until its real TCP and UDP listeners shared one
 kernel-assigned port; its DNS suite passed 100 repetitions.
 
+Linux validation closed three execution defects. Security-group bridge filters
+allowed ARP before applying IP permissions, so newly attached AWS Lambda and
+Amazon ECS elastic network interfaces no longer depended on a stale neighbor
+cache. Workload callbacks used the container runtime's reported default bridge
+gateway on Linux instead of a Podman-machine alias that pointed at the outer
+host. Amazon Amplify compute and build containers used SELinux-labelled real
+bundle/workspace mounts, preserving read-only compute deployments and writable
+build artifacts. The complete AWS Lambda SDK suite passed on Linux and macOS,
+the Linux real-execution host suite passed, and the focused Amplify compute and
+real-build SDK flows passed on enforcing Linux.
+
 ## Next Recommended Slice
 
 The next recommended AWS fidelity slice remained BUG-2679: Amazon EC2
@@ -66,6 +77,10 @@ followed launch type instead of applying Fargate restrictions universally).
 - BUG-2656 retained abnormal-exit cleanup; ordinary AWS harness shutdown was
   clean, but a process killed before defers ran still required an external
   run-labelled reaper.
+- BUG-2690 retained Amazon Amplify's synthetic success lifecycle for
+  build-shaped jobs without both a clonable HTTP(S) source and an explicit
+  build specification; completion required real source/default-build
+  resolution or the matching AWS service error.
 
 ## Durable Validation Contract
 

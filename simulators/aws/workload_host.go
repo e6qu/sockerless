@@ -1,17 +1,29 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"os"
+	"runtime"
+
+	sim "github.com/sockerless/simulator"
 )
 
-func workloadCallbackHost() string {
+func workloadCallbackHost() (string, error) {
 	if runningInsideContainer() {
 		if host := firstNonLoopbackIPv4(); host != "" {
-			return host
+			return host, nil
 		}
+		return "", fmt.Errorf("containerized simulator has no non-loopback IPv4 address")
 	}
-	return "host.docker.internal"
+	if runtime.GOOS == "linux" {
+		host, err := sim.DefaultContainerNetworkGatewayIPv4()
+		if err != nil {
+			return "", fmt.Errorf("resolve Linux workload callback gateway: %w", err)
+		}
+		return host, nil
+	}
+	return "host.docker.internal", nil
 }
 
 func runningInsideContainer() bool {

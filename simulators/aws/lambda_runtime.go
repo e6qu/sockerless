@@ -55,15 +55,20 @@ type runtimeAPISidecar struct {
 // startRuntimeAPISidecar binds a free port on all interfaces, mounts
 // the Runtime API routes, and starts serving in a background
 // goroutine. Must bind to 0.0.0.0 (not 127.0.0.1) because the
-// function container reaches back via the docker bridge gateway on
-// Linux (172.17.0.1 / host.docker.internal), which is a different
-// interface than loopback. Returns the sidecar so the caller can pass
-// its address into the container and shut the sidecar down after the
+// function container reaches back via the container runtime's bridge gateway
+// on Linux, which is a different interface than loopback. Other platforms use
+// their standard host callback name. Returns the sidecar so the caller can
+// pass its address into the container and shut the sidecar down after the
 // invocation completes.
 func startRuntimeAPISidecar(inv *lambdaInvocation) (*runtimeAPISidecar, error) {
 	ln, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
 		return nil, fmt.Errorf("runtime API listen: %w", err)
+	}
+	host, err := runtimeAPIHost()
+	if err != nil {
+		_ = ln.Close()
+		return nil, err
 	}
 	addr, ok := ln.Addr().(*net.TCPAddr)
 	if !ok {
@@ -76,7 +81,7 @@ func startRuntimeAPISidecar(inv *lambdaInvocation) (*runtimeAPISidecar, error) {
 	s := &runtimeAPISidecar{
 		inv:      inv,
 		listener: ln,
-		addr:     fmt.Sprintf("%s:%d", runtimeAPIHost(), port),
+		addr:     net.JoinHostPort(host, fmt.Sprintf("%d", port)),
 		port:     port,
 	}
 
@@ -215,15 +220,12 @@ func (s *runtimeAPISidecar) handleInitError(w http.ResponseWriter, r *http.Reque
 	_, _ = w.Write([]byte(`{"status":"OK"}`))
 }
 
-// runtimeAPIHost returns the hostname the container uses to reach the
-// simulator host. Override via SIM_LAMBDA_RUNTIME_HOST; default
-// host.docker.internal which Docker Desktop maps automatically,
-// Podman 4+ maps automatically, and Linux Docker maps via the
-// `--add-host ...:host-gateway` entry in ContainerConfig.ExtraHosts
-// (see runtimeAPIExtraHosts).
-func runtimeAPIHost() string {
+// runtimeAPIHost returns the coordinate the function container uses to reach
+// the simulator host. Linux uses the runtime-reported bridge gateway; desktop
+// runtimes use their standard host callback name.
+func runtimeAPIHost() (string, error) {
 	if v := os.Getenv("SIM_LAMBDA_RUNTIME_HOST"); v != "" {
-		return v
+		return v, nil
 	}
 	return workloadCallbackHost()
 }
@@ -341,9 +343,13 @@ func prepareLambdaInvocationNetwork(
 	sidecar *runtimeAPISidecar,
 	sink sim.LogSink,
 ) (*lambdaInvocationNetwork, error) {
+	metadataEnv, err := hostMetadataEnv("")
+	if err != nil {
+		return nil, fmt.Errorf("resolve AWS Lambda metadata callback: %w", err)
+	}
 	out := &lambdaInvocationNetwork{
 		runtimeAPIAddr: sidecar.ContainerAddr(),
-		metadataEnv:    hostMetadataEnv(""),
+		metadataEnv:    metadataEnv,
 		extraHosts:     runtimeAPIExtraHosts(),
 		invocationID:   invocationID,
 	}

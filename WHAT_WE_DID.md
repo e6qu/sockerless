@@ -68,6 +68,33 @@ partial socket pair and retried a bounded 16 times until both real listeners
 shared a port; an explicitly configured port still failed immediately. The DNS
 tests passed 100 repetitions after the repair.
 
+The first Linux run of the new Lambda-to-Amazon-ECS integration exposed that
+the bridge security-group filter dropped ARP as well as disallowed IP packets.
+The target had been reachable in older host tests only because they populated
+the neighbor cache before installing the filter. Security-group enforcement
+now permits ARP before applying IP policy, and the host regression flushes the
+neighbor entry before proving permitted traffic. A fresh VPC-configured Lambda
+invocation then reached the Amazon ECS task's private elastic-network-interface
+address on Linux.
+
+The wider Lambda suite exposed a second coordinate defect specific to Linux
+inside a Podman machine: `host.docker.internal` named the outer macOS host, not
+the Linux VM namespace where the Runtime API listener ran. The shared runtime
+layer now reads the default bridge's IPv4 gateway from Docker or Podman, Linux
+callbacks use that exact address, and launch fails clearly if the required
+coordinate is absent. Ordinary and VPC-configured Lambda invocations passed
+their complete SDK suite on Linux, and the macOS desktop path remained green.
+
+The exact AWS services shard also exercised Amazon Amplify on an
+SELinux-enforcing host. Its compute container could not read the deployed
+bundle and its build container could not write the real artifact workspace
+because neither bind carried a relabel. Compute now mounts the bundle
+read-only with a shared label, while builds mount their workspace writable
+with the same label. Both end-to-end SDK flows passed on enforcing Linux.
+That audit also recorded BUG-2690: build-shaped jobs without a clonable HTTP
+source and explicit build specification still reported a synthetic success
+instead of performing real source/build resolution or returning an AWS error.
+
 ## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
 
 The three conformance ratchets counted coverage the simulators did not have.

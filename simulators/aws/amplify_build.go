@@ -302,11 +302,14 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 		Architecture: "linux/" + runtime.GOARCH,
 		Command:      []string{"/bin/sh", "-c", script.String()},
 		WorkingDir:   "/workspace",
-		Binds:        []string{workDir + ":/workspace"},
-		Env:          env,
-		Timeout:      amplifyBuildTimeout,
-		Labels:       map[string]string{"sockerless-amplify-job": jobID},
-		Sandbox:      sim.SandboxFargate,
+		// The build writes real artifacts back into this workspace. A shared
+		// SELinux relabel gives the confined build container that access on
+		// enforcing hosts and is accepted as a no-op by Docker elsewhere.
+		Binds:   []string{workDir + ":/workspace:z"},
+		Env:     env,
+		Timeout: amplifyBuildTimeout,
+		Labels:  map[string]string{"sockerless-amplify-job": jobID},
+		Sandbox: sim.SandboxFargate,
 	}, buildLog)
 	if err != nil {
 		buildLog.Printf("# start build container: %v", err)
