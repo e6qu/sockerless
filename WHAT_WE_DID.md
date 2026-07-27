@@ -95,6 +95,17 @@ That audit also recorded BUG-2690: build-shaped jobs without a clonable HTTP
 source and explicit build specification still reported a synthetic success
 instead of performing real source/build resolution or returning an AWS error.
 
+The final freshness pass upgraded the standalone AWS SDK graph to
+`github.com/aws/smithy-go` v1.27.5. Running the whole SDK matrix then exposed a
+runner failure that the DynamoDB Local differential harness had hidden:
+Podman's overlay filesystem returned an input/output error while mounting the
+oracle container, but the unbounded `docker run` call waited until the package's
+15-minute timeout and lost the useful container state. The harness now bounded
+image inspection, pull, launch, state inspection, and cleanup, gave each oracle
+container a deterministic run-local name, and reported the real failed state
+before cleaning it up. After the local engine remounted cleanly, the focused
+oracle and all four non-overlapping AWS SDK shards passed.
+
 ## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
 
 The three conformance ratchets counted coverage the simulators did not have.

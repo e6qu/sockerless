@@ -34,8 +34,9 @@ The next fidelity work stayed evidence-driven. AWS Lambda image invocations had 
 4. Let the AWS SDK, CLI, and Terraform harnesses terminate the simulator through its cleanup path on ordinary completion.
 5. Bundled the pre-push dependency drift into the branch: every Docker backend and simulator shared-module consumer used `github.com/docker/go-connections` v0.8.1; the three root simulators were independently tidied for standalone `GOWORK=off` builds; and every affected module passed its complete tests.
 6. Closed the Linux data-plane failures exposed by the official SDK run: security-group filtering preserved ARP neighbor discovery, workload callbacks used the runtime's real bridge gateway, and Amazon Amplify compute/build workspaces carried their required SELinux labels.
-7. Preserved the exact Shauth browser, production-build, workflow-budget, and fuzzing contracts.
-8. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+7. Upgraded the standalone AWS SDK graph to `github.com/aws/smithy-go` v1.27.5 and bounded every container-engine operation in the DynamoDB Local differential harness, including real failed-state diagnostics.
+8. Preserved the exact Shauth browser, production-build, workflow-budget, and fuzzing contracts.
+9. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

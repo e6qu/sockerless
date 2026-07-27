@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2690 filed - 2656 fixed - 18 open - 16 false positives.**
+**2692 filed - 2658 fixed - 18 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -33,6 +33,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2692~~ | P2 | AWS SDK DynamoDB differential harness | unbounded container-engine commands consumed the whole test budget | The DynamoDB Local oracle had invoked Docker image inspection, pull, run, and cleanup without deadlines. A Podman overlay mount input/output error therefore left `docker run` blocked for 13 minutes until the package timeout hid the actual engine state. Every engine operation now had an explicit deadline, the oracle container had a deterministic run-local name, a failed start reported the real container state before bounded cleanup, and the full DynamoDB differential flow passed after the local engine recovered. |
+| ~~2691~~ | P3 | AWS SDK dependency freshness | Smithy patch release appeared before publication | The pre-push freshness gate found `github.com/aws/smithy-go` v1.27.5 after the branch's Linux fixes. The standalone AWS SDK module upgraded from v1.27.4 in the same pull request, and all four non-overlapping SDK shards passed against the real simulator. |
 | ~~2689~~ | P2 | AWS simulator Amplify execution | SELinux blocked real deployment and build workspaces | Amazon Amplify compute mounted its deployed bundle without a read relabel and real builds mounted their writable workspace without a write relabel. On an enforcing Linux host, Node could not read the compute entrypoint and the build container could not create artifacts. Compute now mounts the immutable bundle `ro,z`, builds mount the writable workspace `z`, and both real end-to-end SDK flows passed on enforcing Linux. |
 | ~~2688~~ | P2 | AWS simulator workload callbacks | Podman machine host alias pointed outside the runtime host | Linux AWS Lambda Runtime API and metadata callbacks used `host.docker.internal`, which a Podman machine resolved to the outer macOS host rather than the Linux VM where the simulator listener ran. The shared container runtime now reports its default bridge gateway, Linux workloads use that exact coordinate, resolution failures stop launch clearly, and the complete Lambda SDK suite passed on both Linux/Podman and macOS/Podman paths. |
 | ~~2687~~ | P1 | AWS simulator security-group data plane | ingress filter dropped ARP before IP policy could apply | The bridge security-group filter's terminal per-NIC drop also discarded ARP, so a newly attached AWS Lambda invocation could not resolve an Amazon ECS task's elastic network interface and timed out before TCP began. The filter now permits ARP independently of IP permissions, and the Linux host regression flushes the neighbor cache before proving permitted traffic. The exact Lambda-to-ECS private-address SDK test and the complete real-execution host suite passed. |

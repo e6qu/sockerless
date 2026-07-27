@@ -48,6 +48,12 @@ build artifacts. The complete AWS Lambda SDK suite passed on Linux and macOS,
 the Linux real-execution host suite passed, and the focused Amplify compute and
 real-build SDK flows passed on enforcing Linux.
 
+The AWS SDK client graph used `github.com/aws/smithy-go` v1.27.5. Its
+DynamoDB Local differential harness bounded image inspection, pull, launch,
+state inspection, and cleanup; a failed container launch reported the engine's
+real container state instead of consuming the package timeout. The focused
+oracle and all four non-overlapping AWS SDK shards passed.
+
 ## Next Recommended Slice
 
 The next recommended AWS fidelity slice remained BUG-2679: Amazon EC2
