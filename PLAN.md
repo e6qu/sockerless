@@ -32,8 +32,9 @@ The next fidelity work stayed evidence-driven. AWS Lambda image invocations had 
 2. Proved the runtime path with official AWS SDK, AWS CLI, and Terraform clients, including a function reaching an Amazon ECS task at its private `awsvpc` address.
 3. Aligned Amazon Cloud Map custom health checks with AWS's fixed failure threshold and removed the Terraform provider warnings exposed by the production-shaped test.
 4. Let the AWS SDK, CLI, and Terraform harnesses terminate the simulator through its cleanup path on ordinary completion.
-5. Preserved the exact Shauth browser, production-build, workflow-budget, and fuzzing contracts.
-6. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+5. Bundled the pre-push dependency drift into the branch: every Docker backend and simulator shared-module consumer used `github.com/docker/go-connections` v0.8.1, and all four affected modules passed their complete tests.
+6. Preserved the exact Shauth browser, production-build, workflow-budget, and fuzzing contracts.
+7. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

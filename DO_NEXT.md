@@ -27,6 +27,12 @@ and validated without deprecation warnings. Normal AWS SDK, CLI, and Terraform
 harness completion terminated the simulator through its cleanup path and left
 no workload containers or simulator VPC networks behind.
 
+The pre-push freshness gate upgraded `github.com/docker/go-connections` to
+v0.8.1 in the Docker backend and all three simulator shared modules. The Docker
+backend's standardized upgrade also advanced its indirect
+`github.com/mattn/go-isatty` dependency to v0.0.24. All four modules passed
+their complete tests.
+
 ## Next Recommended Slice
 
 The next recommended AWS fidelity slice remained BUG-2679: Amazon EC2

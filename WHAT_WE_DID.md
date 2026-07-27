@@ -47,6 +47,13 @@ termination only after a bounded grace period. The Terraform VPC moved away
 from Podman's default `10.88.0.0/16` bridge. The passing production-shaped run
 left no Lambda, Amazon ECS, or simulator VPC artifacts on the container host.
 
+The pre-push freshness gate found a newly published
+`github.com/docker/go-connections` patch release. The Docker backend and the
+AWS, Google Cloud, and Azure simulator shared modules upgraded to v0.8.1 in the
+same branch; the Docker backend's standardized upgrade also advanced its
+indirect `github.com/mattn/go-isatty` dependency to v0.0.24. All four modules
+passed their complete tests.
+
 ## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
 
 The three conformance ratchets counted coverage the simulators did not have.

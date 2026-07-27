@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2683 filed - 2650 fixed - 17 open - 16 false positives.**
+**2684 filed - 2651 fixed - 17 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -32,6 +32,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2684~~ | P3 | Go module dependency freshness | new patch release appeared before publication | The pre-push freshness gate found `github.com/docker/go-connections` v0.8.1 after the branch's implementation commit. The Docker backend and the AWS, Google Cloud, and Azure simulator shared modules upgraded from v0.8.0 to v0.8.1 in the same pull request; the Docker backend's mandated `make upgrade-deps` run also advanced its indirect `github.com/mattn/go-isatty` dependency from v0.0.22 to v0.0.24. All four modules passed their complete tests and the freshness gate passed. |
 | ~~2683~~ | P3 | AWS simulator test-host cleanup and VPC coordinates | hard kill bypassed cleanup; fixture CIDR collided with Podman | The AWS SDK and CLI harnesses had killed the simulator directly and the Terraform harness had SIGKILLed its process group, bypassing the simulator's container/network cleanup even after successful tests. They now delivered the simulator's normal termination signal, waited for cleanup, and reserved forced termination for a bounded failure path. The Terraform VPC moved off Podman's default `10.88.0.0/16` bridge to a non-conflicting private range, and its local state used a configured local backend instead of Terraform's deprecated per-command `-state` flag. |
 | ~~2682~~ | P3 | AWS simulator provider-contract drift | deprecated fields encoded behavior AWS no longer exposes | Amazon Cloud Map had round-tripped any caller-supplied `HealthCheckCustomConfig.FailureThreshold`, although AWS always reports `1`, and the production-shaped Terraform fixture asserted the obsolete value. The handler now normalizes the field to `1`, official SDK coverage proves Create/Get/List agreement, and the Terraform fixture tests the supported custom-health block without deprecated attributes. The same warning audit moved the DynamoDB global secondary index from deprecated `hash_key` syntax to `key_schema`; `terraform validate` completed without warnings. |
 | ~~2678~~ | P2 | AWS simulator Lambda VpcConfig | modelled control plane, ignored at launch | AWS Lambda image invocations now ran on the VPC declared by `VpcConfig` instead of Docker's default bridge. The simulator validated that every subnet and security group belonged to one VPC, leased addresses from the configured subnets, attached each Linux invocation through a real network namespace and VPC veth, applied security-group and route egress policy, and routed the per-invocation Lambda Runtime API through a dedicated link-local DNAT endpoint. Official AWS SDK coverage reached an Amazon ECS task at its private `awsvpc` address from the function, while AWS CLI and Terraform coverage launched VPC-configured functions through their normal public surfaces. |
