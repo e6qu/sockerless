@@ -132,6 +132,16 @@ func oidcCreateGraphUser(t *testing.T, srv *sim.Server, displayName, upn string)
 	if err := json.Unmarshal(data, &created); err != nil || created.ID == "" {
 		t.Fatalf("decode created user id: %v: %s", err, data)
 	}
+	// The Microsoft Graph directory lives in a process-global store, so a user
+	// created here outlives the server this test built. Delete it the way a real
+	// Graph client would, or a second run in the same process (go test -count=2)
+	// collides on the userPrincipalName uniqueness the directory enforces.
+	t.Cleanup(func() {
+		req := httptest.NewRequest(http.MethodDelete, "http://localhost:4568/v1.0/users/"+created.ID, nil)
+		if resp, body := oidcFlowDo(t, srv, req); resp.StatusCode != http.StatusNoContent {
+			t.Errorf("delete graph user status = %d, want 204: %s", resp.StatusCode, body)
+		}
+	})
 	return created.ID
 }
 

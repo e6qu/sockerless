@@ -123,10 +123,14 @@ test.describe("Azure portal shell", () => {
     expect(await isDark()).toBe(before);
   });
 
-  test("keeps the Azure API root separate from /ui/", async ({ page }) => {
-    const response = await page.goto("/");
-    expect(page.url()).toBe("http://localhost:19330/");
-    expect(response?.status()).toBe(404);
+  test("sends a visitor at the bare origin to the portal", async ({ page }) => {
+    // Azure Cosmos DB owns the simulator's API root, because the azcosmos SDK's
+    // global endpoint manager reads account properties from it. A browser
+    // carries none of Cosmos's data-plane markers, so the root hands it to the
+    // portal instead of answering a bare 404; a real Cosmos client still gets
+    // account properties from the same URL, which the Go and SDK suites pin.
+    await page.goto("/");
+    await expect(page).toHaveURL("http://localhost:19330/ui/");
   });
 
   test("exposes a skip link ahead of the portal content", async ({ page }) => {

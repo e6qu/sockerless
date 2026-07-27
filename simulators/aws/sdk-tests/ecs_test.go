@@ -790,9 +790,15 @@ func createECSTestSubnet(t *testing.T, name string) string {
 func createECSTestVPCSubnet(t *testing.T, name string) (string, string) {
 	t.Helper()
 	ec2c := ec2Client()
+	// Each VPC gets its own /16 so no two tests in a run ever ask the container
+	// runtime for the same network CIDR: a VPC's Docker network outlives its
+	// test whenever teardown races a container that is still shutting down, and
+	// a repeated CIDR then makes the next test's task fail to launch. The range
+	// starts above 10.0.x (used by fixed-CIDR tests) and stops below 10.120.x
+	// (where the CLI suite probes for free CIDRs).
 	n := ecsTestSubnetCounter.Add(1)
-	second := 200 + int(n%40)
-	third := int((n / 40) % 200)
+	second := 20 + int(n%100)
+	third := int((n / 100) % 200)
 	vpcCIDR := fmt.Sprintf("10.%d.0.0/16", second)
 	subnetCIDR := fmt.Sprintf("10.%d.%d.0/24", second, third)
 
@@ -1107,12 +1113,14 @@ func TestECS_ListTasks_Pagination(t *testing.T) {
 		client.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)})
 	})
 
+	// Bridge network mode (the default): the tasks share the container
+	// instance's networking, so no networkConfiguration is needed to run them.
 	td, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
 		Family: aws.String("pag-family"),
 		ContainerDefinitions: []ecstypes.ContainerDefinition{
 			{Name: aws.String("app"), Image: aws.String("alpine:latest")},
 		},
-		NetworkMode: ecstypes.NetworkModeAwsvpc,
+		NetworkMode: ecstypes.NetworkModeBridge,
 	})
 	require.NoError(t, err)
 	tdArn := aws.ToString(td.TaskDefinition.TaskDefinitionArn)

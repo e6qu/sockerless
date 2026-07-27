@@ -870,6 +870,27 @@ func ecsComputeCompatibilities(networkMode string, requires []string) []string {
 	return out
 }
 
+// Amazon Elastic Container Service (ECS) task networking modes, as spelled by
+// the ECS API's NetworkMode enum.
+const (
+	ecsNetworkModeAwsvpc = "awsvpc"
+	ecsNetworkModeBridge = "bridge"
+	ecsNetworkModeHost   = "host"
+	ecsNetworkModeNone   = "none"
+)
+
+// ecsEffectiveNetworkMode returns the networking mode a task definition's
+// containers run under. Amazon ECS defaults an unset networkMode to bridge, so
+// the launch path resolves the default once instead of treating "" as a mode of
+// its own.
+func ecsEffectiveNetworkMode(td ECSTaskDefinition) string {
+	mode := strings.ToLower(strings.TrimSpace(td.NetworkMode))
+	if mode == "" {
+		return ecsNetworkModeBridge
+	}
+	return mode
+}
+
 // ecsIncludeHasTags reports whether the DescribeTaskDefinition include list
 // requests TAGS (case-insensitive, matching the AWS enum).
 func ecsIncludeHasTags(include []string) bool {
@@ -1285,13 +1306,31 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 		}
 	}
 
+	// networkConfiguration is required for awsvpc task definitions — that is
+	// what allocates the task its own elastic network interface — and is not
+	// supported for any other network mode, where the task shares the container
+	// instance's networking. Rejecting both mismatches keeps a caller from
+	// silently getting networking it did not ask for.
+	networkMode := ecsEffectiveNetworkMode(td)
+	hasAwsvpcConfig := in.NetworkConfiguration != nil &&
+		in.NetworkConfiguration.AwsvpcConfiguration != nil &&
+		len(in.NetworkConfiguration.AwsvpcConfiguration.Subnets) > 0
+	switch {
+	case networkMode == ecsNetworkModeAwsvpc && !hasAwsvpcConfig:
+		return nil, &ecsRequestError{"InvalidParameterException",
+			"Network Configuration must be provided when networking mode is awsvpc.", http.StatusBadRequest}
+	case networkMode != ecsNetworkModeAwsvpc && in.NetworkConfiguration != nil:
+		return nil, &ecsRequestError{"InvalidParameterException",
+			fmt.Sprintf("Network Configuration is not supported when networking mode is %s.", networkMode),
+			http.StatusBadRequest}
+	}
+
 	// Real ECS validates the subnet exists in EC2 and uses its CIDR for
 	// task IP assignment. Pull the requested subnet up front; surface a
 	// clean InvalidParameterException when the caller passes one we
 	// don't know about (matches real AWS InvalidSubnetID.NotFound).
 	var requestedSubnet string
-	if in.NetworkConfiguration != nil && in.NetworkConfiguration.AwsvpcConfiguration != nil &&
-		len(in.NetworkConfiguration.AwsvpcConfiguration.Subnets) > 0 {
+	if hasAwsvpcConfig {
 		requestedSubnet = in.NetworkConfiguration.AwsvpcConfiguration.Subnets[0]
 	}
 
@@ -1301,9 +1340,12 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 		taskID := generateUUID()
 		taskArn := fmt.Sprintf("arn:aws:ecs:"+awsRegion()+":"+awsAccountID()+":task/%s/%s", clusterName, taskID)
 
+		// Only an awsvpc task is allocated an elastic network interface. A
+		// bridge/host/none task shares the container instance's networking and
+		// carries no ENI attachment and no per-container networkInterfaces.
 		eniID := generateUUID()
 		var privateIP, subnetID string
-		if requestedSubnet != "" {
+		if networkMode == ecsNetworkModeAwsvpc {
 			ip, ipErr := AllocateSubnetIP(requestedSubnet)
 			if ipErr != nil {
 				return nil, &ecsRequestError{"InvalidParameterException", ipErr.Error(), http.StatusBadRequest}
@@ -1315,17 +1357,18 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 
 		var containers []ECSTaskContainer
 		for _, cd := range td.ContainerDefinitions {
-			containers = append(containers, ECSTaskContainer{
+			c := ECSTaskContainer{
 				ContainerArn: fmt.Sprintf("arn:aws:ecs:"+awsRegion()+":"+awsAccountID()+":container/%s", generateUUID()),
 				Name:         cd.Name,
 				LastStatus:   "PROVISIONING",
-				NetworkInterfaces: []ECSNetworkInterface{
-					{
-						AttachmentId:       eniID,
-						PrivateIpv4Address: privateIP,
-					},
-				},
-			})
+			}
+			if networkMode == ecsNetworkModeAwsvpc {
+				c.NetworkInterfaces = []ECSNetworkInterface{{
+					AttachmentId:       eniID,
+					PrivateIpv4Address: privateIP,
+				}}
+			}
+			containers = append(containers, c)
 		}
 
 		// Merge tags: request tags take priority, then inherited from task def
@@ -1338,13 +1381,6 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 		taskVolumeHosts, ebsAttachments, ebsErr := ecsPrepareManagedEBSVolumes(ctx, td, in.VolumeConfigurations, taskID, requestedSubnet)
 		if ebsErr != nil {
 			return nil, ebsErr
-		}
-
-		attachmentDetails := []ECSKeyValuePair{
-			{Name: "privateIPv4Address", Value: privateIP},
-		}
-		if subnetID != "" {
-			attachmentDetails = append([]ECSKeyValuePair{{Name: "subnetId", Value: subnetID}}, attachmentDetails...)
 		}
 
 		task := ECSTask{
@@ -1363,14 +1399,17 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 			Overrides:            in.Overrides,
 			EnableExecuteCommand: in.EnableExecuteCommand,
 			StartedBy:            in.StartedBy,
-			Attachments: []ECSAttachment{
-				{
-					Id:      eniID,
-					Type:    "ElasticNetworkInterface",
-					Status:  "ATTACHING",
-					Details: attachmentDetails,
+		}
+		if networkMode == ecsNetworkModeAwsvpc {
+			task.Attachments = append(task.Attachments, ECSAttachment{
+				Id:     eniID,
+				Type:   "ElasticNetworkInterface",
+				Status: "ATTACHING",
+				Details: []ECSKeyValuePair{
+					{Name: "subnetId", Value: subnetID},
+					{Name: "privateIPv4Address", Value: privateIP},
 				},
-			},
+			})
 		}
 		task.Attachments = append(task.Attachments, ebsAttachments...)
 
@@ -1559,6 +1598,20 @@ func ecsContainerResourceLimits(td ECSTaskDefinition, cd ECSContainerDefinition)
 	return memBytes, nanoCPU
 }
 
+// ecsTaskSandbox returns the isolation profile a task's containers run under.
+// The AWS Fargate profile denies host networking because Fargate never offers
+// it — Fargate requires the awsvpc network mode. A task definition that asks
+// for the host network mode is by definition running on the EC2 or EXTERNAL
+// launch type, where Amazon ECS does give the task the container instance's own
+// network stack, so the denial does not apply to it.
+func ecsTaskSandbox(networkMode string) sim.SandboxProfile {
+	profile := sim.SandboxFargate
+	if networkMode == ecsNetworkModeHost {
+		profile.DenyHostNetwork = false
+	}
+	return profile
+}
+
 func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, sink sim.LogSink) (*ecsTaskProcesses, error) {
 	if len(td.ContainerDefinitions) == 0 {
 		return nil, nil
@@ -1602,16 +1655,26 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		MainContainerName: td.ContainerDefinitions[0].Name,
 		Handles:           make(map[string]*sim.ContainerHandle, len(td.ContainerDefinitions)),
 	}
-	// awsvpc networking. netns tier (Linux + CAP_NET_ADMIN): a pause container
-	// holds the task's VPC network namespace (a long-lived sleep, so the ENI is
-	// plumbed with no start-race), the ENI veth is attached into it, and every
-	// task container shares that netns — overlapping VPC CIDRs work natively with
-	// the real ENI IP. Otherwise the cross-platform Docker-network tier pins the
+	// The task definition's networkMode decides the fabric every container in
+	// the task lands on: awsvpc gets the task its own elastic network interface
+	// in the VPC, host shares the container instance's network stack, none has
+	// no connectivity, and bridge uses the container instance's default Docker
+	// bridge.
+	//
+	// awsvpc netns tier (Linux + CAP_NET_ADMIN): a pause container holds the
+	// task's VPC network namespace (a long-lived sleep, so the ENI is plumbed
+	// with no start-race), the ENI veth is attached into it, and every task
+	// container shares that netns — overlapping VPC CIDRs work natively with the
+	// real ENI IP. Otherwise the cross-platform Docker-network tier pins the
 	// first container to a per-VPC bridge at the ENI IP.
+	networkMode := ecsEffectiveNetworkMode(td)
 	eniIP, subnetID, hasENI := ecsTaskENIInfo(taskID)
-	netnsTier := ec2ECSRealNetAvailable()
+	if networkMode == ecsNetworkModeAwsvpc && !hasENI {
+		return nil, fmt.Errorf("awsvpc task %s has no elastic network interface attachment", taskID)
+	}
+	netnsTier := networkMode == ecsNetworkModeAwsvpc && ec2ECSRealNetAvailable()
 	var sharedNetMode string
-	if netnsTier && hasENI {
+	if netnsTier {
 		pause, perr := startECSPauseContainer(taskID, td, sink)
 		if perr != nil {
 			return nil, perr
@@ -1633,7 +1696,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		sharedNetMode = "container:" + pause.ContainerID
 	}
 	metadataEnv := hostMetadataEnv(taskID)
-	if netnsTier && hasENI {
+	if netnsTier {
 		metadataEnv = hostMetadataLinkLocalEnv(taskID)
 	}
 	var mainDockerID string
@@ -1706,28 +1769,37 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			Tty:       wantTTY || cd.PseudoTerminal,
 			OpenStdin: wantTTY || cd.Interactive,
 			Binds:     binds,
-			Sandbox:   sim.SandboxFargate,
+			Sandbox:   ecsTaskSandbox(networkMode),
 		}
 		cfg.MemoryBytes, cfg.NanoCPU = ecsContainerResourceLimits(td, cd)
 		switch {
 		case sharedNetMode != "":
 			// netns tier: share the pause container's ENI netns.
 			cfg.NetworkMode = sharedNetMode
-		case i == 0:
+		case networkMode == ecsNetworkModeHost:
+			// host mode: the containers use the container instance's network
+			// stack directly, so they share its interfaces and its loopback.
+			cfg.NetworkMode = "host"
 			cfg.ExtraHosts = append(hostMetadataExtraHosts(), elbv2WorkloadExtraHosts()...)
-			if !netnsTier {
-				netName, dockerIP, ok, nerr := ecsTaskVPCNetwork(taskID)
-				if nerr != nil {
-					cleanupECSTaskProcesses(taskID, processes)
-					return nil, nerr
-				}
-				if ok {
-					cfg.Network = netName
-					cfg.IPAddress = dockerIP
-				}
-			}
-		case mainDockerID != "":
+		case networkMode == ecsNetworkModeNone:
+			// none mode: the containers have no external connectivity.
+			cfg.NetworkMode = "none"
+		case networkMode == ecsNetworkModeAwsvpc && i > 0:
+			// Every container in an awsvpc task shares the task ENI.
 			cfg.NetworkMode = "container:" + mainDockerID
+		case networkMode == ecsNetworkModeAwsvpc:
+			cfg.ExtraHosts = append(hostMetadataExtraHosts(), elbv2WorkloadExtraHosts()...)
+			netName, dockerIP, nerr := ecsTaskVPCNetwork(taskID)
+			if nerr != nil {
+				cleanupECSTaskProcesses(taskID, processes)
+				return nil, nerr
+			}
+			cfg.Network = netName
+			cfg.IPAddress = dockerIP
+		default:
+			// bridge mode: each container gets its own address on the
+			// container instance's default Docker bridge.
+			cfg.ExtraHosts = append(hostMetadataExtraHosts(), elbv2WorkloadExtraHosts()...)
 		}
 
 		handle, err := sim.StartContainerSync(cfg, sink)
@@ -1912,14 +1984,13 @@ func ecsContainerMetadataV4(taskID string) (map[string]any, bool) {
 }
 
 // ecsTaskVPCNetwork resolves the VPC Docker network + ENI IP for an awsvpc task,
-// ensuring the network exists. Returns ok=false for tasks with no awsvpc ENI
-// (bridge/host tasks use default Docker networking). A network-provisioning
-// failure (e.g. a CIDR Docker can't allocate) is returned so the launch fails
-// loudly rather than running with a silently-wrong address.
-func ecsTaskVPCNetwork(taskID string) (networkName, eniIP string, ok bool, err error) {
+// ensuring the network exists. Every failure is returned so an awsvpc launch
+// fails loudly rather than silently landing the task on the container
+// instance's default bridge with an address that is not its ENI's.
+func ecsTaskVPCNetwork(taskID string) (networkName, eniIP string, err error) {
 	task, found := ecsTasks.Get(taskID)
 	if !found {
-		return "", "", false, nil
+		return "", "", fmt.Errorf("task %s not found", taskID)
 	}
 	var subnetID string
 	for _, att := range task.Attachments {
@@ -1936,21 +2007,24 @@ func ecsTaskVPCNetwork(taskID string) (networkName, eniIP string, ok bool, err e
 		}
 	}
 	if subnetID == "" || eniIP == "" {
-		return "", "", false, nil
+		return "", "", fmt.Errorf("awsvpc task %s has no elastic network interface attachment", taskID)
 	}
 	subnet, ok := ec2Subnets.Get(subnetID)
 	if !ok {
-		return "", "", false, nil
+		return "", "", fmt.Errorf("subnet %s for task %s not found", subnetID, taskID)
 	}
 	vpc, ok := ec2Vpcs.Get(subnet.VpcId)
-	if !ok || vpc.CidrBlock == "" {
-		return "", "", false, nil
+	if !ok {
+		return "", "", fmt.Errorf("vpc %s for subnet %s not found", subnet.VpcId, subnetID)
+	}
+	if vpc.CidrBlock == "" {
+		return "", "", fmt.Errorf("vpc %s has no CIDR block", subnet.VpcId)
 	}
 	name := ecsVPCNetworkName(subnet.VpcId)
 	if _, nerr := sim.EnsureVPCNetwork(name, vpc.CidrBlock); nerr != nil {
-		return "", "", false, fmt.Errorf("provision VPC network for %s: %w", subnet.VpcId, nerr)
+		return "", "", fmt.Errorf("provision VPC network for %s: %w", subnet.VpcId, nerr)
 	}
-	return name, eniIP, true, nil
+	return name, eniIP, nil
 }
 
 // ecsRequireCluster resolves a cluster ref (name or ARN; "" → "default") and,

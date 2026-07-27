@@ -71,10 +71,18 @@ vendored Smithy model. How a service's *implemented* op set is read depends on i
 wire protocol:
 
 - **awsJson (`X-Amz-Target`)** — read from the JSON router's registered targets.
-- **awsQuery / ec2Query (`Action=…`)** — read from the query router. Services
-  registered with the *unversioned* `Register` (Amazon EC2, STS, …) land in the
-  router's legacy `""` bucket, which is intersected with the model's own op set so
-  those actions attribute to the right service.
+- **awsQuery / ec2Query (`Action=…`)** — read from the query router. The versioned
+  buckets are keyed by each service's own API `Version`, so they attribute
+  themselves. The *unversioned* `Register` form (Amazon EC2, AWS IAM, AWS STS, and
+  Amazon CloudWatch's query surface) lands in the router's `""` bucket, which carries
+  no service identity at all; ownership there is *measured* by running each service's
+  registration entry point (`legacyQueryRegistrars`) against a fresh router and
+  recording what it mounts. An action no registrar claims is credited to no service —
+  never to every service, which would let one service's actions count as another's
+  coverage. `TestServiceConformance_LegacyQueryAttribution` fails when an action in
+  that bucket has no owner, and `TestServiceConformance_LegacyQueryShadowing` fails
+  when a versioned service leaves an operation to be answered by another service's
+  unversioned handler.
 - **REST (path + method)** — the op name is a constant passed to
   `cloudTrailRecordedREST("Op", "<source>.amazonaws.com", …)` at registration, so it
   is captured in the `restRegisteredOps` registry (keyed by CloudTrail event source)

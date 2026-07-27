@@ -135,7 +135,9 @@ func registerCosmosDB(srv *sim.Server) {
 	// Account discovery: the azcosmos SDK's global-endpoint-manager GETs the
 	// account root on its first request and fails if it errors, so this is
 	// required for the real SDK to talk to the sim at all.
-	srv.HandleFunc("GET /{$}", handleCosmosAccountProperties)
+	srv.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		handleCosmosAccountProperties(srv, w, r)
+	})
 
 	srv.HandleFunc("POST /dbs", handleCosmosDataCreateDB)
 	srv.HandleFunc("GET /dbs", handleCosmosDataListDBs)
@@ -1291,8 +1293,16 @@ func cosmosIsDataPlaneRequest(r *http.Request) bool {
 // handleCosmosAccountProperties serves the Cosmos account root the SDK's global
 // endpoint manager reads. The single read/write region echoes back the client's
 // own endpoint so the SDK keeps routing every request to the sim.
-func handleCosmosAccountProperties(w http.ResponseWriter, r *http.Request) {
+func handleCosmosAccountProperties(srv *sim.Server, w http.ResponseWriter, r *http.Request) {
 	if !cosmosIsDataPlaneRequest(r) {
+		// Cosmos owns the API root, so a request the account-discovery route
+		// does not recognise lands here rather than on the console redirect.
+		// Hand it back to the server, which sends a browser at the bare origin
+		// to the console; only when no console is registered is the root
+		// genuinely nothing.
+		if srv.ServeUIRoot(w, r) {
+			return
+		}
 		http.NotFound(w, r)
 		return
 	}

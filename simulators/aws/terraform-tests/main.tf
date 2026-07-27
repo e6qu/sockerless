@@ -388,6 +388,20 @@ resource "aws_ecs_task_definition" "tf_runner" {
   }])
 }
 
+# A bridge-network-mode task definition — the mode Amazon ECS applies to a task
+# that shares its container instance's networking rather than receiving its own
+# elastic network interface. It is EC2-compatible only: FARGATE requires awsvpc.
+resource "aws_ecs_task_definition" "tf_runner_bridge" {
+  family       = "tf-runner-bridge"
+  network_mode = "bridge"
+
+  container_definitions = jsonencode([{
+    name      = "app"
+    image     = "public.ecr.aws/docker/library/alpine:latest"
+    essential = true
+  }])
+}
+
 resource "aws_ecs_service" "tf_runner" {
   name            = "tf-runner-svc"
   cluster         = aws_ecs_cluster.main.id
@@ -1442,6 +1456,9 @@ output "ecs_service_name" {
 }
 output "ecs_cluster_capacity_providers" {
   value = join(",", sort(aws_ecs_cluster_capacity_providers.main.capacity_providers))
+}
+output "ecs_task_definition_bridge_network_mode" {
+  value = aws_ecs_task_definition.tf_runner_bridge.network_mode
 }
 output "lambda_function_arn" {
   value = aws_lambda_function.tf_lambda.arn

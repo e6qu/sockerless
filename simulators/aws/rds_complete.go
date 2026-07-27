@@ -116,6 +116,144 @@ func registerRDSComplete(r *sim.AWSQueryRouter, srv *sim.Server) {
 
 	r.RegisterVersioned(rdsAPIVersion, "SwitchoverGlobalCluster", handleRDSSwitchoverGlobalCluster)
 	r.RegisterVersioned(rdsAPIVersion, "SwitchoverReadReplica", handleRDSSwitchoverReadReplica)
+
+	r.RegisterVersioned(rdsAPIVersion, "DescribeAccountAttributes", handleRDSDescribeAccountAttributes)
+}
+
+// ---------------------------------------------------------------------------
+// Account attributes
+// ---------------------------------------------------------------------------
+
+// rdsAccountQuota is one entry of DescribeAccountAttributes' AccountQuotaList.
+// `Used` is always derived from the simulator's own RDS resources — the same
+// account state DescribeDBInstances and friends serve — so the quota report
+// stays consistent with what the account actually holds.
+type rdsAccountQuota struct {
+	Name string
+	Used int64
+	Max  int64
+}
+
+// rdsMaxOverAccount returns the highest per-resource count in the account,
+// which is what Amazon RDS reports as `Used` for the per-resource quotas
+// ("the used value is the highest number of X for a Y in the account").
+func rdsMaxOverAccount[T any](items []T, count func(T) int) int64 {
+	var high int64
+	for _, it := range items {
+		if n := int64(count(it)); n > high {
+			high = n
+		}
+	}
+	return high
+}
+
+// rdsIsDefaultGroupName reports whether a parameter/option group name is one of
+// the Amazon RDS-owned defaults. RDS reserves the `default.<family>` (parameter
+// groups) and `default:<engine>-<version>` (option groups) name forms for the
+// groups it creates itself, and the DBParameterGroups /
+// DBClusterParameterGroups / OptionGroups quotas count only the account's own
+// nondefault groups.
+func rdsIsDefaultGroupName(name string) bool {
+	return strings.HasPrefix(name, "default.") || strings.HasPrefix(name, "default:")
+}
+
+// rdsAccountQuotas builds the AccountQuotaList DescribeAccountAttributes
+// returns. The quota names and their default maxima are the ones Amazon RDS
+// documents for an account (the vendored rds Smithy model enumerates them on
+// the AccountQuota shape and captures the first fifteen, in this order, in its
+// DescribeAccountAttributes example); the used values are counted from the
+// simulator's RDS state.
+func rdsAccountQuotas() []rdsAccountQuota {
+	instances := rdsInstances.List()
+	var allocatedStorage int64
+	for _, i := range instances {
+		allocatedStorage += int64(i.AllocatedStorage)
+	}
+	// The ManualSnapshots / ManualClusterSnapshots quotas count only the
+	// snapshots the account took itself; automated backups don't consume them.
+	var manualSnapshots, manualClusterSnapshots int64
+	for _, s := range rdsSnapshots.List() {
+		if s.SnapshotType == "manual" {
+			manualSnapshots++
+		}
+	}
+	for _, s := range rdsClusterSnapshots.List() {
+		if s.SnapshotType == "manual" {
+			manualClusterSnapshots++
+		}
+	}
+	var paramGroups, clusterParamGroups, optionGroups int64
+	for _, g := range rdsParamGroups.List() {
+		if !rdsIsDefaultGroupName(g.DBParameterGroupName) {
+			paramGroups++
+		}
+	}
+	for _, g := range rdsClusterParamGroups.List() {
+		if !rdsIsDefaultGroupName(g.DBClusterParameterGroupName) {
+			clusterParamGroups++
+		}
+	}
+	for _, g := range rdsOptionGroups.List() {
+		if !rdsIsDefaultGroupName(g.OptionGroupName) {
+			optionGroups++
+		}
+	}
+	customEndpointsPerCluster := map[string]int{}
+	for _, e := range rdsClusterEndpoints.List() {
+		if e.EndpointType == "CUSTOM" {
+			customEndpointsPerCluster[e.DBClusterIdentifier]++
+		}
+	}
+	var highestCustomEndpoints int64
+	for _, n := range customEndpointsPerCluster {
+		if int64(n) > highestCustomEndpoints {
+			highestCustomEndpoints = int64(n)
+		}
+	}
+
+	return []rdsAccountQuota{
+		{"DBInstances", int64(len(instances)), 40},
+		{"ReservedDBInstances", int64(len(rdsReservedInstances.List())), 40},
+		{"AllocatedStorage", allocatedStorage, 100000},
+		{"DBSecurityGroups", int64(len(rdsDBSecurityGroups.List())), 25},
+		{"AuthorizationsPerDBSecurityGroup", rdsMaxOverAccount(rdsDBSecurityGroups.List(), func(g RDSDBSecurityGroup) int {
+			return len(g.IPRanges) + len(g.EC2SecurityGroups)
+		}), 20},
+		{"DBParameterGroups", paramGroups, 50},
+		{"ManualSnapshots", manualSnapshots, 100},
+		{"EventSubscriptions", int64(len(rdsEventSubscriptions.List())), 20},
+		{"DBSubnetGroups", int64(len(rdsSubnetGroups.List())), 50},
+		{"OptionGroups", optionGroups, 20},
+		{"SubnetsPerDBSubnetGroup", rdsMaxOverAccount(rdsSubnetGroups.List(), func(g RDSSubnetGroup) int {
+			return len(g.SubnetIds)
+		}), 20},
+		{"ReadReplicasPerMaster", rdsMaxOverAccount(instances, func(i RDSInstance) int {
+			return len(i.ReadReplicas)
+		}), 5},
+		{"DBClusters", int64(len(rdsClusters.List())), 40},
+		{"DBClusterParameterGroups", clusterParamGroups, 50},
+		{"DBClusterRoles", rdsMaxOverAccount(rdsClusterRoles.List(), func(s rdsRoleSet) int {
+			return len(s.Roles)
+		}), 5},
+		{"DBInstanceRoles", rdsMaxOverAccount(rdsInstanceRoles.List(), func(s rdsRoleSet) int {
+			return len(s.Roles)
+		}), 5},
+		{"ManualClusterSnapshots", manualClusterSnapshots, 100},
+		{"CustomEndpointsPerDBCluster", highestCustomEndpoints, 5},
+	}
+}
+
+// handleRDSDescribeAccountAttributes serves DescribeAccountAttributes, which
+// takes no parameters and returns the account's RDS quotas with current usage.
+func handleRDSDescribeAccountAttributes(w http.ResponseWriter, r *http.Request) {
+	var b strings.Builder
+	b.WriteString("<AccountQuotas>")
+	for _, q := range rdsAccountQuotas() {
+		fmt.Fprintf(&b, "<AccountQuota><AccountQuotaName>%s</AccountQuotaName><Used>%d</Used><Max>%d</Max></AccountQuota>",
+			xmlEscape(q.Name), q.Used, q.Max)
+	}
+	b.WriteString("</AccountQuotas>")
+	rdsXMLResponse(w, "DescribeAccountAttributes", b.String(), sim.RequestID(r.Context()))
 }
 
 // ---------------------------------------------------------------------------

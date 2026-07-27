@@ -52,7 +52,30 @@ and its Azure counterpart became install-or-fail-loud, and the remaining
 `docker`/`session-manager-plugin`/`git`/`gcloud`/`nsenter` tool-absent skips were
 removed (vestigial) or made `t.Fatal` against CI-provided tools.
 
-Still open, all externally gated: BUG-2523 and BUG-2441 (Bleephub product/UI, in
+BUG-2651 closed: the coverage ratchets measure served surface rather than pattern
+collisions. Google Cloud and Microsoft Azure probe the running simulator and
+count a documented method only when a handler answers; Amazon Web Services
+credits a legacy query action to the registrar that mounted it. Each cloud has a
+soundness test that fails if the probe stops authenticating or an unmounted URI
+stops reading as a miss, so the gate cannot quietly go blind. The numbers are now
+comparable across passes: Google Cloud 4054 of 5397, Azure 1878 of 2612, and
+every Amazon Web Services floor unchanged. Four reported issues closed with it —
+the Azure bare-origin redirect, the Google Cloud gcloud credential path, the
+Azure Microsoft Entra instance-discovery endpoint, and the Amazon ECS guest-kernel
+requirement — leaving `#394` (AzureAD Terraform provider) as the only open
+reported issue, blocked upstream.
+
+Newly open and actionable, all surfaced by that pass: BUG-2678 (AWS Lambda
+`VpcConfig` is modelled on the control plane but ignored at launch — the same
+synthetic behaviour just fixed for Amazon ECS network modes, and the natural next
+piece of work), BUG-2676 (Cloud Run v1 and v2 keep separate stores for what is one
+service on real Cloud Run), BUG-2677 (Azure Share ACL is a declared gap, which is
+what blocks Terraform coverage of the Azure Files data plane), BUG-2680 (Amazon
+ECS `StartTask` never launches containers), BUG-2681 (the Fargate sandbox profile
+is applied to every launch type), and BUG-2679 (`DeleteSubnet` lacks
+`DependencyViolation`).
+
+Still open and externally gated: BUG-2523 and BUG-2441 (Bleephub product/UI, in
 the separate bleephub repository), BUG-1345 (AzureAD Terraform provider,
 upstream-blocked), and BUG-1075 (live-cloud validation, needs real cloud
 credentials).

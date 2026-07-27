@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"net/http"
+	"strings"
 )
 
 // writeTableODataError writes an Azure Tables data-plane error in the OData
@@ -41,6 +43,41 @@ func writeStorageError(w http.ResponseWriter, code, message string, statusCode i
 		Code:    code,
 		Message: message,
 	})
+}
+
+// writeStorageOperationNotImplemented declares that the simulator has no
+// handler for the Azure Storage data-plane operation this request names.
+//
+// The Blob / Files / Queues data planes select an operation from the
+// `restype` + `comp` query pair rather than from the path, and they dispatch
+// inside a host-addressed middleware instead of through the mux — so "nothing
+// is mounted here" has to be spoken in the response. Answering a sibling
+// handler instead is how a `PUT /{container}/{blob}?comp=tier` (Set Blob Tier)
+// ends up creating a blob and reporting 201 Created: the caller is told an
+// operation succeeded that the simulator never performed.
+//
+// The answer is a storage-shaped XML error carrying the machine-readable code
+// in `x-ms-error-code`, exactly like every other error these planes emit, so a
+// real SDK surfaces it as a typed failure. The simulator does not distinguish a
+// `comp` value Azure itself rejects from one Azure serves and the simulator does
+// not — both are gaps from the caller's point of view, and the message names the
+// exact coordinate that went unserved.
+func writeStorageOperationNotImplemented(w http.ResponseWriter, r *http.Request, plane string) {
+	q := r.URL.Query()
+	var parts []string
+	if v := q.Get("restype"); v != "" {
+		parts = append(parts, "restype="+v)
+	}
+	if v := q.Get("comp"); v != "" {
+		parts = append(parts, "comp="+v)
+	}
+	discriminator := "no restype/comp"
+	if len(parts) > 0 {
+		discriminator = strings.Join(parts, "&")
+	}
+	writeStorageError(w, "NotImplemented", fmt.Sprintf(
+		"Azure Storage %s data plane: %s %s (%s) is not implemented by the simulator",
+		plane, r.Method, r.URL.Path, discriminator), http.StatusNotImplemented)
 }
 
 func writeStorageXML(w http.ResponseWriter, statusCode int, v any) {

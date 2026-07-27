@@ -42,10 +42,86 @@ export CLOUDSDK_API_ENDPOINT_OVERRIDES_RUN=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY=http://localhost:4567/
 export STORAGE_EMULATOR_HOST=localhost:4567
-gcloud auth application-default login --no-launch-browser  # or use ADC
 
 gcloud run jobs list --region us-central1
 gcloud storage buckets list
+```
+
+### Credentials
+
+The data plane verifies an OAuth2 access token on every request, so a client
+needs a real credential. Both of Google's non-interactive credential paths work
+against the simulator, differing from real Google only in the coordinates.
+
+**Service-account key** — the `gcloud auth activate-service-account` path. Mint
+a key through the real IAM API and point the credential's token exchange at the
+simulator; the token endpoint verifies the assertion's signature against the
+public half IAM registered, so only a genuinely minted key authenticates.
+
+Creating that first account is itself an authenticated call, so it is made with
+a token straight from the token endpoint — the simulator's stand-in for the
+administrator who bootstraps a real project:
+
+```bash
+SIM=http://localhost:4567
+TOKEN=$(curl -s -X POST $SIM/token \
+  -d grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"accountId":"runner"}' \
+  $SIM/v1/projects/test-project/serviceAccounts
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}' \
+  $SIM/v1/projects/test-project/serviceAccounts/runner@test-project.iam.gserviceaccount.com/keys \
+  | python3 -c 'import sys,json,base64; sys.stdout.write(base64.b64decode(json.load(sys.stdin)["privateKeyData"]).decode())' \
+  > key.json
+```
+
+From there gcloud takes over, with `auth/token_host` as the only coordinate the
+credential needs:
+
+```bash
+gcloud config set auth/token_host $SIM/token
+gcloud config set api_endpoint_overrides/iam $SIM/
+gcloud auth activate-service-account --key-file=key.json
+gcloud iam service-accounts list
+```
+
+Once activated, `gcloud iam service-accounts keys create` mints every subsequent
+key.
+
+**Metadata server** — the on-instance path, and the one Application Default
+Credentials resolve through. Point the metadata-server coordinate at the
+simulator and gcloud discovers its identity and mints tokens on its own, with no
+key file and no interactive login:
+
+```bash
+export GCE_METADATA_HOST=localhost:4567
+export GCE_METADATA_IP=localhost:4567
+export GCE_METADATA_ROOT=localhost:4567
+
+gcloud auth list                                    # the metadata identity
+gcloud auth application-default print-access-token  # ADC through the same path
+```
+
+`gcloud auth login` (interactive) and `gcloud auth application-default login`
+are browser flows against Google's own consent screen and do not apply. For a
+federated operator identity, `gcloud auth login --cred-file` with an
+`external_account` credential works too — the simulator serves the Security
+Token Service token-exchange and introspection endpoints the file names.
+
+**Regional services.** Given an endpoint override, gcloud prefixes the region
+onto the host for regional services — `us-central1-localhost:4567`, mirroring
+the real `us-central1-run.googleapis.com`. The simulator answers that host form;
+the client just has to be able to reach it, either by resolving the prefixed
+name (a hosts-file entry, or `*.localhost` on Linux) or by routing through
+gcloud's proxy setting:
+
+```bash
+export CLOUDSDK_API_ENDPOINT_OVERRIDES_RUN=http://localhost:4567/
+export HTTP_PROXY=http://localhost:4567
+gcloud run services list --region=us-central1
 ```
 
 Docker or Podman is required when Cloud Run or Cloud Functions calls execute
@@ -176,7 +252,10 @@ None open. The Cloud Run `BackingPDEphemeral` rejection (Phase 91d bookmark) is 
 
 - **gRPC parity**: Cloud Logging's recommended path is gRPC; the sim exposes a gRPC port (default `:4568`) but does not serve every gRPC method. REST + JSON is the canonical surface.
 - **DNS resolution at UDP/53**: Cloud DNS stores records but does not serve them via UDP. Pair with dnsmasq for actual lookups.
-- **Real authentication**: Bearer tokens are accepted but not cryptographically verified.
+- **Google's interactive consent screen**: `gcloud auth login` and `gcloud auth
+  application-default login` are browser flows against accounts.google.com. The
+  non-interactive credential paths — service-account keys, the metadata server,
+  and workforce federation — all work; see [Credentials](#credentials).
 - **Multi-region**: sim is single-region.
 - **Billing / pricing / quota surfaces**: absent.
 

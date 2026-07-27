@@ -4,6 +4,112 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-27 — Simulator conformance became a measurement, and the defects it had been hiding were fixed
+
+The three conformance ratchets counted coverage the simulators did not have.
+Google Cloud treated a documented method as covered whenever any mounted route
+pattern shape-matched its path, so `{+name}` template spellings and colon-verb
+fan-in handlers inflated a floor with methods the simulator answered `404` for.
+Microsoft Azure did the same by shape and worse: `storage-dataplane-blob` scored
+60 of 69 while the simulator had no mux routes for it at all — the Blob plane is
+host-addressed, so its "covered" operations were shape matches against Azure
+Cosmos DB, the OCI registry, and Azure Container Registry. Amazon Web Services
+credited every versioned service with the entire unversioned bucket of its query
+router; those 994 actions belong to four services, so 32 vendored models were
+credited with operations they never register, which is how AWS Certificate
+Manager's missing tagging stayed hidden.
+
+All three now measure. Google Cloud and Azure probe the running simulator: each
+documented method is rendered into a concrete URI from the specification's own
+patterns and sent through the same handler chain `main()` serves, and a handler
+must actually answer for the method to count. A Go mux miss, a method mismatch,
+or a structured "method unknown" is uncovered; a structured `404` for a resource
+that does not exist is covered, because a handler ran and answered. Write probes
+carry deliberately malformed bodies, so no probe can mutate simulator or host
+state. Amazon Web Services replays each legacy query registrar against a fresh
+router to record what it actually mounted, credits an action no registrar claims
+to nobody and a contested action to neither, and its
+`TestQueryActionsExistInSmithyModels` tightened from "the action exists in some
+query-protocol model" to "in the model of the service that registers it". Each
+cloud has a soundness test that fails if the probe stops authenticating or an
+unmounted URI stops reading as a miss — without one, a broken token would credit
+an entire surface to a middleware rejection and the gate would measure nothing.
+
+The numbers moved in both directions, which is the point. Google Cloud fell from
+4249 to 4054 of 5397 documented methods and Spanner from 198 to 58, its entire
+REST session data plane having been phantom; Azure's Blob data plane fell from 60
+to 17 of 69. Azure rose overall to 1878 of 2612, because probing at the correct
+host coordinate revealed real Azure Key Vault coverage the matcher could not see.
+Every Amazon Web Services floor was unchanged, which is the meaningful result
+there — honest attribution did not move them.
+
+Probing exposed handlers that answered resource semantics for methods they do not
+serve, hiding the gap and in one case inventing data: Firestore created a document
+in a collection named after the method for `listCollectionIds`, `partitionQuery`
+and `runAggregationQuery`. Secret Manager, Cloud Resource Manager, IAM, Cloud KMS
+and Spanner answered "not found" or "permission denied" for unrouted custom
+methods, as did the Cloud Resource Manager v3 projects fan-in, which resolved the
+project before the verb. They now resolve the method before the resource, the way
+Google's API frontend does, and answer `404 "Method not found."` An Amazon RDS
+client calling `DescribeAccountAttributes` had been falling through to Amazon EC2's
+handler and receiving EC2-shaped XML; Amazon RDS now serves it with all 18
+documented quotas and every used value counted from real simulator state.
+
+The Azure Storage data planes stopped answering with a sibling handler. An
+unrecognised `comp` or `restype` had fallen through, so Set Blob Tier answered
+`201 Created` having created a blob — which also meant three floors were an upper
+bound rather than a measurement. Removing the fall-through uncovered three further
+defects it had masked: `?comp=range` landed on Create File, so the azfile SDK's
+`Create` plus `UploadBuffer` only worked by accident; Set Queue Metadata fell to
+Create Queue, which answered `204` and silently dropped the metadata; and ranged
+reads were missing entirely, which is why `az storage blob download` failed on an
+absent `Content-Range`. Azure Files, Set Queue Metadata and ranged reads were
+implemented; the rest declare a `501` gap in the Azure Storage XML envelope.
+
+The Azure Files data plane now writes where a container reads. Two Files
+implementations had existed, and the disk-backed one — the one persisting under
+the directory an Azure Container Apps Job or App bind-mounts for
+`Volume{StorageType: AzureFile}` — was unreachable, so a workload mounting a share
+saw none of the bytes a data-plane client wrote and the share directory was never
+created at all. There is now one implementation, resolving every file through the
+same host path the executor binds, with the filesystem as the single source of
+truth for existence, size, bytes and listings. The Azure Storage static website
+(`.web.`) and Data Lake Storage Gen2 (`.dfs.`) planes, which had answered a bare
+`200 OK` with an empty body to every request, declare their gap, and the dead
+dispatcher behind them was deleted.
+
+Amazon ECS honours the task definition's `networkMode`. It had been ignored at
+launch: every task received an elastic network interface attachment regardless of
+mode, `networkConfiguration` was accepted and ignored for non-`awsvpc` modes, an
+`awsvpc` task without it was accepted and run on Docker's default bridge, and an
+unresolvable subnet or VPC silently degraded to that same default bridge. Now
+`awsvpc` requires `networkConfiguration` and is rejected without it,
+`networkConfiguration` is rejected for other modes, the elastic network interface
+appears only for `awsvpc`, each of the four modes lands on its own fabric, and an
+unresolvable VPC is an error rather than a silent fallback.
+
+Four reported issues closed, three of which were mis-diagnosed by their reporters
+and were established as such empirically rather than implemented as asked. The
+Google Cloud simulator's `401` on service-account key issuance was the bearer
+middleware answering an unauthenticated request, not a missing endpoint; the real
+blocker was the metadata server's directory listings, and gcloud's Application
+Default Credentials path now works against the simulator with no static-token
+escape hatch. The Azure simulator's bare origin returned `404` because Azure
+Cosmos DB owns the API root for the azcosmos SDK's global endpoint manager, as
+Amazon S3 does on Amazon Web Services; Cosmos now delegates the requests it
+declines, keeping the root for its own clients while a browser reaches the
+console. The Azure `az login` failure came from real Microsoft Entra rejecting the
+reporter's authority — MSAL sends instance discovery only to
+`login.microsoftonline.com` and skips it entirely for a trusted host — so the
+simulator gained the instance-discovery endpoint for completeness, while the
+coordinate that actually makes `az login` work, the AD FS authority form, was
+documented and pinned by a regression test. The Amazon ECS container-networking
+failure on minimal guest kernels is not avoidable by moving tasks off the default
+bridge: Docker programs its direct-access-filtering `raw` rule for every endpoint
+on any bridge-driver network, so the simulator now fails with a message naming
+`iptable_raw` and `CONFIG_IP_NF_RAW`, and the guest-kernel requirement is
+documented.
+
 ## 2026-07-26 — Refreshed every vendored cloud specification, and fixed the check that hid the drift
 
 The freshness check reported every vendored specification as drifted, which is

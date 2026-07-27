@@ -129,6 +129,33 @@ type JobTemplate struct {
 	Volumes        []JobVolume    `json:"volumes,omitempty"`
 }
 
+// jobExecutionTemplate narrows a job's template to the JobExecutionTemplate an
+// execution reports. Azure models the two separately: JobExecutionTemplate
+// declares only containers and initContainers, and its JobExecutionContainer
+// carries no volumeMounts, so an execution never echoes the volumes or mounts
+// the job template configures. Returning the job template unchanged would put
+// fields on the wire that the real service does not send.
+func jobExecutionTemplate(t *JobTemplate) *JobTemplate {
+	if t == nil {
+		return nil
+	}
+	strip := func(in []JobContainer) []JobContainer {
+		if in == nil {
+			return nil
+		}
+		out := make([]JobContainer, len(in))
+		for i, c := range in {
+			c.VolumeMounts = nil
+			out[i] = c
+		}
+		return out
+	}
+	return &JobTemplate{
+		Containers:     strip(t.Containers),
+		InitContainers: strip(t.InitContainers),
+	}
+}
+
 // JobContainer holds a container definition for a Container Apps Job.
 type JobContainer struct {
 	Name         string                `json:"name"`
@@ -438,7 +465,7 @@ func registerContainerApps(srv *sim.Server) {
 			Properties: JobExecutionProperties{
 				Status:    "Running",
 				StartTime: time.Now().UTC().Format(time.RFC3339),
-				Template:  template,
+				Template:  jobExecutionTemplate(template),
 			},
 		}
 

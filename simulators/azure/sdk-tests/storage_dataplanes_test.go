@@ -46,12 +46,24 @@ func TestFilesDataPlane(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "PUT share")
 	resp.Body.Close()
 
+	// Azure Files writes a file in two steps: Create File allocates the byte
+	// range x-ms-content-length declares (the request carries no body), then
+	// Upload Range fills it. Both are exercised here exactly as the azfile SDK
+	// spells them.
 	payload := []byte("hello files")
-	resp = storageDataplaneReq(t, "PUT", account, "file", "/"+share+"/myfile.txt", payload, map[string]string{
-		"Content-Type": "text/plain",
-		"x-ms-type":    "file",
+	resp = storageDataplaneReq(t, "PUT", account, "file", "/"+share+"/myfile.txt", nil, map[string]string{
+		"Content-Type":        "text/plain",
+		"x-ms-type":           "file",
+		"x-ms-content-length": fmt.Sprintf("%d", len(payload)),
 	})
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "PUT file")
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "PUT file (Create File)")
+	resp.Body.Close()
+
+	resp = storageDataplaneReq(t, "PUT", account, "file", "/"+share+"/myfile.txt?comp=range", payload, map[string]string{
+		"x-ms-write": "update",
+		"x-ms-range": fmt.Sprintf("bytes=0-%d", len(payload)-1),
+	})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "PUT file?comp=range (Upload Range)")
 	resp.Body.Close()
 
 	resp = storageDataplaneReq(t, "HEAD", account, "file", "/"+share+"/myfile.txt", nil, nil)

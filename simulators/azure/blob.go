@@ -310,20 +310,23 @@ func hasAzureStorageSignal(r *http.Request) bool {
 }
 
 // hasNonStorageAzureSubdomain reports whether the host carries an
-// Azure-service subdomain other than the four storage services
-// (blob/file/queue/table). A host like `myvault.vault.localhost`,
+// Azure-service subdomain that belongs to a service other than Azure
+// Storage. A host like `myvault.vault.localhost`,
 // `myns.servicebus.localhost`, `myfn.azurewebsites.net`, or
 // `mycr.azurecr.io` MUST NOT be dispatched as a path-style storage
 // request — the subdomain identifies a different data plane. New
 // service subdomains added to the sim go here too.
+//
+// The storage subdomains the simulator does not implement — static website
+// (`.web.`) and Azure Data Lake Storage Gen2 (`.dfs.`) — are not listed: the
+// storage dispatcher answers them with a declared gap before this predicate is
+// consulted, because they are storage, not another service.
 func hasNonStorageAzureSubdomain(hostname string) bool {
 	for _, marker := range []string{
 		".vault.",
 		".servicebus.",
 		".redis.cache.",
 		".postgres.database.",
-		".web.",
-		".dfs.",
 		".azurewebsites.",
 		".azurecr.",
 		".azure-api.",
@@ -428,75 +431,160 @@ func blobBlockKey(account, container, blob, blockID string) string {
 	return account + "/" + container + "/" + blob + "/" + blockID
 }
 
+// handleBlobDataPlane dispatches one Blob Storage data-plane request. The
+// operation is selected by the `restype` + `comp` query pair at three levels
+// (service `/`, container `/{container}`, blob `/{container}/{blob}`); the
+// combinations below are the complete set the simulator serves:
+//
+//	GET    /?comp=list                                ListContainers
+//	GET    /?restype=service&comp=properties           GetBlobServiceProperties
+//	HEAD   /?restype=service&comp=properties           GetBlobServiceProperties
+//	PUT    /{container}?restype=container              CreateContainer
+//	GET    /{container}?restype=container              GetContainerProperties
+//	HEAD   /{container}?restype=container              GetContainerProperties
+//	DELETE /{container}?restype=container              DeleteContainer
+//	GET    /{container}?restype=container&comp=list    ListBlobs (flat + hierarchical)
+//	PUT    /{container}/{blob}                         PutBlob   (x-ms-blob-type)
+//	PUT    /{container}/{blob}   + x-ms-copy-source     CopyBlob
+//	PUT    /{container}/{blob}?comp=block               StageBlock
+//	PUT    /{container}/{blob}?comp=blocklist           CommitBlockList
+//	GET    /{container}/{blob}                          GetBlob
+//	GET    /{container}/{blob}?comp=blocklist           GetBlockList
+//	HEAD   /{container}/{blob}                          GetBlobProperties
+//	DELETE /{container}/{blob}                          DeleteBlob
+//
+// Every other restype/comp value — Set Blob Tier, Set Blob Metadata, the lease
+// verbs, page and append ranges, blob tags, snapshots, container ACLs, the
+// service-level batch/filter/statistics operations — is a declared gap, not a
+// fall-through to whichever sibling handler happens to sit under the same
+// method. A fall-through would perform a DIFFERENT operation than the caller
+// asked for and report it as success.
 func handleBlobDataPlane(w http.ResponseWriter, r *http.Request, account string) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	q := r.URL.Query()
-	switch {
-	case path == "" && q.Get("comp") == "list":
-		handleListContainers(w, r, account)
-		return
-	case path == "":
-		w.WriteHeader(http.StatusOK)
+	comp, restype := q.Get("comp"), q.Get("restype")
+
+	// Service level: /?comp=…
+	if path == "" {
+		if r.Method == http.MethodGet && restype == "" && comp == "list" {
+			handleListContainers(w, r, account)
+			return
+		}
+		// Get Blob Service Properties. The azurerm provider polls this while
+		// waiting for a storage account's data plane to come up, so it is part
+		// of creating an account rather than an optional extra. The Queues
+		// plane answers the same operation from the same defaults.
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			restype == "service" && comp == "properties" {
+			writeStorageXML(w, http.StatusOK, defaultStorageServiceProperties())
+			return
+		}
+		writeStorageOperationNotImplemented(w, r, "Blob")
 		return
 	}
+
 	segs := strings.SplitN(path, "/", 2)
 	container := segs[0]
 	if len(segs) == 1 {
-		// Container-level op: depends on query params.
+		// Container level: every served operation carries restype=container.
+		if restype != "container" {
+			writeStorageOperationNotImplemented(w, r, "Blob")
+			return
+		}
 		switch r.Method {
 		case http.MethodPut:
-			if q.Get("restype") == "container" {
-				handleCreateContainer(w, r, account, container)
+			if comp != "" {
+				// comp=metadata / rename / undelete / lease / acl — each a real
+				// container operation the simulator does not implement. Creating
+				// the container instead would answer a lease acquisition with a
+				// brand-new container.
+				writeStorageOperationNotImplemented(w, r, "Blob")
 				return
 			}
+			handleCreateContainer(w, r, account, container)
 		case http.MethodDelete:
-			if q.Get("restype") == "container" {
-				handleDeleteContainer(w, r, account, container)
+			if comp != "" {
+				writeStorageOperationNotImplemented(w, r, "Blob")
 				return
 			}
-		case http.MethodGet, http.MethodHead:
-			if q.Get("restype") == "container" {
-				if q.Get("comp") == "list" {
-					handleListBlobs(w, r, account, container)
-					return
-				}
+			handleDeleteContainer(w, r, account, container)
+		case http.MethodGet:
+			switch comp {
+			case "list":
+				handleListBlobs(w, r, account, container)
+			case "":
 				handleGetContainer(w, r, account, container)
+			default:
+				writeStorageOperationNotImplemented(w, r, "Blob")
+			}
+		case http.MethodHead:
+			if comp != "" {
+				writeStorageOperationNotImplemented(w, r, "Blob")
 				return
 			}
+			handleGetContainer(w, r, account, container)
+		default:
+			writeStorageOperationNotImplemented(w, r, "Blob")
 		}
-		writeStorageError(w, "MissingRequiredQueryParameter",
-			"Container ops require restype=container", http.StatusBadRequest)
 		return
 	}
-	// Blob-level op: /{container}/{blob}.
+
+	// Blob level: /{container}/{blob}. restype is never part of a served blob
+	// operation (restype=account&comp=properties is Get Account Information).
 	blob := segs[1]
+	if restype != "" {
+		writeStorageOperationNotImplemented(w, r, "Blob")
+		return
+	}
 	switch r.Method {
 	case http.MethodPut:
-		switch q.Get("comp") {
+		switch comp {
 		case "block":
+			// Stage Block carries the block body; Stage Block From URL names a
+			// source blob in x-ms-copy-source and is a different operation.
+			// Staging the (empty) request body for it would silently commit
+			// nothing where the caller asked for the source's bytes.
+			if r.Header.Get("x-ms-copy-source") != "" {
+				writeStorageOperationNotImplemented(w, r, "Blob")
+				return
+			}
 			handleStageBlock(w, r, account, container, blob)
-			return
 		case "blocklist":
 			handleCommitBlockList(w, r, account, container, blob)
-			return
+		case "":
+			// Copy Blob is the bare PUT plus x-ms-copy-source — Azure spells it
+			// with no comp at all.
+			if r.Header.Get("x-ms-copy-source") != "" {
+				handleCopyBlob(w, r, account, container, blob)
+				return
+			}
+			handlePutBlob(w, r, account, container, blob)
+		default:
+			writeStorageOperationNotImplemented(w, r, "Blob")
 		}
-		if r.Header.Get("x-ms-copy-source") != "" {
-			handleCopyBlob(w, r, account, container, blob)
-			return
-		}
-		handlePutBlob(w, r, account, container, blob)
 	case http.MethodGet:
-		if q.Get("comp") == "blocklist" {
+		switch comp {
+		case "blocklist":
 			handleGetBlockList(w, r, account, container, blob)
+		case "":
+			handleGetBlob(w, r, account, container, blob)
+		default:
+			writeStorageOperationNotImplemented(w, r, "Blob")
+		}
+	case http.MethodHead:
+		if comp != "" {
+			writeStorageOperationNotImplemented(w, r, "Blob")
 			return
 		}
-		handleGetBlob(w, r, account, container, blob)
-	case http.MethodHead:
 		handleHeadBlob(w, r, account, container, blob)
 	case http.MethodDelete:
+		if comp != "" {
+			writeStorageOperationNotImplemented(w, r, "Blob")
+			return
+		}
 		handleDeleteBlob(w, r, account, container, blob)
 	default:
-		writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+		writeStorageOperationNotImplemented(w, r, "Blob")
 	}
 }
 
@@ -1068,8 +1156,85 @@ func handleGetBlob(w http.ResponseWriter, r *http.Request, account, container, b
 			"The specified blob does not exist.", http.StatusNotFound)
 		return
 	}
+	start, end, partial, ok := azureStorageReadRange(w, r, int64(len(b.Data)))
+	if !ok {
+		return // azureStorageReadRange has written the error.
+	}
 	writeBlobHeaders(w, b)
-	_, _ = w.Write(b.Data)
+	if !partial {
+		_, _ = w.Write(b.Data)
+		return
+	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", end-start+1))
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(b.Data)))
+	w.WriteHeader(http.StatusPartialContent)
+	_, _ = w.Write(b.Data[start : end+1])
+}
+
+// azureStorageReadRange resolves the byte range a storage read requests. Azure
+// Storage reads carry the range in x-ms-range (which takes precedence) or the
+// standard Range header, and answer a ranged request with 206 Partial Content
+// plus Content-Range — clients such as the az CLI's `storage blob download`
+// require that header and fail outright on a 200 carrying the whole blob.
+//
+// It returns partial=false when the request asks for the whole resource. On a
+// malformed or unsatisfiable range it writes the storage error itself and
+// returns ok=false.
+func azureStorageReadRange(w http.ResponseWriter, r *http.Request, size int64) (start, end int64, partial, ok bool) {
+	raw := r.Header.Get("x-ms-range")
+	if raw == "" {
+		raw = r.Header.Get("Range")
+	}
+	if raw == "" {
+		return 0, 0, false, true
+	}
+	spec, found := strings.CutPrefix(strings.TrimSpace(raw), "bytes=")
+	if !found {
+		writeStorageError(w, "InvalidHeaderValue",
+			"The value for one of the HTTP headers is not in the correct format: Range.",
+			http.StatusBadRequest)
+		return 0, 0, false, false
+	}
+	lo, hi, found := strings.Cut(spec, "-")
+	if !found {
+		writeStorageError(w, "InvalidHeaderValue",
+			"The value for one of the HTTP headers is not in the correct format: Range.",
+			http.StatusBadRequest)
+		return 0, 0, false, false
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)
+	if err != nil || start < 0 {
+		writeStorageError(w, "InvalidHeaderValue",
+			"The value for one of the HTTP headers is not in the correct format: Range.",
+			http.StatusBadRequest)
+		return 0, 0, false, false
+	}
+	// An open-ended "bytes=start-" runs to the end of the resource.
+	end = size - 1
+	if trimmed := strings.TrimSpace(hi); trimmed != "" {
+		end, err = strconv.ParseInt(trimmed, 10, 64)
+		if err != nil || end < start {
+			writeStorageError(w, "InvalidHeaderValue",
+				"The value for one of the HTTP headers is not in the correct format: Range.",
+				http.StatusBadRequest)
+			return 0, 0, false, false
+		}
+	}
+	// Azure clamps a range that runs past the resource rather than failing; only
+	// a start beyond the end is unsatisfiable.
+	if start >= size && size > 0 {
+		writeStorageError(w, "InvalidRange",
+			"The range specified is invalid for the current size of the resource.",
+			http.StatusRequestedRangeNotSatisfiable)
+		return 0, 0, false, false
+	}
+	if end > size-1 {
+		end = size - 1
+	}
+	if size == 0 {
+		return 0, 0, false, true
+	}
+	return start, end, true, true
 }
 
 func handleHeadBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {

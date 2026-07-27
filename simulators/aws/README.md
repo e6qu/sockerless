@@ -64,7 +64,57 @@ submitting work that needs a running container.
 
 **ECS managed EBS volumes** use Docker named volumes (`sockerless-ebs-<id>`) rather than bind-mounts on the sim process's filesystem. This means the sim can run in a container (with the Docker socket mounted) and task containers will see the correct volume data — no path-sharing between host and sim container is required.
 
-**VPC and Subnet creation** (`CreateVpc`, `CreateSubnet`) always succeeds at the control-plane level (API state is stored). Real Linux network-namespace fabric is set up lazily when a data-plane resource attaches to the VPC/subnet and host networking capabilities (`ip`, `nft`, `sysctl`) are present. Without those capabilities the API calls still succeed; tasks using `networkMode: none` work normally. Tasks requiring `awsvpc` mode with real packet routing need the host-networking caps to be present.
+**VPC and Subnet creation** (`CreateVpc`, `CreateSubnet`) always succeeds at the control-plane level (API state is stored). Real Linux network-namespace fabric is set up lazily when a data-plane resource attaches to the VPC/subnet and host networking capabilities (`ip`, `nft`, `sysctl`) are present. Without those capabilities the API calls still succeed and `awsvpc` tasks fall to the per-VPC Docker-network fabric described below.
+
+### ECS task networking
+
+The task definition's `networkMode` decides the fabric every container in the
+task lands on, exactly as it does on real Amazon Elastic Container Service (ECS):
+
+| `networkMode` | What the task gets | How the simulator realizes it |
+|---|---|---|
+| `awsvpc` | Its own elastic network interface in a subnet of the VPC. `networkConfiguration` is **required**; `RunTask` rejects the request without it. | On Linux with `CAP_NET_ADMIN` + `nsenter`, a pause container holds the task's network namespace and the ENI veth is plumbed into it from the VPC's namespace. Everywhere else, a per-VPC user-defined Docker network (`sockerless-sim-vpc-<vpc-id>`) whose IPAM subnet is the VPC CIDR, with the container pinned to its ENI address. |
+| `bridge` (the default when `networkMode` is unset) | An address on the container instance's default Docker bridge. No ENI. `networkConfiguration` is rejected. | The container runtime's default `bridge` network. |
+| `host` | The container instance's own network stack. No ENI. | Docker `host` network mode. |
+| `none` | No connectivity. No ENI. | Docker `none` network mode. |
+
+An `awsvpc` task is therefore never placed on the default bridge, and only an
+`awsvpc` task carries an `ElasticNetworkInterface` attachment and per-container
+`networkInterfaces`.
+
+### Guest-kernel requirements for `SIM_RUNTIME=docker`
+
+Workload execution is the container runtime's job, so the kernel the **runtime**
+runs on must be able to program everything that runtime needs. Docker 28 and
+later adds a `raw`-table `PREROUTING … -j DROP` rule (direct access filtering)
+for every endpoint it creates on a bridge-driver network, so a kernel built
+without `CONFIG_IP_NF_RAW` cannot start those containers at all:
+
+```
+failed to create endpoint … on network bridge:
+Unable to enable DIRECT ACCESS FILTERING - DROP rule:
+(iptables failed: iptables --wait -t raw -A PREROUTING …:
+can't initialize iptables table `raw': Table does not exist)
+```
+
+This covers the default `bridge` network **and** every user-defined bridge
+network — Docker programs the rule per endpoint, so the per-VPC networks the
+`awsvpc` Docker-network tier uses need the `raw` table too, and so does the
+`awsvpc` namespace tier's pause container (it is created on the default network
+before being moved into the task's namespace). Only `networkMode: host` and
+`networkMode: none` create no bridge endpoint at all.
+
+The simulator does not work around this — it reports the failure with the
+missing module named, and the task stops with that reason. Fix it on the host:
+
+- Run the container runtime on a kernel with the full netfilter set
+  (`iptable_raw` / `CONFIG_IP_NF_RAW`, plus `nf_tables` for the nftables
+  backend). The stock Firecracker CI guest kernel (`vmlinux-6.1.128`) omits
+  both, so build a container-capable guest kernel before running the simulator
+  inside such a microVM.
+- Or start the Docker daemon with `DOCKER_INSECURE_NO_IPTABLES_RAW=1`, Docker's
+  own opt-out from the `raw` rules. That drops the direct-access hardening
+  host-wide; it is the daemon operator's decision, never the simulator's.
 
 For Terraform:
 

@@ -502,10 +502,42 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		// Cleanup on start failure
 		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		if hint := MissingNetfilterTableHint(err); hint != "" {
+			return "", fmt.Errorf("container start: %w (%s)", err, hint)
+		}
 		return "", fmt.Errorf("container start: %w", err)
 	}
 
 	return resp.ID, nil
+}
+
+// MissingNetfilterTableHint names the kernel dependency behind a container
+// runtime's refusal to wire a container onto a network, and returns "" for
+// every other failure. Docker 28 and later programs a raw-table PREROUTING DROP
+// rule when it attaches a container to a bridge network, so a kernel built
+// without the corresponding netfilter table cannot start the workload at all;
+// the runtime reports the table it could not initialise but not the module that
+// supplies it, which leaves a minimal guest kernel (a Firecracker microVM, a
+// container-optimised image) looking like a simulator defect.
+func MissingNetfilterTableHint(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	const marker = "can't initialize iptables table `"
+	i := strings.Index(msg, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := msg[i+len(marker):]
+	j := strings.IndexByte(rest, '\'')
+	if j <= 0 {
+		return ""
+	}
+	table := rest[:j]
+	return fmt.Sprintf("the kernel running the container runtime has no netfilter %q table; "+
+		"load the iptable_%s module or boot a kernel built with CONFIG_IP_NF_%s",
+		table, table, strings.ToUpper(table))
 }
 
 func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID string, cfg ContainerConfig, sink LogSink) ProcessResult {

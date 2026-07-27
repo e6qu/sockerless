@@ -26,6 +26,12 @@ var (
 	commandImageName string
 	tmpDir           string
 
+	// azureFilesDataDir is where the simulator materializes every Azure Files
+	// share: <dir>/<account>/<share>. It is the directory a Container Apps
+	// workload's Volume{StorageType: AzureFile} bind-mounts, so it is where a
+	// file uploaded with `az storage file upload` has to land.
+	azureFilesDataDir string
+
 	subscriptionID = "00000000-0000-0000-0000-000000000001"
 	resourceGroup  = "cli-test-rg"
 
@@ -89,8 +95,13 @@ func TestMain(m *testing.M) {
 	advertisedEndpoints := fmt.Sprintf(
 		`{"storage":{"blob":"http://{account}.blob.cli-shim.localhost:%d/","file":"http://{account}.file.cli-shim.localhost:%d/","queue":"http://{account}.queue.cli-shim.localhost:%d/","table":"http://{account}.table.cli-shim.localhost:%d/"},"keyVault":"https://{vault}.vault.cli-shim.localhost:%d/","serviceBus":"https://{namespace}.servicebus.cli-shim.localhost:%d/","acr":"http://{name}.azurecr.cli-shim.localhost:%d/"}`,
 		port, port, port, port, port, port, port)
+	azureFilesDataDir, err = os.MkdirTemp("", "sockerless-sim-azure-files-cli-*")
+	if err != nil {
+		log.Fatalf("Failed to create Azure Files data dir: %v", err)
+	}
 	simCmd.Env = append(os.Environ(),
 		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port),
+		fmt.Sprintf("SIM_AZURE_FILES_DATA_DIR=%s", azureFilesDataDir),
 		"SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON="+advertisedEndpoints,
 	)
 	simCmd.Stdout = os.Stdout
@@ -130,6 +141,7 @@ func TestMain(m *testing.M) {
 	simCmd.Process.Kill()
 	simCmd.Wait()
 	os.RemoveAll(tmpDir)
+	os.RemoveAll(azureFilesDataDir)
 	os.Exit(code)
 }
 
