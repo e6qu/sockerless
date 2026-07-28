@@ -116,9 +116,10 @@ func loadSmithyModels(t *testing.T) []*smithyService {
 func buildConformanceSimulator(t *testing.T) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryRouter) {
 	t.Helper()
 	t.Setenv("SIM_RUNTIME", "process")
-	srv, jsonRouter, queryRouter, err := buildSimulator(sim.Config{
-		Provider: "aws", ListenAddr: ":0", LogLevel: "error",
-	})
+	srv, jsonRouter, queryRouter, err := buildSimulatorWithOptions(
+		sim.Config{Provider: "aws", ListenAddr: ":0", LogLevel: "error"},
+		simulatorBuildOptions{startBackgroundEvaluators: false},
+	)
 	if err != nil {
 		t.Fatalf("buildSimulator: %v", err)
 	}

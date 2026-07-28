@@ -1,6 +1,8 @@
 package aws_sdk_test
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +26,39 @@ import (
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
+
+func lambdaNodeDeploymentZip(t *testing.T, responseExpression string) []byte {
+	t.Helper()
+	if responseExpression == "" {
+		responseExpression = "event"
+	}
+	return lambdaNodeSourceZip(t, fmt.Sprintf(
+		"exports.handler = async (event) => { console.log(JSON.stringify(event)); return %s; };",
+		responseExpression,
+	))
+}
+
+func lambdaNodeSourceZip(t *testing.T, source string) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	entry, err := zw.Create("index.js")
+	if err != nil {
+		t.Fatalf("create AWS Lambda deployment entry: %v", err)
+	}
+	if _, err := entry.Write([]byte(source)); err != nil {
+		t.Fatalf("write AWS Lambda deployment entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close AWS Lambda deployment archive: %v", err)
+	}
+	return out.Bytes()
+}
+
+func lambdaDeploymentZip(t *testing.T) []byte {
+	t.Helper()
+	return lambdaNodeDeploymentZip(t, "event")
+}
 
 // emptySHA256 is the hex SHA-256 of an empty body — the payload hash for a
 // signed GET request with no body (Lambda's REST list/get operations).

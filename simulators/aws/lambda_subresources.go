@@ -18,23 +18,37 @@ import (
 // but with a frozen Code reference and an updated FunctionArn:
 // `arn:aws:lambda:<region>:<account>:function:<name>:<version>`.
 type LambdaVersion struct {
-	FunctionName     string              `json:"FunctionName"`
-	FunctionArn      string              `json:"FunctionArn"`
-	Version          string              `json:"Version"`
-	Runtime          string              `json:"Runtime,omitempty"`
-	Role             string              `json:"Role"`
-	Handler          string              `json:"Handler,omitempty"`
-	Code             *LambdaFunctionCode `json:"Code,omitempty"`
-	CodeSha256       string              `json:"CodeSha256,omitempty"`
-	CodeSize         int64               `json:"CodeSize"`
-	MemorySize       int                 `json:"MemorySize"`
-	Timeout          int                 `json:"Timeout"`
-	State            string              `json:"State"`
-	LastUpdateStatus string              `json:"LastUpdateStatus,omitempty"`
-	LastModified     string              `json:"LastModified"`
-	RevisionId       string              `json:"RevisionId"`
-	PackageType      string              `json:"PackageType,omitempty"`
-	Description      string              `json:"Description,omitempty"`
+	FunctionName           string                        `json:"FunctionName"`
+	FunctionArn            string                        `json:"FunctionArn"`
+	Version                string                        `json:"Version"`
+	Runtime                string                        `json:"Runtime,omitempty"`
+	Role                   string                        `json:"Role"`
+	Handler                string                        `json:"Handler,omitempty"`
+	Code                   *LambdaFunctionCode           `json:"Code,omitempty"`
+	CodeSha256             string                        `json:"CodeSha256,omitempty"`
+	CodeSize               int64                         `json:"CodeSize"`
+	MemorySize             int                           `json:"MemorySize"`
+	Timeout                int                           `json:"Timeout"`
+	State                  string                        `json:"State"`
+	LastUpdateStatus       string                        `json:"LastUpdateStatus,omitempty"`
+	LastModified           string                        `json:"LastModified"`
+	RevisionId             string                        `json:"RevisionId"`
+	PackageType            string                        `json:"PackageType,omitempty"`
+	Description            string                        `json:"Description,omitempty"`
+	Layers                 []lambdaLayerConfiguration    `json:"Layers,omitempty"`
+	Architectures          []string                      `json:"Architectures,omitempty"`
+	Environment            *LambdaEnvironment            `json:"Environment,omitempty"`
+	ImageConfigResponse    *LambdaImageConfigResponse    `json:"ImageConfigResponse,omitempty"`
+	VpcConfig              *lambdaVpcConfigConfiguration `json:"VpcConfig,omitempty"`
+	CapacityProviderConfig map[string]any                `json:"CapacityProviderConfig,omitempty"`
+	DeadLetterConfig       map[string]any                `json:"DeadLetterConfig,omitempty"`
+	DurableConfig          map[string]any                `json:"DurableConfig,omitempty"`
+	EphemeralStorage       map[string]any                `json:"EphemeralStorage,omitempty"`
+	FileSystemConfigs      []map[string]any              `json:"FileSystemConfigs,omitempty"`
+	KMSKeyArn              string                        `json:"KMSKeyArn,omitempty"`
+	LoggingConfig          map[string]any                `json:"LoggingConfig,omitempty"`
+	SnapStart              map[string]any                `json:"SnapStart,omitempty"`
+	TracingConfig          map[string]any                `json:"TracingConfig,omitempty"`
 }
 
 // LambdaAlias maps a name (e.g. "live") to a function version.
@@ -114,25 +128,97 @@ func latestLambdaVersion(fn LambdaFunction) LambdaVersion {
 	if !strings.HasSuffix(arn, ":$LATEST") {
 		arn += ":$LATEST"
 	}
-	return LambdaVersion{
-		FunctionName:     fn.FunctionName,
-		FunctionArn:      arn,
-		Version:          "$LATEST",
-		Runtime:          fn.Runtime,
-		Role:             fn.Role,
-		Handler:          fn.Handler,
-		Code:             fn.Code,
-		CodeSha256:       fn.CodeSha256,
-		CodeSize:         fn.CodeSize,
-		MemorySize:       fn.MemorySize,
-		Timeout:          fn.Timeout,
-		State:            fn.State,
-		LastUpdateStatus: fn.LastUpdateStatus,
-		LastModified:     fn.LastModified,
-		RevisionId:       fn.RevisionId,
-		PackageType:      fn.PackageType,
-		Description:      fn.Description,
+	version := lambdaVersionFromFunction(fn)
+	version.FunctionArn = arn
+	version.Version = "$LATEST"
+	return version
+}
+
+func lambdaVersionFromFunction(fn LambdaFunction) LambdaVersion {
+	version := LambdaVersion{
+		FunctionName:           fn.FunctionName,
+		Runtime:                fn.Runtime,
+		Role:                   fn.Role,
+		Handler:                fn.Handler,
+		Code:                   fn.Code,
+		CodeSha256:             fn.CodeSha256,
+		CodeSize:               fn.CodeSize,
+		MemorySize:             fn.MemorySize,
+		Timeout:                fn.Timeout,
+		State:                  fn.State,
+		LastUpdateStatus:       fn.LastUpdateStatus,
+		LastModified:           fn.LastModified,
+		RevisionId:             fn.RevisionId,
+		PackageType:            fn.PackageType,
+		Description:            fn.Description,
+		Layers:                 lambdaLayerConfigurations(fn.Layers),
+		Architectures:          fn.Architectures,
+		Environment:            fn.Environment,
+		VpcConfig:              lambdaVpcConfiguration(fn.VpcConfig),
+		CapacityProviderConfig: fn.CapacityProviderConfig,
+		DeadLetterConfig:       fn.DeadLetterConfig,
+		DurableConfig:          fn.DurableConfig,
+		EphemeralStorage:       fn.EphemeralStorage,
+		FileSystemConfigs:      fn.FileSystemConfigs,
+		KMSKeyArn:              fn.KMSKeyArn,
+		LoggingConfig:          fn.LoggingConfig,
+		SnapStart:              lambdaSnapStartResponse(fn.SnapStart),
+		TracingConfig:          fn.TracingConfig,
 	}
+	if fn.ImageConfig != nil {
+		version.ImageConfigResponse = &LambdaImageConfigResponse{ImageConfig: fn.ImageConfig}
+	}
+	return version
+}
+
+func lambdaFunctionFromVersion(version LambdaVersion) LambdaFunction {
+	function := LambdaFunction{
+		FunctionName:           version.FunctionName,
+		FunctionArn:            version.FunctionArn,
+		Runtime:                version.Runtime,
+		Role:                   version.Role,
+		Handler:                version.Handler,
+		Code:                   version.Code,
+		CodeSha256:             version.CodeSha256,
+		CodeSize:               version.CodeSize,
+		Description:            version.Description,
+		MemorySize:             version.MemorySize,
+		Timeout:                version.Timeout,
+		Environment:            version.Environment,
+		State:                  version.State,
+		LastUpdateStatus:       version.LastUpdateStatus,
+		LastModified:           version.LastModified,
+		RevisionId:             version.RevisionId,
+		Version:                version.Version,
+		PackageType:            version.PackageType,
+		Architectures:          version.Architectures,
+		VpcConfig:              nil,
+		CapacityProviderConfig: version.CapacityProviderConfig,
+		DeadLetterConfig:       version.DeadLetterConfig,
+		DurableConfig:          version.DurableConfig,
+		EphemeralStorage:       version.EphemeralStorage,
+		FileSystemConfigs:      version.FileSystemConfigs,
+		KMSKeyArn:              version.KMSKeyArn,
+		LoggingConfig:          version.LoggingConfig,
+		SnapStart:              version.SnapStart,
+		TracingConfig:          version.TracingConfig,
+	}
+	if version.ImageConfigResponse != nil {
+		function.ImageConfig = version.ImageConfigResponse.ImageConfig
+	}
+	if version.VpcConfig != nil {
+		function.VpcConfig = &LambdaVpcConfig{
+			SubnetIds:               version.VpcConfig.SubnetIds,
+			SecurityGroupIds:        version.VpcConfig.SecurityGroupIds,
+			VpcId:                   version.VpcConfig.VpcId,
+			Ipv6AllowedForDualStack: version.VpcConfig.Ipv6AllowedForDualStack,
+		}
+	}
+	function.Layers = make([]string, 0, len(version.Layers))
+	for _, layer := range version.Layers {
+		function.Layers = append(function.Layers, layer.Arn)
+	}
+	return function
 }
 
 func publishLambdaVersion(name, description string, fn LambdaFunction) LambdaVersion {
@@ -141,25 +227,14 @@ func publishLambdaVersion(name, description string, fn LambdaFunction) LambdaVer
 	versions := lambdaVersions[name]
 	nextNum := len(versions) + 1
 	version := strconv.Itoa(nextNum)
-	v := LambdaVersion{
-		FunctionName:     fn.FunctionName,
-		FunctionArn:      fn.FunctionArn + ":" + version,
-		Version:          version,
-		Runtime:          fn.Runtime,
-		Role:             fn.Role,
-		Handler:          fn.Handler,
-		Code:             fn.Code,
-		CodeSha256:       fn.CodeSha256,
-		CodeSize:         fn.CodeSize,
-		MemorySize:       fn.MemorySize,
-		Timeout:          fn.Timeout,
-		State:            "Active",
-		LastUpdateStatus: "Successful",
-		LastModified:     time.Now().UTC().Format(time.RFC3339),
-		RevisionId:       generateUUID(),
-		PackageType:      fn.PackageType,
-		Description:      description,
-	}
+	v := lambdaVersionFromFunction(fn)
+	v.FunctionArn = fn.FunctionArn + ":" + version
+	v.Version = version
+	v.State = "Active"
+	v.LastUpdateStatus = "Successful"
+	v.LastModified = time.Now().UTC().Format(time.RFC3339)
+	v.RevisionId = generateUUID()
+	v.Description = description
 	lambdaVersions[name] = append(versions, v)
 	return v
 }
@@ -182,6 +257,12 @@ func handleLambdaPublishVersion(w http.ResponseWriter, r *http.Request) {
 				"Invalid request body", http.StatusBadRequest)
 			return
 		}
+	}
+	if req.RevisionId != "" && req.RevisionId != fn.RevisionId {
+		sim.AWSError(w, "PreconditionFailedException",
+			"The RevisionId provided does not match the latest RevisionId for the function",
+			http.StatusPreconditionFailed)
+		return
 	}
 
 	v := publishLambdaVersion(name, req.Description, fn)

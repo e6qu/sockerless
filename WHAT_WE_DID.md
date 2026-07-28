@@ -4,6 +4,55 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-28 — AWS Lambda and AWS Step Functions became complete executable cloud slices
+
+AWS Lambda implemented every one of the 85 operations in its vendored Smithy
+service model. ZIP archives and container images executed through the AWS
+Lambda Runtime API rather than returning canned invocation results. Layers,
+versions, aliases, function URLs, reserved and provisioned concurrency, capacity
+providers, code-signing configuration, response streaming, and durable
+executions retained real lifecycle state, validation, pagination, callbacks,
+timeouts, and histories.
+
+AWS Step Functions implemented all 37 operations in its vendored model.
+State-machine definitions executed JSONPath and JSONata expressions across
+Pass, Task, Choice, Wait, Succeed, Fail, Parallel, inline and distributed Map,
+activities, callbacks, retries, nested workflows, and AWS Lambda tasks.
+Published versions and aliases captured immutable definitions, executions
+captured immutable snapshots, redrive created service-shaped continuation
+history, and every history page retained the corresponding event payload.
+
+Official AWS SDK, AWS CLI, and Terraform clients drove the public surfaces.
+The Terraform stack created Lambda versions, aliases, and function URLs plus
+Step Functions state-machine versions and aliases. The CLI covered the expanded
+control planes and runtime behavior, including the previously exempt
+ListStateMachineVersions operation. Its harness installed AWS's official
+architecture-specific Session Manager plugin when necessary and removed all
+provisioned tools after the suite.
+
+Selected flows also ran against short-lived live AWS resources. The differential
+covered Step Functions validation, execution history, Lambda task history,
+control-plane lifecycle, nested workflows, distributed Map, and Lambda ZIP,
+layer, version, and alias behavior. The same tests targeted the simulator by
+changing only endpoint and credential coordinates, and every temporary state
+machine, function, layer, role, and policy was removed afterward.
+
+The AWS console exposed Lambda overview, code, test, logs, configuration,
+layers, environment variables, concurrency, versions, aliases, URLs, and tags.
+The Step Functions console exposed graph and definition authoring, execution
+input, event history, input/output inspection, publishing, aliases, tags, and
+redrive. The production bundle passed 229 Chromium package tests, while the
+authenticated Shauth/Ory Hydra/PostgreSQL browser matrix used federated AWS
+credentials to create a state machine, start it, and inspect its graph and
+execution history through the real APIs.
+
+The conformance harness stopped launching runtime evaluator goroutines for
+route-only simulator builds. Production builds retained Amazon CloudWatch alarm
+and Application Auto Scaling evaluation, while repeated in-process
+introspection no longer rebound stores underneath old goroutines. The focused
+race suite and the complete AWS simulator package passed with this lifecycle
+separation.
+
 ## 2026-07-27 — AWS Lambda `VpcConfig` became a runtime network
 
 AWS Lambda had described Hyperplane elastic network interfaces on the control

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -424,6 +426,143 @@ func prepareLambdaInvocationNetwork(
 	return out, nil
 }
 
+func lambdaRuntimeImage(runtime string) (string, error) {
+	switch runtime {
+	case "provided.al2023":
+		return "public.ecr.aws/lambda/provided:al2023", nil
+	case "provided.al2", "provided", "go1.x":
+		return "public.ecr.aws/lambda/provided:al2", nil
+	case "nodejs18.x":
+		return "public.ecr.aws/lambda/nodejs:18", nil
+	case "nodejs20.x":
+		return "public.ecr.aws/lambda/nodejs:20", nil
+	case "nodejs22.x":
+		return "public.ecr.aws/lambda/nodejs:22", nil
+	case "nodejs24.x":
+		return "public.ecr.aws/lambda/nodejs:24", nil
+	case "python3.10":
+		return "public.ecr.aws/lambda/python:3.10", nil
+	case "python3.11":
+		return "public.ecr.aws/lambda/python:3.11", nil
+	case "python3.12":
+		return "public.ecr.aws/lambda/python:3.12", nil
+	case "python3.13":
+		return "public.ecr.aws/lambda/python:3.13", nil
+	case "python3.14":
+		return "public.ecr.aws/lambda/python:3.14", nil
+	case "ruby3.2":
+		return "public.ecr.aws/lambda/ruby:3.2", nil
+	case "ruby3.3":
+		return "public.ecr.aws/lambda/ruby:3.3", nil
+	case "ruby3.4":
+		return "public.ecr.aws/lambda/ruby:3.4", nil
+	case "ruby4.0":
+		return "public.ecr.aws/lambda/ruby:4.0", nil
+	case "java8.al2":
+		return "public.ecr.aws/lambda/java:8.al2", nil
+	case "java11", "java11.al2023":
+		return "public.ecr.aws/lambda/java:11", nil
+	case "java17", "java17.al2023":
+		return "public.ecr.aws/lambda/java:17", nil
+	case "java21":
+		return "public.ecr.aws/lambda/java:21", nil
+	case "java25":
+		return "public.ecr.aws/lambda/java:25", nil
+	case "dotnet6":
+		return "public.ecr.aws/lambda/dotnet:6", nil
+	case "dotnet8":
+		return "public.ecr.aws/lambda/dotnet:8", nil
+	case "dotnet10":
+		return "public.ecr.aws/lambda/dotnet:10", nil
+	default:
+		return "", fmt.Errorf("runtime %q is not available for new AWS Lambda deployment packages", runtime)
+	}
+}
+
+func materializeLambdaDeploymentPackage(fn LambdaFunction) (string, error) {
+	archiveBytes, err := lambdaDeploymentPackageBytes(fn.Code)
+	if err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp("", "sockerless-aws-lambda-code-*")
+	if err != nil {
+		return "", fmt.Errorf("create deployment-package directory: %w", err)
+	}
+	if err := extractLambdaZIP(dir, archiveBytes); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
+}
+
+func materializeLambdaLayers(layerARNs []string) (string, error) {
+	if len(layerARNs) == 0 {
+		return "", nil
+	}
+	dir, err := os.MkdirTemp("", "sockerless-aws-lambda-layers-*")
+	if err != nil {
+		return "", fmt.Errorf("create layer directory: %w", err)
+	}
+	for _, arn := range layerARNs {
+		layer, ok := lambdaLayerVersionByARN(arn)
+		if !ok {
+			_ = os.RemoveAll(dir)
+			return "", fmt.Errorf("layer version %s no longer exists", arn)
+		}
+		if err := extractLambdaZIP(dir, layer.Content); err != nil {
+			_ = os.RemoveAll(dir)
+			return "", fmt.Errorf("extract layer version %s: %w", arn, err)
+		}
+	}
+	return dir, nil
+}
+
+func extractLambdaZIP(dir string, archiveBytes []byte) error {
+	zr, err := zip.NewReader(bytes.NewReader(archiveBytes), int64(len(archiveBytes)))
+	if err != nil {
+		return fmt.Errorf("deployment package is not a valid ZIP archive: %w", err)
+	}
+	cleanRoot := filepath.Clean(dir) + string(os.PathSeparator)
+	for _, entry := range zr.File {
+		target := filepath.Join(dir, filepath.FromSlash(entry.Name))
+		if !strings.HasPrefix(filepath.Clean(target)+string(os.PathSeparator), cleanRoot) {
+			return fmt.Errorf("deployment package entry %q escapes the task root", entry.Name)
+		}
+		if entry.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return fmt.Errorf("create deployment-package directory %q: %w", entry.Name, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return fmt.Errorf("create deployment-package parent for %q: %w", entry.Name, err)
+		}
+		src, err := entry.Open()
+		if err != nil {
+			return fmt.Errorf("open deployment-package entry %q: %w", entry.Name, err)
+		}
+		mode := entry.Mode().Perm()
+		if mode == 0 {
+			mode = 0644
+		}
+		dst, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+		if err != nil {
+			_ = src.Close()
+			return fmt.Errorf("create deployment-package entry %q: %w", entry.Name, err)
+		}
+		_, copyErr := io.Copy(dst, src)
+		closeErr := dst.Close()
+		_ = src.Close()
+		if copyErr != nil {
+			return fmt.Errorf("extract deployment-package entry %q: %w", entry.Name, copyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close deployment-package entry %q: %w", entry.Name, closeErr)
+		}
+	}
+	return nil
+}
+
 // invokeLambdaViaRuntimeAPI launches the function container with
 // AWS_LAMBDA_RUNTIME_API pointing at a per-invocation sidecar, feeds
 // the payload via /next, and returns whatever the handler posts back
@@ -433,12 +572,32 @@ func prepareLambdaInvocationNetwork(
 // exitCode from the container. Unhandled errors come back as proper
 // Lambda error JSON even when the container itself exits 0.
 func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool, int) {
-	if fn.Code == nil || fn.Code.ImageUri == "" {
-		// Zip-package path: no container, no Runtime API. Return the
-		// empty JSON object that control-plane-only tests expect plus
-		// inject the standard log stream via the existing helper.
-		injectLambdaLogs(fn.FunctionName)
-		return []byte("{}"), false, 0
+	var (
+		runtimeImage string
+		taskRoot     string
+		layerRoot    string
+	)
+	if fn.Code == nil {
+		return lambdaErrorPayload("Function has no deployment package"), true, 1
+	}
+	if fn.Code.ImageUri == "" {
+		var err error
+		runtimeImage, err = lambdaRuntimeImage(fn.Runtime)
+		if err != nil {
+			return lambdaErrorPayload(err.Error()), true, 1
+		}
+		taskRoot, err = materializeLambdaDeploymentPackage(fn)
+		if err != nil {
+			return lambdaErrorPayload(err.Error()), true, 1
+		}
+		defer os.RemoveAll(taskRoot)
+		layerRoot, err = materializeLambdaLayers(fn.Layers)
+		if err != nil {
+			return lambdaErrorPayload(err.Error()), true, 1
+		}
+		if layerRoot != "" {
+			defer os.RemoveAll(layerRoot)
+		}
 	}
 
 	// Build invocation + sidecar.
@@ -468,12 +627,25 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 	// CloudWatch log group + stream + START log entry.
 	logGroup, logStream, logKey, startMs := injectLambdaInvokeLogs(fn.FunctionName, requestID)
 
-	// Extract entrypoint/command/env from the function's ImageConfig
-	// the same way the old sync path did.
+	// Image functions honor their image configuration. ZIP functions run in
+	// AWS's published managed-runtime base image with the extracted archive at
+	// /var/task, which is the filesystem and Runtime API contract Lambda uses.
 	var entrypoint, args []string
-	if fn.ImageConfig != nil {
+	var binds []string
+	workingDir := ""
+	image := fn.Code.ImageUri
+	if image == "" {
+		image = runtimeImage
+		args = []string{fn.Handler}
+		binds = []string{taskRoot + ":/var/task:ro,z"}
+		if layerRoot != "" {
+			binds = append(binds, layerRoot+":/opt:ro,z")
+		}
+		workingDir = "/var/task"
+	} else if fn.ImageConfig != nil {
 		entrypoint = fn.ImageConfig.EntryPoint
 		args = fn.ImageConfig.Command
+		workingDir = fn.ImageConfig.WorkingDirectory
 	}
 	cmdEnv := map[string]string{
 		"AWS_LAMBDA_RUNTIME_API":          sidecar.ContainerAddr(),
@@ -520,7 +692,7 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 	// may still query EC2 IMDS for region/SA tokens via the AWS SDK.
 	// Pass empty taskID — Lambda doesn't expose ECS_CONTAINER_METADATA_URI_V4.
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:        sim.ResolveLocalImage(fn.Code.ImageUri),
+		Image:        sim.ResolveLocalImage(image),
 		Architecture: platform,
 		Command:      entrypoint,
 		Args:         args,
@@ -537,6 +709,9 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 		IPAddress:   invocationNetwork.ipAddress,
 		NetworkMode: invocationNetwork.networkMode,
 		Sandbox:     sim.SandboxLambda,
+		Binds:       binds,
+		WorkingDir:  workingDir,
+		MemoryBytes: int64(fn.MemorySize) * 1024 * 1024,
 	}, collectSink)
 	if err != nil {
 		endMs := time.Now().UnixMilli()

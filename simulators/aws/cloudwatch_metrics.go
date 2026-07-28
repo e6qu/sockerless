@@ -60,7 +60,7 @@ var (
 	cwEvalLogger zerolog.Logger
 )
 
-func registerCloudWatchMetrics(srv *sim.Server) {
+func registerCloudWatchMetrics(srv *sim.Server, startBackgroundEvaluator bool) {
 	cwEvalLogger = srv.Logger()
 	cwMetrics = sim.MakeStore[[]CWMetricDatum](srv.DB(), "cw_metrics")
 	cwAlarms = sim.MakeStore[CWAlarm](srv.DB(), "cw_alarms")
@@ -84,7 +84,9 @@ func registerCloudWatchMetrics(srv *sim.Server) {
 	registerCloudWatchMiscCBOR(srv)
 	registerCloudWatchDashboardsCBOR(srv)
 
-	startCWAlarmEvaluator()
+	if startBackgroundEvaluator {
+		startCWAlarmEvaluator()
+	}
 }
 
 // GetMetricData request/response types (CBOR)

@@ -1,5 +1,4 @@
 AWSStepFunctions.ValidateStateMachineDefinition
-AWSStepFunctions.ListStateMachineVersions
 AWSGlue.GetPartitionIndexes
 POST /service/GraniteServiceVersion20100801/operation/
 GET /2018-10-31/layers

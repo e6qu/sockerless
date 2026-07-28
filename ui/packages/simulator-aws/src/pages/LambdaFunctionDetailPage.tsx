@@ -6,6 +6,7 @@ import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import FormField from "@cloudscape-design/components/form-field";
 import Input from "@cloudscape-design/components/input";
+import Select from "@cloudscape-design/components/select";
 import Textarea from "@cloudscape-design/components/textarea";
 import Box from "@cloudscape-design/components/box";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
@@ -27,10 +28,23 @@ import {
   type AwsTab,
   type KeyValueRow,
 } from "../console/index.js";
-import { formatBytes, formatTimestamp } from "../console/format.js";
+import { formatBytes, formatEpoch, formatTimestamp } from "../console/format.js";
 import {
+  fetchLambdaAliases,
+  fetchLambdaConcurrency,
+  fetchLambdaEventSourceMappings,
   fetchLambdaFunctionDetail,
+  fetchLambdaFunctionUrls,
+  fetchLambdaVersions,
+  fetchCWLogEvents,
+  fetchCWLogStreams,
+  createLambdaAlias,
+  createLambdaFunctionUrl,
+  deleteLambdaConcurrency,
+  deleteLambdaFunctionUrl,
   invokeLambdaFunction,
+  publishLambdaVersion,
+  putLambdaConcurrency,
   tagLambdaResource,
   untagLambdaResource,
   updateLambdaFunctionConfiguration,
@@ -215,6 +229,208 @@ function TestFunctionModal({ name, onClose }: { name: string; onClose: () => voi
   );
 }
 
+function PublishVersionModal({ name, onClose }: { name: string; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [description, setDescription] = useState("");
+  const publish = useMutation({
+    mutationFn: () => publishLambdaVersion(name, description),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["lambda-versions", name] });
+      onClose();
+    },
+  });
+  return (
+    <AwsModal
+      title="Publish new version"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton variant="primary" disabled={publish.isPending} onClick={() => publish.mutate()}>
+            {publish.isPending ? "Publishing…" : "Publish"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="m">
+        <p>Publish an immutable snapshot of the current code and configuration.</p>
+        <FormField label="Version description">
+          <Input value={description} onChange={(event) => setDescription(event.detail.value)} />
+        </FormField>
+        {publish.isError && <AwsErrorAlert>{publish.error instanceof Error ? publish.error.message : "Publish failed."}</AwsErrorAlert>}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
+function CreateAliasModal({
+  name,
+  versions,
+  onClose,
+}: {
+  name: string;
+  versions: { version: string }[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const published = versions.filter((version) => version.version !== "$LATEST");
+  const [alias, setAlias] = useState("");
+  const [version, setVersion] = useState(published.at(-1)?.version ?? "");
+  const [description, setDescription] = useState("");
+  const create = useMutation({
+    mutationFn: () => createLambdaAlias(name, alias, version, description),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["lambda-aliases", name] });
+      onClose();
+    },
+  });
+  const valid = /^[a-zA-Z0-9-_]{1,128}$/.test(alias) && !/^\d+$/.test(alias) && version !== "";
+  return (
+    <AwsModal
+      title="Create alias"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton variant="primary" disabled={!valid || create.isPending} onClick={() => create.mutate()}>
+            {create.isPending ? "Creating…" : "Create"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="m">
+        <FormField label="Alias name">
+          <Input value={alias} onChange={(event) => setAlias(event.detail.value)} />
+        </FormField>
+        <FormField label="Function version">
+          <Select
+            selectedOption={version ? { label: version, value: version } : null}
+            options={published.map((item) => ({ label: item.version, value: item.version }))}
+            onChange={(event) => setVersion(event.detail.selectedOption.value ?? "")}
+            placeholder="Choose a published version"
+          />
+        </FormField>
+        <FormField label="Description">
+          <Input value={description} onChange={(event) => setDescription(event.detail.value)} />
+        </FormField>
+        {published.length === 0 && <AwsErrorAlert>Publish a function version before creating an alias.</AwsErrorAlert>}
+        {create.isError && <AwsErrorAlert>{create.error instanceof Error ? create.error.message : "Create failed."}</AwsErrorAlert>}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
+function ConcurrencyModal({
+  name,
+  current,
+  onClose,
+}: {
+  name: string;
+  current?: number;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [value, setValue] = useState(current === undefined ? "" : String(current));
+  const parsed = Number(value);
+  const valid = Number.isInteger(parsed) && parsed >= 0;
+  const save = useMutation({
+    mutationFn: () => putLambdaConcurrency(name, parsed),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["lambda-concurrency", name] });
+      onClose();
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteLambdaConcurrency(name),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["lambda-concurrency", name] });
+      onClose();
+    },
+  });
+  return (
+    <AwsModal
+      title="Edit reserved concurrency"
+      onDismiss={onClose}
+      footer={
+        <>
+          {current !== undefined && (
+            <AwsButton disabled={remove.isPending || save.isPending} onClick={() => remove.mutate()}>
+              Use unreserved concurrency
+            </AwsButton>
+          )}
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton variant="primary" disabled={!valid || save.isPending || remove.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? "Saving…" : "Save"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="m">
+        <FormField label="Reserved concurrent executions" constraintText="Use 0 to throttle all invocations.">
+          <Input type="number" value={value} onChange={(event) => setValue(event.detail.value)} />
+        </FormField>
+        {(save.isError || remove.isError) && (
+          <AwsErrorAlert>
+            {save.error instanceof Error
+              ? save.error.message
+              : remove.error instanceof Error
+                ? remove.error.message
+                : "Update failed."}
+          </AwsErrorAlert>
+        )}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
+function FunctionUrlModal({ name, onClose }: { name: string; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [authType, setAuthType] = useState<"AWS_IAM" | "NONE">("AWS_IAM");
+  const [invokeMode, setInvokeMode] = useState<"BUFFERED" | "RESPONSE_STREAM">("BUFFERED");
+  const create = useMutation({
+    mutationFn: () => createLambdaFunctionUrl(name, authType, invokeMode),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["lambda-function-urls", name] });
+      onClose();
+    },
+  });
+  return (
+    <AwsModal
+      title="Create function URL"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton variant="primary" disabled={create.isPending} onClick={() => create.mutate()}>
+            {create.isPending ? "Creating…" : "Create"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="m">
+        <FormField label="Auth type">
+          <Select
+            selectedOption={{ label: authType === "AWS_IAM" ? "AWS IAM" : "None", value: authType }}
+            options={[{ label: "AWS IAM", value: "AWS_IAM" }, { label: "None", value: "NONE" }]}
+            onChange={(event) => setAuthType(event.detail.selectedOption.value as "AWS_IAM" | "NONE")}
+          />
+        </FormField>
+        <FormField label="Invoke mode">
+          <Select
+            selectedOption={{ label: invokeMode === "BUFFERED" ? "Buffered" : "Response stream", value: invokeMode }}
+            options={[
+              { label: "Buffered", value: "BUFFERED" },
+              { label: "Response stream", value: "RESPONSE_STREAM" },
+            ]}
+            onChange={(event) => setInvokeMode(event.detail.selectedOption.value as "BUFFERED" | "RESPONSE_STREAM")}
+          />
+        </FormField>
+        {create.isError && <AwsErrorAlert>{create.error instanceof Error ? create.error.message : "Create failed."}</AwsErrorAlert>}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
 export function LambdaFunctionDetailPage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
@@ -222,8 +438,39 @@ export function LambdaFunctionDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [creatingAlias, setCreatingAlias] = useState(false);
+  const [editingConcurrency, setEditingConcurrency] = useState(false);
+  const [creatingFunctionUrl, setCreatingFunctionUrl] = useState(false);
   const [taggingArn, setTaggingArn] = useState<string | null>(null);
   const detail = useQuery({ queryKey: ["lambda-function", name], queryFn: () => fetchLambdaFunctionDetail(name) });
+  const aliases = useQuery({ queryKey: ["lambda-aliases", name], queryFn: () => fetchLambdaAliases(name) });
+  const versions = useQuery({ queryKey: ["lambda-versions", name], queryFn: () => fetchLambdaVersions(name) });
+  const eventSources = useQuery({
+    queryKey: ["lambda-event-source-mappings", name],
+    queryFn: () => fetchLambdaEventSourceMappings(name),
+  });
+  const concurrency = useQuery({
+    queryKey: ["lambda-concurrency", name],
+    queryFn: () => fetchLambdaConcurrency(name),
+  });
+  const functionUrls = useQuery({
+    queryKey: ["lambda-function-urls", name],
+    queryFn: () => fetchLambdaFunctionUrls(name),
+  });
+  const recentLogs = useQuery({
+    queryKey: ["lambda-recent-logs", name],
+    queryFn: async () => {
+      const streams = await fetchCWLogStreams(`/aws/lambda/${name}`);
+      const latest = [...streams].sort((a, b) => b.lastEventTimestamp - a.lastEventTimestamp)[0];
+      if (!latest) return [];
+      return fetchCWLogEvents(`/aws/lambda/${name}`, latest.name);
+    },
+  });
+  const removeFunctionUrl = useMutation({
+    mutationFn: () => deleteLambdaFunctionUrl(name),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["lambda-function-urls", name] }),
+  });
   const config = detail.data?.configuration;
   const tags = detail.data?.tags ?? {};
 
@@ -240,6 +487,142 @@ export function LambdaFunctionDetailPage() {
 
   const tabs: AwsTab[] = config
     ? [
+        {
+          id: "overview",
+          label: "Function overview",
+          content: (
+            <div className="aws-lambda-overview" data-testid="lambda-function-overview">
+              <div className="aws-lambda-trigger-column">
+                <Header variant="h3">Triggers</Header>
+                {eventSources.isLoading ? (
+                  <AwsEmptyState title="Loading triggers…" loading />
+                ) : eventSources.data?.length ? (
+                  eventSources.data.map((source) => (
+                    <div className="aws-lambda-resource-card" key={source.uuid}>
+                      <strong>{source.eventSourceArn.split(":")[2] || "Event source"}</strong>
+                      <small>{source.eventSourceArn}</small>
+                    </div>
+                  ))
+                ) : (
+                  <AwsEmptyState title="No triggers" description="No event source mappings invoke this function." />
+                )}
+              </div>
+              <div className="aws-lambda-function-node">
+                <span className="aws-lambda-icon">λ</span>
+                <strong>{config.name}</strong>
+                <small>{config.packageType === "Image" ? "Container image" : config.runtime}</small>
+              </div>
+              <div className="aws-lambda-destination-column">
+                <Header variant="h3">Destinations</Header>
+                <AwsEmptyState
+                  title="No destinations"
+                  description="No asynchronous invocation destinations are configured."
+                />
+              </div>
+            </div>
+          ),
+        },
+        {
+          id: "code",
+          label: "Code",
+          content: (
+            <div data-testid="lambda-function-code">
+              <AwsKeyValue
+                items={[
+                  { label: "Package type", value: config.packageType || "Zip" },
+                  { label: "Runtime", value: config.runtime || "–" },
+                  { label: "Handler", value: config.handler || "–" },
+                  { label: "Architectures", value: config.architectures.join(", ") || "–" },
+                  detail.data?.code.imageUri
+                    ? { label: "Container image", value: <code>{detail.data.code.imageUri}</code> }
+                    : { label: "Code size", value: formatBytes(config.codeSize) },
+                  { label: "Code SHA-256", value: <code>{config.codeSha256 || "–"}</code> },
+                  { label: "Version", value: config.version || "–" },
+                  ...(config.imageConfig
+                    ? [
+                        { label: "Entry point", value: config.imageConfig.entryPoint.join(" ") || "Image default" },
+                        { label: "Command", value: config.imageConfig.command.join(" ") || "Image default" },
+                        { label: "Working directory", value: config.imageConfig.workingDirectory || "Image default" },
+                      ]
+                    : []),
+                ]}
+              />
+            </div>
+          ),
+        },
+        {
+          id: "test",
+          label: "Test",
+          content: (
+            <SpaceBetween size="m">
+              <Header
+                variant="h3"
+                actions={
+                  <AwsButton variant="primary" onClick={() => setTesting(true)}>
+                    Test function
+                  </AwsButton>
+                }
+              >
+                Test event
+              </Header>
+              <p>Invoke the published function synchronously with a JSON event and inspect its real response payload.</p>
+            </SpaceBetween>
+          ),
+        },
+        {
+          id: "monitor",
+          label: "Monitor",
+          content: (
+            <SpaceBetween size="m">
+              <Header
+                variant="h3"
+                actions={
+                  <SpaceBetween direction="horizontal" size="xs">
+                    <AwsButton onClick={() => setEditingConcurrency(true)}>Edit concurrency</AwsButton>
+                    <AwsButton
+                      onClick={() => navigate(`/ui/logs/${encodeURIComponent(`/aws/lambda/${config.name}`)}`)}
+                    >
+                      View CloudWatch logs
+                    </AwsButton>
+                  </SpaceBetween>
+                }
+              >
+                Monitoring
+              </Header>
+              <AwsKeyValue
+                items={[
+                  { label: "Log group", value: <code>/aws/lambda/{config.name}</code> },
+                  {
+                    label: "Reserved concurrency",
+                    value:
+                      concurrency.data?.reservedConcurrentExecutions === undefined
+                        ? "Unreserved account concurrency"
+                        : concurrency.data.reservedConcurrentExecutions,
+                  },
+                  { label: "Last update", value: <AwsStatus status={config.lastUpdateStatus || config.state} /> },
+                ]}
+              />
+              {recentLogs.isError && (
+                <AwsErrorAlert>
+                  {recentLogs.error instanceof Error ? recentLogs.error.message : "Could not load CloudWatch Logs."}
+                </AwsErrorAlert>
+              )}
+              <Table
+                variant="embedded"
+                loading={recentLogs.isLoading}
+                loadingText="Loading recent logs"
+                items={recentLogs.data ?? []}
+                ariaLabels={{ tableLabel: "Recent Lambda log events" }}
+                header={<Header variant="h3">Recent invocations</Header>}
+                empty={<AwsEmptyState title="No log events" description="Invoke this function to produce runtime logs." />}
+                columnDefinitions={[
+                  { id: "timestamp", header: "Timestamp", cell: (event) => formatEpoch(event.timestamp / 1000) },
+                  { id: "message", header: "Message", cell: (event) => <pre className="aws-lambda-log-message">{event.message}</pre> },
+                ]}
+              />
+            </SpaceBetween>
+          ),
+        },
         {
           id: "configuration",
           label: "Configuration",
@@ -261,6 +644,22 @@ export function LambdaFunctionDetailPage() {
                 ]}
               />
               <div style={{ marginTop: 20 }}>
+                <Header variant="h3">Layers</Header>
+                {config.layers.length === 0 ? (
+                  <AwsEmptyState title="No layers" description="This function has no Lambda layers." />
+                ) : (
+                  <Table
+                    variant="embedded"
+                    ariaLabels={{ tableLabel: "Lambda layers" }}
+                    items={config.layers}
+                    columnDefinitions={[
+                      { id: "arn", header: "Layer version ARN", cell: (layer) => <code>{layer.arn}</code> },
+                      { id: "size", header: "Code size", cell: (layer) => formatBytes(layer.codeSize) },
+                    ]}
+                  />
+                )}
+              </div>
+              <div style={{ marginTop: 20 }}>
                 <Header variant="h3">Environment variables</Header>
                 {config.environment.length === 0 ? (
                   <AwsEmptyState title="No environment variables" description="This function defines no environment variables." />
@@ -280,22 +679,125 @@ export function LambdaFunctionDetailPage() {
           ),
         },
         {
-          id: "code",
-          label: "Code",
+          id: "aliases",
+          label: `Aliases (${aliases.data?.length ?? 0})`,
           content: (
-            <div data-testid="lambda-function-code">
-              <AwsKeyValue
-                items={[
-                  { label: "Package type", value: config.packageType || "Zip" },
-                  { label: "Architectures", value: config.architectures.join(", ") || "–" },
-                  detail.data?.code.imageUri
-                    ? { label: "Container image", value: <code>{detail.data.code.imageUri}</code> }
-                    : { label: "Code size", value: formatBytes(config.codeSize) },
-                  { label: "Code SHA-256", value: <code>{config.codeSha256 || "–"}</code> },
-                  { label: "Version", value: config.version || "–" },
+            <Table
+              variant="embedded"
+              loading={aliases.isLoading}
+              loadingText="Loading aliases"
+              items={aliases.data ?? []}
+              ariaLabels={{ tableLabel: "Function aliases" }}
+              header={
+                <Header
+                  variant="h3"
+                  actions={<AwsButton onClick={() => setCreatingAlias(true)}>Create alias</AwsButton>}
+                >
+                  Aliases
+                </Header>
+              }
+              empty={<AwsEmptyState title="No aliases" description="This function has no aliases." />}
+              columnDefinitions={[
+                { id: "name", header: "Name", cell: (alias) => alias.name },
+                { id: "version", header: "Function version", cell: (alias) => alias.functionVersion },
+                { id: "description", header: "Description", cell: (alias) => alias.description || "–" },
+                { id: "arn", header: "ARN", cell: (alias) => alias.arn },
+              ]}
+            />
+          ),
+        },
+        {
+          id: "versions",
+          label: `Versions (${versions.data?.length ?? 0})`,
+          content: (
+            <Table
+              variant="embedded"
+              loading={versions.isLoading}
+              loadingText="Loading versions"
+              items={versions.data ?? []}
+              ariaLabels={{ tableLabel: "Function versions" }}
+              header={
+                <Header
+                  variant="h3"
+                  actions={<AwsButton onClick={() => setPublishing(true)}>Publish new version</AwsButton>}
+                >
+                  Versions
+                </Header>
+              }
+              empty={<AwsEmptyState title="No versions" description="This function has no published versions." />}
+              columnDefinitions={[
+                { id: "version", header: "Version", cell: (version) => version.version },
+                { id: "runtime", header: "Runtime", cell: (version) => version.runtime || "–" },
+                { id: "size", header: "Code size", cell: (version) => formatBytes(version.codeSize) },
+                { id: "modified", header: "Last modified", cell: (version) => formatTimestamp(version.lastModified) },
+              ]}
+            />
+          ),
+        },
+        {
+          id: "event-sources",
+          label: `Event source mappings (${eventSources.data?.length ?? 0})`,
+          content: (
+            <Table
+              variant="embedded"
+              loading={eventSources.isLoading}
+              loadingText="Loading event source mappings"
+              items={eventSources.data ?? []}
+              ariaLabels={{ tableLabel: "Event source mappings" }}
+              header={<Header variant="h3">Event source mappings</Header>}
+              empty={<AwsEmptyState title="No event source mappings" />}
+              columnDefinitions={[
+                { id: "source", header: "Event source", cell: (mapping) => mapping.eventSourceArn },
+                { id: "state", header: "State", cell: (mapping) => <AwsStatus status={mapping.state} /> },
+                { id: "batch", header: "Batch size", cell: (mapping) => mapping.batchSize },
+                { id: "uuid", header: "UUID", cell: (mapping) => mapping.uuid },
+              ]}
+            />
+          ),
+        },
+        {
+          id: "function-url",
+          label: "Function URL",
+          content: (
+            <SpaceBetween size="m">
+              {removeFunctionUrl.isError && (
+                <AwsErrorAlert>
+                  {removeFunctionUrl.error instanceof Error
+                    ? removeFunctionUrl.error.message
+                    : "Could not delete the function URL."}
+                </AwsErrorAlert>
+              )}
+              <Table
+                variant="embedded"
+                loading={functionUrls.isLoading}
+                loadingText="Loading function URLs"
+                items={functionUrls.data ?? []}
+                ariaLabels={{ tableLabel: "Function URL configurations" }}
+                header={
+                  <Header
+                    variant="h3"
+                    actions={
+                      functionUrls.data?.length ? (
+                        <AwsButton disabled={removeFunctionUrl.isPending} onClick={() => removeFunctionUrl.mutate()}>
+                          Delete
+                        </AwsButton>
+                      ) : (
+                        <AwsButton onClick={() => setCreatingFunctionUrl(true)}>Create function URL</AwsButton>
+                      )
+                    }
+                  >
+                    Function URL
+                  </Header>
+                }
+                empty={<AwsEmptyState title="No function URL" description="This function has no function URL configuration." />}
+                columnDefinitions={[
+                  { id: "url", header: "Function URL", cell: (url) => url.functionUrl },
+                  { id: "auth", header: "Auth type", cell: (url) => url.authType },
+                  { id: "mode", header: "Invoke mode", cell: (url) => url.invokeMode || "BUFFERED" },
+                  { id: "modified", header: "Last modified", cell: (url) => formatTimestamp(url.lastModifiedTime) },
                 ]}
               />
-            </div>
+            </SpaceBetween>
           ),
         },
         {
@@ -347,6 +849,9 @@ export function LambdaFunctionDetailPage() {
             <AwsButton data-testid="lambda-function-edit" disabled={!config} onClick={() => setEditing(true)}>
               Edit
             </AwsButton>
+            <AwsButton disabled={!config} onClick={() => setPublishing(true)}>
+              Publish version
+            </AwsButton>
             <AwsButton data-testid="lambda-function-delete" disabled={!config} onClick={() => setDeleting(true)}>
               Delete
             </AwsButton>
@@ -385,6 +890,20 @@ export function LambdaFunctionDetailPage() {
       </AwsContainer>
       {editing && config && <EditConfigurationModal name={name} config={config} onClose={() => setEditing(false)} />}
       {testing && config && <TestFunctionModal name={name} onClose={() => setTesting(false)} />}
+      {publishing && config && <PublishVersionModal name={name} onClose={() => setPublishing(false)} />}
+      {creatingAlias && config && (
+        <CreateAliasModal name={name} versions={versions.data ?? []} onClose={() => setCreatingAlias(false)} />
+      )}
+      {editingConcurrency && config && (
+        <ConcurrencyModal
+          name={name}
+          current={concurrency.data?.reservedConcurrentExecutions}
+          onClose={() => setEditingConcurrency(false)}
+        />
+      )}
+      {creatingFunctionUrl && config && (
+        <FunctionUrlModal name={name} onClose={() => setCreatingFunctionUrl(false)} />
+      )}
       {taggingArn && (
         <TagsEditorModal
           title="Manage tags"

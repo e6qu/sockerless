@@ -108,7 +108,7 @@ func TestLambda_CallTimeIAMEnforcement(t *testing.T) {
 		Role:         aws.String("arn:aws:iam::000000000000:role/r"),
 		Handler:      aws.String("index.handler"),
 		Runtime:      lambdatypes.RuntimeNodejs20x,
-		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("zip-bytes")},
+		Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 	})
 	require.Error(t, err, "lambda:CreateFunction is not granted and must be denied")
 	assert.Equal(t, "AccessDeniedException", errCode(err))

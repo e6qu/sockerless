@@ -201,7 +201,7 @@ func TestSNS_DeliverToLambda_AuthorizedByFunctionPolicy(t *testing.T) {
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		Runtime:      lambdatypes.RuntimeNodejs20x,
 		Handler:      aws.String("index.handler"),
-		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("zip-bytes")},
+		Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)}) })
@@ -275,7 +275,7 @@ func TestSNS_DeliverToLambda_DeniedNoPermission(t *testing.T) {
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		Runtime:      lambdatypes.RuntimeNodejs20x,
 		Handler:      aws.String("index.handler"),
-		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("zip-bytes")},
+		Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)}) })

@@ -4,6 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Textarea from "@cloudscape-design/components/textarea";
 import FormField from "@cloudscape-design/components/form-field";
+import Header from "@cloudscape-design/components/header";
+import Input from "@cloudscape-design/components/input";
+import Select from "@cloudscape-design/components/select";
+import Table from "@cloudscape-design/components/table";
 import { fontFamilyMonospace } from "@cloudscape-design/design-tokens";
 import {
   AwsButton,
@@ -14,25 +18,50 @@ import {
   AwsModal,
   AwsPageHeader,
   AwsResourceTable,
+  AwsRowLink,
   AwsStatus,
+  AwsTabs,
+  removedKeys,
+  TagsEditorModal,
   type AwsColumn,
+  type AwsTab,
 } from "../console/index.js";
 import { formatEpoch } from "../console/format.js";
 import {
   fetchStateMachine,
+  fetchStateMachineAliases,
   fetchStateMachineExecutions,
+  fetchStateMachineTags,
+  fetchStateMachineVersions,
+  createStateMachineAlias,
+  publishStateMachineVersion,
   startStateMachineExecution,
+  tagStateMachineResource,
+  untagStateMachineResource,
+  updateStateMachine,
   type StateMachineExecution,
 } from "../api.js";
 import { DeleteStateMachinesModal } from "./StepFunctionsPage.js";
+import { StateMachineGraph } from "./StateMachineGraph.js";
 
 // AWS Step Functions — State machine detail. DescribeStateMachine for the
 // summary and the definition, ListExecutions for the executions table, and
 // StartExecution for the "Start execution" action — the same operations the
 // real console's state machine page drives.
 
-const executionColumns: AwsColumn<StateMachineExecution>[] = [
-  { id: "name", header: "Name", cell: (row) => row.name, value: (row) => row.name },
+const executionColumns = (stateMachineArn: string): AwsColumn<StateMachineExecution>[] => [
+  {
+    id: "name",
+    header: "Name",
+    cell: (row) => (
+      <AwsRowLink
+        to={`/ui/stepfunctions/${encodeURIComponent(stateMachineArn)}/executions/${encodeURIComponent(row.executionArn)}`}
+      >
+        {row.name}
+      </AwsRowLink>
+    ),
+    value: (row) => row.name,
+  },
   { id: "status", header: "Status", cell: (row) => <AwsStatus status={row.status} />, value: (row) => row.status },
   {
     id: "startDate",
@@ -49,13 +78,19 @@ const executionColumns: AwsColumn<StateMachineExecution>[] = [
 ];
 
 function StartExecutionModal({ stateMachineArn, onClose }: { stateMachineArn: string; onClose: () => void }) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [input, setInput] = useState("{}");
   const start = useMutation({
     mutationFn: () => startStateMachineExecution(stateMachineArn, input),
-    onSuccess: async () => {
+    onSuccess: async (executionArn) => {
       await queryClient.invalidateQueries({ queryKey: ["sfn-executions", stateMachineArn] });
       onClose();
+      if (executionArn) {
+        navigate(
+          `/ui/stepfunctions/${encodeURIComponent(stateMachineArn)}/executions/${encodeURIComponent(executionArn)}`,
+        );
+      }
     },
   });
   let inputIsJson = true;
@@ -108,15 +143,317 @@ function StartExecutionModal({ stateMachineArn, onClose }: { stateMachineArn: st
   );
 }
 
+function EditStateMachineModal({
+  machine,
+  onClose,
+}: {
+  machine: { stateMachineArn: string; definition: string; roleArn: string };
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [definition, setDefinition] = useState(machine.definition);
+  const [roleArn, setRoleArn] = useState(machine.roleArn);
+  let definitionValid = true;
+  try {
+    const parsed = JSON.parse(definition) as { StartAt?: string; States?: Record<string, unknown> };
+    definitionValid = Boolean(parsed.StartAt && parsed.States?.[parsed.StartAt]);
+  } catch {
+    definitionValid = false;
+  }
+  const update = useMutation({
+    mutationFn: () => updateStateMachine(machine.stateMachineArn, definition, roleArn),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["sfn-state-machine", machine.stateMachineArn] });
+      onClose();
+    },
+  });
+  return (
+    <AwsModal
+      title="Edit state machine"
+      size="max"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton
+            variant="primary"
+            disabled={!definitionValid || !roleArn.startsWith("arn:") || update.isPending}
+            onClick={() => update.mutate()}
+          >
+            {update.isPending ? "Saving…" : "Save"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="l">
+        <div className="aws-sfn-studio">
+          <div className="aws-sfn-studio-pane">
+            <Header variant="h3">Design</Header>
+            <StateMachineGraph definition={definition} />
+          </div>
+          <div className="aws-sfn-studio-pane aws-sfn-definition-editor">
+            <FormField
+              label="Amazon States Language definition"
+              errorText={definitionValid ? undefined : "Enter a valid definition with StartAt and States."}
+            >
+              <Textarea
+                value={definition}
+                rows={22}
+                spellcheck={false}
+                onChange={(event) => setDefinition(event.detail.value)}
+                ariaLabel="Amazon States Language definition"
+              />
+            </FormField>
+          </div>
+        </div>
+        <FormField label="Execution role ARN">
+          <Input value={roleArn} onChange={(event) => setRoleArn(event.detail.value)} />
+        </FormField>
+        {update.isError && <AwsErrorAlert>{update.error instanceof Error ? update.error.message : "Update failed."}</AwsErrorAlert>}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
+function PublishStateMachineModal({ stateMachineArn, onClose }: { stateMachineArn: string; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [description, setDescription] = useState("");
+  const publish = useMutation({
+    mutationFn: () => publishStateMachineVersion(stateMachineArn, description),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["sfn-state-machine-versions", stateMachineArn] });
+      onClose();
+    },
+  });
+  return (
+    <AwsModal
+      title="Publish version"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton variant="primary" disabled={publish.isPending} onClick={() => publish.mutate()}>
+            {publish.isPending ? "Publishing…" : "Publish"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="m">
+        <p>Publish an immutable version of this workflow definition and configuration.</p>
+        <FormField label="Version description">
+          <Input value={description} onChange={(event) => setDescription(event.detail.value)} />
+        </FormField>
+        {publish.isError && <AwsErrorAlert>{publish.error instanceof Error ? publish.error.message : "Publish failed."}</AwsErrorAlert>}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
+function CreateStateMachineAliasModal({
+  versions,
+  onClose,
+  stateMachineArn,
+}: {
+  versions: { stateMachineVersionArn: string; version: number }[];
+  onClose: () => void;
+  stateMachineArn: string;
+}) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [versionArn, setVersionArn] = useState(versions.at(-1)?.stateMachineVersionArn ?? "");
+  const create = useMutation({
+    mutationFn: () => createStateMachineAlias(name, versionArn, description),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["sfn-state-machine-aliases", stateMachineArn] });
+      onClose();
+    },
+  });
+  return (
+    <AwsModal
+      title="Create alias"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton
+            variant="primary"
+            disabled={!/^[a-zA-Z0-9-_]{1,80}$/.test(name) || !versionArn || create.isPending}
+            onClick={() => create.mutate()}
+          >
+            {create.isPending ? "Creating…" : "Create"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="m">
+        <FormField label="Alias name">
+          <Input value={name} onChange={(event) => setName(event.detail.value)} />
+        </FormField>
+        <FormField label="State machine version">
+          <Select
+            selectedOption={
+              versionArn
+                ? { label: String(versions.find((version) => version.stateMachineVersionArn === versionArn)?.version ?? ""), value: versionArn }
+                : null
+            }
+            options={versions.map((version) => ({
+              label: String(version.version),
+              value: version.stateMachineVersionArn,
+            }))}
+            onChange={(event) => setVersionArn(event.detail.selectedOption.value ?? "")}
+            placeholder="Choose a published version"
+          />
+        </FormField>
+        <FormField label="Description">
+          <Input value={description} onChange={(event) => setDescription(event.detail.value)} />
+        </FormField>
+        {versions.length === 0 && <AwsErrorAlert>Publish a state machine version before creating an alias.</AwsErrorAlert>}
+        {create.isError && <AwsErrorAlert>{create.error instanceof Error ? create.error.message : "Create failed."}</AwsErrorAlert>}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
+function formattedDefinition(definition: string): string {
+  try {
+    return JSON.stringify(JSON.parse(definition), null, 2);
+  } catch {
+    return definition;
+  }
+}
+
 export function StateMachineDetailPage() {
   const { stateMachineArn = "" } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [starting, setStarting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [creatingAlias, setCreatingAlias] = useState(false);
+  const [editingTags, setEditingTags] = useState(false);
   const machine = useQuery({
     queryKey: ["sfn-state-machine", stateMachineArn],
     queryFn: () => fetchStateMachine(stateMachineArn),
   });
+  const versions = useQuery({
+    queryKey: ["sfn-state-machine-versions", stateMachineArn],
+    queryFn: () => fetchStateMachineVersions(stateMachineArn),
+  });
+  const aliases = useQuery({
+    queryKey: ["sfn-state-machine-aliases", stateMachineArn],
+    queryFn: () => fetchStateMachineAliases(stateMachineArn),
+  });
+  const tags = useQuery({
+    queryKey: ["sfn-state-machine-tags", stateMachineArn],
+    queryFn: () => fetchStateMachineTags(stateMachineArn),
+  });
+
+  const tabs: AwsTab[] = machine.data
+    ? [
+        {
+          id: "graph",
+          label: "Graph",
+          content: <StateMachineGraph definition={machine.data.definition} />,
+        },
+        {
+          id: "definition",
+          label: "Definition",
+          content: (
+            <pre style={{ fontFamily: fontFamilyMonospace, margin: 0, whiteSpace: "pre-wrap" }}>
+              {formattedDefinition(machine.data.definition)}
+            </pre>
+          ),
+        },
+        {
+          id: "versions",
+          label: `Versions (${versions.data?.length ?? 0})`,
+          content: versions.isError ? (
+            <AwsErrorAlert>Could not load state machine versions.</AwsErrorAlert>
+          ) : (
+            <Table
+              variant="embedded"
+              loading={versions.isLoading}
+              loadingText="Loading versions"
+              items={versions.data ?? []}
+              ariaLabels={{ tableLabel: "State machine versions" }}
+              header={
+                <Header
+                  variant="h3"
+                  actions={<AwsButton onClick={() => setPublishing(true)}>Publish version</AwsButton>}
+                >
+                  Versions
+                </Header>
+              }
+              empty={<AwsEmptyState title="No published versions" description="This state machine has no published versions." />}
+              columnDefinitions={[
+                { id: "version", header: "Version", cell: (version) => version.version },
+                { id: "arn", header: "ARN", cell: (version) => version.stateMachineVersionArn },
+                { id: "created", header: "Created", cell: (version) => formatEpoch(version.creationDate) },
+              ]}
+            />
+          ),
+        },
+        {
+          id: "aliases",
+          label: `Aliases (${aliases.data?.length ?? 0})`,
+          content: aliases.isError ? (
+            <AwsErrorAlert>Could not load state machine aliases.</AwsErrorAlert>
+          ) : (
+            <Table
+              variant="embedded"
+              loading={aliases.isLoading}
+              loadingText="Loading aliases"
+              items={aliases.data ?? []}
+              ariaLabels={{ tableLabel: "State machine aliases" }}
+              header={
+                <Header
+                  variant="h3"
+                  actions={<AwsButton onClick={() => setCreatingAlias(true)}>Create alias</AwsButton>}
+                >
+                  Aliases
+                </Header>
+              }
+              empty={<AwsEmptyState title="No aliases" description="This state machine has no aliases." />}
+              columnDefinitions={[
+                { id: "name", header: "Name", cell: (alias) => alias.name },
+                { id: "arn", header: "ARN", cell: (alias) => alias.stateMachineAliasArn },
+                { id: "updated", header: "Updated", cell: (alias) => formatEpoch(alias.updateDate) },
+              ]}
+            />
+          ),
+        },
+        {
+          id: "tags",
+          label: `Tags (${Object.keys(tags.data ?? {}).length})`,
+          content: tags.isError ? (
+            <AwsErrorAlert>Could not load state machine tags.</AwsErrorAlert>
+          ) : (
+            <Table
+              variant="embedded"
+              loading={tags.isLoading}
+              loadingText="Loading tags"
+              items={Object.entries(tags.data ?? {}).map(([key, value]) => ({ key, value }))}
+              ariaLabels={{ tableLabel: "State machine tags" }}
+              header={
+                <Header
+                  variant="h3"
+                  actions={<AwsButton onClick={() => setEditingTags(true)}>Manage tags</AwsButton>}
+                >
+                  Tags
+                </Header>
+              }
+              empty={<AwsEmptyState title="No tags" description="This state machine has no tags." />}
+              columnDefinitions={[
+                { id: "key", header: "Key", cell: (tag) => tag.key },
+                { id: "value", header: "Value", cell: (tag) => tag.value },
+              ]}
+            />
+          ),
+        },
+      ]
+    : [];
 
   return (
     <>
@@ -131,6 +468,12 @@ export function StateMachineDetailPage() {
               onClick={() => setStarting(true)}
             >
               Start execution
+            </AwsButton>
+            <AwsButton disabled={!machine.isSuccess} onClick={() => setEditing(true)}>
+              Edit
+            </AwsButton>
+            <AwsButton disabled={!machine.isSuccess} onClick={() => setPublishing(true)}>
+              Publish version
             </AwsButton>
             <AwsButton
               data-testid="sfn-state-machine-delete"
@@ -160,12 +503,11 @@ export function StateMachineDetailPage() {
                 { label: "IAM role", value: machine.data.roleArn || "–" },
                 { label: "Created", value: formatEpoch(machine.data.creationDate) },
                 { label: "ARN", value: machine.data.stateMachineArn },
-                {
-                  label: "Definition",
-                  value: <pre style={{ fontFamily: fontFamilyMonospace, margin: 0, whiteSpace: "pre-wrap" }}>{machine.data.definition}</pre>,
-                },
               ]}
             />
+            <div style={{ marginTop: 20 }}>
+              <AwsTabs ariaLabel="State machine detail" tabs={tabs} />
+            </div>
           </div>
         ) : null}
       </AwsContainer>
@@ -173,7 +515,7 @@ export function StateMachineDetailPage() {
         title="Executions"
         headingVariant="h2"
         description="Executions of this state machine."
-        columns={executionColumns}
+        columns={executionColumns(stateMachineArn)}
         queryKey={["sfn-executions", stateMachineArn]}
         queryFn={() => fetchStateMachineExecutions(stateMachineArn)}
         filterPlaceholder="Find executions"
@@ -189,6 +531,32 @@ export function StateMachineDetailPage() {
         )}
       />
       {starting && <StartExecutionModal stateMachineArn={stateMachineArn} onClose={() => setStarting(false)} />}
+      {editing && machine.data && <EditStateMachineModal machine={machine.data} onClose={() => setEditing(false)} />}
+      {publishing && machine.data && (
+        <PublishStateMachineModal stateMachineArn={stateMachineArn} onClose={() => setPublishing(false)} />
+      )}
+      {creatingAlias && machine.data && (
+        <CreateStateMachineAliasModal
+          stateMachineArn={stateMachineArn}
+          versions={versions.data ?? []}
+          onClose={() => setCreatingAlias(false)}
+        />
+      )}
+      {editingTags && machine.data && (
+        <TagsEditorModal
+          title="Manage tags"
+          intro={`Tags applied to the ${machine.data.name} state machine.`}
+          initialTags={tags.data ?? {}}
+          testIdPrefix="sfn-state-machine"
+          onClose={() => setEditingTags(false)}
+          onSaved={() => queryClient.invalidateQueries({ queryKey: ["sfn-state-machine-tags", stateMachineArn] })}
+          save={async (next) => {
+            const remove = removedKeys(tags.data ?? {}, next);
+            if (Object.keys(next).length > 0) await tagStateMachineResource(stateMachineArn, next);
+            if (remove.length > 0) await untagStateMachineResource(stateMachineArn, remove);
+          }}
+        />
+      )}
       {deleting && machine.data && (
         <DeleteStateMachinesModal
           machines={[machine.data]}

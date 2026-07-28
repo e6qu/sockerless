@@ -70,7 +70,7 @@ func TestValidationSweep(t *testing.T) {
 			Runtime:      lambdatypes.RuntimePython312,
 			Handler:      aws.String("app.handler"),
 			MemorySize:   aws.Int32(64), // below the 128 minimum
-			Code:         &lambdatypes.FunctionCode{ZipFile: []byte("x")},
+			Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 		})
 		assert.Equal(t, "InvalidParameterValueException", errCode(t, err))
 	})

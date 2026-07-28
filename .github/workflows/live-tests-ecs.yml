@@ -1,9 +1,8 @@
 # live-tests-ecs — sockerless ECS backend, against a real AWS account.
 #
 # Manual only (`workflow_dispatch`). Brings up the shared AWS infra
-# (terraform), runs the ECS smoke, optionally spawns a github / gitlab
-# runner dispatcher (so that `hello-ecs` self-hosted runner-bound jobs
-# can register), then tears everything down. Teardown always runs so a
+# (terraform), runs the ECS smoke, registers real github.com and gitlab.com
+# runners through the Amazon ECS backend, then tears everything down. Teardown always runs so a
 # failed earlier job still releases scratch AWS resources. See
 # smoke-tests/aws-live/README.md for the scripts each job runs.
 #
@@ -15,12 +14,10 @@
 #                                 Trust policy allows
 #                                 token.actions.githubusercontent.com
 #                                 with this repo's ref claim.
-#   AWS_LIVE_GITHUB_PAT         — (optional) PAT for 4-github-runner.sh
-#                                 self-hosted-runner registration.
-#                                 Skip if not running script 4.
-#   AWS_LIVE_GITLAB_RUNNER_TOKEN — (optional) GitLab runner registration
-#                                 token for 5-gitlab-runner.sh. Skip if
-#                                 not running script 5.
+#   AWS_LIVE_GITHUB_PAT         — PAT with repository administration scope
+#                                 for 4-github-runner.sh.
+#   AWS_LIVE_GITLAB_RUNNER_TOKEN — GitLab runner authentication token for
+#                                  5-gitlab-runner.sh.
 #
 # Why repo secrets and not workflow inputs: workflow_dispatch inputs
 # leak into the run history's Inputs panel and the workflow run REST
@@ -102,14 +99,21 @@ jobs:
     env:
       AWS_REGION: ${{ inputs.region }}
       GITHUB_PAT: ${{ secrets.AWS_LIVE_GITHUB_PAT }}
+      GITHUB_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - run: |
-          if [ -z "$GITHUB_PAT" ]; then
-            echo "::warning::github_pat absent; skipping 4-github-runner.sh"
-            exit 0
-          fi
-          bash smoke-tests/aws-live/4-github-runner.sh
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: actions/download-artifact@v8.0.1
+        with: { name: ecs-outputs, path: /tmp }
+      - run: (cd backends/ecs && go build -o ../../sockerless-backend-ecs ./cmd/sockerless-backend-ecs)
+      - run: bash smoke-tests/aws-live/4-github-runner.sh
 
   gitlab-runner:
     needs: infra-up
@@ -123,18 +127,23 @@ jobs:
       GITLAB_RUNNER_TOKEN: ${{ secrets.AWS_LIVE_GITLAB_RUNNER_TOKEN }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - run: |
-          if [ -z "$GITLAB_RUNNER_TOKEN" ]; then
-            echo "::warning::gitlab_runner_token absent; skipping 5-gitlab-runner.sh"
-            exit 0
-          fi
-          bash smoke-tests/aws-live/5-gitlab-runner.sh
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: actions/download-artifact@v8.0.1
+        with: { name: ecs-outputs, path: /tmp }
+      - run: (cd backends/ecs && go build -o ../../sockerless-backend-ecs ./cmd/sockerless-backend-ecs)
+      - run: bash smoke-tests/aws-live/5-gitlab-runner.sh
 
   hello:
-    # Minimal sanity check that the GH actions/runner + sockerless-ecs
+    # Minimal sanity check that the github.com Actions runner + sockerless-ecs
     # backend wiring works end-to-end. Runs on the self-hosted runner
-    # spawned by `github-runner` above. No repo secrets used directly —
-    # the dispatcher holds the AWS creds + GitHub PAT operator-side.
+    # registered by `github-runner` above.
     needs: github-runner
     if: |
       contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||

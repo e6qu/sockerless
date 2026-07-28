@@ -1319,6 +1319,10 @@ func amplifyPutS3Object(key, contentType string, data []byte) {
 }
 
 func amplifyURLBase(r *http.Request) string {
+	return awsRequestURLBase(r)
+}
+
+func awsRequestURLBase(r *http.Request) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
@@ -1336,19 +1340,24 @@ func amplifyURLBase(r *http.Request) string {
 // A SigV4 presigned URL commits to a single HTTP method, so method selects
 // GET (artifact / log downloads) or PUT (deployment uploads).
 func amplifyPresignedS3URLBase(urlBase, key, method string) string {
+	return presignedS3URLBase(urlBase, amplifyArtifactBucketName(), key, method)
+}
+
+func presignedS3URLBase(urlBase, bucket, key, method string) string {
 	host := urlBase
 	if u, err := url.Parse(urlBase); err == nil && u.Host != "" {
 		host = u.Host
 	}
-	path := "/" + amplifyArtifactBucketName() + "/" + key
+	path := "/" + bucket + "/" + key
 	now := time.Now().UTC()
 	amzDate := now.Format("20060102T150405Z")
 	dateStamp := now.Format("20060102")
-	cred := credScope{accessKeyID: seedAdminAccessKey, date: dateStamp, region: "us-east-1", service: "s3"}
+	region := awsRegion()
+	cred := credScope{accessKeyID: seedAdminAccessKey, date: dateStamp, region: region, service: "s3"}
 
 	q := url.Values{}
 	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
-	q.Set("X-Amz-Credential", seedAdminAccessKey+"/"+dateStamp+"/us-east-1/s3/aws4_request")
+	q.Set("X-Amz-Credential", seedAdminAccessKey+"/"+dateStamp+"/"+region+"/s3/aws4_request")
 	q.Set("X-Amz-Date", amzDate)
 	q.Set("X-Amz-Expires", "3600")
 	q.Set("X-Amz-SignedHeaders", "host")

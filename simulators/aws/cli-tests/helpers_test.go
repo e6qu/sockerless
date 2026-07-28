@@ -125,6 +125,7 @@ var (
 	containerCommandImage  string
 	tmpDir                 string
 	awsCLIVersion          string
+	provisionedToolDirs    []string
 )
 
 // requiredAWSCLIOperations are the AWS Command Line Interface subcommands this
@@ -146,6 +147,9 @@ var requiredAWSCLIOperations = [][2]string{
 	{"ssm", "create-cloud-connector"},
 	{"s3api", "put-object-annotation"},
 	{"s3api", "update-bucket-metadata-annotation-table-configuration"},
+	{"lambda", "checkpoint-durable-execution"},
+	{"lambda", "send-durable-execution-callback-heartbeat"},
+	{"lambda", "send-durable-execution-callback-success"},
 }
 
 func TestMain(m *testing.M) {
@@ -183,6 +187,7 @@ func TestMain(m *testing.M) {
 		log.Fatalf("%s (%s) still sends Amazon CloudWatch over the legacy awsQuery protocol; the simulator serves the awsJson1.0 surface the current API uses. Install a newer AWS CLI v2.",
 			awsCLIVersion, awsPath)
 	}
+	ensureSessionManagerPlugin()
 
 	// Build simulator
 	binaryPath, _ = filepath.Abs("../simulator-aws")
@@ -240,6 +245,9 @@ func TestMain(m *testing.M) {
 
 	shutdownSimulator(simCmd)
 	os.RemoveAll(tmpDir)
+	for _, dir := range provisionedToolDirs {
+		os.RemoveAll(dir)
+	}
 	os.Exit(code)
 }
 
@@ -453,6 +461,7 @@ func installLatestAWSCLI() string {
 	if err != nil {
 		log.Fatalf("Failed to create aws CLI install dir: %v", err)
 	}
+	provisionedToolDirs = append(provisionedToolDirs, binDir)
 	installDir := filepath.Join(binDir, "aws-cli")
 
 	switch runtime.GOOS {
@@ -498,4 +507,101 @@ func installLatestAWSCLI() string {
 	// Prepend to PATH so awsCLI() picks it up.
 	os.Setenv("PATH", installDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return awsBin
+}
+
+// ensureSessionManagerPlugin provisions the real AWS Systems Manager Session
+// Manager plugin when the host does not already carry it. The AWS CLI launches
+// this executable before it sends ecs execute-command, so merely testing the
+// control-plane rejection still requires the vendor plugin to be present.
+func ensureSessionManagerPlugin() {
+	if pluginPath, err := exec.LookPath("session-manager-plugin"); err == nil {
+		if out, err := exec.Command(pluginPath, "--version").CombinedOutput(); err != nil {
+			log.Fatalf("Session Manager plugin at %s does not run: %v\n%s", pluginPath, err, out)
+		}
+		return
+	}
+
+	binDir, err := os.MkdirTemp("", "sockerless-session-manager-plugin-*")
+	if err != nil {
+		log.Fatalf("Failed to create Session Manager plugin install dir: %v", err)
+	}
+	provisionedToolDirs = append(provisionedToolDirs, binDir)
+	extractDir := filepath.Join(binDir, "extract")
+	if err := os.MkdirAll(extractDir, 0755); err != nil {
+		log.Fatalf("Failed to create Session Manager plugin extraction dir: %v", err)
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		archPath := "mac"
+		if runtime.GOARCH == "arm64" {
+			archPath = "mac_arm64"
+		}
+		pkg := filepath.Join(binDir, "session-manager-plugin.pkg")
+		download := "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/" + archPath + "/session-manager-plugin.pkg"
+		if out, err := exec.Command("curl", "-fsSL", "-o", pkg, download).CombinedOutput(); err != nil {
+			log.Fatalf("Failed to download the Session Manager plugin package: %v\n%s", err, out)
+		}
+		expanded := filepath.Join(binDir, "expanded")
+		if out, err := exec.Command("pkgutil", "--expand", pkg, expanded).CombinedOutput(); err != nil {
+			log.Fatalf("Failed to expand the Session Manager plugin package: %v\n%s", err, out)
+		}
+		payloads, err := findFilesNamed(expanded, "Payload")
+		if err != nil {
+			log.Fatalf("Failed to inspect the Session Manager plugin package: %v", err)
+		}
+		if len(payloads) == 0 {
+			log.Fatalf("Session Manager plugin package contained no Payload archive")
+		}
+		for _, payload := range payloads {
+			if out, err := exec.Command("tar", "-xf", payload, "-C", extractDir).CombinedOutput(); err != nil {
+				log.Fatalf("Failed to extract the Session Manager plugin payload: %v\n%s", err, out)
+			}
+		}
+	case "linux":
+		archPath := "ubuntu_64bit"
+		if runtime.GOARCH == "arm64" {
+			archPath = "ubuntu_arm64"
+		}
+		deb := filepath.Join(binDir, "session-manager-plugin.deb")
+		download := "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/" + archPath + "/session-manager-plugin.deb"
+		if out, err := exec.Command("curl", "-fsSL", "-o", deb, download).CombinedOutput(); err != nil {
+			log.Fatalf("Failed to download the Session Manager plugin package: %v\n%s", err, out)
+		}
+		if out, err := exec.Command("dpkg-deb", "-x", deb, extractDir).CombinedOutput(); err != nil {
+			log.Fatalf("Failed to extract the Session Manager plugin package: %v\n%s", err, out)
+		}
+	default:
+		log.Fatalf("Unsupported OS for automatic Session Manager plugin install: %s", runtime.GOOS)
+	}
+
+	plugins, err := findFilesNamed(extractDir, "session-manager-plugin")
+	if err != nil {
+		log.Fatalf("Failed to inspect the Session Manager plugin installation: %v", err)
+	}
+	if len(plugins) != 1 {
+		log.Fatalf("Session Manager plugin package contained %d plugin binaries, want 1: %v", len(plugins), plugins)
+	}
+	pluginLink := filepath.Join(binDir, "session-manager-plugin")
+	if err := os.Symlink(plugins[0], pluginLink); err != nil {
+		log.Fatalf("Failed to expose the Session Manager plugin on PATH: %v", err)
+	}
+	os.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if out, err := exec.Command(pluginLink, "--version").CombinedOutput(); err != nil {
+		log.Fatalf("Provisioned Session Manager plugin does not run: %v\n%s", err, out)
+	}
+}
+
+func findFilesNamed(root, name string) ([]string, error) {
+	var matches []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && entry.Name() == name {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	return matches, err
 }

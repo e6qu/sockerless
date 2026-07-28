@@ -5,15 +5,15 @@
 set -euo pipefail
 
 : "${AWS_REGION:=eu-west-1}"
-: "${LAMBDA_REGION:=us-east-1}"
+: "${LAMBDA_REGION:=$AWS_REGION}"
 TG_DIR="${TG_DIR:-terraform/environments/ecs/live}"
-LAMBDA_TG_DIR="${LAMBDA_TG_DIR:-terraform/environments/lambda/live}"
+EXTRA_TG_DIR="${EXTRA_TG_DIR:-}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
-if [ -d "$REPO_ROOT/$LAMBDA_TG_DIR" ]; then
-  echo "=== terragrunt destroy in $LAMBDA_TG_DIR ==="
-  ( cd "$REPO_ROOT/$LAMBDA_TG_DIR" && terragrunt destroy -auto-approve || true )
+if [ -n "$EXTRA_TG_DIR" ]; then
+  echo "=== terragrunt destroy in $EXTRA_TG_DIR ==="
+  ( cd "$REPO_ROOT/$EXTRA_TG_DIR" && terragrunt destroy -auto-approve || true )
 fi
 
 echo "=== terragrunt destroy in $TG_DIR ==="

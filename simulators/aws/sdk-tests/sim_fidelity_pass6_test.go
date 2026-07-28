@@ -157,7 +157,7 @@ func TestLambda_GetFunctionRepositoryType(t *testing.T) {
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		Runtime:      lambdatypes.RuntimeNodejs20x,
 		Handler:      aws.String("index.handler"),
-		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("zip-bytes")},
+		Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 	})
 	require.NoError(t, err)
 	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(name)})

@@ -4,21 +4,26 @@
 set -euo pipefail
 
 : "${AWS_REGION:=eu-west-1}"
-: "${ECS_OUT:=/tmp/ecs-out.json}"
+: "${AWS_INFRA_OUTPUT:=/tmp/aws-infra-out.json}"
 
-if [ ! -f "$ECS_OUT" ]; then
-  echo "missing $ECS_OUT — run 0-infra-up.sh first" >&2
+if [ ! -f "$AWS_INFRA_OUTPUT" ]; then
+  echo "missing $AWS_INFRA_OUTPUT — run 0-infra-up.sh first" >&2
   exit 1
 fi
 
-jq_val() { jq -r ".$1.value" "$ECS_OUT"; }
-SOCKERLESS_LAMBDA_ROLE_ARN="$(jq_val lambda_role_arn)"
+jq_val() { jq -r ".$1.value" "$AWS_INFRA_OUTPUT"; }
+SOCKERLESS_LAMBDA_ROLE_ARN="$(jq_val execution_role_arn)"
 export SOCKERLESS_LAMBDA_ROLE_ARN
-export SOCKERLESS_LAMBDA_LOG_GROUP="/sockerless/live/lambda"
+SOCKERLESS_LAMBDA_LOG_GROUP="$(jq_val log_group_name)"
+export SOCKERLESS_LAMBDA_LOG_GROUP
 export AWS_REGION
 
 BACKEND_BIN="${BACKEND_BIN:-./sockerless-backend-lambda}"
-cleanup() { kill "${BACKEND_PID:-0}" 2>/dev/null || true; }
+cleanup() {
+  if [ -n "${BACKEND_PID:-}" ]; then
+    kill "$BACKEND_PID" 2>/dev/null || true
+  fi
+}
 trap cleanup EXIT
 
 echo "=== starting Lambda backend on :2376 ==="

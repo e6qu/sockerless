@@ -37,12 +37,12 @@ resource "aws_vpc" "main" {
 }
 
 resource "aws_subnet" "a" {
-  vpc_id                                         = aws_vpc.main.id
-  cidr_block                                     = "10.91.1.0/24"
-  availability_zone                              = "us-east-1a"
-  map_public_ip_on_launch                        = true
-  private_dns_hostname_type_on_launch            = "resource-name"
-  enable_resource_name_dns_a_record_on_launch    = true
+  vpc_id                                      = aws_vpc.main.id
+  cidr_block                                  = "10.91.1.0/24"
+  availability_zone                           = "us-east-1a"
+  map_public_ip_on_launch                     = true
+  private_dns_hostname_type_on_launch         = "resource-name"
+  enable_resource_name_dns_a_record_on_launch = true
 }
 
 resource "aws_subnet" "b" {

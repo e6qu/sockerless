@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,8 +26,8 @@ import (
 // callbacks, history/state read-back), and the two legacy/streaming invoke
 // entry points (InvokeAsync, InvokeWithResponseStream). All state lives in
 // in-process stores whose lifetime matches the running sim, the same as the
-// sibling lambda_*.go files. No fabricated business data: a durable execution
-// with no real workload reports honest, empty-shaped history/state.
+// sibling lambda_*.go files. Durable invocations use Lambda's execution
+// envelope and operation journal, including checkpoint-driven replay.
 
 func registerLambdaExtras3(srv *sim.Server) {
 	mux := srv
@@ -82,10 +87,10 @@ func registerLambdaExtras3(srv *sim.Server) {
 
 func handleLambdaGetFunctionConfiguration(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
-	fn, ok := lambdaFunctions.Get(name)
+	fn, _, ok := lambdaResolveInvocationTarget(name, r.URL.Query().Get("Qualifier"))
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
-			"Function not found: %s", lambdaArn(name))
+			"Function or version not found: %s", name)
 		return
 	}
 	// GetFunctionConfiguration returns the FunctionConfiguration shape directly
@@ -109,6 +114,8 @@ func handleLambdaUpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		Architectures   []string `json:"Architectures"`
 		SourceKMSKeyArn string   `json:"SourceKMSKeyArn"`
 		DryRun          bool     `json:"DryRun"`
+		Publish         bool     `json:"Publish"`
+		RevisionId      string   `json:"RevisionId"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterValueException", "Invalid request body", http.StatusBadRequest)
@@ -122,9 +129,30 @@ func handleLambdaUpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		ZipFile:         req.ZipFile,
 		SourceKMSKeyArn: req.SourceKMSKeyArn,
 	}
+	fn, _ := lambdaFunctions.Get(name)
+	if req.RevisionId != "" && req.RevisionId != fn.RevisionId {
+		sim.AWSError(w, "PreconditionFailedException",
+			"The RevisionId provided does not match the latest RevisionId for the function",
+			http.StatusPreconditionFailed)
+		return
+	}
+	if fn.PackageType == "Image" {
+		if req.ImageUri == "" {
+			sim.AWSError(w, "InvalidParameterValueException",
+				"ImageUri is required for an Image function", http.StatusBadRequest)
+			return
+		}
+	} else if err := validateLambdaDeploymentPackage(newCode); err != nil {
+		sim.AWSError(w, "InvalidParameterValueException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	codeSize, err := lambdaDeploymentPackageSize(newCode)
+	if err != nil {
+		sim.AWSError(w, "InvalidParameterValueException", err.Error(), http.StatusBadRequest)
+		return
+	}
 	// DryRun validates without persisting; return the current config unchanged.
 	if req.DryRun {
-		fn, _ := lambdaFunctions.Get(name)
 		sim.WriteJSON(w, http.StatusOK, lambdaConfiguration(fn))
 		return
 	}
@@ -138,7 +166,7 @@ func handleLambdaUpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		}
 		// A code change re-stamps size/revision/last-modified the way real
 		// Lambda does after a successful deployment-package swap.
-		fn.CodeSize = lambdaCodeSize(newCode)
+		fn.CodeSize = codeSize
 		if len(req.Architectures) > 0 {
 			fn.Architectures = req.Architectures
 		}
@@ -146,24 +174,13 @@ func handleLambdaUpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		fn.LastUpdateStatus = "Successful"
 		fn.RevisionId = generateUUID()
 	})
-	fn, _ := lambdaFunctions.Get(name)
+	fn, _ = lambdaFunctions.Get(name)
+	if req.Publish {
+		version := publishLambdaVersion(name, "", fn)
+		sim.WriteJSON(w, http.StatusOK, version)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, lambdaConfiguration(fn))
-}
-
-// lambdaCodeSize derives a deterministic, non-zero package size from the
-// supplied code material. Real Lambda reports the unzipped size of the stored
-// deployment package; the sim derives it from the material length so a code
-// swap visibly changes CodeSize.
-func lambdaCodeSize(code *LambdaFunctionCode) int64 {
-	if code == nil {
-		return 0
-	}
-	if code.ZipFile != "" {
-		return int64(len(code.ZipFile))
-	}
-	// S3 / image package: keep the same baseline CreateFunction uses so the
-	// shape is stable for clients that don't supply inline zip material.
-	return 1024
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +282,7 @@ type LambdaCapacityProvider struct {
 	PermissionsConfig             map[string]any `json:"PermissionsConfig,omitempty"`
 	InstanceRequirements          map[string]any `json:"InstanceRequirements,omitempty"`
 	CapacityProviderScalingConfig map[string]any `json:"CapacityProviderScalingConfig,omitempty"`
+	TelemetryConfig               map[string]any `json:"TelemetryConfig,omitempty"`
 	KmsKeyArn                     string         `json:"KmsKeyArn,omitempty"`
 	LastModified                  string         `json:"LastModified"`
 	PropagateTags                 map[string]any `json:"PropagateTags,omitempty"`
@@ -294,6 +312,9 @@ func lambdaCapacityProviderBody(cp LambdaCapacityProvider) map[string]any {
 	if cp.CapacityProviderScalingConfig != nil {
 		out["CapacityProviderScalingConfig"] = cp.CapacityProviderScalingConfig
 	}
+	if cp.TelemetryConfig != nil {
+		out["TelemetryConfig"] = cp.TelemetryConfig
+	}
 	if cp.KmsKeyArn != "" {
 		out["KmsKeyArn"] = cp.KmsKeyArn
 	}
@@ -310,6 +331,7 @@ func handleLambdaCreateCapacityProvider(w http.ResponseWriter, r *http.Request) 
 		PermissionsConfig             map[string]any `json:"PermissionsConfig"`
 		InstanceRequirements          map[string]any `json:"InstanceRequirements"`
 		CapacityProviderScalingConfig map[string]any `json:"CapacityProviderScalingConfig"`
+		TelemetryConfig               map[string]any `json:"TelemetryConfig"`
 		KmsKeyArn                     string         `json:"KmsKeyArn"`
 		PropagateTags                 map[string]any `json:"PropagateTags"`
 	}
@@ -319,6 +341,19 @@ func handleLambdaCreateCapacityProvider(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.CapacityProviderName == "" {
 		sim.AWSError(w, "InvalidParameterValueException", "CapacityProviderName is required", http.StatusBadRequest)
+		return
+	}
+	operatorRole, _ := req.PermissionsConfig["CapacityProviderOperatorRoleArn"].(string)
+	if operatorRole == "" {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"PermissionsConfig.CapacityProviderOperatorRoleArn is required", http.StatusBadRequest)
+		return
+	}
+	subnetIDs, subnetOK := req.VpcConfig["SubnetIds"].([]any)
+	securityGroupIDs, securityGroupOK := req.VpcConfig["SecurityGroupIds"].([]any)
+	if !subnetOK || len(subnetIDs) == 0 || !securityGroupOK || len(securityGroupIDs) == 0 {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"VpcConfig.SubnetIds and VpcConfig.SecurityGroupIds are required", http.StatusBadRequest)
 		return
 	}
 	if _, exists := lambdaCapacityProviders.Get(req.CapacityProviderName); exists {
@@ -334,6 +369,7 @@ func handleLambdaCreateCapacityProvider(w http.ResponseWriter, r *http.Request) 
 		PermissionsConfig:             req.PermissionsConfig,
 		InstanceRequirements:          req.InstanceRequirements,
 		CapacityProviderScalingConfig: req.CapacityProviderScalingConfig,
+		TelemetryConfig:               req.TelemetryConfig,
 		KmsKeyArn:                     req.KmsKeyArn,
 		LastModified:                  time.Now().UTC().Format(time.RFC3339),
 		PropagateTags:                 req.PropagateTags,
@@ -399,13 +435,43 @@ func handleLambdaUpdateCapacityProvider(w http.ResponseWriter, r *http.Request) 
 
 func handleLambdaDeleteCapacityProvider(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "cpname")
-	if !lambdaCapacityProviders.Delete(name) {
+	cp, ok := lambdaCapacityProviders.Get(name)
+	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Capacity provider not found: %s", name)
 		return
 	}
-	// DeleteCapacityProvider returns 202 (deletion is asynchronous).
-	w.WriteHeader(http.StatusAccepted)
+	for _, function := range lambdaFunctions.List() {
+		if lambdaCapacityProviderARN(function.CapacityProviderConfig) == cp.CapacityProviderArn {
+			sim.AWSError(w, "ResourceConflictException",
+				"Capacity provider is currently used by a Lambda function version", http.StatusConflict)
+			return
+		}
+	}
+	lambdaVersionsMu.Lock()
+	inUse := false
+	for _, versions := range lambdaVersions {
+		for _, version := range versions {
+			if lambdaCapacityProviderARN(version.CapacityProviderConfig) == cp.CapacityProviderArn {
+				inUse = true
+				break
+			}
+		}
+	}
+	lambdaVersionsMu.Unlock()
+	if inUse {
+		sim.AWSError(w, "ResourceConflictException",
+			"Capacity provider is currently used by a Lambda function version", http.StatusConflict)
+		return
+	}
+	cp.State = "Deleting"
+	cp.LastModified = time.Now().UTC().Format(time.RFC3339)
+	sim.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"CapacityProvider": lambdaCapacityProviderBody(cp),
+	})
+	// The deletion completed as soon as its only real work—the reference
+	// check and durable-store removal—finished.
+	lambdaCapacityProviders.Delete(name)
 }
 
 func handleLambdaListFunctionVersionsByCapacityProvider(w http.ResponseWriter, r *http.Request) {
@@ -416,13 +482,57 @@ func handleLambdaListFunctionVersionsByCapacityProvider(w http.ResponseWriter, r
 			"Capacity provider not found: %s", name)
 		return
 	}
-	// No function versions are pinned to a capacity provider in the sim; report
-	// the honest empty list under the provider's ARN rather than fabricating
-	// associations.
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"CapacityProviderArn": cp.CapacityProviderArn,
-		"FunctionVersions":    []any{},
+	functionVersions := make([]map[string]any, 0)
+	for _, function := range lambdaFunctions.List() {
+		if lambdaCapacityProviderARN(function.CapacityProviderConfig) == cp.CapacityProviderArn {
+			functionVersions = append(functionVersions, map[string]any{
+				"FunctionArn": function.FunctionArn + ":$LATEST",
+				"State":       function.State,
+			})
+		}
+	}
+	lambdaVersionsMu.Lock()
+	for _, versions := range lambdaVersions {
+		for _, version := range versions {
+			if lambdaCapacityProviderARN(version.CapacityProviderConfig) == cp.CapacityProviderArn {
+				functionVersions = append(functionVersions, map[string]any{
+					"FunctionArn": version.FunctionArn,
+					"State":       version.State,
+				})
+			}
+		}
+	}
+	lambdaVersionsMu.Unlock()
+	sort.Slice(functionVersions, func(i, j int) bool {
+		return fmt.Sprint(functionVersions[i]["FunctionArn"]) < fmt.Sprint(functionVersions[j]["FunctionArn"])
 	})
+	maxItems := 50
+	if raw := r.URL.Query().Get("MaxItems"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			maxItems = parsed
+		}
+	}
+	page, nextMarker := awsPage(functionVersions, r.URL.Query().Get("Marker"), maxItems, 50)
+	response := map[string]any{
+		"CapacityProviderArn": cp.CapacityProviderArn,
+		"FunctionVersions":    page,
+	}
+	if nextMarker != "" {
+		response["NextMarker"] = nextMarker
+	}
+	sim.WriteJSON(w, http.StatusOK, response)
+}
+
+func lambdaCapacityProviderARN(config map[string]any) string {
+	if config == nil {
+		return ""
+	}
+	managed, ok := config["LambdaManagedInstancesCapacityProviderConfig"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	arn, _ := managed["CapacityProviderArn"].(string)
+	return arn
 }
 
 // ---------------------------------------------------------------------------
@@ -431,7 +541,7 @@ func handleLambdaListFunctionVersionsByCapacityProvider(w http.ResponseWriter, r
 
 func handleLambdaInvokeAsync(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
-	fn, ok := lambdaFunctions.Get(name)
+	fn, _, ok := lambdaResolveInvocationTarget(name, r.URL.Query().Get("Qualifier"))
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Function not found: %s", lambdaArn(name))
@@ -485,7 +595,7 @@ func awsEventStreamMessage(headers map[string]string, payload []byte) []byte {
 
 func handleLambdaInvokeWithResponseStream(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
-	fn, ok := lambdaFunctions.Get(name)
+	fn, executedVersion, ok := lambdaResolveInvocationTarget(name, r.URL.Query().Get("Qualifier"))
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Function not found: %s", lambdaArn(name))
@@ -493,7 +603,7 @@ func handleLambdaInvokeWithResponseStream(w http.ResponseWriter, r *http.Request
 	}
 	invType := r.Header.Get("X-Amz-Invocation-Type")
 	if strings.EqualFold(invType, "DryRun") {
-		w.Header().Set("X-Amz-Executed-Version", "$LATEST")
+		w.Header().Set("X-Amz-Executed-Version", executedVersion)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -510,7 +620,7 @@ func handleLambdaInvokeWithResponseStream(w http.ResponseWriter, r *http.Request
 	// eventstream decoder reassembles it natively.
 	responseBody, unhandled, _ := invokeLambdaViaRuntimeAPI(fn, payload)
 	w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
-	w.Header().Set("X-Amz-Executed-Version", "$LATEST")
+	w.Header().Set("X-Amz-Executed-Version", executedVersion)
 	w.WriteHeader(http.StatusOK)
 	if len(responseBody) > 0 {
 		_, _ = w.Write(awsEventStreamMessage(map[string]string{
@@ -534,40 +644,61 @@ func handleLambdaInvokeWithResponseStream(w http.ResponseWriter, r *http.Request
 // Durable executions
 // ---------------------------------------------------------------------------
 
-// lambdaDurableEvent is one history entry. Only fields the sim has honest data
-// for are populated; detail unions are emitted with their real payloads.
+// lambdaDurableEvent is one history entry. Detail unions are emitted only for
+// the event type that owns them, matching the Lambda durable-execution API.
 type lambdaDurableEvent struct {
 	EventType      string         `json:"EventType"`
 	EventId        int64          `json:"EventId"`
 	EventTimestamp float64        `json:"EventTimestamp"`
 	StartedDetails map[string]any `json:"ExecutionStartedDetails,omitempty"`
 	SucceededDet   map[string]any `json:"ExecutionSucceededDetails,omitempty"`
+	FailedDet      map[string]any `json:"ExecutionFailedDetails,omitempty"`
 	StoppedDet     map[string]any `json:"ExecutionStoppedDetails,omitempty"`
+	TimedOutDet    map[string]any `json:"ExecutionTimedOutDetails,omitempty"`
 }
 
 // lambdaDurableOperation is one entry in the execution-state operation list.
 type lambdaDurableOperation struct {
-	Id             string  `json:"Id"`
-	Name           string  `json:"Name,omitempty"`
-	Type           string  `json:"Type,omitempty"`
-	StartTimestamp float64 `json:"StartTimestamp,omitempty"`
-	EndTimestamp   float64 `json:"EndTimestamp,omitempty"`
-	Status         string  `json:"Status,omitempty"`
+	Id                   string         `json:"Id"`
+	Name                 string         `json:"Name,omitempty"`
+	ParentId             string         `json:"ParentId,omitempty"`
+	Type                 string         `json:"Type"`
+	SubType              string         `json:"SubType,omitempty"`
+	StartTimestamp       float64        `json:"StartTimestamp"`
+	EndTimestamp         float64        `json:"EndTimestamp,omitempty"`
+	Status               string         `json:"Status"`
+	ExecutionDetails     map[string]any `json:"ExecutionDetails,omitempty"`
+	StepDetails          map[string]any `json:"StepDetails,omitempty"`
+	WaitDetails          map[string]any `json:"WaitDetails,omitempty"`
+	CallbackDetails      map[string]any `json:"CallbackDetails,omitempty"`
+	ContextDetails       map[string]any `json:"ContextDetails,omitempty"`
+	ChainedInvokeDetails map[string]any `json:"ChainedInvokeDetails,omitempty"`
+	callbackStartedAt    time.Time
+	callbackHeartbeatAt  time.Time
+	callbackTimeout      time.Duration
+	heartbeatTimeout     time.Duration
 }
 
 type lambdaDurableExecution struct {
-	Arn          string
-	Name         string
-	FunctionArn  string
-	Version      string
-	InputPayload string
-	Result       string
-	ErrorObj     map[string]any
-	Status       string // RUNNING|SUCCEEDED|FAILED|STOPPED|TIMED_OUT
-	StartTS      float64
-	EndTS        float64
-	Events       []lambdaDurableEvent
-	Operations   []lambdaDurableOperation
+	Arn             string
+	Name            string
+	FunctionArn     string
+	Version         string
+	InputPayload    string
+	Result          string
+	ErrorObj        map[string]any
+	Status          string // RUNNING|SUCCEEDED|FAILED|STOPPED|TIMED_OUT
+	StartTS         float64
+	EndTS           float64
+	Events          []lambdaDurableEvent
+	Operations      []lambdaDurableOperation
+	DurableConfig   map[string]any
+	CheckpointToken string
+	ClientTokens    map[string]string
+	PayloadSHA256   string
+	UpdatedIDs      []string
+	ChangeCh        chan struct{}
+	CoordinatorRun  bool
 }
 
 var (
@@ -577,8 +708,302 @@ var (
 	// CallbackId -> DurableExecutionArn, registered by a checkpoint that
 	// records a CALLBACK operation; the callback ops advance that execution.
 	lambdaDurableCallbacks = map[string]string{}
-	lambdaDurableEventSeq  int64
 )
+
+func lambdaDurableCheckpointToken() string {
+	return base64.StdEncoding.EncodeToString([]byte(lambdaNewRevisionID()))
+}
+
+func lambdaBeginDurableExecution(
+	function LambdaFunction,
+	version, executionName string,
+	payload []byte,
+) (string, bool, string) {
+	if executionName == "" {
+		executionName = generateUUID()
+	}
+	if len(executionName) > 64 {
+		return "", false, "DurableExecutionName must not exceed 64 characters"
+	}
+	qualifiedFunctionARN := function.FunctionArn
+	if !strings.HasSuffix(qualifiedFunctionARN, ":"+version) {
+		qualifiedFunctionARN += ":" + version
+	}
+	payloadDigest := fmt.Sprintf("%x", sha256.Sum256(payload))
+	lambdaDurableMu.Lock()
+	defer lambdaDurableMu.Unlock()
+	for _, execution := range lambdaDurableExecs {
+		if execution.FunctionArn != qualifiedFunctionARN || execution.Name != executionName {
+			continue
+		}
+		if execution.PayloadSHA256 != payloadDigest {
+			return "", false, "A durable execution with this name already exists with different input"
+		}
+		return execution.Arn, true, ""
+	}
+	executionID := generateUUID()
+	arn := qualifiedFunctionARN + "/durable-execution/" + executionName + "/" + executionID
+	now := lambdaNowEpoch()
+	execution := &lambdaDurableExecution{
+		Arn:             arn,
+		Name:            executionName,
+		FunctionArn:     qualifiedFunctionARN,
+		Version:         version,
+		InputPayload:    string(payload),
+		Status:          "RUNNING",
+		StartTS:         now,
+		DurableConfig:   function.DurableConfig,
+		CheckpointToken: lambdaDurableCheckpointToken(),
+		ClientTokens:    map[string]string{},
+		PayloadSHA256:   payloadDigest,
+		ChangeCh:        make(chan struct{}, 1),
+		Operations: []lambdaDurableOperation{{
+			Id:             "execution",
+			Type:           "EXECUTION",
+			Status:         "STARTED",
+			StartTimestamp: now,
+			ExecutionDetails: map[string]any{
+				"InputPayload": string(payload),
+			},
+		}},
+		Events: []lambdaDurableEvent{{
+			EventType:      "ExecutionStarted",
+			EventId:        1,
+			EventTimestamp: now,
+			StartedDetails: map[string]any{
+				"ExecutionTimeout": lambdaDurableExecutionTimeout(function.DurableConfig),
+				"Input": map[string]any{
+					"Payload":   string(payload),
+					"Truncated": false,
+				},
+			},
+		}},
+	}
+	lambdaDurableExecs[arn] = execution
+	return arn, false, ""
+}
+
+func lambdaSignalDurableExecution(execution *lambdaDurableExecution) {
+	select {
+	case execution.ChangeCh <- struct{}{}:
+	default:
+	}
+}
+
+func lambdaFinishDurableExecution(
+	execution *lambdaDurableExecution,
+	status, result string,
+	errorObject map[string]any,
+) {
+	if execution.Status != "RUNNING" {
+		return
+	}
+	now := lambdaNowEpoch()
+	execution.Status = status
+	execution.EndTS = now
+	event := lambdaDurableEvent{
+		EventId:        int64(len(execution.Events) + 1),
+		EventTimestamp: now,
+	}
+	switch status {
+	case "SUCCEEDED":
+		execution.Result = result
+		event.EventType = "ExecutionSucceeded"
+		event.SucceededDet = map[string]any{
+			"Result": map[string]any{
+				"Payload":   result,
+				"Truncated": false,
+			},
+		}
+	case "FAILED":
+		execution.ErrorObj = errorObject
+		event.EventType = "ExecutionFailed"
+		event.FailedDet = map[string]any{"Error": errorObject}
+	default:
+		return
+	}
+	execution.Events = append(execution.Events, event)
+	lambdaSignalDurableExecution(execution)
+}
+
+// lambdaProcessDurableInvocationResponse consumes the private response
+// envelope returned by an AWS Durable Execution SDK wrapper. The envelope is
+// service-to-runtime protocol; Invoke callers receive only the customer result.
+func lambdaProcessDurableInvocationResponse(arn string, response []byte, unhandled bool) {
+	lambdaDurableMu.Lock()
+	defer lambdaDurableMu.Unlock()
+	execution, ok := lambdaDurableExecs[arn]
+	if !ok || execution.Status != "RUNNING" {
+		return
+	}
+	if unhandled {
+		lambdaFinishDurableExecution(execution, "FAILED", "", map[string]any{
+			"ErrorType":    "Runtime.Unhandled",
+			"ErrorMessage": string(response),
+		})
+		return
+	}
+	var envelope struct {
+		Status string         `json:"Status"`
+		Result *string        `json:"Result"`
+		Error  map[string]any `json:"Error"`
+	}
+	if err := json.Unmarshal(response, &envelope); err != nil || envelope.Status == "" {
+		lambdaFinishDurableExecution(execution, "FAILED", "", map[string]any{
+			"ErrorType":    "Runtime.InvalidDurableResponse",
+			"ErrorMessage": "Durable function returned an invalid execution response envelope",
+			"ErrorData":    string(response),
+		})
+		return
+	}
+	switch strings.ToUpper(envelope.Status) {
+	case "PENDING":
+		return
+	case "SUCCEEDED":
+		result := ""
+		if envelope.Result != nil {
+			result = *envelope.Result
+		} else if len(execution.Operations) > 0 &&
+			execution.Operations[0].ExecutionDetails != nil {
+			result, _ = execution.Operations[0].ExecutionDetails["Result"].(string)
+		}
+		lambdaFinishDurableExecution(execution, "SUCCEEDED", result, nil)
+	case "FAILED":
+		if envelope.Error == nil {
+			envelope.Error = map[string]any{
+				"ErrorType":    "Error",
+				"ErrorMessage": "Durable execution failed",
+			}
+		}
+		lambdaFinishDurableExecution(execution, "FAILED", "", envelope.Error)
+	default:
+		lambdaFinishDurableExecution(execution, "FAILED", "", map[string]any{
+			"ErrorType":    "Runtime.InvalidDurableResponse",
+			"ErrorMessage": "Durable function returned an unknown execution status: " + envelope.Status,
+		})
+	}
+}
+
+func lambdaDurableInvocationPayload(arn string) ([]byte, bool) {
+	lambdaDurableMu.Lock()
+	defer lambdaDurableMu.Unlock()
+	execution, ok := lambdaDurableExecs[arn]
+	if !ok || execution.Status != "RUNNING" {
+		return nil, false
+	}
+	operations := append([]lambdaDurableOperation(nil), execution.Operations...)
+	updated := append([]string(nil), execution.UpdatedIDs...)
+	execution.UpdatedIDs = nil
+	payload, err := json.Marshal(map[string]any{
+		"DurableExecutionArn": arn,
+		"CheckpointToken":     execution.CheckpointToken,
+		"InitialExecutionState": map[string]any{
+			"Operations": operations,
+		},
+		"UpdatedOperationIds": updated,
+	})
+	return payload, err == nil
+}
+
+func lambdaDurableStatus(arn string) (status string, result []byte, unhandled bool, changed <-chan struct{}) {
+	lambdaDurableMu.Lock()
+	defer lambdaDurableMu.Unlock()
+	execution, ok := lambdaDurableExecs[arn]
+	if !ok {
+		return "FAILED", lambdaErrorPayload("Durable execution not found"), true, nil
+	}
+	switch execution.Status {
+	case "SUCCEEDED":
+		return execution.Status, []byte(execution.Result), false, execution.ChangeCh
+	case "FAILED", "STOPPED", "TIMED_OUT":
+		if encoded, err := json.Marshal(execution.ErrorObj); err == nil && len(encoded) > 0 {
+			return execution.Status, encoded, true, execution.ChangeCh
+		}
+		return execution.Status, lambdaErrorPayload("Durable execution " + strings.ToLower(execution.Status)), true, execution.ChangeCh
+	default:
+		return execution.Status, nil, false, execution.ChangeCh
+	}
+}
+
+func lambdaStartDurableCoordinator(arn string, function LambdaFunction) {
+	lambdaDurableMu.Lock()
+	execution, ok := lambdaDurableExecs[arn]
+	if !ok || execution.CoordinatorRun || execution.Status != "RUNNING" {
+		lambdaDurableMu.Unlock()
+		return
+	}
+	execution.CoordinatorRun = true
+	timeoutSeconds := lambdaDurableExecutionTimeout(execution.DurableConfig)
+	changeCh := execution.ChangeCh
+	lambdaDurableMu.Unlock()
+
+	go func() {
+		var executionTimer <-chan time.Time
+		if timeoutSeconds > 0 {
+			timer := time.NewTimer(time.Duration(timeoutSeconds) * time.Second)
+			defer timer.Stop()
+			executionTimer = timer.C
+		}
+		for {
+			payload, running := lambdaDurableInvocationPayload(arn)
+			if !running {
+				return
+			}
+			response, unhandled, _ := invokeLambdaViaRuntimeAPI(function, payload)
+			lambdaProcessDurableInvocationResponse(arn, response, unhandled)
+			status, _, _, _ := lambdaDurableStatus(arn)
+			if status != "RUNNING" {
+				return
+			}
+			select {
+			case <-changeCh:
+			case <-executionTimer:
+				lambdaDurableMu.Lock()
+				if current, exists := lambdaDurableExecs[arn]; exists && current.Status == "RUNNING" {
+					now := lambdaNowEpoch()
+					current.Status = "TIMED_OUT"
+					current.EndTS = now
+					current.ErrorObj = map[string]any{
+						"ErrorType":    "ExecutionTimedOut",
+						"ErrorMessage": "Durable execution exceeded its configured execution timeout",
+					}
+					current.Events = append(current.Events, lambdaDurableEvent{
+						EventType:      "ExecutionTimedOut",
+						EventId:        int64(len(current.Events) + 1),
+						EventTimestamp: now,
+						TimedOutDet:    map[string]any{"Error": current.ErrorObj},
+					})
+					lambdaSignalDurableExecution(current)
+				}
+				lambdaDurableMu.Unlock()
+				return
+			}
+		}
+	}()
+}
+
+func lambdaWaitForDurableExecution(ctx context.Context, arn string) ([]byte, bool) {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		status, result, unhandled, _ := lambdaDurableStatus(arn)
+		if status != "RUNNING" {
+			return result, unhandled
+		}
+		select {
+		case <-ctx.Done():
+			return lambdaErrorPayload("Synchronous durable invocation ended before the execution completed: " + ctx.Err().Error()), true
+		case <-ticker.C:
+		}
+	}
+}
+
+func lambdaDurableExecutionTimeout(config map[string]any) int {
+	if timeout, ok := lambdaNumber(config["ExecutionTimeout"]); ok {
+		return timeout
+	}
+	return 0
+}
 
 // lambdaParseDurableArn validates the DurableExecutionArn shape and extracts
 // the embedded function name and version. Real arns look like
@@ -611,7 +1036,11 @@ func lambdaDurableArnFromLabel(r *http.Request) string {
 func handleLambdaGetDurableExecution(w http.ResponseWriter, r *http.Request) {
 	arn := lambdaDurableArnFromLabel(r)
 	lambdaDurableMu.Lock()
-	de, ok := lambdaDurableExecs[arn]
+	stored, ok := lambdaDurableExecs[arn]
+	var de lambdaDurableExecution
+	if ok {
+		de = *stored
+	}
 	lambdaDurableMu.Unlock()
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
@@ -628,14 +1057,21 @@ func handleLambdaGetDurableExecution(w http.ResponseWriter, r *http.Request) {
 	if de.Version != "" {
 		out["Version"] = de.Version
 	}
-	if de.InputPayload != "" {
-		out["InputPayload"] = de.InputPayload
+	if de.DurableConfig != nil {
+		out["DurableConfig"] = de.DurableConfig
 	}
-	if de.Result != "" {
-		out["Result"] = de.Result
-	}
-	if de.ErrorObj != nil {
-		out["Error"] = de.ErrorObj
+	includeExecutionData := !strings.EqualFold(r.URL.Query().Get("IncludeExecutionData"), "false")
+	out["ExecutionDataIncluded"] = includeExecutionData
+	if includeExecutionData {
+		if de.InputPayload != "" {
+			out["InputPayload"] = de.InputPayload
+		}
+		if de.Result != "" {
+			out["Result"] = de.Result
+		}
+		if de.ErrorObj != nil {
+			out["Error"] = de.ErrorObj
+		}
 	}
 	if de.EndTS != 0 {
 		out["EndTimestamp"] = de.EndTS
@@ -645,7 +1081,7 @@ func handleLambdaGetDurableExecution(w http.ResponseWriter, r *http.Request) {
 
 func handleLambdaCheckpointDurableExecution(w http.ResponseWriter, r *http.Request) {
 	arn := lambdaDurableArnFromLabel(r)
-	fnName, version, ok := lambdaParseDurableArn(arn)
+	fnName, _, ok := lambdaParseDurableArn(arn)
 	if !ok {
 		sim.AWSError(w, "InvalidParameterValueException",
 			"Invalid DurableExecutionArn: "+arn, http.StatusBadRequest)
@@ -659,14 +1095,19 @@ func handleLambdaCheckpointDurableExecution(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		CheckpointToken string `json:"CheckpointToken"`
 		Updates         []struct {
-			Id              string         `json:"Id"`
-			ParentId        string         `json:"ParentId"`
-			Name            string         `json:"Name"`
-			Type            string         `json:"Type"`
-			Action          string         `json:"Action"`
-			Payload         string         `json:"Payload"`
-			Error           map[string]any `json:"Error"`
-			CallbackOptions map[string]any `json:"CallbackOptions"`
+			Id                   string         `json:"Id"`
+			ParentId             string         `json:"ParentId"`
+			Name                 string         `json:"Name"`
+			Type                 string         `json:"Type"`
+			SubType              string         `json:"SubType"`
+			Action               string         `json:"Action"`
+			Payload              string         `json:"Payload"`
+			Error                map[string]any `json:"Error"`
+			CallbackOptions      map[string]any `json:"CallbackOptions"`
+			ChainedInvokeOptions map[string]any `json:"ChainedInvokeOptions"`
+			ContextOptions       map[string]any `json:"ContextOptions"`
+			StepOptions          map[string]any `json:"StepOptions"`
+			WaitOptions          map[string]any `json:"WaitOptions"`
 		} `json:"Updates"`
 		ClientToken string `json:"ClientToken"`
 	}
@@ -678,68 +1119,318 @@ func handleLambdaCheckpointDurableExecution(w http.ResponseWriter, r *http.Reque
 	lambdaDurableMu.Lock()
 	de, exists := lambdaDurableExecs[arn]
 	if !exists {
-		// First checkpoint materializes the execution. Its identity (arn, name,
-		// version) comes entirely from the caller; the runtime that is
-		// checkpointing supplied them. No identity is fabricated.
-		name := arn
-		if i := strings.LastIndex(arn, "/"); i >= 0 {
-			name = arn[i+1:]
-		}
-		de = &lambdaDurableExecution{
-			Arn:         arn,
-			Name:        name,
-			FunctionArn: lambdaArn(fnName),
-			Version:     version,
-			Status:      "RUNNING",
-			StartTS:     now,
-		}
-		lambdaDurableEventSeq++
-		de.Events = append(de.Events, lambdaDurableEvent{
-			EventType:      "ExecutionStarted",
-			EventId:        lambdaDurableEventSeq,
-			EventTimestamp: now,
-			StartedDetails: map[string]any{},
-		})
-		lambdaDurableExecs[arn] = de
+		lambdaDurableMu.Unlock()
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+			"Durable execution not found: %s", arn)
+		return
 	}
-	// Apply each operation update onto the real state + history.
-	for _, u := range req.Updates {
-		op := lambdaDurableOperation{
-			Id:             u.Id,
-			Name:           u.Name,
-			Type:           u.Type,
-			StartTimestamp: now,
-			Status:         "STARTED",
+	if de.Status != "RUNNING" {
+		lambdaDurableMu.Unlock()
+		sim.AWSError(w, "InvalidStateException",
+			"Only a running durable execution can be checkpointed", http.StatusConflict)
+		return
+	}
+	if req.CheckpointToken == "" || req.CheckpointToken != de.CheckpointToken {
+		lambdaDurableMu.Unlock()
+		sim.AWSError(w, "InvalidParameterValueException",
+			"CheckpointToken is missing, expired, or out of order", http.StatusBadRequest)
+		return
+	}
+	if req.ClientToken != "" {
+		if responseToken, duplicate := de.ClientTokens[req.ClientToken]; duplicate {
+			ops := append([]lambdaDurableOperation(nil), de.Operations...)
+			lambdaDurableMu.Unlock()
+			sim.WriteJSON(w, http.StatusOK, map[string]any{
+				"CheckpointToken": responseToken,
+				"NewExecutionState": map[string]any{
+					"Operations": ops,
+				},
+			})
+			return
 		}
-		if u.Action != "" {
-			switch strings.ToUpper(u.Action) {
-			case "SUCCEED", "SUCCEEDED", "COMPLETE":
-				op.Status = "SUCCEEDED"
-				op.EndTimestamp = now
-			case "FAIL", "FAILED":
-				op.Status = "FAILED"
-				op.EndTimestamp = now
+	}
+	type scheduledWait struct {
+		operationID string
+		delay       time.Duration
+	}
+	var waits []scheduledWait
+	var callbackMonitors []string
+	// Apply each operation update to the durable operation journal. Updates
+	// target an existing operation by ID; an ID is never appended twice.
+	for _, u := range req.Updates {
+		if u.Id == "" || u.Type == "" || u.Action == "" {
+			lambdaDurableMu.Unlock()
+			sim.AWSError(w, "InvalidParameterValueException",
+				"Each update requires Id, Type, and Action", http.StatusBadRequest)
+			return
+		}
+		index := -1
+		for i := range de.Operations {
+			if de.Operations[i].Id == u.Id {
+				index = i
+				break
 			}
 		}
-		// A CALLBACK-typed operation registers a callback the SendCallback ops
-		// can advance; its id is the operation id.
-		if strings.EqualFold(u.Type, "CALLBACK") && u.Id != "" {
-			lambdaDurableCallbacks[u.Id] = arn
+		action := strings.ToUpper(u.Action)
+		if action == "START" && index >= 0 {
+			lambdaDurableMu.Unlock()
+			sim.AWSError(w, "InvalidParameterValueException",
+				"Operation "+u.Id+" has already started", http.StatusBadRequest)
+			return
 		}
-		de.Operations = append(de.Operations, op)
+		if action != "START" && index < 0 {
+			lambdaDurableMu.Unlock()
+			sim.AWSError(w, "InvalidParameterValueException",
+				"Operation "+u.Id+" has not started", http.StatusBadRequest)
+			return
+		}
+		if index < 0 {
+			de.Operations = append(de.Operations, lambdaDurableOperation{
+				Id:             u.Id,
+				Name:           u.Name,
+				ParentId:       u.ParentId,
+				Type:           strings.ToUpper(u.Type),
+				SubType:        u.SubType,
+				StartTimestamp: now,
+				Status:         "STARTED",
+			})
+			index = len(de.Operations) - 1
+		}
+		op := &de.Operations[index]
+		switch action {
+		case "START":
+			switch op.Type {
+			case "STEP":
+				op.StepDetails = map[string]any{"Attempt": 1}
+			case "WAIT":
+				waitSeconds, valid := lambdaNumber(u.WaitOptions["WaitSeconds"])
+				if !valid || waitSeconds < 0 {
+					lambdaDurableMu.Unlock()
+					sim.AWSError(w, "InvalidParameterValueException",
+						"WAIT operations require a non-negative WaitSeconds", http.StatusBadRequest)
+					return
+				}
+				scheduledEnd := now + float64(waitSeconds)
+				op.WaitDetails = map[string]any{"ScheduledEndTimestamp": scheduledEnd}
+				waits = append(waits, scheduledWait{
+					operationID: u.Id,
+					delay:       time.Duration(waitSeconds) * time.Second,
+				})
+			case "CALLBACK":
+				timeoutSeconds, timeoutOK := lambdaOptionalNonNegativeNumber(
+					u.CallbackOptions, "TimeoutSeconds",
+				)
+				heartbeatSeconds, heartbeatOK := lambdaOptionalNonNegativeNumber(
+					u.CallbackOptions, "HeartbeatTimeoutSeconds",
+				)
+				if !timeoutOK || !heartbeatOK {
+					lambdaDurableMu.Unlock()
+					sim.AWSError(w, "InvalidParameterValueException",
+						"Callback timeout values must be non-negative integers", http.StatusBadRequest)
+					return
+				}
+				callbackID := generateUUID()
+				op.CallbackDetails = map[string]any{"CallbackId": callbackID}
+				op.callbackStartedAt = time.Now()
+				op.callbackHeartbeatAt = op.callbackStartedAt
+				op.callbackTimeout = time.Duration(timeoutSeconds) * time.Second
+				op.heartbeatTimeout = time.Duration(heartbeatSeconds) * time.Second
+				lambdaDurableCallbacks[callbackID] = arn
+				if op.callbackTimeout > 0 || op.heartbeatTimeout > 0 {
+					callbackMonitors = append(callbackMonitors, callbackID)
+				}
+			case "CONTEXT":
+				op.ContextDetails = map[string]any{
+					"ReplayChildren": u.ContextOptions["ReplayChildren"],
+				}
+			case "CHAINED_INVOKE":
+				op.ChainedInvokeDetails = map[string]any{}
+			}
+		case "SUCCEED":
+			op.Status = "SUCCEEDED"
+			op.EndTimestamp = now
+			switch op.Type {
+			case "EXECUTION":
+				if op.ExecutionDetails == nil {
+					op.ExecutionDetails = map[string]any{}
+				}
+				op.ExecutionDetails["Result"] = u.Payload
+			case "STEP":
+				if op.StepDetails == nil {
+					op.StepDetails = map[string]any{"Attempt": 1}
+				}
+				op.StepDetails["Result"] = u.Payload
+			case "CALLBACK":
+				if op.CallbackDetails == nil {
+					op.CallbackDetails = map[string]any{}
+				}
+				op.CallbackDetails["Result"] = u.Payload
+			case "CONTEXT":
+				if op.ContextDetails == nil {
+					op.ContextDetails = map[string]any{}
+				}
+				op.ContextDetails["Result"] = u.Payload
+			case "CHAINED_INVOKE":
+				if op.ChainedInvokeDetails == nil {
+					op.ChainedInvokeDetails = map[string]any{}
+				}
+				op.ChainedInvokeDetails["Result"] = u.Payload
+			}
+		case "FAIL":
+			op.Status = "FAILED"
+			op.EndTimestamp = now
+			switch op.Type {
+			case "STEP":
+				if op.StepDetails == nil {
+					op.StepDetails = map[string]any{"Attempt": 1}
+				}
+				op.StepDetails["Error"] = u.Error
+			case "CALLBACK":
+				if op.CallbackDetails == nil {
+					op.CallbackDetails = map[string]any{}
+				}
+				op.CallbackDetails["Error"] = u.Error
+			case "CONTEXT":
+				if op.ContextDetails == nil {
+					op.ContextDetails = map[string]any{}
+				}
+				op.ContextDetails["Error"] = u.Error
+			case "CHAINED_INVOKE":
+				if op.ChainedInvokeDetails == nil {
+					op.ChainedInvokeDetails = map[string]any{}
+				}
+				op.ChainedInvokeDetails["Error"] = u.Error
+			}
+		case "RETRY":
+			op.Status = "PENDING"
+			if op.StepDetails == nil {
+				op.StepDetails = map[string]any{"Attempt": 1}
+			}
+			attempt, _ := lambdaNumber(op.StepDetails["Attempt"])
+			op.StepDetails["Attempt"] = attempt + 1
+			if delay, ok := lambdaNumber(u.StepOptions["NextAttemptDelaySeconds"]); ok {
+				op.StepDetails["NextAttemptTimestamp"] = now + float64(delay)
+			}
+		case "CANCEL":
+			op.Status = "CANCELLED"
+			op.EndTimestamp = now
+		default:
+			lambdaDurableMu.Unlock()
+			sim.AWSError(w, "InvalidParameterValueException",
+				"Unknown operation action: "+u.Action, http.StatusBadRequest)
+			return
+		}
+		if action != "START" {
+			de.UpdatedIDs = append(de.UpdatedIDs, u.Id)
+		}
 	}
-	token := req.CheckpointToken
-	if token == "" {
-		token = lambdaNewRevisionID()
+	token := lambdaDurableCheckpointToken()
+	de.CheckpointToken = token
+	if req.ClientToken != "" {
+		de.ClientTokens[req.ClientToken] = token
 	}
 	ops := append([]lambdaDurableOperation(nil), de.Operations...)
 	lambdaDurableMu.Unlock()
+	for _, pendingWait := range waits {
+		go lambdaCompleteDurableWait(arn, pendingWait.operationID, pendingWait.delay)
+	}
+	for _, callbackID := range callbackMonitors {
+		go lambdaMonitorDurableCallback(callbackID)
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"CheckpointToken": token,
 		"NewExecutionState": map[string]any{
 			"Operations": ops,
 		},
 	})
+}
+
+func lambdaOptionalNonNegativeNumber(values map[string]any, key string) (int, bool) {
+	value, exists := values[key]
+	if !exists {
+		return 0, true
+	}
+	number, ok := lambdaNumber(value)
+	return number, ok && number >= 0
+}
+
+func lambdaMonitorDurableCallback(callbackID string) {
+	for {
+		lambdaDurableMu.Lock()
+		arn, exists := lambdaDurableCallbacks[callbackID]
+		execution := lambdaDurableExecs[arn]
+		var operation *lambdaDurableOperation
+		if exists && execution != nil && execution.Status == "RUNNING" {
+			for i := range execution.Operations {
+				candidate := &execution.Operations[i]
+				if candidate.CallbackDetails != nil &&
+					candidate.CallbackDetails["CallbackId"] == callbackID &&
+					candidate.Status == "STARTED" {
+					operation = candidate
+					break
+				}
+			}
+		}
+		if operation == nil {
+			lambdaDurableMu.Unlock()
+			return
+		}
+		now := time.Now()
+		nextDeadline := time.Time{}
+		timeoutKind := ""
+		if operation.callbackTimeout > 0 {
+			nextDeadline = operation.callbackStartedAt.Add(operation.callbackTimeout)
+			timeoutKind = "CallbackTimeout"
+		}
+		if operation.heartbeatTimeout > 0 {
+			heartbeatDeadline := operation.callbackHeartbeatAt.Add(operation.heartbeatTimeout)
+			if nextDeadline.IsZero() || heartbeatDeadline.Before(nextDeadline) {
+				nextDeadline = heartbeatDeadline
+				timeoutKind = "CallbackHeartbeatTimeout"
+			}
+		}
+		if !nextDeadline.After(now) {
+			operation.Status = "TIMED_OUT"
+			operation.EndTimestamp = lambdaNowEpoch()
+			operation.CallbackDetails["Error"] = map[string]any{
+				"ErrorType":    timeoutKind,
+				"ErrorMessage": "Durable callback exceeded its configured timeout",
+			}
+			execution.UpdatedIDs = append(execution.UpdatedIDs, operation.Id)
+			delete(lambdaDurableCallbacks, callbackID)
+			lambdaSignalDurableExecution(execution)
+			lambdaDurableMu.Unlock()
+			return
+		}
+		wait := time.Until(nextDeadline)
+		lambdaDurableMu.Unlock()
+
+		timer := time.NewTimer(wait)
+		<-timer.C
+	}
+}
+
+func lambdaCompleteDurableWait(arn, operationID string, delay time.Duration) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	<-timer.C
+	lambdaDurableMu.Lock()
+	defer lambdaDurableMu.Unlock()
+	execution, ok := lambdaDurableExecs[arn]
+	if !ok || execution.Status != "RUNNING" {
+		return
+	}
+	for i := range execution.Operations {
+		operation := &execution.Operations[i]
+		if operation.Id != operationID || operation.Status != "STARTED" {
+			continue
+		}
+		operation.Status = "SUCCEEDED"
+		operation.EndTimestamp = lambdaNowEpoch()
+		execution.UpdatedIDs = append(execution.UpdatedIDs, operationID)
+		lambdaSignalDurableExecution(execution)
+		return
+	}
 }
 
 func handleLambdaGetDurableExecutionHistory(w http.ResponseWriter, r *http.Request) {
@@ -761,7 +1452,24 @@ func handleLambdaGetDurableExecutionHistory(w http.ResponseWriter, r *http.Reque
 			events[i], events[j] = events[j], events[i]
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Events": events})
+	maxItems := 100
+	if raw := r.URL.Query().Get("MaxItems"); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 0 || parsed > 1000 {
+			sim.AWSError(w, "InvalidParameterValueException",
+				"MaxItems must be between 0 and 1000", http.StatusBadRequest)
+			return
+		}
+		if parsed > 0 {
+			maxItems = parsed
+		}
+	}
+	page, nextMarker := awsPage(events, r.URL.Query().Get("Marker"), maxItems, 100)
+	response := map[string]any{"Events": page}
+	if nextMarker != "" {
+		response["NextMarker"] = nextMarker
+	}
+	sim.WriteJSON(w, http.StatusOK, response)
 }
 
 func handleLambdaGetDurableExecutionState(w http.ResponseWriter, r *http.Request) {
@@ -769,8 +1477,10 @@ func handleLambdaGetDurableExecutionState(w http.ResponseWriter, r *http.Request
 	lambdaDurableMu.Lock()
 	de, ok := lambdaDurableExecs[arn]
 	var ops []lambdaDurableOperation
+	checkpointToken := ""
 	if ok {
 		ops = append([]lambdaDurableOperation(nil), de.Operations...)
+		checkpointToken = de.CheckpointToken
 	}
 	lambdaDurableMu.Unlock()
 	if !ok {
@@ -778,7 +1488,29 @@ func handleLambdaGetDurableExecutionState(w http.ResponseWriter, r *http.Request
 			"Durable execution not found: %s", arn)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Operations": ops})
+	if token := r.URL.Query().Get("CheckpointToken"); token == "" || token != checkpointToken {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"CheckpointToken is missing, expired, or out of order", http.StatusBadRequest)
+		return
+	}
+	maxItems := 100
+	if raw := r.URL.Query().Get("MaxItems"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 && parsed <= 1000 {
+			if parsed > 0 {
+				maxItems = parsed
+			}
+		} else {
+			sim.AWSError(w, "InvalidParameterValueException",
+				"MaxItems must be between 0 and 1000", http.StatusBadRequest)
+			return
+		}
+	}
+	page, nextMarker := awsPage(ops, r.URL.Query().Get("Marker"), maxItems, 100)
+	response := map[string]any{"Operations": page}
+	if nextMarker != "" {
+		response["NextMarker"] = nextMarker
+	}
+	sim.WriteJSON(w, http.StatusOK, response)
 }
 
 func handleLambdaListDurableExecutionsByFunction(w http.ResponseWriter, r *http.Request) {
@@ -790,10 +1522,44 @@ func handleLambdaListDurableExecutionsByFunction(w http.ResponseWriter, r *http.
 	}
 	fnArn := lambdaArn(name)
 	statusFilter := r.URL.Query()["Statuses"]
+	executionNameFilter := r.URL.Query().Get("DurableExecutionName")
+	qualifier := r.URL.Query().Get("Qualifier")
+	qualifiedVersion := "$LATEST"
+	if qualifier != "" {
+		_, resolvedVersion, resolved := lambdaResolveInvocationTarget(name, qualifier)
+		if !resolved {
+			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+				"Function not found: %s:%s", fnArn, qualifier)
+			return
+		}
+		qualifiedVersion = resolvedVersion
+	}
+	startedAfter, parseErr := lambdaOptionalRFC3339(r.URL.Query().Get("StartedAfter"))
+	if parseErr != nil {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"StartedAfter must be an ISO 8601 timestamp", http.StatusBadRequest)
+		return
+	}
+	startedBefore, parseErr := lambdaOptionalRFC3339(r.URL.Query().Get("StartedBefore"))
+	if parseErr != nil {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"StartedBefore must be an ISO 8601 timestamp", http.StatusBadRequest)
+		return
+	}
 	lambdaDurableMu.Lock()
 	executions := make([]map[string]any, 0)
 	for _, de := range lambdaDurableExecs {
-		if de.FunctionArn != fnArn {
+		if de.FunctionArn != fnArn+":"+qualifiedVersion {
+			continue
+		}
+		if executionNameFilter != "" && de.Name != executionNameFilter {
+			continue
+		}
+		started := time.Unix(0, int64(de.StartTS*float64(time.Second))).UTC()
+		if !startedAfter.IsZero() && !started.After(startedAfter) {
+			continue
+		}
+		if !startedBefore.IsZero() && !started.Before(startedBefore) {
 			continue
 		}
 		if len(statusFilter) > 0 {
@@ -822,9 +1588,42 @@ func handleLambdaListDurableExecutionsByFunction(w http.ResponseWriter, r *http.
 	}
 	lambdaDurableMu.Unlock()
 	sort.Slice(executions, func(i, j int) bool {
-		return fmt.Sprint(executions[i]["DurableExecutionArn"]) < fmt.Sprint(executions[j]["DurableExecutionArn"])
+		left, leftOK := executions[i]["StartTimestamp"].(float64)
+		right, rightOK := executions[j]["StartTimestamp"].(float64)
+		if !leftOK || !rightOK {
+			return fmt.Sprint(executions[i]["DurableExecutionArn"]) < fmt.Sprint(executions[j]["DurableExecutionArn"])
+		}
+		if left == right {
+			return fmt.Sprint(executions[i]["DurableExecutionArn"]) < fmt.Sprint(executions[j]["DurableExecutionArn"])
+		}
+		if strings.EqualFold(r.URL.Query().Get("ReverseOrder"), "true") {
+			return left < right
+		}
+		return left > right
 	})
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"DurableExecutions": executions})
+	maxItems := 100
+	if raw := r.URL.Query().Get("MaxItems"); raw != "" {
+		parsed, maxErr := strconv.Atoi(raw)
+		if maxErr != nil || parsed < 1 || parsed > 1000 {
+			sim.AWSError(w, "InvalidParameterValueException",
+				"MaxItems must be between 1 and 1000", http.StatusBadRequest)
+			return
+		}
+		maxItems = parsed
+	}
+	page, nextMarker := awsPage(executions, r.URL.Query().Get("Marker"), maxItems, 100)
+	response := map[string]any{"DurableExecutions": page}
+	if nextMarker != "" {
+		response["NextMarker"] = nextMarker
+	}
+	sim.WriteJSON(w, http.StatusOK, response)
+}
+
+func lambdaOptionalRFC3339(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, value)
 }
 
 func handleLambdaStopDurableExecution(w http.ResponseWriter, r *http.Request) {
@@ -837,15 +1636,24 @@ func handleLambdaStopDurableExecution(w http.ResponseWriter, r *http.Request) {
 	lambdaDurableMu.Lock()
 	de, ok := lambdaDurableExecs[arn]
 	if ok {
+		if de.Status != "RUNNING" {
+			lambdaDurableMu.Unlock()
+			sim.AWSError(w, "InvalidStateException",
+				"Only a running durable execution can be stopped", http.StatusConflict)
+			return
+		}
 		de.Status = "STOPPED"
 		de.EndTS = now
-		lambdaDurableEventSeq++
 		de.Events = append(de.Events, lambdaDurableEvent{
 			EventType:      "ExecutionStopped",
-			EventId:        lambdaDurableEventSeq,
+			EventId:        int64(len(de.Events) + 1),
 			EventTimestamp: now,
-			StoppedDet:     map[string]any{},
+			StoppedDet:     map[string]any{"Error": req.Error},
 		})
+		if req.Error != nil {
+			de.ErrorObj = req.Error
+		}
+		lambdaSignalDurableExecution(de)
 	}
 	lambdaDurableMu.Unlock()
 	if !ok {
@@ -856,10 +1664,10 @@ func handleLambdaStopDurableExecution(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"StopTimestamp": now})
 }
 
-// lambdaAdvanceCallback resolves a CallbackId to its execution and marks the
-// matching CALLBACK operation in the desired terminal state. Returns false when
-// the callback id is unknown.
-func lambdaAdvanceCallback(callbackID, status string) bool {
+// lambdaAdvanceCallback resolves a CallbackId to its operation, persists the
+// callback result, and wakes the replay coordinator. A heartbeat validates the
+// live callback without making it terminal.
+func lambdaAdvanceCallback(callbackID, status, result string, errorObject map[string]any) bool {
 	lambdaDurableMu.Lock()
 	defer lambdaDurableMu.Unlock()
 	arn, ok := lambdaDurableCallbacks[callbackID]
@@ -872,19 +1680,45 @@ func lambdaAdvanceCallback(callbackID, status string) bool {
 	}
 	now := lambdaNowEpoch()
 	for i := range de.Operations {
-		if de.Operations[i].Id == callbackID {
-			if status != "" {
-				de.Operations[i].Status = status
-				de.Operations[i].EndTimestamp = now
-			}
+		operation := &de.Operations[i]
+		if operation.CallbackDetails == nil ||
+			operation.CallbackDetails["CallbackId"] != callbackID {
+			continue
 		}
+		if status == "" {
+			if operation.Status != "STARTED" {
+				return false
+			}
+			operation.callbackHeartbeatAt = time.Now()
+			return true
+		}
+		if operation.Status != "STARTED" {
+			return false
+		}
+		operation.Status = status
+		operation.EndTimestamp = now
+		if status == "SUCCEEDED" {
+			operation.CallbackDetails["Result"] = result
+		} else {
+			operation.CallbackDetails["Error"] = errorObject
+		}
+		de.UpdatedIDs = append(de.UpdatedIDs, operation.Id)
+		delete(lambdaDurableCallbacks, callbackID)
+		lambdaSignalDurableExecution(de)
+		return true
 	}
-	return true
+	return false
 }
 
 func handleLambdaSendDurableCallbackSuccess(w http.ResponseWriter, r *http.Request) {
 	id := sim.PathParam(r, "cbid")
-	if !lambdaAdvanceCallback(id, "SUCCEEDED") {
+	result, err := io.ReadAll(io.LimitReader(r.Body, 256*1024+1))
+	if err != nil || len(result) > 256*1024 {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"Callback result exceeds the 256 KB limit", http.StatusBadRequest)
+		return
+	}
+	if !lambdaAdvanceCallback(id, "SUCCEEDED", string(result), nil) {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Callback not found: %s", id)
 		return
@@ -894,7 +1728,14 @@ func handleLambdaSendDurableCallbackSuccess(w http.ResponseWriter, r *http.Reque
 
 func handleLambdaSendDurableCallbackFailure(w http.ResponseWriter, r *http.Request) {
 	id := sim.PathParam(r, "cbid")
-	if !lambdaAdvanceCallback(id, "FAILED") {
+	var req struct {
+		Error map[string]any `json:"Error"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil || req.Error == nil {
+		sim.AWSError(w, "InvalidParameterValueException", "Error is required", http.StatusBadRequest)
+		return
+	}
+	if !lambdaAdvanceCallback(id, "FAILED", "", req.Error) {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Callback not found: %s", id)
 		return
@@ -904,8 +1745,7 @@ func handleLambdaSendDurableCallbackFailure(w http.ResponseWriter, r *http.Reque
 
 func handleLambdaSendDurableCallbackHeartbeat(w http.ResponseWriter, r *http.Request) {
 	id := sim.PathParam(r, "cbid")
-	// Heartbeat keeps a pending callback alive without changing its status.
-	if !lambdaAdvanceCallback(id, "") {
+	if !lambdaAdvanceCallback(id, "", "", nil) {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Callback not found: %s", id)
 		return

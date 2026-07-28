@@ -68,6 +68,14 @@ func main() {
 // tests can build the full route / operation table in-process and
 // validate it against the vendored Smithy models (specs/cloud-api/aws/).
 func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryRouter, error) {
+	return buildSimulatorWithOptions(cfg, simulatorBuildOptions{startBackgroundEvaluators: true})
+}
+
+type simulatorBuildOptions struct {
+	startBackgroundEvaluators bool
+}
+
+func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryRouter, error) {
 	srv, err := sim.NewServer(cfg)
 	if err != nil {
 		return nil, nil, nil, err
@@ -123,7 +131,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	registerCodeBuild(awsRouter, srv)
 	registerCodeBuildExtended(awsRouter, srv)
 	registerGlue(awsRouter, srv)
-	registerApplicationAutoScaling(awsRouter, srv)
+	registerApplicationAutoScaling(awsRouter, srv, options.startBackgroundEvaluators)
 	registerBudgets(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
@@ -195,7 +203,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	})
 
 	// Smithy RPCv2 CBOR services (path-based routing)
-	registerCloudWatchMetrics(srv)
+	registerCloudWatchMetrics(srv, options.startBackgroundEvaluators)
 
 	// REST-based services register directly on the server mux
 	registerEFS(srv)

@@ -229,7 +229,7 @@ func TestLambda_LayerVersionPermissions(t *testing.T) {
 
 	pub, err := lc.PublishLayerVersion(ctx, &lambda.PublishLayerVersionInput{
 		LayerName: aws.String(layer),
-		Content:   &lambdatypes.LayerVersionContentInput{ZipFile: []byte("layer-zip")},
+		Content:   &lambdatypes.LayerVersionContentInput{ZipFile: lambdaDeploymentZip(t)},
 	})
 	require.NoError(t, err)
 	ver := pub.Version

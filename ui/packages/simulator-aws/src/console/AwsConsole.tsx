@@ -7,7 +7,7 @@ import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import Badge from "@cloudscape-design/components/badge";
 import StatusIndicator, { type StatusIndicatorProps } from "@cloudscape-design/components/status-indicator";
-import Modal from "@cloudscape-design/components/modal";
+import Modal, { type ModalProps } from "@cloudscape-design/components/modal";
 import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard";
 import KeyValuePairs, { type KeyValuePairsProps } from "@cloudscape-design/components/key-value-pairs";
 import Alert from "@cloudscape-design/components/alert";
@@ -530,15 +530,17 @@ export function AwsModal({
   title,
   onDismiss,
   footer,
+  size,
   children,
 }: {
   title: string;
   onDismiss: () => void;
   footer: ReactNode;
+  size?: ModalProps.Size;
   children: ReactNode;
 }) {
   return (
-    <Modal visible header={title} footer={footer} onDismiss={onDismiss} closeAriaLabel="Close">
+    <Modal visible header={title} footer={footer} size={size} onDismiss={onDismiss} closeAriaLabel="Close">
       {children}
     </Modal>
   );

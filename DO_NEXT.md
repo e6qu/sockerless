@@ -4,70 +4,39 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
-AWS Lambda image invocations honoured `VpcConfig` at launch. The control plane
-validated that configured subnets and security groups belonged to one Amazon
-Virtual Private Cloud (VPC), and the runtime leased its address from those
-subnets instead of joining Docker's default bridge. Linux execution used a
-pause-container network namespace, a real VPC veth, security-group filters,
-route-driven egress, and a dedicated link-local DNAT endpoint for the AWS Lambda
-Runtime API. Portable execution used the same VPC identifiers and addresses
-through the container engine's VPC network.
+AWS Lambda implemented all 85 operations in the vendored Smithy service model.
+ZIP and image functions executed through the AWS Lambda Runtime API; layers,
+versions, aliases, function URLs, concurrency, capacity providers, response
+streaming, code signing, durable executions, callbacks, timeouts, pagination,
+and lifecycle validation retained real service state and response shapes.
 
-The official AWS SDK test created an Amazon ECS Fargate task on `awsvpc`,
-invoked a VPC-configured Lambda image, and proved the function reached the task
-at its private address. The AWS CLI and Terraform suites launched
-VPC-configured functions through their normal public surfaces. The complete
-Lambda SDK and CLI suites passed, as did the production-shaped Terraform
-apply/destroy.
+AWS Step Functions implemented all 37 operations in its vendored Smithy model.
+Standard and Express Workflows executed JSONPath and JSONata definitions with
+Pass, Task, Choice, Wait, Succeed, Fail, Parallel, Map, distributed Map,
+activities, callbacks, retries, nested workflows, Lambda tasks, redrive,
+versions, and aliases. Execution snapshots and histories retained immutable,
+service-shaped events and input/output.
 
-Amazon Cloud Map custom health checks reported AWS's fixed failure threshold of
-`1`; the SDK Create/Get/List paths agreed. The Terraform fixture used supported
-Cloud Map and DynamoDB schema, configured local state through the local backend,
-and validated without deprecation warnings. Normal AWS SDK, CLI, and Terraform
-harness completion terminated the simulator through its cleanup path and left
-no workload containers or simulator VPC networks behind.
+Official AWS SDK, AWS CLI, and Terraform suites exercised both services through
+their public APIs. Selected control-plane, runtime, history, nested-workflow,
+distributed-Map, ZIP/layer, and version/alias flows ran against short-lived
+live AWS resources and matched the simulator differential. The live resources
+and temporary IAM roles were removed after validation.
 
-The pre-push freshness gate upgraded `github.com/docker/go-connections` to
-v0.8.1 in the Docker backend and all three simulator shared modules. The Docker
-backend's standardized upgrade also advanced its indirect
-`github.com/mattn/go-isatty` dependency to v0.0.24. All four modules passed
-their complete tests. The AWS, Google Cloud, and Azure root simulator modules
-were also tidied independently and passed their complete `GOWORK=off` suites,
-so the local workspace no longer masked missing standalone sums. Azure DNS
-dynamic startup retried until its real TCP and UDP listeners shared one
-kernel-assigned port; its DNS suite passed 100 repetitions.
+The AWS console exposed Lambda overview, code, test, logs, configuration,
+layers, environment, concurrency, versions, aliases, URLs, and tags. Its Step
+Functions experience exposed the graph, editable definition, execution input,
+history, input/output inspection, publishing, aliases, tags, and redrive. The
+production UI passed 229 Chromium package tests, and the authenticated
+Shauth/Ory Hydra/PostgreSQL matrix created a state machine through federated AWS
+credentials, started it, and inspected its graph and execution history.
 
-Linux validation closed three execution defects. Security-group bridge filters
-allowed ARP before applying IP permissions, so newly attached AWS Lambda and
-Amazon ECS elastic network interfaces no longer depended on a stale neighbor
-cache. Workload callbacks used the container runtime's reported default bridge
-gateway on Linux instead of a Podman-machine alias that pointed at the outer
-host. Amazon Amplify compute and build containers used SELinux-labelled real
-bundle/workspace mounts, preserving read-only compute deployments and writable
-build artifacts. The complete AWS Lambda SDK suite passed on Linux and macOS,
-the Linux real-execution host suite passed, and the focused Amplify compute and
-real-build SDK flows passed on enforcing Linux.
-
-The AWS SDK client graph used `github.com/aws/smithy-go` v1.27.5. Its
-DynamoDB Local differential harness bounded image inspection, pull, launch,
-state inspection, and cleanup; a failed container launch reported the engine's
-real container state instead of consuming the package timeout. The focused
-oracle and all four non-overlapping AWS SDK shards passed.
-
-GitHub Container Registry retention preserved a package version whenever it
-carried any retained release tag. Architecture image builds also stamped the
-full source revision into the OCI config, so byte-identical application output
-from different commits no longer collapsed onto one package version and an
-obsolete tag could not take a current architecture tag with it.
-
-The standalone AWS SDK suite used the AWS Glue SDK v1.150.0 found by the
-freshness gate, and its complete real-simulator test surface passed.
-
-The AWS SDK workflow stopped scanning the whole hosted-runner filesystem after
-successful shards. Normal diagnostics reported only the volume, test-log size,
-and Docker usage; a disk-budget failure additionally scanned the workspace,
-runner temporary directory, and Firecracker workspace for at most five seconds
-each. The tested workflow-budget gate rejected any future recursive `du /`.
+The AWS CLI harness provisioned and validated the official Session Manager
+plugin when the host lacked it, so Amazon ECS ExecuteCommand coverage no longer
+depended on undeclared host tooling. Route-conformance builds registered the
+full AWS surface without starting runtime evaluator goroutines, removing the
+store-rebinding race while production builds retained their Amazon CloudWatch
+and Application Auto Scaling evaluators.
 
 ## Next Recommended Slice
 

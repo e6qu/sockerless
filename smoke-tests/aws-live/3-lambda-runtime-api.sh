@@ -6,17 +6,21 @@ set -euo pipefail
 
 : "${SOCKERLESS_CALLBACK_URL:?SOCKERLESS_CALLBACK_URL is required (wss://...)}"
 : "${AWS_REGION:=eu-west-1}"
-: "${ECS_OUT:=/tmp/ecs-out.json}"
+: "${AWS_INFRA_OUTPUT:=/tmp/aws-infra-out.json}"
 
-jq_val() { jq -r ".$1.value" "$ECS_OUT"; }
-SOCKERLESS_LAMBDA_ROLE_ARN="$(jq_val lambda_role_arn)"
+jq_val() { jq -r ".$1.value" "$AWS_INFRA_OUTPUT"; }
+SOCKERLESS_LAMBDA_ROLE_ARN="$(jq_val execution_role_arn)"
 export SOCKERLESS_LAMBDA_ROLE_ARN
 export SOCKERLESS_AGENT_BINARY="${SOCKERLESS_AGENT_BINARY:-/opt/sockerless/sockerless-agent}"
 export SOCKERLESS_LAMBDA_BOOTSTRAP="${SOCKERLESS_LAMBDA_BOOTSTRAP:-/opt/sockerless/sockerless-lambda-bootstrap}"
 export AWS_REGION
 
 BACKEND_BIN="${BACKEND_BIN:-./sockerless-backend-lambda}"
-cleanup() { kill "${BACKEND_PID:-0}" 2>/dev/null || true; }
+cleanup() {
+  if [ -n "${BACKEND_PID:-}" ]; then
+    kill "$BACKEND_PID" 2>/dev/null || true
+  fi
+}
 trap cleanup EXIT
 
 echo "=== Lambda backend + agent-as-handler ==="

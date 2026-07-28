@@ -85,17 +85,17 @@ func iamContextKeyType(t string) iamtypes.ContextKeyTypeEnum {
 }
 
 // iamConformanceClient returns the IAM client + a label for the oracle in use.
-// Default: the sim. SOCKERLESS_IAM_ORACLE=aws → real AWS (skips if no creds).
+// Default: the sim. SOCKERLESS_IAM_ORACLE=aws → real AWS.
 func iamConformanceClient(t *testing.T) (*iam.Client, string) {
 	if os.Getenv("SOCKERLESS_IAM_ORACLE") != "aws" {
 		return iamClient(), "sim"
 	}
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		t.Skipf("SOCKERLESS_IAM_ORACLE=aws but no AWS credentials: %v", err)
+		t.Fatalf("SOCKERLESS_IAM_ORACLE=aws but no AWS credentials: %v", err)
 	}
 	if _, err := cfg.Credentials.Retrieve(ctx); err != nil {
-		t.Skipf("SOCKERLESS_IAM_ORACLE=aws but credentials don't resolve: %v", err)
+		t.Fatalf("SOCKERLESS_IAM_ORACLE=aws but credentials don't resolve: %v", err)
 	}
 	return iam.NewFromConfig(cfg), "real-aws"
 }
