@@ -47,9 +47,10 @@ func TestSQS_DLQ_RedriveOnMaxReceiveCount(t *testing.T) {
 	// the DLQ and the source queue returns empty.
 	for i := 1; i <= 2; i++ {
 		recv, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
-			QueueUrl:            aws.String(srcURL),
-			MaxNumberOfMessages: 10,
-			VisibilityTimeout:   0,
+			QueueUrl:                    aws.String(srcURL),
+			MaxNumberOfMessages:         10,
+			VisibilityTimeout:           0,
+			MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{sqstypes.MessageSystemAttributeNameAll},
 		})
 		require.NoError(t, err)
 		require.Len(t, recv.Messages, 1, "receive %d should still return the message", i)
@@ -70,8 +71,9 @@ func TestSQS_DLQ_RedriveOnMaxReceiveCount(t *testing.T) {
 
 	// The message now lives on the DLQ with a fresh id and reset count.
 	dlqRecv, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
-		QueueUrl:            aws.String(dlqURL),
-		MaxNumberOfMessages: 10,
+		QueueUrl:                    aws.String(dlqURL),
+		MaxNumberOfMessages:         10,
+		MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{sqstypes.MessageSystemAttributeNameAll},
 	})
 	require.NoError(t, err)
 	require.Len(t, dlqRecv.Messages, 1)

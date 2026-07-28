@@ -97,3 +97,32 @@ func TestEC2_NetworkInterfaceLifecycle(t *testing.T) {
 	_, err = client.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{NetworkInterfaceIds: []string{eniID}})
 	require.Error(t, err, "describe after delete must fail")
 }
+
+func TestEC2DeleteSubnetRejectsNetworkInterfaceDependency(t *testing.T) {
+	client := ec2Client()
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.79.0.0/16")})
+	require.NoError(t, err)
+	vpcID := vpc.Vpc.VpcId
+	t.Cleanup(func() {
+		_, _ = client.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: vpcID})
+	})
+	subnet, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:     vpcID,
+		CidrBlock: aws.String("10.79.1.0/24"),
+	})
+	require.NoError(t, err)
+	subnetID := subnet.Subnet.SubnetId
+	networkInterface, err := client.CreateNetworkInterface(ctx, &ec2.CreateNetworkInterfaceInput{SubnetId: subnetID})
+	require.NoError(t, err)
+	networkInterfaceID := networkInterface.NetworkInterface.NetworkInterfaceId
+
+	_, err = client.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: subnetID})
+	assert.Equal(t, "DependencyViolation", errCode(t, err))
+
+	_, err = client.DeleteNetworkInterface(ctx, &ec2.DeleteNetworkInterfaceInput{NetworkInterfaceId: networkInterfaceID})
+	require.NoError(t, err)
+	_, err = client.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: subnetID})
+	require.NoError(t, err)
+	_, err = client.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: subnetID})
+	assert.Equal(t, "InvalidSubnetID.NotFound", errCode(t, err))
+}

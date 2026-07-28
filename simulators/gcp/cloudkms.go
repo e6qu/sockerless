@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
@@ -65,16 +66,19 @@ type kmsCryptoKeyVersionTemplate struct {
 
 // kmsCryptoKeyVersion is the wire shape for a CryptoKeyVersion.
 type kmsCryptoKeyVersion struct {
-	Name             string `json:"name"`
-	State            string `json:"state,omitempty"`
-	ProtectionLevel  string `json:"protectionLevel,omitempty"`
-	Algorithm        string `json:"algorithm,omitempty"`
-	CreateTime       string `json:"createTime,omitempty"`
-	GenerateTime     string `json:"generateTime,omitempty"`
-	DestroyTime      string `json:"destroyTime,omitempty"`
-	DestroyEventTime string `json:"destroyEventTime,omitempty"`
-	ImportJob        string `json:"importJob,omitempty"`
-	ImportTime       string `json:"importTime,omitempty"`
+	Name                   string `json:"name"`
+	State                  string `json:"state,omitempty"`
+	ProtectionLevel        string `json:"protectionLevel,omitempty"`
+	Algorithm              string `json:"algorithm,omitempty"`
+	CreateTime             string `json:"createTime,omitempty"`
+	GenerateTime           string `json:"generateTime,omitempty"`
+	DestroyTime            string `json:"destroyTime,omitempty"`
+	DestroyEventTime       string `json:"destroyEventTime,omitempty"`
+	ImportJob              string `json:"importJob,omitempty"`
+	ImportTime             string `json:"importTime,omitempty"`
+	TrustedWrappingEnabled bool   `json:"trustedWrappingEnabled,omitempty"`
+	HSMTrusted             bool   `json:"hsmTrusted,omitempty"`
+	ReimportEligible       bool   `json:"reimportEligible,omitempty"`
 }
 
 // kmsCryptoKey is the wire shape for a CryptoKey. `primary` is assembled
@@ -199,6 +203,14 @@ type kmsAutokeyConfig struct {
 	Etag                     string `json:"etag,omitempty"`
 }
 
+type kmsEffectiveAutokeyConfig struct {
+	KeyProject               string `json:"keyProject,omitempty"`
+	KeyProjectResolutionMode string `json:"keyProjectResolutionMode,omitempty"`
+	Source                   *struct {
+		Name string `json:"name"`
+	} `json:"source,omitempty"`
+}
+
 // kmsKajPolicyConfig is the per-resource KeyAccessJustificationsPolicyConfig.
 type kmsKajPolicyConfig struct {
 	Name                           string          `json:"name"`
@@ -234,6 +246,7 @@ var (
 	kmsKeyMaterial       sim.Store[kmsKeyMaterialRecord]
 	kmsIamPolicies       sim.Store[kmsIamPolicy]
 	kmsImportJobs        sim.Store[kmsImportJob]
+	kmsImportJobMaterial sim.Store[kmsKeyMaterialRecord]
 	kmsEkmConnections    sim.Store[kmsEkmConnection]
 	kmsEkmConfigs        sim.Store[kmsEkmConfig]
 	kmsKeyHandles        sim.Store[kmsKeyHandle]
@@ -252,6 +265,7 @@ func registerCloudKMS(srv *sim.Server) {
 	kmsKeyMaterial = sim.MakeStore[kmsKeyMaterialRecord](srv.DB(), "kms_key_material")
 	kmsIamPolicies = sim.MakeStore[kmsIamPolicy](srv.DB(), "kms_iam_policies")
 	kmsImportJobs = sim.MakeStore[kmsImportJob](srv.DB(), "kms_import_jobs")
+	kmsImportJobMaterial = sim.MakeStore[kmsKeyMaterialRecord](srv.DB(), "kms_import_job_material")
 	kmsEkmConnections = sim.MakeStore[kmsEkmConnection](srv.DB(), "kms_ekm_connections")
 	kmsEkmConfigs = sim.MakeStore[kmsEkmConfig](srv.DB(), "kms_ekm_configs")
 	kmsKeyHandles = sim.MakeStore[kmsKeyHandle](srv.DB(), "kms_key_handles")
@@ -406,6 +420,12 @@ func registerCloudKMS(srv *sim.Server) {
 				return
 			}
 			stored.VersionSeq = 1
+			if r.URL.Query().Get("trustedWrappingEnabled") == "true" {
+				versionName := name + "/cryptoKeyVersions/" + ver
+				version, _ := kmsCryptoKeyVersions.Get(versionName)
+				version.TrustedWrappingEnabled = true
+				kmsCryptoKeyVersions.Put(versionName, version)
+			}
 			if purpose == kmsPurposeEncryptDecrypt || purpose == "RAW_ENCRYPT_DECRYPT" {
 				stored.PrimaryVersionID = ver
 			}
@@ -542,12 +562,14 @@ func registerCloudKMS(srv *sim.Server) {
 
 	// GetCryptoKeyVersion: GET .../cryptoKeyVersions/{cryptoKeyVersion}
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys/{cryptoKey}/cryptoKeyVersions/{cryptoKeyVersion}", func(w http.ResponseWriter, r *http.Request) {
-		versionID, _, isCustomMethod := gcpCustomMethod(sim.PathParam(r, "cryptoKeyVersion"))
+		versionID, action, isCustomMethod := gcpCustomMethod(sim.PathParam(r, "cryptoKeyVersion"))
 		if isCustomMethod {
-			// The one GET custom method Cloud KMS publishes on a
-			// CryptoKeyVersion is exportTrustedKeyWrappedCryptoKeyVersion,
-			// which the simulator does not serve; reporting the version as
-			// missing would hide that the method itself is unrouted.
+			if action == "exportTrustedKeyWrappedCryptoKeyVersion" {
+				kmsHandleExportTrustedKeyWrappedCryptoKeyVersion(
+					w, r, kmsCryptoKeyName(r)+"/cryptoKeyVersions/"+versionID,
+				)
+				return
+			}
 			gcpMethodNotFound(w)
 			return
 		}
@@ -571,6 +593,11 @@ func registerCloudKMS(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "CryptoKey %s not found", keyName)
 			return
 		}
+		var req kmsCryptoKeyVersion
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 		// Reserve the next version ID atomically by bumping the per-key counter
 		// under the store write lock, so concurrent CreateCryptoKeyVersion calls
 		// never collide on a version ID.
@@ -589,7 +616,13 @@ func registerCloudKMS(srv *sim.Server) {
 			return
 		}
 		v, _ := kmsCryptoKeyVersions.Get(keyName + "/cryptoKeyVersions/" + versionID)
+		v.TrustedWrappingEnabled = req.TrustedWrappingEnabled
+		kmsCryptoKeyVersions.Put(v.Name, v)
 		sim.WriteJSON(w, http.StatusOK, v)
+	})
+
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys/{cryptoKey}/cryptoKeyVersions:importTrustedKeyWrappedCryptoKeyVersion", func(w http.ResponseWriter, r *http.Request) {
+		kmsHandleImportTrustedKeyWrappedCryptoKeyVersion(w, r, kmsCryptoKeyName(r))
 	})
 
 	// UpdateCryptoKeyVersion: PATCH .../cryptoKeyVersions/{cryptoKeyVersion}?updateMask=state
@@ -818,9 +851,20 @@ func kmsRegisterImportJobs(srv *sim.Server) {
 		if protection == "" {
 			protection = kmsDefaultProtectionLevel
 		}
-		// Generate a real RSA-3072 wrapping key pair so the publicKey PEM the
-		// client fetches is a genuine key. The private half stays sim-side.
-		priv, err := rsa.GenerateKey(rand.Reader, 3072)
+		var bits int
+		switch req.ImportMethod {
+		case "RSA_OAEP_3072_SHA1_AES_256", "RSA_OAEP_3072_SHA256_AES_256", "RSA_OAEP_3072_SHA256":
+			bits = 3072
+		case "RSA_OAEP_4096_SHA1_AES_256", "RSA_OAEP_4096_SHA256_AES_256", "RSA_OAEP_4096_SHA256":
+			bits = 4096
+		default:
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported importMethod %q", req.ImportMethod)
+			return
+		}
+		// Generate a real wrapping key of the size selected by importMethod.
+		// The public half is returned to the client and the private half stays
+		// inside the Cloud KMS service.
+		priv, err := rsa.GenerateKey(rand.Reader, bits)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "could not generate wrapping key: %v", err)
 			return
@@ -840,7 +884,13 @@ func kmsRegisterImportJobs(srv *sim.Server) {
 			CreateTime:      now,
 			GenerateTime:    now,
 		}
+		privatePEM, err := kmsPrivateKeyPEM(priv)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "could not encode wrapping private key: %v", err)
+			return
+		}
 		kmsImportJobs.Put(name, job)
+		kmsImportJobMaterial.Put(name, kmsKeyMaterialRecord{PrivatePEM: privatePEM})
 		sim.WriteJSON(w, http.StatusOK, job)
 	})
 
@@ -1214,6 +1264,14 @@ func kmsRegisterConfigSingletons(srv *sim.Server) {
 	srv.HandleFunc("PATCH /v1/folders/{folder}/autokeyConfig", func(w http.ResponseWriter, r *http.Request) {
 		patchAutokey(w, r, "folders/"+sim.PathParam(r, "folder")+"/autokeyConfig")
 	})
+	srv.HandleFunc("GET /v1/folders/{folderAction}", func(w http.ResponseWriter, r *http.Request) {
+		folder, action, found := gcpCustomMethod(sim.PathParam(r, "folderAction"))
+		if !found || action != "showEffectiveAutokeyConfig" {
+			gcpMethodNotFound(w)
+			return
+		}
+		kmsHandleShowEffectiveAutokeyConfig(w, "folders/"+folder)
+	})
 
 	// KajPolicyConfig: projects + folders + organizations.
 	srv.HandleFunc("GET /v1/projects/{project}/kajPolicyConfig", func(w http.ResponseWriter, r *http.Request) {
@@ -1234,6 +1292,58 @@ func kmsRegisterConfigSingletons(srv *sim.Server) {
 	srv.HandleFunc("PATCH /v1/organizations/{organization}/kajPolicyConfig", func(w http.ResponseWriter, r *http.Request) {
 		patchKaj(w, r, "organizations/"+sim.PathParam(r, "organization")+"/kajPolicyConfig")
 	})
+}
+
+func kmsHandleShowEffectiveAutokeyConfig(w http.ResponseWriter, parent string) {
+	current := parent
+	switch {
+	case strings.HasPrefix(parent, "projects/"):
+		projectID := strings.TrimPrefix(parent, "projects/")
+		project, ok := crmResolveProject(projectID)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "project %s not found", parent)
+			return
+		}
+		current = "projects/" + project.ProjectId
+	case strings.HasPrefix(parent, "folders/"):
+		if _, ok := crmFolders.Get(parent); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "folder %s not found", parent)
+			return
+		}
+	default:
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported parent %s", parent)
+		return
+	}
+
+	for current != "" {
+		if config, ok := kmsAutokeyConfigs.Get(current + "/autokeyConfig"); ok &&
+			(config.KeyProject != "" || config.KeyProjectResolutionMode != "") {
+			source := &struct {
+				Name string `json:"name"`
+			}{Name: current}
+			sim.WriteJSON(w, http.StatusOK, kmsEffectiveAutokeyConfig{
+				KeyProject:               config.KeyProject,
+				KeyProjectResolutionMode: config.KeyProjectResolutionMode,
+				Source:                   source,
+			})
+			return
+		}
+		switch {
+		case strings.HasPrefix(current, "projects/"):
+			project, _ := crmResolveProject(strings.TrimPrefix(current, "projects/"))
+			current = project.Parent
+		case strings.HasPrefix(current, "folders/"):
+			folder, ok := crmFolders.Get(current)
+			if !ok {
+				current = ""
+			} else {
+				current = folder.Parent
+			}
+		default:
+			current = ""
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, kmsEffectiveAutokeyConfig{})
 }
 
 // kmsRegisterSingleTenantHsm mounts the SingleTenantHsmInstances + proposals +
@@ -2072,13 +2182,9 @@ func kmsHandleAsymmetricDecrypt(w http.ResponseWriter, r *http.Request, versionN
 	})
 }
 
-// kmsHandleImportCryptoKeyVersion mints a new version under the target key for
-// an import request. Real KMS unwraps caller-provided wrapped material; the sim
-// generates fresh material of the key's algorithm (the wrapped bytes are opaque
-// and the unwrapping key is sim-side), records the version as ENABLED, and
-// returns it. The imported-material round-trip is honest about not decoding the
-// external wrapped blob — it provisions usable material so subsequent crypto ops
-// against the version succeed.
+// kmsHandleImportCryptoKeyVersion unwraps the exact caller-provided material
+// with the selected ImportJob's private wrapping key and persists that material
+// in the imported CryptoKeyVersion.
 func kmsHandleImportCryptoKeyVersion(w http.ResponseWriter, r *http.Request, keyName string) {
 	key, ok := kmsCryptoKeys.Get(keyName)
 	if !ok {
@@ -2086,10 +2192,11 @@ func kmsHandleImportCryptoKeyVersion(w http.ResponseWriter, r *http.Request, key
 		return
 	}
 	var req struct {
-		ImportJob          string `json:"importJob"`
-		Algorithm          string `json:"algorithm"`
-		CryptoKeyVersion   string `json:"cryptoKeyVersion"`
-		WrappedKeyMaterial string `json:"wrappedKeyMaterial"`
+		ImportJob        string `json:"importJob"`
+		Algorithm        string `json:"algorithm"`
+		CryptoKeyVersion string `json:"cryptoKeyVersion"`
+		WrappedKey       string `json:"wrappedKey"`
+		RsaAesWrappedKey string `json:"rsaAesWrappedKey"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
@@ -2099,32 +2206,431 @@ func kmsHandleImportCryptoKeyVersion(w http.ResponseWriter, r *http.Request, key
 		sim.GCPError(w, http.StatusBadRequest, "importJob is required", "INVALID_ARGUMENT")
 		return
 	}
+	job, ok := kmsImportJobs.Get(req.ImportJob)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "ImportJob %s not found", req.ImportJob)
+		return
+	}
+	if job.State != "ACTIVE" || !strings.HasPrefix(req.ImportJob, strings.Split(keyName, "/cryptoKeys/")[0]+"/importJobs/") {
+		sim.GCPError(w, http.StatusBadRequest, "ImportJob is not active in the target key ring", "FAILED_PRECONDITION")
+		return
+	}
+	jobMaterial, ok := kmsImportJobMaterial.Get(req.ImportJob)
+	if !ok || len(jobMaterial.PrivatePEM) == 0 {
+		sim.GCPError(w, http.StatusInternalServerError, "ImportJob wrapping key material is unavailable", "INTERNAL")
+		return
+	}
+	privateKey, err := kmsPrivateFromPEM(jobMaterial.PrivatePEM)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "ImportJob private key is invalid: %v", err)
+		return
+	}
+	rsaPrivate, ok := privateKey.(*rsa.PrivateKey)
+	if !ok {
+		sim.GCPError(w, http.StatusInternalServerError, "ImportJob wrapping key is not RSA", "INTERNAL")
+		return
+	}
+	if (req.WrappedKey == "") == (req.RsaAesWrappedKey == "") {
+		sim.GCPError(w, http.StatusBadRequest, "exactly one of wrappedKey or rsaAesWrappedKey is required", "INVALID_ARGUMENT")
+		return
+	}
+	encodedWrapped := req.WrappedKey
+	if encodedWrapped == "" {
+		encodedWrapped = req.RsaAesWrappedKey
+	}
+	wrapped, err := kmsDecodeBytes(encodedWrapped)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "wrapped key must be base64: %v", err)
+		return
+	}
+	raw, err := kmsUnwrapImportJobMaterial(rsaPrivate, job.ImportMethod, wrapped)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "could not unwrap key material: %v", err)
+		return
+	}
 	algorithm := req.Algorithm
 	if algorithm == "" {
 		algorithm = key.Algorithm
 	}
-	var assigned int
-	kmsCryptoKeys.Update(keyName, func(k *kmsStoredCryptoKey) {
-		if k.VersionSeq < kmsHighestVersionID(keyName) {
-			k.VersionSeq = kmsHighestVersionID(keyName)
+	record, err := kmsImportedMaterialRecord(algorithm, raw)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+		return
+	}
+
+	versionName := req.CryptoKeyVersion
+	if versionName == "" {
+		var assigned int
+		kmsCryptoKeys.Update(keyName, func(k *kmsStoredCryptoKey) {
+			if k.VersionSeq < kmsHighestVersionID(keyName) {
+				k.VersionSeq = kmsHighestVersionID(keyName)
+			}
+			k.VersionSeq++
+			assigned = k.VersionSeq
+		})
+		versionName = keyName + "/cryptoKeyVersions/" + strconv.Itoa(assigned)
+	} else {
+		if !strings.HasPrefix(versionName, keyName+"/cryptoKeyVersions/") {
+			sim.GCPError(w, http.StatusBadRequest, "cryptoKeyVersion must be a child of parent", "INVALID_ARGUMENT")
+			return
 		}
-		k.VersionSeq++
-		assigned = k.VersionSeq
+		existing, exists := kmsCryptoKeyVersions.Get(versionName)
+		if !exists || !existing.ReimportEligible ||
+			(existing.State != "DESTROYED" && existing.State != "IMPORT_FAILED") {
+			sim.GCPError(w, http.StatusBadRequest, "cryptoKeyVersion is not eligible for reimport", "FAILED_PRECONDITION")
+			return
+		}
+		if existing.Algorithm != algorithm {
+			sim.GCPError(w, http.StatusBadRequest, "algorithm must match the existing CryptoKeyVersion", "INVALID_ARGUMENT")
+			return
+		}
+	}
+	now := kmsNow()
+	version := kmsCryptoKeyVersion{
+		Name:             versionName,
+		State:            "ENABLED",
+		ProtectionLevel:  job.ProtectionLevel,
+		Algorithm:        algorithm,
+		CreateTime:       now,
+		GenerateTime:     now,
+		ImportJob:        req.ImportJob,
+		ImportTime:       now,
+		ReimportEligible: true,
+	}
+	kmsCryptoKeyVersions.Put(versionName, version)
+	kmsKeyMaterial.Put(versionName, record)
+	sim.WriteJSON(w, http.StatusOK, version)
+}
+
+func kmsUnwrapImportJobMaterial(privateKey *rsa.PrivateKey, importMethod string, wrapped []byte) ([]byte, error) {
+	var digest hash.Hash
+	switch {
+	case strings.Contains(importMethod, "SHA1"):
+		digest = sha1.New()
+	case strings.Contains(importMethod, "SHA256"):
+		digest = sha256.New()
+	default:
+		return nil, fmt.Errorf("unsupported import method %s", importMethod)
+	}
+	rsaSize := privateKey.Size()
+	if len(wrapped) < rsaSize {
+		return nil, fmt.Errorf("wrapped material is shorter than the RSA ciphertext")
+	}
+	unwrapped, err := rsa.DecryptOAEP(digest, rand.Reader, privateKey, wrapped[:rsaSize], nil)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasSuffix(importMethod, "_AES_256") {
+		if len(unwrapped) != 32 {
+			return nil, fmt.Errorf("hybrid import did not contain a 256-bit AES wrapping key")
+		}
+		if len(wrapped) == rsaSize {
+			return nil, fmt.Errorf("hybrid import is missing AES-wrapped key material")
+		}
+		return kmsAESKeyUnwrapWithPadding(unwrapped, wrapped[rsaSize:])
+	}
+	if len(wrapped) != rsaSize {
+		return nil, fmt.Errorf("direct RSA import contains trailing bytes")
+	}
+	return unwrapped, nil
+}
+
+func kmsHandleExportTrustedKeyWrappedCryptoKeyVersion(w http.ResponseWriter, r *http.Request, versionName string) {
+	version, targetMaterial, ok := kmsLoadEnabledVersion(w, versionName)
+	if !ok {
+		return
+	}
+	if !version.TrustedWrappingEnabled {
+		sim.GCPError(w, http.StatusBadRequest, "CryptoKeyVersion does not have trusted wrapping enabled", "FAILED_PRECONDITION")
+		return
+	}
+	wrappingName := r.URL.Query().Get("wrappingKey")
+	wrappingVersion, wrappingMaterial, ok := kmsLoadTrustedWrappingKey(w, wrappingName)
+	if !ok {
+		return
+	}
+	_ = wrappingVersion
+	targetBytes := targetMaterial.Key
+	if len(targetBytes) == 0 && len(targetMaterial.PrivatePEM) > 0 {
+		block, _ := pem.Decode(targetMaterial.PrivatePEM)
+		if block == nil {
+			sim.GCPError(w, http.StatusInternalServerError, "stored private key is not valid PKCS#8 PEM", "INTERNAL")
+			return
+		}
+		targetBytes = block.Bytes
+	}
+	wrapped, err := kmsAESKeyWrapWithPadding(wrappingMaterial.Key, targetBytes)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "could not wrap key material: %v", err)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"wrappedKey":       base64.StdEncoding.EncodeToString(wrapped),
+		"wrappedKeyCrc32c": fmt.Sprintf("%d", kmsCRC(wrapped)),
 	})
-	versionID := strconv.Itoa(assigned)
-	if _, err := kmsCreateVersionForAlg(keyName, versionID, key.ProtectionLevel, algorithm); err != nil {
-		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "could not provision imported version: %v", err)
+}
+
+func kmsHandleImportTrustedKeyWrappedCryptoKeyVersion(w http.ResponseWriter, r *http.Request, keyName string) {
+	key, ok := kmsCryptoKeys.Get(keyName)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "CryptoKey %s not found", keyName)
 		return
 	}
-	versionName := keyName + "/cryptoKeyVersions/" + versionID
-	if v, ok := kmsCryptoKeyVersions.Get(versionName); ok {
-		v.ImportJob = req.ImportJob
-		v.ImportTime = kmsNow()
-		kmsCryptoKeyVersions.Put(versionName, v)
-		sim.WriteJSON(w, http.StatusOK, v)
+	var req struct {
+		WrappedKey       string `json:"wrappedKey"`
+		ImportingKey     string `json:"importingKey"`
+		CryptoKeyVersion string `json:"cryptoKeyVersion"`
+		Algorithm        string `json:"algorithm"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 		return
 	}
-	sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "imported version %s vanished", versionName)
+	if req.WrappedKey == "" || req.ImportingKey == "" || req.Algorithm == "" {
+		sim.GCPError(w, http.StatusBadRequest, "wrappedKey, importingKey, and algorithm are required", "INVALID_ARGUMENT")
+		return
+	}
+	_, wrappingMaterial, ok := kmsLoadTrustedWrappingKey(w, req.ImportingKey)
+	if !ok {
+		return
+	}
+	wrapped, err := kmsDecodeBytes(req.WrappedKey)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "wrappedKey must be base64: %v", err)
+		return
+	}
+	raw, err := kmsAESKeyUnwrapWithPadding(wrappingMaterial.Key, wrapped)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "trusted wrapped key is invalid: %v", err)
+		return
+	}
+	record, err := kmsImportedMaterialRecord(req.Algorithm, raw)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+		return
+	}
+
+	versionName := req.CryptoKeyVersion
+	if versionName == "" {
+		var assigned int
+		kmsCryptoKeys.Update(keyName, func(k *kmsStoredCryptoKey) {
+			if k.VersionSeq < kmsHighestVersionID(keyName) {
+				k.VersionSeq = kmsHighestVersionID(keyName)
+			}
+			k.VersionSeq++
+			assigned = k.VersionSeq
+		})
+		versionName = keyName + "/cryptoKeyVersions/" + strconv.Itoa(assigned)
+	} else {
+		if !strings.HasPrefix(versionName, keyName+"/cryptoKeyVersions/") {
+			sim.GCPError(w, http.StatusBadRequest, "cryptoKeyVersion must be a child of parent", "INVALID_ARGUMENT")
+			return
+		}
+		existing, exists := kmsCryptoKeyVersions.Get(versionName)
+		if !exists || !existing.ReimportEligible ||
+			(existing.State != "DESTROYED" && existing.State != "IMPORT_FAILED") {
+			sim.GCPError(w, http.StatusBadRequest, "cryptoKeyVersion is not eligible for reimport", "FAILED_PRECONDITION")
+			return
+		}
+		if existing.Algorithm != req.Algorithm {
+			sim.GCPError(w, http.StatusBadRequest, "algorithm must match the existing CryptoKeyVersion", "INVALID_ARGUMENT")
+			return
+		}
+	}
+	now := kmsNow()
+	version := kmsCryptoKeyVersion{
+		Name:                   versionName,
+		State:                  "ENABLED",
+		ProtectionLevel:        key.ProtectionLevel,
+		Algorithm:              req.Algorithm,
+		CreateTime:             now,
+		GenerateTime:           now,
+		ImportTime:             now,
+		TrustedWrappingEnabled: true,
+		ReimportEligible:       true,
+	}
+	kmsCryptoKeyVersions.Put(versionName, version)
+	kmsKeyMaterial.Put(versionName, record)
+	sim.WriteJSON(w, http.StatusOK, version)
+}
+
+func kmsLoadTrustedWrappingKey(w http.ResponseWriter, name string) (kmsCryptoKeyVersion, kmsKeyMaterialRecord, bool) {
+	if !strings.Contains(name, "/cryptoKeyVersions/") {
+		prefix := strings.TrimSuffix(name, "/") + "/cryptoKeyVersions/"
+		var candidates []kmsCryptoKeyVersion
+		for _, version := range kmsCryptoKeyVersions.List() {
+			if strings.HasPrefix(version.Name, prefix) && version.State == "ENABLED" {
+				candidates = append(candidates, version)
+			}
+		}
+		sort.Slice(candidates, func(i, j int) bool { return kmsVersionLess(candidates[j].Name, candidates[i].Name) })
+		if len(candidates) == 0 {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "trusted wrapping key %s has no enabled version", name)
+			return kmsCryptoKeyVersion{}, kmsKeyMaterialRecord{}, false
+		}
+		name = candidates[0].Name
+	}
+	version, material, ok := kmsLoadEnabledVersion(w, name)
+	if !ok {
+		return version, material, false
+	}
+	if !version.HSMTrusted || version.Algorithm != "AES_256_KWP" ||
+		version.ProtectionLevel != "HSM_SINGLE_TENANT" || len(material.Key) != 32 {
+		sim.GCPError(w, http.StatusBadRequest, "wrappingKey must be an HSM-trusted AES_256_KWP CryptoKeyVersion", "FAILED_PRECONDITION")
+		return version, material, false
+	}
+	return version, material, true
+}
+
+func kmsImportedMaterialRecord(algorithm string, raw []byte) (kmsKeyMaterialRecord, error) {
+	switch {
+	case strings.HasPrefix(algorithm, "RSA_"), strings.HasPrefix(algorithm, "EC_SIGN_"):
+		privateKey, err := x509.ParsePKCS8PrivateKey(raw)
+		if err != nil {
+			return kmsKeyMaterialRecord{}, fmt.Errorf("wrapped key material must contain a PKCS#8 private key: %w", err)
+		}
+		switch {
+		case strings.HasPrefix(algorithm, "RSA_"):
+			rsaKey, ok := privateKey.(*rsa.PrivateKey)
+			if !ok {
+				return kmsKeyMaterialRecord{}, fmt.Errorf("algorithm %s requires an RSA private key", algorithm)
+			}
+			wantBits := 0
+			switch {
+			case strings.Contains(algorithm, "_2048_"):
+				wantBits = 2048
+			case strings.Contains(algorithm, "_3072_"):
+				wantBits = 3072
+			case strings.Contains(algorithm, "_4096_"):
+				wantBits = 4096
+			}
+			if wantBits != 0 && rsaKey.N.BitLen() != wantBits {
+				return kmsKeyMaterialRecord{}, fmt.Errorf("algorithm %s requires a %d-bit RSA private key", algorithm, wantBits)
+			}
+		case strings.HasPrefix(algorithm, "EC_SIGN_"):
+			ecKey, ok := privateKey.(*ecdsa.PrivateKey)
+			if !ok {
+				return kmsKeyMaterialRecord{}, fmt.Errorf("algorithm %s requires an EC private key", algorithm)
+			}
+			wantBits := 256
+			if strings.Contains(algorithm, "P384") {
+				wantBits = 384
+			}
+			if ecKey.Curve.Params().BitSize != wantBits {
+				return kmsKeyMaterialRecord{}, fmt.Errorf("algorithm %s requires a P-%d EC private key", algorithm, wantBits)
+			}
+		}
+		pemBytes, err := kmsPrivateKeyPEM(privateKey)
+		if err != nil {
+			return kmsKeyMaterialRecord{}, err
+		}
+		return kmsKeyMaterialRecord{PrivatePEM: pemBytes}, nil
+	default:
+		var wantBytes int
+		switch algorithm {
+		case "GOOGLE_SYMMETRIC_ENCRYPTION", "AES_256_GCM", "AES_256_CBC", "AES_256_CTR", "AES_256_KWP", "HMAC_SHA256":
+			wantBytes = 32
+		case "AES_128_GCM", "AES_128_CBC", "AES_128_CTR":
+			wantBytes = 16
+		case "HMAC_SHA1":
+			wantBytes = 20
+		case "HMAC_SHA224":
+			wantBytes = 28
+		case "HMAC_SHA384":
+			wantBytes = 48
+		case "HMAC_SHA512":
+			wantBytes = 64
+		default:
+			return kmsKeyMaterialRecord{}, fmt.Errorf("algorithm %s is not supported for imported key material", algorithm)
+		}
+		if len(raw) != wantBytes {
+			return kmsKeyMaterialRecord{}, fmt.Errorf("algorithm %s requires exactly %d bytes of key material", algorithm, wantBytes)
+		}
+		return kmsKeyMaterialRecord{Key: append([]byte(nil), raw...)}, nil
+	}
+}
+
+var kmsKWPAIVPrefix = [4]byte{0xa6, 0x59, 0x59, 0xa6}
+
+func kmsAESKeyWrapWithPadding(kek, plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(kek)
+	if err != nil {
+		return nil, err
+	}
+	if len(plaintext) == 0 || uint64(len(plaintext)) > uint64(^uint32(0)) {
+		return nil, fmt.Errorf("plaintext length must be between 1 and 2^32-1 bytes")
+	}
+	n := (len(plaintext) + 7) / 8
+	a := make([]byte, 8)
+	copy(a[:4], kmsKWPAIVPrefix[:])
+	binary.BigEndian.PutUint32(a[4:], uint32(len(plaintext)))
+	padded := make([]byte, n*8)
+	copy(padded, plaintext)
+	if n == 1 {
+		out := make([]byte, 16)
+		block.Encrypt(out, append(a, padded...))
+		return out, nil
+	}
+	r := make([]byte, len(padded))
+	copy(r, padded)
+	b := make([]byte, 16)
+	for j := 0; j < 6; j++ {
+		for i := 1; i <= n; i++ {
+			copy(b[:8], a)
+			copy(b[8:], r[(i-1)*8:i*8])
+			block.Encrypt(b, b)
+			t := uint64(n*j + i)
+			binary.BigEndian.PutUint64(a, binary.BigEndian.Uint64(b[:8])^t)
+			copy(r[(i-1)*8:i*8], b[8:])
+		}
+	}
+	return append(a, r...), nil
+}
+
+func kmsAESKeyUnwrapWithPadding(kek, wrapped []byte) ([]byte, error) {
+	block, err := aes.NewCipher(kek)
+	if err != nil {
+		return nil, err
+	}
+	if len(wrapped) < 16 || len(wrapped)%8 != 0 {
+		return nil, fmt.Errorf("wrapped key length must be a multiple of 8 and at least 16 bytes")
+	}
+	n := len(wrapped)/8 - 1
+	var a []byte
+	var padded []byte
+	if n == 1 {
+		decrypted := make([]byte, 16)
+		block.Decrypt(decrypted, wrapped)
+		a = decrypted[:8]
+		padded = decrypted[8:]
+	} else {
+		a = append([]byte(nil), wrapped[:8]...)
+		padded = append([]byte(nil), wrapped[8:]...)
+		b := make([]byte, 16)
+		for j := 5; j >= 0; j-- {
+			for i := n; i >= 1; i-- {
+				t := uint64(n*j + i)
+				binary.BigEndian.PutUint64(b[:8], binary.BigEndian.Uint64(a)^t)
+				copy(b[8:], padded[(i-1)*8:i*8])
+				block.Decrypt(b, b)
+				copy(a, b[:8])
+				copy(padded[(i-1)*8:i*8], b[8:])
+			}
+		}
+	}
+	if !bytes.Equal(a[:4], kmsKWPAIVPrefix[:]) {
+		return nil, fmt.Errorf("integrity check failed")
+	}
+	length := int(binary.BigEndian.Uint32(a[4:]))
+	if length <= 8*(n-1) || length > 8*n {
+		return nil, fmt.Errorf("invalid message length indicator")
+	}
+	for _, b := range padded[length:] {
+		if b != 0 {
+			return nil, fmt.Errorf("non-zero RFC 5649 padding")
+		}
+	}
+	return append([]byte(nil), padded[:length]...), nil
 }
 
 // ----- helpers -----
@@ -2232,6 +2738,7 @@ func kmsCreateVersionForAlg(keyName, versionID, protection, algorithm string) (s
 		Algorithm:       algorithm,
 		CreateTime:      now,
 		GenerateTime:    now,
+		HSMTrusted:      protection == "HSM_SINGLE_TENANT" && algorithm == "AES_256_KWP",
 	})
 	kmsKeyMaterial.Put(versionName, rec)
 	return versionID, nil

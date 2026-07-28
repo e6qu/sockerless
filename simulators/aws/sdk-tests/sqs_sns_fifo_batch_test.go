@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
@@ -208,6 +209,139 @@ func TestSQS_SendMessageBatch_FifoPerEntryFailure(t *testing.T) {
 	assert.Equal(t, "bad", aws.ToString(batch.Failed[0].Id))
 	assert.Equal(t, "MissingParameter", aws.ToString(batch.Failed[0].Code))
 	assert.True(t, batch.Failed[0].SenderFault)
+}
+
+func TestSQS_FIFODeduplicationAndMessageGroupOrdering(t *testing.T) {
+	c := sqsClient()
+	out, err := c.CreateQueue(ctx, &sqs.CreateQueueInput{
+		QueueName: aws.String("fifo-runtime.fifo"),
+		Attributes: map[string]string{
+			"FifoQueue": "true",
+		},
+	})
+	require.NoError(t, err)
+	url := out.QueueUrl
+	t.Cleanup(func() {
+		_, _ = c.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: url})
+	})
+
+	first, err := c.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:               url,
+		MessageBody:            aws.String("group-a-first"),
+		MessageGroupId:         aws.String("group-a"),
+		MessageDeduplicationId: aws.String("dedup-a-first"),
+	})
+	require.NoError(t, err)
+	duplicate, err := c.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:               url,
+		MessageBody:            aws.String("a duplicate payload is ignored"),
+		MessageGroupId:         aws.String("group-a"),
+		MessageDeduplicationId: aws.String("dedup-a-first"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, aws.ToString(first.MessageId), aws.ToString(duplicate.MessageId))
+	assert.Equal(t, aws.ToString(first.SequenceNumber), aws.ToString(duplicate.SequenceNumber))
+
+	second, err := c.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:               url,
+		MessageBody:            aws.String("group-a-second"),
+		MessageGroupId:         aws.String("group-a"),
+		MessageDeduplicationId: aws.String("dedup-a-second"),
+	})
+	require.NoError(t, err)
+	_, err = c.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:               url,
+		MessageBody:            aws.String("group-b-first"),
+		MessageGroupId:         aws.String("group-b"),
+		MessageDeduplicationId: aws.String("dedup-b-first"),
+	})
+	require.NoError(t, err)
+	assert.NotEqual(t, aws.ToString(first.SequenceNumber), aws.ToString(second.SequenceNumber))
+
+	receivedFirst, err := c.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:                    url,
+		MaxNumberOfMessages:         1,
+		VisibilityTimeout:           30,
+		MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{sqstypes.MessageSystemAttributeNameAll},
+	})
+	require.NoError(t, err)
+	require.Len(t, receivedFirst.Messages, 1)
+	assert.Equal(t, "group-a-first", aws.ToString(receivedFirst.Messages[0].Body))
+	assert.Equal(t, "group-a", receivedFirst.Messages[0].Attributes["MessageGroupId"])
+	assert.Equal(t, aws.ToString(first.SequenceNumber), receivedFirst.Messages[0].Attributes["SequenceNumber"])
+
+	whileAIsInFlight, err := c.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            url,
+		MaxNumberOfMessages: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, whileAIsInFlight.Messages, 1)
+	assert.Equal(t, "group-b-first", aws.ToString(whileAIsInFlight.Messages[0].Body))
+
+	_, err = c.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+		QueueUrl:      url,
+		ReceiptHandle: receivedFirst.Messages[0].ReceiptHandle,
+	})
+	require.NoError(t, err)
+	afterDelete, err := c.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            url,
+		MaxNumberOfMessages: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, afterDelete.Messages, 1)
+	assert.Equal(t, "group-a-second", aws.ToString(afterDelete.Messages[0].Body))
+}
+
+func TestSQSDelayMaximumSizeAndRetentionRuntime(t *testing.T) {
+	c := sqsClient()
+	out, err := c.CreateQueue(ctx, &sqs.CreateQueueInput{
+		QueueName: aws.String("runtime-attributes"),
+		Attributes: map[string]string{
+			"DelaySeconds":           "1",
+			"MaximumMessageSize":     "1024",
+			"MessageRetentionPeriod": "60",
+		},
+	})
+	require.NoError(t, err)
+	url := out.QueueUrl
+	t.Cleanup(func() {
+		_, _ = c.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: url})
+	})
+
+	_, err = c.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    url,
+		MessageBody: aws.String(string(make([]byte, 1025))),
+	})
+	assert.Equal(t, "InvalidParameterValue", errCode(t, err))
+
+	_, err = c.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    url,
+		MessageBody: aws.String("delayed"),
+	})
+	require.NoError(t, err)
+	immediate, err := c.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            url,
+		MaxNumberOfMessages: 1,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, immediate.Messages)
+	time.Sleep(1100 * time.Millisecond)
+	afterDelay, err := c.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            url,
+		MaxNumberOfMessages: 1,
+		VisibilityTimeout:   0,
+	})
+	require.NoError(t, err)
+	require.Len(t, afterDelay.Messages, 1)
+	assert.Equal(t, "delayed", aws.ToString(afterDelay.Messages[0].Body))
+
+	time.Sleep(60 * time.Second)
+	afterRetention, err := c.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            url,
+		MaxNumberOfMessages: 1,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, afterRetention.Messages)
 }
 
 // TestSNS_FifoTopicCoupling locks the SNS .fifo-name ↔ FifoTopic=true

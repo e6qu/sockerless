@@ -1,34 +1,82 @@
-# AWS CodeBuild
+# Sim surface — aws-codebuild
 
-Surface: `simulators/aws/codebuild.go`.
-
-Canonical reference: <https://docs.aws.amazon.com/codebuild/latest/APIReference/>
-
-Protocol: AWS JSON 1.1 (`X-Amz-Target: CodeBuild_20161006.<Op>`).
+Surface registered in `simulators/aws/codebuild.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — implemented, no direct test coverage
+- ✗ — missing (paired with an open BUG or issue; never silent)
+- 501 — stubbed NotImplemented (wire-visible gap)
+- n/a — no meaningful client/provider surface for this op
 
-## Projects
+## Implemented ops (extracted from HandleFunc registrations)
 
-| Operation | X-Amz-Target | SDK test | CLI test | TF resource | notes |
+| Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| CreateProject | `CodeBuild_20161006.CreateProject` | ✓ `TestCodeBuild_ProjectCRUD_SDK` | ✓ `TestCodeBuild_ProjectCRUD_CLI` | ✓ `aws_codebuild_project` | Returns full project object. |
-| BatchGetProjects | `CodeBuild_20161006.BatchGetProjects` | ✓ | ✓ | ✓ | Returns `projects` + `projectsNotFound` arrays. |
-| ListProjects | `CodeBuild_20161006.ListProjects` | ✓ | ✓ | ✓ | Returns project name list with pagination. |
-| UpdateProject | `CodeBuild_20161006.UpdateProject` | ✓ | ✗ | ✓ | |
-| DeleteProject | `CodeBuild_20161006.DeleteProject` | ✓ | ✓ | ✓ | |
-| TagResource | `CodeBuild_20161006.TagResource` | ✗ | ✗ | ✓ | SDK v2 does not expose as a separate client method; tags verified via `BatchGetProjects`. |
-| UntagResource | `CodeBuild_20161006.UntagResource` | ✗ | ✗ | ✓ | |
-| ListTagsForResource | `CodeBuild_20161006.ListTagsForResource` | ✗ | ✗ | ✓ | |
+| `Action CodeBuild_20161006.CreateProject` | ✓ `simulators/aws/codebuild.go:139::handleCBCreateProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetProjects` | ✓ `simulators/aws/codebuild.go:140::handleCBBatchGetProjects` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListProjects` | ✓ `simulators/aws/codebuild.go:141::handleCBListProjects` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.UpdateProject` | ✓ `simulators/aws/codebuild.go:142::handleCBUpdateProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteProject` | ✓ `simulators/aws/codebuild.go:143::handleCBDeleteProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StartBuild` | ✓ `simulators/aws/codebuild.go:144::handleCBStartBuild` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StopBuild` | ✓ `simulators/aws/codebuild.go:145::handleCBStopBuild` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.RetryBuild` | ✓ `simulators/aws/codebuild.go:146::handleCBRetryBuild` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetBuilds` | ✓ `simulators/aws/codebuild.go:147::handleCBBatchGetBuilds` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListBuildsForProject` | ✓ `simulators/aws/codebuild.go:148::handleCBListBuildsForProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListBuilds` | ✓ `simulators/aws/codebuild.go:149::handleCBListBuilds` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.CreateReportGroup` | ✓ `simulators/aws/codebuild.go:151::handleCBCreateReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.UpdateReportGroup` | ✓ `simulators/aws/codebuild.go:152::handleCBUpdateReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteReportGroup` | ✓ `simulators/aws/codebuild.go:153::handleCBDeleteReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListReportGroups` | ✓ `simulators/aws/codebuild.go:154::handleCBListReportGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetReportGroups` | ✓ `simulators/aws/codebuild.go:155::handleCBBatchGetReportGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListReports` | ✓ `simulators/aws/codebuild.go:156::handleCBListReports` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListReportsForReportGroup` | ✓ `simulators/aws/codebuild.go:157::handleCBListReportsForReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetReports` | ✓ `simulators/aws/codebuild.go:158::handleCBBatchGetReports` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ImportSourceCredentials` | ✓ `simulators/aws/codebuild.go:160::handleCBImportSourceCredentials` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListSourceCredentials` | ✓ `simulators/aws/codebuild.go:161::handleCBListSourceCredentials` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteSourceCredentials` | ✓ `simulators/aws/codebuild.go:162::handleCBDeleteSourceCredentials` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchDeleteBuilds` | ✓ `simulators/aws/codebuild_extended.go:150::handleCBBatchDeleteBuilds` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StartBuildBatch` | ✓ `simulators/aws/codebuild_extended.go:153::handleCBStartBuildBatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StopBuildBatch` | ✓ `simulators/aws/codebuild_extended.go:154::handleCBStopBuildBatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.RetryBuildBatch` | ✓ `simulators/aws/codebuild_extended.go:155::handleCBRetryBuildBatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteBuildBatch` | ✓ `simulators/aws/codebuild_extended.go:156::handleCBDeleteBuildBatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetBuildBatches` | ✓ `simulators/aws/codebuild_extended.go:157::handleCBBatchGetBuildBatches` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListBuildBatches` | ✓ `simulators/aws/codebuild_extended.go:158::handleCBListBuildBatches` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListBuildBatchesForProject` | ✓ `simulators/aws/codebuild_extended.go:159::handleCBListBuildBatchesForProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.CreateFleet` | ✓ `simulators/aws/codebuild_extended.go:162::handleCBCreateFleet` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.UpdateFleet` | ✓ `simulators/aws/codebuild_extended.go:163::handleCBUpdateFleet` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteFleet` | ✓ `simulators/aws/codebuild_extended.go:164::handleCBDeleteFleet` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetFleets` | ✓ `simulators/aws/codebuild_extended.go:165::handleCBBatchGetFleets` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListFleets` | ✓ `simulators/aws/codebuild_extended.go:166::handleCBListFleets` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StartSandbox` | ✓ `simulators/aws/codebuild_extended.go:169::handleCBStartSandbox` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StopSandbox` | ✓ `simulators/aws/codebuild_extended.go:170::handleCBStopSandbox` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StartSandboxConnection` | ✓ `simulators/aws/codebuild_extended.go:171::handleCBStartSandboxConnection` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetSandboxes` | ✓ `simulators/aws/codebuild_extended.go:172::handleCBBatchGetSandboxes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListSandboxes` | ✓ `simulators/aws/codebuild_extended.go:173::handleCBListSandboxes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListSandboxesForProject` | ✓ `simulators/aws/codebuild_extended.go:174::handleCBListSandboxesForProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StartCommandExecution` | ✓ `simulators/aws/codebuild_extended.go:177::handleCBStartCommandExecution` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetCommandExecutions` | ✓ `simulators/aws/codebuild_extended.go:178::handleCBBatchGetCommandExecutions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListCommandExecutionsForSandbox` | ✓ `simulators/aws/codebuild_extended.go:179::handleCBListCommandExecutionsForSandbox` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.CreateWebhook` | ✓ `simulators/aws/codebuild_extended.go:182::handleCBCreateWebhook` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.UpdateWebhook` | ✓ `simulators/aws/codebuild_extended.go:183::handleCBUpdateWebhook` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteWebhook` | ✓ `simulators/aws/codebuild_extended.go:184::handleCBDeleteWebhook` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteReport` | ✓ `simulators/aws/codebuild_extended.go:187::handleCBDeleteReport` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DescribeTestCases` | ✓ `simulators/aws/codebuild_extended.go:188::handleCBDescribeTestCases` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DescribeCodeCoverages` | ✓ `simulators/aws/codebuild_extended.go:189::handleCBDescribeCodeCoverages` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.GetReportGroupTrend` | ✓ `simulators/aws/codebuild_extended.go:190::handleCBGetReportGroupTrend` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.PutResourcePolicy` | ✓ `simulators/aws/codebuild_extended.go:193::handleCBPutResourcePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.GetResourcePolicy` | ✓ `simulators/aws/codebuild_extended.go:194::handleCBGetResourcePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteResourcePolicy` | ✓ `simulators/aws/codebuild_extended.go:195::handleCBDeleteResourcePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.UpdateProjectVisibility` | ✓ `simulators/aws/codebuild_extended.go:198::handleCBUpdateProjectVisibility` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.InvalidateProjectCache` | ✓ `simulators/aws/codebuild_extended.go:199::handleCBInvalidateProjectCache` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListCuratedEnvironmentImages` | ✓ `simulators/aws/codebuild_extended.go:200::handleCBListCuratedEnvironmentImages` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListSharedProjects` | ✓ `simulators/aws/codebuild_extended.go:201::handleCBListSharedProjects` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListSharedReportGroups` | ✓ `simulators/aws/codebuild_extended.go:202::handleCBListSharedReportGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
-## Builds
+## Coverage status
 
-| Operation | X-Amz-Target | SDK test | CLI test | TF resource | notes |
-|---|---|---|---|---|---|
-| StartBuild | `CodeBuild_20161006.StartBuild` | ✓ `TestCodeBuild_BuildLifecycle_SDK` | ✓ `TestCodeBuild_Build_CLI` | — | Runs project buildspec commands and records status from process exits. |
-| BatchGetBuilds | `CodeBuild_20161006.BatchGetBuilds` | ✓ | ✓ | — | Returns `builds` + `buildsNotFound`. |
-| ListBuildsForProject | `CodeBuild_20161006.ListBuildsForProject` | ✓ | ✓ | — | Paginated build ID list. |
-| ListBuilds | `CodeBuild_20161006.ListBuilds` | ✗ | ✗ | — | All builds across all projects. |
+- Row-level SDK/Terraform cells summarize the maintained coverage matrix in `specs/SIM_TEST_COVERAGE_MATRIX.md`; detailed client files and client-family `n/a` decisions live there.
+- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
+
+<!-- HAND-WRITTEN BEGIN -->
+<!-- HAND-WRITTEN END -->

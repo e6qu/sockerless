@@ -63,7 +63,7 @@ var gcpMethodFloor = map[string]int{
 	"cloudrun-v2":             102,
 	"bigquery-v2":             94,
 	"dns-v1":                  74,
-	"cloudkms-v1":             160,
+	"cloudkms-v1":             168,
 	"eventarc-v1":             130,
 	"cloudfunctions-v2":       42,
 	"pubsub-v1":               92,
@@ -110,10 +110,10 @@ var gcpMethodFloor = map[string]int{
 	"cloudbuild-v1": 92,
 
 	// Memorystore for Redis: instance CRUD, upgrade and failover are served.
-	// aclPolicies.revisions.list/.get are mux misses, and the instances
-	// fan-in rejects export, import and rescheduleMaintenance as unknown
-	// verbs; operations.cancel is unmounted.
-	"redis-v1": 82,
+	// ACL policy revision get/list are served from immutable policy snapshots;
+	// the instances fan-in rejects export, import and rescheduleMaintenance as
+	// unknown verbs, and operations.cancel is unmounted.
+	"redis-v1": 86,
 
 	// Firestore: document CRUD, runQuery, batchGet, batchWrite and the
 	// transaction verbs are served. documents.write, documents.listen,
@@ -133,10 +133,10 @@ var gcpMethodFloor = map[string]int{
 
 	// Secret Manager: secrets and versions CRUD, addVersion, access, enable,
 	// disable, destroy and the IAM verbs are served on both the global and the
-	// regional (locations/{location}) surface. secrets.rotateSecret and
-	// secrets.enableManagedRotation are not implemented on either surface; the
-	// secret fan-in answers them as unrouted methods.
-	"secretmanager-v1": 64,
+	// regional (locations/{location}) surface. Typed Cloud SQL secrets support
+	// enableManagedRotation and rotateSecret through the Cloud SQL Admin API,
+	// preserving the real managed-version lifecycle.
+	"secretmanager-v1": 72,
 
 	// Service Usage: services.list/.get/.enable/.disable/.batchEnable are
 	// served; services.batchGet and operations.cancel are mux misses.

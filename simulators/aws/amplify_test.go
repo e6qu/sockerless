@@ -344,7 +344,7 @@ func TestAmplifyStopJobRejectsFinishedJob(t *testing.T) {
 	if got := body["jobSummary"].(map[string]any)["status"]; got != string(AmplifyJobStatusCancelled) {
 		t.Fatalf("expected CANCELLED, got %v", got)
 	}
-	// The synthetic pipeline must not resurrect a cancelled job.
+	// No asynchronous worker may resurrect a cancelled job.
 	if amplifyAdvanceJob("run1", AmplifyJobStatusRunning, AmplifyJobStatusSucceed) {
 		t.Fatal("advance must refuse a job that left the expected state")
 	}
@@ -370,6 +370,11 @@ func TestAmplifyStartDeploymentValidation(t *testing.T) {
 		t.Fatalf("non s3/http sourceUrl must 400, got %d", rec.Code)
 	}
 
+	s3Buckets_.Put("bucket", S3Bucket{Name: "bucket"})
+	s3Objects.Put(s3ObjectKey("bucket", "prefix/index.html"), S3Object{
+		Key:  s3ObjectKey("bucket", "prefix/index.html"),
+		Data: []byte("<html>source prefix</html>"),
+	})
 	rec, body = amplifyDoJSON(t, handleAmplifyStartDeployment, http.MethodPost, "/apps/depapp/branches/main/deployments/start",
 		`{"sourceUrl":"s3://bucket/prefix/","sourceUrlType":"BUCKET_PREFIX"}`, vals)
 	if rec.Code != http.StatusOK {

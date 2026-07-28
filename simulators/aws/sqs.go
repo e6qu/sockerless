@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -44,6 +45,16 @@ type SQSQueue struct {
 	// GetQueueAttributes echoes these alongside the system-emitted
 	// values (QueueArn, CreatedTimestamp, message counts).
 	Attributes map[string]string
+	// Deduplication records survive message deletion for the five-minute FIFO
+	// deduplication interval, as they do in Amazon SQS.
+	Deduplication map[string]SQSDeduplicationRecord
+	NextSequence  uint64
+}
+
+type SQSDeduplicationRecord struct {
+	MessageID      string
+	SequenceNumber string
+	ExpiresAt      int64
 }
 
 // SQSMessage is one message currently buffered in a queue.
@@ -60,6 +71,10 @@ type SQSMessage struct {
 	VisibleAt               int64
 	ApproximateReceiveCount int
 	FirstReceivedAt         int64
+	DelayedUntil            int64
+	MessageGroupID          string
+	MessageDeduplicationID  string
+	SequenceNumber          string
 	MessageAttributes       map[string]SQSMessageAttribute
 	MD5OfMessageAttributes  string
 }
@@ -160,6 +175,14 @@ func sqsRenderMessageAttributes(attrs map[string]SQSMessageAttribute) map[string
 
 var sqsQueues sim.Store[SQSQueue]
 
+const (
+	sqsDefaultVisibilityTimeout = 30
+	sqsDefaultDelaySeconds      = 0
+	sqsDefaultRetentionSeconds  = 4 * 24 * 60 * 60
+	sqsDefaultMaximumBytes      = 1024 * 1024
+	sqsDeduplicationWindow      = 5 * time.Minute
+)
+
 // sqsQueueURL builds the canonical queue URL real SQS emits.
 // external: real-AWS canonical `sqs.<region>.amazonaws.com` host;
 // the aws-sdk-go-v2 SQS client treats the queue URL as an opaque
@@ -188,7 +211,7 @@ func sqsEnqueueByARN(queueARN, body string) bool {
 	if _, ok := sqsQueues.Get(name); !ok {
 		return false
 	}
-	sqsEnqueue(name, sqsSendEntry{MessageBody: body})
+	_ = sqsEnqueue(name, sqsSendEntry{MessageBody: body})
 	return true
 }
 
@@ -252,14 +275,20 @@ func sqsEnqueueRedrives(dlqARN string, msgs []SQSMessage) {
 	if _, ok := sqsQueues.Get(dlqName); !ok {
 		return
 	}
-	now := time.Now().Unix()
+	now := time.Now().UnixMilli()
 	sqsQueues.Update(dlqName, func(d *SQSQueue) {
 		for _, m := range msgs {
+			delayUntil := now + int64(sqsQueueIntAttribute(*d, "DelaySeconds", sqsDefaultDelaySeconds))*1000
 			d.Messages = append(d.Messages, SQSMessage{
 				MessageId:              generateUUID(),
 				Body:                   m.Body,
 				MD5OfBody:              m.MD5OfBody,
 				SentTimestamp:          now,
+				VisibleAt:              delayUntil,
+				DelayedUntil:           delayUntil,
+				MessageGroupID:         m.MessageGroupID,
+				MessageDeduplicationID: m.MessageDeduplicationID,
+				SequenceNumber:         m.SequenceNumber,
 				MessageAttributes:      m.MessageAttributes,
 				MD5OfMessageAttributes: m.MD5OfMessageAttributes,
 			})
@@ -329,16 +358,39 @@ var sqsNumericAttributes = []string{
 // value is present but not parseable as an integer, mirroring real SQS's
 // InvalidParameterValue rejection. ok is false when a value is invalid.
 func sqsValidateNumericAttributes(attrs map[string]string) (msg string, ok bool) {
+	ranges := map[string][2]int{
+		"VisibilityTimeout":             {0, 43200},
+		"DelaySeconds":                  {0, 900},
+		"MessageRetentionPeriod":        {60, 1209600},
+		"MaximumMessageSize":            {1024, sqsDefaultMaximumBytes},
+		"ReceiveMessageWaitTimeSeconds": {0, 20},
+	}
 	for _, k := range sqsNumericAttributes {
 		v, present := attrs[k]
 		if !present {
 			continue
 		}
-		if _, err := strconv.Atoi(v); err != nil {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Sprintf("Invalid value for the parameter %s.", k), false
+		}
+		if bounds, constrained := ranges[k]; constrained && (n < bounds[0] || n > bounds[1]) {
 			return fmt.Sprintf("Invalid value for the parameter %s.", k), false
 		}
 	}
 	return "", true
+}
+
+func sqsQueueIntAttribute(q SQSQueue, name string, fallback int) int {
+	raw, ok := q.Attributes[name]
+	if !ok {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 func handleSQSCreateQueue(w http.ResponseWriter, r *http.Request) {
@@ -380,9 +432,10 @@ func handleSQSCreateQueue(w http.ResponseWriter, r *http.Request) {
 		URL:               sqsQueueURL(req.QueueName),
 		ARN:               sqsQueueARN(req.QueueName),
 		CreatedTimestamp:  time.Now().Unix(),
-		VisibilityTimeout: 30,
+		VisibilityTimeout: sqsDefaultVisibilityTimeout,
 		Tags:              map[string]string{},
 		Attributes:        map[string]string{},
+		Deduplication:     map[string]SQSDeduplicationRecord{},
 	}
 	// Persist every operator-supplied attribute. VisibilityTimeout
 	// is mirrored to the typed field for hot-path use by Receive;
@@ -510,9 +563,17 @@ func handleSQSGetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	}
 	all := len(wanted) == 0 || wanted["All"]
 
-	now := time.Now().Unix()
-	visibleCount, invisibleCount := 0, 0
+	now := time.Now().UnixMilli()
+	retention := int64(sqsQueueIntAttribute(q, "MessageRetentionPeriod", sqsDefaultRetentionSeconds)) * 1000
+	visibleCount, invisibleCount, delayedCount := 0, 0, 0
 	for _, m := range q.Messages {
+		if now-m.SentTimestamp >= retention {
+			continue
+		}
+		if m.DelayedUntil > now {
+			delayedCount++
+			continue
+		}
 		if m.VisibleAt <= now {
 			visibleCount++
 		} else {
@@ -531,6 +592,11 @@ func handleSQSGetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		"CreatedTimestamp":                      strconv.FormatInt(q.CreatedTimestamp, 10),
 		"ApproximateNumberOfMessages":           strconv.Itoa(visibleCount),
 		"ApproximateNumberOfMessagesNotVisible": strconv.Itoa(invisibleCount),
+		"ApproximateNumberOfMessagesDelayed":    strconv.Itoa(delayedCount),
+		"DelaySeconds":                          strconv.Itoa(sqsDefaultDelaySeconds),
+		"MessageRetentionPeriod":                strconv.Itoa(sqsDefaultRetentionSeconds),
+		"MaximumMessageSize":                    strconv.Itoa(sqsDefaultMaximumBytes),
+		"ReceiveMessageWaitTimeSeconds":         "0",
 	}
 	for k, v := range q.Attributes {
 		allAttrs[k] = v
@@ -601,6 +667,7 @@ type sqsSendEntry struct {
 	Id                     string                         `json:"Id"`
 	MessageBody            string                         `json:"MessageBody"`
 	MessageAttributes      map[string]SQSMessageAttribute `json:"MessageAttributes"`
+	DelaySeconds           *int                           `json:"DelaySeconds"`
 	MessageGroupId         string                         `json:"MessageGroupId"`
 	MessageDeduplicationId string                         `json:"MessageDeduplicationId"`
 }
@@ -613,11 +680,18 @@ func sqsValidateSend(q SQSQueue, e sqsSendEntry) (string, string) {
 	if e.MessageBody == "" {
 		return "MissingParameter", "MessageBody is required"
 	}
-	if len(e.MessageBody) > sqsMaxMessageBytes {
+	maximumBytes := sqsQueueIntAttribute(q, "MaximumMessageSize", sqsDefaultMaximumBytes)
+	if len(e.MessageBody) > maximumBytes {
 		return "InvalidParameterValue",
-			"One or more parameters are invalid. Reason: Message must be shorter than 262144 bytes."
+			fmt.Sprintf("One or more parameters are invalid. Reason: Message must be shorter than %d bytes.", maximumBytes)
+	}
+	if e.DelaySeconds != nil && (*e.DelaySeconds < 0 || *e.DelaySeconds > 900) {
+		return "InvalidParameterValue", "DelaySeconds must be between 0 and 900."
 	}
 	if sqsQueueIsFifo(q) {
+		if e.DelaySeconds != nil {
+			return "InvalidParameterValue", "Value for parameter DelaySeconds is invalid. Reason: The request include parameter that is not valid for this queue type."
+		}
 		if e.MessageGroupId == "" {
 			return "MissingParameter", "The request must contain the parameter MessageGroupId."
 		}
@@ -629,26 +703,86 @@ func sqsValidateSend(q SQSQueue, e sqsSendEntry) (string, string) {
 	return "", ""
 }
 
+type sqsEnqueueResult struct {
+	MessageID              string
+	MD5OfBody              string
+	MD5OfMessageAttributes string
+	SequenceNumber         string
+}
+
+func sqsDeduplicationKey(q SQSQueue, e sqsSendEntry) (key, id string) {
+	id = e.MessageDeduplicationId
+	if id == "" && sqsContentBasedDedup(q) {
+		sum := sha256.Sum256([]byte(e.MessageBody))
+		id = hex.EncodeToString(sum[:])
+	}
+	key = id
+	if q.Attributes["DeduplicationScope"] == "messageGroup" {
+		key = e.MessageGroupId + "\x00" + id
+	}
+	return key, id
+}
+
 // sqsEnqueue appends a validated entry to the queue and returns the
-// SDK-shaped result fields (MessageId, MD5OfMessageBody, and — when
-// attributes are present — MD5OfMessageAttributes).
-func sqsEnqueue(name string, e sqsSendEntry) (msgID, md5OfBody, md5OfAttrs string) {
-	msgID = generateUUID()
+// SDK-shaped result fields. FIFO deduplication records outlive message
+// deletion for five minutes and therefore live on the queue, not the message.
+func sqsEnqueue(name string, e sqsSendEntry) (result sqsEnqueueResult) {
 	hash := md5.Sum([]byte(e.MessageBody))
-	md5OfBody = hex.EncodeToString(hash[:])
-	md5OfAttrs = sqsMessageAttributeMD5(e.MessageAttributes)
-	now := time.Now().Unix()
+	result.MD5OfBody = hex.EncodeToString(hash[:])
+	result.MD5OfMessageAttributes = sqsMessageAttributeMD5(e.MessageAttributes)
+	now := time.Now().UnixMilli()
 	sqsQueues.Update(name, func(q *SQSQueue) {
+		if q.Deduplication == nil {
+			q.Deduplication = map[string]SQSDeduplicationRecord{}
+		}
+		for key, record := range q.Deduplication {
+			if record.ExpiresAt <= now {
+				delete(q.Deduplication, key)
+			}
+		}
+
+		deduplicationID := e.MessageDeduplicationId
+		if sqsQueueIsFifo(*q) {
+			key, resolvedID := sqsDeduplicationKey(*q, e)
+			deduplicationID = resolvedID
+			if record, ok := q.Deduplication[key]; ok {
+				result.MessageID = record.MessageID
+				result.SequenceNumber = record.SequenceNumber
+				return
+			}
+			q.NextSequence++
+			result.SequenceNumber = strconv.FormatUint(q.NextSequence, 10)
+		}
+
+		result.MessageID = generateUUID()
+		delaySeconds := sqsQueueIntAttribute(*q, "DelaySeconds", sqsDefaultDelaySeconds)
+		if e.DelaySeconds != nil {
+			delaySeconds = *e.DelaySeconds
+		}
+		delayedUntil := now + int64(delaySeconds)*1000
 		q.Messages = append(q.Messages, SQSMessage{
-			MessageId:              msgID,
+			MessageId:              result.MessageID,
 			Body:                   e.MessageBody,
-			MD5OfBody:              md5OfBody,
+			MD5OfBody:              result.MD5OfBody,
 			SentTimestamp:          now,
+			VisibleAt:              delayedUntil,
+			DelayedUntil:           delayedUntil,
+			MessageGroupID:         e.MessageGroupId,
+			MessageDeduplicationID: deduplicationID,
+			SequenceNumber:         result.SequenceNumber,
 			MessageAttributes:      e.MessageAttributes,
-			MD5OfMessageAttributes: md5OfAttrs,
+			MD5OfMessageAttributes: result.MD5OfMessageAttributes,
 		})
+		if sqsQueueIsFifo(*q) {
+			key, _ := sqsDeduplicationKey(*q, e)
+			q.Deduplication[key] = SQSDeduplicationRecord{
+				MessageID:      result.MessageID,
+				SequenceNumber: result.SequenceNumber,
+				ExpiresAt:      now + sqsDeduplicationWindow.Milliseconds(),
+			}
+		}
 	})
-	return msgID, md5OfBody, md5OfAttrs
+	return result
 }
 
 // sqsEnqueueBody appends a raw message body to a queue with the MD5 and
@@ -660,17 +794,7 @@ func sqsEnqueueBody(queueName, body string) {
 }
 
 func sqsEnqueueBodyWithAttributes(queueName, body string, attributes map[string]SQSMessageAttribute) {
-	hash := md5.Sum([]byte(body))
-	sqsQueues.Update(queueName, func(q *SQSQueue) {
-		q.Messages = append(q.Messages, SQSMessage{
-			MessageId:              generateUUID(),
-			Body:                   body,
-			MD5OfBody:              hex.EncodeToString(hash[:]),
-			SentTimestamp:          time.Now().Unix(),
-			MessageAttributes:      attributes,
-			MD5OfMessageAttributes: sqsMessageAttributeMD5(attributes),
-		})
-	})
+	_ = sqsEnqueue(queueName, sqsSendEntry{MessageBody: body, MessageAttributes: attributes})
 	if q, ok := sqsQueues.Get(queueName); ok {
 		cwEvalLogger.Debug().Str("queueName", queueName).Int("messageCount", len(q.Messages)).Msg("SQS enqueue body completed")
 	}
@@ -681,6 +805,7 @@ func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 		QueueUrl               string                         `json:"QueueUrl"`
 		MessageBody            string                         `json:"MessageBody"`
 		MessageAttributes      map[string]SQSMessageAttribute `json:"MessageAttributes"`
+		DelaySeconds           *int                           `json:"DelaySeconds"`
 		MessageGroupId         string                         `json:"MessageGroupId"`
 		MessageDeduplicationId string                         `json:"MessageDeduplicationId"`
 	}
@@ -697,6 +822,7 @@ func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 	entry := sqsSendEntry{
 		MessageBody:            req.MessageBody,
 		MessageAttributes:      req.MessageAttributes,
+		DelaySeconds:           req.DelaySeconds,
 		MessageGroupId:         req.MessageGroupId,
 		MessageDeduplicationId: req.MessageDeduplicationId,
 	}
@@ -704,13 +830,16 @@ func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 		sqsErrorJSON(w, code, msg, http.StatusBadRequest)
 		return
 	}
-	msgID, md5OfBody, md5OfAttrs := sqsEnqueue(name, entry)
+	result := sqsEnqueue(name, entry)
 	resp := map[string]string{
-		"MessageId":        msgID,
-		"MD5OfMessageBody": md5OfBody,
+		"MessageId":        result.MessageID,
+		"MD5OfMessageBody": result.MD5OfBody,
 	}
-	if md5OfAttrs != "" {
-		resp["MD5OfMessageAttributes"] = md5OfAttrs
+	if result.MD5OfMessageAttributes != "" {
+		resp["MD5OfMessageAttributes"] = result.MD5OfMessageAttributes
+	}
+	if result.SequenceNumber != "" {
+		resp["SequenceNumber"] = result.SequenceNumber
 	}
 	sim.WriteJSON(w, http.StatusOK, resp)
 }
@@ -759,9 +888,10 @@ func handleSQSSendMessageBatch(w http.ResponseWriter, r *http.Request) {
 		seen[e.Id] = true
 		total += len(e.MessageBody)
 	}
-	if total > sqsMaxMessageBytes {
+	maximumBytes := sqsQueueIntAttribute(q, "MaximumMessageSize", sqsDefaultMaximumBytes)
+	if total > maximumBytes {
 		sqsErrorJSON(w, "AWS.SimpleQueueService.BatchRequestTooLong",
-			"Batch requests cannot be longer than 262144 bytes. You have sent "+strconv.Itoa(total)+" bytes.",
+			"Batch requests cannot be longer than "+strconv.Itoa(maximumBytes)+" bytes. You have sent "+strconv.Itoa(total)+" bytes.",
 			http.StatusBadRequest)
 		return
 	}
@@ -778,14 +908,17 @@ func handleSQSSendMessageBatch(w http.ResponseWriter, r *http.Request) {
 			})
 			continue
 		}
-		msgID, md5OfBody, md5OfAttrs := sqsEnqueue(name, e)
+		result := sqsEnqueue(name, e)
 		entry := map[string]string{
 			"Id":               e.Id,
-			"MessageId":        msgID,
-			"MD5OfMessageBody": md5OfBody,
+			"MessageId":        result.MessageID,
+			"MD5OfMessageBody": result.MD5OfBody,
 		}
-		if md5OfAttrs != "" {
-			entry["MD5OfMessageAttributes"] = md5OfAttrs
+		if result.MD5OfMessageAttributes != "" {
+			entry["MD5OfMessageAttributes"] = result.MD5OfMessageAttributes
+		}
+		if result.SequenceNumber != "" {
+			entry["SequenceNumber"] = result.SequenceNumber
 		}
 		successful = append(successful, entry)
 	}
@@ -797,11 +930,13 @@ func handleSQSSendMessageBatch(w http.ResponseWriter, r *http.Request) {
 
 func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		QueueUrl              string   `json:"QueueUrl"`
-		MaxNumberOfMessages   int      `json:"MaxNumberOfMessages"`
-		VisibilityTimeout     *int     `json:"VisibilityTimeout"`
-		WaitTimeSeconds       *int     `json:"WaitTimeSeconds"`
-		MessageAttributeNames []string `json:"MessageAttributeNames"`
+		QueueUrl                    string   `json:"QueueUrl"`
+		MaxNumberOfMessages         int      `json:"MaxNumberOfMessages"`
+		VisibilityTimeout           *int     `json:"VisibilityTimeout"`
+		WaitTimeSeconds             *int     `json:"WaitTimeSeconds"`
+		AttributeNames              []string `json:"AttributeNames"`
+		MessageSystemAttributeNames []string `json:"MessageSystemAttributeNames"`
+		MessageAttributeNames       []string `json:"MessageAttributeNames"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
@@ -865,11 +1000,14 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 			"ReceiptHandle": m.ReceiptHandle,
 			"MD5OfBody":     m.MD5OfBody,
 			"Body":          m.Body,
-			"Attributes": map[string]string{
+			"Attributes":    sqsRenderSystemAttributes(m, append(req.AttributeNames, req.MessageSystemAttributeNames...)),
+		}
+		if len(req.AttributeNames) == 0 && len(req.MessageSystemAttributeNames) == 0 {
+			msg["Attributes"] = map[string]string{
 				"ApproximateReceiveCount":          strconv.Itoa(m.ApproximateReceiveCount),
 				"SentTimestamp":                    strconv.FormatInt(m.SentTimestamp, 10),
 				"ApproximateFirstReceiveTimestamp": strconv.FormatInt(m.FirstReceivedAt, 10),
-			},
+			}
 		}
 		if subset := sqsSelectMessageAttributeSubset(m.MessageAttributes, req.MessageAttributeNames); subset != nil {
 			msg["MessageAttributes"] = sqsRenderMessageAttributes(subset)
@@ -885,15 +1023,19 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func sqsReceiveAvailableMessages(name string, maxN int, visTimeout int) []SQSMessage {
-	now := time.Now().Unix()
+	now := time.Now().UnixMilli()
 	var picked []SQSMessage
 	var redrived []SQSMessage
 	var dlqARN string
 
 	sqsQueues.Update(name, func(qq *SQSQueue) {
+		sqsPruneExpiredLocked(qq, now)
 		var hasRedrive bool
 		var maxReceiveCount int
 		dlqARN, maxReceiveCount, hasRedrive = sqsParseRedrivePolicy(qq.Attributes)
+		fifo := sqsQueueIsFifo(*qq)
+		blockedGroups := map[string]bool{}
+		pickedGroups := map[string]bool{}
 		originalCount := len(qq.Messages)
 		visibleCount := 0
 		kept := qq.Messages[:0]
@@ -902,12 +1044,19 @@ func sqsReceiveAvailableMessages(name string, maxN int, visTimeout int) []SQSMes
 			if m.VisibleAt <= now {
 				visibleCount++
 			}
-			if len(picked) >= maxN || m.VisibleAt > now {
+			if m.VisibleAt > now {
+				if fifo {
+					blockedGroups[m.MessageGroupID] = true
+				}
+				kept = append(kept, m)
+				continue
+			}
+			if len(picked) >= maxN || (fifo && blockedGroups[m.MessageGroupID] && !pickedGroups[m.MessageGroupID]) {
 				kept = append(kept, m)
 				continue
 			}
 			m.ReceiptHandle = generateUUID()
-			m.VisibleAt = now + int64(visTimeout)
+			m.VisibleAt = now + int64(visTimeout)*1000
 			m.ApproximateReceiveCount++
 			if m.FirstReceivedAt == 0 {
 				m.FirstReceivedAt = now
@@ -918,12 +1067,59 @@ func sqsReceiveAvailableMessages(name string, maxN int, visTimeout int) []SQSMes
 			}
 			kept = append(kept, m)
 			picked = append(picked, m)
+			if fifo {
+				pickedGroups[m.MessageGroupID] = true
+			}
 		}
 		qq.Messages = kept
 		cwEvalLogger.Debug().Str("queueName", name).Int("totalMessages", originalCount).Int("visibleMessages", visibleCount).Int("picked", len(picked)).Int("redrived", len(redrived)).Int("visibilityTimeout", visTimeout).Msg("SQS ReceiveMessage scanned queue")
 	})
 	sqsEnqueueRedrives(dlqARN, redrived)
 	return picked
+}
+
+func sqsPruneExpiredLocked(q *SQSQueue, now int64) {
+	retention := int64(sqsQueueIntAttribute(*q, "MessageRetentionPeriod", sqsDefaultRetentionSeconds)) * 1000
+	kept := q.Messages[:0]
+	for _, message := range q.Messages {
+		if now-message.SentTimestamp < retention {
+			kept = append(kept, message)
+		}
+	}
+	q.Messages = kept
+}
+
+func sqsRenderSystemAttributes(message SQSMessage, requested []string) map[string]string {
+	if len(requested) == 0 {
+		return nil
+	}
+	all := false
+	wanted := map[string]bool{}
+	for _, name := range requested {
+		all = all || name == "All"
+		wanted[name] = true
+	}
+	values := map[string]string{
+		"ApproximateReceiveCount":          strconv.Itoa(message.ApproximateReceiveCount),
+		"SentTimestamp":                    strconv.FormatInt(message.SentTimestamp, 10),
+		"ApproximateFirstReceiveTimestamp": strconv.FormatInt(message.FirstReceivedAt, 10),
+	}
+	if message.MessageGroupID != "" {
+		values["MessageGroupId"] = message.MessageGroupID
+	}
+	if message.MessageDeduplicationID != "" {
+		values["MessageDeduplicationId"] = message.MessageDeduplicationID
+	}
+	if message.SequenceNumber != "" {
+		values["SequenceNumber"] = message.SequenceNumber
+	}
+	out := map[string]string{}
+	for name, value := range values {
+		if all || wanted[name] {
+			out[name] = value
+		}
+	}
+	return out
 }
 
 func handleSQSDeleteMessage(w http.ResponseWriter, r *http.Request) {
@@ -1045,13 +1241,13 @@ func handleSQSDeleteMessageBatch(w http.ResponseWriter, r *http.Request) {
 // (a handle that matches a message no longer hidden is MessageNotInflight on
 // real SQS). A negative timeout is rejected by the caller before this runs.
 func sqsApplyVisibility(name, handle string, timeout int) (matched, inflight bool) {
-	now := time.Now().Unix()
+	now := time.Now().UnixMilli()
 	sqsQueues.Update(name, func(qq *SQSQueue) {
 		for i := range qq.Messages {
 			if qq.Messages[i].ReceiptHandle != "" && qq.Messages[i].ReceiptHandle == handle {
 				matched = true
 				inflight = qq.Messages[i].VisibleAt > now
-				qq.Messages[i].VisibleAt = now + int64(timeout)
+				qq.Messages[i].VisibleAt = now + int64(timeout)*1000
 				return
 			}
 		}
@@ -1414,9 +1610,6 @@ func handleSQSListQueueTags(w http.ResponseWriter, r *http.Request) {
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Tags": tags})
 }
-
-// sqsMaxMessageBytes is the SQS message-body size limit (256 KiB).
-const sqsMaxMessageBytes = 262144
 
 // sqsQueueIsFifo reports whether the queue is a FIFO queue, per its
 // FifoQueue attribute (real SQS keys FIFO behavior off this attribute,

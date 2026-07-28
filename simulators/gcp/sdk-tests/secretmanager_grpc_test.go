@@ -10,9 +10,11 @@ import (
 	smpb "cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/option"
+	sqladmin "google.golang.org/api/sqladmin/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
@@ -112,6 +114,89 @@ func TestSecretManager_GRPC_CreateAddAccess(t *testing.T) {
 	require.Equal(t, created.GetName(), accessed.GetName())
 	require.Equal(t, []byte("hello"), accessed.GetPayload().GetData())
 	require.Equal(t, smGRPCCrc32C([]byte("hello")), accessed.GetPayload().GetDataCrc32C())
+}
+
+func TestSecretManager_GRPC_ManagedCloudSQLRotation(t *testing.T) {
+	const (
+		project      = "sm-managed-rotation"
+		location     = "us-central1"
+		instanceName = "managed-rotation-pg"
+		username     = "rotation-user"
+	)
+
+	sql := sqlAdminService(t)
+	_, err := sql.Instances.Insert(project, &sqladmin.DatabaseInstance{
+		Name:            instanceName,
+		Region:          location,
+		DatabaseVersion: "POSTGRES_15",
+	}).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = sql.Instances.Delete(project, instanceName).Do() })
+	_, err = sql.Users.Insert(project, instanceName, &sqladmin.User{
+		Name: username,
+		Host: "%",
+	}).Do()
+	require.NoError(t, err)
+
+	c := newSecretManagerGRPCClient(t)
+	parent := "projects/" + project + "/locations/" + location
+	created, err := c.CreateSecret(ctx, &smpb.CreateSecretRequest{
+		Parent:   parent,
+		SecretId: "database-password",
+		Secret: &smpb.Secret{
+			Replication: &smpb.Replication{
+				Replication: &smpb.Replication_Automatic_{Automatic: &smpb.Replication_Automatic{}},
+			},
+			SecretType: smpb.Secret_CLOUD_SQL_DB_CREDENTIALS,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, smpb.Secret_CLOUD_SQL_DB_CREDENTIALS, created.GetSecretType())
+
+	first, err := c.EnableManagedRotation(ctx, &smpb.EnableManagedRotationRequest{
+		Parent: created.GetName(),
+		Credentials: &smpb.EnableManagedRotationRequest_CloudSqlSingleUserCredentials{
+			CloudSqlSingleUserCredentials: &smpb.EnableManagedRotationRequest_CloudSQLSingleUserCredentials{
+				InstanceId: instanceName,
+				Username:   username,
+				Password:   "first-managed-password",
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, smpb.SecretVersion_ENABLED, first.GetState())
+	firstAccess, err := c.AccessSecretVersion(ctx, &smpb.AccessSecretVersionRequest{Name: first.GetName()})
+	require.NoError(t, err)
+	require.Equal(t, []byte("first-managed-password"), firstAccess.GetPayload().GetData())
+
+	_, err = c.EnableManagedRotation(ctx, &smpb.EnableManagedRotationRequest{
+		Parent: created.GetName(),
+		Credentials: &smpb.EnableManagedRotationRequest_CloudSqlSingleUserCredentials{
+			CloudSqlSingleUserCredentials: &smpb.EnableManagedRotationRequest_CloudSQLSingleUserCredentials{
+				InstanceId: instanceName,
+				Username:   username,
+			},
+		},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+
+	second, err := c.RotateSecret(ctx, &smpb.RotateSecretRequest{Parent: created.GetName()})
+	require.NoError(t, err)
+	require.NotEqual(t, first.GetName(), second.GetName())
+	secondAccess, err := c.AccessSecretVersion(ctx, &smpb.AccessSecretVersionRequest{Name: second.GetName()})
+	require.NoError(t, err)
+	require.NotEmpty(t, secondAccess.GetPayload().GetData())
+	require.NotEqual(t, firstAccess.GetPayload().GetData(), secondAccess.GetPayload().GetData())
+
+	_, err = c.AddSecretVersion(ctx, &smpb.AddSecretVersionRequest{
+		Parent: created.GetName(),
+		Payload: &smpb.SecretPayload{
+			Data: []byte("manual-version-is-forbidden"),
+		},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
 // TestSecretManager_GRPC_LatestAliasAndMultipleVersions exercises the "latest"

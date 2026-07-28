@@ -31,6 +31,9 @@ import (
 )
 
 func main() {
+	if sim.RunContainerReaper() {
+		return
+	}
 	cfg := sim.ConfigFromEnv("aws")
 	if cfg.ListenAddr == ":8443" {
 		cfg.ListenAddr = ":4566" // AWS simulator default port

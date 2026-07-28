@@ -8,29 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// snsSandboxOTPForTestCLI mirrors the simulator's deterministic OTP derivation
-// (sns_mobile_sms.go snsSandboxOTP) so the CLI verify-sms-sandbox-phone-number
-// call can complete the Pending → Verified transition.
-func snsSandboxOTPForTestCLI(phoneNumber string) string {
-	var sum int
-	for _, c := range phoneNumber {
-		sum = (sum*31 + int(c)) % 1000000
-	}
-	out := ""
-	for i := 0; i < 6; i++ {
-		out = string(rune('0'+sum%10)) + out
-		sum /= 10
-	}
-	return out
-}
-
 // TestSNSCLI_PlatformApplicationAndEndpoint exercises the mobile-push platform
 // application + endpoint CRUD through the aws CLI.
 func TestSNSCLI_PlatformApplicationAndEndpoint(t *testing.T) {
 	out := runCLI(t, awsCLI("sns", "create-platform-application",
 		"--name", "cli-gcm-app",
 		"--platform", "GCM",
-		"--attributes", "PlatformCredential=fake-key"))
+		"--attributes", "PlatformCredential=provider-credential"))
 	var app struct {
 		PlatformApplicationArn string `json:"PlatformApplicationArn"`
 	}
@@ -47,7 +31,7 @@ func TestSNSCLI_PlatformApplicationAndEndpoint(t *testing.T) {
 		Attributes map[string]string `json:"Attributes"`
 	}
 	parseJSON(t, out, &getApp)
-	assert.Equal(t, "fake-key", getApp.Attributes["PlatformCredential"])
+	assert.Equal(t, "provider-credential", getApp.Attributes["PlatformCredential"])
 
 	runCLI(t, awsCLI("sns", "set-platform-application-attributes",
 		"--platform-application-arn", app.PlatformApplicationArn,
@@ -93,52 +77,20 @@ func TestSNSCLI_PlatformApplicationAndEndpoint(t *testing.T) {
 		"--platform-application-arn", app.PlatformApplicationArn))
 }
 
-// TestSNSCLI_SMSSandbox exercises create → verify → list for an SMS-sandbox
-// phone number and the account-status read-back.
-func TestSNSCLI_SMSSandbox(t *testing.T) {
+// TestSNSCLI_SMSSandboxFailsWithoutCarrier proves the AWS CLI receives a
+// fail-loud service error and no state when no SMS carrier exists.
+func TestSNSCLI_SMSSandboxFailsWithoutCarrier(t *testing.T) {
 	phone := "+12065550111"
-	runCLI(t, awsCLI("sns", "create-sms-sandbox-phone-number",
+	errOut := runCLIExpectError(t, awsCLI("sns", "create-sms-sandbox-phone-number",
 		"--phone-number", phone,
 		"--language-code", "en-US"))
-	t.Cleanup(func() {
-		_ = awsCLI("sns", "delete-sms-sandbox-phone-number", "--phone-number", phone).Run()
-	})
+	assert.Contains(t, errOut, "InternalError")
 
 	out := runCLI(t, awsCLI("sns", "list-sms-sandbox-phone-numbers"))
-	assert.Contains(t, out, phone)
-	assert.Contains(t, out, "Pending")
-
-	// Wrong OTP rejected.
-	errOut := runCLIExpectError(t, awsCLI("sns", "verify-sms-sandbox-phone-number",
-		"--phone-number", phone,
-		"--one-time-password", "000000"))
-	assert.Contains(t, errOut, "VerificationException")
-
-	// Correct OTP flips to Verified.
-	runCLI(t, awsCLI("sns", "verify-sms-sandbox-phone-number",
-		"--phone-number", phone,
-		"--one-time-password", snsSandboxOTPForTestCLI(phone)))
-
-	out = runCLI(t, awsCLI("sns", "list-sms-sandbox-phone-numbers"))
-	var listVerified struct {
-		PhoneNumbers []struct {
-			PhoneNumber string `json:"PhoneNumber"`
-			Status      string `json:"Status"`
-		} `json:"PhoneNumbers"`
-	}
-	parseJSON(t, out, &listVerified)
-	verified := false
-	for _, n := range listVerified.PhoneNumbers {
-		if n.PhoneNumber == phone {
-			verified = n.Status == "Verified"
-		}
-	}
-	assert.True(t, verified, "number should be Verified after the matching OTP")
+	assert.NotContains(t, out, phone)
 
 	out = runCLI(t, awsCLI("sns", "get-sms-sandbox-account-status"))
 	assert.Contains(t, out, "IsInSandbox")
-
-	runCLI(t, awsCLI("sns", "delete-sms-sandbox-phone-number", "--phone-number", phone))
 }
 
 // TestSNSCLI_SMSAttributesAndOptOut exercises the account SMS attribute store,

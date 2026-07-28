@@ -11,11 +11,13 @@ Legend:
 | Surface | SDK | CLI | Terraform | Evidence |
 |---|---|---|---|---|
 | `aws-acm` | direct | direct | direct | `simulators/aws/sdk-tests/acm_test.go`; `simulators/aws/cli-tests/acm_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-acm_acme` | direct | direct | not applicable | `simulators/aws/sdk-tests/acm_acme_test.go`; `simulators/aws/cli-tests/acm_acme_test.go`; the RFC 8555 data-plane routes are listed in `simulators/aws/tests-exempt.txt` because no Terraform resource wraps them |
 | `aws-amplify` | direct | direct | direct | `simulators/aws/sdk-tests/amplify_test.go`; `simulators/aws/cli-tests/amplify_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-apigateway` | direct | direct | direct | `simulators/aws/sdk-tests/apigateway_test.go`; `simulators/aws/sdk-tests/apigateway_method_response_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-apigatewayv2` | direct | direct | direct | `simulators/aws/sdk-tests/apigatewayv2_deployment_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-application-autoscaling` | direct | direct | direct | `simulators/aws/sdk-tests/application_autoscaling_test.go`; `simulators/aws/cli-tests/application_autoscaling_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-autoscaling` | direct | direct | direct | `simulators/aws/sdk-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/cli-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-budgets` | direct | direct | direct | `simulators/aws/sdk-tests/budgets_test.go`; `simulators/aws/cli-tests/budgets_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudmap` | direct | direct | direct | `simulators/aws/sdk-tests/cloudmap_test.go`; `simulators/aws/cli-tests/cloudmap_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudtrail` | direct | direct | direct | `simulators/aws/sdk-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/cli-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudwatch` | direct | direct | direct | `simulators/aws/sdk-tests/cloudwatch_test.go`; `simulators/aws/cli-tests/cloudwatch_test.go`; `simulators/aws/terraform-tests/main.tf` |
@@ -31,6 +33,7 @@ Legend:
 | `aws-kinesis` | direct | direct | direct | `simulators/aws/sdk-tests/kinesis_test.go`; `simulators/aws/cli-tests/kinesis_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-kms` | direct | direct | direct | `simulators/aws/sdk-tests/kms_test.go`; `simulators/aws/cli-tests/kms_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-lambda` | direct | direct | direct | `simulators/aws/sdk-tests/lambda_test.go`; `simulators/aws/cli-tests/lambda_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-organizations` | direct | direct | direct | `simulators/aws/sdk-tests/organizations_test.go`; `simulators/aws/cli-tests/organizations_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-rds` | direct | direct | direct | `simulators/aws/sdk-tests/rds_elasticache_test.go`; `simulators/aws/sdk-tests/rds_snapshot_test.go`; `simulators/aws/cli-tests/rds_elasticache_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-route53` | direct | direct | direct | `simulators/aws/sdk-tests/route53_test.go`; `simulators/aws/cli-tests/route53_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3` | direct | direct | direct | `simulators/aws/sdk-tests/s3_test.go`; `simulators/aws/cli-tests/s3_test.go`; `simulators/aws/terraform-tests/main.tf` |
@@ -48,6 +51,7 @@ Legend:
 | `aws-glue` | direct | direct | direct | `simulators/aws/sdk-tests/glue_test.go`; `simulators/aws/cli-tests/glue_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-batch` | direct | direct | direct | `simulators/aws/sdk-tests/batch_test.go`; `simulators/aws/cli-tests/batch_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `azure-acr` | direct | direct | direct | `simulators/azure/sdk-tests/acr_test.go`; `simulators/azure/cli-tests/acr_test.go`; `simulators/azure/terraform-tests/main.tf` |
+| `azure-apim` | direct | direct | direct | `simulators/azure/sdk-tests/apim_completion_test.go`; `simulators/azure/sdk-tests/apim_more_test.go`; `simulators/azure/cli-tests/apim_more_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-cache_redis` | direct | direct | direct | `simulators/azure/sdk-tests/redis_pg_test.go`; `simulators/azure/cli-tests/redis_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-compute` | direct | direct | direct | `simulators/azure/sdk-tests/compute_test.go`; `simulators/azure/sdk-tests/network_test.go`; `simulators/azure/cli-tests/compute_test.go`; `simulators/azure/cli-tests/loadbalancer_test.go`; `simulators/azure/cli-tests/nat_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-containerinstance` | direct | direct | direct | `simulators/azure/sdk-tests/logicapps_containerinstance_test.go`; `simulators/azure/cli-tests/logicapps_containerinstance_test.go`; `simulators/azure/terraform-tests/main.tf` |
@@ -60,7 +64,9 @@ Legend:
 | `azure-kv-data-plane` | direct | direct | direct | `simulators/azure/sdk-tests/keyvault_sdk_test.go`; `simulators/azure/cli-tests/keyvault_dataplane_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-logicapps` | direct | direct | direct | `simulators/azure/sdk-tests/logicapps_containerinstance_test.go`; `simulators/azure/cli-tests/logicapps_containerinstance_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-monitor` | direct | direct | direct | `simulators/azure/sdk-tests/monitor_test.go`; `simulators/azure/cli-tests/monitor_test.go`; `simulators/azure/terraform-tests/main.tf` |
+| `azure-postgresql-flexible-server` | direct | direct | direct | `simulators/azure/sdk-tests/postgres_more_test.go`; `simulators/azure/sdk-tests/postgres_completion_test.go`; `simulators/azure/cli-tests/pg_resources_appinsights_cli_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-resourcegroups` | direct | direct | direct | `simulators/azure/sdk-tests/resourcegroup_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go`; `simulators/azure/terraform-tests/main.tf` |
+| `azure-resources` | direct | direct | direct | `simulators/azure/sdk-tests/resourcesarm_test.go`; `simulators/azure/cli-tests/pg_resources_appinsights_cli_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-servicebus-admin` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/servicebus_admin_test.go` |
 | `azure-servicebus-arm` | direct | direct | direct | `simulators/azure/sdk-tests/servicebus_arm_sdk_test.go`; `simulators/azure/cli-tests/servicebus_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-servicebus-data-plane` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/servicebus_dataplane_test.go` |

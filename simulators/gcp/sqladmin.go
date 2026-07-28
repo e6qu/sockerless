@@ -51,6 +51,10 @@ type SQLUser struct {
 	Type     string `json:"type,omitempty"`
 }
 
+type sqlUserCredential struct {
+	Password string `json:"password"`
+}
+
 // SQLOperation mirrors the v1 sqladmin Operation envelope, which
 // differs from the cloud.google.com/operations.v1 envelope used by
 // other GCP services (Memorystore / APIGW use the latter). The sim
@@ -123,13 +127,14 @@ type SQLBackup struct {
 }
 
 var (
-	sqlInstances  sim.Store[SQLInstance]
-	sqlDatabases  sim.Store[SQLDatabase]
-	sqlUsers      sim.Store[SQLUser]
-	sqlBackupRuns sim.Store[SQLBackupRun]
-	sqlOperations sim.Store[SQLOperation]
-	sqlSslCerts   sim.Store[SQLSslCert]
-	sqlBackups    sim.Store[SQLBackup]
+	sqlInstances   sim.Store[SQLInstance]
+	sqlDatabases   sim.Store[SQLDatabase]
+	sqlUsers       sim.Store[SQLUser]
+	sqlUserSecrets sim.Store[sqlUserCredential]
+	sqlBackupRuns  sim.Store[SQLBackupRun]
+	sqlOperations  sim.Store[SQLOperation]
+	sqlSslCerts    sim.Store[SQLSslCert]
+	sqlBackups     sim.Store[SQLBackup]
 )
 
 // sqlInstanceOperationActions are the instances.* action verbs whose real
@@ -151,6 +156,7 @@ func registerCloudSQL(srv *sim.Server) {
 	sqlInstances = sim.MakeStore[SQLInstance](srv.DB(), "sql_instances")
 	sqlDatabases = sim.MakeStore[SQLDatabase](srv.DB(), "sql_databases")
 	sqlUsers = sim.MakeStore[SQLUser](srv.DB(), "sql_users")
+	sqlUserSecrets = sim.MakeStore[sqlUserCredential](srv.DB(), "sql_user_credentials")
 	sqlBackupRuns = sim.MakeStore[SQLBackupRun](srv.DB(), "sql_backup_runs")
 	sqlOperations = sim.MakeStore[SQLOperation](srv.DB(), "sql_operations")
 	sqlSslCerts = sim.MakeStore[SQLSslCert](srv.DB(), "sql_ssl_certs")
@@ -584,7 +590,9 @@ func handleSQLDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, u := range sqlUsers.List() {
 		if u.Instance == name && u.Project == project {
-			sqlUsers.Delete(sqlUserKey(project, name, u.Host, u.Name))
+			key := sqlUserKey(project, name, u.Host, u.Name)
+			sqlUsers.Delete(key)
+			sqlUserSecrets.Delete(key)
 		}
 	}
 	op := newSQLOperation(project, "DELETE", name)
@@ -667,10 +675,15 @@ func handleSQLInsertUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req SQLUser
-	if err := sim.ReadJSON(r, &req); err != nil {
+	var wire struct {
+		SQLUser
+		Password string `json:"password"`
+	}
+	if err := sim.ReadJSON(r, &wire); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
 		return
 	}
+	req = wire.SQLUser
 	if req.Name == "" {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "name is required")
 		return
@@ -683,6 +696,7 @@ func handleSQLInsertUser(w http.ResponseWriter, r *http.Request) {
 		Type:     defaultStr(req.Type, "BUILT_IN"),
 	}
 	sqlUsers.Put(sqlUserKey(project, instance, req.Host, req.Name), u)
+	sqlUserSecrets.Put(sqlUserKey(project, instance, req.Host, req.Name), sqlUserCredential{Password: wire.Password})
 	op := newSQLOperation(project, "CREATE_USER", req.Name)
 	sim.WriteJSON(w, http.StatusOK, op)
 }
@@ -729,19 +743,31 @@ func handleSQLUpdateUser(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "user not found: %s", name)
 		return
 	}
-	var req SQLUser
-	if err := sim.ReadJSON(r, &req); err != nil {
+	var wire struct {
+		SQLUser
+		Password string `json:"password"`
+	}
+	if err := sim.ReadJSON(r, &wire); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
 		return
 	}
+	req := wire.SQLUser
+	oldKey := sqlUserKey(project, instance, current.Host, current.Name)
 	if req.Host != "" && req.Host != current.Host {
-		sqlUsers.Delete(sqlUserKey(project, instance, current.Host, current.Name))
+		sqlUsers.Delete(oldKey)
+		if credential, exists := sqlUserSecrets.Get(oldKey); exists {
+			sqlUserSecrets.Delete(oldKey)
+			sqlUserSecrets.Put(sqlUserKey(project, instance, req.Host, current.Name), credential)
+		}
 		current.Host = req.Host
 	}
 	if req.Type != "" {
 		current.Type = req.Type
 	}
 	sqlUsers.Put(sqlUserKey(project, instance, current.Host, current.Name), current)
+	if wire.Password != "" {
+		sqlUserSecrets.Put(sqlUserKey(project, instance, current.Host, current.Name), sqlUserCredential{Password: wire.Password})
+	}
 	op := newSQLOperation(project, "UPDATE_USER", name)
 	sim.WriteJSON(w, http.StatusOK, op)
 }
@@ -760,7 +786,9 @@ func handleSQLDeleteUser(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "user not found: %s", name)
 		return
 	}
-	sqlUsers.Delete(sqlUserKey(project, instance, u.Host, u.Name))
+	key := sqlUserKey(project, instance, u.Host, u.Name)
+	sqlUsers.Delete(key)
+	sqlUserSecrets.Delete(key)
 	op := newSQLOperation(project, "DELETE_USER", name)
 	sim.WriteJSON(w, http.StatusOK, op)
 }

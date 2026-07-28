@@ -2,7 +2,13 @@ package aws_sdk_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -101,27 +107,46 @@ func TestACMUpdateOptionsRenewResendValidation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// RenewCertificate — sim stub refreshes IssuedAt
+	// A pending certificate is not eligible for renewal.
 	_, err = c.RenewCertificate(ctx, &acm.RenewCertificateInput{CertificateArn: aws.String(arn)})
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "InvalidStateException")
 
-	// ResendValidationEmail — sim stub no-op
+	// ResendValidationEmail rejects a DNS-validated certificate rather than
+	// claiming that an email was sent.
 	_, err = c.ResendValidationEmail(ctx, &acm.ResendValidationEmailInput{
 		CertificateArn:   aws.String(arn),
 		Domain:           aws.String("opts.example.com"),
 		ValidationDomain: aws.String("opts.example.com"),
 	})
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "InvalidDomainValidationOptionsException")
 }
 
 func TestACMImportCertificate(t *testing.T) {
 	c := acmClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(42),
+		Subject:      pkix.Name{CommonName: "imported.example.com"},
+		DNSNames:     []string{"imported.example.com", "www.imported.example.com"},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.AddDate(1, 0, 0),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	require.NoError(t, err)
+	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})
+	privateKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
 
 	out, err := c.ImportCertificate(ctx, &acm.ImportCertificateInput{
-		Certificate: []byte("-----BEGIN CERTIFICATE-----\nFAKECERT\n-----END CERTIFICATE-----\n"),
-		PrivateKey:  []byte("-----BEGIN PRIVATE KEY-----\nFAKEKEY\n-----END PRIVATE KEY-----\n"),
+		Certificate: certificatePEM,
+		PrivateKey:  privateKeyPEM,
 	})
 	require.NoError(t, err)
 	arn := aws.ToString(out.CertificateArn)
@@ -133,6 +158,9 @@ func TestACMImportCertificate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, acmtypes.CertificateStatusIssued, descOut.Certificate.Status)
 	assert.Equal(t, acmtypes.CertificateTypeImported, descOut.Certificate.Type)
+	assert.Equal(t, "imported.example.com", aws.ToString(descOut.Certificate.DomainName))
+	assert.ElementsMatch(t, template.DNSNames, descOut.Certificate.SubjectAlternativeNames)
+	assert.Equal(t, acmtypes.KeyAlgorithmRsa2048, descOut.Certificate.KeyAlgorithm)
 }
 
 func TestACMTagsLifecycle(t *testing.T) {

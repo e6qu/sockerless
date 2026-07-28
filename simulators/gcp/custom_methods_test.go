@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,61 @@ func gcpCustomMethodTestServer(t *testing.T) *sim.Server {
 		t.Fatalf("buildSimulator: %v", err)
 	}
 	return srv
+}
+
+func TestMemorystoreAclPolicyRevisionsAreImmutableSnapshots(t *testing.T) {
+	srv := gcpCustomMethodTestServer(t)
+	const host = "redis.googleapis.com"
+	const base = "/v1/projects/test-project/locations/us-central1/aclPolicies"
+
+	status, body := gcpDo(t, srv, http.MethodPost, host, base+"?aclPolicyId=policy-1",
+		`{"rules":[{"username":"app","rule":"+get ~old:*"}]}`)
+	if status != http.StatusOK {
+		t.Fatalf("create ACL policy: got %d %s", status, body)
+	}
+
+	status, body = gcpDo(t, srv, http.MethodPatch, host, base+"/policy-1?updateMask=rules",
+		`{"rules":[{"username":"app","rule":"+get ~new:*"}]}`)
+	if status != http.StatusOK {
+		t.Fatalf("patch ACL policy: got %d %s", status, body)
+	}
+
+	status, body = gcpDo(t, srv, http.MethodGet, host, base+"/policy-1/revisions?pageSize=1", "")
+	if status != http.StatusOK {
+		t.Fatalf("list ACL policy revisions: got %d %s", status, body)
+	}
+	var firstPage struct {
+		Revisions []MSRedisAclPolicyRevision `json:"aclPolicyRevisions"`
+		NextToken string                     `json:"nextPageToken"`
+	}
+	if err := json.Unmarshal([]byte(body), &firstPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(firstPage.Revisions) != 1 || firstPage.Revisions[0].RevisionNumber != "2" ||
+		firstPage.Revisions[0].Snapshot.Rules[0].Rule != "+get ~new:*" || firstPage.NextToken == "" {
+		t.Fatalf("unexpected first revision page: %s", body)
+	}
+
+	status, body = gcpDo(t, srv, http.MethodGet, host,
+		base+"/policy-1/revisions?pageSize=1&pageToken="+firstPage.NextToken, "")
+	if status != http.StatusOK {
+		t.Fatalf("list second ACL policy revision page: got %d %s", status, body)
+	}
+	var secondPage struct {
+		Revisions []MSRedisAclPolicyRevision `json:"aclPolicyRevisions"`
+	}
+	if err := json.Unmarshal([]byte(body), &secondPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(secondPage.Revisions) != 1 || secondPage.Revisions[0].RevisionNumber != "1" ||
+		secondPage.Revisions[0].Snapshot.Rules[0].Rule != "+get ~old:*" {
+		t.Fatalf("unexpected second revision page: %s", body)
+	}
+
+	status, body = gcpDo(t, srv, http.MethodGet, host, base+"/policy-1/revisions/1", "")
+	if status != http.StatusOK || !strings.Contains(body, `"+get ~old:*"`) {
+		t.Fatalf("get immutable ACL policy revision: got %d %s", status, body)
+	}
 }
 
 func gcpDo(t *testing.T, srv *sim.Server, method, host, path, body string) (int, string) {
@@ -48,20 +104,6 @@ func TestUnservedCustomMethodsAreMethodNotFound(t *testing.T) {
 		name, method, host, path, body string
 	}{
 		{
-			name:   "SecretManagerRotateSecret",
-			method: http.MethodPost,
-			host:   "secretmanager.googleapis.com",
-			path:   "/v1/projects/test-project/secrets/my-secret:rotateSecret",
-			body:   `{}`,
-		},
-		{
-			name:   "SecretManagerEnableManagedRotationRegional",
-			method: http.MethodPost,
-			host:   "secretmanager.googleapis.com",
-			path:   "/v1/projects/test-project/locations/us-central1/secrets/my-secret:enableManagedRotation",
-			body:   `{}`,
-		},
-		{
 			name:   "CloudResourceManagerGetOrgPolicy",
 			method: http.MethodPost,
 			host:   "cloudresourcemanager.googleapis.com",
@@ -74,18 +116,6 @@ func TestUnservedCustomMethodsAreMethodNotFound(t *testing.T) {
 			host:   "sqladmin.googleapis.com",
 			path:   "/v1/projects/test-project:pointInTimeRestore",
 			body:   `{}`,
-		},
-		{
-			name:   "CloudKMSShowEffectiveAutokeyConfig",
-			method: http.MethodGet,
-			host:   "cloudkms.googleapis.com",
-			path:   "/v1/projects/test-project:showEffectiveAutokeyConfig",
-		},
-		{
-			name:   "CloudKMSExportTrustedKeyWrappedCryptoKeyVersion",
-			method: http.MethodGet,
-			host:   "cloudkms.googleapis.com",
-			path:   "/v1/projects/test-project/locations/us-central1/keyRings/kr/cryptoKeys/ck/cryptoKeyVersions/1:exportTrustedKeyWrappedCryptoKeyVersion",
 		},
 		{
 			name:   "SpannerExecuteSql",

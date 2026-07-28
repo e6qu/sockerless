@@ -13,15 +13,15 @@ Surface registered in `simulators/aws/scheduler.go` (and related files grouped u
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /schedules/{Name}` | ✓ `simulators/aws/scheduler.go:59::handleSchedulerCreateSchedule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /schedules/{Name}` | ✓ `simulators/aws/scheduler.go:60::handleSchedulerGetSchedule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /schedules/{Name}` | ✓ `simulators/aws/scheduler.go:61::handleSchedulerUpdateSchedule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /schedules/{Name}` | ✓ `simulators/aws/scheduler.go:62::handleSchedulerDeleteSchedule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /schedules` | ✓ `simulators/aws/scheduler.go:63::handleSchedulerListSchedules` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /schedule-groups/{Name}` | ✓ `simulators/aws/scheduler.go:65::handleSchedulerCreateScheduleGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /schedule-groups/{Name}` | ✓ `simulators/aws/scheduler.go:66::handleSchedulerGetScheduleGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /schedule-groups/{Name}` | ✓ `simulators/aws/scheduler.go:67::handleSchedulerDeleteScheduleGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /schedule-groups` | ✓ `simulators/aws/scheduler.go:68::handleSchedulerListScheduleGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /schedules/{Name}` | ✓ `simulators/aws/scheduler.go:80::schedulerRecorded` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /schedules/{Name}` | ✓ `simulators/aws/scheduler.go:81::schedulerRecorded` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /schedules/{Name}` | ✓ `simulators/aws/scheduler.go:82::schedulerRecorded` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /schedules/{Name}` | ✓ `simulators/aws/scheduler.go:83::schedulerRecorded` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /schedules` | ✓ `simulators/aws/scheduler.go:84::schedulerRecorded` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /schedule-groups/{Name}` | ✓ `simulators/aws/scheduler.go:86::schedulerRecorded` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /schedule-groups/{Name}` | ✓ `simulators/aws/scheduler.go:87::schedulerRecorded` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /schedule-groups/{Name}` | ✓ `simulators/aws/scheduler.go:88::schedulerRecorded` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /schedule-groups` | ✓ `simulators/aws/scheduler.go:89::schedulerRecorded` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

@@ -178,9 +178,9 @@ var azureMethodFloor = map[string]int{
 	//     addresses them at "?comp=copy", a spelling no client sends — the
 	//     simulator serves Copy Blob where Azure documents it, at the bare PUT
 	//     carrying x-ms-copy-source.
-	//   file 11/51 — shares (create/get/delete), the share-root directory
-	//     listing, and files (create/download/properties/delete/upload-range).
-	//     Unserved: every directory operation below the share root, share ACL /
+	//   file 13/51 — shares (create/get/delete/ACL get+set), the share-root
+	//     directory listing, and files (create/download/properties/delete/upload-range).
+	//     Unserved: every directory operation below the share root, share
 	//     lease / snapshot / permission / statistics / metadata / properties /
 	//     undelete, file leases, handles, range lists, renames, copies, hard and
 	//     symbolic links, and Set File Service Properties. Get File Service
@@ -194,7 +194,7 @@ var azureMethodFloor = map[string]int{
 	//     Get Service Statistics, the queue access policy (comp=acl) and Update
 	//     Message.
 	"storage-dataplane-blob-2026-04-06":         18,
-	"storage-dataplane-file-2026-04-06":         11,
+	"storage-dataplane-file-2026-04-06":         13,
 	"storage-dataplane-queue-2018-03-28":        11,
 	"subscription-arm-subscriptions-2021-10-01": 7,
 	"web-arm-openapi-2025-03-01":                161,

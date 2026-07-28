@@ -43,40 +43,30 @@ and Application Auto Scaling evaluators.
 
 ## Next Recommended Slice
 
-The next recommended AWS fidelity slice became BUG-2713: Amazon SQS runtime
-semantics. Completion meant:
+The next locally actionable AWS slice became BUG-2714: AWS Private Certificate
+Authority. Completion required a real authority/key/certificate lifecycle,
+AWS Certificate Manager issuance from an existing authority ARN, encrypted
+private-key export, revocation, and official AWS SDK, AWS CLI, and Terraform
+coverage.
 
-- FIFO queues deduplicated within AWS's five-minute window, allocated stable
-  sequence numbers, and preserved message-group ordering across visibility
-  changes and redrive.
-- Queue and per-message delay, retention expiry, and the configured maximum
-  message size affected delivery instead of being echo-only attributes.
-- Official AWS SDK, AWS CLI, and Terraform coverage exercised each runtime
-  behavior, with a live-AWS differential for the timing and FIFO edge cases.
+BUG-2712 retained the adjacent outbound-delivery work. Amazon SNS email and
+email-json completed real SMTP confirmation and delivery, while an Amazon Data
+Firehose service remained necessary for both SNS subscriptions and Amazon
+CloudWatch metric streams. Mobile push and SMS could be connected only through
+provider/carrier primitives represented in a public AWS contract; the simulator
+did not invent private configuration for them.
 
-The related Amazon SNS slice remained BUG-2712: email, SMS, mobile-push, and
-Amazon Data Firehose protocols required real transports rather than being
-silently skipped. The next infrastructure slices remained BUG-2679
-(`DeleteSubnet` dependency enforcement), BUG-2680 (`StartTask` launched real
-containers through the `RunTask` execution path), and BUG-2681 (sandbox
-selection followed launch type instead of applying Fargate restrictions
-universally).
+## Externally Blocked Work
 
-## Other Queued Fidelity Work
-
-- BUG-2676 retained one Google Cloud Run service in two independent v1/v2
-  stores; completion required one cloud resource with two API projections.
-- BUG-2677 retained the Azure Files Share ACL gap that blocked
-  `azurerm_storage_share` coverage.
-- BUG-1075 retained the authenticated real-cloud backend cells that required
-  operator credentials.
-- BUG-2656 retained abnormal-exit cleanup; ordinary AWS harness shutdown was
-  clean, but a process killed before defers ran still required an external
-  run-labelled reaper.
-- BUG-2690 retained Amazon Amplify's synthetic success lifecycle for
-  build-shaped jobs without both a clonable HTTP(S) source and an explicit
-  build specification; completion required real source/default-build
-  resolution or the matching AWS service error.
+- BUG-1075 retained authenticated Google Cloud Run, Azure Container Apps,
+  Azure Functions, Lambda service-mesh, and Azure identity-backed live-cloud
+  cells that required operator credentials.
+- BUG-2646 retained Google's publication of Cloud Run worker-pool scaling
+  members in the Discovery document.
+- BUG-1345 retained the upstream AzureAD Terraform provider's missing
+  Microsoft Graph endpoint override.
+- BUG-2523 and BUG-2441 remained owned by the external Bleephub repository,
+  which was not present in this workspace.
 
 ## Durable Validation Contract
 

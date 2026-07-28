@@ -2652,3 +2652,45 @@ observed the resources through federated SigV4.
 The mandatory freshness pass upgraded Microsoft Authentication Library for Go
 to v1.8.0 and `docker/login-action` to v4.5.2; the complete affected Azure SDK
 integration suite passed.
+
+## 2026-07-28 - Open cloud-fidelity closure (`feat/close-all-open-fidelity-gaps`)
+
+The sweep closed 13 defects that had been recorded at branch creation. Amazon
+SQS made FIFO deduplication, group ordering, delay,
+retention, visibility, maximum message size, receive counts, and dead-letter
+redrive part of its real runtime. Amazon EC2 refused subnet deletion with
+attached network interfaces. Amazon ECS `StartTask` executed the workload and
+selected EC2, EXTERNAL, or Fargate sandbox rules from launch type. Amazon
+Amplify cloned and built real repositories and deployed real ZIP/Amazon S3
+artifacts instead of reporting synthetic success.
+
+AWS Certificate Manager gained persistent signing authorities, exact X.509
+import validation, real managed renewal, SMTP email validation, and its
+complete 19-operation ACME control plane backed by a real RFC 8555 nonce, JWS,
+external-account-binding, account, authorization, DNS challenge, CSR,
+certificate, key-rollover, and revocation data plane. The AWS console managed
+ACME endpoints, domains, external account binding credentials, and accounts
+through the real AWS JSON operations. Amazon SNS email and email-json
+subscriptions used SMTP for confirmation and signed notification delivery;
+the SMS sandbox stopped manufacturing verification codes and failed loudly
+without a carrier.
+
+Google Cloud Secret Manager performed managed Cloud SQL password rotation,
+Cloud KMS performed standard and trusted wrapped-key imports with real
+RSA-OAEP/AES-KWP cryptography and resolved effective Autokey ancestry,
+Memorystore exposed immutable ACL revisions, and Cloud Run v1/v2 projected one
+shared service. Azure Files persisted signed Share ACL identifiers and exposed
+them through Azure SDK, Azure CLI, and Terraform. All three simulators labelled
+workloads with a run identity and launched detached abnormal-exit reapers; the
+registry-trust helper operated correctly inside the Linux container harness.
+
+The vendored-spec freshness check sampled concurrent Google Discovery
+revisions and failed on definite drift, the full cloud API catalog was
+refreshed, and generated simulator surface tables gained a deterministic
+pre-commit/CI gate. Official AWS, Google Cloud, and Azure SDK and CLI clients,
+the official Terraform providers, real Git and SMTP servers, `x/crypto/acme`,
+real container workloads, and the production AWS frontend exercised the
+implementations. The full AWS, Google Cloud, and Azure simulator packages,
+shared execution modules, AWS and Azure Terraform suites within their host
+capabilities, frontend typecheck/tests/build, cloud conformance ratchets, and
+the network-backed dependency audit passed.

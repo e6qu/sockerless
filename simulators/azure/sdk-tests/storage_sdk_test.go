@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/streaming"
@@ -23,6 +24,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/directory"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/file"
 	fileservice "github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/service"
+	fileshare "github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/share"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -407,6 +409,48 @@ func TestStorageSDK_FileLifecycleAndPagedLists(t *testing.T) {
 
 	_, err = fileClient.Delete(ctx, nil)
 	require.NoError(t, err)
+}
+
+func TestStorageSDK_FileShareStoredAccessPolicy(t *testing.T) {
+	const (
+		account = "sdkfileaclacct"
+		name    = "sdk-file-acl-share"
+	)
+	serviceClient, err := fileservice.NewClientWithNoCredential(storageSDKURL(t, account, "file"),
+		&fileservice.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+	_, err = serviceClient.CreateShare(ctx, name, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = serviceClient.DeleteShare(ctx, name, nil) })
+
+	start := time.Date(2026, time.July, 28, 10, 0, 0, 0, time.UTC)
+	expiry := start.Add(24 * time.Hour)
+	permissions := fileshare.AccessPolicyPermission{
+		Read: true, Write: true, Create: true, Delete: true, List: true,
+	}.String()
+	shareClient := serviceClient.NewShareClient(name)
+	_, err = shareClient.SetAccessPolicy(ctx, &fileshare.SetAccessPolicyOptions{
+		ShareACL: []*fileshare.SignedIdentifier{{
+			ID: to.Ptr("sdk-policy"),
+			AccessPolicy: &fileshare.AccessPolicy{
+				Start:      &start,
+				Expiry:     &expiry,
+				Permission: &permissions,
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	got, err := shareClient.GetAccessPolicy(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, got.SignedIdentifiers, 1)
+	require.NotNil(t, got.SignedIdentifiers[0].ID)
+	require.NotNil(t, got.SignedIdentifiers[0].AccessPolicy)
+	require.NotNil(t, got.SignedIdentifiers[0].AccessPolicy.Permission)
+	assert.Equal(t, "sdk-policy", *got.SignedIdentifiers[0].ID)
+	assert.Equal(t, permissions, *got.SignedIdentifiers[0].AccessPolicy.Permission)
+	assert.Equal(t, start, *got.SignedIdentifiers[0].AccessPolicy.Start)
+	assert.Equal(t, expiry, *got.SignedIdentifiers[0].AccessPolicy.Expiry)
 }
 
 func TestStorageSDK_QueueLifecycleAndPagedLists(t *testing.T) {

@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"testing/fstest"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -21,10 +20,6 @@ func TestBareRootReachesConsoleWhileCosmosKeepsAPIRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSimulator: %v", err)
 	}
-	// Registering the console after the services is the order main() uses, and
-	// is what leaves Cosmos holding "GET /{$}".
-	srv.RegisterUI(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>console</html>")}})
-
 	// A browser at the bare origin carries none of Cosmos's data-plane headers.
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -49,7 +44,7 @@ func TestBareRootReachesConsoleWhileCosmosKeepsAPIRoot(t *testing.T) {
 	// The console itself is served where it always was.
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "<html>console</html>" {
+	if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
 		t.Fatalf("console at /ui/: got %d %q", rec.Code, rec.Body.String())
 	}
 }
@@ -59,7 +54,7 @@ func TestBareRootReachesConsoleWhileCosmosKeepsAPIRoot(t *testing.T) {
 // that does not exist.
 func TestBareRootStays404WithoutConsole(t *testing.T) {
 	t.Setenv("SIM_RUNTIME", "process")
-	srv, err := buildSimulator(sim.Config{Provider: "azure", ListenAddr: ":0", LogLevel: "error"})
+	srv, err := buildSimulatorWithUI(sim.Config{Provider: "azure", ListenAddr: ":0", LogLevel: "error"}, false)
 	if err != nil {
 		t.Fatalf("buildSimulator: %v", err)
 	}

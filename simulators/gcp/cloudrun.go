@@ -276,6 +276,7 @@ type CRAuthorizedDomain struct {
 
 func registerCloudRun(srv *sim.Server) {
 	services := sim.MakeStore[CRService](srv.DB(), "cloudrun_services")
+	crv1Services = services
 	configurations := sim.MakeStore[CRConfiguration](srv.DB(), "cloudrun_v1_configurations")
 	revisions := sim.MakeStore[CRRevision](srv.DB(), "cloudrun_v1_revisions")
 	routes := sim.MakeStore[CRRoute](srv.DB(), "cloudrun_v1_routes")
@@ -362,6 +363,19 @@ func registerCloudRun(srv *sim.Server) {
 			},
 		})
 	}
+	crv1ReconcileChildren = reconcileKnativeChildren
+	crv1DeleteChildren = func(namespace, name string) {
+		key := svcKey(namespace, name)
+		configurations.Delete(key)
+		routes.Delete(key)
+		revPrefix := key + "-"
+		for _, revision := range revisions.List() {
+			revisionKey := svcKey(revision.Metadata.Namespace, revision.Metadata.Name)
+			if strings.HasPrefix(revisionKey, revPrefix) {
+				revisions.Delete(revisionKey)
+			}
+		}
+	}
 
 	// CreateService: POST /apis/serving.knative.dev/v1/namespaces/{namespace}/services
 	srv.HandleFunc("POST /apis/serving.knative.dev/v1/namespaces/{namespace}/services", func(w http.ResponseWriter, r *http.Request) {
@@ -409,6 +423,7 @@ func registerCloudRun(srv *sim.Server) {
 
 		services.Put(key, svc)
 		reconcileKnativeChildren(namespace, svc, svc.Metadata.Name+"-00001")
+		projectCloudRunV1ToV2(svc, namespace, cloudRunDefaultLocation)
 		sim.WriteJSON(w, http.StatusOK, svc)
 	})
 
@@ -486,6 +501,7 @@ func registerCloudRun(srv *sim.Server) {
 
 		services.Put(key, update)
 		reconcileKnativeChildren(namespace, update, revName)
+		projectCloudRunV1ToV2(update, namespace, cloudRunDefaultLocation)
 		sim.WriteJSON(w, http.StatusOK, update)
 	})
 
@@ -498,6 +514,7 @@ func registerCloudRun(srv *sim.Server) {
 				"service %q not found in namespace %q", name, namespace)
 			return
 		}
+		deleteCloudRunServiceProjections(namespace, cloudRunDefaultLocation, name)
 		key := svcKey(namespace, name)
 		configurations.Delete(key)
 		routes.Delete(key)
@@ -759,6 +776,7 @@ func registerCloudRun(srv *sim.Server) {
 		}
 		services.Put(key, svc)
 		reconcileKnativeChildren(namespace, svc, revName)
+		projectCloudRunV1ToV2(svc, sim.PathParam(r, "project"), namespace)
 		sim.WriteJSON(w, http.StatusOK, svc)
 	})
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -827,6 +845,7 @@ func registerCloudRun(srv *sim.Server) {
 		}
 		services.Put(key, update)
 		reconcileKnativeChildren(namespace, update, revName)
+		projectCloudRunV1ToV2(update, sim.PathParam(r, "project"), namespace)
 		sim.WriteJSON(w, http.StatusOK, update)
 	})
 	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -838,6 +857,7 @@ func registerCloudRun(srv *sim.Server) {
 				"service %q not found in namespace %q", name, namespace)
 			return
 		}
+		deleteCloudRunServiceProjections(sim.PathParam(r, "project"), namespace, name)
 		configurations.Delete(key)
 		routes.Delete(key)
 		revPrefix := key + "-"

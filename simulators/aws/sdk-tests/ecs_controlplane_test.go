@@ -376,8 +376,13 @@ func TestECS_StartTask(t *testing.T) {
 	t.Cleanup(func() { _, _ = c.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)}) })
 
 	_, err = c.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
-		Family:               aws.String("start-task"),
-		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("alpine:latest")}},
+		Family: aws.String("start-task"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:       aws.String("app"),
+			Image:      aws.String("alpine:latest"),
+			Privileged: aws.Bool(true),
+			Command:    []string{"sh", "-c", "mkdir -p /tmp/start-task-mount && mount -t tmpfs tmpfs /tmp/start-task-mount && umount /tmp/start-task-mount"},
+		}},
 	})
 	require.NoError(t, err)
 	regOut, err := c.RegisterContainerInstance(ctx, &ecs.RegisterContainerInstanceInput{Cluster: aws.String(cluster)})
@@ -391,8 +396,20 @@ func TestECS_StartTask(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, startOut.Tasks, 1)
-	assert.Equal(t, "RUNNING", aws.ToString(startOut.Tasks[0].LastStatus))
+	assert.Equal(t, "PROVISIONING", aws.ToString(startOut.Tasks[0].LastStatus))
 	assert.Equal(t, ciArn, aws.ToString(startOut.Tasks[0].ContainerInstanceArn))
+	taskARN := aws.ToString(startOut.Tasks[0].TaskArn)
+	waitForECSTaskStatus(t, c, cluster, taskARN, "STOPPED")
+	described, err := c.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(cluster),
+		Tasks:   []string{taskARN},
+	})
+	require.NoError(t, err)
+	require.Len(t, described.Tasks, 1)
+	require.Len(t, described.Tasks[0].Containers, 1)
+	require.NotNil(t, described.Tasks[0].Containers[0].ExitCode)
+	assert.Equal(t, int32(0), *described.Tasks[0].Containers[0].ExitCode)
+	assert.Equal(t, ecstypes.LaunchTypeEc2, described.Tasks[0].LaunchType)
 }
 
 // TestECS_DeleteTaskDefinitions deletes a deregistered (INACTIVE) revision and

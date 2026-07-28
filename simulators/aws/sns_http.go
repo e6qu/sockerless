@@ -82,25 +82,8 @@ func snsSigningCertificateURL(sub SNSSubscription) string {
 }
 
 func snsDeliverHTTPConfirmation(sub SNSSubscription) {
-	token := snsConfirmationToken(sub)
-	messageID := generateUUID()
-	timestamp := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	subscribeURL := snsControlURL(sub, "ConfirmSubscription", url.Values{
-		"TopicArn": {sub.TopicARN},
-		"Token":    {token},
-	})
-	envelope := map[string]any{
-		"Type":             "SubscriptionConfirmation",
-		"MessageId":        messageID,
-		"Token":            token,
-		"TopicArn":         sub.TopicARN,
-		"Message":          "You have chosen to subscribe to the topic " + sub.TopicARN + ".",
-		"SubscribeURL":     subscribeURL,
-		"Timestamp":        timestamp,
-		"SignatureVersion": "1",
-		"SigningCertURL":   snsSigningCertificateURL(sub),
-	}
-	envelope["Signature"] = snsSignEnvelope(envelope)
+	envelope := snsConfirmationEnvelope(sub)
+	messageID := snsEnvelopeString(envelope, "MessageId")
 	snsPostHTTP(sub, "SubscriptionConfirmation", envelope, messageID, "")
 }
 

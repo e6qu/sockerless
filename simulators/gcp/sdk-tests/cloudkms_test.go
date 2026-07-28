@@ -2,6 +2,8 @@ package gcp_sdk_test
 
 import (
 	"crypto"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/cloudkms/v1"
+	crm "google.golang.org/api/cloudresourcemanager/v3"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
@@ -27,6 +30,130 @@ func kmsService(t *testing.T) *cloudkms.Service {
 	)
 	require.NoError(t, err)
 	return svc
+}
+
+func TestCloudKMSShowEffectiveAutokeyConfigSDK(t *testing.T) {
+	// The official client drives GET /v1/folders/{folderAction} for both
+	// GetAutokeyConfig and ShowEffectiveAutokeyConfig below.
+	resourceManager := crmV3Service(t)
+	folderOp, err := resourceManager.Folders.Create(&crm.Folder{
+		DisplayName: "Autokey parent",
+		Parent:      "organizations/123456789012",
+	}).Do()
+	require.NoError(t, err)
+	folderName := crmOpResourceName(t, folderOp)
+	require.NotEmpty(t, folderName)
+
+	const projectID = "autokey-child"
+	_, err = resourceManager.Projects.Create(&crm.Project{
+		ProjectId:   projectID,
+		DisplayName: "Autokey child",
+		Parent:      folderName,
+	}).Do()
+	require.NoError(t, err)
+
+	client := kmsService(t)
+
+	const keyProject = "projects/dedicated-key-project"
+	updated, err := client.Folders.UpdateAutokeyConfig(folderName+"/autokeyConfig", &cloudkms.AutokeyConfig{
+		Name:                     folderName + "/autokeyConfig",
+		KeyProject:               keyProject,
+		KeyProjectResolutionMode: "DEDICATED_KEY_PROJECT",
+	}).UpdateMask("keyProject,keyProjectResolutionMode").Do()
+	require.NoError(t, err)
+	require.Equal(t, keyProject, updated.KeyProject)
+
+	stored, err := client.Folders.GetAutokeyConfig(folderName + "/autokeyConfig").Do()
+	require.NoError(t, err)
+	require.Equal(t, keyProject, stored.KeyProject)
+
+	folderEffective, err := client.Folders.ShowEffectiveAutokeyConfig(folderName).Do()
+	require.NoError(t, err)
+	require.Equal(t, keyProject, folderEffective.KeyProject)
+	require.Equal(t, folderName, folderEffective.Source.Name)
+
+	effective, err := client.Projects.ShowEffectiveAutokeyConfig("projects/" + projectID).Do()
+	require.NoError(t, err)
+	require.Equal(t, keyProject, effective.KeyProject)
+	require.Equal(t, "DEDICATED_KEY_PROJECT", effective.KeyProjectResolutionMode)
+	require.Equal(t, folderName, effective.Source.Name)
+}
+
+func TestCloudKMSTrustedWrappedKeyExportImportSDK(t *testing.T) {
+	// The generated method below drives POST /v1/projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys/{cryptoKey}/cryptoKeyVersions:importTrustedKeyWrappedCryptoKeyVersion.
+	svc := kmsService(t)
+	_, ringName := kmsNewRing(t, svc, "sdk-ring-trusted-wrap")
+
+	wrappingKeyName := ringName + "/cryptoKeys/wrapping-key"
+	wrappingKey, err := svc.Projects.Locations.KeyRings.CryptoKeys.Create(ringName, &cloudkms.CryptoKey{
+		Purpose: "AES_WRAPPING",
+		VersionTemplate: &cloudkms.CryptoKeyVersionTemplate{
+			Algorithm:       "AES_256_KWP",
+			ProtectionLevel: "HSM_SINGLE_TENANT",
+		},
+	}).CryptoKeyId("wrapping-key").Do()
+	require.NoError(t, err)
+	require.Equal(t, wrappingKeyName, wrappingKey.Name)
+	wrappingVersion := wrappingKeyName + "/cryptoKeyVersions/1"
+	wrappingVersionState, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.Get(wrappingVersion).Do()
+	require.NoError(t, err)
+	require.True(t, wrappingVersionState.HsmTrusted)
+
+	sourceKeyName := ringName + "/cryptoKeys/source-key"
+	_, err = svc.Projects.Locations.KeyRings.CryptoKeys.Create(ringName, &cloudkms.CryptoKey{
+		Purpose: "RAW_ENCRYPT_DECRYPT",
+		VersionTemplate: &cloudkms.CryptoKeyVersionTemplate{
+			Algorithm:       "AES_256_GCM",
+			ProtectionLevel: "HSM_SINGLE_TENANT",
+		},
+	}).CryptoKeyId("source-key").TrustedWrappingEnabled(true).Do()
+	require.NoError(t, err)
+	sourceVersion := sourceKeyName + "/cryptoKeyVersions/1"
+
+	exported, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.
+		ExportTrustedKeyWrappedCryptoKeyVersion(sourceVersion).
+		WrappingKey(wrappingVersion).
+		Do()
+	require.NoError(t, err)
+	wrappedBytes, err := base64.StdEncoding.DecodeString(exported.WrappedKey)
+	require.NoError(t, err)
+	require.NotEmpty(t, wrappedBytes)
+	require.Equal(t, int64(crc32.Checksum(wrappedBytes, kmsCRCTable)), exported.WrappedKeyCrc32c)
+
+	destinationKeyName := ringName + "/cryptoKeys/destination-key"
+	_, err = svc.Projects.Locations.KeyRings.CryptoKeys.Create(ringName, &cloudkms.CryptoKey{
+		Purpose: "RAW_ENCRYPT_DECRYPT",
+		VersionTemplate: &cloudkms.CryptoKeyVersionTemplate{
+			Algorithm:       "AES_256_GCM",
+			ProtectionLevel: "HSM_SINGLE_TENANT",
+		},
+	}).CryptoKeyId("destination-key").SkipInitialVersionCreation(true).Do()
+	require.NoError(t, err)
+
+	imported, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.
+		ImportTrustedKeyWrappedCryptoKeyVersion(destinationKeyName, &cloudkms.ImportTrustedKeyWrappedCryptoKeyVersionRequest{
+			Algorithm:    "AES_256_GCM",
+			ImportingKey: wrappingVersion,
+			WrappedKey:   exported.WrappedKey,
+		}).Do()
+	require.NoError(t, err)
+	require.True(t, imported.TrustedWrappingEnabled)
+	require.True(t, imported.ReimportEligible)
+
+	plaintext := []byte("trusted wrapping preserves this exact key material")
+	encrypted, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.RawEncrypt(sourceVersion, &cloudkms.RawEncryptRequest{
+		Plaintext: base64.StdEncoding.EncodeToString(plaintext),
+	}).Do()
+	require.NoError(t, err)
+	decrypted, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.RawDecrypt(imported.Name, &cloudkms.RawDecryptRequest{
+		Ciphertext:           encrypted.Ciphertext,
+		InitializationVector: encrypted.InitializationVector,
+		TagLength:            encrypted.TagLength,
+	}).Do()
+	require.NoError(t, err)
+	decryptedBytes, err := base64.StdEncoding.DecodeString(decrypted.Plaintext)
+	require.NoError(t, err)
+	require.Equal(t, plaintext, decryptedBytes)
 }
 
 func requireKMSErrorCode(t *testing.T, err error, code int) {
@@ -433,7 +560,7 @@ func TestCloudKMSImportJobSDK(t *testing.T) {
 	_, ringName := kmsNewRing(t, svc, "sdk-ring-import")
 
 	job, err := svc.Projects.Locations.KeyRings.ImportJobs.Create(ringName, &cloudkms.ImportJob{
-		ImportMethod:    "RSA_OAEP_3072_SHA256_AES_256",
+		ImportMethod:    "RSA_OAEP_3072_SHA256",
 		ProtectionLevel: "SOFTWARE",
 	}).ImportJobId("imp-1").Do()
 	require.NoError(t, err)
@@ -458,6 +585,52 @@ func TestCloudKMSImportJobSDK(t *testing.T) {
 	ipol, err := svc.Projects.Locations.KeyRings.ImportJobs.GetIamPolicy(job.Name).Do()
 	require.NoError(t, err)
 	require.Len(t, ipol.Bindings, 1)
+
+	keyName := ringName + "/cryptoKeys/imported-raw-key"
+	_, err = svc.Projects.Locations.KeyRings.CryptoKeys.Create(ringName, &cloudkms.CryptoKey{
+		Purpose: "RAW_ENCRYPT_DECRYPT",
+		VersionTemplate: &cloudkms.CryptoKeyVersionTemplate{
+			Algorithm: "AES_256_GCM",
+		},
+	}).CryptoKeyId("imported-raw-key").SkipInitialVersionCreation(true).Do()
+	require.NoError(t, err)
+
+	block, _ := pem.Decode([]byte(job.PublicKey.Pem))
+	require.NotNil(t, block)
+	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	require.NoError(t, err)
+	rsaPublicKey, ok := publicKey.(*rsa.PublicKey)
+	require.True(t, ok)
+	importedMaterial := make([]byte, 32)
+	_, err = rand.Read(importedMaterial)
+	require.NoError(t, err)
+	wrappedMaterial, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPublicKey, importedMaterial, nil)
+	require.NoError(t, err)
+
+	imported, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.Import(keyName, &cloudkms.ImportCryptoKeyVersionRequest{
+		Algorithm:  "AES_256_GCM",
+		ImportJob:  job.Name,
+		WrappedKey: base64.StdEncoding.EncodeToString(wrappedMaterial),
+	}).Do()
+	require.NoError(t, err)
+	require.True(t, imported.ReimportEligible)
+
+	plaintext := []byte("the imported material must be the caller's exact key")
+	encrypted, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.RawEncrypt(imported.Name, &cloudkms.RawEncryptRequest{
+		Plaintext: base64.StdEncoding.EncodeToString(plaintext),
+	}).Do()
+	require.NoError(t, err)
+	iv, err := base64.StdEncoding.DecodeString(encrypted.InitializationVector)
+	require.NoError(t, err)
+	ciphertext, err := base64.StdEncoding.DecodeString(encrypted.Ciphertext)
+	require.NoError(t, err)
+	aesBlock, err := aes.NewCipher(importedMaterial)
+	require.NoError(t, err)
+	gcm, err := cipher.NewGCM(aesBlock)
+	require.NoError(t, err)
+	decrypted, err := gcm.Open(nil, iv, ciphertext, nil)
+	require.NoError(t, err)
+	require.Equal(t, plaintext, decrypted)
 }
 
 func TestCloudKMSEkmConnectionSDK(t *testing.T) {

@@ -13,19 +13,38 @@ Surface registered in `simulators/aws/efs.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /2015-02-01/file-systems` | ✓ `simulators/aws/efs.go:141::handleEFSCreateFileSystem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-02-01/file-systems` | ✓ `simulators/aws/efs.go:142::handleEFSDescribeFileSystems` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2015-02-01/file-systems/{id}` | ✓ `simulators/aws/efs.go:143::handleEFSDeleteFileSystem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /2015-02-01/file-systems/{id}/lifecycle-configuration` | ✓ `simulators/aws/efs.go:144::handleEFSPutLifecycleConfiguration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-02-01/file-systems/{id}/lifecycle-configuration` | ✓ `simulators/aws/efs.go:145::handleEFSDescribeLifecycleConfiguration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2015-02-01/mount-targets` | ✓ `simulators/aws/efs.go:147::handleEFSCreateMountTarget` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-02-01/mount-targets` | ✓ `simulators/aws/efs.go:148::handleEFSDescribeMountTargets` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-02-01/mount-targets/{id}/security-groups` | ✓ `simulators/aws/efs.go:149::handleEFSDescribeMountTargetSecurityGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /2015-02-01/mount-targets/{id}/security-groups` | ✓ `simulators/aws/efs.go:150::handleEFSModifyMountTargetSecurityGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2015-02-01/mount-targets/{id}` | ✓ `simulators/aws/efs.go:151::handleEFSDeleteMountTarget` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2015-02-01/access-points` | ✓ `simulators/aws/efs.go:153::handleEFSCreateAccessPoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-02-01/access-points` | ✓ `simulators/aws/efs.go:154::handleEFSDescribeAccessPoints` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2015-02-01/access-points/{id}` | ✓ `simulators/aws/efs.go:155::handleEFSDeleteAccessPoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-02-01/file-systems` | ✓ `simulators/aws/efs.go:238::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/file-systems` | ✓ `simulators/aws/efs.go:239::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-02-01/file-systems/{id}` | ✓ `simulators/aws/efs.go:240::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-02-01/file-systems/{id}/protection` | ✓ `simulators/aws/efs.go:241::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-02-01/file-systems/{id}` | ✓ `simulators/aws/efs.go:242::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-02-01/file-systems/{id}/lifecycle-configuration` | ✓ `simulators/aws/efs.go:243::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/file-systems/{id}/lifecycle-configuration` | ✓ `simulators/aws/efs.go:244::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-02-01/mount-targets` | ✓ `simulators/aws/efs.go:246::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/mount-targets` | ✓ `simulators/aws/efs.go:247::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/mount-targets/{id}/security-groups` | ✓ `simulators/aws/efs.go:248::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-02-01/mount-targets/{id}/security-groups` | ✓ `simulators/aws/efs.go:249::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-02-01/mount-targets/{id}` | ✓ `simulators/aws/efs.go:250::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-02-01/access-points` | ✓ `simulators/aws/efs.go:252::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/access-points` | ✓ `simulators/aws/efs.go:253::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-02-01/access-points/{id}` | ✓ `simulators/aws/efs.go:254::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-02-01/file-systems/{id}/policy` | ✓ `simulators/aws/efs.go:257::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/file-systems/{id}/policy` | ✓ `simulators/aws/efs.go:258::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-02-01/file-systems/{id}/policy` | ✓ `simulators/aws/efs.go:259::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-02-01/file-systems/{id}/backup-policy` | ✓ `simulators/aws/efs.go:262::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/file-systems/{id}/backup-policy` | ✓ `simulators/aws/efs.go:263::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/file-systems/replication-configurations` | ✓ `simulators/aws/efs.go:267::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-02-01/file-systems/{id}/replication-configuration` | ✓ `simulators/aws/efs.go:268::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-02-01/file-systems/{id}/replication-configuration` | ✓ `simulators/aws/efs.go:269::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-02-01/account-preferences` | ✓ `simulators/aws/efs.go:272::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/account-preferences` | ✓ `simulators/aws/efs.go:273::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-02-01/resource-tags/{id}` | ✓ `simulators/aws/efs.go:277::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/resource-tags/{id}` | ✓ `simulators/aws/efs.go:278::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-02-01/resource-tags/{id}` | ✓ `simulators/aws/efs.go:279::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-02-01/create-tags/{id}` | ✓ `simulators/aws/efs.go:282::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/tags/{id}` | ✓ `simulators/aws/efs.go:283::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-02-01/tags/{id}/` | ✓ `simulators/aws/efs.go:284::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-02-01/delete-tags/{id}` | ✓ `simulators/aws/efs.go:285::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

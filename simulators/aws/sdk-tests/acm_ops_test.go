@@ -12,90 +12,69 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// requestPrivateCert issues a PRIVATE (PCA-backed) certificate, which the sim
-// mints with real X.509 material and issues synchronously — the precondition
-// for Get/Export/Revoke. Returns the ARN; registers cleanup.
-func requestPrivateCert(t *testing.T, c *acm.Client, domain string) string {
+// requestUnknownPrivateCA proves ACM does not manufacture a certificate
+// authority merely because the caller supplied a syntactically valid ARN.
+func requestUnknownPrivateCA(t *testing.T, c *acm.Client, domain string) {
 	t.Helper()
-	out, err := c.RequestCertificate(ctx, &acm.RequestCertificateInput{
+	_, err := c.RequestCertificate(ctx, &acm.RequestCertificateInput{
 		DomainName:              aws.String(domain),
 		CertificateAuthorityArn: aws.String("arn:aws:acm-pca:us-east-1:000000000000:certificate-authority/test-ca"),
 	})
-	require.NoError(t, err)
-	arn := aws.ToString(out.CertificateArn)
-	t.Cleanup(func() {
-		_, _ = c.DeleteCertificate(context.Background(), &acm.DeleteCertificateInput{CertificateArn: aws.String(arn)})
-	})
-	return arn
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ResourceNotFoundException")
 }
 
-// TestACM_GetCertificate pins GetCertificate returning the stored PEM body and
-// chain for an issued PRIVATE certificate, and erroring for a cert with no
-// material yet.
-func TestACM_GetCertificate(t *testing.T) {
+func TestACM_RejectsUnknownPrivateCertificateAuthority(t *testing.T) {
 	c := acmClient()
-
-	arn := requestPrivateCert(t, c, "get.private.example.com")
-	out, err := c.GetCertificate(ctx, &acm.GetCertificateInput{CertificateArn: aws.String(arn)})
-	require.NoError(t, err)
-	require.NotNil(t, out.Certificate)
-	assert.Contains(t, aws.ToString(out.Certificate), "BEGIN CERTIFICATE",
-		"GetCertificate must return a real PEM body")
+	requestUnknownPrivateCA(t, c, "unknown-ca.private.example.com")
 }
 
-// TestACM_ExportCertificate pins ExportCertificate returning the cert, chain,
-// and private key for a PRIVATE certificate; a missing passphrase is rejected,
-// and a non-PRIVATE cert can't be exported.
+// TestACM_ExportCertificate proves public Amazon-issued certificates cannot
+// expose their service-held private key.
 func TestACM_ExportCertificate(t *testing.T) {
 	c := acmClient()
 
-	arn := requestPrivateCert(t, c, "export.private.example.com")
-	out, err := c.ExportCertificate(ctx, &acm.ExportCertificateInput{
-		CertificateArn: aws.String(arn),
-		Passphrase:     []byte("hunter2"),
-	})
-	require.NoError(t, err)
-	assert.Contains(t, aws.ToString(out.Certificate), "BEGIN CERTIFICATE")
-	assert.Contains(t, aws.ToString(out.PrivateKey), "PRIVATE KEY",
-		"ExportCertificate must return the private key for a PRIVATE cert")
-
-	// Missing passphrase is rejected.
-	_, err = c.ExportCertificate(ctx, &acm.ExportCertificateInput{CertificateArn: aws.String(arn)})
-	require.Error(t, err)
-
-	// A public (AMAZON_ISSUED) cert cannot be exported.
 	reqOut, err := c.RequestCertificate(ctx, &acm.RequestCertificateInput{
 		DomainName:       aws.String("public.example.com"),
 		ValidationMethod: acmtypes.ValidationMethodDns,
 	})
 	require.NoError(t, err)
-	pubArn := aws.ToString(reqOut.CertificateArn)
+	arn := aws.ToString(reqOut.CertificateArn)
 	t.Cleanup(func() {
-		_, _ = c.DeleteCertificate(context.Background(), &acm.DeleteCertificateInput{CertificateArn: aws.String(pubArn)})
+		_, _ = c.DeleteCertificate(context.Background(), &acm.DeleteCertificateInput{CertificateArn: aws.String(arn)})
 	})
+
+	// Missing passphrase is rejected.
+	_, err = c.ExportCertificate(ctx, &acm.ExportCertificateInput{CertificateArn: aws.String(arn)})
+	require.Error(t, err)
+
 	_, err = c.ExportCertificate(ctx, &acm.ExportCertificateInput{
-		CertificateArn: aws.String(pubArn),
+		CertificateArn: aws.String(arn),
 		Passphrase:     []byte("x"),
 	})
 	require.Error(t, err, "a non-PRIVATE certificate must not be exportable")
 }
 
-// TestACM_RevokeCertificate pins RevokeCertificate moving a PRIVATE cert to
-// REVOKED and requiring a reason.
+// TestACM_RevokeCertificate proves the private-certificate-only operation
+// rejects an Amazon-issued request.
 func TestACM_RevokeCertificate(t *testing.T) {
 	c := acmClient()
 
-	arn := requestPrivateCert(t, c, "revoke.private.example.com")
-	out, err := c.RevokeCertificate(ctx, &acm.RevokeCertificateInput{
+	req, err := c.RequestCertificate(ctx, &acm.RequestCertificateInput{
+		DomainName:       aws.String("revoke.public.example.com"),
+		ValidationMethod: acmtypes.ValidationMethodDns,
+	})
+	require.NoError(t, err)
+	arn := aws.ToString(req.CertificateArn)
+	t.Cleanup(func() {
+		_, _ = c.DeleteCertificate(context.Background(), &acm.DeleteCertificateInput{CertificateArn: aws.String(arn)})
+	})
+	_, err = c.RevokeCertificate(ctx, &acm.RevokeCertificateInput{
 		CertificateArn:   aws.String(arn),
 		RevocationReason: acmtypes.RevocationReasonKeyCompromise,
 	})
-	require.NoError(t, err)
-	assert.Equal(t, arn, aws.ToString(out.CertificateArn))
-
-	desc, err := c.DescribeCertificate(ctx, &acm.DescribeCertificateInput{CertificateArn: aws.String(arn)})
-	require.NoError(t, err)
-	assert.Equal(t, acmtypes.CertificateStatusRevoked, desc.Certificate.Status)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ResourceInUseException")
 }
 
 // TestACM_AccountConfiguration pins the account expiry-events config
@@ -127,10 +106,10 @@ func TestACM_AccountConfiguration(t *testing.T) {
 func TestACM_SearchCertificates(t *testing.T) {
 	c := acmClient()
 
-	privateArn := requestPrivateCert(t, c, "search-private.example.com")
+	requestUnknownPrivateCA(t, c, "search-private.example.com")
 
 	deadline := time.Now().Add(5 * time.Second)
-	var found bool
+	var foundSynthetic bool
 	for time.Now().Before(deadline) {
 		out, err := c.SearchCertificates(ctx, &acm.SearchCertificatesInput{
 			FilterStatement: &acmtypes.CertificateFilterStatementMemberFilter{
@@ -147,14 +126,12 @@ func TestACM_SearchCertificates(t *testing.T) {
 			require.True(t, ok, "CertificateMetadata must carry AcmCertificateMetadata")
 			// Every returned cert must be PRIVATE per the filter.
 			assert.Equal(t, acmtypes.CertificateTypePrivate, meta.Value.Type)
-			if aws.ToString(res.CertificateArn) == privateArn {
-				found = true
-			}
+			foundSynthetic = true
 		}
-		if found {
+		if foundSynthetic {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	assert.True(t, found, "SearchCertificates must return the PRIVATE cert when filtering by Type=PRIVATE")
+	assert.False(t, foundSynthetic, "a missing AWS Private CA must never create synthetic PRIVATE certificate state")
 }

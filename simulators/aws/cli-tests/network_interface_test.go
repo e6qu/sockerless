@@ -3,6 +3,8 @@ package aws_cli_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestEC2NetworkInterfaceCLI drives the standalone ENI ops via the aws CLI
@@ -31,5 +33,9 @@ func TestEC2NetworkInterfaceCLI(t *testing.T) {
 		t.Fatalf("expected SourceDestCheck False after --no-source-dest-check, got %q", sdc)
 	}
 
+	deleteBlocked := runCLIExpectError(t, awsCLI("ec2", "delete-subnet", "--subnet-id", subnetID))
+	assert.Contains(t, deleteBlocked, "DependencyViolation")
 	runCLI(t, awsCLI("ec2", "delete-network-interface", "--network-interface-id", eniID))
+	runCLI(t, awsCLI("ec2", "delete-subnet", "--subnet-id", subnetID))
+	runCLI(t, awsCLI("ec2", "delete-vpc", "--vpc-id", vpcID))
 }

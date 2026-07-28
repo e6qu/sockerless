@@ -74,6 +74,19 @@ func TestCloudRunV2Services_CLI_CreateGetDelete(t *testing.T) {
 	assert.Contains(t, got.Name, "cli-svc-roundtrip")
 	assert.Equal(t, "true", got.Labels["sockerless_managed"])
 
+	v1ListOut := httpDoJSON(t, "GET",
+		fmt.Sprintf("%s/apis/serving.knative.dev/v1/namespaces/%s/services", baseURL, project), "")
+	var v1List struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	parseJSON(t, v1ListOut, &v1List)
+	require.Len(t, v1List.Items, 1)
+	assert.Equal(t, "cli-svc-roundtrip", v1List.Items[0].Metadata.Name)
+
 	httpDoJSON(t, "DELETE", runServiceURL("cli-svc-roundtrip"), "")
 
 	resp, err := httpDo("GET", runServiceURL("cli-svc-roundtrip"), "")

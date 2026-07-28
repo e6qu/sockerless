@@ -116,7 +116,7 @@ func NewServer(cfg Config) (*Server, error) {
 		runtime = "docker"
 	}
 	if runtime != "process" {
-		InitDocker()
+		InitDocker(cfg.Provider)
 		logger.Info().Str("runtime", RuntimeInfo()).Msg("container runtime initialized")
 	}
 

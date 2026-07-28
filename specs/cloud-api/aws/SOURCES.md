@@ -24,7 +24,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `elastic-load-balancing-v2.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/elastic-load-balancing-v2.json` | Apache-2.0 | `11899a4fc4fb821e2a172ce51db4d82b467be5e4` | 2026-07-26T18:38:48Z |
 | `elasticache.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/elasticache.json` | Apache-2.0 | `334471f366bcc5a944629c05a5bc041c717071ec` | 2026-07-26T18:38:50Z |
 | `eventbridge.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/eventbridge.json` | Apache-2.0 | `5b7905253b87c2cfed5b83c0d36830e72c12eb32` | 2026-07-26T18:38:53Z |
-| `glue.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/glue.json` | Apache-2.0 | `334471f366bcc5a944629c05a5bc041c717071ec` | 2026-07-26T18:38:55Z |
 | `iam.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/iam.json` | Apache-2.0 | `d701489126a33e148c96dc9f8fe0d08933bdadee` | 2026-07-26T18:38:57Z |
 | `kinesis.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/kinesis.json` | Apache-2.0 | `def6a3a4bb06c199a4843c501d84730d8235cab4` | 2026-07-26T18:38:59Z |
 | `kms.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/kms.json` | Apache-2.0 | `af6568be692483489ab5df33958f4b69734a4318` | 2026-07-26T18:39:00Z |
@@ -43,3 +42,4 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `sts.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/sts.json` | Apache-2.0 | `b8a4fc132e65d8310e2de67e0600eec53e2f4b26` | 2026-07-26T18:39:27Z |
 | `wafv2.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/wafv2.json` | Apache-2.0 | `334471f366bcc5a944629c05a5bc041c717071ec` | 2026-07-26T18:39:29Z |
 | `acm.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/acm.json` | Apache-2.0 | `1529ead9d1a40beee31b0ad347cf082a5eb039a6` | 2026-07-26T20:02:45Z |
+| `glue.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/glue.json` | Apache-2.0 | `4ce9aac3a387308d9416f011037c8dab081f74ed` | 2026-07-28T14:18:19Z |

@@ -33,6 +33,9 @@ import (
 )
 
 func main() {
+	if sim.RunContainerReaper() {
+		return
+	}
 	cfg := sim.ConfigFromEnv("gcp")
 	if cfg.ListenAddr == ":8443" {
 		cfg.ListenAddr = ":4567" // GCP simulator default port

@@ -27,6 +27,9 @@ import (
 )
 
 func main() {
+	if sim.RunContainerReaper() {
+		return
+	}
 	cfg := sim.ConfigFromEnv("azure")
 	if cfg.ListenAddr == ":8443" {
 		cfg.ListenAddr = ":4568" // Azure simulator default port
@@ -84,6 +87,10 @@ func main() {
 // table in-process and validate it against the vendored Swagger specs
 // (specs/cloud-api/azure/).
 func buildSimulator(cfg sim.Config) (*sim.Server, error) {
+	return buildSimulatorWithUI(cfg, true)
+}
+
+func buildSimulatorWithUI(cfg sim.Config, includeUI bool) (*sim.Server, error) {
 	srv, err := sim.NewServer(cfg)
 	if err != nil {
 		return nil, err
@@ -172,8 +179,10 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	// Entra identity seeding and Microsoft Graph delegated endpoints
 	registerEntra(srv)
 
-	// Embedded UI (no-op with -tags noui)
-	registerUI(srv)
+	// Embedded UI (no-op with -tags noui).
+	if includeUI {
+		registerUI(srv)
+	}
 
 	// Runtime wire-shape validation (armed only when
 	// SOCKERLESS_SPEC_VALIDATE is set; see spec_validator.go). Wrapped

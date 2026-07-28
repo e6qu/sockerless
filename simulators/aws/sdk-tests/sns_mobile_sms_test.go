@@ -11,27 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// snsSandboxOTPForTest mirrors the simulator's deterministic OTP derivation
-// (sns_mobile_sms.go snsSandboxOTP): the verification flow uses a derivable
-// code so a test can complete the Pending → Verified transition without an
-// out-of-band SMS channel.
-func snsSandboxOTPForTest(phoneNumber string) string {
-	var sum int
-	for _, c := range phoneNumber {
-		sum = (sum*31 + int(c)) % 1000000
-	}
-	return padOTP(sum)
-}
-
-func padOTP(n int) string {
-	s := ""
-	for i := 0; i < 6; i++ {
-		s = string(rune('0'+n%10)) + s
-		n /= 10
-	}
-	return s
-}
-
 // TestSNS_PlatformApplicationLifecycle exercises the mobile-push platform
 // application CRUD (create → get/list → set → delete) plus the endpoint CRUD
 // nested under it.
@@ -149,10 +128,9 @@ func TestSNS_GetEndpointAttributes_NotFound(t *testing.T) {
 		"expected NotFound, got %v", err)
 }
 
-// TestSNS_SMSSandboxVerificationFlow exercises the create → verify → list
-// state machine: a freshly added number is Pending, and a verify with the
-// matching deterministic OTP flips it to Verified.
-func TestSNS_SMSSandboxVerificationFlow(t *testing.T) {
+// TestSNS_SMSSandboxFailsWithoutCarrier proves the cloud slice does not
+// manufacture or disclose an OTP when no telecommunications carrier exists.
+func TestSNS_SMSSandboxFailsWithoutCarrier(t *testing.T) {
 	c := snsClient()
 	phone := "+12065550100"
 
@@ -160,46 +138,17 @@ func TestSNS_SMSSandboxVerificationFlow(t *testing.T) {
 		PhoneNumber:  aws.String(phone),
 		LanguageCode: snstypes.LanguageCodeStringEnUs,
 	})
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_, _ = c.DeleteSMSSandboxPhoneNumber(ctx, &sns.DeleteSMSSandboxPhoneNumberInput{
-			PhoneNumber: aws.String(phone),
-		})
-	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "InternalError")
 
 	listPending, err := c.ListSMSSandboxPhoneNumbers(ctx, &sns.ListSMSSandboxPhoneNumbersInput{})
 	require.NoError(t, err)
-	require.True(t, sandboxStatusIs(listPending.PhoneNumbers, phone, snstypes.SMSSandboxPhoneNumberVerificationStatusPending),
-		"number should start Pending")
-
-	// Wrong OTP is rejected.
-	_, err = c.VerifySMSSandboxPhoneNumber(ctx, &sns.VerifySMSSandboxPhoneNumberInput{
-		PhoneNumber:     aws.String(phone),
-		OneTimePassword: aws.String("000000"),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "VerificationException")
-
-	// Correct OTP flips it to Verified.
-	_, err = c.VerifySMSSandboxPhoneNumber(ctx, &sns.VerifySMSSandboxPhoneNumberInput{
-		PhoneNumber:     aws.String(phone),
-		OneTimePassword: aws.String(snsSandboxOTPForTest(phone)),
-	})
-	require.NoError(t, err)
-
-	listVerified, err := c.ListSMSSandboxPhoneNumbers(ctx, &sns.ListSMSSandboxPhoneNumbersInput{})
-	require.NoError(t, err)
-	assert.True(t, sandboxStatusIs(listVerified.PhoneNumbers, phone, snstypes.SMSSandboxPhoneNumberVerificationStatusVerified),
-		"number should be Verified after the matching OTP")
+	assert.False(t, sandboxStatusIs(listPending.PhoneNumbers, phone, snstypes.SMSSandboxPhoneNumberVerificationStatusPending),
+		"a failed carrier delivery must not create pending verification state")
 
 	status, err := c.GetSMSSandboxAccountStatus(ctx, &sns.GetSMSSandboxAccountStatusInput{})
 	require.NoError(t, err)
 	assert.True(t, status.IsInSandbox, "a fresh account is in the SMS sandbox")
-
-	_, err = c.DeleteSMSSandboxPhoneNumber(ctx, &sns.DeleteSMSSandboxPhoneNumberInput{
-		PhoneNumber: aws.String(phone),
-	})
-	require.NoError(t, err)
 }
 
 func sandboxStatusIs(nums []snstypes.SMSSandboxPhoneNumber, phone string, want snstypes.SMSSandboxPhoneNumberVerificationStatus) bool {

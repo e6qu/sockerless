@@ -737,6 +737,8 @@ type CRMFolder struct {
 	Etag        string `json:"etag,omitempty"`
 }
 
+var crmFolders sim.Store[CRMFolder]
+
 // CRMLien mirrors the cloudresourcemanager#Lien (v3) resource.
 type CRMLien struct {
 	Name         string   `json:"name"`
@@ -884,6 +886,7 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 	crmEnsureDefaultProject()
 	registerCloudResourceManagerV1(srv, projectPolicies)
 	folders := sim.MakeStore[CRMFolder](srv.DB(), "crm_folders")
+	crmFolders = folders
 	liens := sim.MakeStore[CRMLien](srv.DB(), "crm_liens")
 	tagKeys := sim.MakeStore[CRMTagKey](srv.DB(), "crm_tag_keys")
 	tagValues := sim.MakeStore[CRMTagValue](srv.DB(), "crm_tag_values")
@@ -904,13 +907,12 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 	// the v1 read. A project the sim has never seen is a real 403 — the
 	// API never discloses whether an inaccessible project exists.
 	srv.HandleFunc("GET /v1/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
-		project, _, isCustomMethod := gcpCustomMethod(sim.PathParam(r, "project"))
+		project, action, isCustomMethod := gcpCustomMethod(sim.PathParam(r, "project"))
 		if isCustomMethod {
-			// A ":verb" suffix names a GET custom method on a project. This
-			// pattern receives every service's — Cloud KMS publishes
-			// projects:showEffectiveAutokeyConfig and the two Key Access
-			// Justifications config reads — and the simulator serves none, so
-			// the answer is a method-routing failure, not the project's 403.
+			if action == "showEffectiveAutokeyConfig" {
+				kmsHandleShowEffectiveAutokeyConfig(w, "projects/"+project)
+				return
+			}
 			gcpMethodNotFound(w)
 			return
 		}

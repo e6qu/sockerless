@@ -122,38 +122,9 @@ var serviceConformanceCatalog = map[string][]string{
 	// Step Functions / Secrets Manager / Application Auto Scaling: all
 	// operations implemented (conformance-complete).
 	"AWSStepFunctions": {},
-	// AWS Certificate Manager: the certificate surface (request / import /
-	// describe / export / renew / revoke / search / account configuration /
-	// tagging) is implemented. The gap is the ACME sub-surface: an ACME
-	// endpoint is the control plane of an RFC 8555 certificate authority, and
-	// its resources only come into existence when an ACME client registers
-	// against the endpoint's EndpointUrl and drives newNonce / newAccount /
-	// newOrder / authz / challenge / finalize against it. Implementing these
-	// operations without that server would emit an EndpointUrl resolving to
-	// nothing and a permanently-empty ListAcmeAccounts — synthetic behavior the
-	// project forbids. Closing this entry means serving the ACME protocol at
-	// the advertised endpoint, then wiring these operations to it.
-	"CertificateManager": {
-		"CreateAcmeDomainValidation",
-		"CreateAcmeEndpoint",
-		"CreateAcmeExternalAccountBinding",
-		"DeleteAcmeDomainValidation",
-		"DeleteAcmeEndpoint",
-		"DeleteAcmeExternalAccountBinding",
-		"DescribeAcmeAccount",
-		"DescribeAcmeDomainValidation",
-		"DescribeAcmeEndpoint",
-		"DescribeAcmeExternalAccountBinding",
-		"GetAcmeExternalAccountBindingCredentials",
-		"ListAcmeAccounts",
-		"ListAcmeDomainValidations",
-		"ListAcmeEndpoints",
-		"ListAcmeExternalAccountBindings",
-		"RevokeAcmeAccount",
-		"RevokeAcmeExternalAccountBinding",
-		"UpdateAcmeDomainValidation",
-		"UpdateAcmeEndpoint",
-	},
+	// AWS Certificate Manager: all certificate and RFC 8555 ACME control-plane
+	// operations are implemented.
+	"CertificateManager":      {},
 	"secretsmanager":          {},
 	"AnyScaleFrontendService": {},
 	// Kinesis: all operations implemented (SubscribeToShard streams over vnd.amazon.eventstream).

@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="$REPO_ROOT/specs/SIM_SURFACE_TABLES"
+OUT_DIR="${SEED_SURFACE_TABLES_OUT_DIR:-$REPO_ROOT/specs/SIM_SURFACE_TABLES}"
 MATRIX="$REPO_ROOT/specs/SIM_TEST_COVERAGE_MATRIX.md"
 mkdir -p "$OUT_DIR"
 
@@ -70,12 +70,42 @@ table_for_file() {
     aws:cloudfront|aws:cloudfront_functions|aws:cloudfront_keys|aws:cloudfront_policies) echo "aws-cloudfront" ;;
     aws:amplify|aws:amplify_domains) echo "aws-amplify" ;;
     aws:iam|aws:iam_slr_oidc) echo "aws-iam" ;;
+    aws:apigatewayv2*) echo "aws-apigatewayv2" ;;
+    aws:apigateway*) echo "aws-apigateway" ;;
+    aws:cloudwatch*) echo "aws-cloudwatch" ;;
+    aws:codebuild*) echo "aws-codebuild" ;;
+    aws:ec2*) echo "aws-ec2" ;;
+    aws:ecr*) echo "aws-ecr" ;;
+    aws:ecs*) echo "aws-ecs" ;;
+    aws:elasticache*) echo "aws-elasticache" ;;
+    aws:elbv2*) echo "aws-elbv2" ;;
+    aws:eventbridge*) echo "aws-eventbridge" ;;
+    aws:glue*) echo "aws-glue" ;;
+    aws:iam*) echo "aws-iam" ;;
+    aws:kinesis*) echo "aws-kinesis" ;;
+    aws:kms*) echo "aws-kms" ;;
+    aws:lambda*) echo "aws-lambda" ;;
+    aws:rds*) echo "aws-rds" ;;
+    aws:sns*) echo "aws-sns" ;;
+    aws:ssm*) echo "aws-ssm_parameters" ;;
+    azure:apim*) echo "azure-apim" ;;
     azure:blob|azure:files|azure:storage_dataplane) echo "azure-storage" ;;
     azure:containerapps|azure:containerapps_apps|azure:containerappsenv) echo "azure-containerapps" ;;
     azure:servicebus|azure:servicebus_dataplane) echo "azure-servicebus" ;;
     azure:insights|azure:monitor) echo "azure-monitor" ;;
     azure:subscription|azure:subscription_alias) echo "azure-subscription" ;;
+    azure:cosmos*) echo "azure-cosmos" ;;
+    azure:eventgrid*) echo "azure-eventgrid" ;;
+    azure:logicapps*) echo "azure-logicapps" ;;
+    azure:postgres*) echo "azure-postgresql-flexible-server" ;;
+    azure:resourcesarm) echo "azure-resources" ;;
+    azure:storagearm) echo "azure-storage" ;;
+    azure:web*) echo "azure-functions" ;;
     gcp:cloudrun|gcp:cloudrunjobs|gcp:cloudrunservices) echo "gcp-cloudrun" ;;
+    gcp:cloudrun*) echo "gcp-cloudrun" ;;
+    gcp:compute_more*) echo "gcp-compute" ;;
+    gcp:logging_admin) echo "gcp-logging" ;;
+    gcp:token_signing) echo "gcp-iam" ;;
     *) echo "$1-$2" ;;
   esac
 }
@@ -89,7 +119,7 @@ for cloud in aws azure gcp; do
     [[ -f "$go_file" ]] || continue
     [[ "$go_file" =~ _test\.go$ ]] && continue
     base="$(basename "$go_file" .go)"
-    if [[ "$base" =~ ^(main|dashboard|metadata|streaming|awschunked|aws_identity|auth|authorization|managedidentity|oauth2|operations|quota|serviceusage|ui_embed|ui_noembed|lambda_runtime|ssm_proto|logfilter|cloudwatch_metrics|kql)$ ]]; then
+    if [[ "$base" =~ ^(main|dashboard|metadata|streaming|awschunked|aws_identity|auth|authorization|managedidentity|oauth2|operations|quota|serviceusage|ui_embed|ui_noembed|lambda_runtime|ssm_proto|logfilter|cloudwatch_metrics|kql|arm_lro)$ ]]; then
       continue
     fi
     has_handle="$(grep -Ec 'HandleFunc\(|\.Register\("|\.RegisterVersioned\(' "$go_file" || true)"

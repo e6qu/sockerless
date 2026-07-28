@@ -1,50 +1,287 @@
-# AWS Glue
+# Sim surface — aws-glue
 
-Surface: `simulators/aws/glue.go`.
-
-Canonical reference: <https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api.html>
-
-Protocol: AWS JSON 1.1 (`X-Amz-Target: AWSGlue.<Op>`).
+Surface registered in `simulators/aws/glue.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — implemented, no direct test coverage
+- ✗ — missing (paired with an open BUG or issue; never silent)
+- 501 — stubbed NotImplemented (wire-visible gap)
+- n/a — no meaningful client/provider surface for this op
 
-## Data Catalog — Databases
+## Implemented ops (extracted from HandleFunc registrations)
 
-| Operation | X-Amz-Target | SDK test | CLI test | TF resource | notes |
+| Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| CreateDatabase | `AWSGlue.CreateDatabase` | ✓ `TestGlue_DatabaseCRUD_SDK` | ✓ `TestGlue_DatabaseCRUD_CLI` | ✓ `aws_glue_catalog_database` | |
-| GetDatabase | `AWSGlue.GetDatabase` | ✓ | ✓ | ✓ | Returns `Database` object. |
-| GetDatabases | `AWSGlue.GetDatabases` | ✓ | ✓ | ✓ | Paginated via `NextToken`. |
-| DeleteDatabase | `AWSGlue.DeleteDatabase` | ✓ | ✓ | ✓ | |
+| `Action AWSGlue.CreateDatabase` | ✓ `simulators/aws/glue.go:328::handleGlueCreateDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDatabase` | ✓ `simulators/aws/glue.go:329::handleGlueGetDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDatabases` | ✓ `simulators/aws/glue.go:330::handleGlueGetDatabases` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateDatabase` | ✓ `simulators/aws/glue.go:331::handleGlueUpdateDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteDatabase` | ✓ `simulators/aws/glue.go:332::handleGlueDeleteDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateTable` | ✓ `simulators/aws/glue.go:333::handleGlueCreateTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetTable` | ✓ `simulators/aws/glue.go:334::handleGlueGetTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetTables` | ✓ `simulators/aws/glue.go:335::handleGlueGetTables` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateTable` | ✓ `simulators/aws/glue.go:336::handleGlueUpdateTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteTable` | ✓ `simulators/aws/glue.go:337::handleGlueDeleteTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchDeleteTable` | ✓ `simulators/aws/glue.go:338::handleGlueBatchDeleteTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreatePartition` | ✓ `simulators/aws/glue.go:339::handleGlueCreatePartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchCreatePartition` | ✓ `simulators/aws/glue.go:340::handleGlueBatchCreatePartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetPartition` | ✓ `simulators/aws/glue.go:341::handleGlueGetPartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetPartitions` | ✓ `simulators/aws/glue.go:342::handleGlueGetPartitions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetPartition` | ✓ `simulators/aws/glue.go:343::handleGlueBatchGetPartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdatePartition` | ✓ `simulators/aws/glue.go:344::handleGlueUpdatePartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeletePartition` | ✓ `simulators/aws/glue.go:345::handleGlueDeletePartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchDeletePartition` | ✓ `simulators/aws/glue.go:346::handleGlueBatchDeletePartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateJob` | ✓ `simulators/aws/glue.go:347::handleGlueCreateJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetJob` | ✓ `simulators/aws/glue.go:348::handleGlueGetJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetJobs` | ✓ `simulators/aws/glue.go:349::handleGlueGetJobs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateJob` | ✓ `simulators/aws/glue.go:350::handleGlueUpdateJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteJob` | ✓ `simulators/aws/glue.go:351::handleGlueDeleteJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListJobs` | ✓ `simulators/aws/glue.go:352::handleGlueListJobs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartJobRun` | ✓ `simulators/aws/glue.go:353::handleGlueStartJobRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetJobRun` | ✓ `simulators/aws/glue.go:354::handleGlueGetJobRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetJobRuns` | ✓ `simulators/aws/glue.go:355::handleGlueGetJobRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchStopJobRun` | ✓ `simulators/aws/glue.go:356::handleGlueBatchStopJobRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateCrawler` | ✓ `simulators/aws/glue.go:357::handleGlueCreateCrawler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetCrawler` | ✓ `simulators/aws/glue.go:358::handleGlueGetCrawler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetCrawlers` | ✓ `simulators/aws/glue.go:359::handleGlueGetCrawlers` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateCrawler` | ✓ `simulators/aws/glue.go:360::handleGlueUpdateCrawler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteCrawler` | ✓ `simulators/aws/glue.go:361::handleGlueDeleteCrawler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartCrawler` | ✓ `simulators/aws/glue.go:362::handleGlueStartCrawler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StopCrawler` | ✓ `simulators/aws/glue.go:363::handleGlueStopCrawler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListCrawlers` | ✓ `simulators/aws/glue.go:364::handleGlueListCrawlers` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateTrigger` | ✓ `simulators/aws/glue.go:365::handleGlueCreateTrigger` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetTrigger` | ✓ `simulators/aws/glue.go:366::handleGlueGetTrigger` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetTriggers` | ✓ `simulators/aws/glue.go:367::handleGlueGetTriggers` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteTrigger` | ✓ `simulators/aws/glue.go:368::handleGlueDeleteTrigger` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartTrigger` | ✓ `simulators/aws/glue.go:369::handleGlueStartTrigger` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StopTrigger` | ✓ `simulators/aws/glue.go:370::handleGlueStopTrigger` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateConnection` | ✓ `simulators/aws/glue.go:371::handleGlueCreateConnection` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetConnection` | ✓ `simulators/aws/glue.go:372::handleGlueGetConnection` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetConnections` | ✓ `simulators/aws/glue.go:373::handleGlueGetConnections` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateConnection` | ✓ `simulators/aws/glue.go:374::handleGlueUpdateConnection` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteConnection` | ✓ `simulators/aws/glue.go:375::handleGlueDeleteConnection` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetPartitionIndexes` | ✓ `simulators/aws/glue.go:376::handleGlueGetPartitionIndexes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.TagResource` | ✓ `simulators/aws/glue.go:377::handleGlueTagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UntagResource` | ✓ `simulators/aws/glue.go:378::handleGlueUntagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetTags` | ✓ `simulators/aws/glue.go:379::handleGlueGetTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateSecurityConfiguration` | ✓ `simulators/aws/glue.go:380::handleGlueCreateSecurityConfiguration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetSecurityConfiguration` | ✓ `simulators/aws/glue.go:381::handleGlueGetSecurityConfiguration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetSecurityConfigurations` | ✓ `simulators/aws/glue.go:382::handleGlueGetSecurityConfigurations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteSecurityConfiguration` | ✓ `simulators/aws/glue.go:383::handleGlueDeleteSecurityConfiguration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateWorkflow` | ✓ `simulators/aws/glue.go:384::handleGlueCreateWorkflow` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetWorkflow` | ✓ `simulators/aws/glue.go:385::handleGlueGetWorkflow` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListWorkflows` | ✓ `simulators/aws/glue.go:386::handleGlueListWorkflows` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteWorkflow` | ✓ `simulators/aws/glue.go:387::handleGlueDeleteWorkflow` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartWorkflowRun` | ✓ `simulators/aws/glue.go:388::handleGlueStartWorkflowRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetWorkflowRun` | ✓ `simulators/aws/glue.go:389::handleGlueGetWorkflowRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateClassifier` | ✓ `simulators/aws/glue.go:390::handleGlueCreateClassifier` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetClassifier` | ✓ `simulators/aws/glue.go:391::handleGlueGetClassifier` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetClassifiers` | ✓ `simulators/aws/glue.go:392::handleGlueGetClassifiers` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateClassifier` | ✓ `simulators/aws/glue.go:393::handleGlueUpdateClassifier` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteClassifier` | ✓ `simulators/aws/glue.go:394::handleGlueDeleteClassifier` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateUserDefinedFunction` | ✓ `simulators/aws/glue.go:395::handleGlueCreateUserDefinedFunction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetUserDefinedFunction` | ✓ `simulators/aws/glue.go:396::handleGlueGetUserDefinedFunction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetUserDefinedFunctions` | ✓ `simulators/aws/glue.go:397::handleGlueGetUserDefinedFunctions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteUserDefinedFunction` | ✓ `simulators/aws/glue.go:398::handleGlueDeleteUserDefinedFunction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateRegistry` | ✓ `simulators/aws/glue.go:399::handleGlueCreateRegistry` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetRegistry` | ✓ `simulators/aws/glue.go:400::handleGlueGetRegistry` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListRegistries` | ✓ `simulators/aws/glue.go:401::handleGlueListRegistries` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteRegistry` | ✓ `simulators/aws/glue.go:402::handleGlueDeleteRegistry` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateSchema` | ✓ `simulators/aws/glue.go:403::handleGlueCreateSchema` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetSchema` | ✓ `simulators/aws/glue.go:404::handleGlueGetSchema` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteSchema` | ✓ `simulators/aws/glue.go:405::handleGlueDeleteSchema` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetTableVersion` | ✓ `simulators/aws/glue.go:406::handleGlueGetTableVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetTableVersions` | ✓ `simulators/aws/glue.go:407::handleGlueGetTableVersions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteTableVersion` | ✓ `simulators/aws/glue.go:408::handleGlueDeleteTableVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchDeleteTableVersion` | ✓ `simulators/aws/glue.go:409::handleGlueBatchDeleteTableVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreatePartitionIndex` | ✓ `simulators/aws/glue.go:410::handleGlueCreatePartitionIndex` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeletePartitionIndex` | ✓ `simulators/aws/glue.go:411::handleGlueDeletePartitionIndex` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateColumnStatisticsForTable` | ✓ `simulators/aws/glue.go:412::handleGlueUpdateColumnStatisticsForTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetColumnStatisticsForTable` | ✓ `simulators/aws/glue.go:413::handleGlueGetColumnStatisticsForTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteColumnStatisticsForTable` | ✓ `simulators/aws/glue.go:414::handleGlueDeleteColumnStatisticsForTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateColumnStatisticsForPartition` | ✓ `simulators/aws/glue.go:415::handleGlueUpdateColumnStatisticsForPartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetColumnStatisticsForPartition` | ✓ `simulators/aws/glue.go:416::handleGlueGetColumnStatisticsForPartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteColumnStatisticsForPartition` | ✓ `simulators/aws/glue.go:417::handleGlueDeleteColumnStatisticsForPartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.PutResourcePolicy` | ✓ `simulators/aws/glue.go:418::handleGluePutResourcePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetResourcePolicy` | ✓ `simulators/aws/glue.go:419::handleGlueGetResourcePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteResourcePolicy` | ✓ `simulators/aws/glue.go:420::handleGlueDeleteResourcePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.PutDataCatalogEncryptionSettings` | ✓ `simulators/aws/glue.go:421::handleGluePutDataCatalogEncryptionSettings` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDataCatalogEncryptionSettings` | ✓ `simulators/aws/glue.go:422::handleGlueGetDataCatalogEncryptionSettings` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetCatalogImportStatus` | ✓ `simulators/aws/glue.go:423::handleGlueGetCatalogImportStatus` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ImportCatalogToGlue` | ✓ `simulators/aws/glue.go:424::handleGlueImportCatalogToGlue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.RegisterSchemaVersion` | ✓ `simulators/aws/glue.go:425::handleGlueRegisterSchemaVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetSchemaVersion` | ✓ `simulators/aws/glue.go:426::handleGlueGetSchemaVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListSchemaVersions` | ✓ `simulators/aws/glue.go:427::handleGlueListSchemaVersions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteSchemaVersions` | ✓ `simulators/aws/glue.go:428::handleGlueDeleteSchemaVersions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetSchemaByDefinition` | ✓ `simulators/aws/glue.go:429::handleGlueGetSchemaByDefinition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateCatalog` | ✓ `simulators/aws/glue_catalog_optimizer.go:109::handleGlueCreateCatalog` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetCatalog` | ✓ `simulators/aws/glue_catalog_optimizer.go:110::handleGlueGetCatalog` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetCatalogs` | ✓ `simulators/aws/glue_catalog_optimizer.go:111::handleGlueGetCatalogs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateCatalog` | ✓ `simulators/aws/glue_catalog_optimizer.go:112::handleGlueUpdateCatalog` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteCatalog` | ✓ `simulators/aws/glue_catalog_optimizer.go:113::handleGlueDeleteCatalog` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateTableOptimizer` | ✓ `simulators/aws/glue_catalog_optimizer.go:116::handleGlueCreateTableOptimizer` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetTableOptimizer` | ✓ `simulators/aws/glue_catalog_optimizer.go:117::handleGlueGetTableOptimizer` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetTableOptimizer` | ✓ `simulators/aws/glue_catalog_optimizer.go:118::handleGlueBatchGetTableOptimizer` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateTableOptimizer` | ✓ `simulators/aws/glue_catalog_optimizer.go:119::handleGlueUpdateTableOptimizer` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteTableOptimizer` | ✓ `simulators/aws/glue_catalog_optimizer.go:120::handleGlueDeleteTableOptimizer` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListTableOptimizerRuns` | ✓ `simulators/aws/glue_catalog_optimizer.go:121::handleGlueListTableOptimizerRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetCrawlers` | ✓ `simulators/aws/glue_catalog_optimizer.go:124::handleGlueBatchGetCrawlers` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetJobs` | ✓ `simulators/aws/glue_catalog_optimizer.go:125::handleGlueBatchGetJobs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetTriggers` | ✓ `simulators/aws/glue_catalog_optimizer.go:126::handleGlueBatchGetTriggers` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetWorkflows` | ✓ `simulators/aws/glue_catalog_optimizer.go:127::handleGlueBatchGetWorkflows` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetCustomEntityTypes` | ✓ `simulators/aws/glue_catalog_optimizer.go:128::handleGlueBatchGetCustomEntityTypes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchDeleteConnection` | ✓ `simulators/aws/glue_catalog_optimizer.go:129::handleGlueBatchDeleteConnection` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchUpdatePartition` | ✓ `simulators/aws/glue_catalog_optimizer.go:130::handleGlueBatchUpdatePartition` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateIntegration` | ✓ `simulators/aws/glue_catalog_optimizer.go:133::handleGlueCreateIntegration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DescribeIntegrations` | ✓ `simulators/aws/glue_catalog_optimizer.go:134::handleGlueDescribeIntegrations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ModifyIntegration` | ✓ `simulators/aws/glue_catalog_optimizer.go:135::handleGlueModifyIntegration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteIntegration` | ✓ `simulators/aws/glue_catalog_optimizer.go:136::handleGlueDeleteIntegration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DescribeInboundIntegrations` | ✓ `simulators/aws/glue_catalog_optimizer.go:137::handleGlueDescribeInboundIntegrations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateIntegrationResourceProperty` | ✓ `simulators/aws/glue_catalog_optimizer.go:140::handleGlueCreateIntegrationResourceProperty` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetIntegrationResourceProperty` | ✓ `simulators/aws/glue_catalog_optimizer.go:141::handleGlueGetIntegrationResourceProperty` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateIntegrationResourceProperty` | ✓ `simulators/aws/glue_catalog_optimizer.go:142::handleGlueUpdateIntegrationResourceProperty` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteIntegrationResourceProperty` | ✓ `simulators/aws/glue_catalog_optimizer.go:143::handleGlueDeleteIntegrationResourceProperty` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListIntegrationResourceProperties` | ✓ `simulators/aws/glue_catalog_optimizer.go:144::handleGlueListIntegrationResourceProperties` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateIntegrationTableProperties` | ✓ `simulators/aws/glue_catalog_optimizer.go:147::handleGlueCreateIntegrationTableProperties` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetIntegrationTableProperties` | ✓ `simulators/aws/glue_catalog_optimizer.go:148::handleGlueGetIntegrationTableProperties` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateIntegrationTableProperties` | ✓ `simulators/aws/glue_catalog_optimizer.go:149::handleGlueUpdateIntegrationTableProperties` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteIntegrationTableProperties` | ✓ `simulators/aws/glue_catalog_optimizer.go:150::handleGlueDeleteIntegrationTableProperties` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateCustomEntityType` | ✓ `simulators/aws/glue_entity_catalog2.go:83::handleGlueCreateCustomEntityType` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetCustomEntityType` | ✓ `simulators/aws/glue_entity_catalog2.go:84::handleGlueGetCustomEntityType` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListCustomEntityTypes` | ✓ `simulators/aws/glue_entity_catalog2.go:85::handleGlueListCustomEntityTypes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteCustomEntityType` | ✓ `simulators/aws/glue_entity_catalog2.go:86::handleGlueDeleteCustomEntityType` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateUsageProfile` | ✓ `simulators/aws/glue_entity_catalog2.go:88::handleGlueCreateUsageProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetUsageProfile` | ✓ `simulators/aws/glue_entity_catalog2.go:89::handleGlueGetUsageProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListUsageProfiles` | ✓ `simulators/aws/glue_entity_catalog2.go:90::handleGlueListUsageProfiles` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateUsageProfile` | ✓ `simulators/aws/glue_entity_catalog2.go:91::handleGlueUpdateUsageProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteUsageProfile` | ✓ `simulators/aws/glue_entity_catalog2.go:92::handleGlueDeleteUsageProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateGlueIdentityCenterConfiguration` | ✓ `simulators/aws/glue_entity_catalog2.go:94::handleGlueCreateIdentityCenter` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetGlueIdentityCenterConfiguration` | ✓ `simulators/aws/glue_entity_catalog2.go:95::handleGlueGetIdentityCenter` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateGlueIdentityCenterConfiguration` | ✓ `simulators/aws/glue_entity_catalog2.go:96::handleGlueUpdateIdentityCenter` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteGlueIdentityCenterConfiguration` | ✓ `simulators/aws/glue_entity_catalog2.go:97::handleGlueDeleteIdentityCenter` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.SearchTables` | ✓ `simulators/aws/glue_entity_catalog2.go:99::handleGlueSearchTables` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListSchemas` | ✓ `simulators/aws/glue_entity_catalog2.go:101::handleGlueListSchemas` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateSchema` | ✓ `simulators/aws/glue_entity_catalog2.go:102::handleGlueUpdateSchema` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateRegistry` | ✓ `simulators/aws/glue_entity_catalog2.go:103::handleGlueUpdateRegistry` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CheckSchemaVersionValidity` | ✓ `simulators/aws/glue_entity_catalog2.go:104::handleGlueCheckSchemaVersionValidity` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.PutSchemaVersionMetadata` | ✓ `simulators/aws/glue_entity_catalog2.go:105::handleGluePutSchemaVersionMetadata` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.QuerySchemaVersionMetadata` | ✓ `simulators/aws/glue_entity_catalog2.go:106::handleGlueQuerySchemaVersionMetadata` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.RemoveSchemaVersionMetadata` | ✓ `simulators/aws/glue_entity_catalog2.go:107::handleGlueRemoveSchemaVersionMetadata` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetSchemaVersionsDiff` | ✓ `simulators/aws/glue_entity_catalog2.go:108::handleGlueGetSchemaVersionsDiff` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateJobFromSourceControl` | ✓ `simulators/aws/glue_entity_catalog2.go:110::handleGlueUpdateJobFromSourceControl` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateSourceControlFromJob` | ✓ `simulators/aws/glue_entity_catalog2.go:111::handleGlueUpdateSourceControlFromJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateUserDefinedFunction` | ✓ `simulators/aws/glue_entity_catalog2.go:112::handleGlueUpdateUserDefinedFunction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetResourcePolicies` | ✓ `simulators/aws/glue_entity_catalog2.go:113::handleGlueGetResourcePolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetMapping` | ✓ `simulators/aws/glue_entity_catalog2.go:115::handleGlueGetMapping` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetPlan` | ✓ `simulators/aws/glue_entity_catalog2.go:116::handleGlueGetPlan` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDataflowGraph` | ✓ `simulators/aws/glue_entity_catalog2.go:117::handleGlueGetDataflowGraph` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDashboardUrl` | ✓ `simulators/aws/glue_entity_catalog2.go:118::handleGlueGetDashboardUrl` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateScript` | ✓ `simulators/aws/glue_entity_catalog2.go:119::handleGlueCreateScript` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateMLTransform` | ✓ `simulators/aws/glue_ml_dataquality.go:206::handleGlueCreateMLTransform` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetMLTransform` | ✓ `simulators/aws/glue_ml_dataquality.go:207::handleGlueGetMLTransform` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetMLTransforms` | ✓ `simulators/aws/glue_ml_dataquality.go:208::handleGlueGetMLTransforms` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListMLTransforms` | ✓ `simulators/aws/glue_ml_dataquality.go:209::handleGlueListMLTransforms` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateMLTransform` | ✓ `simulators/aws/glue_ml_dataquality.go:210::handleGlueUpdateMLTransform` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteMLTransform` | ✓ `simulators/aws/glue_ml_dataquality.go:211::handleGlueDeleteMLTransform` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateDataQualityRuleset` | ✓ `simulators/aws/glue_ml_dataquality.go:214::handleGlueCreateDataQualityRuleset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDataQualityRuleset` | ✓ `simulators/aws/glue_ml_dataquality.go:215::handleGlueGetDataQualityRuleset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListDataQualityRulesets` | ✓ `simulators/aws/glue_ml_dataquality.go:216::handleGlueListDataQualityRulesets` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateDataQualityRuleset` | ✓ `simulators/aws/glue_ml_dataquality.go:217::handleGlueUpdateDataQualityRuleset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteDataQualityRuleset` | ✓ `simulators/aws/glue_ml_dataquality.go:218::handleGlueDeleteDataQualityRuleset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartDataQualityRulesetEvaluationRun` | ✓ `simulators/aws/glue_ml_dataquality.go:221::handleGlueStartDataQualityRulesetEvaluationRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDataQualityRulesetEvaluationRun` | ✓ `simulators/aws/glue_ml_dataquality.go:222::handleGlueGetDataQualityRulesetEvaluationRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CancelDataQualityRulesetEvaluationRun` | ✓ `simulators/aws/glue_ml_dataquality.go:223::handleGlueCancelDataQualityRulesetEvaluationRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListDataQualityRulesetEvaluationRuns` | ✓ `simulators/aws/glue_ml_dataquality.go:224::handleGlueListDataQualityRulesetEvaluationRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartDataQualityRuleRecommendationRun` | ✓ `simulators/aws/glue_ml_dataquality.go:227::handleGlueStartDataQualityRuleRecommendationRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDataQualityRuleRecommendationRun` | ✓ `simulators/aws/glue_ml_dataquality.go:228::handleGlueGetDataQualityRuleRecommendationRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CancelDataQualityRuleRecommendationRun` | ✓ `simulators/aws/glue_ml_dataquality.go:229::handleGlueCancelDataQualityRuleRecommendationRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListDataQualityRuleRecommendationRuns` | ✓ `simulators/aws/glue_ml_dataquality.go:230::handleGlueListDataQualityRuleRecommendationRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDataQualityResult` | ✓ `simulators/aws/glue_ml_dataquality.go:233::handleGlueGetDataQualityResult` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetDataQualityResult` | ✓ `simulators/aws/glue_ml_dataquality.go:234::handleGlueBatchGetDataQualityResult` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListDataQualityResults` | ✓ `simulators/aws/glue_ml_dataquality.go:235::handleGlueListDataQualityResults` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListDataQualityStatistics` | ✓ `simulators/aws/glue_ml_dataquality.go:236::handleGlueListDataQualityStatistics` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDataQualityModel` | ✓ `simulators/aws/glue_ml_dataquality.go:237::handleGlueGetDataQualityModel` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDataQualityModelResult` | ✓ `simulators/aws/glue_ml_dataquality.go:238::handleGlueGetDataQualityModelResult` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateColumnStatisticsTaskSettings` | ✓ `simulators/aws/glue_ml_dataquality.go:241::handleGlueCreateColumnStatisticsTaskSettings` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetColumnStatisticsTaskSettings` | ✓ `simulators/aws/glue_ml_dataquality.go:242::handleGlueGetColumnStatisticsTaskSettings` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateColumnStatisticsTaskSettings` | ✓ `simulators/aws/glue_ml_dataquality.go:243::handleGlueUpdateColumnStatisticsTaskSettings` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteColumnStatisticsTaskSettings` | ✓ `simulators/aws/glue_ml_dataquality.go:244::handleGlueDeleteColumnStatisticsTaskSettings` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartColumnStatisticsTaskRun` | ✓ `simulators/aws/glue_ml_dataquality.go:247::handleGlueStartColumnStatisticsTaskRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetColumnStatisticsTaskRun` | ✓ `simulators/aws/glue_ml_dataquality.go:248::handleGlueGetColumnStatisticsTaskRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetColumnStatisticsTaskRuns` | ✓ `simulators/aws/glue_ml_dataquality.go:249::handleGlueGetColumnStatisticsTaskRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListColumnStatisticsTaskRuns` | ✓ `simulators/aws/glue_ml_dataquality.go:250::handleGlueListColumnStatisticsTaskRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StopColumnStatisticsTaskRun` | ✓ `simulators/aws/glue_ml_dataquality.go:251::handleGlueStopColumnStatisticsTaskRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartMLEvaluationTaskRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:99::glueStartMLTaskRunHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartMLLabelingSetGenerationTaskRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:100::glueStartMLTaskRunHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartExportLabelsTaskRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:101::glueStartMLTaskRunHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartImportLabelsTaskRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:102::glueStartMLTaskRunHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetMLTaskRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:103::handleGlueGetMLTaskRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetMLTaskRuns` | ✓ `simulators/aws/glue_mltasks_schedules.go:104::handleGlueGetMLTaskRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CancelMLTaskRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:105::handleGlueCancelMLTaskRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartColumnStatisticsTaskRunSchedule` | ✓ `simulators/aws/glue_mltasks_schedules.go:107::handleGlueStartColumnStatisticsTaskRunSchedule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StopColumnStatisticsTaskRunSchedule` | ✓ `simulators/aws/glue_mltasks_schedules.go:108::handleGlueStopColumnStatisticsTaskRunSchedule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartCrawlerSchedule` | ✓ `simulators/aws/glue_mltasks_schedules.go:109::handleGlueStartCrawlerSchedule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StopCrawlerSchedule` | ✓ `simulators/aws/glue_mltasks_schedules.go:110::handleGlueStopCrawlerSchedule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateCrawlerSchedule` | ✓ `simulators/aws/glue_mltasks_schedules.go:111::handleGlueUpdateCrawlerSchedule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetCrawlerMetrics` | ✓ `simulators/aws/glue_mltasks_schedules.go:112::handleGlueGetCrawlerMetrics` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListCrawls` | ✓ `simulators/aws/glue_mltasks_schedules.go:113::handleGlueListCrawls` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartMaterializedViewRefreshTaskRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:115::handleGlueStartMaterializedViewRefreshTaskRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetMaterializedViewRefreshTaskRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:116::handleGlueGetMaterializedViewRefreshTaskRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StopMaterializedViewRefreshTaskRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:117::handleGlueStopMaterializedViewRefreshTaskRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListMaterializedViewRefreshTaskRuns` | ✓ `simulators/aws/glue_mltasks_schedules.go:118::handleGlueListMaterializedViewRefreshTaskRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetWorkflowRuns` | ✓ `simulators/aws/glue_mltasks_schedules.go:120::handleGlueGetWorkflowRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetWorkflowRunProperties` | ✓ `simulators/aws/glue_mltasks_schedules.go:121::handleGlueGetWorkflowRunProperties` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.PutWorkflowRunProperties` | ✓ `simulators/aws/glue_mltasks_schedules.go:122::handleGluePutWorkflowRunProperties` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StopWorkflowRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:123::handleGlueStopWorkflowRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ResumeWorkflowRun` | ✓ `simulators/aws/glue_mltasks_schedules.go:124::handleGlueResumeWorkflowRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateWorkflow` | ✓ `simulators/aws/glue_mltasks_schedules.go:125::handleGlueUpdateWorkflow` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListTriggers` | ✓ `simulators/aws/glue_mltasks_schedules.go:127::handleGlueListTriggers` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateTrigger` | ✓ `simulators/aws/glue_mltasks_schedules.go:128::handleGlueUpdateTrigger` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetJobBookmark` | ✓ `simulators/aws/glue_mltasks_schedules.go:130::handleGlueGetJobBookmark` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ResetJobBookmark` | ✓ `simulators/aws/glue_mltasks_schedules.go:131::handleGlueResetJobBookmark` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.RegisterConnectionType` | ✓ `simulators/aws/glue_mltasks_schedules.go:133::handleGlueRegisterConnectionType` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DescribeConnectionType` | ✓ `simulators/aws/glue_mltasks_schedules.go:134::handleGlueDescribeConnectionType` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListConnectionTypes` | ✓ `simulators/aws/glue_mltasks_schedules.go:135::handleGlueListConnectionTypes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteConnectionType` | ✓ `simulators/aws/glue_mltasks_schedules.go:136::handleGlueDeleteConnectionType` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.TestConnection` | ✓ `simulators/aws/glue_mltasks_schedules.go:137::handleGlueTestConnection` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateSession` | ✓ `simulators/aws/glue_sessions_blueprints.go:172::handleGlueCreateSession` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetSession` | ✓ `simulators/aws/glue_sessions_blueprints.go:173::handleGlueGetSession` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListSessions` | ✓ `simulators/aws/glue_sessions_blueprints.go:174::handleGlueListSessions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StopSession` | ✓ `simulators/aws/glue_sessions_blueprints.go:175::handleGlueStopSession` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteSession` | ✓ `simulators/aws/glue_sessions_blueprints.go:176::handleGlueDeleteSession` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetSessionEndpoint` | ✓ `simulators/aws/glue_sessions_blueprints.go:177::handleGlueGetSessionEndpoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.RunStatement` | ✓ `simulators/aws/glue_sessions_blueprints.go:180::handleGlueRunStatement` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetStatement` | ✓ `simulators/aws/glue_sessions_blueprints.go:181::handleGlueGetStatement` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListStatements` | ✓ `simulators/aws/glue_sessions_blueprints.go:182::handleGlueListStatements` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CancelStatement` | ✓ `simulators/aws/glue_sessions_blueprints.go:183::handleGlueCancelStatement` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateDevEndpoint` | ✓ `simulators/aws/glue_sessions_blueprints.go:186::handleGlueCreateDevEndpoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDevEndpoint` | ✓ `simulators/aws/glue_sessions_blueprints.go:187::handleGlueGetDevEndpoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetDevEndpoints` | ✓ `simulators/aws/glue_sessions_blueprints.go:188::handleGlueGetDevEndpoints` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetDevEndpoints` | ✓ `simulators/aws/glue_sessions_blueprints.go:189::handleGlueBatchGetDevEndpoints` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListDevEndpoints` | ✓ `simulators/aws/glue_sessions_blueprints.go:190::handleGlueListDevEndpoints` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateDevEndpoint` | ✓ `simulators/aws/glue_sessions_blueprints.go:191::handleGlueUpdateDevEndpoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteDevEndpoint` | ✓ `simulators/aws/glue_sessions_blueprints.go:192::handleGlueDeleteDevEndpoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.CreateBlueprint` | ✓ `simulators/aws/glue_sessions_blueprints.go:195::handleGlueCreateBlueprint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetBlueprint` | ✓ `simulators/aws/glue_sessions_blueprints.go:196::handleGlueGetBlueprint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchGetBlueprints` | ✓ `simulators/aws/glue_sessions_blueprints.go:197::handleGlueBatchGetBlueprints` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListBlueprints` | ✓ `simulators/aws/glue_sessions_blueprints.go:198::handleGlueListBlueprints` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.UpdateBlueprint` | ✓ `simulators/aws/glue_sessions_blueprints.go:199::handleGlueUpdateBlueprint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.DeleteBlueprint` | ✓ `simulators/aws/glue_sessions_blueprints.go:200::handleGlueDeleteBlueprint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.StartBlueprintRun` | ✓ `simulators/aws/glue_sessions_blueprints.go:201::handleGlueStartBlueprintRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetBlueprintRun` | ✓ `simulators/aws/glue_sessions_blueprints.go:202::handleGlueGetBlueprintRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetBlueprintRuns` | ✓ `simulators/aws/glue_sessions_blueprints.go:203::handleGlueGetBlueprintRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetUnfilteredTableMetadata` | ✓ `simulators/aws/glue_unfiltered_dq.go:52::handleGlueGetUnfilteredTableMetadata` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetUnfilteredPartitionMetadata` | ✓ `simulators/aws/glue_unfiltered_dq.go:53::handleGlueGetUnfilteredPartitionMetadata` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.GetUnfilteredPartitionsMetadata` | ✓ `simulators/aws/glue_unfiltered_dq.go:54::handleGlueGetUnfilteredPartitionsMetadata` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.BatchPutDataQualityStatisticAnnotation` | ✓ `simulators/aws/glue_unfiltered_dq.go:55::handleGlueBatchPutDataQualityStatisticAnnotation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.PutDataQualityProfileAnnotation` | ✓ `simulators/aws/glue_unfiltered_dq.go:56::handleGluePutDataQualityProfileAnnotation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AWSGlue.ListDataQualityStatisticAnnotations` | ✓ `simulators/aws/glue_unfiltered_dq.go:57::handleGlueListDataQualityStatisticAnnotations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
-## Data Catalog — Tables
+## Coverage status
 
-| Operation | X-Amz-Target | SDK test | CLI test | TF resource | notes |
-|---|---|---|---|---|---|
-| CreateTable | `AWSGlue.CreateTable` | ✓ `TestGlue_TableCRUD_SDK` | ✓ `TestGlue_TableCRUD_CLI` | ✓ `aws_glue_catalog_table` | Validates database exists. |
-| GetTable | `AWSGlue.GetTable` | ✓ | ✓ | ✓ | Returns `Table` object. |
-| GetTables | `AWSGlue.GetTables` | ✓ | ✓ | ✓ | Filtered by `DatabaseName`. |
-| DeleteTable | `AWSGlue.DeleteTable` | ✓ | ✓ | ✓ | |
+- Row-level SDK/Terraform cells summarize the maintained coverage matrix in `specs/SIM_TEST_COVERAGE_MATRIX.md`; detailed client files and client-family `n/a` decisions live there.
+- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
-## Jobs
-
-| Operation | X-Amz-Target | SDK test | CLI test | TF resource | notes |
-|---|---|---|---|---|---|
-| CreateJob | `AWSGlue.CreateJob` | ✓ `TestGlue_JobCRUD_SDK` | ✓ `TestGlue_JobCRUD_CLI` | ✓ `aws_glue_job` | |
-| GetJob | `AWSGlue.GetJob` | ✓ | ✓ | ✓ | |
-| GetJobs | `AWSGlue.GetJobs` | ✓ | ✓ | ✓ | Paginated via `NextToken`. |
-| DeleteJob | `AWSGlue.DeleteJob` | ✓ | ✓ | ✓ | |
-| StartJobRun | `AWSGlue.StartJobRun` | ✓ | ✓ | — | Executes Python shell scripts stored at the job's S3 script location. |
-| GetJobRun | `AWSGlue.GetJobRun` | ✓ | ✓ | — | |
-| GetJobRuns | `AWSGlue.GetJobRuns` | ✓ | ✗ | — | All runs for a job. |
-
-## Tags
-
-| Operation | X-Amz-Target | SDK test | CLI test | TF resource | notes |
-|---|---|---|---|---|---|
-| TagResource | `AWSGlue.TagResource` | ✓ `TestGlue_Tags_SDK` | ✗ | ✓ | |
-| UntagResource | `AWSGlue.UntagResource` | ✓ | ✗ | ✓ | |
-| GetTags | `AWSGlue.GetTags` | ✓ | ✗ | ✓ | |
+<!-- HAND-WRITTEN BEGIN -->
+<!-- HAND-WRITTEN END -->

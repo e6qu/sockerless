@@ -13,19 +13,25 @@ Surface registered in `simulators/aws/sqs.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action AmazonSQS.CreateQueue` | ✓ `simulators/aws/sqs.go:85::handleSQSCreateQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.DeleteQueue` | ✓ `simulators/aws/sqs.go:86::handleSQSDeleteQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.GetQueueUrl` | ✓ `simulators/aws/sqs.go:87::handleSQSGetQueueURL` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.ListQueues` | ✓ `simulators/aws/sqs.go:88::handleSQSListQueues` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.GetQueueAttributes` | ✓ `simulators/aws/sqs.go:89::handleSQSGetQueueAttributes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.SetQueueAttributes` | ✓ `simulators/aws/sqs.go:90::handleSQSSetQueueAttributes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.SendMessage` | ✓ `simulators/aws/sqs.go:91::handleSQSSendMessage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.ReceiveMessage` | ✓ `simulators/aws/sqs.go:92::handleSQSReceiveMessage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.DeleteMessage` | ✓ `simulators/aws/sqs.go:93::handleSQSDeleteMessage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.TagQueue` | ✓ `simulators/aws/sqs.go:94::handleSQSTagQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.UntagQueue` | ✓ `simulators/aws/sqs.go:95::handleSQSUntagQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.ListQueueTags` | ✓ `simulators/aws/sqs.go:96::handleSQSListQueueTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AmazonSQS.PurgeQueue` | ✓ `simulators/aws/sqs.go:97::handleSQSPurgeQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.CreateQueue` | ✓ `simulators/aws/sqs.go:307::handleSQSCreateQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.DeleteQueue` | ✓ `simulators/aws/sqs.go:308::handleSQSDeleteQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.GetQueueUrl` | ✓ `simulators/aws/sqs.go:309::handleSQSGetQueueURL` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.ListQueues` | ✓ `simulators/aws/sqs.go:310::handleSQSListQueues` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.GetQueueAttributes` | ✓ `simulators/aws/sqs.go:311::handleSQSGetQueueAttributes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.SetQueueAttributes` | ✓ `simulators/aws/sqs.go:312::handleSQSSetQueueAttributes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.SendMessage` | ✓ `simulators/aws/sqs.go:313::handleSQSSendMessage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.SendMessageBatch` | ✓ `simulators/aws/sqs.go:314::handleSQSSendMessageBatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.ReceiveMessage` | ✓ `simulators/aws/sqs.go:315::handleSQSReceiveMessage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.DeleteMessage` | ✓ `simulators/aws/sqs.go:316::handleSQSDeleteMessage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.DeleteMessageBatch` | ✓ `simulators/aws/sqs.go:317::handleSQSDeleteMessageBatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.ChangeMessageVisibility` | ✓ `simulators/aws/sqs.go:318::handleSQSChangeMessageVisibility` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.ChangeMessageVisibilityBatch` | ✓ `simulators/aws/sqs.go:319::handleSQSChangeMessageVisibilityBatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.AddPermission` | ✓ `simulators/aws/sqs.go:320::handleSQSAddPermission` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.RemovePermission` | ✓ `simulators/aws/sqs.go:321::handleSQSRemovePermission` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.TagQueue` | ✓ `simulators/aws/sqs.go:322::handleSQSTagQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.UntagQueue` | ✓ `simulators/aws/sqs.go:323::handleSQSUntagQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.ListQueueTags` | ✓ `simulators/aws/sqs.go:324::handleSQSListQueueTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonSQS.PurgeQueue` | ✓ `simulators/aws/sqs.go:325::handleSQSPurgeQueue` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

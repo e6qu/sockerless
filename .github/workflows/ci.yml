@@ -92,6 +92,8 @@ jobs:
         run: zsh scripts/check-latest-deps.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check Google Cloud API specification freshness
+        run: bash scripts/check-spec-freshness.sh gcp
       # README badges are refreshed by the update-readme-badges pre-push hook.
       # Re-run it here so a push that skipped the hook (e.g. --no-verify) can't
       # land stale badges — the line counts are computed from committed files
@@ -544,7 +546,7 @@ jobs:
       matrix:
         include:
           - suite: edge-routing
-            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch)'
+            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|Budgets)'
             timeout: 1200s
             timeout_minutes: 15
           - suite: edge-delivery
@@ -825,6 +827,9 @@ jobs:
         timeout-minutes: 5
       - name: Check simulator SDK/CLI/Terraform coverage matrix
         run: bash scripts/check-simulator-coverage-matrix.sh
+        timeout-minutes: 5
+      - name: Check generated simulator surface tables
+        run: bash scripts/check-surface-tables-generated.sh
         timeout-minutes: 5
       - name: Required status checks stay emittable
         run: bash scripts/check-required-status-checks.sh

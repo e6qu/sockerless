@@ -314,11 +314,24 @@ func TestFilesDataPlaneServedOperations(t *testing.T) {
 	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", "/"+share+"?restype=share", nil, nil),
 		http.StatusOK, "GetShareProperties")
 
+	accessPolicy := []byte(`<SignedIdentifiers><SignedIdentifier><Id>served-policy</Id><AccessPolicy>` +
+		`<Start>2026-07-28T10:00:00Z</Start><Expiry>2026-07-29T10:00:00Z</Expiry>` +
+		`<Permission>rwdl</Permission></AccessPolicy></SignedIdentifier></SignedIdentifiers>`)
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
+		"/"+share+"?restype=share&comp=acl", accessPolicy, nil), http.StatusOK, "SetShareACL")
+	rec := storagePlaneReq(t, srv, http.MethodGet, account, "file",
+		"/"+share+"?restype=share&comp=acl", nil, nil)
+	assertStatus(t, rec, http.StatusOK, "GetShareACL")
+	if !strings.Contains(rec.Body.String(), "<Id>served-policy</Id>") ||
+		!strings.Contains(rec.Body.String(), "<Permission>rwdl</Permission>") {
+		t.Fatalf("GetShareACL body = %s, want stored access policy", rec.Body.String())
+	}
+
 	// Create File allocates the declared size; Upload Range fills it.
 	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/"+file, nil,
 		map[string]string{"x-ms-type": "file", "x-ms-content-length": fmt.Sprintf("%d", len(payload))}),
 		http.StatusCreated, "CreateFile")
-	rec := storagePlaneReq(t, srv, http.MethodGet, account, "file", "/"+share+"/"+file, nil, nil)
+	rec = storagePlaneReq(t, srv, http.MethodGet, account, "file", "/"+share+"/"+file, nil, nil)
 	assertStatus(t, rec, http.StatusOK, "DownloadFile (allocated)")
 	if got := rec.Body.Bytes(); len(got) != len(payload) || strings.Trim(string(got), "\x00") != "" {
 		t.Fatalf("freshly created file = %q, want %d zero bytes", got, len(payload))
@@ -443,7 +456,7 @@ func TestFilesDataPlaneUnservedCompDeclaresGap(t *testing.T) {
 
 	// Share level: an unserved comp must not create, read back or delete the
 	// share.
-	for _, comp := range []string{"acl", "metadata", "properties", "snapshot", "lease", "filepermission", "undelete"} {
+	for _, comp := range []string{"metadata", "properties", "snapshot", "lease", "filepermission", "undelete"} {
 		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
 			"/never-a-share?restype=share&comp="+comp, nil, nil), "PUT share ?comp="+comp)
 		assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", "/never-a-share?restype=share", nil, nil),

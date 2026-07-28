@@ -38,6 +38,7 @@ import (
 //   - Microsoft.DocumentDB/databaseAccounts + sqlDatabases + containers
 //   - Microsoft.OperationalInsights/workspaces
 //   - Microsoft.Insights/components
+//   - Microsoft.DBforPostgreSQL/flexibleServers + databases + firewallRules
 //   - Microsoft.App/managedEnvironments + containerApps + jobs
 //   - Microsoft.Web/serverfarms + sites (Function App)
 //   - Microsoft.Web/sites/networkConfig/virtualNetwork (App Service regional
@@ -106,6 +107,16 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	azrmRG := outputs.must(t, "azrm_resource_group_id")
 	require.True(t, strings.HasSuffix(azrmRG, "/resourceGroups/tf-azrm-rg"),
 		"azurerm RG id must end with /resourceGroups/{name}; got %s", azrmRG)
+
+	azrmPG := outputs.must(t, "azrm_postgresql_flexible_server_id")
+	require.Contains(t, azrmPG, "/providers/Microsoft.DBforPostgreSQL/flexibleServers/tf-azrm-pg",
+		"Azure Database for PostgreSQL flexible server id must include canonical ARM path; got %s", azrmPG)
+	azrmPGDatabase := outputs.must(t, "azrm_postgresql_flexible_server_database_id")
+	require.Contains(t, azrmPGDatabase, "/flexibleServers/tf-azrm-pg/databases/tfapp",
+		"Azure Database for PostgreSQL database id must include canonical ARM path; got %s", azrmPGDatabase)
+	azrmPGFirewallRule := outputs.must(t, "azrm_postgresql_flexible_server_firewall_rule_id")
+	require.Contains(t, azrmPGFirewallRule, "/flexibleServers/tf-azrm-pg/firewallRules/allow-ci",
+		"Azure Database for PostgreSQL firewall rule id must include canonical ARM path; got %s", azrmPGFirewallRule)
 
 	azrmACR := outputs.must(t, "azrm_acr_id")
 	require.Contains(t, azrmACR, "/providers/Microsoft.ContainerRegistry/registries/tfazrmacr",

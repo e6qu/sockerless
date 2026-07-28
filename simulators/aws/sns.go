@@ -353,6 +353,14 @@ func handleSNSSubscribe(w http.ResponseWriter, r *http.Request) {
 	if !sub.Confirmed && (strings.EqualFold(protocol, "http") || strings.EqualFold(protocol, "https")) {
 		go snsDeliverHTTPConfirmation(sub)
 	}
+	if !sub.Confirmed && (strings.EqualFold(protocol, "email") || strings.EqualFold(protocol, "email-json")) {
+		if _, err := snsEmailDomain(endpoint); err != nil {
+			snsSubscriptions.Delete(sub.ARN)
+			snsErrorXML(w, "InvalidParameter", "Invalid parameter: Endpoint", http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
+		go snsDeliverEmailConfirmation(sub)
+	}
 	returnedARN := sub.ARN
 	if !sub.Confirmed && !snsReturnSubscriptionARN(r) {
 		returnedARN = "pending confirmation"
@@ -644,6 +652,8 @@ func snsFanout(topicARN, msgID, subject, message string, attributes map[string]S
 			snsDeliverToLambda(sub.Endpoint, topicARN, msgID, subject, message, attributes, src)
 		case "http", "https":
 			go snsDeliverHTTPNotification(sub, msgID, subject, message, attributes)
+		case "email", "email-json":
+			go snsDeliverEmailNotification(sub, msgID, subject, message, attributes)
 		default:
 			cwEvalLogger.Info().Str("topicARN", topicARN).Str("msgID", msgID).Str("protocol", sub.Protocol).Str("endpoint", sub.Endpoint).Msg("SNS fanout skipping unsupported subscription protocol")
 		}

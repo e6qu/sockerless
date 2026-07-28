@@ -9,15 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sockerless/simulator-testutil/githttp"
 	"github.com/stretchr/testify/require"
 )
 
-// amplifyWaitJobStatus polls get-job until the job reaches the wanted
-// status (the sim drives jobs through PENDING → RUNNING → SUCCEED on a
-// short synthetic timer).
+// amplifyWaitJobStatus polls get-job while the real build or deployment runs.
 func amplifyWaitJobStatus(t *testing.T, appID, branch, jobID, want string) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		out := runCLI(t, awsCLI("amplify", "get-job",
 			"--app-id", appID,
@@ -35,6 +34,9 @@ func amplifyWaitJobStatus(t *testing.T, appID, branch, jobID, want string) {
 		if result.Job.Summary.Status == want {
 			return
 		}
+		if result.Job.Summary.Status == "FAILED" || result.Job.Summary.Status == "CANCELLED" {
+			t.Fatalf("job %s reached terminal status %s while waiting for %s: %s", jobID, result.Job.Summary.Status, want, out)
+		}
 		if time.Now().After(deadline) {
 			t.Fatalf("job %s never reached %s (last status %s)", jobID, want, result.Job.Summary.Status)
 		}
@@ -42,12 +44,34 @@ func amplifyWaitJobStatus(t *testing.T, appID, branch, jobID, want string) {
 	}
 }
 
+func amplifyCLIServeGitRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	return githttp.Serve(t, "main", files)
+}
+
 func TestAmplify_App_Lifecycle(t *testing.T) {
 	name := "cli-app-" + time.Now().Format("150405.000000")
+	repository := amplifyCLIServeGitRepo(t, map[string]string{
+		"index.html": "<html>CLI real build</html>",
+		"amplify.yml": `version: 1
+frontend:
+  phases:
+    build:
+      commands:
+        - sleep 2
+        - mkdir -p dist
+        - cp index.html dist/index.html
+  artifacts:
+    baseDirectory: dist
+    files:
+      - '**/*'
+`,
+	})
 	out := runCLI(t, awsCLI("amplify", "create-app",
 		"--name", name,
 		"--description", "cli test",
 		"--platform", "WEB",
+		"--repository", repository,
 		"--output", "json",
 	))
 	var createResult struct {
@@ -92,8 +116,8 @@ func TestAmplify_App_Lifecycle(t *testing.T) {
 	require.NotEmpty(t, whResult.Webhook.WebhookUrl)
 	require.Equal(t, appID, whResult.Webhook.AppId)
 
-	// Job — settles through the synthetic PENDING → RUNNING → SUCCEED
-	// pipeline.
+	// Job — clones the repository, reads its checked-in amplify.yml, executes
+	// the build, and publishes the resulting zip.
 	jobOut := runCLI(t, awsCLI("amplify", "start-job",
 		"--app-id", appID, "--branch-name", "main",
 		"--job-type", "RELEASE",

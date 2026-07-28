@@ -1,6 +1,7 @@
 package azure_cli_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,4 +117,35 @@ func TestFilesShareDeleteRemovesTheMountedContentsCLI(t *testing.T) {
 	runCLI(t, azStorageFile("share", "delete", "--name", share))
 	_, err := os.Stat(shareDir)
 	assert.True(t, os.IsNotExist(err), "the share directory must be gone after az storage share delete: %v", err)
+}
+
+func TestFilesShareStoredAccessPolicyCLI(t *testing.T) {
+	const (
+		share  = "cli-policy-share"
+		policy = "cli-policy"
+	)
+	runCLI(t, azStorageFile("share", "create", "--name", share))
+	t.Cleanup(func() {
+		_ = azStorageFile("share", "delete", "--name", share).Run()
+	})
+
+	runCLI(t, azStorageFile("share", "policy", "create",
+		"--share-name", share,
+		"--name", policy,
+		"--permissions", "rwdl",
+		"--start", "2026-07-28T10:00:00Z",
+		"--expiry", "2026-07-29T10:00:00Z"))
+
+	out := runCLI(t, azStorageFile("share", "policy", "show",
+		"--share-name", share,
+		"--name", policy))
+	var stored struct {
+		Permission string `json:"permission"`
+		Start      string `json:"start"`
+		Expiry     string `json:"expiry"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &stored))
+	assert.Equal(t, "rwdl", stored.Permission, out)
+	assert.Equal(t, "2026-07-28T10:00:00Z+00:00", stored.Start, out)
+	assert.Equal(t, "2026-07-29T10:00:00Z+00:00", stored.Expiry, out)
 }
