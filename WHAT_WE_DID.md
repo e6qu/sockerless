@@ -2841,6 +2841,22 @@ representations, the official Azure SDK round-tripped the plural member, and
 network namespaces plus source NAT resolved their IPv4 CIDR from either
 representation.
 
+The same external apply then reached AzureRM 5's Container Apps environment
+cross-field validation. A configuration that linked
+`log_analytics_workspace_id` without selecting a logs destination no longer
+meant Log Analytics implicitly. The production Azure Container Apps module and
+the production-shaped simulator stack now set `logs_destination` to
+`log-analytics`, matching the provider's public resource contract; both
+configurations validated with the real provider.
+
+Repository-wide provider validation also reached the AWS Lambda module's
+Step Functions live-differential role and found four IAM policy ARNs using an
+undeclared `aws_region` variable. The policy now used the module's declared
+`region` input for AWS Lambda, Step Functions, and EventBridge resources, and
+all six production Terraform modules validated with their real providers.
+The same complete-tree pass restored canonical HCL alignment in the Amazon ECS
+runner task policy.
+
 The full frontend fan-out also exposed a timing-sensitive Microsoft Azure
 portal defect. A failed resource DELETE rendered Azure Resource Manager's
 error, but a concurrent Fluent dismiss event could detach the confirmation

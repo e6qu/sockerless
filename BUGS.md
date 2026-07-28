@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2728 filed - 2728 fixed - 6 open - 16 false positives.**
+**2731 filed - 2731 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2731~~ | P3 | Amazon ECS Terraform module | committed runner policy formatting drifted from canonical HCL | Terraform's recursive formatter restored canonical alignment in the runner task's `iam:PassRole` statement, and the complete Terraform tree passed the recursive format gate. |
+| ~~2730~~ | P1 | AWS Lambda Terraform module | Step Functions conformance IAM policy referenced an undeclared region variable | The live-differential execution role now constructed AWS Lambda, Step Functions, and EventBridge ARNs from the module's declared `region` input, and every production Terraform module validated with its real provider. |
+| ~~2729~~ | P1 | Azure Container Apps Terraform | AzureRM 5 rejected a linked Log Analytics workspace without an explicit logs destination | The production Azure Container Apps module and the production-shaped external stack now selected the real `log-analytics` destination whenever they supplied `log_analytics_workspace_id`; both configurations validated with AzureRM 5, and the external apply proceeded through the provider's cross-field contract. |
 | ~~2728~~ | P1 | Microsoft Azure simulator console | failed resource deletion could dismiss its own confirmation dialog | The shared Fluent delete confirmation now rejected dismiss events while an Azure Resource Manager mutation was pending, restored the surface when the request failed, and cleared the prior mutation error only when the operator opened or deliberately closed the dialog; the complete 131-test Azure portal suite retained the real provider error in an attached, accessible dialog. |
 | ~~2727~~ | P1 | Microsoft Azure simulator networking | HashiCorp AzureRM 5 sent subnet `addressPrefixes` that the data plane discarded | Microsoft.Network subnet resources now persisted and returned both the singular and plural public API members, and the real network-namespace and source-NAT fabric resolved the IPv4 CIDR from either representation; the official Azure SDK round-tripped `AddressPrefixes`, and the production-shaped AzureRM 5 stack created its real subnets instead of retrying an empty CIDR. |
 | ~~2726~~ | P1 | Azure Terraform CI | unbounded third-party package bootstrap consumed the integration-test budget | The Azure Terraform job now installed Ubuntu's signed Caddy package through the same retry- and timeout-bounded APT path as its other real-execution tools, removing the unbounded Cloudsmith key and repository downloads that could consume the entire job before the official provider ran. |

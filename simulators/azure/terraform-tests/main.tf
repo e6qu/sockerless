@@ -451,6 +451,7 @@ resource "azurerm_container_app_environment" "az_cae" {
   name                       = "tf-azrm-cae"
   resource_group_name        = azurerm_resource_group.az_rg.name
   location                   = azurerm_resource_group.az_rg.location
+  logs_destination           = "log-analytics"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.az_law.id
 }
 

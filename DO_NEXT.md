@@ -68,8 +68,13 @@ The Azure Terraform job installed Ubuntu's signed Caddy package through its
 retry- and timeout-bounded APT path, so a third-party repository bootstrap
 could no longer consume the provider test's execution budget. Microsoft.Network
 subnets accepted AzureRM 5's plural `addressPrefixes` request and used it for
-the real network fabric. Failed portal deletions kept their provider error
-inside the open Fluent confirmation surface instead of racing with dismissal.
+the real network fabric. Azure Container Apps environments that linked a Log
+Analytics workspace explicitly selected the provider-required `log-analytics`
+destination. Failed portal deletions kept their provider error inside the open
+Fluent confirmation surface instead of racing with dismissal. The AWS Lambda
+module's Step Functions differential role built its policy ARNs from the
+module's declared `region` input, and all six production modules validated.
+The complete Terraform tree also retained canonical HCL formatting.
 
 The publication repair preserved current public contracts across the failing
 client surfaces. Amazon SQS redrive used the normal enqueue path and therefore

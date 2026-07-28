@@ -115,8 +115,8 @@ data "aws_iam_policy_document" "runner_task" {
   # this, RegisterTaskDefinition with roleArn / executionRoleArn
   # rejects the request.
   statement {
-    sid    = "PassRoleForSubTasks"
-    effect = "Allow"
+    sid     = "PassRoleForSubTasks"
+    effect  = "Allow"
     actions = ["iam:PassRole"]
     resources = [
       aws_iam_role.execution.arn,

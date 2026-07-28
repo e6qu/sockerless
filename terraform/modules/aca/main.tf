@@ -181,6 +181,7 @@ resource "azurerm_container_app_environment" "this" {
   name                       = "${var.name_prefix}-${var.environment}-env"
   location                   = var.location
   resource_group_name        = local.resource_group_name
+  logs_destination           = "log-analytics"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.this.id
   infrastructure_subnet_id   = azurerm_subnet.container_apps.id
 

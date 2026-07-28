@@ -44,7 +44,10 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 14. Made region-skewed Google Discovery drift retain the exact upstream documents as short-lived CI artifacts, and replaced CloudWatch metric-stream test placeholders with real Amazon S3, IAM, and Amazon Data Firehose resources.
 15. Kept the Azure Terraform integration budget available for the official provider by installing Ubuntu's signed Caddy package through the existing bounded APT path.
 16. Round-tripped Microsoft.Network subnet `addressPrefixes` from AzureRM 5 into the real network fabric and kept failed Azure portal deletions attached to their accessible confirmation dialog.
-17. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+17. Made the production Azure Container Apps module and external provider stack select AzureRM 5's required `log-analytics` destination when linking a Log Analytics workspace.
+18. Corrected the AWS Lambda module's Step Functions live-differential IAM policy to use its declared region input and revalidated every production Terraform module.
+19. Restored canonical HCL formatting across the complete Terraform tree.
+20. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
