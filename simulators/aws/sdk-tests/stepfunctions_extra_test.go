@@ -83,9 +83,32 @@ func TestSFN_LambdaTaskHistory_SDK(t *testing.T) {
 	require.NotNil(t, history.Events[2].LambdaFunctionScheduledEventDetails)
 	assert.Equal(t, functionARN, aws.ToString(history.Events[2].LambdaFunctionScheduledEventDetails.Resource))
 	assert.JSONEq(t, `{"request":"history"}`, aws.ToString(history.Events[2].LambdaFunctionScheduledEventDetails.Input))
+	require.NotNil(t, history.Events[0].ExecutionStartedEventDetails.InputDetails)
+	assert.False(t, history.Events[0].ExecutionStartedEventDetails.InputDetails.Truncated)
+	require.NotNil(t, history.Events[1].StateEnteredEventDetails.InputDetails)
+	assert.False(t, history.Events[1].StateEnteredEventDetails.InputDetails.Truncated)
+	require.NotNil(t, history.Events[2].LambdaFunctionScheduledEventDetails.InputDetails)
+	assert.False(t, history.Events[2].LambdaFunctionScheduledEventDetails.InputDetails.Truncated)
 	require.NotNil(t, history.Events[4].LambdaFunctionSucceededEventDetails)
 	assert.JSONEq(t, `{"request":"history"}`,
 		aws.ToString(history.Events[4].LambdaFunctionSucceededEventDetails.Output))
+	require.NotNil(t, history.Events[5].StateExitedEventDetails.OutputDetails)
+	assert.False(t, history.Events[5].StateExitedEventDetails.OutputDetails.Truncated)
+	require.NotNil(t, history.Events[6].ExecutionSucceededEventDetails.OutputDetails)
+	assert.False(t, history.Events[6].ExecutionSucceededEventDetails.OutputDetails.Truncated)
+
+	withoutData, err := statesAPI.GetExecutionHistory(ctx, &sfn.GetExecutionHistoryInput{
+		ExecutionArn:         started.ExecutionArn,
+		IncludeExecutionData: aws.Bool(false),
+	})
+	require.NoError(t, err)
+	require.Len(t, withoutData.Events, len(history.Events))
+	assert.Nil(t, withoutData.Events[0].ExecutionStartedEventDetails.Input)
+	require.NotNil(t, withoutData.Events[0].ExecutionStartedEventDetails.InputDetails)
+	assert.False(t, withoutData.Events[0].ExecutionStartedEventDetails.InputDetails.Truncated)
+	assert.Nil(t, withoutData.Events[6].ExecutionSucceededEventDetails.Output)
+	require.NotNil(t, withoutData.Events[6].ExecutionSucceededEventDetails.OutputDetails)
+	assert.False(t, withoutData.Events[6].ExecutionSucceededEventDetails.OutputDetails.Truncated)
 }
 
 // TestSFN_NestedWorkflowIntegration_SDK executes the optimized

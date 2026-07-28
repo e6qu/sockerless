@@ -484,7 +484,7 @@ func sfnStartNestedExecution(stateMachineARN, name, input string) (SFNExecution,
 	sfnExecutions.Put(executionARN, execution)
 	sfnAppendHistory(executionARN, "ExecutionStarted", map[string]any{
 		"input":        input,
-		"inputDetails": map[string]any{"included": true},
+		"inputDetails": map[string]any{"truncated": false},
 		"roleArn":      stateMachine.RoleArn,
 	})
 	executionCancel := make(chan struct{})
@@ -780,7 +780,7 @@ func sfnRunMap(state sfnState, stateName string, input, context any, cancel <-ch
 					if child.TypeSnapshot == "STANDARD" {
 						sfnAppendHistory(itemExecutionARN, "ExecutionStarted", map[string]any{
 							"input":        itemJSON,
-							"inputDetails": map[string]any{"included": true},
+							"inputDetails": map[string]any{"truncated": false},
 							"roleArn":      child.RoleArnSnapshot,
 						})
 					}

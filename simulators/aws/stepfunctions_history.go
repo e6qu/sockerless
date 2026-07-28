@@ -63,7 +63,7 @@ func sfnStateHistoryDetails(stateName string, value any, field string) map[strin
 	}
 	if field != "" {
 		details[field] = encoded
-		details[field+"Details"] = map[string]any{"included": true}
+		details[field+"Details"] = map[string]any{"truncated": false}
 	}
 	return details
 }
@@ -84,7 +84,7 @@ func sfnHistoryWithoutExecutionData(events []sfnHistoryEvent) []sfnHistoryEvent 
 					continue
 				}
 				if detailKey == "inputDetails" || detailKey == "outputDetails" {
-					copyDetails[detailKey] = map[string]any{"included": false}
+					copyDetails[detailKey] = map[string]any{"truncated": false}
 					continue
 				}
 				copyDetails[detailKey] = detailValue

@@ -32,7 +32,9 @@ provisioned tools after the suite. The Step Functions Lambda-task SDK flow used
 the suite's prebuilt real Runtime API image, so its history assertion measured
 the integration rather than a clean runner's unrelated managed-runtime image
 download; separate ZIP and live-AWS differentials retained managed-runtime
-coverage.
+coverage. The now-completing test exposed that history data details had used
+DescribeExecution's `included` member; all history events now used the Smithy
+model's `truncated:false`, including when execution payloads were omitted.
 
 Selected flows also ran against short-lived live AWS resources. The differential
 covered Step Functions validation, execution history, Lambda task history,

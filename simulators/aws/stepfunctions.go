@@ -660,7 +660,7 @@ func handleSFNStartExecution(w http.ResponseWriter, r *http.Request) {
 	sfnExecutions.Put(execARN, exec)
 	sfnAppendHistory(execARN, "ExecutionStarted", map[string]any{
 		"input":        input,
-		"inputDetails": map[string]any{"included": true},
+		"inputDetails": map[string]any{"truncated": false},
 		"roleArn":      sm.RoleArn,
 	})
 	cancel := make(chan struct{})
@@ -1336,7 +1336,7 @@ func sfnCompleteExecution(execARN, status, output string, runErr error) {
 	case "SUCCEEDED":
 		sfnAppendHistory(execARN, "ExecutionSucceeded", map[string]any{
 			"output":        output,
-			"outputDetails": map[string]any{"included": true},
+			"outputDetails": map[string]any{"truncated": false},
 		})
 	case "FAILED":
 		sfnAppendHistory(execARN, "ExecutionFailed", map[string]any{

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2698 filed - 2665 fixed - 17 open - 16 false positives.**
+**2699 filed - 2666 fixed - 17 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -32,6 +32,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2699~~ | P1 | AWS Step Functions execution history | history data details used the DescribeExecution shape | Execution history events had encoded `inputDetails` and `outputDetails` with DescribeExecution's `included` member instead of HistoryEventExecutionDataDetails' `truncated` member. Every history producer now reported `truncated:false`, `includeExecutionData:false` omitted only the payload while retaining service-shaped detail metadata, official SDK assertions covered both projections, and the AWS spec-shape ratchet reported no new divergence. |
 | ~~2698~~ | P1 | AWS Step Functions Lambda-task SDK coverage | cold managed-runtime image pull exceeded the execution assertion window | The services N–Z SDK shard created a ZIP Lambda and immediately started a Step Functions execution, so a clean Linux runner spent the entire 20-second assertion window pulling the managed Node.js runtime image while the execution correctly remained running. The integration test now used the suite's prebuilt real Runtime API image, which exercised the same direct Lambda task and service-history path without making assertion timing depend on an unrelated registry cold pull; separate Lambda ZIP and live-AWS differentials retained managed-runtime coverage. |
 | ~~2697~~ | P2 | AWS simulator conformance harness | introspection builds started runtime evaluators against rebound stores | Each route-conformance simulator build had started Amazon CloudWatch alarm and Application Auto Scaling evaluator goroutines, then rebound their package stores when the next in-process simulator was built. Conformance-only builds now register the complete route surface without runtime evaluators, production builds retain both evaluators, and the AWS Lambda/AWS Step Functions conformance race suite plus the complete AWS simulator package passed. |
 | ~~2696~~ | P1 | AWS Lambda and AWS Step Functions simulator fidelity | documented operations and console workflows lacked real behavior | The AWS cloud slice now implemented all 85 vendored AWS Lambda operations and all 37 vendored AWS Step Functions operations with executable runtimes, durable state, service-shaped validation and history, versions and aliases, distributed and nested workflows, and real Lambda task integration. Official AWS SDK, AWS CLI, Terraform, live-AWS differential, production UI, and authenticated Shauth/Chromium validation exercised the same public APIs, while the AWS console exposed the corresponding create, edit, execute, inspect, version, alias, configuration, logging, and redrive workflows. |
