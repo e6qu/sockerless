@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -1087,7 +1085,8 @@ func ebApplyInput(target EBTarget, source, detailType, detail, eventID string) s
 		return target.Input
 	}
 	if target.InputPath == "" && len(target.InputTransformer) == 0 {
-		return detail
+		event, _ := json.Marshal(ebBuildEvent(source, detailType, detail, eventID))
+		return string(event)
 	}
 	event := ebBuildEvent(source, detailType, detail, eventID)
 	if target.InputPath != "" {
@@ -1407,29 +1406,45 @@ func deliverEBTarget(ruleArn string, target EBTarget, body, source, detailType, 
 		return
 	}
 	if strings.HasPrefix(target.Arn, "arn:aws:sns:") {
-		name := snsTopicNameFromARN(target.Arn)
-		if _, ok := snsTopics.Get(name); !ok {
+		if !iamAuthorizeServiceDelivery(target.Arn, "sns:Publish", src) {
 			return
 		}
-		msgID := eventID
-		for _, sub := range snsSubscriptions.List() {
-			if sub.TopicARN != target.Arn || sub.Protocol != "sqs" {
-				continue
-			}
-			queue := snsTopicNameFromARN(sub.Endpoint)
-			envelope := fmt.Sprintf(
-				`{"Type":"Notification","MessageId":%q,"TopicArn":%q,"Subject":%q,"Message":%q}`,
-				msgID, target.Arn, detailType, body)
-			hash := md5.Sum([]byte(envelope))
-			sqsQueues.Update(queue, func(q *SQSQueue) {
-				q.Messages = append(q.Messages, SQSMessage{
-					MessageId:     generateUUID(),
-					Body:          envelope,
-					MD5OfBody:     hex.EncodeToString(hash[:]),
-					SentTimestamp: time.Now().Unix(),
-				})
-			})
+		if _, ok := snsTopics.Get(snsTopicNameFromARN(target.Arn)); !ok {
+			return
 		}
+		snsFanout(target.Arn, eventID, detailType, body, nil)
+		return
+	}
+	if strings.HasPrefix(target.Arn, "arn:aws:states:") {
+		_, _ = sfnStartNestedExecution(target.Arn, eventID, body)
+		return
+	}
+	if strings.HasPrefix(target.Arn, "arn:aws:logs:") && strings.Contains(target.Arn, ":log-group:") {
+		group := strings.SplitN(target.Arn, ":log-group:", 2)[1]
+		group = strings.TrimSuffix(group, ":*")
+		if _, ok := cwLogGroups.Get(group); !ok {
+			return
+		}
+		stream := "eventbridge/" + cloudTrailShortName(ruleArn)
+		key := cwEventsKey(group, stream)
+		now := time.Now().UnixMilli()
+		if _, ok := cwLogStreams.Get(key); !ok {
+			cwLogStreams.Put(key, CWLogStream{
+				LogStreamName: stream,
+				LogGroupName:  group,
+				CreationTime:  now,
+				Arn:           cwLogStreamArn(group, stream),
+			})
+			cwLogEvents.Put(key, []CWLogEvent{})
+		}
+		cwLogEvents.Update(key, func(events *[]CWLogEvent) {
+			*events = append(*events, CWLogEvent{Timestamp: now, IngestionTime: now, Message: body})
+		})
+		cwLogStreams.Update(key, func(logStream *CWLogStream) {
+			logStream.LastEventTimestamp = now
+			logStream.LastIngestionTime = now
+		})
+		return
 	}
 	_, _, _ = source, detailType, eventID
 }

@@ -15,7 +15,13 @@ import {
   type AwsColumn,
 } from "../console/index.js";
 import { formatEpoch } from "../console/format.js";
-import { createStateMachine, deleteStateMachine, fetchStateMachines, type StateMachine } from "../api.js";
+import {
+  createStateMachine,
+  deleteStateMachine,
+  fetchStateMachines,
+  validateStateMachineDefinition,
+  type StateMachine,
+} from "../api.js";
 import { StateMachineGraph } from "./StateMachineGraph.js";
 
 // AWS Step Functions — State machines. ListStateMachines and
@@ -65,7 +71,13 @@ function CreateStateMachineModal({ onClose }: { onClose: () => void }) {
   }
   const valid = /^[a-zA-Z0-9-_]{1,80}$/.test(name) && roleArn.startsWith("arn:") && definitionValid;
   const create = useMutation({
-    mutationFn: () => createStateMachine({ name, definition, roleArn, type }),
+    mutationFn: async () => {
+      const validation = await validateStateMachineDefinition(definition);
+      if (validation.result !== "OK") {
+        throw new Error(validation.diagnostics.map((diagnostic) => diagnostic.message).join("; "));
+      }
+      return createStateMachine({ name, definition, roleArn, type });
+    },
     onSuccess: async (arn) => {
       await queryClient.invalidateQueries({ queryKey: ["sfn-state-machines"] });
       onClose();

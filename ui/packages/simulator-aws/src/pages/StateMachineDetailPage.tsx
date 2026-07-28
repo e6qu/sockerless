@@ -34,11 +34,18 @@ import {
   fetchStateMachineTags,
   fetchStateMachineVersions,
   createStateMachineAlias,
+  deleteStateMachineAlias,
+  deleteStateMachineVersion,
   publishStateMachineVersion,
   startStateMachineExecution,
   tagStateMachineResource,
   untagStateMachineResource,
   updateStateMachine,
+  updateStateMachineAlias,
+  validateStateMachineDefinition,
+  testStateMachineState,
+  type StateMachineAlias,
+  type StateMachineTestResult,
   type StateMachineExecution,
 } from "../api.js";
 import { DeleteStateMachinesModal } from "./StepFunctionsPage.js";
@@ -81,8 +88,9 @@ function StartExecutionModal({ stateMachineArn, onClose }: { stateMachineArn: st
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [input, setInput] = useState("{}");
+  const [executionName, setExecutionName] = useState("");
   const start = useMutation({
-    mutationFn: () => startStateMachineExecution(stateMachineArn, input),
+    mutationFn: () => startStateMachineExecution(stateMachineArn, input, executionName || undefined),
     onSuccess: async (executionArn) => {
       await queryClient.invalidateQueries({ queryKey: ["sfn-executions", stateMachineArn] });
       onClose();
@@ -118,6 +126,9 @@ function StartExecutionModal({ stateMachineArn, onClose }: { stateMachineArn: st
       }
     >
       <SpaceBetween size="m">
+        <FormField label="Execution name" description="Optional. AWS Step Functions generates a UUID when omitted.">
+          <Input value={executionName} onChange={(event) => setExecutionName(event.detail.value)} />
+        </FormField>
         <FormField
           label="Input"
           constraintText="A JSON document passed to the state machine's first state."
@@ -161,7 +172,13 @@ function EditStateMachineModal({
     definitionValid = false;
   }
   const update = useMutation({
-    mutationFn: () => updateStateMachine(machine.stateMachineArn, definition, roleArn),
+    mutationFn: async () => {
+      const validation = await validateStateMachineDefinition(definition);
+      if (validation.result !== "OK") {
+        throw new Error(validation.diagnostics.map((diagnostic) => diagnostic.message).join("; "));
+      }
+      return updateStateMachine(machine.stateMachineArn, definition, roleArn);
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["sfn-state-machine", machine.stateMachineArn] });
       onClose();
@@ -251,19 +268,37 @@ function PublishStateMachineModal({ stateMachineArn, onClose }: { stateMachineAr
 
 function CreateStateMachineAliasModal({
   versions,
+  current,
   onClose,
   stateMachineArn,
 }: {
   versions: { stateMachineVersionArn: string; version: number }[];
+  current?: StateMachineAlias;
   onClose: () => void;
   stateMachineArn: string;
 }) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [versionArn, setVersionArn] = useState(versions.at(-1)?.stateMachineVersionArn ?? "");
-  const create = useMutation({
-    mutationFn: () => createStateMachineAlias(name, versionArn, description),
+  const [name, setName] = useState(current?.name ?? "");
+  const [description, setDescription] = useState(current?.description ?? "");
+  const [versionArn, setVersionArn] = useState(
+    current?.routingConfiguration[0]?.stateMachineVersionArn ?? versions.at(-1)?.stateMachineVersionArn ?? "",
+  );
+  const [secondVersionArn, setSecondVersionArn] = useState(
+    current?.routingConfiguration[1]?.stateMachineVersionArn ?? "",
+  );
+  const [firstWeight, setFirstWeight] = useState(String(current?.routingConfiguration[0]?.weight ?? 100));
+  const weight = Number(firstWeight);
+  const routingConfiguration = secondVersionArn
+    ? [
+        { stateMachineVersionArn: versionArn, weight },
+        { stateMachineVersionArn: secondVersionArn, weight: 100 - weight },
+      ]
+    : [{ stateMachineVersionArn: versionArn, weight: 100 }];
+  const save = useMutation({
+    mutationFn: () =>
+      current
+        ? updateStateMachineAlias(current.stateMachineAliasArn, description, routingConfiguration)
+        : createStateMachineAlias(name, versionArn, description),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["sfn-state-machine-aliases", stateMachineArn] });
       onClose();
@@ -271,25 +306,66 @@ function CreateStateMachineAliasModal({
   });
   return (
     <AwsModal
-      title="Create alias"
+      title={current ? `Edit ${current.name}` : "Create alias"}
       onDismiss={onClose}
       footer={
         <>
           <AwsButton onClick={onClose}>Cancel</AwsButton>
           <AwsButton
             variant="primary"
-            disabled={!/^[a-zA-Z0-9-_]{1,80}$/.test(name) || !versionArn || create.isPending}
-            onClick={() => create.mutate()}
+            disabled={
+              !/^[a-zA-Z0-9-_]{1,80}$/.test(name) ||
+              !versionArn ||
+              (Boolean(secondVersionArn) &&
+                (secondVersionArn === versionArn || !Number.isInteger(weight) || weight < 1 || weight > 99)) ||
+              save.isPending
+            }
+            onClick={() => save.mutate()}
           >
-            {create.isPending ? "Creating…" : "Create"}
+            {save.isPending ? "Saving…" : current ? "Save" : "Create"}
           </AwsButton>
         </>
       }
     >
       <SpaceBetween size="m">
         <FormField label="Alias name">
-          <Input value={name} onChange={(event) => setName(event.detail.value)} />
+          <Input disabled={Boolean(current)} value={name} onChange={(event) => setName(event.detail.value)} />
         </FormField>
+        {current && (
+          <>
+            <FormField label="Optional second version" description="Route a percentage of executions to another version.">
+              <Select
+                selectedOption={
+                  secondVersionArn
+                    ? {
+                        label: String(
+                          versions.find((version) => version.stateMachineVersionArn === secondVersionArn)?.version ?? "",
+                        ),
+                        value: secondVersionArn,
+                      }
+                    : null
+                }
+                options={[
+                  { label: "No second version", value: "" },
+                  ...versions.map((version) => ({
+                    label: String(version.version),
+                    value: version.stateMachineVersionArn,
+                  })),
+                ]}
+                onChange={(event) => setSecondVersionArn(event.detail.selectedOption.value ?? "")}
+                placeholder="No second version"
+              />
+            </FormField>
+            {secondVersionArn && (
+              <FormField
+                label="Primary version traffic weight"
+                description={`The second version receives ${100 - (Number(firstWeight) || 0)}%.`}
+              >
+                <Input type="number" value={firstWeight} onChange={(event) => setFirstWeight(event.detail.value)} />
+              </FormField>
+            )}
+          </>
+        )}
         <FormField label="State machine version">
           <Select
             selectedOption={
@@ -309,7 +385,7 @@ function CreateStateMachineAliasModal({
           <Input value={description} onChange={(event) => setDescription(event.detail.value)} />
         </FormField>
         {versions.length === 0 && <AwsErrorAlert>Publish a state machine version before creating an alias.</AwsErrorAlert>}
-        {create.isError && <AwsErrorAlert>{create.error instanceof Error ? create.error.message : "Create failed."}</AwsErrorAlert>}
+        {save.isError && <AwsErrorAlert>{save.error instanceof Error ? save.error.message : "Save failed."}</AwsErrorAlert>}
       </SpaceBetween>
     </AwsModal>
   );
@@ -323,6 +399,74 @@ function formattedDefinition(definition: string): string {
   }
 }
 
+function TestStateModal({
+  definition,
+  onClose,
+}: {
+  definition: string;
+  onClose: () => void;
+}) {
+  const [stateName, setStateName] = useState("");
+  const [input, setInput] = useState("{}");
+  const [result, setResult] = useState<StateMachineTestResult | null>(null);
+  const test = useMutation({
+    mutationFn: () => testStateMachineState(definition, input, stateName),
+    onSuccess: setResult,
+  });
+  let inputValid = true;
+  try {
+    JSON.parse(input);
+  } catch {
+    inputValid = false;
+  }
+  return (
+    <AwsModal
+      title="Test state"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Close</AwsButton>
+          <AwsButton
+            variant="primary"
+            disabled={!inputValid || test.isPending}
+            onClick={() => test.mutate()}
+          >
+            {test.isPending ? "Testing…" : "Test state"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="m">
+        <FormField label="State name" description="Leave empty to test the workflow's StartAt state.">
+          <Input value={stateName} onChange={(event) => setStateName(event.detail.value)} />
+        </FormField>
+        <FormField label="State input" errorText={inputValid ? undefined : "Input must be valid JSON."}>
+          <Textarea value={input} rows={7} spellcheck={false} onChange={(event) => setInput(event.detail.value)} />
+        </FormField>
+        {test.isError && (
+          <AwsErrorAlert>{test.error instanceof Error ? test.error.message : "The state test failed."}</AwsErrorAlert>
+        )}
+        {result && (
+          <AwsContainer>
+            <AwsKeyValue
+              items={[
+                { label: "Status", value: <AwsStatus status={result.status} /> },
+                { label: "Next state", value: result.nextState || "–" },
+                ...(result.error
+                  ? [
+                      { label: "Error", value: result.error },
+                      { label: "Cause", value: result.cause || "–" },
+                    ]
+                  : [{ label: "Output", value: <pre>{formattedDefinition(result.output)}</pre> }]),
+              ]}
+            />
+          </AwsContainer>
+        )}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
 export function StateMachineDetailPage() {
   const { stateMachineArn = "" } = useParams();
   const navigate = useNavigate();
@@ -332,6 +476,8 @@ export function StateMachineDetailPage() {
   const [editing, setEditing] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [creatingAlias, setCreatingAlias] = useState(false);
+  const [editingAlias, setEditingAlias] = useState<StateMachineAlias | null>(null);
+  const [testingState, setTestingState] = useState(false);
   const [editingTags, setEditingTags] = useState(false);
   const machine = useQuery({
     queryKey: ["sfn-state-machine", stateMachineArn],
@@ -349,13 +495,31 @@ export function StateMachineDetailPage() {
     queryKey: ["sfn-state-machine-tags", stateMachineArn],
     queryFn: () => fetchStateMachineTags(stateMachineArn),
   });
+  const removeAlias = useMutation({
+    mutationFn: deleteStateMachineAlias,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sfn-state-machine-aliases", stateMachineArn] }),
+  });
+  const removeVersion = useMutation({
+    mutationFn: deleteStateMachineVersion,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sfn-state-machine-versions", stateMachineArn] }),
+  });
 
   const tabs: AwsTab[] = machine.data
     ? [
         {
           id: "graph",
           label: "Graph",
-          content: <StateMachineGraph definition={machine.data.definition} />,
+          content: (
+            <SpaceBetween size="m">
+              <Header
+                variant="h3"
+                actions={<AwsButton onClick={() => setTestingState(true)}>Test state</AwsButton>}
+              >
+                Workflow
+              </Header>
+              <StateMachineGraph definition={machine.data.definition} />
+            </SpaceBetween>
+          ),
         },
         {
           id: "definition",
@@ -391,6 +555,18 @@ export function StateMachineDetailPage() {
                 { id: "version", header: "Version", cell: (version) => version.version },
                 { id: "arn", header: "ARN", cell: (version) => version.stateMachineVersionArn },
                 { id: "created", header: "Created", cell: (version) => formatEpoch(version.creationDate) },
+                {
+                  id: "actions",
+                  header: "Actions",
+                  cell: (version) => (
+                    <AwsButton
+                      disabled={removeVersion.isPending}
+                      onClick={() => removeVersion.mutate(version.stateMachineVersionArn)}
+                    >
+                      Delete
+                    </AwsButton>
+                  ),
+                },
               ]}
             />
           ),
@@ -419,7 +595,31 @@ export function StateMachineDetailPage() {
               columnDefinitions={[
                 { id: "name", header: "Name", cell: (alias) => alias.name },
                 { id: "arn", header: "ARN", cell: (alias) => alias.stateMachineAliasArn },
+                {
+                  id: "routing",
+                  header: "Routing",
+                  cell: (alias) =>
+                    alias.routingConfiguration
+                      .map((route) => `${route.stateMachineVersionArn.slice(route.stateMachineVersionArn.lastIndexOf(":") + 1)} (${route.weight}%)`)
+                      .join(", "),
+                },
+                { id: "description", header: "Description", cell: (alias) => alias.description || "–" },
                 { id: "updated", header: "Updated", cell: (alias) => formatEpoch(alias.updateDate) },
+                {
+                  id: "actions",
+                  header: "Actions",
+                  cell: (alias) => (
+                    <SpaceBetween direction="horizontal" size="xs">
+                      <AwsButton onClick={() => setEditingAlias(alias)}>Edit</AwsButton>
+                      <AwsButton
+                        disabled={removeAlias.isPending}
+                        onClick={() => removeAlias.mutate(alias.stateMachineAliasArn)}
+                      >
+                        Delete
+                      </AwsButton>
+                    </SpaceBetween>
+                  ),
+                },
               ]}
             />
           ),
@@ -541,6 +741,17 @@ export function StateMachineDetailPage() {
           versions={versions.data ?? []}
           onClose={() => setCreatingAlias(false)}
         />
+      )}
+      {editingAlias && machine.data && (
+        <CreateStateMachineAliasModal
+          stateMachineArn={stateMachineArn}
+          versions={versions.data ?? []}
+          current={editingAlias}
+          onClose={() => setEditingAlias(null)}
+        />
+      )}
+      {testingState && machine.data && (
+        <TestStateModal definition={machine.data.definition} onClose={() => setTestingState(false)} />
       )}
       {editingTags && machine.data && (
         <TagsEditorModal

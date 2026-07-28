@@ -196,6 +196,8 @@ func fireSchedule(s Schedule) {
 		fireSQSTarget(t.Arn, t.Input)
 	case strings.Contains(t.Arn, ":sns:"):
 		fireSNSTarget(t.Arn, t.Input)
+	case strings.Contains(t.Arn, ":states:"):
+		fireStepFunctionsTarget(t.Arn, t.Input)
 	}
 }
 
@@ -333,6 +335,30 @@ func fireSNSTarget(topicArn, input string) {
 	handleSNSPublish(rec, req)
 	recordSchedulerFireResult("Publish", "sns.amazonaws.com",
 		"AWS::SNS::Topic", cloudTrailShortName(topicArn), rec.Code, rec.Body.Bytes(), true)
+}
+
+func fireStepFunctionsTarget(stateMachineArn, input string) {
+	if input == "" {
+		input = "{}"
+	}
+	execution, executionErr := sfnStartNestedExecution(stateMachineArn, generateUUID(), input)
+	if executionErr != nil {
+		cloudTrailRecordSchedulerFireErr(
+			"StartExecution",
+			"states.amazonaws.com",
+			"AWS::StepFunctions::StateMachine",
+			cloudTrailShortName(stateMachineArn),
+			executionErr.Name,
+			executionErr.Cause,
+		)
+		return
+	}
+	cloudTrailRecordSchedulerFire(
+		"StartExecution",
+		"states.amazonaws.com",
+		"AWS::StepFunctions::StateMachine",
+		cloudTrailShortName(execution.StateMachineArn),
+	)
 }
 
 // cloudTrailRecordSchedulerFire records a CloudTrail event for a target the

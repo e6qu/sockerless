@@ -207,7 +207,7 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 
 	// REST-based services register directly on the server mux
 	registerEFS(srv)
-	registerLambda(srv)
+	registerLambda(srv, options.startBackgroundEvaluators)
 	registerS3(srv)
 	registerCloudFront(srv)
 	registerRoute53(srv)

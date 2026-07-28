@@ -36,4 +36,5 @@ Allowed classifications:
 | `sqs-dead-letter-redrive` | dispatch | `simulators/aws/sqs.go` | `simulators/aws/sdk-tests/behavioral_gate_test.go` |
 | `sns-topic-fanout` | dispatch | `simulators/aws/sns.go` | `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go` |
 | `lambda-runtime-sidecar` | listener | `simulators/aws/lambda_runtime.go` | `simulators/aws/sdk-tests/lambda_test.go` |
+| `lambda-event-source-runtime` | background-evaluator | `simulators/aws/lambda_event_source_runtime.go` | `simulators/aws/sdk-tests/lambda_sqs_event_source_runtime_test.go` |
 | `behavioral-audit-misc` | audit | `simulators/aws` | `simulators/aws/sdk-tests/behavioral_audit_test.go` |

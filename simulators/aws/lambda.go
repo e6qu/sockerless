@@ -343,11 +343,15 @@ func lambdaInvocationHasQualifier(identifier, queryQualifier string) bool {
 	return strings.Contains(identifier, ":")
 }
 
-func registerLambda(srv *sim.Server) {
+func registerLambda(srv *sim.Server, startBackgroundPollers bool) {
 	// Invoke is a CloudTrail DATA event (excluded from LookupEvents); the
 	// function-management ops are management events.
 	cloudTrailDeclareDataEvents("lambda.amazonaws.com", "Invoke")
 	lambdaFunctions = sim.MakeStore[LambdaFunction](srv.DB(), "lambda_functions")
+	lambdaESMLogger = srv.Logger()
+	if startBackgroundPollers {
+		startLambdaEventSourcePollers()
+	}
 
 	mux := srv
 
@@ -1119,9 +1123,7 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 			// Async invocation runs the function for real in the background,
 			// producing the same Runtime API callbacks and logs as a
 			// synchronous invocation.
-			go func() {
-				_, _, _ = invokeLambdaViaRuntimeAPI(fn, payload)
-			}()
+			go lambdaInvokeAsynchronously(fn, payload, lambdaAsyncQualifier(name, queryQualifier))
 		}
 		w.WriteHeader(http.StatusAccepted)
 	default:

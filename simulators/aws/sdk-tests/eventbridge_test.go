@@ -21,6 +21,17 @@ func eventbridgeClient() *eventbridge.Client {
 	})
 }
 
+func assertEventBridgeSQSEnvelope(t *testing.T, body, source, detailType string, detail map[string]any) {
+	t.Helper()
+	var delivered map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &delivered))
+	assert.Equal(t, source, delivered["source"])
+	assert.Equal(t, detailType, delivered["detail-type"])
+	assert.Equal(t, detail, delivered["detail"])
+	assert.NotEmpty(t, delivered["id"])
+	assert.NotEmpty(t, delivered["time"])
+}
+
 func TestEventBridge_BusArchiveReplaySDK(t *testing.T) {
 	eb := eventbridgeClient()
 	sqsC := sqsClient()
@@ -154,7 +165,8 @@ func TestEventBridge_BusArchiveReplaySDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, original.Messages, 1)
-	assert.JSONEq(t, `{"replayed":true}`, aws.ToString(original.Messages[0].Body))
+	assertEventBridgeSQSEnvelope(t, aws.ToString(original.Messages[0].Body),
+		"sockerless.archive", "example", map[string]any{"replayed": true})
 	_, err = sqsC.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      q.QueueUrl,
 		ReceiptHandle: original.Messages[0].ReceiptHandle,
@@ -195,7 +207,8 @@ func TestEventBridge_BusArchiveReplaySDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, received.Messages, 1)
-	assert.JSONEq(t, `{"replayed":true}`, aws.ToString(received.Messages[0].Body))
+	assertEventBridgeSQSEnvelope(t, aws.ToString(received.Messages[0].Body),
+		"sockerless.archive", "example", map[string]any{"replayed": true})
 }
 
 func TestEventBridge_RuleTargetPutEventsSDK(t *testing.T) {
@@ -322,7 +335,8 @@ func TestEventBridge_RuleTargetPutEventsSDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, received.Messages, 1)
-	assert.JSONEq(t, `{"ok":true}`, aws.ToString(received.Messages[0].Body))
+	assertEventBridgeSQSEnvelope(t, aws.ToString(received.Messages[0].Body),
+		"sockerless.test", "example", map[string]any{"ok": true})
 }
 
 // TestEventBridge_TestEventPatternSDK exercises TestEventPattern over a
@@ -523,7 +537,8 @@ func TestEventBridge_ContentFilterPatternSDK(t *testing.T) {
 	}, 3*time.Second, 50*time.Millisecond)
 
 	require.Len(t, bodies, 1, "only the matching event must be delivered")
-	assert.JSONEq(t, matchDetail, bodies[0])
+	assertEventBridgeSQSEnvelope(t, bodies[0], "sockerless.content", "job",
+		map[string]any{"state": "running", "code": float64(500)})
 }
 
 // setEBQueuePolicy attaches an SQS queue policy granting events.amazonaws.com
@@ -627,7 +642,8 @@ func TestEventBridge_SQSDeliveryAuthorizationSDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, received.Messages, 1)
-	assert.JSONEq(t, `{"ok":true}`, aws.ToString(received.Messages[0].Body))
+	assertEventBridgeSQSEnvelope(t, aws.ToString(received.Messages[0].Body),
+		"sockerless.auth", "example", map[string]any{"ok": true})
 
 	// The unauthorized queues receive nothing — neither the no-policy queue nor
 	// the wrong-SourceArn queue.

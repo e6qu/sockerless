@@ -19,14 +19,9 @@ func xmlEscape(s string) string {
 	return b.String()
 }
 
-// SNS — pub/sub topic + subscription + publish flow. The most common
-// real-world use is SNS → SQS fan-out (one topic, N SQS subscribers
-// receiving each published message). The sim implements that path
-// in-process: a Publish to a topic enumerates Subscription entries
-// pointing at SQS queues and pushes the message body into each
-// queue's Messages slice. HTTP / HTTPS / email / SMS subscribers
-// are recorded but not delivered (real HTTP/HTTPS
-// subscription confirmation is out of scope for the first cut).
+// Amazon Simple Notification Service (SNS) implements topic publication,
+// subscription filtering, and delivery to Amazon SQS, Lambda, and signed
+// HTTP/HTTPS endpoints.
 //
 // Wire protocol: awsQuery (POST / + Action form param + XML envelope),
 // same as SQS.
@@ -48,6 +43,10 @@ type SNSSubscription struct {
 	Protocol  string // "sqs", "http", "https", "email", "sms", "lambda"
 	Endpoint  string // queue ARN for sqs, URL for http(s), email addr, etc.
 	Confirmed bool
+	// ControlPlaneOrigin is the SNS endpoint coordinate used to form the
+	// SubscribeURL, UnsubscribeURL, and SigningCertURL delivered to HTTP
+	// subscribers. It is internal metadata, not an SNS response member.
+	ControlPlaneOrigin string
 	// Attributes holds the mutable subscription settings set via
 	// SetSubscriptionAttributes — RawMessageDelivery, FilterPolicy,
 	// FilterPolicyScope, DeliveryPolicy, RedrivePolicy — surfaced by
@@ -80,6 +79,7 @@ func registerSNS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	cloudTrailDeclareDataEvents("sns.amazonaws.com", "Publish", "PublishBatch")
 	snsTopics = sim.MakeStore[SNSTopic](srv.DB(), "sns_topics")
 	snsSubscriptions = sim.MakeStore[SNSSubscription](srv.DB(), "sns_subscriptions")
+	registerSNSHTTPDelivery(srv)
 
 	r.RegisterVersioned(snsAPIVersion, "CreateTopic", handleSNSCreateTopic)
 	r.RegisterVersioned(snsAPIVersion, "DeleteTopic", handleSNSDeleteTopic)
@@ -287,6 +287,18 @@ func handleSNSSetTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	}
 	attrName := r.FormValue("AttributeName")
 	attrValue := r.FormValue("AttributeValue")
+	if attrName == "FilterPolicy" {
+		if err := snsValidateFilterPolicy(attrValue); err != nil {
+			snsErrorXML(w, "InvalidParameter", err.Error(), http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	if attrName == "FilterPolicyScope" &&
+		attrValue != "" && attrValue != "MessageAttributes" && attrValue != "MessageBody" {
+		snsErrorXML(w, "InvalidParameter", "FilterPolicyScope must be MessageAttributes or MessageBody",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
 	if attrName == "" {
 		snsErrorXML(w, "InvalidParameter",
 			"AttributeName is required",
@@ -330,13 +342,17 @@ func handleSNSSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sub := SNSSubscription{
-		ARN:       snsSubscriptionARN(name),
-		TopicARN:  topicARN,
-		Protocol:  protocol,
-		Endpoint:  endpoint,
-		Confirmed: !snsProtocolRequiresConfirmation(protocol),
+		ARN:                snsSubscriptionARN(name),
+		TopicARN:           topicARN,
+		Protocol:           protocol,
+		Endpoint:           endpoint,
+		Confirmed:          !snsProtocolRequiresConfirmation(protocol),
+		ControlPlaneOrigin: snsRequestOrigin(r),
 	}
 	snsSubscriptions.Put(sub.ARN, sub)
+	if !sub.Confirmed && (strings.EqualFold(protocol, "http") || strings.EqualFold(protocol, "https")) {
+		go snsDeliverHTTPConfirmation(sub)
+	}
 	returnedARN := sub.ARN
 	if !sub.Confirmed && !snsReturnSubscriptionARN(r) {
 		returnedARN = "pending confirmation"
@@ -519,12 +535,8 @@ func handleSNSListSubscriptionsByTopic(w http.ResponseWriter, r *http.Request) {
 	snsXMLResponse(w, "ListSubscriptionsByTopic", b.String(), sim.RequestID(r.Context()))
 }
 
-// handleSNSPublish fans the message out to in-process SQS
-// subscribers. HTTP / HTTPS / email / SMS / Lambda subscribers
-// are recorded but not delivered — recording the URL is enough
-// for integration tests of "did the subscription configuration
-// get applied"; in-flight delivery is out of scope for the first
-// cut.
+// handleSNSPublish fans the message out through the real delivery path for
+// each supported protocol.
 // snsPublishEntry is the common publish payload shared by Publish and
 // each PublishBatch entry.
 type snsPublishEntry struct {
@@ -533,6 +545,7 @@ type snsPublishEntry struct {
 	Subject                string
 	MessageGroupId         string
 	MessageDeduplicationId string
+	MessageAttributes      map[string]SQSMessageAttribute
 }
 
 // snsValidatePublish applies the per-message validation real SNS
@@ -573,7 +586,7 @@ func snsARNAccount(arn string) string {
 // body an SQS subscriber receives and the inner record of a Lambda SNS
 // event. Built with json.Marshal so embedded alarm JSON is always valid JSON
 // (fmt.Sprintf %q can emit \x escapes that JSON parsers reject).
-func snsNotificationEnvelope(topicARN, msgID, subject, message string) string {
+func snsNotificationEnvelope(topicARN, msgID, subject, message string, attributes map[string]SQSMessageAttribute) string {
 	env := map[string]any{
 		"Type":      "Notification",
 		"MessageId": msgID,
@@ -581,6 +594,9 @@ func snsNotificationEnvelope(topicARN, msgID, subject, message string) string {
 		"Subject":   subject,
 		"Message":   message,
 		"Timestamp": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+	}
+	if messageAttributes := snsMessageAttributesEnvelope(attributes); messageAttributes != nil {
+		env["MessageAttributes"] = messageAttributes
 	}
 	b, _ := json.Marshal(env)
 	return string(b)
@@ -594,7 +610,7 @@ func snsNotificationEnvelope(topicARN, msgID, subject, message string) string {
 // unauthorized delivery. SQS subscribers get the Notification envelope
 // enqueued; Lambda subscribers get a real in-process invoke with the
 // SNS event payload.
-func snsFanout(topicARN, msgID, subject, message string) {
+func snsFanout(topicARN, msgID, subject, message string, attributes map[string]SQSMessageAttribute) {
 	srcAccount := snsARNAccount(topicARN)
 	subs := snsSubscriptions.List()
 	matching := 0
@@ -609,7 +625,10 @@ func snsFanout(topicARN, msgID, subject, message string) {
 		return
 	}
 	for _, sub := range subs {
-		if sub.TopicARN != topicARN {
+		if sub.TopicARN != topicARN || !sub.Confirmed {
+			continue
+		}
+		if !snsSubscriptionMatches(sub, message, attributes) {
 			continue
 		}
 		src := iamServiceSource{
@@ -618,11 +637,13 @@ func snsFanout(topicARN, msgID, subject, message string) {
 			SourceAccount: srcAccount,
 		}
 		cwEvalLogger.Info().Str("topicARN", topicARN).Str("msgID", msgID).Str("protocol", sub.Protocol).Str("endpoint", sub.Endpoint).Msg("SNS fanout delivering to subscription")
-		switch sub.Protocol {
+		switch strings.ToLower(sub.Protocol) {
 		case "sqs":
-			snsDeliverToSQS(sub.Endpoint, topicARN, msgID, subject, message, src)
+			snsDeliverToSQS(sub, topicARN, msgID, subject, message, attributes, src)
 		case "lambda":
-			snsDeliverToLambda(sub.Endpoint, topicARN, msgID, subject, message, src)
+			snsDeliverToLambda(sub.Endpoint, topicARN, msgID, subject, message, attributes, src)
+		case "http", "https":
+			go snsDeliverHTTPNotification(sub, msgID, subject, message, attributes)
 		default:
 			cwEvalLogger.Info().Str("topicARN", topicARN).Str("msgID", msgID).Str("protocol", sub.Protocol).Str("endpoint", sub.Endpoint).Msg("SNS fanout skipping unsupported subscription protocol")
 		}
@@ -633,7 +654,8 @@ func snsFanout(topicARN, msgID, subject, message string) {
 // subscriber queue — but only when the queue's resource policy admits
 // sns:SendMessage from this topic. Endpoint is the queue ARN
 // (arn:aws:sqs:<region>:<account>:<queue-name>).
-func snsDeliverToSQS(queueARN, topicARN, msgID, subject, message string, src iamServiceSource) {
+func snsDeliverToSQS(sub SNSSubscription, topicARN, msgID, subject, message string, attributes map[string]SQSMessageAttribute, src iamServiceSource) {
+	queueARN := sub.Endpoint
 	if !iamAuthorizeServiceDelivery(queueARN, "sqs:SendMessage", src) {
 		cwEvalLogger.Info().Str("queueARN", queueARN).Str("topicARN", topicARN).Str("sourceService", src.Service).Msg("SNS to SQS delivery denied by resource policy")
 		return
@@ -643,8 +665,13 @@ func snsDeliverToSQS(queueARN, topicARN, msgID, subject, message string, src iam
 		cwEvalLogger.Info().Str("queueARN", queueARN).Str("queueName", queueName).Msg("SNS to SQS delivery target queue not found")
 		return
 	}
-	envelope := snsNotificationEnvelope(topicARN, msgID, subject, message)
-	sqsEnqueueBody(queueName, envelope)
+	body := snsNotificationEnvelope(topicARN, msgID, subject, message, attributes)
+	var sqsAttributes map[string]SQSMessageAttribute
+	if strings.EqualFold(sub.Attributes["RawMessageDelivery"], "true") {
+		body = message
+		sqsAttributes = attributes
+	}
+	sqsEnqueueBodyWithAttributes(queueName, body, sqsAttributes)
 	cwEvalLogger.Info().Str("queueARN", queueARN).Str("queueName", queueName).Str("topicARN", topicARN).Str("msgID", msgID).Msg("SNS to SQS delivery succeeded")
 }
 
@@ -653,7 +680,7 @@ func snsDeliverToSQS(queueARN, topicARN, msgID, subject, message string, src iam
 // admits lambda:InvokeFunction from this topic. SNS→Lambda is an async
 // (Event) delivery, so the invoke runs in the background. Endpoint is
 // the function ARN (arn:aws:lambda:<region>:<account>:function:<name>).
-func snsDeliverToLambda(functionARN, topicARN, msgID, subject, message string, src iamServiceSource) {
+func snsDeliverToLambda(functionARN, topicARN, msgID, subject, message string, attributes map[string]SQSMessageAttribute, src iamServiceSource) {
 	if !iamAuthorizeServiceDelivery(functionARN, "lambda:InvokeFunction", src) {
 		cwEvalLogger.Info().Str("functionARN", functionARN).Str("topicARN", topicARN).Str("sourceService", src.Service).Msg("SNS to Lambda delivery denied by resource policy")
 		return
@@ -664,7 +691,7 @@ func snsDeliverToLambda(functionARN, topicARN, msgID, subject, message string, s
 		cwEvalLogger.Info().Str("functionARN", functionARN).Str("functionName", name).Msg("SNS to Lambda delivery target function not found")
 		return
 	}
-	payload := snsLambdaEventPayload(functionARN, topicARN, msgID, subject, message)
+	payload := snsLambdaEventPayload(functionARN, topicARN, msgID, subject, message, attributes)
 	go func() { _, _, _ = invokeLambdaViaRuntimeAPI(fn, payload) }()
 	cwEvalLogger.Info().Str("functionARN", functionARN).Str("functionName", name).Str("topicARN", topicARN).Str("msgID", msgID).Msg("SNS to Lambda delivery initiated")
 }
@@ -672,7 +699,7 @@ func snsDeliverToLambda(functionARN, topicARN, msgID, subject, message string, s
 // snsLambdaEventPayload builds the SNS event a Lambda subscriber
 // receives — a Records array with one Sns record carrying the
 // Notification message — matching the real SNS→Lambda event shape.
-func snsLambdaEventPayload(functionARN, topicARN, msgID, subject, message string) []byte {
+func snsLambdaEventPayload(functionARN, topicARN, msgID, subject, message string, attributes map[string]SQSMessageAttribute) []byte {
 	subscriptionARN := functionARN
 	for _, sub := range snsSubscriptions.List() {
 		if sub.TopicARN == topicARN && sub.Protocol == "lambda" && sub.Endpoint == functionARN {
@@ -685,12 +712,13 @@ func snsLambdaEventPayload(functionARN, topicARN, msgID, subject, message string
 		"EventVersion":         "1.0",
 		"EventSubscriptionArn": subscriptionARN,
 		"Sns": map[string]any{
-			"Type":      "Notification",
-			"MessageId": msgID,
-			"TopicArn":  topicARN,
-			"Subject":   subject,
-			"Message":   message,
-			"Timestamp": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+			"Type":              "Notification",
+			"MessageId":         msgID,
+			"TopicArn":          topicARN,
+			"Subject":           subject,
+			"Message":           message,
+			"Timestamp":         time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+			"MessageAttributes": snsMessageAttributesEnvelope(attributes),
 		},
 	}
 	out, _ := json.Marshal(map[string]any{"Records": []any{rec}})
@@ -716,13 +744,14 @@ func handleSNSPublish(w http.ResponseWriter, r *http.Request) {
 		Subject:                r.FormValue("Subject"),
 		MessageGroupId:         r.FormValue("MessageGroupId"),
 		MessageDeduplicationId: r.FormValue("MessageDeduplicationId"),
+		MessageAttributes:      snsParseMessageAttributes(r, "MessageAttributes"),
 	}
 	if code, msg := snsValidatePublish(t, entry); code != "" {
 		snsErrorXML(w, code, msg, http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
 	msgID := generateUUID()
-	snsFanout(topicARN, msgID, entry.Subject, entry.Message)
+	snsFanout(topicARN, msgID, entry.Subject, entry.Message, entry.MessageAttributes)
 
 	body := fmt.Sprintf("<PublishResult><MessageId>%s</MessageId></PublishResult>", xmlEscape(msgID))
 	snsXMLResponse(w, "Publish", body, sim.RequestID(r.Context()))
@@ -786,7 +815,7 @@ func handleSNSPublishBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		msgID := generateUUID()
-		snsFanout(topicARN, msgID, e.Subject, e.Message)
+		snsFanout(topicARN, msgID, e.Subject, e.Message, e.MessageAttributes)
 		fmt.Fprintf(&b, "<member><Id>%s</Id><MessageId>%s</MessageId></member>",
 			xmlEscape(e.Id), xmlEscape(msgID))
 	}
@@ -818,6 +847,7 @@ func snsPublishBatchEntries(r *http.Request) []snsPublishEntry {
 			Subject:                r.FormValue(prefix + "Subject"),
 			MessageGroupId:         r.FormValue(prefix + "MessageGroupId"),
 			MessageDeduplicationId: r.FormValue(prefix + "MessageDeduplicationId"),
+			MessageAttributes:      snsParseMessageAttributes(r, prefix+"MessageAttributes"),
 		})
 	}
 	return out

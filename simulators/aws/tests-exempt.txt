@@ -2,3 +2,4 @@ AWSStepFunctions.ValidateStateMachineDefinition
 AWSGlue.GetPartitionIndexes
 POST /service/GraniteServiceVersion20100801/operation/
 GET /2018-10-31/layers
+GET /SimpleNotificationService-

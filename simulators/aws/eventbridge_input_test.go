@@ -13,9 +13,17 @@ func TestEBApplyInput_StaticAndPath(t *testing.T) {
 		t.Errorf("static Input: got %q", got)
 	}
 
-	// No input transform → raw detail.
-	if got := ebApplyInput(EBTarget{}, "src", "dt", detail, "e1"); got != detail {
-		t.Errorf("default: got %q want %q", got, detail)
+	// No input transform → the complete EventBridge event envelope.
+	got := ebApplyInput(EBTarget{}, "src", "dt", detail, "e1")
+	var event map[string]any
+	if err := json.Unmarshal([]byte(got), &event); err != nil {
+		t.Fatalf("default event JSON: %v", err)
+	}
+	if event["id"] != "e1" || event["source"] != "src" || event["detail-type"] != "dt" {
+		t.Errorf("default event envelope: %#v", event)
+	}
+	if nested := event["detail"].(map[string]any); nested["instance"] != "i-123" {
+		t.Errorf("default event detail: %#v", nested)
 	}
 
 	// InputPath extracts a nested value as JSON.

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-shauth_root=${SHAUTH_SOURCE_DIR:?SHAUTH_SOURCE_DIR must point to a Shauth checkout}
+shauth_source_dir=${SHAUTH_SOURCE_DIR:?SHAUTH_SOURCE_DIR must point to a Shauth checkout}
+shauth_root=$(cd "$shauth_source_dir" && pwd -P)
 shauth_expected_commit=0fda680cba964e5768ed75a9c3e5b7230c418ca6
 
 for command in bun curl docker git go jq make node openssl; do

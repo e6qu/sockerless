@@ -142,10 +142,10 @@ func handleCWJSONDeleteDashboards(w http.ResponseWriter, r *http.Request) {
 // ── rpc-v2-cbor (Go SDK / terraform) ────────────────────────────────────────
 
 func registerCloudWatchDashboardsCBOR(srv *sim.Server) {
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/PutDashboard", cloudTrailRecordedREST("PutDashboard", "monitoring.amazonaws.com", nil, handleCWCBORPutDashboard))
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/GetDashboard", cloudTrailRecordedREST("GetDashboard", "monitoring.amazonaws.com", nil, handleCWCBORGetDashboard))
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/ListDashboards", cloudTrailRecordedREST("ListDashboards", "monitoring.amazonaws.com", nil, handleCWCBORListDashboards))
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/DeleteDashboards", cloudTrailRecordedREST("DeleteDashboards", "monitoring.amazonaws.com", nil, handleCWCBORDeleteDashboards))
+	cwCBOR(srv, "PutDashboard", handleCWCBORPutDashboard)
+	cwCBOR(srv, "GetDashboard", handleCWCBORGetDashboard)
+	cwCBOR(srv, "ListDashboards", handleCWCBORListDashboards)
+	cwCBOR(srv, "DeleteDashboards", handleCWCBORDeleteDashboards)
 }
 
 func handleCWCBORPutDashboard(w http.ResponseWriter, r *http.Request) {

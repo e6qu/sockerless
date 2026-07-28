@@ -2620,3 +2620,35 @@ so the same build succeeded when Shauth was checked out beneath Sockerless's
 workspace in continuous integration. The browser job selected the Go toolchain
 from that pinned Shauth module, preventing the provider's compiler requirement
 from drifting behind Sockerless's own toolchain.
+
+## AWS eventing, observability, and console workflows
+
+The AWS cloud slice connected its eventing services through real runtimes.
+AWS Lambda consumed Amazon SQS event-source mappings with visibility,
+acknowledgement, partial-batch failure, and dead-letter behavior, and its
+asynchronous invocations honoured retry, maximum-age, and destination
+configuration. Amazon EventBridge and EventBridge Scheduler delivered canonical
+event envelopes to AWS Lambda, Amazon SQS, Amazon SNS, AWS Step Functions, and
+Amazon CloudWatch Logs. Step Functions Task states executed supported Amazon
+SQS, Amazon SNS, EventBridge, CloudWatch Metrics, and CloudWatch Logs
+integrations, including callback-token completion.
+
+Amazon SNS delivered signed HTTP and HTTPS notifications with confirmation,
+filter policies, message attributes, and raw Amazon SQS delivery. Amazon
+CloudWatch enforced SigV4 and AWS Identity and Access Management authorization
+on its CBOR protocol, and CloudWatch Logs implemented account storage-tier and
+syslog-configuration operations. CloudTrail retained its real Amazon S3-backed
+trail lifecycle.
+
+The production AWS console gained working Lambda, Step Functions, EventBridge,
+EventBridge Scheduler, Amazon SNS, Amazon SQS, CloudWatch, CloudWatch Logs, and
+CloudTrail resource workflows over federated public cloud APIs. The official
+AWS SDK and AWS CLI suites exercised cross-service delivery, the official
+HashiCorp AWS provider completed a production-shaped apply and destroy, 229
+Chromium tests covered the production bundle and accessibility, and the exact
+Shauth, Ory Hydra, PostgreSQL, simulator, and browser matrix created and
+observed the resources through federated SigV4.
+
+The mandatory freshness pass upgraded Microsoft Authentication Library for Go
+to v1.8.0 and `docker/login-action` to v4.5.2; the complete affected Azure SDK
+integration suite passed.

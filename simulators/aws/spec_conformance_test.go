@@ -293,9 +293,10 @@ var allowedNonSpecRoutes = map[string]string{
 // allowedNonSpecPrefixes covers route families outside the AWS API
 // namespace entirely.
 var allowedNonSpecPrefixes = map[string]string{
-	"/sim/v1/":     "simulator control + dashboard surface (sockerless-specific, documented in simulators/README.md)",
-	"/sockerless/": "simulator-internal host-dispatch surface",
-	"/ecs-exec/":   "ECS ExecuteCommand session WebSocket bridge — the real wire surface is SSM session-manager streaming, which has no Smithy HTTP model",
+	"/sim/v1/":                    "simulator control + dashboard surface (sockerless-specific, documented in simulators/README.md)",
+	"/sockerless/":                "simulator-internal host-dispatch surface",
+	"/ecs-exec/":                  "ECS ExecuteCommand session WebSocket bridge — the real wire surface is SSM session-manager streaming, which has no Smithy HTTP model",
+	"/SimpleNotificationService-": "Amazon SNS HTTP notification signing certificates — documented data-plane support routes absent from the awsQuery Smithy model",
 }
 
 func TestRESTRoutesExistInSmithyModels(t *testing.T) {

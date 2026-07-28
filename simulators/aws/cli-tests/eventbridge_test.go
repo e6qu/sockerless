@@ -8,6 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func assertEventBridgeCLIEnvelope(t *testing.T, body, source, detailType string, detail map[string]any) {
+	t.Helper()
+	var event map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &event))
+	assert.Equal(t, source, event["source"])
+	assert.Equal(t, detailType, event["detail-type"])
+	assert.Equal(t, detail, event["detail"])
+	assert.NotEmpty(t, event["id"])
+	assert.NotEmpty(t, event["time"])
+}
+
 func TestEventBridgeCLI_RuleTargetPutEvents(t *testing.T) {
 	runCLI(t, awsCLI("sqs", "create-queue", "--queue-name", "eb-cli-q"))
 	t.Cleanup(func() {
@@ -79,7 +90,8 @@ func TestEventBridgeCLI_RuleTargetPutEvents(t *testing.T) {
 	}
 	parseJSON(t, out, &recv)
 	require.Len(t, recv.Messages, 1)
-	assert.JSONEq(t, `{"cli":true}`, recv.Messages[0].Body)
+	assertEventBridgeCLIEnvelope(t, recv.Messages[0].Body, "sockerless.cli", "example",
+		map[string]any{"cli": true})
 }
 
 func TestEventBridgeCLI_BusArchiveReplay(t *testing.T) {
@@ -337,7 +349,8 @@ func TestEventBridgeCLI_ContentFilterPattern(t *testing.T) {
 	}
 	parseJSON(t, out, &recv)
 	require.Len(t, recv.Messages, 1, "only the matching event must be delivered")
-	assert.JSONEq(t, `{"state":"running","code":500}`, recv.Messages[0].Body)
+	assertEventBridgeCLIEnvelope(t, recv.Messages[0].Body, "sockerless.cli.content", "job",
+		map[string]any{"state": "running", "code": float64(500)})
 }
 
 // setEBQueuePolicyCLI attaches a queue policy authorizing EventBridge to deliver

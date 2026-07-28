@@ -74,8 +74,8 @@ func registerCloudWatchMetrics(srv *sim.Server, startBackgroundEvaluator bool) {
 	cwLogAlarms = sim.MakeStore[CWLogAlarm](srv.DB(), "cw_log_alarms")
 
 	// Smithy RPCv2 CBOR uses URL path routing
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/GetMetricData", cloudTrailRecordedREST("GetMetricData", "monitoring.amazonaws.com", nil, handleCWGetMetricData))
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/PutMetricData", cloudTrailRecordedREST("PutMetricData", "monitoring.amazonaws.com", nil, handleCWPutMetricData))
+	cwCBOR(srv, "GetMetricData", handleCWGetMetricData)
+	cwCBOR(srv, "PutMetricData", handleCWPutMetricData)
 	registerCloudWatchAlarmsCBOR(srv)
 	registerCloudWatchLogAlarmsCBOR(srv)
 	registerCloudWatchAlarmOpsCBOR(srv)

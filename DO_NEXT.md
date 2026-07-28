@@ -43,21 +43,24 @@ and Application Auto Scaling evaluators.
 
 ## Next Recommended Slice
 
-The next recommended AWS fidelity slice remained BUG-2679: Amazon EC2
-`DeleteSubnet` dependency enforcement. Completion meant:
+The next recommended AWS fidelity slice became BUG-2713: Amazon SQS runtime
+semantics. Completion meant:
 
-- `DeleteSubnet` returned Amazon EC2's `DependencyViolation` while any elastic
-  network interface remained in the subnet, including interfaces backing
-  Amazon ECS tasks and active AWS Lambda invocations.
-- The dependency decision came from cloud state rather than local container
-  state, and asynchronous task launch could not race subnet deletion into an
-  invalid topology.
-- Official AWS SDK, AWS CLI, and Terraform coverage exercised the refusal and
-  the successful delete after the dependency was removed.
+- FIFO queues deduplicated within AWS's five-minute window, allocated stable
+  sequence numbers, and preserved message-group ordering across visibility
+  changes and redrive.
+- Queue and per-message delay, retention expiry, and the configured maximum
+  message size affected delivery instead of being echo-only attributes.
+- Official AWS SDK, AWS CLI, and Terraform coverage exercised each runtime
+  behavior, with a live-AWS differential for the timing and FIFO edge cases.
 
-The next related Amazon ECS slices remained BUG-2680 (`StartTask` launched real
-containers through the `RunTask` execution path) and BUG-2681 (sandbox selection
-followed launch type instead of applying Fargate restrictions universally).
+The related Amazon SNS slice remained BUG-2712: email, SMS, mobile-push, and
+Amazon Data Firehose protocols required real transports rather than being
+silently skipped. The next infrastructure slices remained BUG-2679
+(`DeleteSubnet` dependency enforcement), BUG-2680 (`StartTask` launched real
+containers through the `RunTask` execution path), and BUG-2681 (sandbox
+selection followed launch type instead of applying Fargate restrictions
+universally).
 
 ## Other Queued Fidelity Work
 

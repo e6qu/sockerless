@@ -406,12 +406,12 @@ func handleCWJSONDeleteAlarms(w http.ResponseWriter, r *http.Request) {
 // ── rpc-v2-cbor surface (Go SDK / terraform) ───────────────────────────────
 
 func registerCloudWatchAlarmsCBOR(srv *sim.Server) {
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/PutMetricAlarm", cloudTrailRecordedREST("PutMetricAlarm", "monitoring.amazonaws.com", nil, handleCWCBORPutMetricAlarm))
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/DescribeAlarms", cloudTrailRecordedREST("DescribeAlarms", "monitoring.amazonaws.com", nil, handleCWCBORDescribeAlarms))
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/DeleteAlarms", cloudTrailRecordedREST("DeleteAlarms", "monitoring.amazonaws.com", nil, handleCWCBORDeleteAlarms))
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/ListTagsForResource", cloudTrailRecordedREST("ListTagsForResource", "monitoring.amazonaws.com", nil, handleCWCBORListTagsForResource))
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/TagResource", cloudTrailRecordedREST("TagResource", "monitoring.amazonaws.com", nil, handleCWCBORTagResource))
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/UntagResource", cloudTrailRecordedREST("UntagResource", "monitoring.amazonaws.com", nil, handleCWCBORUntagResource))
+	cwCBOR(srv, "PutMetricAlarm", handleCWCBORPutMetricAlarm)
+	cwCBOR(srv, "DescribeAlarms", handleCWCBORDescribeAlarms)
+	cwCBOR(srv, "DeleteAlarms", handleCWCBORDeleteAlarms)
+	cwCBOR(srv, "ListTagsForResource", handleCWCBORListTagsForResource)
+	cwCBOR(srv, "TagResource", handleCWCBORTagResource)
+	cwCBOR(srv, "UntagResource", handleCWCBORUntagResource)
 }
 
 func cwWriteCBOR(w http.ResponseWriter, v any) {
