@@ -93,7 +93,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Check Google Cloud API specification freshness
+        id: gcp-spec-freshness
         run: bash scripts/check-spec-freshness.sh gcp
+        env:
+          SPEC_FRESHNESS_CAPTURE_DIR: ${{ runner.temp }}/gcp-spec-drift
+      - name: Preserve drifted Google Cloud API specifications
+        if: failure() && steps.gcp-spec-freshness.outcome == 'failure'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gcp-discovery-drift
+          path: ${{ runner.temp }}/gcp-spec-drift
+          if-no-files-found: ignore
+          retention-days: 1
       # README badges are refreshed by the update-readme-badges pre-push hook.
       # Re-run it here so a push that skipped the hook (e.g. --no-verify) can't
       # land stale badges — the line counts are computed from committed files
