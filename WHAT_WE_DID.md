@@ -2826,3 +2826,9 @@ returned the hosted runner to 20260709 as well. The succeeding gate passed
 without inventing a revision or altering the simulator contract, while a
 future recurrence remained directly reproducible from its captured official
 documents.
+
+The Azure Terraform workflow stopped bootstrapping Caddy through unbounded
+Cloudsmith key and repository downloads. It installed Ubuntu's signed Caddy
+package through the existing retry- and timeout-bounded APT path, preserving
+the job's twelve-minute budget for the real AzureRM apply, zero-drift plan,
+and destroy.

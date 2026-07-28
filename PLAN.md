@@ -42,7 +42,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 12. Upgraded every same-day Google Cloud API dependency drift, fixed Buildx external-test image loading, and reran the complete affected SDK, CLI, Terraform, browser, and production-build gates.
 13. Migrated Azure Container Apps, Azure Functions, and the production-shaped Azure simulator Terraform stack to HashiCorp AzureRM 5.0.0, including every provider-required resource-ID field.
 14. Made region-skewed Google Discovery drift retain the exact upstream documents as short-lived CI artifacts, and replaced CloudWatch metric-stream test placeholders with real Amazon S3, IAM, and Amazon Data Firehose resources.
-15. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+15. Kept the Azure Terraform integration budget available for the official provider by installing Ubuntu's signed Caddy package through the existing bounded APT path.
+16. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

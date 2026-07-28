@@ -64,6 +64,9 @@ Microsoft.Subscription apply, zero-drift plan, and destroy. Google Discovery
 drift failures retained the exact newest response as a short-lived artifact;
 the transient Cloud Resource Manager 20260715 rollout disappeared from every
 sampled edge, so the pinned 20260709 documents remained the truthful source.
+The Azure Terraform job installed Ubuntu's signed Caddy package through its
+retry- and timeout-bounded APT path, so a third-party repository bootstrap
+could no longer consume the provider test's execution budget.
 
 The publication repair preserved current public contracts across the failing
 client surfaces. Amazon SQS redrive used the normal enqueue path and therefore
