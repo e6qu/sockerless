@@ -46,6 +46,7 @@ import { EventBridgePage } from "./pages/EventBridgePage.js";
 import { SchedulerPage } from "./pages/SchedulerPage.js";
 import { StepFunctionsPage } from "./pages/StepFunctionsPage.js";
 import { StateMachineDetailPage } from "./pages/StateMachineDetailPage.js";
+import { StateMachineExecutionPage } from "./pages/StateMachineExecutionPage.js";
 import { CloudWatchPage } from "./pages/CloudWatchPage.js";
 import { CloudTrailPage } from "./pages/CloudTrailPage.js";
 import { SystemsManagerPage } from "./pages/SystemsManagerPage.js";
@@ -107,6 +108,10 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/eventbridge" element={<EventBridgePage />} />
         <Route path="/ui/scheduler" element={<SchedulerPage />} />
         <Route path="/ui/stepfunctions" element={<StepFunctionsPage />} />
+        <Route
+          path="/ui/stepfunctions/:stateMachineArn/executions/:executionArn"
+          element={<StateMachineExecutionPage />}
+        />
         <Route path="/ui/stepfunctions/:stateMachineArn" element={<StateMachineDetailPage />} />
         <Route path="/ui/cloudwatch" element={<CloudWatchPage />} />
         <Route path="/ui/cloudtrail" element={<CloudTrailPage />} />

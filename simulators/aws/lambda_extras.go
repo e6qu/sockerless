@@ -290,12 +290,10 @@ type LambdaLayerVersion struct {
 	LicenseInfo             string
 	CodeSha256              string
 	CodeSize                int64
+	Content                 []byte
 }
 
-// lambdaLayerContentInput is the LayerVersionContentInput shape. The zip
-// material is not retained — like the function code path, only a CodeSha256 is
-// derived — but the field presence (S3 vs ZipFile) is required for a valid
-// PublishLayerVersion request.
+// lambdaLayerContentInput is the LayerVersionContentInput shape.
 type lambdaLayerContentInput struct {
 	S3Bucket        string `json:"S3Bucket,omitempty"`
 	S3Key           string `json:"S3Key,omitempty"`
@@ -316,20 +314,21 @@ func lambdaLayerVersionArn(name string, version int64) string {
 	return fmt.Sprintf("%s:%d", lambdaLayerArn(name), version)
 }
 
-// lambdaLayerContentOutput builds the LayerVersionContentOutput. Location is
-// external: real Lambda returns a presigned S3 URL the client dereferences to
-// download the layer zip; the sim emits the same canonical shape.
-func lambdaLayerContentOutput(lv LambdaLayerVersion) map[string]any {
+func lambdaLayerContentOutput(r *http.Request, lv LambdaLayerVersion) map[string]any {
+	key := fmt.Sprintf("layers/%s/%d.zip", lv.LayerName, lv.Version)
+	lambdaPutArtifact(key, lv.Content)
 	return map[string]any{
-		"Location":   fmt.Sprintf("https://awslambda-%s-layers.s3.%s.amazonaws.com/snapshots/%s/%d", awsRegion(), awsRegion(), lv.LayerName, lv.Version),
+		"Location": presignedS3URLBase(
+			awsRequestURLBase(r), lambdaArtifactBucketName(), key, http.MethodGet,
+		),
 		"CodeSha256": lv.CodeSha256,
 		"CodeSize":   lv.CodeSize,
 	}
 }
 
-func lambdaLayerVersionResponse(lv LambdaLayerVersion) map[string]any {
+func lambdaLayerVersionResponse(r *http.Request, lv LambdaLayerVersion) map[string]any {
 	out := map[string]any{
-		"Content":         lambdaLayerContentOutput(lv),
+		"Content":         lambdaLayerContentOutput(r, lv),
 		"LayerArn":        lambdaLayerArn(lv.LayerName),
 		"LayerVersionArn": lambdaLayerVersionArn(lv.LayerName, lv.Version),
 		"Version":         lv.Version,
@@ -392,6 +391,21 @@ func handleLambdaPublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidParameterValueException", "Content is required", http.StatusBadRequest)
 		return
 	}
+	code := &LambdaFunctionCode{
+		S3Bucket:        req.Content.S3Bucket,
+		S3Key:           req.Content.S3Key,
+		S3ObjectVersion: req.Content.S3ObjectVersion,
+		ZipFile:         req.Content.ZipFile,
+	}
+	content, err := lambdaDeploymentPackageBytes(code)
+	if err != nil {
+		sim.AWSError(w, "InvalidParameterValueException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateLambdaDeploymentPackage(code); err != nil {
+		sim.AWSError(w, "InvalidParameterValueException", err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	lambdaLayersMu.Lock()
 	existing := lambdaLayers[layerName]
@@ -404,17 +418,14 @@ func handleLambdaPublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 		CompatibleRuntimes:      req.CompatibleRuntimes,
 		CompatibleArchitectures: req.CompatibleArchitectures,
 		LicenseInfo:             req.LicenseInfo,
-		CodeSha256:              lambdaLayerCodeSha256(layerName, version),
-		CodeSize:                1024,
+		CodeSha256:              lambdaCodeSha256(code),
+		CodeSize:                int64(len(content)),
+		Content:                 append([]byte(nil), content...),
 	}
 	lambdaLayers[layerName] = append(existing, lv)
 	lambdaLayersMu.Unlock()
 
-	sim.WriteJSON(w, http.StatusCreated, lambdaLayerVersionResponse(lv))
-}
-
-func lambdaLayerCodeSha256(name string, version int64) string {
-	return lambdaCodeSha256(&LambdaFunctionCode{ZipFile: fmt.Sprintf("layer:%s:%d", name, version)})
+	sim.WriteJSON(w, http.StatusCreated, lambdaLayerVersionResponse(r, lv))
 }
 
 func handleLambdaListLayerVersions(w http.ResponseWriter, r *http.Request) {
@@ -444,7 +455,7 @@ func handleLambdaGetLayerVersion(w http.ResponseWriter, r *http.Request) {
 			"Layer version %s:%d not found", layerName, version)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, lambdaLayerVersionResponse(lv))
+	sim.WriteJSON(w, http.StatusOK, lambdaLayerVersionResponse(r, lv))
 }
 
 func handleLambdaDeleteLayerVersion(w http.ResponseWriter, r *http.Request) {
@@ -479,6 +490,19 @@ func lambdaFindLayerVersion(name string, version int64) (LambdaLayerVersion, boo
 		}
 	}
 	return LambdaLayerVersion{}, false
+}
+
+func lambdaLayerVersionByARN(arn string) (LambdaLayerVersion, bool) {
+	lastColon := strings.LastIndexByte(arn, ':')
+	layerMarker := strings.Index(arn, ":layer:")
+	if layerMarker < 0 || lastColon <= layerMarker+len(":layer:") {
+		return LambdaLayerVersion{}, false
+	}
+	version, err := strconv.ParseInt(arn[lastColon+1:], 10, 64)
+	if err != nil {
+		return LambdaLayerVersion{}, false
+	}
+	return lambdaFindLayerVersion(arn[layerMarker+len(":layer:"):lastColon], version)
 }
 
 // lambdaLayersEventName composes the CloudTrail event name for the shared
@@ -555,7 +579,7 @@ func handleLambdaGetLayerVersionByArn(w http.ResponseWriter, r *http.Request) {
 			"Layer version %s:%d not found", name, version)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, lambdaLayerVersionResponse(lv))
+	sim.WriteJSON(w, http.StatusOK, lambdaLayerVersionResponse(r, lv))
 }
 
 // ---------------------------------------------------------------------------

@@ -1,9 +1,22 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AwsButton, AwsErrorAlert, AwsModal, AwsResourceTable, AwsRowLink, type AwsColumn } from "../console/index.js";
+import FormField from "@cloudscape-design/components/form-field";
+import Input from "@cloudscape-design/components/input";
+import Select from "@cloudscape-design/components/select";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Textarea from "@cloudscape-design/components/textarea";
+import {
+  AwsButton,
+  AwsErrorAlert,
+  AwsModal,
+  AwsResourceTable,
+  AwsRowLink,
+  type AwsColumn,
+} from "../console/index.js";
 import { formatEpoch } from "../console/format.js";
-import { deleteStateMachine, fetchStateMachines, type StateMachine } from "../api.js";
+import { createStateMachine, deleteStateMachine, fetchStateMachines, type StateMachine } from "../api.js";
+import { StateMachineGraph } from "./StateMachineGraph.js";
 
 // AWS Step Functions — State machines. ListStateMachines and
 // DeleteStateMachine on the real Step Functions API (X-Amz-Target
@@ -27,6 +40,110 @@ const columns: AwsColumn<StateMachine>[] = [
     value: (row) => String(row.creationDate),
   },
 ];
+
+const STARTER_DEFINITION = JSON.stringify({
+  Comment: "A starter workflow",
+  StartAt: "Pass",
+  States: {
+    Pass: { Type: "Pass", Result: { message: "Hello from AWS Step Functions" }, End: true },
+  },
+}, null, 2);
+
+function CreateStateMachineModal({ onClose }: { onClose: () => void }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [type, setType] = useState<"STANDARD" | "EXPRESS">("STANDARD");
+  const [roleArn, setRoleArn] = useState("");
+  const [definition, setDefinition] = useState(STARTER_DEFINITION);
+  let definitionValid = true;
+  try {
+    const parsed = JSON.parse(definition) as { StartAt?: string; States?: Record<string, unknown> };
+    definitionValid = Boolean(parsed.StartAt && parsed.States?.[parsed.StartAt]);
+  } catch {
+    definitionValid = false;
+  }
+  const valid = /^[a-zA-Z0-9-_]{1,80}$/.test(name) && roleArn.startsWith("arn:") && definitionValid;
+  const create = useMutation({
+    mutationFn: () => createStateMachine({ name, definition, roleArn, type }),
+    onSuccess: async (arn) => {
+      await queryClient.invalidateQueries({ queryKey: ["sfn-state-machines"] });
+      onClose();
+      if (arn) navigate(`/ui/stepfunctions/${encodeURIComponent(arn)}`);
+    },
+  });
+  return (
+    <AwsModal
+      title="Create state machine"
+      size="max"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton
+            variant="primary"
+            data-testid="sfn-create-state-machine-submit"
+            disabled={!valid || create.isPending}
+            onClick={() => create.mutate()}
+          >
+            {create.isPending ? "Creating…" : "Create"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="l">
+        <div className="aws-sfn-studio">
+          <div className="aws-sfn-studio-pane">
+            <h3>Design</h3>
+            <StateMachineGraph definition={definition} />
+          </div>
+          <div className="aws-sfn-studio-pane aws-sfn-definition-editor">
+            <h3>Code</h3>
+            <FormField
+              label="Amazon States Language definition"
+              errorText={definitionValid ? undefined : "Enter a valid definition with StartAt and States."}
+            >
+              <Textarea
+                value={definition}
+                onChange={(event) => setDefinition(event.detail.value)}
+                rows={20}
+                spellcheck={false}
+                ariaLabel="Amazon States Language definition"
+              />
+            </FormField>
+          </div>
+        </div>
+        <h3>Config</h3>
+        <FormField label="State machine name" constraintText="1–80 letters, numbers, hyphens, or underscores.">
+          <Input value={name} onChange={(event) => setName(event.detail.value)} />
+        </FormField>
+        <FormField label="Type" description="Standard keeps durable execution history. Express is optimized for high-volume workflows.">
+          <Select
+            selectedOption={{ label: type === "STANDARD" ? "Standard" : "Express", value: type }}
+            options={[
+              { label: "Standard", value: "STANDARD", description: "Exactly-once execution for up to one year." },
+              { label: "Express", value: "EXPRESS", description: "High-volume execution for up to five minutes." },
+            ]}
+            onChange={(event) => setType(event.detail.selectedOption.value as "STANDARD" | "EXPRESS")}
+          />
+        </FormField>
+        <FormField label="Execution role ARN" description="AWS Step Functions assumes this IAM role when the workflow calls resources.">
+          <Input
+            value={roleArn}
+            onChange={(event) => setRoleArn(event.detail.value)}
+            placeholder="arn:aws:iam::123456789012:role/step-functions-role"
+          />
+        </FormField>
+        {create.isError && (
+          <AwsErrorAlert>
+            <strong>Could not create the state machine.</strong>{" "}
+            {create.error instanceof Error ? create.error.message : "The request failed."}
+          </AwsErrorAlert>
+        )}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
 
 export function DeleteStateMachinesModal({
   machines,
@@ -88,6 +205,7 @@ export function DeleteStateMachinesModal({
 
 export function StepFunctionsPage() {
   const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<{ machines: StateMachine[]; clearSelection: () => void } | null>(null);
   return (
     <>
@@ -122,9 +240,13 @@ export function StepFunctionsPage() {
             <AwsButton onClick={refetch} disabled={isFetching}>
               {isFetching ? "Refreshing…" : "Refresh"}
             </AwsButton>
+            <AwsButton variant="primary" data-testid="sfn-create-state-machine" onClick={() => setCreating(true)}>
+              Create state machine
+            </AwsButton>
           </>
         )}
       />
+      {creating && <CreateStateMachineModal onClose={() => setCreating(false)} />}
       {deleting && (
         <DeleteStateMachinesModal
           machines={deleting.machines}

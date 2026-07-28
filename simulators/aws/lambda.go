@@ -1,12 +1,15 @@
 package main
 
 import (
-	"crypto/rand"
+	"archive/zip"
+	"bytes"
+	"crypto/md5"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,28 +25,38 @@ var lambdaProcessHandles sync.Map // map[requestID]*sim.ContainerHandle
 // Lambda types
 
 type LambdaFunction struct {
-	FunctionName     string              `json:"FunctionName"`
-	FunctionArn      string              `json:"FunctionArn"`
-	Runtime          string              `json:"Runtime,omitempty"`
-	Role             string              `json:"Role"`
-	Handler          string              `json:"Handler,omitempty"`
-	Code             *LambdaFunctionCode `json:"Code,omitempty"`
-	CodeSha256       string              `json:"CodeSha256,omitempty"`
-	CodeSize         int64               `json:"CodeSize"`
-	Description      string              `json:"Description,omitempty"`
-	MemorySize       int                 `json:"MemorySize"`
-	Timeout          int                 `json:"Timeout"`
-	Environment      *LambdaEnvironment  `json:"Environment,omitempty"`
-	Tags             map[string]string   `json:"Tags,omitempty"`
-	State            string              `json:"State"`
-	LastUpdateStatus string              `json:"LastUpdateStatus,omitempty"`
-	LastModified     string              `json:"LastModified"`
-	RevisionId       string              `json:"RevisionId"`
-	Version          string              `json:"Version"`
-	PackageType      string              `json:"PackageType,omitempty"`
-	Architectures    []string            `json:"Architectures,omitempty"`
-	ImageConfig      *LambdaImageConfig  `json:"ImageConfig,omitempty"`
-	VpcConfig        *LambdaVpcConfig    `json:"VpcConfig,omitempty"`
+	FunctionName           string              `json:"FunctionName"`
+	FunctionArn            string              `json:"FunctionArn"`
+	Runtime                string              `json:"Runtime,omitempty"`
+	Role                   string              `json:"Role"`
+	Handler                string              `json:"Handler,omitempty"`
+	Code                   *LambdaFunctionCode `json:"Code,omitempty"`
+	CodeSha256             string              `json:"CodeSha256,omitempty"`
+	CodeSize               int64               `json:"CodeSize"`
+	Description            string              `json:"Description,omitempty"`
+	MemorySize             int                 `json:"MemorySize"`
+	Timeout                int                 `json:"Timeout"`
+	Environment            *LambdaEnvironment  `json:"Environment,omitempty"`
+	Tags                   map[string]string   `json:"Tags,omitempty"`
+	State                  string              `json:"State"`
+	LastUpdateStatus       string              `json:"LastUpdateStatus,omitempty"`
+	LastModified           string              `json:"LastModified"`
+	RevisionId             string              `json:"RevisionId"`
+	Version                string              `json:"Version"`
+	PackageType            string              `json:"PackageType,omitempty"`
+	Architectures          []string            `json:"Architectures,omitempty"`
+	ImageConfig            *LambdaImageConfig  `json:"ImageConfig,omitempty"`
+	VpcConfig              *LambdaVpcConfig    `json:"VpcConfig,omitempty"`
+	Layers                 []string            `json:"Layers,omitempty"`
+	CapacityProviderConfig map[string]any      `json:"CapacityProviderConfig,omitempty"`
+	DeadLetterConfig       map[string]any      `json:"DeadLetterConfig,omitempty"`
+	DurableConfig          map[string]any      `json:"DurableConfig,omitempty"`
+	EphemeralStorage       map[string]any      `json:"EphemeralStorage,omitempty"`
+	FileSystemConfigs      []map[string]any    `json:"FileSystemConfigs,omitempty"`
+	KMSKeyArn              string              `json:"KMSKeyArn,omitempty"`
+	LoggingConfig          map[string]any      `json:"LoggingConfig,omitempty"`
+	SnapStart              map[string]any      `json:"SnapStart,omitempty"`
+	TracingConfig          map[string]any      `json:"TracingConfig,omitempty"`
 }
 
 // LambdaVpcConfig matches the real Lambda CreateFunction shape. When
@@ -148,54 +161,118 @@ type LambdaImageConfigResponse struct {
 }
 
 type lambdaFunctionConfiguration struct {
-	FunctionName        string                        `json:"FunctionName"`
-	FunctionArn         string                        `json:"FunctionArn"`
-	Runtime             string                        `json:"Runtime,omitempty"`
-	Role                string                        `json:"Role"`
-	Handler             string                        `json:"Handler,omitempty"`
-	CodeSha256          string                        `json:"CodeSha256,omitempty"`
-	CodeSize            int64                         `json:"CodeSize"`
-	Description         string                        `json:"Description,omitempty"`
-	MemorySize          int                           `json:"MemorySize"`
-	Timeout             int                           `json:"Timeout"`
-	Environment         *LambdaEnvironment            `json:"Environment,omitempty"`
-	State               string                        `json:"State"`
-	LastUpdateStatus    string                        `json:"LastUpdateStatus,omitempty"`
-	LastModified        string                        `json:"LastModified"`
-	RevisionId          string                        `json:"RevisionId"`
-	Version             string                        `json:"Version"`
-	PackageType         string                        `json:"PackageType,omitempty"`
-	Architectures       []string                      `json:"Architectures,omitempty"`
-	ImageConfigResponse *LambdaImageConfigResponse    `json:"ImageConfigResponse,omitempty"`
-	VpcConfig           *lambdaVpcConfigConfiguration `json:"VpcConfig,omitempty"`
+	FunctionName           string                        `json:"FunctionName"`
+	FunctionArn            string                        `json:"FunctionArn"`
+	Runtime                string                        `json:"Runtime,omitempty"`
+	Role                   string                        `json:"Role"`
+	Handler                string                        `json:"Handler,omitempty"`
+	CodeSha256             string                        `json:"CodeSha256,omitempty"`
+	CodeSize               int64                         `json:"CodeSize"`
+	Description            string                        `json:"Description,omitempty"`
+	MemorySize             int                           `json:"MemorySize"`
+	Timeout                int                           `json:"Timeout"`
+	Environment            *LambdaEnvironment            `json:"Environment,omitempty"`
+	State                  string                        `json:"State"`
+	LastUpdateStatus       string                        `json:"LastUpdateStatus,omitempty"`
+	LastModified           string                        `json:"LastModified"`
+	RevisionId             string                        `json:"RevisionId"`
+	Version                string                        `json:"Version"`
+	PackageType            string                        `json:"PackageType,omitempty"`
+	Architectures          []string                      `json:"Architectures,omitempty"`
+	ImageConfigResponse    *LambdaImageConfigResponse    `json:"ImageConfigResponse,omitempty"`
+	VpcConfig              *lambdaVpcConfigConfiguration `json:"VpcConfig,omitempty"`
+	Layers                 []lambdaLayerConfiguration    `json:"Layers,omitempty"`
+	CapacityProviderConfig map[string]any                `json:"CapacityProviderConfig,omitempty"`
+	DeadLetterConfig       map[string]any                `json:"DeadLetterConfig,omitempty"`
+	DurableConfig          map[string]any                `json:"DurableConfig,omitempty"`
+	EphemeralStorage       map[string]any                `json:"EphemeralStorage,omitempty"`
+	FileSystemConfigs      []map[string]any              `json:"FileSystemConfigs,omitempty"`
+	KMSKeyArn              string                        `json:"KMSKeyArn,omitempty"`
+	LoggingConfig          map[string]any                `json:"LoggingConfig,omitempty"`
+	SnapStart              map[string]any                `json:"SnapStart,omitempty"`
+	TracingConfig          map[string]any                `json:"TracingConfig,omitempty"`
+}
+
+type lambdaLayerConfiguration struct {
+	Arn      string `json:"Arn"`
+	CodeSize int64  `json:"CodeSize"`
+}
+
+func lambdaLayerConfigurations(layerARNs []string) []lambdaLayerConfiguration {
+	var configurations []lambdaLayerConfiguration
+	for _, arn := range layerARNs {
+		if layer, ok := lambdaLayerVersionByARN(arn); ok {
+			configurations = append(configurations, lambdaLayerConfiguration{Arn: arn, CodeSize: layer.CodeSize})
+		}
+	}
+	return configurations
 }
 
 func lambdaConfiguration(fn LambdaFunction) lambdaFunctionConfiguration {
 	cfg := lambdaFunctionConfiguration{
-		FunctionName:     fn.FunctionName,
-		FunctionArn:      fn.FunctionArn,
-		Runtime:          fn.Runtime,
-		Role:             fn.Role,
-		Handler:          fn.Handler,
-		CodeSha256:       fn.CodeSha256,
-		CodeSize:         fn.CodeSize,
-		Description:      fn.Description,
-		MemorySize:       fn.MemorySize,
-		Timeout:          fn.Timeout,
-		Environment:      fn.Environment,
-		State:            fn.State,
-		LastUpdateStatus: fn.LastUpdateStatus,
-		LastModified:     fn.LastModified,
-		RevisionId:       fn.RevisionId,
-		Version:          fn.Version,
-		PackageType:      fn.PackageType,
-		Architectures:    fn.Architectures,
-		VpcConfig:        lambdaVpcConfiguration(fn.VpcConfig),
+		FunctionName:           fn.FunctionName,
+		FunctionArn:            fn.FunctionArn,
+		Runtime:                fn.Runtime,
+		Role:                   fn.Role,
+		Handler:                fn.Handler,
+		CodeSha256:             fn.CodeSha256,
+		CodeSize:               fn.CodeSize,
+		Description:            fn.Description,
+		MemorySize:             fn.MemorySize,
+		Timeout:                fn.Timeout,
+		Environment:            fn.Environment,
+		State:                  fn.State,
+		LastUpdateStatus:       fn.LastUpdateStatus,
+		LastModified:           fn.LastModified,
+		RevisionId:             fn.RevisionId,
+		Version:                fn.Version,
+		PackageType:            fn.PackageType,
+		Architectures:          fn.Architectures,
+		VpcConfig:              lambdaVpcConfiguration(fn.VpcConfig),
+		CapacityProviderConfig: fn.CapacityProviderConfig,
+		DeadLetterConfig:       fn.DeadLetterConfig,
+		DurableConfig:          fn.DurableConfig,
+		EphemeralStorage:       fn.EphemeralStorage,
+		FileSystemConfigs:      fn.FileSystemConfigs,
+		KMSKeyArn:              fn.KMSKeyArn,
+		LoggingConfig:          fn.LoggingConfig,
+		SnapStart:              lambdaSnapStartResponse(fn.SnapStart),
+		TracingConfig:          fn.TracingConfig,
 	}
+	cfg.Layers = lambdaLayerConfigurations(fn.Layers)
 	if fn.ImageConfig != nil {
 		cfg.ImageConfigResponse = &LambdaImageConfigResponse{ImageConfig: fn.ImageConfig}
 	}
 	return cfg
+}
+
+func lambdaSnapStartResponse(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	response := make(map[string]any, len(input)+1)
+	for key, value := range input {
+		response[key] = value
+	}
+	if _, ok := response["OptimizationStatus"]; !ok {
+		response["OptimizationStatus"] = "Off"
+	}
+	return response
+}
+
+func lambdaNumber(value any) (int, bool) {
+	switch number := value.(type) {
+	case float64:
+		return int(number), number == float64(int(number))
+	case int:
+		return number, true
+	case int32:
+		return int(number), true
+	case int64:
+		return int(number), true
+	default:
+		return 0, false
+	}
 }
 
 // State store
@@ -203,6 +280,67 @@ var lambdaFunctions sim.Store[LambdaFunction]
 
 func lambdaArn(name string) string {
 	return fmt.Sprintf("arn:aws:lambda:%s:%s:function:%s", awsRegion(), awsAccountID(), name)
+}
+
+func lambdaResolveInvocationTarget(identifier, queryQualifier string) (LambdaFunction, string, bool) {
+	name := identifier
+	qualifier := queryQualifier
+	if marker := strings.Index(name, ":function:"); marker >= 0 {
+		name = name[marker+len(":function:"):]
+	}
+	if separator := strings.IndexByte(name, ':'); separator >= 0 {
+		if qualifier == "" {
+			qualifier = name[separator+1:]
+		}
+		name = name[:separator]
+	}
+	function, ok := lambdaFunctions.Get(name)
+	if !ok {
+		return LambdaFunction{}, "", false
+	}
+	if qualifier == "" || qualifier == "$LATEST" {
+		function.Version = "$LATEST"
+		return function, "$LATEST", true
+	}
+	lambdaAliasesMu.Lock()
+	alias, isAlias := lambdaAliases[name][qualifier]
+	lambdaAliasesMu.Unlock()
+	if isAlias {
+		selectedVersion := alias.FunctionVersion
+		if alias.RoutingConfig != nil && len(alias.RoutingConfig.AdditionalVersionWeights) > 0 {
+			point, err := cryptorand.Int(cryptorand.Reader, big.NewInt(10_000))
+			if err != nil {
+				return LambdaFunction{}, "", false
+			}
+			cursor := 0
+			for candidate, weight := range alias.RoutingConfig.AdditionalVersionWeights {
+				cursor += int(weight * 10_000)
+				if int(point.Int64()) < cursor {
+					selectedVersion = candidate
+					break
+				}
+			}
+		}
+		qualifier = selectedVersion
+	}
+	lambdaVersionsMu.Lock()
+	defer lambdaVersionsMu.Unlock()
+	for _, version := range lambdaVersions[name] {
+		if version.Version == qualifier {
+			return lambdaFunctionFromVersion(version), version.Version, true
+		}
+	}
+	return LambdaFunction{}, "", false
+}
+
+func lambdaInvocationHasQualifier(identifier, queryQualifier string) bool {
+	if queryQualifier != "" {
+		return true
+	}
+	if marker := strings.Index(identifier, ":function:"); marker >= 0 {
+		identifier = identifier[marker+len(":function:"):]
+	}
+	return strings.Contains(identifier, ":")
 }
 
 func registerLambda(srv *sim.Server) {
@@ -277,21 +415,31 @@ func registerLambda(srv *sim.Server) {
 
 func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		FunctionName  string              `json:"FunctionName"`
-		Runtime       string              `json:"Runtime"`
-		Role          string              `json:"Role"`
-		Handler       string              `json:"Handler"`
-		Code          *LambdaFunctionCode `json:"Code"`
-		Description   string              `json:"Description"`
-		MemorySize    int                 `json:"MemorySize"`
-		Timeout       int                 `json:"Timeout"`
-		Environment   *LambdaEnvironment  `json:"Environment"`
-		Tags          map[string]string   `json:"Tags"`
-		PackageType   string              `json:"PackageType"`
-		Publish       bool                `json:"Publish"`
-		Architectures []string            `json:"Architectures"`
-		ImageConfig   *LambdaImageConfig  `json:"ImageConfig"`
-		VpcConfig     *LambdaVpcConfig    `json:"VpcConfig"`
+		FunctionName           string              `json:"FunctionName"`
+		Runtime                string              `json:"Runtime"`
+		Role                   string              `json:"Role"`
+		Handler                string              `json:"Handler"`
+		Code                   *LambdaFunctionCode `json:"Code"`
+		Description            string              `json:"Description"`
+		MemorySize             int                 `json:"MemorySize"`
+		Timeout                int                 `json:"Timeout"`
+		Environment            *LambdaEnvironment  `json:"Environment"`
+		Tags                   map[string]string   `json:"Tags"`
+		PackageType            string              `json:"PackageType"`
+		Publish                bool                `json:"Publish"`
+		Architectures          []string            `json:"Architectures"`
+		ImageConfig            *LambdaImageConfig  `json:"ImageConfig"`
+		VpcConfig              *LambdaVpcConfig    `json:"VpcConfig"`
+		Layers                 []string            `json:"Layers"`
+		CapacityProviderConfig map[string]any      `json:"CapacityProviderConfig"`
+		DeadLetterConfig       map[string]any      `json:"DeadLetterConfig"`
+		DurableConfig          map[string]any      `json:"DurableConfig"`
+		EphemeralStorage       map[string]any      `json:"EphemeralStorage"`
+		FileSystemConfigs      []map[string]any    `json:"FileSystemConfigs"`
+		KMSKeyArn              string              `json:"KMSKeyArn"`
+		LoggingConfig          map[string]any      `json:"LoggingConfig"`
+		SnapStart              map[string]any      `json:"SnapStart"`
+		TracingConfig          map[string]any      `json:"TracingConfig"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterValueException", "Invalid request body", http.StatusBadRequest)
@@ -338,6 +486,68 @@ func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 	if len(req.Architectures) == 0 {
 		req.Architectures = []string{"x86_64"}
 	}
+	if req.Code == nil {
+		sim.AWSError(w, "InvalidParameterValueException", "Code is required", http.StatusBadRequest)
+		return
+	}
+	if req.EphemeralStorage == nil {
+		req.EphemeralStorage = map[string]any{"Size": float64(512)}
+	}
+	if size, ok := lambdaNumber(req.EphemeralStorage["Size"]); !ok || size < 512 || size > 10240 {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"EphemeralStorage.Size must be between 512 and 10240", http.StatusBadRequest)
+		return
+	}
+	if req.LoggingConfig == nil {
+		req.LoggingConfig = map[string]any{
+			"LogFormat":      "Text",
+			"LogGroup":       "/aws/lambda/" + req.FunctionName,
+			"SystemLogLevel": "INFO",
+		}
+	}
+	if req.TracingConfig == nil {
+		req.TracingConfig = map[string]any{"Mode": "PassThrough"}
+	}
+	if req.SnapStart == nil {
+		req.SnapStart = map[string]any{"ApplyOn": "None"}
+	}
+	if req.DurableConfig != nil && req.PackageType != "Image" &&
+		!strings.HasPrefix(req.Runtime, "nodejs") &&
+		!strings.HasPrefix(req.Runtime, "python") &&
+		!strings.HasPrefix(req.Runtime, "java") {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"Durable functions require a supported Node.js, Python, Java, or container-image runtime", http.StatusBadRequest)
+		return
+	}
+	if req.PackageType == "Image" {
+		if req.Code.ImageUri == "" {
+			sim.AWSError(w, "InvalidParameterValueException",
+				"ImageUri is required when PackageType is Image", http.StatusBadRequest)
+			return
+		}
+	} else {
+		if req.Runtime == "" || req.Handler == "" {
+			sim.AWSError(w, "InvalidParameterValueException",
+				"Runtime and Handler are required when PackageType is Zip", http.StatusBadRequest)
+			return
+		}
+		if err := validateLambdaDeploymentPackage(req.Code); err != nil {
+			sim.AWSError(w, "InvalidParameterValueException", err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	codeSize, err := lambdaDeploymentPackageSize(req.Code)
+	if err != nil {
+		sim.AWSError(w, "InvalidParameterValueException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, layerARN := range req.Layers {
+		if _, ok := lambdaLayerVersionByARN(layerARN); !ok {
+			sim.AWSErrorf(w, "InvalidParameterValueException", http.StatusBadRequest,
+				"Layer version %s does not exist", layerARN)
+			return
+		}
+	}
 
 	// Real Lambda allocates a Hyperplane ENI per VpcConfig.SubnetId, with
 	// an IP drawn from the subnet's CIDR. Validate the subnet exists and
@@ -355,28 +565,38 @@ func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fn := LambdaFunction{
-		FunctionName:     req.FunctionName,
-		FunctionArn:      lambdaArn(req.FunctionName),
-		Runtime:          req.Runtime,
-		Role:             req.Role,
-		Handler:          req.Handler,
-		Code:             req.Code,
-		CodeSha256:       lambdaCodeSha256(req.Code),
-		CodeSize:         1024,
-		Description:      req.Description,
-		MemorySize:       req.MemorySize,
-		Timeout:          req.Timeout,
-		Environment:      req.Environment,
-		Tags:             req.Tags,
-		State:            "Active",
-		LastUpdateStatus: "Successful",
-		LastModified:     time.Now().UTC().Format(time.RFC3339),
-		RevisionId:       generateUUID(),
-		Version:          "$LATEST",
-		PackageType:      req.PackageType,
-		Architectures:    req.Architectures,
-		ImageConfig:      req.ImageConfig,
-		VpcConfig:        vpcConfig,
+		FunctionName:           req.FunctionName,
+		FunctionArn:            lambdaArn(req.FunctionName),
+		Runtime:                req.Runtime,
+		Role:                   req.Role,
+		Handler:                req.Handler,
+		Code:                   req.Code,
+		CodeSha256:             lambdaCodeSha256(req.Code),
+		CodeSize:               codeSize,
+		Description:            req.Description,
+		MemorySize:             req.MemorySize,
+		Timeout:                req.Timeout,
+		Environment:            req.Environment,
+		Tags:                   req.Tags,
+		State:                  "Active",
+		LastUpdateStatus:       "Successful",
+		LastModified:           time.Now().UTC().Format(time.RFC3339),
+		RevisionId:             generateUUID(),
+		Version:                "$LATEST",
+		PackageType:            req.PackageType,
+		Architectures:          req.Architectures,
+		ImageConfig:            req.ImageConfig,
+		VpcConfig:              vpcConfig,
+		Layers:                 req.Layers,
+		CapacityProviderConfig: req.CapacityProviderConfig,
+		DeadLetterConfig:       req.DeadLetterConfig,
+		DurableConfig:          req.DurableConfig,
+		EphemeralStorage:       req.EphemeralStorage,
+		FileSystemConfigs:      req.FileSystemConfigs,
+		KMSKeyArn:              req.KMSKeyArn,
+		LoggingConfig:          req.LoggingConfig,
+		SnapStart:              req.SnapStart,
+		TracingConfig:          req.TracingConfig,
 	}
 	lambdaFunctions.Put(req.FunctionName, fn)
 	if req.Publish {
@@ -390,15 +610,85 @@ func lambdaCodeSha256(code *LambdaFunctionCode) string {
 	if code == nil || code.ImageUri != "" {
 		return ""
 	}
-	material := code.ZipFile
-	if material == "" {
-		material = code.S3Bucket + "/" + code.S3Key + "@" + code.S3ObjectVersion
-	}
-	if material == "" {
+	material, err := lambdaDeploymentPackageBytes(code)
+	if err != nil || len(material) == 0 {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(material))
+	sum := sha256.Sum256(material)
 	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// lambdaDeploymentPackageBytes resolves the deployment archive from the same
+// sources AWS Lambda accepts. Inline ZipFile is base64 on the REST-JSON wire;
+// S3 coordinates address the real Amazon S3 slice in this cloud process.
+// These typed errors preserve AWS's user-facing capitalization when handlers
+// copy the validation message into an InvalidParameterValueException.
+type lambdaDeploymentPackageError string
+
+func (e lambdaDeploymentPackageError) Error() string {
+	return string(e)
+}
+
+func lambdaDeploymentPackageBytes(code *LambdaFunctionCode) ([]byte, error) {
+	if code == nil {
+		return nil, lambdaDeploymentPackageError("Code is required")
+	}
+	if code.ZipFile != "" {
+		b, err := base64.StdEncoding.DecodeString(code.ZipFile)
+		if err != nil {
+			return nil, fmt.Errorf("ZipFile must be valid base64: %w", err)
+		}
+		return b, nil
+	}
+	if code.S3Bucket != "" || code.S3Key != "" {
+		if code.S3Bucket == "" || code.S3Key == "" {
+			return nil, fmt.Errorf("S3Bucket and S3Key must be supplied together")
+		}
+		obj, ok := s3Objects.Get(s3ObjectKey(code.S3Bucket, code.S3Key))
+		if !ok {
+			return nil, lambdaDeploymentPackageError(fmt.Sprintf(
+				"Amazon S3 object s3://%s/%s does not exist", code.S3Bucket, code.S3Key,
+			))
+		}
+		return append([]byte(nil), obj.Data...), nil
+	}
+	return nil, lambdaDeploymentPackageError("ZipFile or Amazon S3 deployment package coordinates are required")
+}
+
+func lambdaDeploymentPackageSize(code *LambdaFunctionCode) (int64, error) {
+	if code == nil {
+		return 0, lambdaDeploymentPackageError("Code is required")
+	}
+	if code.ImageUri != "" {
+		return 0, nil
+	}
+	b, err := lambdaDeploymentPackageBytes(code)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(b)), nil
+}
+
+func validateLambdaDeploymentPackage(code *LambdaFunctionCode) error {
+	b, err := lambdaDeploymentPackageBytes(code)
+	if err != nil {
+		return err
+	}
+	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		return lambdaDeploymentPackageError(fmt.Sprintf("Could not unzip uploaded file: %v", err))
+	}
+	if len(zr.File) == 0 {
+		return lambdaDeploymentPackageError("Could not unzip uploaded file: archive is empty")
+	}
+	var uncompressed uint64
+	for _, entry := range zr.File {
+		uncompressed += entry.UncompressedSize64
+		if uncompressed > 250*1024*1024 {
+			return lambdaDeploymentPackageError("Unzipped size must be smaller than 262144000 bytes")
+		}
+	}
+	return nil
 }
 
 func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
@@ -408,23 +698,15 @@ func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fn, ok := lambdaFunctions.Get(name)
+	queryQualifier := r.URL.Query().Get("Qualifier")
+	fn, _, ok := lambdaResolveInvocationTarget(name, queryQualifier)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Function not found: %s", lambdaArn(name))
 		return
 	}
 
-	// Code.Location is external: real Lambda returns a presigned S3
-	// URL (`https://awslambda-<region>-tasks.s3.<region>.amazonaws.com/snapshots/<fn>`)
-	// that aws-sdk-go-v2 + terraform-provider-aws + the Lambda console
-	// dereference to fetch the deployment package. The sim does not
-	// host an equivalent surface; clients that follow the URL will
-	// receive whatever real AWS returns for an unknown snapshot.
 	code := map[string]string{
-		"Location": fmt.Sprintf("https://awslambda-%s-tasks.s3.%s.amazonaws.com/snapshots/%s", awsRegion(), awsRegion(), name),
-		// RepositoryType is a documented GetFunction response field: "S3" for a
-		// ZIP package, "ECR" for a container-image package (overridden below).
 		"RepositoryType": "S3",
 	}
 	if fn.Code != nil {
@@ -432,6 +714,17 @@ func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
 			code["ImageUri"] = fn.Code.ImageUri
 			code["ResolvedImageUri"] = fn.Code.ImageUri
 			code["RepositoryType"] = "ECR"
+		} else {
+			archive, err := lambdaDeploymentPackageBytes(fn.Code)
+			if err != nil {
+				sim.AWSError(w, "ServiceException", err.Error(), http.StatusInternalServerError)
+				return
+			}
+			key := "functions/" + name + "/" + fn.RevisionId + ".zip"
+			lambdaPutArtifact(key, archive)
+			code["Location"] = presignedS3URLBase(
+				awsRequestURLBase(r), lambdaArtifactBucketName(), key, http.MethodGet,
+			)
 		}
 		if fn.Code.SourceKMSKeyArn != "" {
 			code["SourceKMSKeyArn"] = fn.Code.SourceKMSKeyArn
@@ -448,10 +741,87 @@ func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func lambdaArtifactBucketName() string {
+	return awsAccountID() + "-lambda-artifacts"
+}
+
+func lambdaPutArtifact(key string, data []byte) {
+	bucket := lambdaArtifactBucketName()
+	if _, ok := s3Buckets_.Get(bucket); !ok {
+		s3Buckets_.Put(bucket, S3Bucket{
+			Name:         bucket,
+			CreationDate: time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+	digest := md5.Sum(data)
+	s3Objects.Put(s3ObjectKey(bucket, key), S3Object{
+		Key:          s3ObjectKey(bucket, key),
+		Data:         append([]byte(nil), data...),
+		ContentType:  "application/zip",
+		ETag:         fmt.Sprintf("\"%x\"", digest),
+		LastModified: time.Now().UTC(),
+		Size:         int64(len(data)),
+		Metadata:     map[string]string{"aws-service": "lambda"},
+	})
+}
+
 func handleLambdaDeleteFunction(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
 	if name == "" {
 		sim.AWSError(w, "InvalidParameterValueException", "Function name is required", http.StatusBadRequest)
+		return
+	}
+	qualifier := r.URL.Query().Get("Qualifier")
+	if qualifier != "" {
+		if qualifier == "$LATEST" {
+			sim.AWSError(w, "InvalidParameterValueException",
+				"$LATEST cannot be deleted independently", http.StatusBadRequest)
+			return
+		}
+		if _, ok := lambdaFunctions.Get(name); !ok {
+			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+				"Function not found: %s", lambdaArn(name))
+			return
+		}
+		lambdaAliasesMu.Lock()
+		for _, alias := range lambdaAliases[name] {
+			if alias.FunctionVersion == qualifier {
+				lambdaAliasesMu.Unlock()
+				sim.AWSError(w, "ResourceConflictException",
+					"Lambda version "+qualifier+" is referenced by an alias",
+					http.StatusConflict)
+				return
+			}
+			if alias.RoutingConfig != nil {
+				if _, referenced := alias.RoutingConfig.AdditionalVersionWeights[qualifier]; referenced {
+					lambdaAliasesMu.Unlock()
+					sim.AWSError(w, "ResourceConflictException",
+						"Lambda version "+qualifier+" is referenced by an alias",
+						http.StatusConflict)
+					return
+				}
+			}
+		}
+		lambdaAliasesMu.Unlock()
+		deleted := false
+		lambdaVersionsMu.Lock()
+		versions := lambdaVersions[name]
+		filtered := versions[:0]
+		for _, version := range versions {
+			if version.Version == qualifier {
+				deleted = true
+				continue
+			}
+			filtered = append(filtered, version)
+		}
+		lambdaVersions[name] = filtered
+		lambdaVersionsMu.Unlock()
+		if !deleted {
+			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+				"Function version not found: %s:%s", lambdaArn(name), qualifier)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -460,6 +830,55 @@ func handleLambdaDeleteFunction(w http.ResponseWriter, r *http.Request) {
 			"Function not found: %s", lambdaArn(name))
 		return
 	}
+	lambdaVersionsMu.Lock()
+	delete(lambdaVersions, name)
+	lambdaVersionsMu.Unlock()
+	lambdaAliasesMu.Lock()
+	delete(lambdaAliases, name)
+	lambdaAliasesMu.Unlock()
+	lambdaPoliciesMu.Lock()
+	delete(lambdaPolicies, name)
+	lambdaPoliciesMu.Unlock()
+	lambdaURLConfigsMu.Lock()
+	delete(lambdaURLConfigs, name)
+	lambdaURLConfigsMu.Unlock()
+	lambdaConcurrencyMu.Lock()
+	delete(lambdaConcurrency, name)
+	lambdaConcurrencyMu.Unlock()
+	lambdaFnCSCMu.Lock()
+	delete(lambdaFnCSC, name)
+	lambdaFnCSCMu.Unlock()
+	lambdaRecursionMu.Lock()
+	delete(lambdaRecursion, name)
+	lambdaRecursionMu.Unlock()
+	lambdaEICMu.Lock()
+	for key := range lambdaEICs {
+		if strings.HasPrefix(key, name+":") {
+			delete(lambdaEICs, key)
+		}
+	}
+	lambdaEICMu.Unlock()
+	lambdaPCMu.Lock()
+	for key := range lambdaPCs {
+		if strings.HasPrefix(key, name+":") {
+			delete(lambdaPCs, key)
+		}
+	}
+	lambdaPCMu.Unlock()
+	lambdaRTMMu.Lock()
+	for key := range lambdaRTMs {
+		if strings.HasPrefix(key, name+":") {
+			delete(lambdaRTMs, key)
+		}
+	}
+	lambdaRTMMu.Unlock()
+	lambdaScalingMu.Lock()
+	for key := range lambdaScalingCfgs {
+		if strings.HasPrefix(key, name+":") {
+			delete(lambdaScalingCfgs, key)
+		}
+	}
+	lambdaScalingMu.Unlock()
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -472,17 +891,50 @@ func handleLambdaUpdateFunctionConfiguration(w http.ResponseWriter, r *http.Requ
 	}
 
 	var req struct {
-		Runtime     string             `json:"Runtime"`
-		Handler     string             `json:"Handler"`
-		Description string             `json:"Description"`
-		MemorySize  *int               `json:"MemorySize"`
-		Timeout     *int               `json:"Timeout"`
-		Environment *LambdaEnvironment `json:"Environment"`
-		Role        string             `json:"Role"`
-		VpcConfig   *LambdaVpcConfig   `json:"VpcConfig"`
+		Runtime                *string            `json:"Runtime"`
+		Handler                *string            `json:"Handler"`
+		Description            *string            `json:"Description"`
+		MemorySize             *int               `json:"MemorySize"`
+		Timeout                *int               `json:"Timeout"`
+		Environment            *LambdaEnvironment `json:"Environment"`
+		Role                   *string            `json:"Role"`
+		VpcConfig              *LambdaVpcConfig   `json:"VpcConfig"`
+		Layers                 *[]string          `json:"Layers"`
+		CapacityProviderConfig map[string]any     `json:"CapacityProviderConfig"`
+		DeadLetterConfig       map[string]any     `json:"DeadLetterConfig"`
+		DurableConfig          map[string]any     `json:"DurableConfig"`
+		EphemeralStorage       map[string]any     `json:"EphemeralStorage"`
+		FileSystemConfigs      *[]map[string]any  `json:"FileSystemConfigs"`
+		ImageConfig            *LambdaImageConfig `json:"ImageConfig"`
+		KMSKeyArn              *string            `json:"KMSKeyArn"`
+		LoggingConfig          map[string]any     `json:"LoggingConfig"`
+		SnapStart              map[string]any     `json:"SnapStart"`
+		TracingConfig          map[string]any     `json:"TracingConfig"`
+		RevisionId             *string            `json:"RevisionId"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterValueException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	current, exists := lambdaFunctions.Get(name)
+	if !exists {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+			"Function not found: %s", lambdaArn(name))
+		return
+	}
+	if req.RevisionId != nil && *req.RevisionId != current.RevisionId {
+		sim.AWSError(w, "PreconditionFailedException",
+			"The Revision Id provided does not match the latest Revision Id.", http.StatusPreconditionFailed)
+		return
+	}
+	if req.MemorySize != nil && (*req.MemorySize < 128 || *req.MemorySize > 10240) {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"MemorySize must be between 128 and 10240", http.StatusBadRequest)
+		return
+	}
+	if req.Timeout != nil && (*req.Timeout < 1 || *req.Timeout > 900) {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"Timeout must be between 1 and 900", http.StatusBadRequest)
 		return
 	}
 
@@ -499,16 +951,32 @@ func handleLambdaUpdateFunctionConfiguration(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	if req.Layers != nil {
+		for _, layerARN := range *req.Layers {
+			if _, ok := lambdaLayerVersionByARN(layerARN); !ok {
+				sim.AWSErrorf(w, "InvalidParameterValueException", http.StatusBadRequest,
+					"Layer version %s does not exist", layerARN)
+				return
+			}
+		}
+	}
+	if req.EphemeralStorage != nil {
+		if size, ok := lambdaNumber(req.EphemeralStorage["Size"]); !ok || size < 512 || size > 10240 {
+			sim.AWSError(w, "InvalidParameterValueException",
+				"EphemeralStorage.Size must be between 512 and 10240", http.StatusBadRequest)
+			return
+		}
+	}
 
 	found := lambdaFunctions.Update(name, func(fn *LambdaFunction) {
-		if req.Runtime != "" {
-			fn.Runtime = req.Runtime
+		if req.Runtime != nil {
+			fn.Runtime = *req.Runtime
 		}
-		if req.Handler != "" {
-			fn.Handler = req.Handler
+		if req.Handler != nil {
+			fn.Handler = *req.Handler
 		}
-		if req.Description != "" {
-			fn.Description = req.Description
+		if req.Description != nil {
+			fn.Description = *req.Description
 		}
 		if req.MemorySize != nil {
 			fn.MemorySize = *req.MemorySize
@@ -519,13 +987,46 @@ func handleLambdaUpdateFunctionConfiguration(w http.ResponseWriter, r *http.Requ
 		if req.Environment != nil {
 			fn.Environment = req.Environment
 		}
-		if req.Role != "" {
-			fn.Role = req.Role
+		if req.Role != nil {
+			fn.Role = *req.Role
 		}
 		if req.VpcConfig != nil {
 			req.VpcConfig.SubnetIPv4Allocations = newAllocations
 			req.VpcConfig.VpcId = newVpcID
 			fn.VpcConfig = req.VpcConfig
+		}
+		if req.Layers != nil {
+			fn.Layers = append([]string(nil), (*req.Layers)...)
+		}
+		if req.CapacityProviderConfig != nil {
+			fn.CapacityProviderConfig = req.CapacityProviderConfig
+		}
+		if req.DeadLetterConfig != nil {
+			fn.DeadLetterConfig = req.DeadLetterConfig
+		}
+		if req.DurableConfig != nil {
+			fn.DurableConfig = req.DurableConfig
+		}
+		if req.EphemeralStorage != nil {
+			fn.EphemeralStorage = req.EphemeralStorage
+		}
+		if req.FileSystemConfigs != nil {
+			fn.FileSystemConfigs = append([]map[string]any(nil), (*req.FileSystemConfigs)...)
+		}
+		if req.ImageConfig != nil {
+			fn.ImageConfig = req.ImageConfig
+		}
+		if req.KMSKeyArn != nil {
+			fn.KMSKeyArn = *req.KMSKeyArn
+		}
+		if req.LoggingConfig != nil {
+			fn.LoggingConfig = req.LoggingConfig
+		}
+		if req.SnapStart != nil {
+			fn.SnapStart = req.SnapStart
+		}
+		if req.TracingConfig != nil {
+			fn.TracingConfig = req.TracingConfig
 		}
 		fn.LastModified = time.Now().UTC().Format(time.RFC3339)
 		fn.LastUpdateStatus = "Successful"
@@ -556,10 +1057,11 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fn, ok := lambdaFunctions.Get(name)
+	queryQualifier := r.URL.Query().Get("Qualifier")
+	fn, executedVersion, ok := lambdaResolveInvocationTarget(name, queryQualifier)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
-			"Function not found: %s", lambdaArn(name))
+			"Function or version not found: %s", name)
 		return
 	}
 
@@ -569,47 +1071,76 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 		invocationType = "RequestResponse"
 	}
 
-	w.Header().Set("X-Amz-Executed-Version", "$LATEST")
+	w.Header().Set("X-Amz-Executed-Version", executedVersion)
+
+	if strings.EqualFold(invocationType, "DryRun") {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if ce := r.Header.Get("Content-Encoding"); ce != "" {
+		sim.AWSError(w, "InvalidRequest",
+			fmt.Sprintf("Content-Encoding %q not supported on Lambda Invoke", ce),
+			http.StatusUnsupportedMediaType)
+		return
+	}
+	payload, err := io.ReadAll(r.Body)
+	if err != nil {
+		sim.AWSError(w, "RequestBodyInvalid",
+			"failed to read invocation payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	durableARN := ""
+	if fn.DurableConfig != nil {
+		if !lambdaInvocationHasQualifier(name, queryQualifier) {
+			sim.AWSError(w, "InvalidParameterValueException",
+				"Durable functions must be invoked with a version, alias, or $LATEST qualifier",
+				http.StatusBadRequest)
+			return
+		}
+		var durableErr string
+		durableARN, _, durableErr = lambdaBeginDurableExecution(
+			fn,
+			executedVersion,
+			r.Header.Get("X-Amz-Durable-Execution-Name"),
+			payload,
+		)
+		if durableErr != "" {
+			sim.AWSError(w, "DurableExecutionAlreadyStartedException", durableErr, http.StatusConflict)
+			return
+		}
+		w.Header().Set("X-Amz-Durable-Execution-Arn", durableARN)
+	}
 
 	switch strings.ToLower(invocationType) {
 	case "event":
-		// Async invocation: run the function for real in the background — which
-		// produces real logs — rather than fabricating a log group/stream for an
-		// invocation that never executed.
-		payload, err := io.ReadAll(r.Body)
-		if err != nil {
-			sim.AWSError(w, "RequestBodyInvalid",
-				"failed to read invocation payload: "+err.Error(), http.StatusBadRequest)
-			return
+		if durableARN != "" {
+			lambdaStartDurableCoordinator(durableARN, fn)
+		} else {
+			// Async invocation runs the function for real in the background,
+			// producing the same Runtime API callbacks and logs as a
+			// synchronous invocation.
+			go func() {
+				_, _, _ = invokeLambdaViaRuntimeAPI(fn, payload)
+			}()
 		}
-		go func() { _, _, _ = invokeLambdaViaRuntimeAPI(fn, payload) }()
 		w.WriteHeader(http.StatusAccepted)
-	case "dryrun":
-		w.WriteHeader(http.StatusNoContent)
 	default:
-		// RequestResponse — Image-package functions go through the
-		// Runtime API slice; Zip-package functions stay on the
-		// control-plane synthetic path (no container launched).
+		// RequestResponse runs both image and ZIP deployment packages through
+		// the same Lambda Runtime API contract their managed runtime speaks.
 		//
 		// aws-sdk-go-v2 gates request-compression via the
 		// `requestcompression` trait; Lambda Invoke isn't in that
 		// set today but has been flagged for future inclusion. If a
 		// caller sends a `Content-Encoding`, fail loud rather than
 		// forward the gzipped envelope into the runtime.
-		if ce := r.Header.Get("Content-Encoding"); ce != "" {
-			sim.AWSError(w, "InvalidRequest",
-				fmt.Sprintf("Content-Encoding %q not supported on Lambda Invoke", ce),
-				http.StatusUnsupportedMediaType)
-			return
+		var responseBody []byte
+		var unhandled bool
+		if durableARN != "" {
+			lambdaStartDurableCoordinator(durableARN, fn)
+			responseBody, unhandled = lambdaWaitForDurableExecution(r.Context(), durableARN)
+		} else {
+			responseBody, unhandled, _ = invokeLambdaViaRuntimeAPI(fn, payload)
 		}
-		payload, err := io.ReadAll(r.Body)
-		if err != nil {
-			sim.AWSError(w, "RequestBodyInvalid",
-				"failed to read invocation payload: "+err.Error(),
-				http.StatusBadRequest)
-			return
-		}
-		responseBody, unhandled, _ := invokeLambdaViaRuntimeAPI(fn, payload)
 		if unhandled {
 			w.Header().Set("X-Amz-Function-Error", "Unhandled")
 		}
@@ -659,68 +1190,37 @@ func handleLambdaListFunctions(w http.ResponseWriter, r *http.Request) {
 
 func lambdaConfigurationFromVersion(v LambdaVersion) lambdaFunctionConfiguration {
 	return lambdaFunctionConfiguration{
-		FunctionName:     v.FunctionName,
-		FunctionArn:      v.FunctionArn,
-		Runtime:          v.Runtime,
-		Role:             v.Role,
-		Handler:          v.Handler,
-		CodeSha256:       v.CodeSha256,
-		CodeSize:         v.CodeSize,
-		Description:      v.Description,
-		MemorySize:       v.MemorySize,
-		Timeout:          v.Timeout,
-		State:            v.State,
-		LastUpdateStatus: v.LastUpdateStatus,
-		LastModified:     v.LastModified,
-		RevisionId:       v.RevisionId,
-		Version:          v.Version,
-		PackageType:      v.PackageType,
+		FunctionName:           v.FunctionName,
+		FunctionArn:            v.FunctionArn,
+		Runtime:                v.Runtime,
+		Role:                   v.Role,
+		Handler:                v.Handler,
+		CodeSha256:             v.CodeSha256,
+		CodeSize:               v.CodeSize,
+		Description:            v.Description,
+		MemorySize:             v.MemorySize,
+		Timeout:                v.Timeout,
+		State:                  v.State,
+		LastUpdateStatus:       v.LastUpdateStatus,
+		LastModified:           v.LastModified,
+		RevisionId:             v.RevisionId,
+		Version:                v.Version,
+		PackageType:            v.PackageType,
+		Architectures:          v.Architectures,
+		Environment:            v.Environment,
+		ImageConfigResponse:    v.ImageConfigResponse,
+		VpcConfig:              v.VpcConfig,
+		Layers:                 v.Layers,
+		CapacityProviderConfig: v.CapacityProviderConfig,
+		DeadLetterConfig:       v.DeadLetterConfig,
+		DurableConfig:          v.DurableConfig,
+		EphemeralStorage:       v.EphemeralStorage,
+		FileSystemConfigs:      v.FileSystemConfigs,
+		KMSKeyArn:              v.KMSKeyArn,
+		LoggingConfig:          v.LoggingConfig,
+		SnapStart:              v.SnapStart,
+		TracingConfig:          v.TracingConfig,
 	}
-}
-
-// injectLambdaLogs creates a CloudWatch log group, stream, and initial log
-// entries for a Lambda function invocation, mirroring the ECS pattern in ecs.go.
-func injectLambdaLogs(functionName string) {
-	logGroup := fmt.Sprintf("/aws/lambda/%s", functionName)
-	now := time.Now()
-	nowMs := now.UnixMilli()
-
-	// Create log group if not exists
-	if _, exists := cwLogGroups.Get(logGroup); !exists {
-		cwLogGroups.Put(logGroup, CWLogGroup{
-			LogGroupName: logGroup,
-			Arn:          cwLogGroupArn(logGroup),
-			CreationTime: nowMs,
-		})
-	}
-
-	// Build stream name: YYYY/MM/DD/[$LATEST]<16-char hex>
-	hexBytes := make([]byte, 8)
-	if _, err := rand.Read(hexBytes); err != nil {
-		hexBytes = []byte{0, 0, 0, 0, 0, 0, 0, 0}
-	}
-	hexSuffix := hex.EncodeToString(hexBytes)
-	logStreamName := fmt.Sprintf("%s/[$LATEST]%s", now.Format("2006/01/02"), hexSuffix)
-
-	// Create log stream
-	key := cwEventsKey(logGroup, logStreamName)
-	cwLogStreams.Put(key, CWLogStream{
-		LogStreamName:       logStreamName,
-		LogGroupName:        logGroup,
-		CreationTime:        nowMs,
-		FirstEventTimestamp: nowMs,
-		LastEventTimestamp:  nowMs,
-		Arn:                 cwLogStreamArn(logGroup, logStreamName),
-		UploadSequenceToken: "1",
-	})
-
-	// Inject log entries mimicking real Lambda output
-	requestID := generateUUID()
-	cwLogEvents.Put(key, []CWLogEvent{
-		{Timestamp: nowMs, Message: fmt.Sprintf("START RequestId: %s Version: $LATEST", requestID), IngestionTime: nowMs},
-		{Timestamp: nowMs + 1, Message: fmt.Sprintf("END RequestId: %s", requestID), IngestionTime: nowMs + 1},
-		{Timestamp: nowMs + 2, Message: fmt.Sprintf("REPORT RequestId: %s\tDuration: 1.00 ms\tBilled Duration: 1 ms\tMemory Size: 128 MB\tMax Memory Used: 64 MB", requestID), IngestionTime: nowMs + 2},
-	})
 }
 
 func handleLambdaListTags(w http.ResponseWriter, r *http.Request) {

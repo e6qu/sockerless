@@ -2,7 +2,6 @@ package aws_sdk_test
 
 import (
 	"errors"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -186,9 +185,6 @@ func TestEC2_SecurityGroupEnforce_StoresAndQueries(t *testing.T) {
 	}
 	assert.True(t, foundRef, "DescribeSecurityGroups must surface the SG reference")
 
-	if runtime.GOOS != "linux" {
-		t.Logf("non-Linux host (%s): SG rules stored and queryable but not host-enforced (no CAP_NET_ADMIN)", runtime.GOOS)
-	}
 }
 
 // TestEC2_SecurityGroupEnforce_IPv6IngressStored verifies IPv6 ingress rules
@@ -212,20 +208,6 @@ func TestEC2_SecurityGroupEnforce_IPv6IngressStored(t *testing.T) {
 	require.NotEmpty(t, desc.SecurityGroups[0].IpPermissions)
 	require.NotEmpty(t, desc.SecurityGroups[0].IpPermissions[0].Ipv6Ranges)
 	assert.Equal(t, "2001:db8::/32", aws.ToString(desc.SecurityGroups[0].IpPermissions[0].Ipv6Ranges[0].CidrIpv6))
-}
-
-// TestEC2_SecurityGroupEnforce_HostFirewallGated documents the host-firewall
-// enforcement tier. Real nftables-level verification runs only on Linux + real-
-// exec hosts and is exercised by the realexec_host-tagged test
-// (TestEC2RealSecurityGroupHostFirewall). On non-Linux hosts the SG rules are
-// stored and queryable but not enforced at the packet layer — there is no way
-// to install CAP_NET_ADMIN into a foreign kernel, so the runtime.GOOS skip here
-// is the sanctioned kernel-capability form rather than a tool-absent skip.
-func TestEC2_SecurityGroupEnforce_HostFirewallGated(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skipf("host-firewall SG enforcement requires Linux (host is %s); SG rules remain metadata-only here", runtime.GOOS)
-	}
-	t.Log("Linux host: SG host-firewall enforcement is wired; nftables application is verified under the realexec_host build tag")
 }
 
 func mustCreateVpc(t *testing.T, c *ec2.Client, cidr string) *ec2.CreateVpcOutput {

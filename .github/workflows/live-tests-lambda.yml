@@ -1,8 +1,7 @@
 # live-tests-lambda — sockerless Lambda backend, against a real AWS account.
 #
-# Manual only (`workflow_dispatch`). Brings up the shared AWS infra
-# (terraform; same script as live-tests-ecs — terraform state is
-# idempotent), runs the Lambda baseline + runtime-API smokes, and
+# Manual only (`workflow_dispatch`). Brings up the AWS Lambda infrastructure,
+# runs API differentials and the backend baseline, and
 # tears everything down. Teardown always runs so a failed earlier job
 # still releases scratch AWS resources. See smoke-tests/aws-live/README.md
 # for the scripts each job runs.
@@ -12,15 +11,6 @@
 # will fail at the first credentials step otherwise:
 #
 #   AWS_LIVE_ROLE_ARN          — IAM role ARN that GitHub OIDC assumes.
-#   AWS_LIVE_NGROK_AUTHTOKEN   — (optional) ngrok authtoken used by
-#                                3-lambda-runtime-api.sh to publish a
-#                                callback URL. Skip if not running
-#                                script 3.
-#   AWS_LIVE_GITHUB_PAT        — (optional) PAT for the Lambda-targeted
-#                                self-hosted runner registration used
-#                                by the `hello` job below. Skip if not
-#                                running `hello`.
-#
 # Why repo secrets and not workflow inputs: see live-tests-ecs.yml.
 
 name: live-tests-lambda
@@ -33,7 +23,7 @@ on:
         required: true
         default: eu-west-1
       scripts:
-        description: 'Comma-separated steps: 0=infra,2=lambda-baseline,3=lambda-runtime-api,4=github-runner,hello,6=teardown ("all" runs the full chain)'
+        description: 'Comma-separated steps: 0=infra,api=real-AWS API differential,2=lambda-baseline,6=teardown ("all" runs the full chain)'
         required: true
         default: "all"
 
@@ -59,17 +49,26 @@ jobs:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
           aws-region: ${{ inputs.region }}
       - uses: hashicorp/setup-terraform@v4.0.1
-      - run: bash smoke-tests/aws-live/0-infra-up.sh
+      - name: Provision shared Amazon ECS infrastructure
+        run: |
+          TG_DIR=terraform/environments/ecs/live \
+          INFRA_OUTPUT=/tmp/ecs-infra-out.json \
+          bash smoke-tests/aws-live/0-infra-up.sh
+      - name: Provision AWS Lambda infrastructure
+        run: |
+          TG_DIR=terraform/environments/lambda/live \
+          INFRA_OUTPUT=/tmp/aws-infra-out.json \
+          bash smoke-tests/aws-live/0-infra-up.sh
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: ecs-outputs
-          path: /tmp/ecs-out.json
+          name: lambda-outputs
+          path: /tmp/aws-infra-out.json
 
-  lambda-baseline:
+  api-conformance:
     needs: infra-up
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '2')
+    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, 'api')
     env:
       AWS_REGION: ${{ inputs.region }}
     steps:
@@ -83,72 +82,48 @@ jobs:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
           aws-region: ${{ inputs.region }}
       - uses: actions/download-artifact@v8.0.1
-        with: { name: ecs-outputs, path: /tmp }
-      - run: (cd backends/lambda && go build -o ../../sockerless-backend-lambda ./cmd/sockerless-backend-lambda)
-      - run: bash smoke-tests/aws-live/2-lambda-baseline.sh
+        with: { name: lambda-outputs, path: /tmp }
+      - name: Differential against real AWS Lambda and AWS Step Functions
+        run: |
+          export AWS_LIVE_LAMBDA_ROLE_ARN
+          export AWS_LIVE_SFN_ROLE_ARN
+          AWS_LIVE_LAMBDA_ROLE_ARN="$(jq -r '.execution_role_arn.value' /tmp/aws-infra-out.json)"
+          AWS_LIVE_SFN_ROLE_ARN="$(jq -r '.step_functions_conformance_role_arn.value' /tmp/aws-infra-out.json)"
+          cd simulators/aws/sdk-tests
+          GOWORK=off go test -tags 'noui liveaws' -run 'Test(SFNTestState|SFNExecutionHistory|SFNLambdaTaskHistory|SFNControlPlane|SFNNestedWorkflow|SFNDistributedMap|LambdaZIPAndLayer|LambdaVersionAlias)DifferentialAgainstAWS' ./...
 
-  lambda-runtime-api:
-    needs: [infra-up, lambda-baseline]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    if: |
-      contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
-      contains(inputs.scripts, '3')
-    env:
-      AWS_REGION: ${{ inputs.region }}
-      NGROK_AUTHTOKEN: ${{ secrets.AWS_LIVE_NGROK_AUTHTOKEN }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - run: |
-          if [ -z "$NGROK_AUTHTOKEN" ]; then
-            echo "::warning::ngrok authtoken absent; skipping 3-lambda-runtime-api.sh"
-            exit 0
-          fi
-          bash smoke-tests/aws-live/3-lambda-runtime-api.sh
-
-  github-runner:
+  lambda-baseline:
     needs: infra-up
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: |
-      contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
-      contains(inputs.scripts, '4')
+    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '2')
     env:
       AWS_REGION: ${{ inputs.region }}
-      GITHUB_PAT: ${{ secrets.AWS_LIVE_GITHUB_PAT }}
+      AWS_INFRA_OUTPUT: /tmp/aws-infra-out.json
     steps:
       - uses: actions/checkout@v7.0.1
-      - run: |
-          if [ -z "$GITHUB_PAT" ]; then
-            echo "::warning::github_pat absent; skipping 4-github-runner.sh"
-            exit 0
-          fi
-          bash smoke-tests/aws-live/4-github-runner.sh
-
-  hello:
-    # Minimal sanity check that the GH actions/runner + sockerless-lambda
-    # backend wiring works end-to-end. Runs on the self-hosted runner
-    # spawned by `github-runner` above. No repo secrets used directly —
-    # the dispatcher holds the AWS creds + GitHub PAT operator-side.
-    needs: github-runner
-    if: |
-      contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
-      contains(inputs.scripts, 'hello')
-    runs-on: [self-hosted, sockerless-lambda]
-    timeout-minutes: 15
-    container:
-      image: alpine:latest
-    steps:
-      - run: echo "hello from sockerless lambda"
-      - run: date -u
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - uses: actions/download-artifact@v8.0.1
+        with: { name: lambda-outputs, path: /tmp }
+      - run: (cd backends/lambda && go build -o ../../sockerless-backend-lambda ./cmd/sockerless-backend-lambda)
+      - run: bash smoke-tests/aws-live/2-lambda-baseline.sh
 
   teardown:
-    needs: [lambda-baseline, lambda-runtime-api, github-runner, hello]
+    needs: [api-conformance, lambda-baseline]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       AWS_REGION: ${{ inputs.region }}
+      TG_DIR: terraform/environments/ecs/live
+      EXTRA_TG_DIR: terraform/environments/lambda/live
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: aws-actions/configure-aws-credentials@v6.2.3

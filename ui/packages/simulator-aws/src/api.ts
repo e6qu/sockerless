@@ -482,6 +482,8 @@ export interface LambdaFunctionDetail {
   packageType: string;
   architectures: string[];
   vpcConfig?: { subnetIds: string[]; securityGroupIds: string[]; vpcId: string };
+  layers: { arn: string; codeSize: number }[];
+  imageConfig?: { entryPoint: string[]; command: string[]; workingDirectory: string };
 }
 
 export interface LambdaFunctionCode {
@@ -512,6 +514,10 @@ interface LambdaGetFunctionResponse {
     PackageType?: string;
     Architectures?: string[];
     VpcConfig?: { SubnetIds?: string[]; SecurityGroupIds?: string[]; VpcId?: string };
+    Layers?: { Arn?: string; CodeSize?: number }[];
+    ImageConfigResponse?: {
+      ImageConfig?: { EntryPoint?: string[]; Command?: string[]; WorkingDirectory?: string };
+    };
   };
   Code?: { Location?: string; RepositoryType?: string; ImageUri?: string; ResolvedImageUri?: string };
   Tags?: Record<string, string>;
@@ -546,6 +552,14 @@ export const fetchLambdaFunctionDetail = async (
       version: cfg.Version ?? "",
       packageType: cfg.PackageType ?? "",
       architectures: cfg.Architectures ?? [],
+      layers: (cfg.Layers ?? []).map((layer) => ({ arn: layer.Arn ?? "", codeSize: layer.CodeSize ?? 0 })),
+      imageConfig: cfg.ImageConfigResponse?.ImageConfig
+        ? {
+            entryPoint: cfg.ImageConfigResponse.ImageConfig.EntryPoint ?? [],
+            command: cfg.ImageConfigResponse.ImageConfig.Command ?? [],
+            workingDirectory: cfg.ImageConfigResponse.ImageConfig.WorkingDirectory ?? "",
+          }
+        : undefined,
       vpcConfig: cfg.VpcConfig
         ? {
             subnetIds: cfg.VpcConfig.SubnetIds ?? [],
@@ -674,6 +688,206 @@ export const invokeLambdaFunction = async (
     );
   }
   return { payload: text, functionError: response.headers.get("X-Amz-Function-Error") ?? "" };
+};
+
+export interface LambdaVersion {
+  version: string;
+  arn: string;
+  description: string;
+  runtime: string;
+  lastModified: string;
+  codeSize: number;
+}
+
+export const fetchLambdaVersions = async (functionName: string): Promise<LambdaVersion[]> => {
+  const response = await awsRestJson<{
+    Versions?: {
+      Version?: string;
+      FunctionArn?: string;
+      Description?: string;
+      Runtime?: string;
+      LastModified?: string;
+      CodeSize?: number;
+    }[];
+  }>("lambda", `/2015-03-31/functions/${encodeURIComponent(functionName)}/versions`);
+  return (response.Versions ?? []).map((version) => ({
+    version: version.Version ?? "",
+    arn: version.FunctionArn ?? "",
+    description: version.Description ?? "",
+    runtime: version.Runtime ?? "",
+    lastModified: version.LastModified ?? "",
+    codeSize: version.CodeSize ?? 0,
+  }));
+};
+
+export interface LambdaAlias {
+  name: string;
+  arn: string;
+  functionVersion: string;
+  description: string;
+  revisionId: string;
+}
+
+export const fetchLambdaAliases = async (functionName: string): Promise<LambdaAlias[]> => {
+  const response = await awsRestJson<{
+    Aliases?: {
+      Name?: string;
+      AliasArn?: string;
+      FunctionVersion?: string;
+      Description?: string;
+      RevisionId?: string;
+    }[];
+  }>("lambda", `/2015-03-31/functions/${encodeURIComponent(functionName)}/aliases`);
+  return (response.Aliases ?? []).map((alias) => ({
+    name: alias.Name ?? "",
+    arn: alias.AliasArn ?? "",
+    functionVersion: alias.FunctionVersion ?? "",
+    description: alias.Description ?? "",
+    revisionId: alias.RevisionId ?? "",
+  }));
+};
+
+export const publishLambdaVersion = async (functionName: string, description: string): Promise<LambdaVersion> => {
+  const version = await restJson<{
+    Version?: string;
+    FunctionArn?: string;
+    Description?: string;
+    Runtime?: string;
+    LastModified?: string;
+    CodeSize?: number;
+  }>("lambda", "POST", `/2015-03-31/functions/${encodeURIComponent(functionName)}/versions`, {
+    Description: description,
+  });
+  return {
+    version: version.Version ?? "",
+    arn: version.FunctionArn ?? "",
+    description: version.Description ?? "",
+    runtime: version.Runtime ?? "",
+    lastModified: version.LastModified ?? "",
+    codeSize: version.CodeSize ?? 0,
+  };
+};
+
+export const createLambdaAlias = async (
+  functionName: string,
+  name: string,
+  functionVersion: string,
+  description: string,
+): Promise<void> => {
+  await restJson("lambda", "POST", `/2015-03-31/functions/${encodeURIComponent(functionName)}/aliases`, {
+    Name: name,
+    FunctionVersion: functionVersion,
+    Description: description,
+  });
+};
+
+export interface LambdaEventSourceMapping {
+  uuid: string;
+  eventSourceArn: string;
+  functionArn: string;
+  state: string;
+  stateTransitionReason: string;
+  batchSize: number;
+  lastModified: number;
+}
+
+export const fetchLambdaEventSourceMappings = async (
+  functionName: string,
+): Promise<LambdaEventSourceMapping[]> => {
+  const query = new URLSearchParams({ FunctionName: functionName });
+  const response = await awsRestJson<{
+    EventSourceMappings?: {
+      UUID?: string;
+      EventSourceArn?: string;
+      FunctionArn?: string;
+      State?: string;
+      StateTransitionReason?: string;
+      BatchSize?: number;
+      LastModified?: number;
+    }[];
+  }>("lambda", `/2015-03-31/event-source-mappings?${query}`);
+  return (response.EventSourceMappings ?? []).map((mapping) => ({
+    uuid: mapping.UUID ?? "",
+    eventSourceArn: mapping.EventSourceArn ?? "",
+    functionArn: mapping.FunctionArn ?? "",
+    state: mapping.State ?? "",
+    stateTransitionReason: mapping.StateTransitionReason ?? "",
+    batchSize: mapping.BatchSize ?? 0,
+    lastModified: mapping.LastModified ?? 0,
+  }));
+};
+
+export interface LambdaConcurrency {
+  reservedConcurrentExecutions?: number;
+}
+
+export const fetchLambdaConcurrency = async (functionName: string): Promise<LambdaConcurrency> =>
+  restJson<LambdaConcurrencyWire>(
+    "lambda",
+    "GET",
+    `/2017-10-31/functions/${encodeURIComponent(functionName)}/concurrency`,
+  ).then((response) => ({ reservedConcurrentExecutions: response.ReservedConcurrentExecutions }));
+
+export const putLambdaConcurrency = async (
+  functionName: string,
+  reservedConcurrentExecutions: number,
+): Promise<void> => {
+  await restJson("lambda", "PUT", `/2017-10-31/functions/${encodeURIComponent(functionName)}/concurrency`, {
+    ReservedConcurrentExecutions: reservedConcurrentExecutions,
+  });
+};
+
+export const deleteLambdaConcurrency = async (functionName: string): Promise<void> => {
+  await restJson("lambda", "DELETE", `/2017-10-31/functions/${encodeURIComponent(functionName)}/concurrency`);
+};
+
+interface LambdaConcurrencyWire {
+  ReservedConcurrentExecutions?: number;
+}
+
+export interface LambdaFunctionUrl {
+  functionUrl: string;
+  functionArn: string;
+  authType: string;
+  creationTime: string;
+  lastModifiedTime: string;
+  invokeMode: string;
+}
+
+export const fetchLambdaFunctionUrls = async (functionName: string): Promise<LambdaFunctionUrl[]> => {
+  const response = await restJson<{
+    FunctionUrlConfigs?: {
+      FunctionUrl?: string;
+      FunctionArn?: string;
+      AuthType?: string;
+      CreationTime?: string;
+      LastModifiedTime?: string;
+      InvokeMode?: string;
+    }[];
+  }>("lambda", "GET", `/2021-10-31/functions/${encodeURIComponent(functionName)}/urls`);
+  return (response.FunctionUrlConfigs ?? []).map((config) => ({
+    functionUrl: config.FunctionUrl ?? "",
+    functionArn: config.FunctionArn ?? "",
+    authType: config.AuthType ?? "",
+    creationTime: config.CreationTime ?? "",
+    lastModifiedTime: config.LastModifiedTime ?? "",
+    invokeMode: config.InvokeMode ?? "",
+  }));
+};
+
+export const createLambdaFunctionUrl = async (
+  functionName: string,
+  authType: "AWS_IAM" | "NONE",
+  invokeMode: "BUFFERED" | "RESPONSE_STREAM",
+): Promise<void> => {
+  await restJson("lambda", "POST", `/2021-10-31/functions/${encodeURIComponent(functionName)}/url`, {
+    AuthType: authType,
+    InvokeMode: invokeMode,
+  });
+};
+
+export const deleteLambdaFunctionUrl = async (functionName: string): Promise<void> => {
+  await restJson("lambda", "DELETE", `/2021-10-31/functions/${encodeURIComponent(functionName)}/url`);
 };
 
 // Lambda resource tagging — TagResource (POST /2017-03-31/tags/{arn}) sets or
@@ -2663,6 +2877,29 @@ export const fetchStateMachines = async (): Promise<StateMachine[]> => {
   }));
 };
 
+export interface CreateStateMachineInput {
+  name: string;
+  definition: string;
+  roleArn: string;
+  type: "STANDARD" | "EXPRESS";
+  tags?: { key: string; value: string }[];
+}
+
+export const createStateMachine = async (input: CreateStateMachineInput): Promise<string> => {
+  const created = await awsJson10<{ stateMachineArn?: string }>(
+    "states",
+    "AWSStepFunctions.CreateStateMachine",
+    {
+      name: input.name,
+      definition: input.definition,
+      roleArn: input.roleArn,
+      type: input.type,
+      tags: input.tags ?? [],
+    },
+  );
+  return created.stateMachineArn ?? "";
+};
+
 export interface StateMachineDetail extends StateMachine {
   status: string;
   roleArn: string;
@@ -2713,8 +2950,200 @@ export const fetchStateMachineExecutions = async (stateMachineArn: string): Prom
 
 // StartExecution with no input is what the real console's "Start execution"
 // dialog sends when the operator leaves the input at its `{}` default.
-export const startStateMachineExecution = async (stateMachineArn: string, input: string): Promise<void> => {
-  await awsJson10("states", "AWSStepFunctions.StartExecution", { stateMachineArn, input });
+export const startStateMachineExecution = async (stateMachineArn: string, input: string): Promise<string> => {
+  const started = await awsJson10<{ executionArn?: string }>(
+    "states",
+    "AWSStepFunctions.StartExecution",
+    { stateMachineArn, input },
+  );
+  return started.executionArn ?? "";
+};
+
+export interface StateMachineExecutionDetail extends StateMachineExecution {
+  stateMachineArn: string;
+  input: string;
+  output: string;
+  error: string;
+  cause: string;
+}
+
+export interface StateMachineHistoryEvent {
+  id: number;
+  previousEventId: number;
+  timestamp: number;
+  type: string;
+  details: Record<string, unknown>;
+}
+
+export const fetchStateMachineExecution = async (executionArn: string): Promise<StateMachineExecutionDetail> => {
+  const execution = await awsJson10<{
+    executionArn?: string;
+    stateMachineArn?: string;
+    name?: string;
+    status?: string;
+    startDate?: number;
+    stopDate?: number;
+    input?: string;
+    output?: string;
+    error?: string;
+    cause?: string;
+  }>("states", "AWSStepFunctions.DescribeExecution", { executionArn });
+  return {
+    executionArn: execution.executionArn ?? executionArn,
+    stateMachineArn: execution.stateMachineArn ?? "",
+    name: execution.name ?? "",
+    status: execution.status ?? "",
+    startDate: execution.startDate ?? 0,
+    stopDate: execution.stopDate ?? 0,
+    input: execution.input ?? "",
+    output: execution.output ?? "",
+    error: execution.error ?? "",
+    cause: execution.cause ?? "",
+  };
+};
+
+export const fetchStateMachineExecutionHistory = async (
+  executionArn: string,
+): Promise<StateMachineHistoryEvent[]> => {
+  const response = await awsJson10<{ events?: Record<string, unknown>[] }>(
+    "states",
+    "AWSStepFunctions.GetExecutionHistory",
+    { executionArn, includeExecutionData: true },
+  );
+  return (response.events ?? []).map((event) => {
+    const detailsEntry = Object.entries(event).find(([key]) => key.endsWith("EventDetails"));
+    return {
+      id: Number(event.id ?? 0),
+      previousEventId: Number(event.previousEventId ?? 0),
+      timestamp: Number(event.timestamp ?? 0),
+      type: String(event.type ?? ""),
+      details: (detailsEntry?.[1] as Record<string, unknown> | undefined) ?? {},
+    };
+  });
+};
+
+export const stopStateMachineExecution = async (executionArn: string): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.StopExecution", {
+    executionArn,
+    error: "OperatorStopped",
+    cause: "Stopped from the AWS Step Functions console.",
+  });
+};
+
+export const redriveStateMachineExecution = async (executionArn: string): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.RedriveExecution", { executionArn });
+};
+
+export interface StateMachineVersion {
+  stateMachineVersionArn: string;
+  version: number;
+  creationDate: number;
+}
+
+export const fetchStateMachineVersions = async (stateMachineArn: string): Promise<StateMachineVersion[]> => {
+  const response = await awsJson10<{
+    stateMachineVersions?: { stateMachineVersionArn?: string; creationDate?: number }[];
+  }>("states", "AWSStepFunctions.ListStateMachineVersions", { stateMachineArn });
+  return (response.stateMachineVersions ?? []).map((version) => {
+    const stateMachineVersionArn = version.stateMachineVersionArn ?? "";
+    const parsedVersion = Number(stateMachineVersionArn.slice(stateMachineVersionArn.lastIndexOf(":") + 1));
+    return {
+      stateMachineVersionArn,
+      version: Number.isFinite(parsedVersion) ? parsedVersion : 0,
+      creationDate: version.creationDate ?? 0,
+    };
+  });
+};
+
+export interface StateMachineAlias {
+  stateMachineAliasArn: string;
+  name: string;
+  creationDate: number;
+  updateDate: number;
+}
+
+export const fetchStateMachineAliases = async (stateMachineArn: string): Promise<StateMachineAlias[]> => {
+  const response = await awsJson10<{
+    stateMachineAliases?: {
+      stateMachineAliasArn?: string;
+      creationDate?: number;
+    }[];
+  }>("states", "AWSStepFunctions.ListStateMachineAliases", { stateMachineArn });
+  return Promise.all((response.stateMachineAliases ?? []).map(async (alias) => {
+    const stateMachineAliasArn = alias.stateMachineAliasArn ?? "";
+    const described = await awsJson10<{ name?: string; updateDate?: number }>(
+      "states",
+      "AWSStepFunctions.DescribeStateMachineAlias",
+      { stateMachineAliasArn },
+    );
+    return {
+      stateMachineAliasArn,
+      name: described.name ?? stateMachineAliasArn.slice(stateMachineAliasArn.lastIndexOf(":") + 1),
+      creationDate: alias.creationDate ?? 0,
+      updateDate: described.updateDate ?? 0,
+    };
+  }));
+};
+
+export const fetchStateMachineTags = async (
+  resourceArn: string,
+): Promise<Record<string, string>> => {
+  const response = await awsJson10<{ tags?: { key?: string; value?: string }[] }>(
+    "states",
+    "AWSStepFunctions.ListTagsForResource",
+    { resourceArn },
+  );
+  return Object.fromEntries((response.tags ?? []).map((tag) => [tag.key ?? "", tag.value ?? ""]));
+};
+
+export const updateStateMachine = async (
+  stateMachineArn: string,
+  definition: string,
+  roleArn: string,
+): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.UpdateStateMachine", {
+    stateMachineArn,
+    definition,
+    roleArn,
+  });
+};
+
+export const publishStateMachineVersion = async (
+  stateMachineArn: string,
+  description: string,
+): Promise<string> => {
+  const response = await awsJson10<{ stateMachineVersionArn?: string }>(
+    "states",
+    "AWSStepFunctions.PublishStateMachineVersion",
+    { stateMachineArn, description },
+  );
+  return response.stateMachineVersionArn ?? "";
+};
+
+export const createStateMachineAlias = async (
+  name: string,
+  versionArn: string,
+  description: string,
+): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.CreateStateMachineAlias", {
+    name,
+    description,
+    routingConfiguration: [{ stateMachineVersionArn: versionArn, weight: 100 }],
+  });
+};
+
+export const tagStateMachineResource = async (
+  resourceArn: string,
+  tags: Record<string, string>,
+): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.TagResource", {
+    resourceArn,
+    tags: Object.entries(tags).map(([key, value]) => ({ key, value })),
+  });
+};
+
+export const untagStateMachineResource = async (resourceArn: string, tagKeys: string[]): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.UntagResource", { resourceArn, tagKeys });
 };
 
 export const deleteStateMachine = async (stateMachineArn: string): Promise<void> => {

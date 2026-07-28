@@ -2,10 +2,13 @@ package aws_cli_test
 
 import (
 	"archive/zip"
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,6 +25,21 @@ func createDummyZip(t *testing.T) string {
 	fw.Write([]byte(`exports.handler = async () => ({ statusCode: 200, body: "hello" });`))
 	w.Close()
 	f.Close()
+	return zipPath
+}
+
+func createLambdaSourceZip(t *testing.T, name, source string) string {
+	t.Helper()
+	zipPath := filepath.Join(tmpDir, name+".zip")
+	f, err := os.Create(zipPath)
+	require.NoError(t, err)
+	w := zip.NewWriter(f)
+	fw, err := w.Create("index.js")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte(source))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	require.NoError(t, f.Close())
 	return zipPath
 }
 
@@ -64,6 +82,156 @@ func TestLambda_CreateAndGetFunction(t *testing.T) {
 
 	// Cleanup
 	runCLI(t, awsCLI("lambda", "delete-function", "--function-name", "cli-test-func"))
+}
+
+// TestLambda_CheckpointAndCallbackOperationsCLI exercises the AWS CLI
+// CheckpointDurableExecution, SendDurableExecutionCallbackHeartbeat, and
+// SendDurableExecutionCallbackSuccess operations against a running function.
+func TestLambda_CheckpointAndCallbackOperationsCLI(t *testing.T) {
+	const fn = "cli-durable-callback-fn"
+	source := `
+exports.handler = async (event) => {
+  const callback = event.InitialExecutionState.Operations.find(
+    (operation) => operation.Type === "CALLBACK"
+  );
+  if (callback?.Status === "SUCCEEDED") {
+    return {Status: "SUCCEEDED", Result: callback.CallbackDetails.Result};
+  }
+  console.log("CHECKPOINT_TOKEN=" + event.CheckpointToken);
+  console.log("DURABLE_ARN=" + event.DurableExecutionArn);
+  return {Status: "PENDING"};
+};`
+	zipPath := createLambdaSourceZip(t, fn, source)
+	runCLI(t, awsCLI("lambda", "create-function",
+		"--function-name", fn,
+		"--runtime", "nodejs20.x",
+		"--role", "arn:aws:iam::123456789012:role/test-role",
+		"--handler", "index.handler",
+		"--zip-file", "fileb://"+zipPath,
+		"--durable-config", "ExecutionTimeout=60,RetentionPeriodInDays=1",
+	))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("lambda", "delete-function", "--function-name", fn))
+	})
+
+	payloadPath := filepath.Join(tmpDir, fn+"-payload.json")
+	resultPath := filepath.Join(tmpDir, fn+"-result.json")
+	require.NoError(t, os.WriteFile(payloadPath, []byte(`{"orderId":"CLI-1"}`), 0600))
+	invoke := awsCLI("lambda", "invoke",
+		"--function-name", fn+":$LATEST",
+		"--durable-execution-name", "cli-callback-replay",
+		"--cli-binary-format", "raw-in-base64-out",
+		"--payload", "fileb://"+payloadPath,
+		resultPath,
+	)
+	var invokeOutput bytes.Buffer
+	invoke.Stdout = &invokeOutput
+	invoke.Stderr = &invokeOutput
+	require.NoError(t, invoke.Start())
+	invokeDone := make(chan error, 1)
+	go func() { invokeDone <- invoke.Wait() }()
+	t.Cleanup(func() {
+		if invoke.ProcessState == nil {
+			_ = invoke.Process.Kill()
+		}
+	})
+
+	var checkpointToken, durableARN string
+	require.Eventually(t, func() bool {
+		select {
+		case invokeErr := <-invokeDone:
+			t.Fatalf("AWS CLI durable Invoke ended before its callback: %v\n%s", invokeErr, invokeOutput.String())
+		default:
+		}
+		streamJSON, streamErr := awsCLI("logs", "describe-log-streams",
+			"--log-group-name", "/aws/lambda/"+fn,
+			"--output", "json",
+		).CombinedOutput()
+		if streamErr != nil {
+			return false
+		}
+		var streams struct {
+			LogStreams []struct {
+				LogStreamName string `json:"logStreamName"`
+			} `json:"logStreams"`
+		}
+		if json.Unmarshal(streamJSON, &streams) != nil {
+			return false
+		}
+		for _, stream := range streams.LogStreams {
+			eventJSON, eventErr := awsCLI("logs", "get-log-events",
+				"--log-group-name", "/aws/lambda/"+fn,
+				"--log-stream-name", stream.LogStreamName,
+				"--output", "json",
+			).CombinedOutput()
+			if eventErr != nil {
+				continue
+			}
+			var events struct {
+				Events []struct {
+					Message string `json:"message"`
+				} `json:"events"`
+			}
+			if json.Unmarshal(eventJSON, &events) != nil {
+				continue
+			}
+			for _, event := range events.Events {
+				if strings.Contains(event.Message, "CHECKPOINT_TOKEN=") {
+					checkpointToken = strings.TrimSpace(strings.SplitN(event.Message, "CHECKPOINT_TOKEN=", 2)[1])
+				}
+				if strings.Contains(event.Message, "DURABLE_ARN=") {
+					durableARN = strings.TrimSpace(strings.SplitN(event.Message, "DURABLE_ARN=", 2)[1])
+				}
+			}
+		}
+		return checkpointToken != "" && durableARN != ""
+	}, 20*time.Second, 200*time.Millisecond)
+
+	checkpointJSON := runCLI(t, awsCLI("lambda", "checkpoint-durable-execution",
+		"--durable-execution-arn", durableARN,
+		"--checkpoint-token", checkpointToken,
+		"--updates", `[{"Id":"approval","Name":"approval","Type":"CALLBACK","Action":"START","CallbackOptions":{"HeartbeatTimeoutSeconds":10,"TimeoutSeconds":30}}]`,
+		"--output", "json",
+	))
+	var checkpoint struct {
+		NewExecutionState struct {
+			Operations []struct {
+				Type            string `json:"Type"`
+				CallbackDetails struct {
+					CallbackID string `json:"CallbackId"`
+				} `json:"CallbackDetails"`
+			} `json:"Operations"`
+		} `json:"NewExecutionState"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(checkpointJSON), &checkpoint))
+	var callbackID string
+	for _, operation := range checkpoint.NewExecutionState.Operations {
+		if operation.Type == "CALLBACK" {
+			callbackID = operation.CallbackDetails.CallbackID
+		}
+	}
+	require.NotEmpty(t, callbackID)
+	runCLI(t, awsCLI("lambda", "send-durable-execution-callback-heartbeat",
+		"--callback-id", callbackID,
+	))
+	callbackResult := filepath.Join(tmpDir, fn+"-callback-result.json")
+	require.NoError(t, os.WriteFile(callbackResult, []byte(`{"approved":true}`), 0600))
+	runCLI(t, awsCLI("lambda", "send-durable-execution-callback-success",
+		"--callback-id", callbackID,
+		"--result", "fileb://"+callbackResult,
+	))
+
+	select {
+	case err := <-invokeDone:
+		require.NoError(t, err, invokeOutput.String())
+	case <-time.After(20 * time.Second):
+		_ = invoke.Process.Kill()
+		t.Fatal("AWS CLI synchronous durable Invoke did not complete")
+	}
+	result, err := os.ReadFile(resultPath)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"approved":true}`, string(result))
+	assert.Contains(t, invokeOutput.String(), durableARN)
 }
 
 func TestLambda_GetFunctionCodeSigningConfigWithoutAttachment(t *testing.T) {

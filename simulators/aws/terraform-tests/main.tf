@@ -1663,6 +1663,7 @@ output "s3_bucket_metric_name" {
 resource "aws_sfn_state_machine" "tf_sfn_sm" {
   name     = "tf-sfn-state-machine"
   role_arn = "arn:aws:iam::123456789012:role/sfn-role"
+  publish  = true
 
   definition = jsonencode({
     Comment = "Terraform test"
@@ -1680,8 +1681,22 @@ resource "aws_sfn_state_machine" "tf_sfn_sm" {
   }
 }
 
+resource "aws_sfn_alias" "tf_sfn_alias" {
+  name        = "PROD"
+  description = "Terraform-managed AWS Step Functions alias"
+
+  routing_configuration {
+    state_machine_version_arn = aws_sfn_state_machine.tf_sfn_sm.state_machine_version_arn
+    weight                    = 100
+  }
+}
+
 output "sfn_state_machine_arn" {
   value = aws_sfn_state_machine.tf_sfn_sm.arn
+}
+
+output "sfn_alias_arn" {
+  value = aws_sfn_alias.tf_sfn_alias.arn
 }
 
 # ── CodeBuild ───────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,13 +39,14 @@ func cwLogsClient() *cloudwatchlogs.Client {
 func TestLambda_FunctionConfigurationOmitsCodeAndTags(t *testing.T) {
 	lc := lambdaClient()
 	fnName := "shape-fn"
+	deployment := lambdaDeploymentZip(t)
 
 	createOut, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
 		FunctionName: aws.String(fnName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		Runtime:      lambdatypes.RuntimeNodejs20x,
 		Handler:      aws.String("index.handler"),
-		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("zip-bytes")},
+		Code:         &lambdatypes.FunctionCode{ZipFile: deployment},
 		Tags:         map[string]string{"env": "sdk"},
 	})
 	require.NoError(t, err)
@@ -60,6 +62,15 @@ func TestLambda_FunctionConfigurationOmitsCodeAndTags(t *testing.T) {
 	getOut, err := lc.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String(fnName)})
 	require.NoError(t, err)
 	require.NotNil(t, getOut.Configuration)
+	require.NotNil(t, getOut.Code)
+	require.NotEmpty(t, aws.ToString(getOut.Code.Location))
+	download, err := http.Get(aws.ToString(getOut.Code.Location))
+	require.NoError(t, err)
+	defer download.Body.Close()
+	downloaded, err := io.ReadAll(download.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, download.StatusCode, string(downloaded))
+	require.Equal(t, deployment, downloaded)
 	assert.Equal(t, "sdk", getOut.Tags["env"])
 	rawConfig, err := json.Marshal(getOut.Configuration)
 	require.NoError(t, err)
@@ -81,7 +92,17 @@ func TestLambda_FunctionConfigurationOmitsCodeAndTags(t *testing.T) {
 		assert.NotContains(t, string(rawList), `"SubnetIPv4Allocations"`)
 	}
 
-	rawReq := []byte(`{"FunctionName":"raw-shape-fn","Role":"arn:aws:iam::123456789012:role/test-role","Runtime":"nodejs20.x","Handler":"index.handler","Code":{"ZipFile":"zip-bytes"},"Tags":{"env":"raw"}}`)
+	rawReq, err := json.Marshal(map[string]any{
+		"FunctionName": "raw-shape-fn",
+		"Role":         "arn:aws:iam::123456789012:role/test-role",
+		"Runtime":      "nodejs20.x",
+		"Handler":      "index.handler",
+		"Code": map[string]string{
+			"ZipFile": base64.StdEncoding.EncodeToString(lambdaDeploymentZip(t)),
+		},
+		"Tags": map[string]string{"env": "raw"},
+	})
+	require.NoError(t, err)
 	rawPostReq, err := http.NewRequest(http.MethodPost, baseURL+"/2015-03-31/functions", bytes.NewReader(rawReq))
 	require.NoError(t, err)
 	rawPostReq.Header.Set("Content-Type", "application/json")
@@ -129,7 +150,7 @@ func TestLambda_InvokeCreatesLogStream(t *testing.T) {
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		Runtime:      lambdatypes.RuntimeNodejs18x,
 		Handler:      aws.String("index.handler"),
-		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("fake")},
+		Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 	})
 	require.NoError(t, err)
 	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
@@ -162,7 +183,7 @@ func TestLambda_InvokeCreatesLogStream(t *testing.T) {
 	streamName := *streams.LogStreams[0].LogStreamName
 	assert.Contains(t, streamName, "[$LATEST]", "stream name should contain [$LATEST]")
 
-	// Verify log events were injected
+	// Verify the real runtime lifecycle and application output were recorded.
 	events, err := cw.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
 		LogGroupName:  aws.String(logGroupName),
 		LogStreamName: aws.String(streamName),
@@ -171,10 +192,14 @@ func TestLambda_InvokeCreatesLogStream(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(events.Events), 3, "expected at least 3 log events (START, END, REPORT)")
 
-	// Verify log event content
-	assert.Contains(t, *events.Events[0].Message, "START RequestId:")
-	assert.Contains(t, *events.Events[1].Message, "END RequestId:")
-	assert.Contains(t, *events.Events[2].Message, "REPORT RequestId:")
+	messages := make([]string, 0, len(events.Events))
+	for _, event := range events.Events {
+		messages = append(messages, aws.ToString(event.Message))
+	}
+	logOutput := strings.Join(messages, "\n")
+	assert.Contains(t, logOutput, "START RequestId:")
+	assert.Contains(t, logOutput, "END RequestId:")
+	assert.Contains(t, logOutput, "REPORT RequestId:")
 
 	// Cleanup: delete the log group
 	cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{
@@ -212,6 +237,37 @@ func TestLambda_InvokeRoundTrip(t *testing.T) {
 	assert.Nil(t, invokeOut.FunctionError, "unexpected function error: %v", aws.ToString(invokeOut.FunctionError))
 	assert.JSONEq(t, string(payload), string(invokeOut.Payload),
 		"handler should echo payload back via /response")
+}
+
+func TestLambda_InvokeZIPDeploymentPackage(t *testing.T) {
+	lc := lambdaClient()
+	fnName := "zip-roundtrip-fn"
+	deployment := lambdaNodeDeploymentZip(t, `{received:event, functionName:process.env.AWS_LAMBDA_FUNCTION_NAME}`)
+
+	created, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fnName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		Runtime:      lambdatypes.RuntimeNodejs20x,
+		Handler:      aws.String("index.handler"),
+		Code:         &lambdatypes.FunctionCode{ZipFile: deployment},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
+	})
+	require.Equal(t, int64(len(deployment)), created.CodeSize)
+
+	payload := []byte(`{"ping":1,"message":"real deployment package"}`)
+	invoked, err := lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName: aws.String(fnName),
+		Payload:      payload,
+	})
+	require.NoError(t, err)
+	require.Empty(t, aws.ToString(invoked.FunctionError), string(invoked.Payload))
+	require.JSONEq(t,
+		`{"received":{"ping":1,"message":"real deployment package"},"functionName":"zip-roundtrip-fn"}`,
+		string(invoked.Payload),
+	)
 }
 
 // TestLambda_InvokeHandlerError exercises the /error branch of the
@@ -366,7 +422,7 @@ func TestLambda_MultipleInvokesCreateMultipleStreams(t *testing.T) {
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		Runtime:      lambdatypes.RuntimeNodejs18x,
 		Handler:      aws.String("index.handler"),
-		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("fake")},
+		Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 	})
 	require.NoError(t, err)
 	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
@@ -438,7 +494,7 @@ func TestLambda_VpcConfig_AllocatesENIPerSubnet(t *testing.T) {
 		Runtime:      lambdatypes.RuntimeNodejs20x,
 		Handler:      aws.String("index.handler"),
 		Code: &lambdatypes.FunctionCode{
-			ZipFile: []byte("dummy"),
+			ZipFile: lambdaDeploymentZip(t),
 		},
 		VpcConfig: &lambdatypes.VpcConfig{
 			SubnetIds: []string{*sub1.Subnet.SubnetId, *sub2.Subnet.SubnetId},
@@ -609,7 +665,7 @@ func TestLambda_VpcConfig_RejectsUnknownSubnet(t *testing.T) {
 		Runtime:      lambdatypes.RuntimeNodejs20x,
 		Handler:      aws.String("index.handler"),
 		Code: &lambdatypes.FunctionCode{
-			ZipFile: []byte("dummy"),
+			ZipFile: lambdaDeploymentZip(t),
 		},
 		VpcConfig: &lambdatypes.VpcConfig{
 			SubnetIds: []string{"subnet-doesnotexistanywhere"},
@@ -627,7 +683,7 @@ func TestLambda_ListFunctions_Pagination(t *testing.T) {
 			Runtime:      lambdatypes.RuntimeProvidedal2023,
 			Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 			Handler:      aws.String("bootstrap"),
-			Code:         &lambdatypes.FunctionCode{ZipFile: []byte("placeholder")},
+			Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 		})
 		require.NoError(t, err)
 		t.Cleanup(func() {

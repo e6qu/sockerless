@@ -48,6 +48,7 @@ try {
       await assertCreatedOrganizationAccount(page, app);
       await assertCreatedECRRepository(page, app);
       await assertCreatedDynamoDBTable(page, app);
+      await assertRanStepFunctionsWorkflow(page, app);
     }
     if (app.name === "Sockerless Microsoft Azure simulator") {
       await assertFederatedAzureToken(context, page, app);
@@ -640,6 +641,54 @@ async function assertCreatedOrganizationAccount(page, app) {
   // The created account appears in the accounts table; its name column is a link
   // to the account detail (the Cloudscape table renders no per-row test id).
   await page.getByRole("link", { name: accountName }).waitFor({ state: "visible" });
+}
+
+// assertRanStepFunctionsWorkflow drives the same signed-in AWS console data
+// plane used against real AWS: create a state machine, inspect its graph, start
+// an execution, and read the completed execution history and output through the
+// public AWS Step Functions APIs.
+async function assertRanStepFunctionsWorkflow(page, app) {
+  const origin = new URL(app.launch).origin;
+  const machineName = `rps-workflow-${Date.now() % 1_000_000}`;
+
+  await page.goto(`${origin}/ui/stepfunctions`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("sfn-create-state-machine").click();
+  const dialog = page.getByRole("dialog", { name: "Create state machine" });
+  await dialog.getByLabel("State machine name").fill(machineName);
+  await dialog
+    .getByLabel("Execution role ARN")
+    .fill("arn:aws:iam::123456789012:role/console-federation-role");
+  await dialog.getByTestId("sfn-create-state-machine-submit").click();
+
+  await page.getByTestId("sfn-state-machine-summary").waitFor({ state: "visible" });
+  await page.getByText("Pass", { exact: true }).first().waitFor({ state: "visible" });
+  assert.equal(
+    await page.getByTestId("sfn-state-machine-error").count(),
+    0,
+    `${app.name} state machine detail failed to read the live definition`,
+  );
+
+  await page.getByTestId("sfn-state-machine-start").click();
+  await page.getByTestId("sfn-execution-input").locator("textarea").fill('{"order":"A-100"}');
+  await page.getByTestId("sfn-start-execution-submit").click();
+
+  await page.getByText("SUCCEEDED", { exact: true }).first().waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: /Table view/ }).click();
+  await page.getByText("ExecutionSucceeded", { exact: true }).waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Input and output" }).click();
+  const executionInput = page.getByTestId("sfn-execution-input-document").locator("textarea");
+  const executionOutput = page.getByTestId("sfn-execution-output-document").locator("textarea");
+  await executionInput.waitFor({ state: "visible" });
+  assert.match(
+    await executionInput.inputValue(),
+    /"order": "A-100"/,
+    `${app.name} execution detail did not render the live input`,
+  );
+  assert.match(
+    await executionOutput.inputValue(),
+    /Hello from AWS Step Functions/,
+    `${app.name} execution detail did not render the live output`,
+  );
 }
 
 // assertCreatedProject drives the Google Cloud console's project picker as the

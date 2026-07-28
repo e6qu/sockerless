@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -158,7 +159,7 @@ func TestIntegration_LambdaFullLifecycle(t *testing.T) {
 		Role:         aws.String("arn:aws:iam::123456789012:role/integration-role"),
 		Runtime:      lambdatypes.RuntimeNodejs18x,
 		Handler:      aws.String("index.handler"),
-		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("fake")},
+		Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 	})
 	require.NoError(t, err)
 
@@ -190,9 +191,14 @@ func TestIntegration_LambdaFullLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(events.Events), 3, "should have START, END, REPORT entries")
-	assert.Contains(t, *events.Events[0].Message, "START RequestId:")
-	assert.Contains(t, *events.Events[1].Message, "END RequestId:")
-	assert.Contains(t, *events.Events[2].Message, "REPORT RequestId:")
+	messages := make([]string, 0, len(events.Events))
+	for _, event := range events.Events {
+		messages = append(messages, aws.ToString(event.Message))
+	}
+	logOutput := strings.Join(messages, "\n")
+	assert.Contains(t, logOutput, "START RequestId:")
+	assert.Contains(t, logOutput, "END RequestId:")
+	assert.Contains(t, logOutput, "REPORT RequestId:")
 
 	// Verify pagination tokens work (follow mode simulation)
 	token := events.NextForwardToken

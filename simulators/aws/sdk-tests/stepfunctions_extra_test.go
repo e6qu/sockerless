@@ -3,13 +3,154 @@ package aws_sdk_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	sfntypes "github.com/aws/aws-sdk-go-v2/service/sfn/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestSFN_LambdaTaskHistory_SDK verifies the real direct-Lambda integration
+// lifecycle, including the service events that surround the Task state.
+func TestSFN_LambdaTaskHistory_SDK(t *testing.T) {
+	lambdaAPI := lambdaClient()
+	functionName := "sfn-sdk-history-lambda"
+	_, err := lambdaAPI.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(functionName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		PackageType:  lambdatypes.PackageTypeImage,
+		Code: &lambdatypes.FunctionCode{
+			ImageUri: aws.String(lambdaHandlerImageName),
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = lambdaAPI.DeleteFunction(ctx, &lambda.DeleteFunctionInput{
+			FunctionName: aws.String(functionName),
+		})
+	})
+
+	statesAPI := sfnClient()
+	functionARN := lambdaFunctionArn(functionName)
+	definition := fmt.Sprintf(
+		`{"StartAt":"Invoke","States":{"Invoke":{"Type":"Task","Resource":%q,"End":true}}}`,
+		functionARN,
+	)
+	created, err := statesAPI.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name:       aws.String("sfn-sdk-lambda-history"),
+		Definition: aws.String(definition),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = statesAPI.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{
+			StateMachineArn: created.StateMachineArn,
+		})
+	})
+	started, err := statesAPI.StartExecution(ctx, &sfn.StartExecutionInput{
+		StateMachineArn: created.StateMachineArn,
+		Input:           aws.String(`{"request":"history"}`),
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		described, describeErr := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+			ExecutionArn: started.ExecutionArn,
+		})
+		return describeErr == nil && described.Status == sfntypes.ExecutionStatusSucceeded
+	}, 20*time.Second, 100*time.Millisecond)
+
+	history, err := statesAPI.GetExecutionHistory(ctx, &sfn.GetExecutionHistoryInput{
+		ExecutionArn: started.ExecutionArn,
+	})
+	require.NoError(t, err)
+	types := make([]sfntypes.HistoryEventType, 0, len(history.Events))
+	for _, event := range history.Events {
+		types = append(types, event.Type)
+	}
+	assert.Equal(t, []sfntypes.HistoryEventType{
+		sfntypes.HistoryEventTypeExecutionStarted,
+		sfntypes.HistoryEventTypeTaskStateEntered,
+		sfntypes.HistoryEventTypeLambdaFunctionScheduled,
+		sfntypes.HistoryEventTypeLambdaFunctionStarted,
+		sfntypes.HistoryEventTypeLambdaFunctionSucceeded,
+		sfntypes.HistoryEventTypeTaskStateExited,
+		sfntypes.HistoryEventTypeExecutionSucceeded,
+	}, types)
+	require.NotNil(t, history.Events[2].LambdaFunctionScheduledEventDetails)
+	assert.Equal(t, functionARN, aws.ToString(history.Events[2].LambdaFunctionScheduledEventDetails.Resource))
+	assert.JSONEq(t, `{"request":"history"}`, aws.ToString(history.Events[2].LambdaFunctionScheduledEventDetails.Input))
+	require.NotNil(t, history.Events[0].ExecutionStartedEventDetails.InputDetails)
+	assert.False(t, history.Events[0].ExecutionStartedEventDetails.InputDetails.Truncated)
+	require.NotNil(t, history.Events[1].StateEnteredEventDetails.InputDetails)
+	assert.False(t, history.Events[1].StateEnteredEventDetails.InputDetails.Truncated)
+	require.NotNil(t, history.Events[2].LambdaFunctionScheduledEventDetails.InputDetails)
+	assert.False(t, history.Events[2].LambdaFunctionScheduledEventDetails.InputDetails.Truncated)
+	require.NotNil(t, history.Events[4].LambdaFunctionSucceededEventDetails)
+	assert.JSONEq(t, `{"request":"history"}`,
+		aws.ToString(history.Events[4].LambdaFunctionSucceededEventDetails.Output))
+	require.NotNil(t, history.Events[5].StateExitedEventDetails.OutputDetails)
+	assert.False(t, history.Events[5].StateExitedEventDetails.OutputDetails.Truncated)
+	require.NotNil(t, history.Events[6].ExecutionSucceededEventDetails.OutputDetails)
+	assert.False(t, history.Events[6].ExecutionSucceededEventDetails.OutputDetails.Truncated)
+
+	withoutData, err := statesAPI.GetExecutionHistory(ctx, &sfn.GetExecutionHistoryInput{
+		ExecutionArn:         started.ExecutionArn,
+		IncludeExecutionData: aws.Bool(false),
+	})
+	require.NoError(t, err)
+	require.Len(t, withoutData.Events, len(history.Events))
+	assert.Nil(t, withoutData.Events[0].ExecutionStartedEventDetails.Input)
+	require.NotNil(t, withoutData.Events[0].ExecutionStartedEventDetails.InputDetails)
+	assert.False(t, withoutData.Events[0].ExecutionStartedEventDetails.InputDetails.Truncated)
+	assert.Nil(t, withoutData.Events[6].ExecutionSucceededEventDetails.Output)
+	require.NotNil(t, withoutData.Events[6].ExecutionSucceededEventDetails.OutputDetails)
+	assert.False(t, withoutData.Events[6].ExecutionSucceededEventDetails.OutputDetails.Truncated)
+}
+
+// TestSFN_NestedWorkflowIntegration_SDK executes the optimized
+// states:startExecution.sync:2 integration against a second real state
+// machine and verifies both the parent result and the independently
+// discoverable child execution.
+func TestSFN_NestedWorkflowIntegration_SDK(t *testing.T) {
+	c := sfnClient()
+	child, err := c.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name:       aws.String("sfn-sdk-nested-child"),
+		Definition: aws.String(`{"StartAt":"Complete","States":{"Complete":{"Type":"Pass","Parameters":{"child.$":"$"},"End":true}}}`),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: child.StateMachineArn})
+	})
+	parentDefinition := fmt.Sprintf(
+		`{"StartAt":"Child","States":{"Child":{"Type":"Task","Resource":"arn:aws:states:::states:startExecution.sync:2","Parameters":{"StateMachineArn":%q,"Input":{"order":"A-1"}},"OutputPath":"$.Output","End":true}}}`,
+		aws.ToString(child.StateMachineArn),
+	)
+	parent, err := c.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name:       aws.String("sfn-sdk-nested-parent"),
+		Definition: aws.String(parentDefinition),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: parent.StateMachineArn})
+	})
+	started, err := c.StartExecution(ctx, &sfn.StartExecutionInput{StateMachineArn: parent.StateMachineArn})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		described, describeErr := c.DescribeExecution(ctx, &sfn.DescribeExecutionInput{ExecutionArn: started.ExecutionArn})
+		return describeErr == nil && described.Status == sfntypes.ExecutionStatusSucceeded &&
+			aws.ToString(described.Output) == `{"child":{"order":"A-1"}}`
+	}, 10*time.Second, 100*time.Millisecond)
+	children, err := c.ListExecutions(ctx, &sfn.ListExecutionsInput{StateMachineArn: child.StateMachineArn})
+	require.NoError(t, err)
+	require.Len(t, children.Executions, 1)
+	assert.Equal(t, sfntypes.ExecutionStatusSucceeded, children.Executions[0].Status)
+}
 
 // TestSFN_Activities_SDK covers CreateActivity / DescribeActivity /
 // ListActivities / DeleteActivity and the GetActivityTask + SendTask*
@@ -41,22 +182,70 @@ func TestSFN_Activities_SDK(t *testing.T) {
 	}
 	assert.True(t, found)
 
-	// No work scheduled yet — GetActivityTask returns an empty token.
+	_, err = c.TagResource(ctx, &sfn.TagResourceInput{
+		ResourceArn: create.ActivityArn,
+		Tags:        []sfntypes.Tag{{Key: aws.String("worker"), Value: aws.String("sdk")}},
+	})
+	require.NoError(t, err)
+	tagged, err := c.ListTagsForResource(ctx, &sfn.ListTagsForResourceInput{ResourceArn: create.ActivityArn})
+	require.NoError(t, err)
+	require.Len(t, tagged.Tags, 1)
+
+	machine, err := c.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name:       aws.String("sfn-sdk-activity-sm"),
+		Definition: aws.String(fmt.Sprintf(`{"StartAt":"Work","States":{"Work":{"Type":"Task","Resource":%q,"End":true}}}`, aws.ToString(create.ActivityArn))),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: machine.StateMachineArn})
+	})
+	execution, err := c.StartExecution(ctx, &sfn.StartExecutionInput{
+		StateMachineArn: machine.StateMachineArn,
+		Input:           aws.String(`{"job":"real"}`),
+	})
+	require.NoError(t, err)
+
 	task, err := c.GetActivityTask(ctx, &sfn.GetActivityTaskInput{
 		ActivityArn: create.ActivityArn,
 		WorkerName:  aws.String("worker-1"),
 	})
 	require.NoError(t, err)
-	assert.Empty(t, aws.ToString(task.TaskToken))
+	require.NotEmpty(t, aws.ToString(task.TaskToken))
+	assert.JSONEq(t, `{"job":"real"}`, aws.ToString(task.Input))
+	_, err = c.SendTaskHeartbeat(ctx, &sfn.SendTaskHeartbeatInput{TaskToken: task.TaskToken})
+	require.NoError(t, err)
+	_, err = c.SendTaskSuccess(ctx, &sfn.SendTaskSuccessInput{
+		TaskToken: task.TaskToken,
+		Output:    aws.String(`{"completed":true}`),
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		result, describeErr := c.DescribeExecution(ctx, &sfn.DescribeExecutionInput{ExecutionArn: execution.ExecutionArn})
+		return describeErr == nil && result.Status == sfntypes.ExecutionStatusSucceeded &&
+			aws.ToString(result.Output) == `{"completed":true}`
+	}, 10e9, 1e8)
 
-	// SendTaskSuccess/Failure/Heartbeat against an unknown token raise
-	// TaskDoesNotExist — exercises the full SendTask* surface.
-	_, err = c.SendTaskHeartbeat(ctx, &sfn.SendTaskHeartbeatInput{TaskToken: aws.String("nope")})
-	require.Error(t, err)
-	_, err = c.SendTaskSuccess(ctx, &sfn.SendTaskSuccessInput{TaskToken: aws.String("nope"), Output: aws.String("{}")})
-	require.Error(t, err)
-	_, err = c.SendTaskFailure(ctx, &sfn.SendTaskFailureInput{TaskToken: aws.String("nope"), Error: aws.String("E")})
-	require.Error(t, err)
+	failedExecution, err := c.StartExecution(ctx, &sfn.StartExecutionInput{
+		StateMachineArn: machine.StateMachineArn,
+		Input:           aws.String(`{"job":"fail"}`),
+	})
+	require.NoError(t, err)
+	failedTask, err := c.GetActivityTask(ctx, &sfn.GetActivityTaskInput{
+		ActivityArn: create.ActivityArn,
+		WorkerName:  aws.String("worker-1"),
+	})
+	require.NoError(t, err)
+	_, err = c.SendTaskFailure(ctx, &sfn.SendTaskFailureInput{
+		TaskToken: failedTask.TaskToken,
+		Error:     aws.String("Worker.Failed"),
+		Cause:     aws.String("real worker failure"),
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		result, describeErr := c.DescribeExecution(ctx, &sfn.DescribeExecutionInput{ExecutionArn: failedExecution.ExecutionArn})
+		return describeErr == nil && result.Status == sfntypes.ExecutionStatusFailed
+	}, 10e9, 1e8)
 }
 
 // TestSFN_VersionsAndAliases_SDK covers PublishStateMachineVersion,
@@ -93,8 +282,11 @@ func TestSFN_VersionsAndAliases_SDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, aws.ToString(alias.StateMachineAliasArn))
+	aliasDeleted := false
 	t.Cleanup(func() {
-		_, _ = c.DeleteStateMachineAlias(ctx, &sfn.DeleteStateMachineAliasInput{StateMachineAliasArn: alias.StateMachineAliasArn})
+		if !aliasDeleted {
+			_, _ = c.DeleteStateMachineAlias(ctx, &sfn.DeleteStateMachineAliasInput{StateMachineAliasArn: alias.StateMachineAliasArn})
+		}
 	})
 
 	da, err := c.DescribeStateMachineAlias(ctx, &sfn.DescribeStateMachineAliasInput{
@@ -124,6 +316,15 @@ func TestSFN_VersionsAndAliases_SDK(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "updated", aws.ToString(da.Description))
 
+	_, err = c.DeleteStateMachineVersion(ctx, &sfn.DeleteStateMachineVersionInput{
+		StateMachineVersionArn: pub.StateMachineVersionArn,
+	})
+	require.ErrorContains(t, err, "ConflictException")
+	_, err = c.DeleteStateMachineAlias(ctx, &sfn.DeleteStateMachineAliasInput{
+		StateMachineAliasArn: alias.StateMachineAliasArn,
+	})
+	require.NoError(t, err)
+	aliasDeleted = true
 	_, err = c.DeleteStateMachineVersion(ctx, &sfn.DeleteStateMachineVersionInput{
 		StateMachineVersionArn: pub.StateMachineVersionArn,
 	})
@@ -184,9 +385,15 @@ func TestSFN_DescribeForExecutionAndRedrive_SDK(t *testing.T) {
 	c := sfnClient()
 
 	sm, err := c.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
-		Name:       aws.String("sfn-sdk-redrive-sm"),
-		Definition: aws.String(`{"StartAt":"F","States":{"F":{"Type":"Fail","Error":"E","Cause":"boom"}}}`),
-		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+		Name: aws.String("sfn-sdk-redrive-sm"),
+		Definition: aws.String(`{
+			"StartAt":"AlreadyCompleted",
+			"States":{
+				"AlreadyCompleted":{"Type":"Pass","Next":"F"},
+				"F":{"Type":"Fail","Error":"E","Cause":"boom"}
+			}
+		}`),
+		RoleArn: aws.String("arn:aws:iam::123456789012:role/sfn-role"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -212,22 +419,62 @@ func TestSFN_DescribeForExecutionAndRedrive_SDK(t *testing.T) {
 		return err == nil && d.Status == sfntypes.ExecutionStatusFailed
 	}, 10e9, 1e8)
 
-	rd, err := c.RedriveExecution(ctx, &sfn.RedriveExecutionInput{ExecutionArn: start.ExecutionArn})
+	clientToken := aws.String("redrive-idempotency-token")
+	rd, err := c.RedriveExecution(ctx, &sfn.RedriveExecutionInput{
+		ExecutionArn: start.ExecutionArn,
+		ClientToken:  clientToken,
+	})
 	require.NoError(t, err)
 	require.NotNil(t, rd.RedriveDate)
 	assert.False(t, rd.RedriveDate.IsZero())
+	repeated, err := c.RedriveExecution(ctx, &sfn.RedriveExecutionInput{
+		ExecutionArn: start.ExecutionArn,
+		ClientToken:  clientToken,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, rd.RedriveDate, repeated.RedriveDate)
+
+	require.Eventually(t, func() bool {
+		d, describeErr := c.DescribeExecution(ctx, &sfn.DescribeExecutionInput{ExecutionArn: start.ExecutionArn})
+		return describeErr == nil && d.Status == sfntypes.ExecutionStatusFailed
+	}, 10e9, 1e8)
+	history, err := c.GetExecutionHistory(ctx, &sfn.GetExecutionHistoryInput{
+		ExecutionArn: start.ExecutionArn,
+	})
+	require.NoError(t, err)
+	completedStateEntries := 0
+	for _, event := range history.Events {
+		if event.Type == sfntypes.HistoryEventTypePassStateEntered &&
+			event.StateEnteredEventDetails != nil &&
+			aws.ToString(event.StateEnteredEventDetails.Name) == "AlreadyCompleted" {
+			completedStateEntries++
+		}
+	}
+	assert.Equal(t, 1, completedStateEntries, "redrive must resume at the failed state")
 }
 
-// TestSFN_MapRuns_SDK covers ListMapRuns (empty), and DescribeMapRun /
-// UpdateMapRun against a Map Run seeded through the SDK is not directly
-// creatable, so we assert the empty-list shape and the not-found errors.
+// TestSFN_MapRuns_SDK launches a real Distributed Map and exercises its
+// ListMapRuns, DescribeMapRun, and UpdateMapRun control plane while its child
+// workflows are running.
 func TestSFN_MapRuns_SDK(t *testing.T) {
 	c := sfnClient()
 
 	sm, err := c.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
-		Name:       aws.String("sfn-sdk-maprun-sm"),
-		Definition: aws.String(`{"StartAt":"P","States":{"P":{"Type":"Pass","End":true}}}`),
-		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+		Name: aws.String("sfn-sdk-maprun-sm"),
+		Definition: aws.String(`{
+			"StartAt":"Distributed",
+			"States":{"Distributed":{
+				"Type":"Map",
+				"MaxConcurrency":1,
+				"ItemProcessor":{
+					"ProcessorConfig":{"Mode":"DISTRIBUTED","ExecutionType":"EXPRESS"},
+					"StartAt":"Delay",
+					"States":{"Delay":{"Type":"Wait","Seconds":1,"End":true}}
+				},
+				"End":true
+			}}
+		}`),
+		RoleArn: aws.String("arn:aws:iam::123456789012:role/sfn-role"),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -236,23 +483,44 @@ func TestSFN_MapRuns_SDK(t *testing.T) {
 
 	start, err := c.StartExecution(ctx, &sfn.StartExecutionInput{
 		StateMachineArn: sm.StateMachineArn,
-		Input:           aws.String(`{}`),
+		Input:           aws.String(`[{"id":1},{"id":2}]`),
 	})
 	require.NoError(t, err)
 
-	lmr, err := c.ListMapRuns(ctx, &sfn.ListMapRunsInput{ExecutionArn: start.ExecutionArn})
-	require.NoError(t, err)
-	assert.Empty(t, lmr.MapRuns)
+	var mapRunArn *string
+	require.Eventually(t, func() bool {
+		list, listErr := c.ListMapRuns(ctx, &sfn.ListMapRunsInput{ExecutionArn: start.ExecutionArn})
+		if listErr != nil || len(list.MapRuns) != 1 {
+			return false
+		}
+		mapRunArn = list.MapRuns[0].MapRunArn
+		return aws.ToString(mapRunArn) != ""
+	}, 10e9, 5e7)
 
-	missingMapRun := aws.String("arn:aws:states:us-east-1:123456789012:mapRun:nope/x:1")
-	_, err = c.DescribeMapRun(ctx, &sfn.DescribeMapRunInput{MapRunArn: missingMapRun})
-	require.Error(t, err)
-
-	// UpdateMapRun on a non-existent Map Run returns the faithful error (no
-	// Distributed-Map execution has produced one).
 	_, err = c.UpdateMapRun(ctx, &sfn.UpdateMapRunInput{
-		MapRunArn:      missingMapRun,
-		MaxConcurrency: aws.Int32(5),
+		MapRunArn:      mapRunArn,
+		MaxConcurrency: aws.Int32(2),
 	})
-	require.Error(t, err)
+	require.NoError(t, err)
+	described, err := c.DescribeMapRun(ctx, &sfn.DescribeMapRunInput{MapRunArn: mapRunArn})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), described.MaxConcurrency)
+	assert.Equal(t, int64(2), described.ItemCounts.Total)
+
+	require.Eventually(t, func() bool {
+		result, describeErr := c.DescribeMapRun(ctx, &sfn.DescribeMapRunInput{MapRunArn: mapRunArn})
+		return describeErr == nil && result.Status == sfntypes.MapRunStatusSucceeded &&
+			result.ItemCounts.Succeeded == 2
+	}, 10e9, 1e8)
+	described, err = c.DescribeMapRun(ctx, &sfn.DescribeMapRunInput{MapRunArn: mapRunArn})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), described.ItemCounts.ResultsWritten)
+	children, err := c.ListExecutions(ctx, &sfn.ListExecutionsInput{MapRunArn: mapRunArn})
+	require.NoError(t, err)
+	require.Len(t, children.Executions, 2)
+	for _, child := range children.Executions {
+		assert.Equal(t, sfntypes.ExecutionStatusSucceeded, child.Status)
+		assert.Equal(t, aws.ToString(mapRunArn), aws.ToString(child.MapRunArn))
+		assert.Contains(t, aws.ToString(child.StateMachineArn), "/Distributed")
+	}
 }

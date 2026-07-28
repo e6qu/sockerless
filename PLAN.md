@@ -24,21 +24,20 @@ Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator dashbo
 
 Production operation had enforceable resource and artifact contracts. Every ordinary GitHub Actions job was bounded to 15 minutes, the historically over-budget AWS edge and Amazon EC2 command-line interface groups were split without losing any of the 630 tests, nightly fuzz targets ran in bounded parallel batches, and clean production builds created every frontend before compiling all 11 UI-bearing Go binaries. Native release tags remained direct architecture manifests while each short-SHA tag remained an OCI index containing exactly Linux ARM64 and AMD64.
 
-The next fidelity work stayed evidence-driven. AWS Lambda image invocations had joined the configured VPC at runtime, closing the control-plane/runtime split for `VpcConfig`; the remaining local simulator gaps were the Google Cloud Run v1/v2 service store, Azure Files Share ACL, Amazon EC2 subnet dependency enforcement, Amazon ECS `StartTask` execution, and launch-type-specific Amazon ECS sandboxing. Authenticated live-cloud validation remained externally gated. Standalone products consumed published Sockerless simulator and backend contracts and retained their own source, deployment modules, and product-specific tests.
+The next fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions covered every operation in their vendored Smithy service models with executable implementations, production console workflows, official-client validation, selected live-AWS differentials, and an authenticated federated-browser flow. The remaining local simulator gaps were the Google Cloud Run v1/v2 service store, Azure Files Share ACL, Amazon EC2 subnet dependency enforcement, Amazon ECS `StartTask` execution, launch-type-specific Amazon ECS sandboxing, and Amazon Amplify's synthetic build-success path. Standalone products consumed published Sockerless simulator and backend contracts and retained their own source, deployment modules, and product-specific tests.
 
 ## Active Branch Priorities
 
-1. Closed BUG-2678 by placing AWS Lambda image invocations on the VPC represented by `VpcConfig`, including real Linux network namespaces, subnet address leasing, security-group enforcement, VPC egress policy, and Lambda Runtime API routing.
-2. Proved the runtime path with official AWS SDK, AWS CLI, and Terraform clients, including a function reaching an Amazon ECS task at its private `awsvpc` address.
-3. Aligned Amazon Cloud Map custom health checks with AWS's fixed failure threshold and removed the Terraform provider warnings exposed by the production-shaped test.
-4. Let the AWS SDK, CLI, and Terraform harnesses terminate the simulator through its cleanup path on ordinary completion.
-5. Bundled the pre-push dependency drift into the branch: every Docker backend and simulator shared-module consumer used `github.com/docker/go-connections` v0.8.1; the three root simulators were independently tidied for standalone `GOWORK=off` builds; and every affected module passed its complete tests.
-6. Closed the Linux data-plane failures exposed by the official SDK run: security-group filtering preserved ARP neighbor discovery, workload callbacks used the runtime's real bridge gateway, and Amazon Amplify compute/build workspaces carried their required SELinux labels.
-7. Upgraded the standalone AWS SDK graph to `github.com/aws/smithy-go` v1.27.5 and bounded every container-engine operation in the DynamoDB Local differential harness, including real failed-state diagnostics.
-8. Upgraded the AWS Glue SDK to v1.150.0 when the current patch release appeared while the pull request ran, and passed the exact freshness gate plus every AWS SDK shard.
-9. Kept successful AWS SDK shards within their job budget by removing the unconditional whole-filesystem consumer scan; disk failures retained bounded, relevant diagnostics, and a fixture prevented the unbounded scan from returning.
-10. Preserved the exact Shauth browser, production-build, workflow-budget, and fuzzing contracts.
-11. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+1. Implemented all 85 AWS Lambda operations represented by the vendored Smithy service model with real control-plane and executable-runtime behavior.
+2. Implemented all 37 AWS Step Functions operations with JSONPath and JSONata evaluation, complete workflow execution, immutable history, versions, aliases, redrive, nested workflows, and Lambda integration.
+3. Exercised the same public surfaces through official AWS SDK, AWS CLI, and Terraform clients and selected short-lived live-AWS differentials.
+4. Brought the AWS console's Lambda and Step Functions resource, configuration, authoring, execution, history, and lifecycle workflows close to the corresponding AWS Console information architecture.
+5. Proved the federated browser path through the exact Shauth, Ory Hydra, PostgreSQL, AWS console, AWS cloud API, and Chromium matrix.
+6. Provisioned the official AWS Systems Manager Session Manager plugin inside the AWS CLI harness and cleaned every installed tool directory at suite exit.
+7. Separated route-introspection construction from runtime evaluator startup, preserving production evaluators while eliminating the conformance-harness store race.
+8. Made extracted AWS Lambda deployment packages and layers traversable by the managed runtime's sandbox user while preserving read-only mounts, with Linux SDK-shard coverage.
+9. Kept dependency freshness authenticated against the real GitHub API in both required shell portability passes.
+10. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

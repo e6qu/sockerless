@@ -1,6 +1,10 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -75,7 +79,22 @@ func TestIAMResourcePolicy_LambdaPolicyMirror(t *testing.T) {
 	srv := buildResourcePolicySim(t)
 	const fn = "policy-fn"
 
-	create := `{"FunctionName":"policy-fn","Role":"arn:aws:iam::000000000000:role/r","Code":{"ZipFile":"AA=="},"Handler":"h","Runtime":"go","PackageType":"Zip"}`
+	var archive bytes.Buffer
+	zipWriter := zip.NewWriter(&archive)
+	entry, err := zipWriter.Create("bootstrap")
+	if err != nil {
+		t.Fatalf("create Lambda ZIP entry: %v", err)
+	}
+	if _, err := entry.Write([]byte("#!/bin/sh\n")); err != nil {
+		t.Fatalf("write Lambda ZIP entry: %v", err)
+	}
+	if err := zipWriter.Close(); err != nil {
+		t.Fatalf("close Lambda ZIP: %v", err)
+	}
+	create := fmt.Sprintf(
+		`{"FunctionName":"policy-fn","Role":"arn:aws:iam::000000000000:role/r","Code":{"ZipFile":%q},"Handler":"bootstrap","Runtime":"provided.al2023","PackageType":"Zip"}`,
+		base64.StdEncoding.EncodeToString(archive.Bytes()),
+	)
 	if rr := doReq(t, srv, lambdaReq("POST", "/2015-03-31/functions", create)); rr.Code != http.StatusCreated {
 		t.Fatalf("CreateFunction: status %d body %s", rr.Code, rr.Body.String())
 	}

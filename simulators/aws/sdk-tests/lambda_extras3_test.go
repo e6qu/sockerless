@@ -1,11 +1,12 @@
 package aws_sdk_test
 
 import (
-	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/stretchr/testify/assert"
@@ -33,7 +34,7 @@ func TestLambda_ConfigAndCode(t *testing.T) {
 
 	upd, err := lc.UpdateFunctionCode(ctx, &lambda.UpdateFunctionCodeInput{
 		FunctionName: aws.String(fn),
-		ZipFile:      []byte("new-deployment-package-material"),
+		ZipFile:      lambdaNodeDeploymentZip(t, `{"updated":true}`),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, fn, aws.ToString(upd.FunctionName))
@@ -194,6 +195,42 @@ func TestLambda_CapacityProviders(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cpArn, aws.ToString(fv.CapacityProviderArn))
 	assert.Empty(t, fv.FunctionVersions)
+
+	attachedFunction := "extras3-cp-function"
+	_, err = lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(attachedFunction),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		Runtime:      lambdatypes.RuntimeNodejs20x,
+		Handler:      aws.String("index.handler"),
+		Code: &lambdatypes.FunctionCode{
+			ZipFile: lambdaNodeDeploymentZip(t, `{}`),
+		},
+		CapacityProviderConfig: &lambdatypes.CapacityProviderConfig{
+			LambdaManagedInstancesCapacityProviderConfig: &lambdatypes.LambdaManagedInstancesCapacityProviderConfig{
+				CapacityProviderArn: aws.String(cpArn),
+			},
+		},
+	})
+	require.NoError(t, err)
+	_, err = lc.DeleteCapacityProvider(ctx, &lambda.DeleteCapacityProviderInput{
+		CapacityProviderName: aws.String(cpName),
+	})
+	require.ErrorContains(t, err, "ResourceConflictException")
+	_, err = lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{
+		FunctionName: aws.String(attachedFunction),
+	})
+	require.NoError(t, err)
+
+	deleted, err := lc.DeleteCapacityProvider(ctx, &lambda.DeleteCapacityProviderInput{
+		CapacityProviderName: aws.String(cpName),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, deleted.CapacityProvider)
+	assert.Equal(t, lambdatypes.CapacityProviderStateDeleting, deleted.CapacityProvider.State)
+	_, err = lc.GetCapacityProvider(ctx, &lambda.GetCapacityProviderInput{
+		CapacityProviderName: aws.String(cpName),
+	})
+	require.ErrorContains(t, err, "ResourceNotFoundException")
 }
 
 // TestLambda_InvokeAsync exercises the deprecated InvokeAsync entry point (202).
@@ -239,101 +276,281 @@ func TestLambda_InvokeWithResponseStream(t *testing.T) {
 	assert.True(t, sawComplete, "stream must terminate with an InvokeComplete event")
 }
 
-// TestLambda_DurableExecutionLifecycle drives the durable-execution surface:
-// a checkpoint materializes the execution (the runtime checkpointing itself),
-// then Get/History/State/List/Stop and a callback advance it.
+// TestLambda_DurableExecutionLifecycle starts a durable execution through the
+// real Invoke entry point, then observes its result, history, listing, and
+// idempotent execution-name behavior through the official SDK.
 func TestLambda_DurableExecutionLifecycle(t *testing.T) {
 	lc := lambdaClient()
 	fn := "extras3-durable-fn"
-	lambdaExtrasFunc(t, lc, fn)
-
-	// Construct a valid DurableExecutionArn rooted at the function.
-	deArn := fmt.Sprintf("%s:$LATEST/durable-execution/order-saga/exec-001", lambdaFunctionArn(fn))
-	callbackID := "cb-await-payment"
-
-	// Get before any checkpoint: 404.
-	_, err := lc.GetDurableExecution(ctx, &lambda.GetDurableExecutionInput{
-		DurableExecutionArn: aws.String(deArn),
-	})
-	require.Error(t, err)
-
-	// First checkpoint materializes the execution and records a CALLBACK op.
-	cp, err := lc.CheckpointDurableExecution(ctx, &lambda.CheckpointDurableExecutionInput{
-		DurableExecutionArn: aws.String(deArn),
-		CheckpointToken:     aws.String("ckpt-1"),
-		Updates: []lambdatypes.OperationUpdate{
-			{
-				Id:     aws.String("step-validate"),
-				Name:   aws.String("validate"),
-				Type:   lambdatypes.OperationTypeStep,
-				Action: lambdatypes.OperationActionSucceed,
-			},
-			{
-				Id:     aws.String(callbackID),
-				Name:   aws.String("await-payment"),
-				Type:   lambdatypes.OperationTypeCallback,
-				Action: lambdatypes.OperationActionStart,
-			},
+	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fn),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		Runtime:      lambdatypes.RuntimeNodejs20x,
+		Handler:      aws.String("index.handler"),
+		Code: &lambdatypes.FunctionCode{
+			ZipFile: lambdaNodeDeploymentZip(t, `({
+				Status: "SUCCEEDED",
+				Result: JSON.stringify({
+					durable: true,
+					input: JSON.parse(event.InitialExecutionState.Operations[0].ExecutionDetails.InputPayload)
+				})
+			})`),
+		},
+		DurableConfig: &lambdatypes.DurableConfig{
+			ExecutionTimeout:      aws.Int32(60),
+			RetentionPeriodInDays: aws.Int32(1),
 		},
 	})
 	require.NoError(t, err)
-	require.NotNil(t, cp.NewExecutionState)
-	assert.GreaterOrEqual(t, len(cp.NewExecutionState.Operations), 2)
+	t.Cleanup(func() {
+		_, _ = lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fn)})
+	})
+
+	invoked, err := lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName:         aws.String(fn + ":$LATEST"),
+		DurableExecutionName: aws.String("order-saga"),
+		Payload:              []byte(`{"orderId":"A-1"}`),
+	})
+	require.NoError(t, err)
+	deArn := aws.ToString(invoked.DurableExecutionArn)
+	require.NotEmpty(t, deArn)
+	assert.JSONEq(t, `{"durable":true,"input":{"orderId":"A-1"}}`, string(invoked.Payload))
 
 	got, err := lc.GetDurableExecution(ctx, &lambda.GetDurableExecutionInput{
 		DurableExecutionArn: aws.String(deArn),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, deArn, aws.ToString(got.DurableExecutionArn))
-	assert.Equal(t, lambdatypes.ExecutionStatusRunning, got.Status)
+	assert.Equal(t, lambdatypes.ExecutionStatusSucceeded, got.Status)
+	assert.True(t, aws.ToBool(got.ExecutionDataIncluded))
+	assert.JSONEq(t, `{"orderId":"A-1"}`, aws.ToString(got.InputPayload))
+	assert.JSONEq(t, `{"durable":true,"input":{"orderId":"A-1"}}`, aws.ToString(got.Result))
+
+	withoutData, err := lc.GetDurableExecution(ctx, &lambda.GetDurableExecutionInput{
+		DurableExecutionArn:  aws.String(deArn),
+		IncludeExecutionData: aws.Bool(false),
+	})
+	require.NoError(t, err)
+	assert.False(t, aws.ToBool(withoutData.ExecutionDataIncluded))
+	assert.Nil(t, withoutData.InputPayload)
+	assert.Nil(t, withoutData.Result)
 
 	hist, err := lc.GetDurableExecutionHistory(ctx, &lambda.GetDurableExecutionHistoryInput{
 		DurableExecutionArn: aws.String(deArn),
+		MaxItems:            1,
 	})
 	require.NoError(t, err)
-	assert.NotEmpty(t, hist.Events, "history must carry the ExecutionStarted event")
-
-	state, err := lc.GetDurableExecutionState(ctx, &lambda.GetDurableExecutionStateInput{
+	require.Len(t, hist.Events, 1)
+	require.NotNil(t, hist.NextMarker)
+	assert.Equal(t, lambdatypes.EventTypeExecutionStarted, hist.Events[0].EventType)
+	histNext, err := lc.GetDurableExecutionHistory(ctx, &lambda.GetDurableExecutionHistoryInput{
 		DurableExecutionArn: aws.String(deArn),
-		CheckpointToken:     aws.String("ckpt-1"),
+		Marker:              hist.NextMarker,
+		MaxItems:            1,
 	})
 	require.NoError(t, err)
-	assert.NotEmpty(t, state.Operations)
+	require.Len(t, histNext.Events, 1)
+	assert.Equal(t, lambdatypes.EventTypeExecutionSucceeded, histNext.Events[0].EventType)
+
+	_, err = lc.GetDurableExecutionState(ctx, &lambda.GetDurableExecutionStateInput{
+		DurableExecutionArn: aws.String(deArn),
+		CheckpointToken:     aws.String("not-a-runtime-token"),
+	})
+	require.Error(t, err)
+
+	second, err := lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName:         aws.String(fn + ":$LATEST"),
+		DurableExecutionName: aws.String("order-saga-2"),
+		Payload:              []byte(`{"orderId":"A-2"}`),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(second.DurableExecutionArn))
 
 	lst, err := lc.ListDurableExecutionsByFunction(ctx, &lambda.ListDurableExecutionsByFunctionInput{
 		FunctionName: aws.String(fn),
+		Statuses:     []lambdatypes.ExecutionStatus{lambdatypes.ExecutionStatusSucceeded},
+		MaxItems:     1,
 	})
 	require.NoError(t, err)
-	require.NotEmpty(t, lst.DurableExecutions)
+	require.Len(t, lst.DurableExecutions, 1)
+	require.NotNil(t, lst.NextMarker)
+	lstNext, err := lc.ListDurableExecutionsByFunction(ctx, &lambda.ListDurableExecutionsByFunctionInput{
+		FunctionName: aws.String(fn),
+		Statuses:     []lambdatypes.ExecutionStatus{lambdatypes.ExecutionStatusSucceeded},
+		MaxItems:     1,
+		Marker:       lst.NextMarker,
+	})
+	require.NoError(t, err)
+	require.Len(t, lstNext.DurableExecutions, 1)
+	filtered, err := lc.ListDurableExecutionsByFunction(ctx, &lambda.ListDurableExecutionsByFunctionInput{
+		FunctionName:         aws.String(fn),
+		DurableExecutionName: aws.String("order-saga"),
+	})
+	require.NoError(t, err)
+	require.Len(t, filtered.DurableExecutions, 1)
+	assert.Equal(t, deArn, aws.ToString(filtered.DurableExecutions[0].DurableExecutionArn))
 
-	// The callback ops advance the stored execution.
-	_, err = lc.SendDurableExecutionCallbackHeartbeat(ctx, &lambda.SendDurableExecutionCallbackHeartbeatInput{
-		CallbackId: aws.String(callbackID),
+	reused, err := lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName:         aws.String(fn + ":$LATEST"),
+		DurableExecutionName: aws.String("order-saga"),
+		Payload:              []byte(`{"orderId":"A-1"}`),
 	})
 	require.NoError(t, err)
-	_, err = lc.SendDurableExecutionCallbackSuccess(ctx, &lambda.SendDurableExecutionCallbackSuccessInput{
-		CallbackId: aws.String(callbackID),
-		Result:     []byte(`{"paid":true}`),
-	})
-	require.NoError(t, err)
+	assert.Equal(t, deArn, aws.ToString(reused.DurableExecutionArn))
+	assert.JSONEq(t, `{"durable":true,"input":{"orderId":"A-1"}}`, string(reused.Payload))
 
-	// An unknown callback id is a 404.
+	_, err = lc.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName:         aws.String(fn + ":$LATEST"),
+		DurableExecutionName: aws.String("order-saga"),
+		Payload:              []byte(`{"orderId":"different"}`),
+	})
+	require.ErrorContains(t, err, "DurableExecutionAlreadyStartedException")
+
 	_, err = lc.SendDurableExecutionCallbackFailure(ctx, &lambda.SendDurableExecutionCallbackFailureInput{
 		CallbackId: aws.String("cb-does-not-exist"),
 		Error:      &lambdatypes.ErrorObject{ErrorMessage: aws.String("nope")},
 	})
 	require.Error(t, err)
 
-	stop, err := lc.StopDurableExecution(ctx, &lambda.StopDurableExecutionInput{
+	_, err = lc.StopDurableExecution(ctx, &lambda.StopDurableExecutionInput{
 		DurableExecutionArn: aws.String(deArn),
 		Error:               &lambdatypes.ErrorObject{ErrorMessage: aws.String("operator stop")},
 	})
-	require.NoError(t, err)
-	require.NotNil(t, stop.StopTimestamp)
+	require.Error(t, err)
+}
 
-	after, err := lc.GetDurableExecution(ctx, &lambda.GetDurableExecutionInput{
-		DurableExecutionArn: aws.String(deArn),
+// TestLambda_DurableCheckpointAndCallbackReplay drives the private durable
+// execution envelope through a real managed-runtime container, then uses the
+// official AWS SDK for Go for checkpoint, heartbeat, and callback completion.
+// The synchronous Invoke remains open until callback completion causes Lambda
+// to replay the function and return its customer result.
+func TestLambda_DurableCheckpointAndCallbackReplay(t *testing.T) {
+	lc := lambdaClient()
+	fn := "extras3-durable-callback-fn"
+	source := `
+exports.handler = async (event) => {
+  const callback = event.InitialExecutionState.Operations.find(
+    (operation) => operation.Type === "CALLBACK"
+  );
+  if (callback?.Status === "SUCCEEDED") {
+    return {
+      Status: "SUCCEEDED",
+      Result: JSON.stringify({
+        approved: JSON.parse(callback.CallbackDetails.Result),
+        replayedOperationIds: event.UpdatedOperationIds
+      })
+    };
+  }
+  console.log("CHECKPOINT_TOKEN=" + event.CheckpointToken);
+  console.log("DURABLE_ARN=" + event.DurableExecutionArn);
+  return {Status: "PENDING"};
+};`
+	_, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fn),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		Runtime:      lambdatypes.RuntimeNodejs20x,
+		Handler:      aws.String("index.handler"),
+		Code: &lambdatypes.FunctionCode{
+			ZipFile: lambdaNodeSourceZip(t, source),
+		},
+		DurableConfig: &lambdatypes.DurableConfig{
+			ExecutionTimeout:      aws.Int32(60),
+			RetentionPeriodInDays: aws.Int32(1),
+		},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, lambdatypes.ExecutionStatusStopped, after.Status)
+	t.Cleanup(func() {
+		_, _ = lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fn)})
+	})
+
+	type invocationResult struct {
+		output *lambda.InvokeOutput
+		err    error
+	}
+	invocationDone := make(chan invocationResult, 1)
+	go func() {
+		output, invokeErr := lc.Invoke(ctx, &lambda.InvokeInput{
+			FunctionName:         aws.String(fn + ":$LATEST"),
+			DurableExecutionName: aws.String("callback-replay"),
+			Payload:              []byte(`{"orderId":"B-2"}`),
+		})
+		invocationDone <- invocationResult{output: output, err: invokeErr}
+	}()
+
+	cw := cwLogsClient()
+	var checkpointToken, durableARN string
+	require.Eventually(t, func() bool {
+		streams, streamErr := cw.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
+			LogGroupName: aws.String("/aws/lambda/" + fn),
+		})
+		if streamErr != nil || len(streams.LogStreams) == 0 {
+			return false
+		}
+		for _, stream := range streams.LogStreams {
+			events, eventErr := cw.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
+				LogGroupName:  aws.String("/aws/lambda/" + fn),
+				LogStreamName: stream.LogStreamName,
+			})
+			if eventErr != nil {
+				continue
+			}
+			for _, event := range events.Events {
+				message := aws.ToString(event.Message)
+				if strings.Contains(message, "CHECKPOINT_TOKEN=") {
+					checkpointToken = strings.TrimSpace(strings.SplitN(message, "CHECKPOINT_TOKEN=", 2)[1])
+				}
+				if strings.Contains(message, "DURABLE_ARN=") {
+					durableARN = strings.TrimSpace(strings.SplitN(message, "DURABLE_ARN=", 2)[1])
+				}
+			}
+		}
+		return checkpointToken != "" && durableARN != ""
+	}, 15*time.Second, 100*time.Millisecond)
+
+	checkpoint, err := lc.CheckpointDurableExecution(ctx, &lambda.CheckpointDurableExecutionInput{
+		DurableExecutionArn: aws.String(durableARN),
+		CheckpointToken:     aws.String(checkpointToken),
+		Updates: []lambdatypes.OperationUpdate{{
+			Id:     aws.String("approval"),
+			Name:   aws.String("approval"),
+			Type:   lambdatypes.OperationTypeCallback,
+			Action: lambdatypes.OperationActionStart,
+			CallbackOptions: &lambdatypes.CallbackOptions{
+				HeartbeatTimeoutSeconds: 10,
+				TimeoutSeconds:          30,
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, checkpoint.NewExecutionState)
+	var callbackID string
+	for _, operation := range checkpoint.NewExecutionState.Operations {
+		if operation.Type == lambdatypes.OperationTypeCallback && operation.CallbackDetails != nil {
+			callbackID = aws.ToString(operation.CallbackDetails.CallbackId)
+		}
+	}
+	require.NotEmpty(t, callbackID)
+
+	_, err = lc.SendDurableExecutionCallbackHeartbeat(ctx, &lambda.SendDurableExecutionCallbackHeartbeatInput{
+		CallbackId: aws.String(callbackID),
+	})
+	require.NoError(t, err)
+	_, err = lc.SendDurableExecutionCallbackSuccess(ctx, &lambda.SendDurableExecutionCallbackSuccessInput{
+		CallbackId: aws.String(callbackID),
+		Result:     []byte(`{"by":"operator"}`),
+	})
+	require.NoError(t, err)
+
+	select {
+	case result := <-invocationDone:
+		require.NoError(t, result.err)
+		require.NotNil(t, result.output)
+		assert.Equal(t, durableARN, aws.ToString(result.output.DurableExecutionArn))
+		assert.JSONEq(t, `{
+			"approved":{"by":"operator"},
+			"replayedOperationIds":["approval"]
+		}`, string(result.output.Payload))
+	case <-time.After(20 * time.Second):
+		t.Fatal("synchronous durable Invoke did not complete after callback success")
+	}
 }

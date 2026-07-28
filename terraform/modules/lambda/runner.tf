@@ -32,20 +32,20 @@ data "terraform_remote_state" "ecs" {
 }
 
 locals {
-  ecs_state                    = data.terraform_remote_state.ecs.outputs
+  ecs_state = data.terraform_remote_state.ecs.outputs
   # try() wrappers keep `terragrunt destroy` self-sufficient when the
   # ECS env's state has already been destroyed (cross-env teardown
   # ordering). Without them, destroy plans fail at locals evaluation
   # before any resource can be removed. Apply paths still error
   # explicitly via the downstream resource references (count = 0 on
   # missing AP, etc.), so this only relaxes the *destroy* path.
-  ecs_efs_filesystem_id        = try(local.ecs_state.efs_filesystem_id, "")
-  ecs_runner_workspace_apid    = try(local.ecs_state.runner_workspace_access_point_id, "")
-  ecs_private_subnet_ids       = try(local.ecs_state.private_subnet_ids, [])
-  ecs_task_security_group_id   = try(local.ecs_state.task_security_group_id, "")
-  ecs_task_role_arn            = try(local.ecs_state.task_role_arn, "")
-  ecs_execution_role_arn       = try(local.ecs_state.execution_role_arn, "")
-  ecs_log_group_name           = try(local.ecs_state.log_group_name, "")
+  ecs_efs_filesystem_id      = try(local.ecs_state.efs_filesystem_id, "")
+  ecs_runner_workspace_apid  = try(local.ecs_state.runner_workspace_access_point_id, "")
+  ecs_private_subnet_ids     = try(local.ecs_state.private_subnet_ids, [])
+  ecs_task_security_group_id = try(local.ecs_state.task_security_group_id, "")
+  ecs_task_role_arn          = try(local.ecs_state.task_role_arn, "")
+  ecs_execution_role_arn     = try(local.ecs_state.execution_role_arn, "")
+  ecs_log_group_name         = try(local.ecs_state.log_group_name, "")
 }
 
 # Resolve the workspace access point ARN from its ID via a data lookup
@@ -137,8 +137,8 @@ data "aws_iam_policy_document" "runner_lambda" {
   }
 
   statement {
-    sid    = "PassRoleForSubTasks"
-    effect = "Allow"
+    sid     = "PassRoleForSubTasks"
+    effect  = "Allow"
     actions = ["iam:PassRole"]
     resources = [
       "*",
@@ -261,7 +261,7 @@ resource "aws_lambda_function" "sockerless_runner" {
   }
 
   file_system_config {
-    arn              = try(data.aws_efs_access_point.runner_workspace[0].arn, "")
+    arn = try(data.aws_efs_access_point.runner_workspace[0].arn, "")
     # Lambda requires file system mount paths under /mnt/. The
     # bootstrap symlinks /home/runner/_work → /mnt/runner-workspace
     # so the runner's hardcoded workspace paths still resolve to
@@ -292,12 +292,12 @@ resource "aws_lambda_function" "sockerless_runner" {
       # rule: backend ↔ host primitive must match). It dispatches
       # each `container:` sub-task as a fresh Lambda function on
       # demand using these knobs:
-      SOCKERLESS_LAMBDA_ROLE_ARN          = aws_iam_role.runner_lambda.arn
-      SOCKERLESS_LAMBDA_LOG_GROUP         = "/sockerless/lambda/${local.name_prefix}"
-      SOCKERLESS_LAMBDA_SUBNETS           = join(",", local.ecs_private_subnet_ids)
-      SOCKERLESS_LAMBDA_SECURITY_GROUPS   = local.ecs_task_security_group_id
-      SOCKERLESS_LAMBDA_AGENT_EFS_ID      = local.ecs_efs_filesystem_id
-      SOCKERLESS_LAMBDA_ARCHITECTURE      = "x86_64"
+      SOCKERLESS_LAMBDA_ROLE_ARN        = aws_iam_role.runner_lambda.arn
+      SOCKERLESS_LAMBDA_LOG_GROUP       = "/sockerless/lambda/${local.name_prefix}"
+      SOCKERLESS_LAMBDA_SUBNETS         = join(",", local.ecs_private_subnet_ids)
+      SOCKERLESS_LAMBDA_SECURITY_GROUPS = local.ecs_task_security_group_id
+      SOCKERLESS_LAMBDA_AGENT_EFS_ID    = local.ecs_efs_filesystem_id
+      SOCKERLESS_LAMBDA_ARCHITECTURE    = "x86_64"
       # Bind-mount → EFS translation for sub-task Lambdas. Lambda
       # enforces at most one `FileSystemConfig` per function with mount
       # path `/mnt/...`, so sockerless collapses both runner-side

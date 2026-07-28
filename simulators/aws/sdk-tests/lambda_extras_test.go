@@ -1,6 +1,8 @@
 package aws_sdk_test
 
 import (
+	"io"
+	"net/http"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,7 +20,7 @@ func lambdaExtrasFunc(t *testing.T, lc *lambda.Client, name string) {
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
 		Runtime:      lambdatypes.RuntimeNodejs20x,
 		Handler:      aws.String("index.handler"),
-		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("zip")},
+		Code:         &lambdatypes.FunctionCode{ZipFile: lambdaDeploymentZip(t)},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -58,14 +60,23 @@ func TestLambda_EventSourceMappings(t *testing.T) {
 
 func TestLambda_Layers(t *testing.T) {
 	lc := lambdaClient()
+	archive := lambdaDeploymentZip(t)
 
 	pub, err := lc.PublishLayerVersion(ctx, &lambda.PublishLayerVersionInput{
 		LayerName: aws.String("my-layer"),
-		Content:   &lambdatypes.LayerVersionContentInput{ZipFile: []byte("layer-zip")},
+		Content:   &lambdatypes.LayerVersionContentInput{ZipFile: archive},
 	})
 	require.NoError(t, err)
 	ver := pub.Version
 	require.NotZero(t, ver)
+	require.NotNil(t, pub.Content)
+	download, err := http.Get(aws.ToString(pub.Content.Location))
+	require.NoError(t, err)
+	defer download.Body.Close()
+	downloaded, err := io.ReadAll(download.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, download.StatusCode, string(downloaded))
+	require.Equal(t, archive, downloaded)
 
 	_, err = lc.GetLayerVersion(ctx, &lambda.GetLayerVersionInput{
 		LayerName: aws.String("my-layer"), VersionNumber: aws.Int64(ver),
