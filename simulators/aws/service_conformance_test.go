@@ -125,6 +125,8 @@ var serviceConformanceCatalog = map[string][]string{
 	// AWS Certificate Manager: all certificate and RFC 8555 ACME control-plane
 	// operations are implemented.
 	"CertificateManager":      {},
+	"ACMPrivateCA":            {},
+	"Firehose_20150804":       {},
 	"secretsmanager":          {},
 	"AnyScaleFrontendService": {},
 	// Kinesis: all operations implemented (SubscribeToShard streams over vnd.amazon.eventstream).

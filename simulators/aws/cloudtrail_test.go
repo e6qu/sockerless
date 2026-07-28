@@ -162,6 +162,8 @@ func TestAWSEventSourceCoversAllServiceSlices(t *testing.T) {
 		"AWSStepFunctions.StartExecution":                     "states.amazonaws.com",
 		"AWSWAF_20190729.GetWebACL":                           "wafv2.amazonaws.com",
 		"CertificateManager.DescribeCertificate":              "acm.amazonaws.com",
+		"ACMPrivateCA.DescribeCertificateAuthority":           "acm-pca.amazonaws.com",
+		"Firehose_20150804.PutRecord":                         "firehose.amazonaws.com",
 		"CodeBuild_20161006.StartBuild":                       "codebuild.amazonaws.com",
 		"AmazonEC2ContainerServiceV20141113.RunTask":          "ecs.amazonaws.com",
 		"AmazonEC2ContainerRegistry_V20150921.DescribeImages": "ecr.amazonaws.com",

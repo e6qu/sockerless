@@ -2710,3 +2710,93 @@ builds while `noui` retained a 404. Google Cloud DNS and Artifact Registry
 Discovery documents advanced to revisions 20260723 and 20260724. The affected
 unit, official SDK, vendor CLI, freshness, surface-generation, and full
 pre-commit gates passed.
+
+## 2026-07-28 - Remaining cloud-fidelity closure (`feat/finish-remaining-fidelity-gaps`)
+
+The AWS cloud slice implemented all 23 vendored AWS Private Certificate
+Authority operations. It generated real RSA and elliptic-curve authority keys,
+PKCS #10 certificate signing requests, signed X.509 certificate chains and
+certificate revocation lists, and persisted authority lifecycle, permission,
+policy, tag, and audit-report state. AWS Certificate Manager used those
+authorities for private issuance, encrypted export, and revocation instead of
+maintaining an independent certificate source. Official AWS SDK, AWS CLI, and
+Terraform clients completed the root-authority lifecycle through the public
+AWS APIs.
+
+Amazon Data Firehose implemented its complete 12-operation vendored surface.
+Direct writes, Amazon SNS subscriptions, and Amazon CloudWatch metric streams
+entered one durable, concurrency-safe buffer; server-side encryption stored
+records with real AES-GCM key material before delivery. Buffer size and
+interval thresholds, IAM service-role authorization, AWS KMS state, all five
+supported Amazon S3 compression formats, tags, destination updates, and
+encryption transitions affected real runtime behavior. The official SDK,
+vendor CLI, and HashiCorp AWS provider exercised the same delivery streams,
+including data arriving in Amazon S3.
+
+The production AWS console gained resource-list, create, inspect, operate, and
+delete workflows for both services. Its authenticated Shauth, Ory Hydra,
+PostgreSQL, simulator, and Chromium matrix created and activated a root
+authority, delivered Firehose records into Amazon S3, and verified the cloud
+resources through federated SigV4. The full production frontend passed 239
+Chromium tests.
+
+The sweep also removed three publication blockers discovered by external
+clients. AWS Security Token Service and Microsoft Entra Workload Identity
+Federation cached issuer-scoped OpenID Connect discovery and JSON Web Key Set
+metadata while validating every assertion independently. The production Caddy
+configuration bounded cold-upstream retries and returned an exact `503
+Retry-After` response after ten seconds. Amazon Elastic Block Store snapshot,
+restore, and copy paths preserved sparse extents, so the production-shaped
+Terraform stack copied an 8 GiB logical block image without consuming its
+logical size.
+
+The generated API catalog and continuous-integration shard assignments covered
+both new AWS services. Same-day AWS SDK dependency releases were upgraded in
+every affected module. Complete simulator, official SDK, AWS CLI, Terraform,
+production build, lint, dead-code, duplication, frontend, authenticated
+browser, external HTTPS, specification, generated-surface, and
+dependency-freshness gates passed.
+
+The externally reviewed workload gaps were closed through the clouds' public
+contracts. AWS Step Functions gained optimized and AWS SDK Amazon ECS
+`RunTask` and AWS CodeBuild integrations with request/response, `.sync`,
+task-token callback, failure, timeout, cancellation, and stop behavior. The
+official AWS SDK launched a real Amazon ECS container and an AWS CodeBuild
+container whose real AWS CLI process reached Amazon SQS through the standard
+endpoint coordinate.
+
+AWS Amplify encrypted connected-repository credentials under AWS-owned AWS Key
+Management Service material and used the write-only access token for real
+private Git clones. Checked-in and explicit build specifications executed in a
+managed multi-language image; a private authenticated Git server and real
+Python plus Node.js build produced an artifact that the hosting data plane
+served. The AWS console added repository, token, platform, and build
+configuration controls.
+
+Amazon Relational Database Service gained real PostgreSQL and MySQL data
+planes behind native TLS endpoints. Engine containers retained data on
+volumes, master credentials stayed encrypted at rest, and IAM database
+authentication tokens were verified through SigV4 and `rds-db:connect`
+authorization. Stock pgx and MySQL drivers proved schema creation, insert,
+select, denied tokens, and policy-authorized tokens. The AWS console added
+database creation, connection guidance, IAM-token commands, and deletion.
+
+The AWS simulator documented the standard global and per-service SDK endpoint
+variables and the explicit AWS Lambda deployment/environment contract. A real
+deployed Python Lambda package used bundled boto3 and standard credentials to
+send to Amazon SQS. Explicit deployment remained faithful to AWS Lambda rather
+than introducing simulator-side code discovery, and the repository retained
+its unaudited/non-production warning because functional qualification did not
+constitute an independent security audit.
+
+The external client harnesses also stopped relying on a warm image cache.
+AWS CLI and Terraform workload-image builds used Buildx `--load` when Buildx
+was available, matching the AWS SDK harness, so real Lambda Runtime API images
+entered the container runtime store. The affected AWS CLI cases and the
+production-shaped Terraform apply, Lambda invocation, and destroy passed from
+an emptied image cache. Same-day `google.golang.org/api` v0.291.0 updates
+landed in all five affected Google Cloud modules; each affected suite, the
+complete official Google Cloud SDK simulator suite, and the repository-wide
+freshness audit passed. The final AWS console count was 239 Chromium tests,
+and the authenticated Shauth matrix covered the connected Amplify and Amazon
+RDS workflows.

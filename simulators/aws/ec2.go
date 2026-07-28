@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -4379,25 +4378,7 @@ func ebsCopyDir(dst, src string) error {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
-		if err != nil {
-			_ = in.Close()
-			return err
-		}
-		if _, err := io.Copy(out, in); err != nil {
-			_ = in.Close()
-			_ = out.Close()
-			return err
-		}
-		if err := in.Close(); err != nil {
-			_ = out.Close()
-			return err
-		}
-		return out.Close()
+		return ebsCopySparseFile(target, path, info.Mode().Perm())
 	})
 }
 

@@ -33,6 +33,7 @@ provider "aws" {
     servicediscovery = var.endpoint
     cloudfront       = var.endpoint
     acm              = var.endpoint
+    acmpca           = var.endpoint
     route53          = var.endpoint
     wafv2            = var.endpoint
     amplify          = var.endpoint
@@ -41,6 +42,7 @@ provider "aws" {
     dynamodb         = var.endpoint
     efs              = var.endpoint
     events           = var.endpoint
+    firehose         = var.endpoint
     kinesis          = var.endpoint
     kms              = var.endpoint
     lambda           = var.endpoint
@@ -1106,6 +1108,105 @@ resource "aws_s3_bucket" "tf_bucket" {
   }
 }
 
+# Amazon Data Firehose assumes this role and writes delivered records to the
+# production-shaped S3 destination. Keeping the trust and permissions in the
+# Terraform graph proves that the service consumes IAM and S3 cloud primitives
+# instead of accepting an inert role ARN.
+resource "aws_iam_role" "tf_firehose_role" {
+  name = "tf-firehose-delivery-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "firehose.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "tf_firehose_policy" {
+  name = "tf-firehose-s3-delivery"
+  role = aws_iam_role.tf_firehose_role.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "s3:GetBucketLocation",
+        "s3:ListBucket",
+        "s3:PutObject",
+      ]
+      Resource = [
+        aws_s3_bucket.tf_bucket.arn,
+        "${aws_s3_bucket.tf_bucket.arn}/*",
+      ]
+    }]
+  })
+}
+
+resource "aws_kinesis_firehose_delivery_stream" "tf_firehose" {
+  name        = "tf-firehose-stream"
+  destination = "extended_s3"
+  depends_on  = [aws_iam_role_policy.tf_firehose_policy]
+
+  extended_s3_configuration {
+    role_arn           = aws_iam_role.tf_firehose_role.arn
+    bucket_arn         = aws_s3_bucket.tf_bucket.arn
+    prefix             = "firehose/"
+    buffering_interval = 0
+    buffering_size     = 1
+    compression_format = "UNCOMPRESSED"
+  }
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+# A ROOT AWS Private Certificate Authority is activated through the same
+# create → CSR → issue → import sequence required by real AWS. The separate
+# certificate resources make every step visible to the official provider.
+resource "aws_acmpca_certificate_authority" "tf_root_ca" {
+  type                            = "ROOT"
+  permanent_deletion_time_in_days = 7
+
+  certificate_authority_configuration {
+    key_algorithm     = "RSA_2048"
+    signing_algorithm = "SHA256WITHRSA"
+
+    subject {
+      common_name  = "Terraform Root CA"
+      organization = "Sockerless"
+    }
+  }
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_acmpca_certificate" "tf_root_ca" {
+  certificate_authority_arn   = aws_acmpca_certificate_authority.tf_root_ca.arn
+  certificate_signing_request = aws_acmpca_certificate_authority.tf_root_ca.certificate_signing_request
+  signing_algorithm           = "SHA256WITHRSA"
+  template_arn                = "arn:aws:acm-pca:::template/RootCACertificate/V1"
+
+  validity {
+    type  = "YEARS"
+    value = 10
+  }
+}
+
+resource "aws_acmpca_certificate_authority_certificate" "tf_root_ca" {
+  certificate_authority_arn = aws_acmpca_certificate_authority.tf_root_ca.arn
+  certificate               = aws_acmpca_certificate.tf_root_ca.certificate
+  certificate_chain         = aws_acmpca_certificate.tf_root_ca.certificate_chain
+}
+
 resource "aws_cloudtrail" "tf_trail" {
   name                          = "tf-trail"
   s3_bucket_name                = aws_s3_bucket.tf_bucket.id
@@ -1557,6 +1658,16 @@ output "autoscaling_group_name" {
 }
 output "cloudtrail_arn" {
   value = aws_cloudtrail.tf_trail.arn
+}
+output "firehose_delivery_stream_arn" {
+  value = aws_kinesis_firehose_delivery_stream.tf_firehose.arn
+}
+output "acmpca_certificate_authority_arn" {
+  value = aws_acmpca_certificate_authority.tf_root_ca.arn
+}
+output "acmpca_certificate" {
+  value     = aws_acmpca_certificate_authority_certificate.tf_root_ca.certificate
+  sensitive = true
 }
 output "efs_file_system_arn" {
   value = aws_efs_file_system.tf_efs.arn

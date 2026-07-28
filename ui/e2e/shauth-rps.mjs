@@ -51,6 +51,8 @@ try {
       await assertManagedLambdaFunction(page, app);
       await assertRanStepFunctionsWorkflow(page, app);
       await assertManagedAwsEventingAndObservability(page, app);
+      await assertManagedFirehoseAndPrivateCA(page, app);
+      await assertManagedAmplifyAndRDS(page, app);
     }
     if (app.name === "Sockerless Microsoft Azure simulator") {
       await assertFederatedAzureToken(context, page, app);
@@ -1044,6 +1046,126 @@ async function assertManagedAwsEventingAndObservability(page, app) {
   const event = page.getByRole("dialog");
   await event.getByText("Event source", { exact: true }).waitFor({ state: "visible" });
   await event.getByRole("button", { name: "Close" }).last().click();
+}
+
+// assertManagedFirehoseAndPrivateCA proves the two source-service slices
+// through the production browser data plane. Firehose assumes a provisioned
+// IAM service role and delivers a real record to Amazon S3; AWS Private
+// Certificate Authority performs the public root CSR → issue → import chain,
+// then changes lifecycle state through the console.
+async function assertManagedFirehoseAndPrivateCA(page, app) {
+  const origin = new URL(app.launch).origin;
+  const suffix = Date.now() % 1_000_000;
+  const bucketName = `rps-firehose-${suffix}`;
+  const streamName = `rps-firehose-${suffix}`;
+  const commonName = `RPS Root CA ${suffix}`;
+
+  await page.goto(`${origin}/ui/s3`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("s3-create-bucket").click();
+  const bucket = page.getByRole("dialog", { name: "Create bucket" });
+  await bucket.getByLabel("Bucket name").fill(bucketName);
+  await bucket.getByTestId("s3-create-bucket-submit").click();
+  await bucket.waitFor({ state: "detached" });
+  await page.getByRole("link", { name: bucketName, exact: true }).waitFor({ state: "visible" });
+
+  await page.goto(`${origin}/ui/firehose`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Create delivery stream", exact: true }).click();
+  const stream = page.getByRole("dialog", { name: "Create Firehose stream" });
+  await stream.getByLabel("Delivery stream name").fill(streamName);
+  await stream.getByLabel("Amazon S3 bucket ARN").fill(`arn:aws:s3:::${bucketName}`);
+  await stream
+    .getByLabel("IAM role ARN")
+    .fill("arn:aws:iam::123456789012:role/console-firehose-role");
+  await stream.getByLabel("S3 prefix").fill("browser/");
+  await stream.getByTestId("firehose-create-submit").click();
+  await stream.waitFor({ state: "detached" });
+  const streamRow = page.getByRole("row", { name: new RegExp(streamName) });
+  await streamRow.getByRole("checkbox").click();
+  for (let index = 0; index < 2; index += 1) {
+    await page.getByRole("button", { name: "Send test data" }).click();
+    const record = page.getByRole("dialog", { name: `Send test record to ${streamName}` });
+    await record
+      .getByLabel("Record data")
+      .fill(`browser-firehose-delivery-${index}\n${"x".repeat(600 * 1024)}`);
+    await record.getByTestId("firehose-send-record-submit").click();
+    await record.getByText(/Accepted record ID:/).waitFor({ state: "visible" });
+    await record.getByRole("button", { name: "Close" }).last().click();
+  }
+
+  await page.goto(`${origin}/ui/s3/${bucketName}`, { waitUntil: "domcontentloaded" });
+  await page.getByText(/browser\//).waitFor({ state: "visible" });
+
+  await page.goto(`${origin}/ui/private-ca`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Create CA", exact: true }).click();
+  const authority = page.getByRole("dialog", { name: "Create root certificate authority" });
+  await authority.getByLabel("Common name").fill(commonName);
+  await authority.getByLabel("Organization").fill("Sockerless");
+  await authority.getByTestId("private-ca-create-submit").click();
+  await authority.waitFor({ state: "detached" });
+  const authorityRow = page.getByRole("row", { name: new RegExp(commonName) });
+  await authorityRow.getByText("ACTIVE", { exact: true }).waitFor({ state: "visible" });
+  await authorityRow.getByRole("checkbox").click();
+  await page.getByRole("button", { name: "Disable", exact: true }).click();
+  await authorityRow.getByText("DISABLED", { exact: true }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Enable", exact: true }).click();
+  await authorityRow.getByText("ACTIVE", { exact: true }).waitFor({ state: "visible" });
+
+  assert.equal(
+    await page.getByTestId("private-ca-error").count() + await page.getByTestId("firehose-error").count(),
+    0,
+    `${app.name} Firehose or AWS Private Certificate Authority browser flow reported an API error`,
+  );
+}
+
+// assertManagedAmplifyAndRDS proves the new operator workflows use the real
+// federated cloud data plane. The independent official-client suite exercises
+// the private Git clone/build and native database wire protocols; this browser
+// flow pins their production console creation and connection experiences.
+async function assertManagedAmplifyAndRDS(page, app) {
+  const origin = new URL(app.launch).origin;
+  const suffix = Date.now() % 1_000_000;
+  const appName = `rps-amplify-${suffix}`;
+  const databaseID = `rps-database-${suffix}`;
+
+  await page.goto(`${origin}/ui/amplify`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("amplify-create-app").click();
+  const amplify = page.getByRole("dialog", { name: "Create Amplify app" });
+  await amplify.getByLabel("App name").fill(appName);
+  await amplify.getByLabel("Repository URL").fill("https://github.com/example/private-site");
+  await amplify.getByLabel("Repository access token").fill(`rps-repository-token-${suffix}`);
+  await amplify.getByTestId("amplify-create-app-submit").click();
+  await amplify.waitFor({ state: "detached" });
+  const appRow = page.getByRole("row", { name: new RegExp(appName) });
+  await appRow.getByText("TOKEN", { exact: true }).waitFor({ state: "visible" });
+
+  await page.goto(`${origin}/ui/rds`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("rds-create-instance").click();
+  const database = page.getByRole("dialog", { name: "Create database" });
+  await database.getByLabel("DB instance identifier").fill(databaseID);
+  await database.getByLabel("Master password").fill(`RpsDatabase-${suffix}!`);
+  await database.getByTestId("rds-create-instance-submit").click();
+  await database.waitFor({ state: "detached" });
+
+  const databaseRow = page.getByRole("row", { name: new RegExp(databaseID) });
+  await databaseRow.getByText("available", { exact: true }).waitFor({ state: "visible" });
+  await databaseRow.getByRole("checkbox").click();
+  await page.getByTestId("rds-connect-instance").click();
+  const connection = page.getByRole("dialog", { name: `Connect to ${databaseID}` });
+  await connection.getByText("IAM database authentication", { exact: true }).waitFor({ state: "visible" });
+  await connection.getByText(/aws rds generate-db-auth-token/).waitFor({ state: "visible" });
+  await connection.getByRole("button", { name: "Close" }).last().click();
+
+  await page.getByTestId("rds-delete-instance").click();
+  const deletion = page.getByRole("dialog", { name: `Delete ${databaseID}?` });
+  await deletion.getByTestId("rds-delete-instance-confirm").click();
+  await deletion.waitFor({ state: "detached" });
+  await databaseRow.waitFor({ state: "detached" });
+
+  assert.equal(
+    await page.getByTestId("rds-instances-error").count(),
+    0,
+    `${app.name} Amazon RDS browser flow reported an API error`,
+  );
 }
 
 // assertCreatedProject drives the Google Cloud console's project picker as the

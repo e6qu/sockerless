@@ -39,6 +39,7 @@ import { CloudMapPage } from "./pages/CloudMapPage.js";
 import { CodeBuildPage } from "./pages/CodeBuildPage.js";
 import { AmplifyPage } from "./pages/AmplifyPage.js";
 import { KinesisPage } from "./pages/KinesisPage.js";
+import { FirehosePage } from "./pages/FirehosePage.js";
 import { GluePage } from "./pages/GluePage.js";
 import { SNSPage } from "./pages/SNSPage.js";
 import { SQSPage } from "./pages/SQSPage.js";
@@ -53,6 +54,7 @@ import { SystemsManagerPage } from "./pages/SystemsManagerPage.js";
 import { SecretsManagerPage } from "./pages/SecretsManagerPage.js";
 import { KMSKeysPage } from "./pages/KMSKeysPage.js";
 import { ACMCertificatesPage } from "./pages/ACMCertificatesPage.js";
+import { PrivateCAPage } from "./pages/PrivateCAPage.js";
 import { WAFPage } from "./pages/WAFPage.js";
 import { BudgetsPage } from "./pages/BudgetsPage.js";
 import { NotSupportedServicePage } from "./pages/NotSupportedServicePage.js";
@@ -102,6 +104,7 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/codebuild" element={<CodeBuildPage />} />
         <Route path="/ui/amplify" element={<AmplifyPage />} />
         <Route path="/ui/kinesis" element={<KinesisPage />} />
+        <Route path="/ui/firehose" element={<FirehosePage />} />
         <Route path="/ui/glue" element={<GluePage />} />
         <Route path="/ui/sns" element={<SNSPage />} />
         <Route path="/ui/sqs" element={<SQSPage />} />
@@ -119,6 +122,7 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/ui/secretsmanager" element={<SecretsManagerPage />} />
         <Route path="/ui/kms" element={<KMSKeysPage />} />
         <Route path="/ui/acm" element={<ACMCertificatesPage />} />
+        <Route path="/ui/private-ca" element={<PrivateCAPage />} />
         <Route path="/ui/waf" element={<WAFPage />} />
         <Route path="/ui/budgets" element={<BudgetsPage />} />
         <Route path="/ui/not-supported/:service" element={<NotSupportedServicePage />} />

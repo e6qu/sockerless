@@ -267,7 +267,6 @@ func handleCWPutMetricData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, item := range req.MetricData {
-		key := metricsKey(req.Namespace, item.MetricName, item.Dimensions)
 		ts := item.Timestamp
 		if ts.IsZero() {
 			ts = time.Now().UTC() // real CloudWatch defaults an omitted timestamp to now
@@ -280,9 +279,7 @@ func handleCWPutMetricData(w http.ResponseWriter, r *http.Request) {
 			Timestamp:  float64(ts.Unix()),
 			Unit:       item.Unit,
 		}
-		cwMetrics.Upsert(key, func(existing *[]CWMetricDatum) {
-			*existing = append(*existing, datum)
-		})
+		cwStoreDatum(datum)
 	}
 
 	// Empty CBOR response

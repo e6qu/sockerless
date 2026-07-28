@@ -6,8 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/sync/singleflight"
+)
+
+var (
+	stsOIDCVerifiers sync.Map
+	stsOIDCDiscovery singleflight.Group
 )
 
 // verifyWebIdentityToken verifies a web identity token the way STS does for
@@ -30,13 +37,11 @@ func verifyWebIdentityToken(ctx context.Context, rawToken string) (subject strin
 		return "", fmt.Errorf("no OpenID Connect provider is registered for issuer %q", issuer)
 	}
 
-	oidcProvider, err := oidc.NewProvider(ctx, issuer)
+	verifier, err := stsOIDCVerifier(ctx, issuer)
 	if err != nil {
 		return "", fmt.Errorf("issuer %q could not be discovered: %w", issuer, err)
 	}
-	// The audience is checked against the provider's client ID list below
-	// rather than a single client ID.
-	verified, err := oidcProvider.Verifier(&oidc.Config{SkipClientIDCheck: true}).Verify(ctx, rawToken)
+	verified, err := verifier.Verify(ctx, rawToken)
 	if err != nil {
 		return "", fmt.Errorf("web identity token failed verification: %w", err)
 	}
@@ -47,6 +52,44 @@ func verifyWebIdentityToken(ctx context.Context, rawToken string) (subject strin
 		return "", fmt.Errorf("web identity token has no subject")
 	}
 	return verified.Subject, nil
+}
+
+// stsOIDCVerifier reuses issuer discovery metadata and its remote JSON Web Key
+// Set across web-identity exchanges. The verifier validates every token's
+// signature, issuer, expiry, and claims; only the issuer-scoped network client
+// is retained. singleflight prevents concurrent first exchanges from repeating
+// discovery for the same issuer.
+func stsOIDCVerifier(ctx context.Context, issuer string) (*oidc.IDTokenVerifier, error) {
+	cacheKey := strings.TrimSuffix(strings.TrimSpace(issuer), "/")
+	if cached, ok := stsOIDCVerifiers.Load(cacheKey); ok {
+		return stsCachedOIDCVerifier(cached)
+	}
+	value, err, _ := stsOIDCDiscovery.Do(cacheKey, func() (any, error) {
+		if cached, ok := stsOIDCVerifiers.Load(cacheKey); ok {
+			return stsCachedOIDCVerifier(cached)
+		}
+		provider, err := oidc.NewProvider(ctx, issuer)
+		if err != nil {
+			return nil, err
+		}
+		// The audience is checked against the IAM provider's current client ID
+		// list after cryptographic verification, rather than one fixed client.
+		verifier := provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
+		stsOIDCVerifiers.Store(cacheKey, verifier)
+		return verifier, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stsCachedOIDCVerifier(value)
+}
+
+func stsCachedOIDCVerifier(value any) (*oidc.IDTokenVerifier, error) {
+	verifier, ok := value.(*oidc.IDTokenVerifier)
+	if !ok {
+		return nil, fmt.Errorf("cached OpenID Connect verifier has unexpected type %T", value)
+	}
+	return verifier, nil
 }
 
 // unverifiedIssuer reads the `iss` claim without verifying the signature, so the

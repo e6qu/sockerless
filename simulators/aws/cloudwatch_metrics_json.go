@@ -44,6 +44,7 @@ func registerCloudWatchMetricsJSON(r *sim.AWSRouter) {
 func cwStoreDatum(datum CWMetricDatum) {
 	key := metricsKey(datum.Namespace, datum.MetricName, datum.Dimensions)
 	cwMetrics.Upsert(key, func(existing *[]CWMetricDatum) { *existing = append(*existing, datum) })
+	cwDeliverMetricDatum(datum)
 }
 
 func handleCWJSONPutMetricData(w http.ResponseWriter, r *http.Request) {

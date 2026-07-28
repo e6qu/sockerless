@@ -301,6 +301,11 @@ provision_aws_federation() {
   # itself runs AssumeRoleWithWebIdentity with the Shauth ID token on demand.
   aws_sigv4_post "Action=CreateRole&Version=2010-05-08&RoleName=cli-federation-role&AssumeRolePolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/localhost:8080"},"Action":"sts:AssumeRoleWithWebIdentity"}]}')"
   aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=cli-federation-role&PolicyName=cli-access&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecs:*","lambda:*","ecr:*","s3:*","logs:*","sts:*"],"Resource":"*"}]}')"
+  # Amazon Data Firehose uses its own service role to reach destination
+  # resources. The authenticated browser flow selects this real IAM role; the
+  # simulator does not manufacture a role or bypass the service trust.
+  aws_sigv4_post "Action=CreateRole&Version=2010-05-08&RoleName=console-firehose-role&AssumeRolePolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"firehose.amazonaws.com"},"Action":"sts:AssumeRole"}]}')"
+  aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=console-firehose-role&PolicyName=firehose-destination-access&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket","s3:PutObject"],"Resource":"*"}]}')"
   # The console reads across services and administers IAM users and access
   # keys from its credential-minting pages, so the administrator grants the
   # role that access; without it, the simulator's IAM enforcement denies the
@@ -311,7 +316,7 @@ provision_aws_federation() {
   # is explicit rather than a wildcard: it documents exactly what the console
   # needs, and a service the console starts calling without being added here
   # fails loudly with the real AccessDenied instead of silently widening.
-  aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=console-federation-role&PolicyName=console-access&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["acm:*","amplify:*","apigateway:*","autoscaling:*","batch:*","budgets:*","cloudfront:*","cloudtrail:*","cloudwatch:*","codebuild:*","dynamodb:*","ec2:*","ecr:*","ecs:*","elasticache:*","elasticfilesystem:*","elasticloadbalancing:*","events:*","glue:*","iam:*","kinesis:*","kms:*","lambda:*","logs:*","organizations:*","rds:*","route53:*","s3:*","scheduler:*","secretsmanager:*","servicediscovery:*","sns:*","sqs:*","ssm:*","states:*","sts:*","wafv2:*"],"Resource":"*"}]}')"
+  aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=console-federation-role&PolicyName=console-access&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["acm:*","acm-pca:*","amplify:*","apigateway:*","autoscaling:*","batch:*","budgets:*","cloudfront:*","cloudtrail:*","cloudwatch:*","codebuild:*","dynamodb:*","ec2:*","ecr:*","ecs:*","elasticache:*","elasticfilesystem:*","elasticloadbalancing:*","events:*","firehose:*","glue:*","iam:*","kinesis:*","kms:*","lambda:*","logs:*","organizations:*","rds:*","route53:*","s3:*","scheduler:*","secretsmanager:*","servicediscovery:*","sns:*","sqs:*","ssm:*","states:*","sts:*","wafv2:*"],"Resource":"*"}]}')"
 }
 
 start_simulator "$repo_root/simulators/aws/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision" "$aws_federation_role"

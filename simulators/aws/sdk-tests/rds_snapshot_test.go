@@ -27,6 +27,7 @@ func TestRDS_Snapshot_Lifecycle(t *testing.T) {
 		DBInstanceClass:      aws.String("db.t3.micro"),
 		Engine:               aws.String("postgres"),
 		MasterUsername:       aws.String("admin"),
+		MasterUserPassword:   aws.String("SnapshotPassword-123!"),
 		AllocatedStorage:     aws.Int32(20),
 	})
 	require.NoError(t, err)
@@ -114,6 +115,7 @@ func TestRDS_RestoreFromSnapshot_PortFromEngine(t *testing.T) {
 		DBInstanceClass:      aws.String("db.t3.micro"),
 		Engine:               aws.String("mysql"),
 		MasterUsername:       aws.String("admin"),
+		MasterUserPassword:   aws.String("SnapshotPassword-123!"),
 		AllocatedStorage:     aws.Int32(20),
 	})
 	require.NoError(t, err)

@@ -404,9 +404,245 @@ func sfnInvokeTaskResource(resource string, input any, inputJSON string, context
 	if resource == "arn:aws:states:::aws-sdk:cloudwatchlogs:putLogEvents" {
 		return sfnInvokeJSONService(handleCWPutLogEvents, input)
 	}
+	if resource == "arn:aws:states:::ecs:runTask" ||
+		resource == "arn:aws:states:::ecs:runTask.sync" ||
+		resource == "arn:aws:states:::ecs:runTask.waitForTaskToken" ||
+		resource == "arn:aws:states:::aws-sdk:ecs:runTask" {
+		return sfnInvokeECSRunTask(resource, input, context, cancel, heartbeat)
+	}
+	if strings.HasPrefix(resource, "arn:aws:states:::codebuild:") ||
+		strings.HasPrefix(resource, "arn:aws:states:::aws-sdk:codebuild:") {
+		return sfnInvokeCodeBuild(resource, input, cancel)
+	}
 	return nil, &sfnExecutionError{
 		Name:  "States.TaskFailed",
 		Cause: fmt.Sprintf("Task resource %q is not implemented by an AWS service slice", resource),
+	}
+}
+
+func sfnInvokeECSRunTask(resource string, input, context any, cancel <-chan struct{}, heartbeat time.Duration) (any, *sfnExecutionError) {
+	result, taskErr := sfnInvokeJSONService(handleECSRunTask, input)
+	if taskErr != nil {
+		return nil, taskErr
+	}
+	response, ok := result.(map[string]any)
+	if !ok {
+		return nil, &sfnExecutionError{Name: "States.Runtime", Cause: "Amazon ECS returned an invalid RunTask response"}
+	}
+	tasks, decodeErr := sfnDecodeECSTasks(response["tasks"])
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	failures, _ := response["failures"].([]any)
+	optimized := !strings.Contains(resource, ":::aws-sdk:")
+	if optimized && len(failures) > 0 {
+		return nil, &sfnExecutionError{
+			Name:  "AmazonECS.Unknown",
+			Cause: "Amazon ECS RunTask returned a non-empty failures field",
+		}
+	}
+	output := map[string]any{
+		"Tasks":    ecsTasksWire(tasks),
+		"Failures": failures,
+	}
+	if strings.HasSuffix(resource, ".waitForTaskToken") {
+		task, tokenErr := sfnTaskFromContext(context)
+		if tokenErr != nil {
+			sfnStopECSTasks(tasks, "AWS Step Functions callback integration failed")
+			return nil, tokenErr
+		}
+		value, waitErr := sfnWaitForTaskToken(task, cancel, heartbeat)
+		if waitErr != nil {
+			sfnStopECSTasks(tasks, "AWS Step Functions callback integration stopped")
+			return nil, waitErr
+		}
+		return value, nil
+	}
+	if !strings.HasSuffix(resource, ".sync") {
+		return output, nil
+	}
+
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-cancel:
+			sfnStopECSTasks(tasks, "AWS Step Functions execution aborted")
+			return nil, &sfnExecutionError{Name: "States.TaskFailed", Cause: "execution aborted"}
+		case <-ticker.C:
+			current := make([]ECSTask, 0, len(tasks))
+			allStopped := true
+			for _, started := range tasks {
+				task, exists := ecsTasks.Get(started.TaskID())
+				if !exists {
+					return nil, &sfnExecutionError{Name: "States.TaskFailed", Cause: "Amazon ECS task no longer exists: " + started.TaskArn}
+				}
+				current = append(current, task)
+				if task.LastStatus != ECSTaskStatusStopped {
+					allStopped = false
+				}
+			}
+			if !allStopped {
+				continue
+			}
+			for _, task := range current {
+				for _, container := range task.Containers {
+					if container.ExitCode != nil && *container.ExitCode != 0 {
+						return nil, &sfnExecutionError{
+							Name:  "States.TaskFailed",
+							Cause: fmt.Sprintf("Amazon ECS task %s container %s exited with status %d", task.TaskArn, container.Name, *container.ExitCode),
+						}
+					}
+				}
+			}
+			output["Tasks"] = ecsTasksWire(current)
+			return output, nil
+		}
+	}
+}
+
+func sfnDecodeECSTasks(value any) ([]ECSTask, *sfnExecutionError) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, &sfnExecutionError{Name: "States.Runtime", Cause: "Amazon ECS returned invalid tasks: " + err.Error()}
+	}
+	var tasks []ECSTask
+	if err := json.Unmarshal(encoded, &tasks); err != nil {
+		return nil, &sfnExecutionError{Name: "States.Runtime", Cause: "Amazon ECS returned invalid tasks: " + err.Error()}
+	}
+	return tasks, nil
+}
+
+func sfnStopECSTasks(tasks []ECSTask, reason string) {
+	for _, task := range tasks {
+		stopECSTask(task.TaskID(), reason, "ServiceSchedulerInitiated")
+	}
+}
+
+func sfnInvokeCodeBuild(resource string, input any, cancel <-chan struct{}) (any, *sfnExecutionError) {
+	action := strings.TrimPrefix(resource, "arn:aws:states:::codebuild:")
+	if strings.HasPrefix(resource, "arn:aws:states:::aws-sdk:codebuild:") {
+		action = strings.TrimPrefix(resource, "arn:aws:states:::aws-sdk:codebuild:")
+	}
+	syncIntegration := strings.HasSuffix(action, ".sync")
+	action = strings.TrimSuffix(action, ".sync")
+
+	var handler http.HandlerFunc
+	switch action {
+	case "startBuild":
+		handler = handleCBStartBuild
+	case "stopBuild":
+		handler = handleCBStopBuild
+	case "batchDeleteBuilds":
+		handler = handleCBBatchDeleteBuilds
+	case "batchGetReports":
+		handler = handleCBBatchGetReports
+	case "startBuildBatch":
+		handler = handleCBStartBuildBatch
+	case "stopBuildBatch":
+		handler = handleCBStopBuildBatch
+	case "retryBuildBatch":
+		handler = handleCBRetryBuildBatch
+	case "deleteBuildBatch":
+		handler = handleCBDeleteBuildBatch
+	default:
+		return nil, &sfnExecutionError{Name: "States.TaskFailed", Cause: "unsupported AWS CodeBuild integration action: " + action}
+	}
+	result, taskErr := sfnInvokeJSONService(handler, input)
+	if taskErr != nil || !syncIntegration {
+		return result, taskErr
+	}
+	response, ok := result.(map[string]any)
+	if !ok {
+		return nil, &sfnExecutionError{Name: "States.Runtime", Cause: "AWS CodeBuild returned an invalid response"}
+	}
+	switch action {
+	case "startBuild":
+		build, decodeErr := sfnDecodeCodeBuildBuild(response["build"])
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		return sfnWaitForCodeBuildBuild(build.ID, cancel)
+	case "startBuildBatch", "retryBuildBatch":
+		batch, decodeErr := sfnDecodeCodeBuildBatch(response["buildBatch"])
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		return sfnWaitForCodeBuildBatch(batch.ID, cancel)
+	default:
+		return result, nil
+	}
+}
+
+func sfnDecodeCodeBuildBuild(value any) (CBBuild, *sfnExecutionError) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return CBBuild{}, &sfnExecutionError{Name: "States.Runtime", Cause: "AWS CodeBuild returned an invalid build: " + err.Error()}
+	}
+	var build CBBuild
+	if err := json.Unmarshal(encoded, &build); err != nil || build.ID == "" {
+		return CBBuild{}, &sfnExecutionError{Name: "States.Runtime", Cause: "AWS CodeBuild returned an invalid build"}
+	}
+	return build, nil
+}
+
+func sfnDecodeCodeBuildBatch(value any) (CBBuildBatch, *sfnExecutionError) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return CBBuildBatch{}, &sfnExecutionError{Name: "States.Runtime", Cause: "AWS CodeBuild returned an invalid build batch: " + err.Error()}
+	}
+	var batch CBBuildBatch
+	if err := json.Unmarshal(encoded, &batch); err != nil || batch.ID == "" {
+		return CBBuildBatch{}, &sfnExecutionError{Name: "States.Runtime", Cause: "AWS CodeBuild returned an invalid build batch"}
+	}
+	return batch, nil
+}
+
+func sfnWaitForCodeBuildBuild(buildID string, cancel <-chan struct{}) (any, *sfnExecutionError) {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-cancel:
+			cbStopBuildByID(buildID)
+			return nil, &sfnExecutionError{Name: "States.TaskFailed", Cause: "execution aborted"}
+		case <-ticker.C:
+			build, exists := cbBuilds.Get(buildID)
+			if !exists {
+				return nil, &sfnExecutionError{Name: "States.TaskFailed", Cause: "AWS CodeBuild build no longer exists: " + buildID}
+			}
+			if build.BuildStatus == "IN_PROGRESS" {
+				continue
+			}
+			if build.BuildStatus != "SUCCEEDED" {
+				return nil, &sfnExecutionError{Name: "CodeBuild.BuildFailed", Cause: "AWS CodeBuild build ended with status " + build.BuildStatus}
+			}
+			return map[string]any{"Build": build}, nil
+		}
+	}
+}
+
+func sfnWaitForCodeBuildBatch(batchID string, cancel <-chan struct{}) (any, *sfnExecutionError) {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-cancel:
+			cbStopBuildBatchByID(batchID)
+			return nil, &sfnExecutionError{Name: "States.TaskFailed", Cause: "execution aborted"}
+		case <-ticker.C:
+			batch, exists := cbBuildBatches.Get(batchID)
+			if !exists {
+				return nil, &sfnExecutionError{Name: "States.TaskFailed", Cause: "AWS CodeBuild build batch no longer exists: " + batchID}
+			}
+			if batch.BuildBatchStatus == "IN_PROGRESS" {
+				continue
+			}
+			if batch.BuildBatchStatus != "SUCCEEDED" {
+				return nil, &sfnExecutionError{Name: "CodeBuild.BuildBatchFailed", Cause: "AWS CodeBuild build batch ended with status " + batch.BuildBatchStatus}
+			}
+			return map[string]any{"BuildBatch": batch}, nil
+		}
 	}
 }
 

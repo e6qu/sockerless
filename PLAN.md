@@ -24,36 +24,40 @@ Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator dashbo
 
 Production operation had enforceable resource and artifact contracts. Every ordinary GitHub Actions job was bounded to 15 minutes, the historically over-budget AWS edge and Amazon EC2 command-line interface groups were split without losing any of the 630 tests, nightly fuzz targets ran in bounded parallel batches, and clean production builds created every frontend before compiling all 11 UI-bearing Go binaries. Native release tags remained direct architecture manifests while each short-SHA tag remained an OCI index containing exactly Linux ARM64 and AMD64.
 
-The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions covered every operation in their vendored Smithy service models with executable implementations, while the follow-on sweep closed Amazon SQS runtime semantics, Amazon EC2 subnet dependencies, Amazon ECS `StartTask` and launch-type sandboxing, real Amazon Amplify builds, the AWS Certificate Manager ACME service, and SMTP-backed Amazon SNS email delivery. Google Cloud closed the described-but-unserved cryptographic, rotation, Autokey, Memorystore, and Cloud Run projection gaps; Azure Files gained Share ACL. Official SDK, vendor CLI, Terraform, RFC 8555, SMTP, Git, container, and authenticated browser clients proved the public contracts externally.
+The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions covered every operation in their vendored Smithy service models with executable implementations. The follow-on sweeps closed Amazon SQS runtime semantics, Amazon EC2 subnet dependencies and sparse snapshots, Amazon ECS `StartTask` and launch-type sandboxing, real Amazon Amplify builds, the AWS Certificate Manager ACME service, AWS Private Certificate Authority, Amazon Data Firehose, SMTP-backed Amazon SNS email delivery, Firehose-backed Amazon SNS and Amazon CloudWatch delivery, and repeated AWS/Microsoft Entra OpenID discovery. Google Cloud closed the described-but-unserved cryptographic, rotation, Autokey, Memorystore, and Cloud Run projection gaps; Azure Files gained Share ACL. Official SDK, vendor CLI, Terraform, RFC 8555, SMTP, Git, container, authenticated browser, and external reverse-proxy clients proved the public contracts externally.
 
 ## Active Branch Priorities
 
-1. Closed 13 recorded simulator, runtime, tooling, specification, and documentation defects.
-2. Implemented the complete AWS Certificate Manager ACME control and RFC 8555 data planes and added the corresponding production console workflows.
-3. Replaced stored-but-inert Amazon SQS attributes, Amazon ECS tasks, Amazon Amplify jobs, certificate material, and Google Cloud cryptographic/rotation methods with real runtime behavior.
-4. Unified Google Cloud Run v1/v2 service projections and implemented Azure Files Share ACL through the same cloud data planes official clients use.
-5. Added run-labelled abnormal-exit reaping, container-safe registry trust, generated surface-table enforcement, and multi-probe cloud-spec freshness gating.
-6. Exercised the changes through official SDK, vendor CLI, Terraform, Git, SMTP, RFC 8555, container-runtime, production frontend, and accessibility clients.
-7. Kept dependency freshness authenticated against the real GitHub API in both required shell portability passes.
-8. Hardened publication across Amazon SQS redrive identity/timestamps and its current 1 MiB limit, Amazon ECS omitted-launch-type selection, Azure Database for PostgreSQL SKU round-trip, Google Cloud Run shared-collection validation, and Azure `noui` console boundaries.
-9. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+1. Implemented the complete 23-operation AWS Private Certificate Authority slice and connected it to AWS Certificate Manager private issuance, export, and revocation.
+2. Implemented the complete 12-operation Amazon Data Firehose slice with durable encrypted buffering, real IAM/KMS enforcement, Amazon S3 delivery, and Amazon SNS and Amazon CloudWatch producers.
+3. Added production AWS console workflows for Firehose delivery streams and root private certificate authorities, validated through the authenticated Shauth browser matrix.
+4. Removed repeated OpenID discovery from AWS Security Token Service and Microsoft Entra federation while preserving complete per-assertion verification.
+5. Made the deployment reverse proxy report bounded cold-start `503 Retry-After` responses and preserved sparse Amazon Elastic Block Store extents through snapshot, restore, and copy.
+6. Regenerated public surface tables and assigned every new official AWS CLI test to exactly one continuous-integration shard.
+7. Upgraded every same-day AWS SDK dependency drift in the open branch and retested all affected modules and service wire paths.
+8. Added optimized and SDK AWS Step Functions integrations for Amazon ECS and AWS CodeBuild, including synchronous and callback lifecycles.
+9. Made AWS Amplify retain encrypted connected-repository credentials and execute authenticated multi-language builds with corresponding AWS console workflows.
+10. Added real PostgreSQL and MySQL Amazon Relational Database Service data planes with native TLS, durable volumes, encrypted master secrets, and IAM database authentication.
+11. Documented and externally proved standard AWS endpoint propagation from explicitly deployed AWS Lambda and AWS CodeBuild workloads.
+12. Upgraded every same-day Google Cloud API dependency drift, fixed Buildx external-test image loading, and reran the complete affected SDK, CLI, Terraform, browser, and production-build gates.
+13. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
-1. BUG-2712 retained Amazon Data Firehose, mobile-push-provider, and carrier-backed SMS delivery; email and email-json SMTP delivery were complete.
-2. BUG-2714 retained the AWS Private CA source service required to make AWS Certificate Manager private issuance/export/revocation reachable.
-3. BUG-1075 retained authenticated validation for the remaining real-cloud backend cells.
-4. BUG-2646 retained only Google's upstream Cloud Run Discovery publication lag.
-5. BUG-1345 retained only the upstream AzureAD provider's lack of a Microsoft Graph endpoint override.
-6. BUG-2523 and BUG-2441 remained in the external Bleephub repository rather than this workspace.
+1. BUG-2712 retained only mobile-push-provider and carrier-backed SMS delivery; SMTP and Amazon Data Firehose transports were complete.
+2. BUG-1075 retained authenticated validation for the remaining real-cloud backend cells.
+3. BUG-2646 retained only Google's upstream Cloud Run Discovery publication lag.
+4. BUG-1345 retained only the upstream AzureAD provider's lack of a Microsoft Graph endpoint override.
+5. BUG-2523 and BUG-2441 remained in the external Bleephub repository rather than this workspace.
 
 ## Simulator Console Parity
 
-The three simulator interfaces are one generic application wearing three accent
-colours. Layout, navigation, typography, density, and component set are
-identical across AWS, Google Cloud, and Azure; only the tint and the navigation
-labels differ. Each real console is unmistakably its own product, so an operator
-who knows one of them recognises nothing here.
+The three simulator interfaces adopted distinct cloud-native shells and
+component systems: AWS used Cloudscape, Google Cloud used its Material console
+idiom, and Microsoft Azure used Fluent UI portal patterns. Cloud-neutral API
+and authentication behavior remained shared while each cloud owned its
+navigation, typography, density, actions, resource tables, detail treatment,
+empty states, and themes.
 
 The goal is recognisability, not replication: adopt each cloud's real shell,
 information architecture, density, colour, and terminology, using each
@@ -84,9 +88,8 @@ memory:
   quickstart link. The console itself offers Light, Dark, and Same-as-device
   themes plus an increased-contrast setting.
 
-Three changes, one per cloud, in this order. Each is a separate pull request so
-one cloud's interface can be reviewed against its own console rather than
-against the other two.
+The three cloud-specific passes were reviewed against their corresponding
+console rather than against one another.
 
 1. **AWS simulator console parity.** Shell, navigation, resource tables, and
    empty states in the Cloudscape idiom. Done.

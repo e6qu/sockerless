@@ -10,6 +10,7 @@ Re-run `bash scripts/seed-surface-tables.sh` after adding new `HandleFunc` regis
 
 - [`aws-acm`](aws-acm.md)
 - [`aws-acm_acme`](aws-acm_acme.md)
+- [`aws-acmpca`](aws-acmpca.md)
 - [`aws-amplify`](aws-amplify.md)
 - [`aws-apigateway`](aws-apigateway.md)
 - [`aws-apigatewayv2`](aws-apigatewayv2.md)
@@ -29,6 +30,7 @@ Re-run `bash scripts/seed-surface-tables.sh` after adding new `HandleFunc` regis
 - [`aws-elasticache`](aws-elasticache.md)
 - [`aws-elbv2`](aws-elbv2.md)
 - [`aws-eventbridge`](aws-eventbridge.md)
+- [`aws-firehose`](aws-firehose.md)
 - [`aws-glue`](aws-glue.md)
 - [`aws-iam`](aws-iam.md)
 - [`aws-kinesis`](aws-kinesis.md)

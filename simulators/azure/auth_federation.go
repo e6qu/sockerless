@@ -7,15 +7,22 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	sim "github.com/sockerless/simulator"
+	"golang.org/x/sync/singleflight"
 )
 
 // federatedClientAssertionType is the client_assertion_type Microsoft Entra
 // requires for a JWT-bearer client assertion (RFC 7523).
 const federatedClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+
+var (
+	azureOIDCVerifiers sync.Map
+	azureOIDCDiscovery singleflight.Group
+)
 
 // handleAzureFederatedClientCredentials implements Microsoft Entra Workload
 // Identity Federation on the client_credentials grant: a confidential client
@@ -100,11 +107,11 @@ func azureVerifyFederatedAssertion(ctx context.Context, identity UserAssignedIde
 	if len(creds) == 0 {
 		return "", fmt.Errorf("identity %q has no federated identity credentials", identity.Name)
 	}
-	provider, err := oidc.NewProvider(ctx, issuer)
+	verifier, err := azureOIDCVerifier(ctx, issuer)
 	if err != nil {
 		return "", fmt.Errorf("issuer %q could not be discovered: %w", issuer, err)
 	}
-	verified, err := provider.Verifier(&oidc.Config{SkipClientIDCheck: true}).Verify(ctx, assertion)
+	verified, err := verifier.Verify(ctx, assertion)
 	if err != nil {
 		return "", fmt.Errorf("client assertion failed verification: %w", err)
 	}
@@ -121,6 +128,44 @@ func azureVerifyFederatedAssertion(ctx context.Context, identity UserAssignedIde
 		return verified.Subject, nil
 	}
 	return "", fmt.Errorf("no federated identity credential matches the assertion's issuer, subject, and audience")
+}
+
+// azureOIDCVerifier returns the verifier for one exact external issuer. OpenID
+// Connect discovery metadata and its remote JSON Web Key Set are issuer
+// configuration, not request state, so Microsoft Entra reuses them across
+// workload-identity exchanges. The verifier still checks every assertion's
+// signature, issuer, expiry, and claims; only the network-backed discovery
+// object is retained. singleflight prevents a burst of first exchanges from
+// repeating the same discovery request.
+func azureOIDCVerifier(ctx context.Context, issuer string) (*oidc.IDTokenVerifier, error) {
+	cacheKey := strings.TrimSuffix(strings.TrimSpace(issuer), "/")
+	if cached, ok := azureOIDCVerifiers.Load(cacheKey); ok {
+		return azureCachedOIDCVerifier(cached)
+	}
+	value, err, _ := azureOIDCDiscovery.Do(cacheKey, func() (any, error) {
+		if cached, ok := azureOIDCVerifiers.Load(cacheKey); ok {
+			return azureCachedOIDCVerifier(cached)
+		}
+		provider, err := oidc.NewProvider(ctx, issuer)
+		if err != nil {
+			return nil, err
+		}
+		verifier := provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
+		azureOIDCVerifiers.Store(cacheKey, verifier)
+		return verifier, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return azureCachedOIDCVerifier(value)
+}
+
+func azureCachedOIDCVerifier(value any) (*oidc.IDTokenVerifier, error) {
+	verifier, ok := value.(*oidc.IDTokenVerifier)
+	if !ok {
+		return nil, fmt.Errorf("cached OpenID Connect verifier has unexpected type %T", value)
+	}
+	return verifier, nil
 }
 
 // azureIdentityForClientID finds the user-assigned identity whose client ID the

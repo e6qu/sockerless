@@ -9,13 +9,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	sim "github.com/sockerless/simulator"
 	"gopkg.in/yaml.v3"
 )
@@ -139,7 +139,7 @@ func amplifyCancelRunningBuild(jobID string) {
 // therefore fixed by the cloud implementation rather than caller-configurable
 // simulator state.
 func amplifyBuildImage() string {
-	return "public.ecr.aws/docker/library/node:20-alpine"
+	return "public.ecr.aws/docker/library/node:22-bookworm"
 }
 
 // ---------- step/log plumbing ----------
@@ -263,6 +263,13 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 		SingleBranch:  true,
 		Depth:         1,
 	}
+	if connection, ok := amplifyRepositoryConnections.Get(appID); ok {
+		_, token, decrypted := kmsDecryptBytes(connection.Ciphertext)
+		if !decrypted {
+			return failProvision("repository connection could not be decrypted")
+		}
+		cloneOpts.Auth = &githttp.BasicAuth{Username: connection.Username, Password: string(token)}
+	}
 	gitRepo, err := git.PlainClone(workDir, false, cloneOpts)
 	if err != nil {
 		return failProvision("git clone %s (branch %s): %v", repo, branch, err)
@@ -302,7 +309,7 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 	}
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
 		Image:        amplifyBuildImage(),
-		Architecture: "linux/" + runtime.GOARCH,
+		Architecture: "linux/amd64",
 		Command:      []string{"/bin/sh", "-c", script.String()},
 		WorkingDir:   "/workspace",
 		// The build writes real artifacts back into this workspace. A shared

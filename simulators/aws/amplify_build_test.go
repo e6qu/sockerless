@@ -117,7 +117,7 @@ func TestAmplifyBuildEnvMerge(t *testing.T) {
 }
 
 func TestAmplifyBuildImageDefault(t *testing.T) {
-	if img := amplifyBuildImage(); !strings.HasPrefix(img, "public.ecr.aws/docker/library/node:") {
-		t.Fatalf("managed build image must come from the ECR Public mirror, got %q", img)
+	if img := amplifyBuildImage(); !strings.HasPrefix(img, "public.ecr.aws/docker/library/node:22-bookworm") {
+		t.Fatalf("managed multi-language build image must come from Amazon ECR Public, got %q", img)
 	}
 }

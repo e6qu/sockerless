@@ -20,6 +20,7 @@ import (
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +29,75 @@ func lambdaClient() *lambda.Client {
 	return lambda.NewFromConfig(sdkConfig(), func(o *lambda.Options) {
 		o.BaseEndpoint = aws.String(baseURL)
 	})
+}
+
+// TestLambdaExplicitDeploymentEnvironmentAndDownstreamSDK proves the complete
+// AWS contract the runtime is meant to provide: the caller deploys code and
+// environment through CreateFunction, then that managed-runtime code uses the
+// bundled AWS SDK and standard endpoint coordinate to authenticate to another
+// AWS service.
+func TestLambdaExplicitDeploymentEnvironmentAndDownstreamSDK(t *testing.T) {
+	lambdaAPI := lambdaClient()
+	queueAPI := sqsClient()
+	queue, err := queueAPI.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("lambda-downstream-sdk")})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = queueAPI.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: queue.QueueUrl})
+	})
+	containerEndpoint := fmt.Sprintf("http://host.docker.internal:%d", simPort)
+	containerQueueURL := strings.Replace(aws.ToString(queue.QueueUrl), baseURL, containerEndpoint, 1)
+	source := `
+import boto3
+import os
+
+def handler(event, context):
+    result = boto3.client("sqs").send_message(
+        QueueUrl=os.environ["QUEUE_URL"],
+        MessageBody=os.environ["MESSAGE_BODY"],
+    )
+    return {
+        "messageId": result["MessageId"],
+        "configured": os.environ["CONFIGURED_VALUE"],
+    }
+`
+	const functionName = "lambda-downstream-sdk"
+	_, err = lambdaAPI.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(functionName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		Runtime:      lambdatypes.RuntimePython312,
+		Handler:      aws.String("index.handler"),
+		Code:         &lambdatypes.FunctionCode{ZipFile: lambdaPythonSourceZip(t, source)},
+		Environment: &lambdatypes.Environment{Variables: map[string]string{
+			"AWS_ENDPOINT_URL":      containerEndpoint,
+			"AWS_ACCESS_KEY_ID":     "test",
+			"AWS_SECRET_ACCESS_KEY": "test",
+			"AWS_DEFAULT_REGION":    "us-east-1",
+			"QUEUE_URL":             containerQueueURL,
+			"MESSAGE_BODY":          "from-explicit-lambda-deployment",
+			"CONFIGURED_VALUE":      "environment-wired",
+		}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = lambdaAPI.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(functionName)})
+	})
+	invoked, err := lambdaAPI.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName: aws.String(functionName),
+		Payload:      []byte(`{}`),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, aws.ToString(invoked.FunctionError))
+	var output map[string]string
+	require.NoError(t, json.Unmarshal(invoked.Payload, &output))
+	assert.NotEmpty(t, output["messageId"])
+	assert.Equal(t, "environment-wired", output["configured"])
+
+	received, err := queueAPI.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl: queue.QueueUrl, MaxNumberOfMessages: 1, VisibilityTimeout: 0,
+	})
+	require.NoError(t, err)
+	require.Len(t, received.Messages, 1)
+	assert.Equal(t, "from-explicit-lambda-deployment", aws.ToString(received.Messages[0].Body))
 }
 
 func cwLogsClient() *cloudwatchlogs.Client {

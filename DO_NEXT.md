@@ -29,10 +29,23 @@ and temporary IAM roles were removed after validation.
 The AWS console exposed Lambda overview, code, test, logs, configuration,
 layers, environment, concurrency, versions, aliases, URLs, and tags. Its Step
 Functions experience exposed the graph, editable definition, execution input,
-history, input/output inspection, publishing, aliases, tags, and redrive. The
-production UI passed 229 Chromium package tests, and the authenticated
-Shauth/Ory Hydra/PostgreSQL matrix created a state machine through federated AWS
-credentials, started it, and inspected its graph and execution history.
+history, input/output inspection, publishing, aliases, tags, and redrive. AWS
+Private Certificate Authority and Amazon Data Firehose added complete
+authority lifecycle, encrypted delivery-stream, and Amazon S3 delivery
+workflows. The production UI passed 239 Chromium package tests, and the
+authenticated Shauth/Ory Hydra/PostgreSQL matrix exercised all four services
+through federated AWS credentials.
+
+AWS Step Functions executed optimized and SDK Amazon ECS and AWS CodeBuild
+tasks with request/response, synchronous, callback, failure, and cancellation
+semantics. AWS Amplify encrypted connected-repository credentials, cloned
+private repositories, and executed Python and Node.js build specifications.
+Amazon Relational Database Service ran real PostgreSQL and MySQL data planes
+with native TLS and IAM database authentication. Explicit AWS Lambda
+deployments and AWS CodeBuild workloads reached downstream AWS APIs through
+the standard global or per-service endpoint coordinates. The production AWS
+console passed 239 Chromium tests and its authenticated browser matrix covered
+the Amplify and RDS workflows.
 
 The AWS CLI harness provisioned and validated the official Session Manager
 plugin when the host lacked it, so Amazon ECS ExecuteCommand coverage no longer
@@ -56,18 +69,30 @@ to Discovery revisions 20260723 and 20260724.
 
 ## Next Recommended Slice
 
-The next locally actionable AWS slice became BUG-2714: AWS Private Certificate
-Authority. Completion required a real authority/key/certificate lifecycle,
-AWS Certificate Manager issuance from an existing authority ARN, encrypted
-private-key export, revocation, and official AWS SDK, AWS CLI, and Terraform
-coverage.
+No locally actionable bug remained in this workspace. AWS Private Certificate
+Authority implemented all 23 vendored operations and supplied real authority,
+key, certificate, revocation-list, permission, policy, and audit-report state
+to AWS Certificate Manager. Amazon Data Firehose implemented all 12 vendored
+operations with durable encrypted buffering and IAM-authorized Amazon S3
+delivery for direct writes, Amazon SNS subscriptions, and Amazon CloudWatch
+metric streams. Both services shipped with official AWS SDK, AWS CLI,
+Terraform, and authenticated browser coverage.
 
-BUG-2712 retained the adjacent outbound-delivery work. Amazon SNS email and
-email-json completed real SMTP confirmation and delivery, while an Amazon Data
-Firehose service remained necessary for both SNS subscriptions and Amazon
-CloudWatch metric streams. Mobile push and SMS could be connected only through
-provider/carrier primitives represented in a public AWS contract; the simulator
-did not invent private configuration for them.
+The external review's locally actionable gaps were closed: AWS Step Functions
+ran Amazon ECS and AWS CodeBuild workloads, AWS Amplify authenticated private
+repositories and ran multi-language builds, Amazon RDS exposed real native data
+planes with IAM database authentication, and deployed workloads used the
+standard SDK endpoint environment variables. Explicit Lambda deployment
+remained intentional because AWS Lambda itself runs only functions a caller
+creates; the repository retained its truthful unaudited/non-production
+warning because functional validation did not constitute an independent
+security audit.
+
+The next pass should recheck the six external blockers below and resume only
+when their missing credentials, upstream API coordinates, published schemas,
+provider transports, or external repository become available. Mobile push and
+SMS remained under BUG-2712 because no available public AWS configuration
+exposed the carrier/provider primitives needed for faithful delivery.
 
 ## Externally Blocked Work
 

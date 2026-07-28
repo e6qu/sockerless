@@ -546,11 +546,11 @@ jobs:
       matrix:
         include:
           - suite: edge-routing
-            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|Budgets)'
+            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|Budgets|PrivateCA)'
             timeout: 1200s
             timeout_minutes: 15
           - suite: edge-delivery
-            run: '^Test(CloudFront|CloudTrail|CodeBuild|ELBv2|Glue)'
+            run: '^Test(CloudFront|CloudTrail|CodeBuild|ELBv2|Firehose|Glue)'
             timeout: 1200s
             timeout_minutes: 15
           - suite: ec2-a-m

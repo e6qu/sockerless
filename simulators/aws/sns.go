@@ -40,7 +40,7 @@ type SNSTopic struct {
 type SNSSubscription struct {
 	ARN       string
 	TopicARN  string
-	Protocol  string // "sqs", "http", "https", "email", "sms", "lambda"
+	Protocol  string // "sqs", "http", "https", "email", "sms", "lambda", "firehose"
 	Endpoint  string // queue ARN for sqs, URL for http(s), email addr, etc.
 	Confirmed bool
 	// ControlPlaneOrigin is the SNS endpoint coordinate used to form the
@@ -341,6 +341,28 @@ func handleSNSSubscribe(w http.ResponseWriter, r *http.Request) {
 		snsErrorXML(w, "NotFound", "Topic does not exist", http.StatusNotFound, sim.RequestID(r.Context()))
 		return
 	}
+	attributes := snsAttributesMap(r, "Attributes")
+	if strings.EqualFold(protocol, "firehose") {
+		roleARN := attributes["SubscriptionRoleArn"]
+		if roleARN == "" {
+			snsErrorXML(w, "InvalidParameter", "SubscriptionRoleArn is required for a Firehose subscription",
+				http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
+		if _, ok := firehoseStreamByARN(endpoint); !ok {
+			snsErrorXML(w, "InvalidParameter", "Endpoint must identify an existing Firehose stream",
+				http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
+		if err := iamValidateServiceRole(roleARN, "sns.amazonaws.com", map[string]string{
+			"firehose:PutRecord": endpoint,
+		}); err != nil {
+			snsErrorXML(w, "InvalidParameter", err.Error(),
+				http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
+		attributes["SubscriptionRoleArn"] = roleARN
+	}
 	sub := SNSSubscription{
 		ARN:                snsSubscriptionARN(name),
 		TopicARN:           topicARN,
@@ -348,6 +370,7 @@ func handleSNSSubscribe(w http.ResponseWriter, r *http.Request) {
 		Endpoint:           endpoint,
 		Confirmed:          !snsProtocolRequiresConfirmation(protocol),
 		ControlPlaneOrigin: snsRequestOrigin(r),
+		Attributes:         attributes,
 	}
 	snsSubscriptions.Put(sub.ARN, sub)
 	if !sub.Confirmed && (strings.EqualFold(protocol, "http") || strings.EqualFold(protocol, "https")) {
@@ -654,9 +677,28 @@ func snsFanout(topicARN, msgID, subject, message string, attributes map[string]S
 			go snsDeliverHTTPNotification(sub, msgID, subject, message, attributes)
 		case "email", "email-json":
 			go snsDeliverEmailNotification(sub, msgID, subject, message, attributes)
+		case "firehose":
+			snsDeliverToFirehose(sub, topicARN, msgID, subject, message, attributes)
 		default:
 			cwEvalLogger.Info().Str("topicARN", topicARN).Str("msgID", msgID).Str("protocol", sub.Protocol).Str("endpoint", sub.Endpoint).Msg("SNS fanout skipping unsupported subscription protocol")
 		}
+	}
+}
+
+func snsDeliverToFirehose(sub SNSSubscription, topicARN, msgID, subject, message string, attributes map[string]SQSMessageAttribute) {
+	if err := iamValidateServiceRole(sub.Attributes["SubscriptionRoleArn"], "sns.amazonaws.com", map[string]string{
+		"firehose:PutRecord": sub.Endpoint,
+	}); err != nil {
+		cwEvalLogger.Error().Err(err).Str("firehoseARN", sub.Endpoint).Str("topicARN", topicARN).
+			Msg("Amazon SNS cannot assume its Amazon Data Firehose delivery role")
+		return
+	}
+	body := snsNotificationEnvelope(topicARN, msgID, subject, message, attributes)
+	if strings.EqualFold(sub.Attributes["RawMessageDelivery"], "true") {
+		body = message
+	}
+	if err := firehosePutServiceRecord(sub.Endpoint, []byte(body)); err != nil {
+		cwEvalLogger.Error().Err(err).Str("firehoseARN", sub.Endpoint).Str("topicARN", topicARN).Msg("Amazon SNS to Amazon Data Firehose delivery failed")
 	}
 }
 

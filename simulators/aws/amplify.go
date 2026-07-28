@@ -254,12 +254,23 @@ type amplifyStoredDeployment struct {
 	CreateTime float64
 }
 
+// amplifyRepositoryConnection is the provider connection Amplify establishes
+// from CreateApp/UpdateApp's write-only access token. The credential is
+// encrypted under an AWS-owned KMS key, is never part of the App resource, and
+// is used only to authenticate repository fetches.
+type amplifyRepositoryConnection struct {
+	AppID      string
+	Username   string
+	Ciphertext []byte
+}
+
 var (
-	amplifyApps        sim.Store[amplifyStoredApp]
-	amplifyWebhooks    sim.Store[amplifyStoredWebhook]
-	amplifyJobs        sim.Store[amplifyStoredJob]
-	amplifyArtifacts   sim.Store[amplifyStoredArtifact]
-	amplifyDeployments sim.Store[amplifyStoredDeployment]
+	amplifyApps                  sim.Store[amplifyStoredApp]
+	amplifyWebhooks              sim.Store[amplifyStoredWebhook]
+	amplifyJobs                  sim.Store[amplifyStoredJob]
+	amplifyArtifacts             sim.Store[amplifyStoredArtifact]
+	amplifyDeployments           sim.Store[amplifyStoredDeployment]
+	amplifyRepositoryConnections sim.Store[amplifyRepositoryConnection]
 )
 
 // ---------- Helpers ----------
@@ -372,6 +383,7 @@ func registerAmplify(srv *sim.Server) {
 	amplifyJobs = sim.MakeStore[amplifyStoredJob](srv.DB(), "amplify_jobs")
 	amplifyArtifacts = sim.MakeStore[amplifyStoredArtifact](srv.DB(), "amplify_artifacts")
 	amplifyDeployments = sim.MakeStore[amplifyStoredDeployment](srv.DB(), "amplify_deployments")
+	amplifyRepositoryConnections = sim.MakeStore[amplifyRepositoryConnection](srv.DB(), "amplify_repository_connections")
 
 	mux := srv
 	appResource := cloudTrailRESTResource("AWS::Amplify::App", "appId", "arn")
@@ -505,6 +517,11 @@ func handleAmplifyCreateApp(w http.ResponseWriter, r *http.Request) {
 		Tags:                       req.Tags,
 	}
 	amplifyApps.Put(id, amplifyStoredApp{App: app, Branches: map[string]AmplifyBranch{}})
+	if err := amplifySetRepositoryConnection(id, req.Repository, req.AccessToken, req.OauthToken); err != nil {
+		amplifyApps.Delete(id)
+		amplifyWriteError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		return
+	}
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyApp{"app": app})
 }
 
@@ -566,6 +583,7 @@ func handleAmplifyDeleteApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	amplifyApps.Delete(id)
+	amplifyRepositoryConnections.Delete(id)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyApp{"app": stored.App})
 }
 
@@ -675,11 +693,68 @@ func handleAmplifyUpdateApp(w http.ResponseWriter, r *http.Request) {
 	if req.CacheConfig != nil {
 		a.CacheConfig = req.CacheConfig
 	}
-	// oauthToken/accessToken are write-only credentials: accepted, never
-	// stored or echoed (the App shape has no such members).
+	if req.AccessToken != nil || req.OauthToken != nil {
+		accessToken, oauthToken := "", ""
+		if req.AccessToken != nil {
+			accessToken = *req.AccessToken
+		}
+		if req.OauthToken != nil {
+			oauthToken = *req.OauthToken
+		}
+		if err := amplifySetRepositoryConnection(id, a.Repository, accessToken, oauthToken); err != nil {
+			amplifyWriteError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+			return
+		}
+	} else if req.Repository != nil && *req.Repository == "" {
+		amplifyRepositoryConnections.Delete(id)
+	}
+	// oauthToken/accessToken stay write-only: the service turns the supplied
+	// credential into an encrypted repository connection and never echoes it.
 	a.UpdateTime = amplifyEpoch()
 	amplifyApps.Put(id, stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyApp{"app": stored.App})
+}
+
+const amplifyAWSOwnedKMSKeyID = "aws-owned-amplify"
+
+func amplifySetRepositoryConnection(appID, repository, accessToken, oauthToken string) error {
+	token := accessToken
+	if token == "" {
+		token = oauthToken
+	}
+	if token == "" {
+		return nil
+	}
+	if repository == "" {
+		return fmt.Errorf("repository is required when a repository credential is supplied")
+	}
+	if _, ok := kmsGetKeyMaterial(amplifyAWSOwnedKMSKeyID); !ok {
+		if _, err := kmsGenerateKeyMaterial(amplifyAWSOwnedKMSKeyID); err != nil {
+			return fmt.Errorf("AWS owned KMS key material could not be generated: %w", err)
+		}
+	}
+	ciphertext, ok := kmsEncryptBytes(amplifyAWSOwnedKMSKeyID, []byte(token))
+	if !ok {
+		return fmt.Errorf("AWS owned KMS key could not encrypt the repository connection")
+	}
+	amplifyRepositoryConnections.Put(appID, amplifyRepositoryConnection{
+		AppID: appID, Username: amplifyRepositoryUsername(repository), Ciphertext: ciphertext,
+	})
+	return nil
+}
+
+func amplifyRepositoryUsername(repository string) string {
+	host := strings.ToLower(repository)
+	switch {
+	case strings.Contains(host, "github"):
+		return "x-access-token"
+	case strings.Contains(host, "gitlab"):
+		return "oauth2"
+	case strings.Contains(host, "bitbucket"):
+		return "x-token-auth"
+	default:
+		return "oauth2"
+	}
 }
 
 func handleAmplifyListApps(w http.ResponseWriter, r *http.Request) {
