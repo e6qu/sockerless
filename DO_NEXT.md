@@ -54,6 +54,17 @@ full AWS surface without starting runtime evaluator goroutines, removing the
 store-rebinding race while production builds retained their Amazon CloudWatch
 and Application Auto Scaling evaluators.
 
+The CI closure kept the external-client contracts real. CloudWatch
+metric-stream CLI coverage provisioned Amazon S3, IAM, and Amazon Data Firehose
+resources instead of using placeholder ARNs. Azure Container Apps and Azure
+Functions Terraform modules and examples used HashiCorp AzureRM 5.0.0, and the
+production-shaped Azure simulator stack migrated every resource whose provider
+schema became ID-based. The official provider completed a
+Microsoft.Subscription apply, zero-drift plan, and destroy. Google Discovery
+drift failures retained the exact newest response as a short-lived artifact;
+the transient Cloud Resource Manager 20260715 rollout disappeared from every
+sampled edge, so the pinned 20260709 documents remained the truthful source.
+
 The publication repair preserved current public contracts across the failing
 client surfaces. Amazon SQS redrive used the normal enqueue path and therefore
 assigned a new message ID, millisecond enqueue timestamp, FIFO sequence, and

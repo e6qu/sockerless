@@ -90,6 +90,7 @@ resource "azurerm_key_vault" "main" {
   tenant_id           = "11111111-1111-1111-1111-111111111111"
 
   sku_name                   = "standard"
+  rbac_authorization_enabled = false
   purge_protection_enabled   = false
   soft_delete_retention_days = 7
 }
@@ -301,11 +302,10 @@ resource "azurerm_eventhub_namespace" "az_eh_ns" {
 }
 
 resource "azurerm_eventhub" "az_eh" {
-  name                = "tfazrmeventhub"
-  namespace_name      = azurerm_eventhub_namespace.az_eh_ns.name
-  resource_group_name = azurerm_resource_group.az_rg.name
-  partition_count     = 1
-  message_retention   = 1
+  name              = "tfazrmeventhub"
+  namespace_id      = azurerm_eventhub_namespace.az_eh_ns.id
+  partition_count   = 1
+  message_retention = 1
 }
 
 resource "azurerm_eventhub_consumer_group" "az_eh_cg" {
@@ -372,11 +372,11 @@ resource "azurerm_eventgrid_domain_topic" "az_eg_domain_topic" {
 }
 
 resource "azurerm_eventgrid_system_topic" "az_eg_system_topic" {
-  name                   = "tf-azrm-eg-system-topic"
-  resource_group_name    = azurerm_resource_group.az_rg.name
-  location               = azurerm_resource_group.az_rg.location
-  source_arm_resource_id = azurerm_storage_account.main.id
-  topic_type             = "Microsoft.Storage.StorageAccounts"
+  name                = "tf-azrm-eg-system-topic"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  source_resource_id  = azurerm_storage_account.main.id
+  topic_type          = "Microsoft.Storage.StorageAccounts"
 }
 
 # ---------- Cosmos DB (NoSQL control plane) ----------
@@ -572,25 +572,25 @@ resource "azurerm_storage_account" "az_st" {
 }
 
 # Storage container through the AzureRM data-plane resource path.
-# Using storage_account_name, not storage_account_id, intentionally drives
-# the provider through the storage account's primary_blob_endpoint. That
-# verifies the simulator emits azurerm-parseable {account}.blob.{suffix}
-# endpoints and matching /metadata/endpoints storage suffixes.
+# AzureRM 5 requires the storage account ID and resolves the account's
+# data-plane endpoints from that resource. This verifies the simulator emits
+# azurerm-parseable {account}.{service}.{suffix} endpoints and matching
+# /metadata/endpoints storage suffixes.
 resource "azurerm_storage_container" "az_st_container" {
   name                  = "tfazrmcontainer"
-  storage_account_name  = azurerm_storage_account.az_st.name
+  storage_account_id    = azurerm_storage_account.az_st.id
   container_access_type = "private"
 }
 
 resource "azurerm_storage_table" "az_st_table" {
-  name                 = "tfazrmstable"
-  storage_account_name = azurerm_storage_account.az_st.name
+  name               = "tfazrmstable"
+  storage_account_id = azurerm_storage_account.az_st.id
 }
 
 resource "azurerm_storage_share" "az_st_share" {
-  name                 = "tfazrmshare"
-  storage_account_name = azurerm_storage_account.az_st.name
-  quota                = 50
+  name               = "tfazrmshare"
+  storage_account_id = azurerm_storage_account.az_st.id
+  quota              = 50
 
   acl {
     id = "terraform-policy"
@@ -683,6 +683,7 @@ resource "azurerm_key_vault" "az_kv" {
   location                   = azurerm_resource_group.az_rg.location
   tenant_id                  = "11111111-1111-1111-1111-111111111111"
   sku_name                   = "standard"
+  rbac_authorization_enabled = false
   purge_protection_enabled   = false
   soft_delete_retention_days = 7
 }

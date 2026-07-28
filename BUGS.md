@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2722 filed - 2722 fixed - 6 open - 16 false positives.**
+**2725 filed - 2725 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2725~~ | P1 | Terraform and Azure simulator | HashiCorp AzureRM 5.0.0 invalidated production module and external-test schemas | Azure Container Apps and Azure Functions modules and examples now required AzureRM 5, Azure Files and private DNS resources used provider-required resource IDs, and the official simulator stack supplied explicit Key Vault authorization mode plus the new Event Hubs, Event Grid, Blob, Table, and File ID fields; AzureRM 5 validated every composition and completed a real Microsoft.Subscription apply, zero-drift plan, and destroy against the simulator. |
+| ~~2724~~ | P2 | Google Cloud API specification freshness | region-skewed Discovery rollout could not be reproduced from the maintainer edge | The freshness gate now retained the exact newest valid Google Discovery response as a one-day CI artifact whenever it reported drift, allowing the published document to be vendored without guessing; Google briefly served Cloud Resource Manager revision 20260715 to the hosted runner and then returned every sampled edge to the pinned 20260709 revision, so the succeeding gate stayed truthful instead of manufacturing a newer pin. |
+| ~~2723~~ | P1 | AWS CLI CloudWatch metric-stream coverage | tests used nonexistent Firehose and IAM ARNs | The official AWS CLI CloudWatch metric-stream lifecycle and tagging tests now provisioned real Amazon S3 buckets, IAM delivery and CloudWatch service roles, inline policies, and Amazon Data Firehose delivery streams before creating metric streams; the exact appdata CI shard passed with Firehose existence and authorization validation enabled. |
 | ~~2722~~ | P1 | AWS simulator external test images | Docker Buildx container driver retained workload images only in its cache | AWS CLI and Terraform harnesses now used `docker buildx build --load` when Buildx was available, matching the SDK harness, so real Lambda Runtime API images entered the container runtime store; the affected AWS CLI cases and the production-shaped Terraform apply/invoke/destroy passed after the cache had been emptied. |
 | ~~2721~~ | P1 | AWS Step Functions workload integrations | Amazon ECS and AWS CodeBuild tasks were absent | AWS Step Functions now executed optimized and AWS SDK Amazon ECS `RunTask` plus AWS CodeBuild build operations, including request/response, `.sync`, task-token callback, failure, timeout, stop, and cancellation behavior through the real service slices; the official AWS SDK drove an Amazon ECS task and an AWS CodeBuild container whose real AWS CLI process sent a message to Amazon SQS. |
 | ~~2720~~ | P1 | Amazon Relational Database Service data plane | database instances exposed only control-plane state | Amazon RDS now ran real PostgreSQL and MySQL engines behind native TLS endpoints, stored master secrets encrypted, preserved engine data on volumes, and verified IAM database authentication tokens through SigV4 plus `rds-db:connect` authorization; stock pgx and MySQL drivers proved create, insert, select, denial, and authorized token connections. |

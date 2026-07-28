@@ -2800,3 +2800,29 @@ complete official Google Cloud SDK simulator suite, and the repository-wide
 freshness audit passed. The final AWS console count was 239 Chromium tests,
 and the authenticated Shauth matrix covered the connected Amplify and Amazon
 RDS workflows.
+
+The post-publication CI closure replaced the last CloudWatch metric-stream test
+placeholders with public cloud operations. The AWS CLI created Amazon S3
+buckets, IAM service roles and inline policies, and Amazon Data Firehose
+delivery streams before creating, starting, stopping, tagging, and deleting
+CloudWatch metric streams. The exact appdata shard passed while Firehose
+existence and IAM service-role validation remained enabled.
+
+HashiCorp AzureRM 5.0.0 landed in the Azure Container Apps and Azure Functions
+modules and examples on the same branch where its release appeared. Azure
+Files shares and private DNS links adopted their required resource IDs. The
+production-shaped Azure simulator stack also supplied explicit Key Vault
+authorization mode and migrated Event Hubs, Event Grid, Blob containers,
+Tables, and File shares to the provider's new ID-based fields. All four module
+and example compositions validated against the real provider, and AzureRM 5
+completed a Microsoft.Subscription apply, zero-drift plan, and destroy against
+the simulator.
+
+The Google Discovery freshness gate retained the exact newest valid response
+as a one-day workflow artifact whenever regional publication drift failed CI.
+The hosted runner briefly observed Cloud Resource Manager v1 and v3 revision
+20260715 while the maintainer and web edges still served 20260709; Google then
+returned the hosted runner to 20260709 as well. The succeeding gate passed
+without inventing a revision or altering the simulator contract, while a
+future recurrence remained directly reproducible from its captured official
+documents.
