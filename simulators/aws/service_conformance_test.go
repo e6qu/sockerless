@@ -429,7 +429,7 @@ var serviceCoverageFloor = map[string]int{
 	"AWSWAF_20190729":                      55,
 	"CloudTrail_20131101":                  60,
 	"CodeBuild_20161006":                   59,
-	"Logs_20140328":                        113, // CloudWatch Logs
+	"Logs_20140328":                        118, // CloudWatch Logs
 	"Route53AutoNaming_v20170314":          30,  // Cloud Map / ServiceDiscovery
 	"AWSDnsV20130401":                      71,  // Route 53 (REST)
 	"MagnolioAPIService_v20150201":         31,  // EFS (REST)

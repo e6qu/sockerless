@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"time"
@@ -388,7 +391,42 @@ func registerCloudWatchAlarmOpsCBOR(srv *sim.Server) {
 // like the existing alarm/metric cbor routes.
 func cwCBOR(srv *sim.Server, op string, h http.HandlerFunc) {
 	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/"+op,
-		cloudTrailRecordedREST(op, "monitoring.amazonaws.com", nil, h))
+		cloudTrailRecordedREST(op, "monitoring.amazonaws.com", nil, cloudWatchCBORAuthorized(op, h)))
+}
+
+// cloudWatchCBORAuthorized applies the same SigV4 and call-time IAM contract
+// as the query-protocol Amazon CloudWatch endpoint. RPCv2-CBOR is path-routed
+// rather than Action-routed, so the operation name comes from the modeled
+// route.
+func cloudWatchCBORAuthorized(op string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body []byte
+		if r.Body != nil {
+			body, _ = io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+
+		// Preserve the established unsigned-request passthrough for direct
+		// in-process consumers. Official SDK and CLI requests are signed;
+		// signed requests are authenticated and registered principals are
+		// authorized exactly as on the query-protocol route.
+		if iamAccessKeyIDFromRequest(r) != "" {
+			if _, serr := sigv4Verify(r, body); serr != nil {
+				jsonCode, _ := sigv4ErrorCodes(serr.kind)
+				cwWriteCBORError(w, jsonCode, serr.message, http.StatusForbidden)
+				return
+			}
+			allowed, principalARN, registered := iamAuthorize(r, "cloudwatch:"+op, "*")
+			if registered && !allowed {
+				cwWriteCBORError(w, "AccessDenied",
+					fmt.Sprintf("User: %s is not authorized to perform: cloudwatch:%s", principalARN, op),
+					http.StatusForbidden)
+				return
+			}
+		}
+		h(w, r)
+	}
 }
 
 // cwReadCBOR reads and CBOR-decodes a request body into v, writing the protocol

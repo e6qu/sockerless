@@ -24,7 +24,7 @@ Sockerless Admin and the AWS, Google Cloud, and Microsoft Azure simulator dashbo
 
 Production operation had enforceable resource and artifact contracts. Every ordinary GitHub Actions job was bounded to 15 minutes, the historically over-budget AWS edge and Amazon EC2 command-line interface groups were split without losing any of the 630 tests, nightly fuzz targets ran in bounded parallel batches, and clean production builds created every frontend before compiling all 11 UI-bearing Go binaries. Native release tags remained direct architecture manifests while each short-SHA tag remained an OCI index containing exactly Linux ARM64 and AMD64.
 
-The next fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions covered every operation in their vendored Smithy service models with executable implementations, production console workflows, official-client validation, selected live-AWS differentials, and an authenticated federated-browser flow. The remaining local simulator gaps were the Google Cloud Run v1/v2 service store, Azure Files Share ACL, Amazon EC2 subnet dependency enforcement, Amazon ECS `StartTask` execution, launch-type-specific Amazon ECS sandboxing, and Amazon Amplify's synthetic build-success path. Standalone products consumed published Sockerless simulator and backend contracts and retained their own source, deployment modules, and product-specific tests.
+The next fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions covered every operation in their vendored Smithy service models with executable implementations, while their eventing paths connected to Amazon EventBridge, EventBridge Scheduler, Amazon SNS, Amazon SQS, Amazon CloudWatch, CloudWatch Logs, and CloudTrail through real service runtimes. The AWS console exposed the corresponding operator workflows through federated public APIs, and official clients plus authenticated browsers proved cross-service delivery. The remaining local simulator gaps included Amazon SNS outbound transports, Amazon SQS FIFO/delay/retention runtime semantics, the Google Cloud Run v1/v2 service store, Azure Files Share ACL, Amazon EC2 subnet dependency enforcement, Amazon ECS `StartTask` execution, launch-type-specific Amazon ECS sandboxing, and Amazon Amplify's synthetic build-success path.
 
 ## Active Branch Priorities
 
@@ -36,18 +36,22 @@ The next fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions
 6. Provisioned the official AWS Systems Manager Session Manager plugin inside the AWS CLI harness and cleaned every installed tool directory at suite exit.
 7. Separated route-introspection construction from runtime evaluator startup, preserving production evaluators while eliminating the conformance-harness store race.
 8. Made extracted AWS Lambda deployment packages and layers traversable by the managed runtime's sandbox user while preserving read-only mounts, with Linux SDK-shard coverage.
-9. Kept dependency freshness authenticated against the real GitHub API in both required shell portability passes.
-10. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+9. Connected AWS Lambda, AWS Step Functions, Amazon EventBridge, EventBridge Scheduler, Amazon SNS, Amazon SQS, Amazon CloudWatch, CloudWatch Logs, and CloudTrail runtime and console workflows.
+10. Proved cross-service event delivery through official AWS SDK, AWS CLI, the official HashiCorp AWS provider, and the authenticated production-browser matrix.
+11. Kept dependency freshness authenticated against the real GitHub API in both required shell portability passes.
+12. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
-1. BUG-2679 still required Amazon EC2 `DeleteSubnet` to return `DependencyViolation` while an elastic network interface remained attached.
-2. BUG-2680 still required Amazon ECS `StartTask` to launch containers through the same real execution path as `RunTask`.
-3. BUG-2681 still required Amazon ECS to select its sandbox profile from the task's launch type instead of applying Fargate restrictions universally.
-4. BUG-2676 still required Google Cloud Run v1 and v2 to project one shared service store.
-5. BUG-2677 still required Azure Files Share ACL fidelity before its Terraform resource could cover the data plane.
-6. BUG-2690 still required Amazon Amplify to replace its synthetic success path with real source/default-build resolution or a faithful AWS error.
-7. BUG-1075 still required authenticated validation for the remaining real-cloud backend cells.
+1. BUG-2712 still required real transports for Amazon SNS email, SMS, mobile-push, and Amazon Data Firehose subscriptions instead of skipping those protocols.
+2. BUG-2713 still required Amazon SQS FIFO deduplication/ordering plus delay, retention, and configured maximum-message-size behavior.
+3. BUG-2679 still required Amazon EC2 `DeleteSubnet` to return `DependencyViolation` while an elastic network interface remained attached.
+4. BUG-2680 still required Amazon ECS `StartTask` to launch containers through the same real execution path as `RunTask`.
+5. BUG-2681 still required Amazon ECS to select its sandbox profile from the task's launch type instead of applying Fargate restrictions universally.
+6. BUG-2676 still required Google Cloud Run v1 and v2 to project one shared service store.
+7. BUG-2677 still required Azure Files Share ACL fidelity before its Terraform resource could cover the data plane.
+8. BUG-2690 still required Amazon Amplify to replace its synthetic success path with real source/default-build resolution or a faithful AWS error.
+9. BUG-1075 still required authenticated validation for the remaining real-cloud backend cells.
 
 ## Simulator Console Parity
 

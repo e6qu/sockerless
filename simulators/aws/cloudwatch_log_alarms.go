@@ -68,8 +68,7 @@ func registerCloudWatchLogAlarmsJSON(r *sim.AWSRouter) {
 }
 
 func registerCloudWatchLogAlarmsCBOR(srv *sim.Server) {
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/PutLogAlarm",
-		cloudTrailRecordedREST("PutLogAlarm", "monitoring.amazonaws.com", nil, handleCWCBORPutLogAlarm))
+	cwCBOR(srv, "PutLogAlarm", handleCWCBORPutLogAlarm)
 }
 
 // cwPutLogAlarmInput is the wire shape of PutLogAlarmInput, shared by the

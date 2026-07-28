@@ -1,11 +1,23 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Input from "@cloudscape-design/components/input";
 import FormField from "@cloudscape-design/components/form-field";
+import Select from "@cloudscape-design/components/select";
 import { AwsButton, AwsErrorAlert, AwsModal, AwsResourceTable, AwsRowLink, type AwsColumn } from "../console/index.js";
 import { formatBytes, formatEpoch, formatRetention } from "../console/format.js";
-import { createCWLogGroup, deleteCWLogGroup, fetchCWLogGroups, type CWLogGroup } from "../api.js";
+import {
+  createCWLogGroup,
+  deleteCWLogGroup,
+  deleteCWSyslogConfiguration,
+  fetchCWLogGroups,
+  fetchCWStorageTierPolicy,
+  fetchCWSyslogConfigurations,
+  putCWStorageTierPolicy,
+  putCWSyslogConfiguration,
+  type CWLogGroup,
+  type CWStorageTier,
+} from "../api.js";
 
 // Amazon CloudWatch Logs — Log groups. The list and Delete both go through
 // the real CloudWatch Logs awsjson1.1 API (DescribeLogGroups for the table,
@@ -77,6 +89,133 @@ function CreateLogGroupModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function StorageTierModal({ onClose }: { onClose: () => void }) {
+  const policy = useQuery({ queryKey: ["cw-storage-tier-policy"], queryFn: fetchCWStorageTierPolicy });
+  const [selection, setSelection] = useState<CWStorageTier | null>(null);
+  const selectedTier = selection ?? policy.data?.storageTier ?? "STANDARD";
+  const save = useMutation({
+    mutationFn: () => putCWStorageTierPolicy(selectedTier),
+    onSuccess: onClose,
+  });
+  return (
+    <AwsModal
+      title="Account storage tier"
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton
+            variant="primary"
+            data-testid="logs-save-storage-tier"
+            disabled={policy.isLoading || save.isPending}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? "Saving…" : "Save changes"}
+          </AwsButton>
+        </>
+      }
+    >
+      <p>Choose how Amazon CloudWatch Logs manages storage for this account and Region.</p>
+      <FormField label="Storage tier">
+        <Select
+          selectedOption={{
+            label: selectedTier === "STANDARD" ? "Standard" : "Intelligent-Tiering",
+            value: selectedTier,
+          }}
+          onChange={(event) => setSelection(event.detail.selectedOption.value as CWStorageTier)}
+          options={[
+            { label: "Standard", value: "STANDARD" },
+            { label: "Intelligent-Tiering", value: "INTELLIGENT_TIERING" },
+          ]}
+        />
+      </FormField>
+      {(policy.isError || save.isError) && (
+        <AwsErrorAlert>
+          <strong>Could not update the storage tier.</strong>{" "}
+          {(policy.error ?? save.error) instanceof Error
+            ? (policy.error ?? save.error as Error).message
+            : "The request failed."}
+        </AwsErrorAlert>
+      )}
+    </AwsModal>
+  );
+}
+
+function SyslogConfigurationModal({ group, onClose }: { group: CWLogGroup; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const queryKey = ["cw-syslog-configurations", group.name];
+  const configurations = useQuery({
+    queryKey,
+    queryFn: () => fetchCWSyslogConfigurations(group.name),
+  });
+  const [vpcEndpointId, setVpcEndpointId] = useState("");
+  const add = useMutation({
+    mutationFn: () => putCWSyslogConfiguration(group.name, vpcEndpointId.trim()),
+    onSuccess: async () => {
+      setVpcEndpointId("");
+      await queryClient.invalidateQueries({ queryKey });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (endpointId: string) => deleteCWSyslogConfiguration(group.name, endpointId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+  });
+  return (
+    <AwsModal
+      title="Syslog ingestion"
+      onDismiss={onClose}
+      footer={<AwsButton onClick={onClose}>Close</AwsButton>}
+    >
+      <p>
+        Receive syslog data for <code>{group.name}</code> through an Amazon Virtual Private Cloud (VPC)
+        endpoint.
+      </p>
+      <FormField
+        label="VPC endpoint ID (optional)"
+        constraintText="Leave blank for a service-managed endpoint, or enter an ID such as vpce-0123456789abcdef0."
+      >
+        <Input
+          value={vpcEndpointId}
+          onChange={(event) => setVpcEndpointId(event.detail.value)}
+          nativeInputAttributes={{ "data-testid": "logs-syslog-vpc-endpoint-input" }}
+        />
+      </FormField>
+      <AwsButton
+        variant="primary"
+        data-testid="logs-create-syslog-configuration"
+        disabled={add.isPending}
+        onClick={() => add.mutate()}
+      >
+        {add.isPending ? "Adding…" : "Add configuration"}
+      </AwsButton>
+      <h3>Configurations</h3>
+      {configurations.isLoading && <p>Loading configurations…</p>}
+      {configurations.data?.length === 0 && <p>No syslog configurations.</p>}
+      {configurations.data?.map((configuration) => (
+        <div key={`${configuration.logGroupArn}:${configuration.vpcEndpointId}`}>
+          <code>{configuration.vpcEndpointId || "Service-managed endpoint"}</code>{" "}
+          <span>{configuration.sourceType}</span>{" "}
+          <AwsButton
+            data-testid={`logs-delete-syslog-${configuration.vpcEndpointId}`}
+            disabled={remove.isPending}
+            onClick={() => remove.mutate(configuration.vpcEndpointId)}
+          >
+            Delete
+          </AwsButton>
+        </div>
+      ))}
+      {(configurations.isError || add.isError || remove.isError) && (
+        <AwsErrorAlert>
+          <strong>Could not update syslog ingestion.</strong>{" "}
+          {(configurations.error ?? add.error ?? remove.error) instanceof Error
+            ? (configurations.error ?? add.error ?? remove.error as Error).message
+            : "The request failed."}
+        </AwsErrorAlert>
+      )}
+    </AwsModal>
+  );
+}
+
 export function DeleteLogGroupsModal({
   groups,
   onClose,
@@ -141,6 +280,8 @@ export function DeleteLogGroupsModal({
 export function LogGroupsPage() {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
+  const [editingStorageTier, setEditingStorageTier] = useState(false);
+  const [editingSyslog, setEditingSyslog] = useState<CWLogGroup | null>(null);
   const [deleting, setDeleting] = useState<{ groups: CWLogGroup[]; clearSelection: () => void } | null>(null);
   return (
     <>
@@ -157,6 +298,16 @@ export function LogGroupsPage() {
         tableTestId="log-groups-table"
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
+            <AwsButton data-testid="logs-storage-tier" onClick={() => setEditingStorageTier(true)}>
+              Account storage
+            </AwsButton>
+            <AwsButton
+              data-testid="logs-syslog-ingestion"
+              disabled={selected.length !== 1}
+              onClick={() => setEditingSyslog(selected[0])}
+            >
+              Syslog ingestion
+            </AwsButton>
             <AwsButton
               data-testid="logs-view-log-group"
               disabled={selected.length !== 1}
@@ -181,6 +332,10 @@ export function LogGroupsPage() {
         )}
       />
       {creating && <CreateLogGroupModal onClose={() => setCreating(false)} />}
+      {editingStorageTier && <StorageTierModal onClose={() => setEditingStorageTier(false)} />}
+      {editingSyslog && (
+        <SyslogConfigurationModal group={editingSyslog} onClose={() => setEditingSyslog(null)} />
+      )}
       {deleting && (
         <DeleteLogGroupsModal
           groups={deleting.groups}

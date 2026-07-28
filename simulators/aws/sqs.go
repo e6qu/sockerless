@@ -16,23 +16,19 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// SQS — used by runner workflows that need a managed message queue
-// for fan-out / fan-in patterns + by application-event pipelines
-// fronted by SNS → SQS.
+// Amazon Simple Queue Service (SQS) implements managed standard and FIFO
+// queues for direct producers and service delivery from Amazon SNS,
+// EventBridge, EventBridge Scheduler, Lambda, and AWS Step Functions.
 //
 // Wire protocol note: AWS migrated SQS from awsQuery to awsJson1_0
 // in late 2023 (aws-sdk-go-v2 service/sqs v1.28+). All current SDK
 // callers dispatch via `X-Amz-Target: AmazonSQS.<Action>` against
-// POST /, with JSON request + JSON response bodies. The handlers
-// below assume that protocol — older awsQuery callers would need
-// a separate registration path (out of scope for the first cut).
+// POST /, with JSON request + JSON response bodies.
 
-// SQSQueue is a managed queue. Real SQS distinguishes Standard
-// (at-least-once, best-effort ordering) from FIFO (exactly-once,
-// strict ordering by MessageGroupId). The sim's queue is a Standard
-// in-memory FIFO list with visibility-timeout-based at-most-once-
-// per-handle semantics — close enough for integration tests of
-// produce-consume-ack flows.
+// SQSQueue is the durable provider-side record for a standard or FIFO queue.
+// Messages remain stored until DeleteMessage, retention expiry, purge, or
+// dead-letter redrive; ReceiveMessage advances their visibility deadline so an
+// unacknowledged message becomes available again.
 type SQSQueue struct {
 	Name              string
 	URL               string
@@ -660,13 +656,19 @@ func sqsEnqueue(name string, e sqsSendEntry) (msgID, md5OfBody, md5OfAttrs strin
 // performs. It is the in-process enqueue path SNS→SQS fan-out uses to
 // deliver a Notification envelope; a subsequent ReceiveMessage returns it.
 func sqsEnqueueBody(queueName, body string) {
+	sqsEnqueueBodyWithAttributes(queueName, body, nil)
+}
+
+func sqsEnqueueBodyWithAttributes(queueName, body string, attributes map[string]SQSMessageAttribute) {
 	hash := md5.Sum([]byte(body))
 	sqsQueues.Update(queueName, func(q *SQSQueue) {
 		q.Messages = append(q.Messages, SQSMessage{
-			MessageId:     generateUUID(),
-			Body:          body,
-			MD5OfBody:     hex.EncodeToString(hash[:]),
-			SentTimestamp: time.Now().Unix(),
+			MessageId:              generateUUID(),
+			Body:                   body,
+			MD5OfBody:              hex.EncodeToString(hash[:]),
+			SentTimestamp:          time.Now().Unix(),
+			MessageAttributes:      attributes,
+			MD5OfMessageAttributes: sqsMessageAttributeMD5(attributes),
 		})
 	})
 	if q, ok := sqsQueues.Get(queueName); ok {

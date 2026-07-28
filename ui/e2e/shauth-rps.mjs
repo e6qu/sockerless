@@ -48,7 +48,9 @@ try {
       await assertCreatedOrganizationAccount(page, app);
       await assertCreatedECRRepository(page, app);
       await assertCreatedDynamoDBTable(page, app);
+      await assertManagedLambdaFunction(page, app);
       await assertRanStepFunctionsWorkflow(page, app);
+      await assertManagedAwsEventingAndObservability(page, app);
     }
     if (app.name === "Sockerless Microsoft Azure simulator") {
       await assertFederatedAzureToken(context, page, app);
@@ -643,6 +645,105 @@ async function assertCreatedOrganizationAccount(page, app) {
   await page.getByRole("link", { name: accountName }).waitFor({ state: "visible" });
 }
 
+// assertManagedLambdaFunction drives the resource sub-surfaces the AWS Lambda
+// console exposes through Lambda's public REST-JSON API. It creates a real
+// function resource, updates its code and configuration, publishes and aliases
+// a version, and configures the trigger, asynchronous destination, provisioned
+// concurrency, and function URL. Every read after a write comes from Lambda's
+// API over the operator's federated SigV4 credentials.
+async function assertManagedLambdaFunction(page, app) {
+  const origin = new URL(app.launch).origin;
+  const functionName = `rps-lambda-${Date.now() % 1_000_000}`;
+  await page.goto(`${origin}/ui/lambda`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("lambda-create-function").click();
+  const create = page.getByRole("dialog", { name: "Create function" });
+  await create.getByTestId("lambda-function-name-input").fill(functionName);
+  await create.getByTestId("lambda-image-uri-input").fill("123456789012.dkr.ecr.us-east-1.amazonaws.com/rps:v1");
+  await create
+    .getByTestId("lambda-role-input")
+    .fill("arn:aws:iam::123456789012:role/console-federation-role");
+  await create.getByTestId("lambda-create-function-submit").click();
+  await create.waitFor({ state: "detached" });
+  await page.getByRole("link", { name: functionName, exact: true }).click();
+  await page.getByTestId("lambda-function-summary").waitFor({ state: "visible" });
+
+  await page.getByTestId("lambda-function-edit").click();
+  const edit = page.getByRole("dialog", { name: "Edit basic settings" });
+  await edit.getByTestId("lambda-edit-config-memory").fill("512");
+  await edit.getByTestId("lambda-edit-config-timeout").fill("30");
+  await edit.getByTestId("lambda-edit-config-description").fill("managed from the console");
+  await edit.getByTestId("lambda-edit-config-save").click();
+  await edit.waitFor({ state: "detached" });
+
+  await page.getByRole("tab", { name: "Code" }).click();
+  await page.getByRole("button", { name: "Upload code" }).click();
+  const code = page.getByRole("dialog", { name: "Upload code" });
+  await code.getByLabel("Container image URI").fill("123456789012.dkr.ecr.us-east-1.amazonaws.com/rps:v2");
+  await code.getByRole("button", { name: "Save" }).click();
+  await code.waitFor({ state: "detached" });
+
+  await page.getByRole("button", { name: "Publish version" }).click();
+  const publish = page.getByRole("dialog", { name: "Publish new version" });
+  await publish.getByLabel("Version description").fill("browser validated");
+  await publish.getByRole("button", { name: "Publish" }).click();
+  await publish.waitFor({ state: "detached" });
+
+  await page.getByRole("tab", { name: /Aliases/ }).click();
+  await page.getByRole("button", { name: "Create alias" }).click();
+  const alias = page.getByRole("dialog", { name: "Create alias" });
+  await alias.getByLabel("Alias name").fill("live");
+  await alias.getByLabel("Function version").click();
+  await page.getByRole("option", { name: "1", exact: true }).click();
+  await alias.getByRole("button", { name: "Create" }).click();
+  await alias.waitFor({ state: "detached" });
+  await page.getByText("live", { exact: true }).waitFor({ state: "visible" });
+
+  await page.getByRole("tab", { name: "Monitor" }).click();
+  await page.getByRole("button", { name: "Add configuration" }).click();
+  const provisioned = page.getByRole("dialog", { name: "Provisioned concurrency configuration" });
+  await provisioned.getByLabel("Alias or version").click();
+  await page.getByRole("option", { name: "live", exact: true }).click();
+  await provisioned.getByLabel("Provisioned concurrent executions").fill("2");
+  await provisioned.getByRole("button", { name: "Save" }).click();
+  await provisioned.waitFor({ state: "detached" });
+  await page.getByText("READY", { exact: true }).waitFor({ state: "visible" });
+
+  await page.getByRole("tab", { name: /Event source mappings/ }).click();
+  await page.getByRole("button", { name: "Add event source mapping" }).click();
+  const eventSource = page.getByRole("dialog", { name: "Add event source mapping" });
+  await eventSource
+    .getByLabel("Event source ARN")
+    .fill("arn:aws:kinesis:us-east-1:123456789012:stream/rps-events");
+  await eventSource.getByRole("button", { name: "Save" }).click();
+  await eventSource.waitFor({ state: "detached" });
+  await page.getByText("rps-events", { exact: false }).waitFor({ state: "visible" });
+
+  await page.getByRole("tab", { name: /Asynchronous invocation/ }).click();
+  await page.getByRole("button", { name: "Add configuration" }).click();
+  const asynchronous = page.getByRole("dialog", { name: "Configure asynchronous invocation" });
+  await asynchronous
+    .getByLabel("On failure destination ARN")
+    .fill("arn:aws:sqs:us-east-1:123456789012:rps-failures");
+  await asynchronous.getByRole("button", { name: "Save" }).click();
+  await asynchronous.waitFor({ state: "detached" });
+  await page.getByText("rps-failures", { exact: false }).waitFor({ state: "visible" });
+
+  await page.getByRole("tab", { name: "Function URL" }).click();
+  await page.getByRole("button", { name: "Create function URL" }).click();
+  const functionURL = page.getByRole("dialog", { name: "Create function URL" });
+  await functionURL.getByRole("button", { name: "Create" }).click();
+  await functionURL.waitFor({ state: "detached" });
+  await page.getByText(/lambda-url\.us-east-1\.on\.aws/).waitFor({ state: "visible" });
+
+  await page.getByRole("tab", { name: "Function overview" }).click();
+  await page.getByText("On failure", { exact: true }).waitFor({ state: "visible" });
+  assert.equal(
+    await page.getByTestId("lambda-function-error").count(),
+    0,
+    `${app.name} AWS Lambda detail failed during its live management round trip`,
+  );
+}
+
 // assertRanStepFunctionsWorkflow drives the same signed-in AWS console data
 // plane used against real AWS: create a state machine, inspect its graph, start
 // an execution, and read the completed execution history and output through the
@@ -668,6 +769,46 @@ async function assertRanStepFunctionsWorkflow(page, app) {
     `${app.name} state machine detail failed to read the live definition`,
   );
 
+  await page.getByRole("button", { name: "Test state" }).click();
+  const testState = page.getByRole("dialog", { name: "Test state" });
+  await testState.getByLabel("State input").fill('{"probe":true}');
+  await testState.getByRole("button", { name: "Test state" }).click();
+  await testState.getByText("SUCCEEDED", { exact: true }).waitFor({ state: "visible" });
+  assert.match(
+    await testState.innerText(),
+    /Hello from AWS Step Functions/,
+    `${app.name} TestState did not return the live state output`,
+  );
+  await testState.getByRole("button", { name: "Close", exact: true }).last().click();
+
+  for (const description of ["first browser version", "second browser version"]) {
+    await page.getByRole("button", { name: "Publish version" }).click();
+    const publish = page.getByRole("dialog", { name: "Publish version" });
+    await publish.getByLabel("Version description").fill(description);
+    await publish.getByRole("button", { name: "Publish" }).click();
+    await publish.waitFor({ state: "detached" });
+  }
+  await page.getByRole("tab", { name: /Aliases/ }).click();
+  await page.getByRole("button", { name: "Create alias" }).click();
+  const createAlias = page.getByRole("dialog", { name: "Create alias" });
+  await createAlias.getByLabel("Alias name").fill("production");
+  await createAlias.getByLabel("State machine version").click();
+  await page.getByRole("option", { name: "2", exact: true }).click();
+  await createAlias.getByRole("button", { name: "Create" }).click();
+  await createAlias.waitFor({ state: "detached" });
+  await page.getByText("production", { exact: true }).waitFor({ state: "visible" });
+  await page
+    .getByRole("row", { name: /production/ })
+    .getByRole("button", { name: "Edit", exact: true })
+    .click();
+  const editAlias = page.getByRole("dialog", { name: "Edit production" });
+  await editAlias.getByLabel("Optional second version").click();
+  await page.getByRole("option", { name: "1", exact: true }).click();
+  await editAlias.getByLabel("Primary version traffic weight").fill("80");
+  await editAlias.getByRole("button", { name: "Save" }).click();
+  await editAlias.waitFor({ state: "detached" });
+  await page.getByText(/2 \(80%\).*1 \(20%\)/).waitFor({ state: "visible" });
+
   await page.getByTestId("sfn-state-machine-start").click();
   await page.getByTestId("sfn-execution-input").locator("textarea").fill('{"order":"A-100"}');
   await page.getByTestId("sfn-start-execution-submit").click();
@@ -689,6 +830,220 @@ async function assertRanStepFunctionsWorkflow(page, app) {
     /Hello from AWS Step Functions/,
     `${app.name} execution detail did not render the live output`,
   );
+}
+
+// assertManagedAwsEventingAndObservability drives the connected AWS console
+// workflows that surround Lambda and Step Functions. It creates and uses real
+// Amazon SQS, Amazon SNS, EventBridge, EventBridge Scheduler, CloudWatch, and
+// CloudTrail resources through the browser's federated SigV4 data plane.
+async function assertManagedAwsEventingAndObservability(page, app) {
+  const origin = new URL(app.launch).origin;
+  const suffix = Date.now() % 1_000_000;
+  const queueName = `rps-events-${suffix}`;
+  const queueARN = `arn:aws:sqs:us-east-1:123456789012:${queueName}`;
+  const topicName = `rps-events-${suffix}`;
+  const eventBusName = `rps-bus-${suffix}`;
+  const ruleName = `rps-events-${suffix}`;
+  const scheduleName = `rps-events-${suffix}`;
+  const alarmName = `rps-events-${suffix}`;
+  const dashboardName = `rps-events-${suffix}`;
+  const logGroupName = `/rps/events/${suffix}`;
+  const trailName = `rps-events-${suffix}`;
+
+  await page.goto(`${origin}/ui/sqs`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("sqs-create-queue").click();
+  const createQueue = page.getByRole("dialog", { name: "Create queue" });
+  await createQueue.getByTestId("sqs-queue-name-input").fill(queueName);
+  await createQueue.getByTestId("sqs-create-queue-submit").click();
+  await createQueue.waitFor({ state: "detached" });
+  const queueRow = page.getByRole("row", { name: new RegExp(queueName) });
+  await queueRow.getByRole("checkbox").click();
+  await page.getByRole("button", { name: "Send and receive messages" }).click();
+  const queue = page.getByRole("dialog", { name: queueName });
+  await queue.getByLabel("Message body").fill("browser-to-sqs");
+  await queue.getByRole("button", { name: "Send message" }).click();
+  await queue.getByRole("button", { name: "Poll for messages" }).click();
+  await queue.getByText("browser-to-sqs", { exact: true }).waitFor({ state: "visible" });
+  await queue.getByRole("button", { name: "Delete message" }).click();
+  await queue.getByText("browser-to-sqs", { exact: true }).waitFor({ state: "detached" });
+  await queue.getByLabel("Access policy JSON").fill(JSON.stringify({
+    Version: "2012-10-17",
+    Statement: [{
+      Effect: "Allow",
+      Principal: { Service: ["sns.amazonaws.com", "events.amazonaws.com"] },
+      Action: "sqs:SendMessage",
+      Resource: queueARN,
+    }],
+  }));
+  await queue.getByRole("button", { name: "Save access policy" }).click();
+  await queue.getByText("Access policy saved.", { exact: true }).waitFor({ state: "visible" });
+  await queue.getByRole("button", { name: "Close" }).last().click();
+
+  await page.goto(`${origin}/ui/sns`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("sns-create-topic").click();
+  const createTopic = page.getByRole("dialog", { name: "Create topic" });
+  await createTopic.getByTestId("sns-topic-name-input").fill(topicName);
+  await createTopic.getByTestId("sns-create-topic-submit").click();
+  await createTopic.waitFor({ state: "detached" });
+  const topicRow = page.getByRole("row", { name: new RegExp(topicName) });
+  await topicRow.getByRole("checkbox").click();
+  await page.getByRole("button", { name: "Publish and subscribe" }).click();
+  const topic = page.getByRole("dialog", { name: topicName });
+  await topic.getByLabel("Endpoint").fill(queueARN);
+  await topic.getByRole("button", { name: "Create subscription" }).click();
+  await topic.getByLabel("Subject").fill("Browser event");
+  await topic.getByLabel("Message").fill("browser-to-sns");
+  await topic.getByRole("button", { name: "Publish message" }).click();
+  await page.waitForFunction(
+    (element) => element.value === "",
+    await topic.getByLabel("Message").elementHandle(),
+  );
+  assert.equal(await topic.getByLabel("Message").inputValue(), "", `${app.name} Amazon SNS publish did not complete`);
+  await topic.getByRole("button", { name: "Close" }).last().click();
+  await page.getByText(queueARN, { exact: true }).waitFor({ state: "visible" });
+
+  await page.goto(`${origin}/ui/sqs`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("row", { name: new RegExp(queueName) }).getByRole("checkbox").click();
+  await page.getByRole("button", { name: "Send and receive messages" }).click();
+  const snsQueue = page.getByRole("dialog", { name: queueName });
+  await snsQueue.getByRole("button", { name: "Poll for messages" }).click();
+  await snsQueue.getByText(/browser-to-sns/).waitFor({ state: "visible" });
+  await snsQueue.getByRole("button", { name: "Delete message" }).click();
+  await snsQueue.getByRole("button", { name: "Close" }).last().click();
+
+  await page.goto(`${origin}/ui/eventbridge`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Create event bus", exact: true }).click();
+  const createEventBus = page.getByRole("dialog", { name: "Create event bus" });
+  await createEventBus.getByLabel("Name", { exact: true }).fill(eventBusName);
+  await createEventBus.getByLabel("Description").fill("browser validated event bus");
+  await createEventBus.getByRole("button", { name: "Create event bus" }).click();
+  await createEventBus.waitFor({ state: "detached" });
+  await page
+    .getByTestId("eventbridge-buses-table")
+    .getByText(eventBusName, { exact: true })
+    .waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Create rule", exact: true }).click();
+  const createRule = page.getByRole("dialog", { name: "Create rule" });
+  await createRule.getByLabel("Name", { exact: true }).fill(ruleName);
+  await createRule.getByLabel("Description").fill("browser validated event routing");
+  await createRule.getByLabel("Event bus name").fill(eventBusName);
+  await createRule.getByRole("button", { name: "Create rule" }).click();
+  await createRule.waitFor({ state: "detached" });
+  const ruleRow = page.getByRole("row", { name: new RegExp(ruleName) });
+  await ruleRow.getByRole("checkbox").click();
+  await page.getByRole("button", { name: "Manage targets" }).click();
+  const targets = page.getByRole("dialog", { name: `Targets for ${ruleName}` });
+  await targets.getByLabel("Target ARN").fill(queueARN);
+  await targets.getByRole("button", { name: "Add target" }).click();
+  await targets.getByText(queueARN, { exact: true }).waitFor({ state: "visible" });
+  await targets.getByRole("button", { name: "Close" }).last().click();
+  await page.getByRole("button", { name: "Send event", exact: true }).click();
+  const sendEvent = page.getByRole("dialog", { name: "Send event" });
+  await sendEvent.getByLabel("Event bus name").fill(eventBusName);
+  await sendEvent.getByRole("button", { name: "Send event" }).click();
+  await sendEvent.getByText(/Event accepted with ID/).waitFor({ state: "visible" });
+  await sendEvent.getByRole("button", { name: "Close" }).last().click();
+
+  await page.goto(`${origin}/ui/sqs`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("row", { name: new RegExp(queueName) }).getByRole("checkbox").click();
+  await page.getByRole("button", { name: "Send and receive messages" }).click();
+  const eventQueue = page.getByRole("dialog", { name: queueName });
+  await eventQueue.getByRole("button", { name: "Poll for messages" }).click();
+  await eventQueue.getByText(/Application event/).waitFor({ state: "visible" });
+  await eventQueue.getByRole("button", { name: "Delete message" }).click();
+  await eventQueue.getByRole("button", { name: "Close" }).last().click();
+
+  await page.goto(`${origin}/ui/scheduler`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("scheduler-schedules-table").getByRole("button", { name: "Create schedule", exact: true }).click();
+  const createSchedule = page.getByRole("dialog", { name: "Create schedule" });
+  await createSchedule.getByLabel("Name").fill(scheduleName);
+  const scheduleTime = new Date(Date.now() + 5_000).toISOString().replace(/\.\d{3}Z$/, "");
+  await createSchedule.getByLabel("Schedule expression").fill(`at(${scheduleTime})`);
+  await createSchedule.getByLabel("Target ARN").fill(queueARN);
+  await createSchedule
+    .getByLabel("Execution role ARN")
+    .fill("arn:aws:iam::123456789012:role/console-federation-role");
+  await createSchedule.getByLabel("Target input").fill('"browser-to-scheduler"');
+  await createSchedule.getByRole("button", { name: "Create schedule" }).click();
+  await createSchedule.waitFor({ state: "detached" });
+  await page.getByText(scheduleName, { exact: true }).waitFor({ state: "visible" });
+  await page.waitForTimeout(7_000);
+  await page.goto(`${origin}/ui/sqs`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("row", { name: new RegExp(queueName) }).getByRole("checkbox").click();
+  await page.getByRole("button", { name: "Send and receive messages" }).click();
+  const schedulerQueue = page.getByRole("dialog", { name: queueName });
+  await schedulerQueue.getByRole("button", { name: "Poll for messages" }).click();
+  await schedulerQueue.getByText(/browser-to-scheduler/).waitFor({ state: "visible" });
+  await schedulerQueue.getByRole("button", { name: "Delete message" }).click();
+  await schedulerQueue.getByRole("button", { name: "Close" }).last().click();
+
+  await page.goto(`${origin}/ui/logs`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("logs-create-log-group").click();
+  const createLogGroup = page.getByRole("dialog", { name: "Create log group" });
+  await createLogGroup.getByTestId("logs-log-group-name-input").fill(logGroupName);
+  await createLogGroup.getByTestId("logs-create-log-group-submit").click();
+  await createLogGroup.waitFor({ state: "detached" });
+  await page
+    .getByTestId("log-groups-table")
+    .getByText(logGroupName, { exact: true })
+    .waitFor({ state: "visible" });
+  await page.getByTestId("logs-storage-tier").click();
+  const storageTier = page.getByRole("dialog", { name: "Account storage tier" });
+  await storageTier.getByLabel("Storage tier").click();
+  await page.getByRole("option", { name: "Intelligent-Tiering", exact: true }).click();
+  await storageTier.getByTestId("logs-save-storage-tier").click();
+  await storageTier.waitFor({ state: "detached" });
+  await page.getByRole("row", { name: new RegExp(logGroupName) }).getByRole("checkbox").click();
+  await page.getByTestId("logs-syslog-ingestion").click();
+  const syslog = page.getByRole("dialog", { name: "Syslog ingestion" });
+  await syslog.getByTestId("logs-create-syslog-configuration").click();
+  await syslog.getByText("Service-managed endpoint", { exact: true }).waitFor({ state: "visible" });
+  await syslog.getByRole("button", { name: "Delete" }).click();
+  await syslog.getByText("No syslog configurations.", { exact: true }).waitFor({ state: "visible" });
+  await syslog.getByRole("button", { name: "Close" }).last().click();
+
+  await page.goto(`${origin}/ui/cloudwatch`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Put metric data", exact: true }).click();
+  const metric = page.getByRole("dialog", { name: "Put metric data" });
+  await metric.getByRole("button", { name: "Put metric" }).click();
+  await metric.getByText("Metric datum accepted.", { exact: true }).waitFor({ state: "visible" });
+  await metric.getByRole("button", { name: "Close" }).last().click();
+  await page.getByRole("button", { name: "Create alarm", exact: true }).click();
+  const alarm = page.getByRole("dialog", { name: "Create metric alarm" });
+  await alarm.getByLabel("Alarm name").fill(alarmName);
+  await alarm.getByRole("button", { name: "Create alarm" }).click();
+  await alarm.waitFor({ state: "detached" });
+  await page
+    .getByTestId("cloudwatch-alarms-table")
+    .getByText(alarmName, { exact: true })
+    .waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Create dashboard", exact: true }).click();
+  const dashboard = page.getByRole("dialog", { name: "Create dashboard" });
+  await dashboard.getByLabel("Dashboard name").fill(dashboardName);
+  await dashboard.getByRole("button", { name: "Create dashboard" }).click();
+  await dashboard.waitFor({ state: "detached" });
+  await page
+    .getByTestId("cloudwatch-dashboards-table")
+    .getByText(dashboardName, { exact: true })
+    .waitFor({ state: "visible" });
+
+  await page.goto(`${origin}/ui/cloudtrail`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Create trail", exact: true }).click();
+  const trail = page.getByRole("dialog", { name: "Create trail" });
+  await trail.getByLabel("Trail name").fill(trailName);
+  await trail.getByLabel("Amazon S3 bucket name").fill(`rps-cloudtrail-${suffix}`);
+  await trail.getByRole("button", { name: "Create trail" }).click();
+  await trail.waitFor({ state: "detached" });
+  await page
+    .getByTestId("cloudtrail-trails-table")
+    .getByText(trailName, { exact: true })
+    .waitFor({ state: "visible" });
+  const eventTable = page.getByTestId("cloudtrail-events-table");
+  await eventTable.getByRole("row").nth(1).getByRole("checkbox").click();
+  await eventTable.getByRole("button", { name: "View event" }).click();
+  const event = page.getByRole("dialog");
+  await event.getByText("Event source", { exact: true }).waitFor({ state: "visible" });
+  await event.getByRole("button", { name: "Close" }).last().click();
 }
 
 // assertCreatedProject drives the Google Cloud console's project picker as the

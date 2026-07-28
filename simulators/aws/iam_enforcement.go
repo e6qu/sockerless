@@ -188,6 +188,12 @@ func iamActionForRequest(r *http.Request) (string, bool) {
 		return "", false
 	}
 	service := strings.SplitN(src, ".", 2)[0] // "ecs.amazonaws.com" → "ecs"
+	// Amazon CloudWatch records monitoring.amazonaws.com as its CloudTrail
+	// event source, but its IAM service prefix is cloudwatch. CloudTrail source
+	// names and IAM namespaces are separate AWS contracts.
+	if service == "monitoring" {
+		service = "cloudwatch"
+	}
 	var op string
 	if target := r.Header.Get("X-Amz-Target"); target != "" {
 		if i := strings.LastIndex(target, "."); i >= 0 {

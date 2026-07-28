@@ -1,13 +1,21 @@
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Input from "@cloudscape-design/components/input";
 import FormField from "@cloudscape-design/components/form-field";
+import Textarea from "@cloudscape-design/components/textarea";
+import Select from "@cloudscape-design/components/select";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import { AwsButton, AwsErrorAlert, AwsModal, AwsResourceTable, type AwsColumn } from "../console/index.js";
 import {
   createSNSTopic,
   deleteSNSTopic,
   fetchSNSSubscriptions,
+  fetchSNSTopicAttributes,
   fetchSNSTopics,
+  publishSNSMessage,
+  setSNSTopicAttribute,
+  subscribeSNSEndpoint,
+  unsubscribeSNSEndpoint,
   type SNSSubscription,
   type SNSTopic,
 } from "../api.js";
@@ -138,9 +146,118 @@ function DeleteTopicsModal({
   );
 }
 
+function ManageTopicModal({ topic, onClose }: { topic: SNSTopic; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [message, setMessage] = useState("");
+  const [subject, setSubject] = useState("");
+  const [protocol, setProtocol] = useState("sqs");
+  const [endpoint, setEndpoint] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [deliveryPolicy, setDeliveryPolicy] = useState("");
+  const attributes = useQuery({
+    queryKey: ["sns-topic-attributes", topic.arn],
+    queryFn: () => fetchSNSTopicAttributes(topic.arn),
+  });
+  useEffect(() => {
+    if (!attributes.data) return;
+    setDisplayName(attributes.data.DisplayName ?? "");
+    setDeliveryPolicy(attributes.data.DeliveryPolicy ?? "");
+  }, [attributes.data]);
+  const publish = useMutation({ mutationFn: () => publishSNSMessage(topic.arn, message, subject), onSuccess: () => setMessage("") });
+  const subscribe = useMutation({
+    mutationFn: () => subscribeSNSEndpoint(topic.arn, protocol, endpoint),
+    onSuccess: async () => {
+      setEndpoint("");
+      await queryClient.invalidateQueries({ queryKey: ["sns-subscriptions"] });
+    },
+  });
+  const saveAttributes = useMutation({
+    mutationFn: async () => {
+      if (displayName !== (attributes.data?.DisplayName ?? "")) {
+        await setSNSTopicAttribute(topic.arn, "DisplayName", displayName);
+      }
+      if (deliveryPolicy !== (attributes.data?.DeliveryPolicy ?? "")) {
+        await setSNSTopicAttribute(topic.arn, "DeliveryPolicy", deliveryPolicy);
+      }
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sns-topic-attributes", topic.arn] }),
+  });
+  const error = publish.error || subscribe.error || saveAttributes.error || attributes.error;
+  return (
+    <AwsModal
+      title={topic.name}
+      onDismiss={onClose}
+      footer={<AwsButton onClick={onClose}>Close</AwsButton>}
+    >
+      <SpaceBetween size="l">
+        <div>
+          <h3>Publish message</h3>
+          <SpaceBetween size="s">
+            <FormField label="Subject"><Input value={subject} onChange={(event) => setSubject(event.detail.value)} /></FormField>
+            <FormField label="Message"><Textarea value={message} onChange={(event) => setMessage(event.detail.value)} rows={5} /></FormField>
+            <AwsButton variant="primary" disabled={!message || publish.isPending} onClick={() => publish.mutate()}>
+              Publish message
+            </AwsButton>
+          </SpaceBetween>
+        </div>
+        <div>
+          <h3>Create subscription</h3>
+          <SpaceBetween size="s">
+            <FormField label="Protocol">
+              <Select
+                selectedOption={{ label: protocol, value: protocol }}
+                options={["sqs", "lambda", "http", "https", "email", "sms"].map((value) => ({ label: value, value }))}
+                onChange={(event) => setProtocol(event.detail.selectedOption.value ?? "sqs")}
+              />
+            </FormField>
+            <FormField label="Endpoint" description="Queue or function ARN, URL, email address, or phone number.">
+              <Input value={endpoint} onChange={(event) => setEndpoint(event.detail.value)} />
+            </FormField>
+            <AwsButton variant="primary" disabled={!endpoint || subscribe.isPending} onClick={() => subscribe.mutate()}>
+              Create subscription
+            </AwsButton>
+          </SpaceBetween>
+        </div>
+        <div>
+          <h3>Topic attributes</h3>
+          <SpaceBetween size="s">
+            <FormField label="Display name">
+              <Input value={displayName} disabled={attributes.isLoading} onChange={(event) => setDisplayName(event.detail.value)} />
+            </FormField>
+            <FormField label="Delivery policy" description="JSON delivery and retry policy used by this topic.">
+              <Textarea
+                value={deliveryPolicy}
+                disabled={attributes.isLoading}
+                onChange={(event) => setDeliveryPolicy(event.detail.value)}
+                rows={5}
+              />
+            </FormField>
+            <AwsButton
+              variant="primary"
+              disabled={attributes.isLoading || saveAttributes.isPending}
+              onClick={() => saveAttributes.mutate()}
+            >
+              Save attributes
+            </AwsButton>
+          </SpaceBetween>
+        </div>
+        {error && <AwsErrorAlert>{error instanceof Error ? error.message : "The request failed."}</AwsErrorAlert>}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
 export function SNSPage() {
+  const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<{ topics: SNSTopic[]; clearSelection: () => void } | null>(null);
+  const [managing, setManaging] = useState<SNSTopic | null>(null);
+  const unsubscribe = useMutation({
+    mutationFn: async (subscriptions: SNSSubscription[]) => {
+      for (const subscription of subscriptions) await unsubscribeSNSEndpoint(subscription.subscriptionArn);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sns-subscriptions"] }),
+  });
   return (
     <>
       <AwsResourceTable<SNSTopic>
@@ -157,6 +274,9 @@ export function SNSPage() {
         errorTestId="sns-topics-error"
         actions={({ selected, clearSelection, refetch, isFetching }) => (
           <>
+            <AwsButton disabled={selected.length !== 1} onClick={() => setManaging(selected[0] ?? null)}>
+              Publish and subscribe
+            </AwsButton>
             <AwsButton
               data-testid="sns-delete-topic"
               disabled={selected.length === 0}
@@ -186,13 +306,22 @@ export function SNSPage() {
         rowKey={(row) => row.subscriptionArn}
         tableTestId="sns-subscriptions-table"
         errorTestId="sns-subscriptions-error"
-        actions={({ refetch, isFetching }) => (
-          <AwsButton onClick={refetch} disabled={isFetching}>
-            {isFetching ? "Refreshing…" : "Refresh"}
-          </AwsButton>
+        actions={({ selected, clearSelection, refetch, isFetching }) => (
+          <>
+            <AwsButton
+              disabled={selected.length === 0 || unsubscribe.isPending}
+              onClick={() => unsubscribe.mutate(selected, { onSuccess: clearSelection })}
+            >
+              Delete subscription
+            </AwsButton>
+            <AwsButton onClick={refetch} disabled={isFetching}>
+              {isFetching ? "Refreshing…" : "Refresh"}
+            </AwsButton>
+          </>
         )}
       />
       {creating && <CreateTopicModal onClose={() => setCreating(false)} />}
+      {managing && <ManageTopicModal topic={managing} onClose={() => setManaging(null)} />}
       {deleting && (
         <DeleteTopicsModal topics={deleting.topics} clearSelection={deleting.clearSelection} onClose={() => setDeleting(null)} />
       )}

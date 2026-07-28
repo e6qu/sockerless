@@ -103,6 +103,14 @@ func handleLambdaCreateEventSourceMapping(w http.ResponseWriter, r *http.Request
 			"Function not found: %s", req.FunctionName)
 		return
 	}
+	if strings.HasPrefix(req.EventSourceArn, "arn:aws:sqs:") {
+		queueName := snsTopicNameFromARN(req.EventSourceArn)
+		if _, exists := sqsQueues.Get(queueName); !exists {
+			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+				"Event source does not exist: %s", req.EventSourceArn)
+			return
+		}
+	}
 
 	uuid := generateUUID()
 	state := "Enabled"

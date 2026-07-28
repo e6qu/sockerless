@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,12 +31,19 @@ func lambdaExtrasFunc(t *testing.T, lc *lambda.Client, name string) {
 
 func TestLambda_EventSourceMappings(t *testing.T) {
 	lc := lambdaClient()
+	sqsC := sqsClient()
 	fn := "esm-fn"
 	lambdaExtrasFunc(t, lc, fn)
+	queue, err := sqsC.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("esm-queue")})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = sqsC.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: queue.QueueUrl})
+	})
+	queueARN := queueARNOf(t, sqsC, queue.QueueUrl)
 
 	cre, err := lc.CreateEventSourceMapping(ctx, &lambda.CreateEventSourceMappingInput{
 		FunctionName:   aws.String(fn),
-		EventSourceArn: aws.String("arn:aws:sqs:us-east-1:123456789012:my-queue"),
+		EventSourceArn: aws.String(queueARN),
 		BatchSize:      aws.Int32(10),
 	})
 	require.NoError(t, err)

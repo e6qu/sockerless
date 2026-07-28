@@ -556,7 +556,7 @@ func handleLambdaInvokeAsync(w http.ResponseWriter, r *http.Request) {
 	// InvokeAsync buffers the invocation and runs it for real in the
 	// background (which produces real logs), the same async path Invoke
 	// with InvocationType=Event takes.
-	go func() { _, _, _ = invokeLambdaViaRuntimeAPI(fn, payload) }()
+	go lambdaInvokeAsynchronously(fn, payload, lambdaAsyncQualifier(name, r.URL.Query().Get("Qualifier")))
 	// The deprecated InvokeAsync response binds Status to the HTTP code (202)
 	// and carries no body.
 	w.WriteHeader(http.StatusAccepted)

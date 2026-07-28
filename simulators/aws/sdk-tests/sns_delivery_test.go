@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
+	snstypes "github.com/aws/aws-sdk-go-v2/service/sns/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/stretchr/testify/assert"
@@ -97,6 +98,67 @@ func TestSNS_DeliverToSQS_AuthorizedByQueuePolicy(t *testing.T) {
 	assert.Contains(t, body, `"Type":"Notification"`)
 	assert.Contains(t, body, `"Message":"authorized-payload"`)
 	assert.Contains(t, body, topicARN)
+}
+
+func TestSNS_FilterPolicyAndRawSQSMessageAttributes(t *testing.T) {
+	snsC := snsClient()
+	sqsC := sqsClient()
+
+	topic, err := snsC.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String("filtered-delivery-t")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = snsC.DeleteTopic(ctx, &sns.DeleteTopicInput{TopicArn: topic.TopicArn}) })
+
+	queue, err := sqsC.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("filtered-delivery-q")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = sqsC.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: queue.QueueUrl}) })
+
+	queueARN := queueARNOf(t, sqsC, queue.QueueUrl)
+	setQueuePolicyAllowingSNS(t, sqsC, aws.ToString(queue.QueueUrl), queueARN, aws.ToString(topic.TopicArn))
+	subscription, err := snsC.Subscribe(ctx, &sns.SubscribeInput{
+		TopicArn: topic.TopicArn,
+		Protocol: aws.String("sqs"),
+		Endpoint: aws.String(queueARN),
+	})
+	require.NoError(t, err)
+	for name, value := range map[string]string{
+		"FilterPolicy":       `{"event":["order_placed"],"amount":[{"numeric":[">=",100]}]}`,
+		"RawMessageDelivery": "true",
+	} {
+		_, err = snsC.SetSubscriptionAttributes(ctx, &sns.SetSubscriptionAttributesInput{
+			SubscriptionArn: subscription.SubscriptionArn,
+			AttributeName:   aws.String(name),
+			AttributeValue:  aws.String(value),
+		})
+		require.NoError(t, err)
+	}
+
+	publish := func(body, event, amount string) {
+		t.Helper()
+		_, publishErr := snsC.Publish(ctx, &sns.PublishInput{
+			TopicArn: topic.TopicArn,
+			Message:  aws.String(body),
+			MessageAttributes: map[string]snstypes.MessageAttributeValue{
+				"event":  {DataType: aws.String("String"), StringValue: aws.String(event)},
+				"amount": {DataType: aws.String("Number"), StringValue: aws.String(amount)},
+			},
+		})
+		require.NoError(t, publishErr)
+	}
+	publish("filtered-out", "order_cancelled", "150")
+	publish("matching-order", "order_placed", "125")
+
+	received, err := sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:              queue.QueueUrl,
+		MaxNumberOfMessages:   10,
+		MessageAttributeNames: []string{"All"},
+	})
+	require.NoError(t, err)
+	require.Len(t, received.Messages, 1)
+	assert.Equal(t, "matching-order", aws.ToString(received.Messages[0].Body))
+	require.Contains(t, received.Messages[0].MessageAttributes, "event")
+	assert.Equal(t, "order_placed", aws.ToString(received.Messages[0].MessageAttributes["event"].StringValue))
+	require.Contains(t, received.Messages[0].MessageAttributes, "amount")
+	assert.Equal(t, "125", aws.ToString(received.Messages[0].MessageAttributes["amount"].StringValue))
 }
 
 // TestSNS_DeliverToSQS_DeniedNoQueuePolicy proves the service-initiated IAM

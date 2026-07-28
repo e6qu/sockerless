@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -79,4 +80,22 @@ func TestIAM_CallTimeEnforcement(t *testing.T) {
 	adminEC2 := ec2.NewFromConfig(sdkConfig(), func(o *ec2.Options) { o.BaseEndpoint = aws.String(baseURL) })
 	_, err = adminEC2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{})
 	assert.NoError(t, err, "unregistered test credentials remain permissive")
+}
+
+// TestIAM_CloudWatchNamespaceEnforcement proves Amazon CloudWatch's
+// monitoring.amazonaws.com CloudTrail event source is authorized through the
+// service's real cloudwatch:* IAM namespace.
+func TestIAM_CloudWatchNamespaceEnforcement(t *testing.T) {
+	cfg := restrictedConfig(t, iamClient(), "cloudwatch-restricted-user", "cloudwatch-only",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"cloudwatch:ListDashboards","Resource":"*"}]}`)
+	cw := cloudwatch.NewFromConfig(cfg, func(o *cloudwatch.Options) {
+		o.BaseEndpoint = aws.String(baseURL)
+	})
+
+	_, err := cw.ListDashboards(ctx, &cloudwatch.ListDashboardsInput{})
+	assert.NoError(t, err, "cloudwatch:ListDashboards must authorize the query-protocol request")
+
+	_, err = cw.DescribeAlarms(ctx, &cloudwatch.DescribeAlarmsInput{})
+	require.Error(t, err, "cloudwatch:DescribeAlarms was not granted and must be denied")
+	assert.Equal(t, "AccessDenied", errCodeOf(err))
 }

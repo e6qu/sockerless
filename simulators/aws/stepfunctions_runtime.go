@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -357,10 +362,109 @@ func sfnInvokeTaskResource(resource string, input any, inputJSON string, context
 		resource == "arn:aws:states:::aws-sdk:sfn:startExecution" {
 		return sfnInvokeNestedExecution(resource, input, context, cancel, heartbeat)
 	}
+	if resource == "arn:aws:states:::sqs:sendMessage" ||
+		resource == "arn:aws:states:::sqs:sendMessage.waitForTaskToken" ||
+		resource == "arn:aws:states:::aws-sdk:sqs:sendMessage" {
+		result, taskErr := sfnInvokeJSONService(handleSQSSendMessage, input)
+		if taskErr != nil {
+			return nil, taskErr
+		}
+		if strings.HasSuffix(resource, ".waitForTaskToken") {
+			task, tokenErr := sfnTaskFromContext(context)
+			if tokenErr != nil {
+				return nil, tokenErr
+			}
+			return sfnWaitForTaskToken(task, cancel, heartbeat)
+		}
+		return result, nil
+	}
+	if resource == "arn:aws:states:::sns:publish" ||
+		resource == "arn:aws:states:::sns:publish.waitForTaskToken" ||
+		resource == "arn:aws:states:::aws-sdk:sns:publish" {
+		result, taskErr := sfnInvokeSNSPublish(input)
+		if taskErr != nil {
+			return nil, taskErr
+		}
+		if strings.HasSuffix(resource, ".waitForTaskToken") {
+			task, tokenErr := sfnTaskFromContext(context)
+			if tokenErr != nil {
+				return nil, tokenErr
+			}
+			return sfnWaitForTaskToken(task, cancel, heartbeat)
+		}
+		return result, nil
+	}
+	if resource == "arn:aws:states:::events:putEvents" ||
+		resource == "arn:aws:states:::aws-sdk:eventbridge:putEvents" {
+		return sfnInvokeJSONService(handleEBPutEvents, input)
+	}
+	if resource == "arn:aws:states:::aws-sdk:cloudwatch:putMetricData" {
+		return sfnInvokeJSONService(handleCWJSONPutMetricData, input)
+	}
+	if resource == "arn:aws:states:::aws-sdk:cloudwatchlogs:putLogEvents" {
+		return sfnInvokeJSONService(handleCWPutLogEvents, input)
+	}
 	return nil, &sfnExecutionError{
 		Name:  "States.TaskFailed",
 		Cause: fmt.Sprintf("Task resource %q is not implemented by an AWS service slice", resource),
 	}
+}
+
+func sfnInvokeJSONService(handler http.HandlerFunc, input any) (any, *sfnExecutionError) {
+	body, err := json.Marshal(input)
+	if err != nil {
+		return nil, &sfnExecutionError{Name: "States.Runtime", Cause: err.Error()}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	if rec.Code >= http.StatusBadRequest {
+		code, message := awsJSONError(rec.Body.Bytes())
+		if code == "" {
+			code = "States.TaskFailed"
+		}
+		return nil, &sfnExecutionError{Name: code, Cause: message}
+	}
+	if rec.Body.Len() == 0 {
+		return map[string]any{}, nil
+	}
+	var result any
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		return nil, &sfnExecutionError{Name: "States.Runtime", Cause: "service returned invalid JSON: " + err.Error()}
+	}
+	return result, nil
+}
+
+func sfnInvokeSNSPublish(input any) (any, *sfnExecutionError) {
+	parameters, ok := input.(map[string]any)
+	if !ok {
+		return nil, &sfnExecutionError{Name: "States.Runtime", Cause: "SNS integration parameters must be an object"}
+	}
+	form := url.Values{}
+	for _, key := range []string{"TopicArn", "TargetArn", "PhoneNumber", "Message", "Subject", "MessageGroupId", "MessageDeduplicationId"} {
+		if value, ok := parameters[key].(string); ok && value != "" {
+			form.Set(key, value)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	handleSNSPublish(rec, req)
+	if rec.Code >= http.StatusBadRequest {
+		code, message := awsXMLError(rec.Body.Bytes())
+		if code == "" {
+			code = "States.TaskFailed"
+		}
+		return nil, &sfnExecutionError{Name: code, Cause: message}
+	}
+	var response struct {
+		MessageID string `xml:"PublishResult>MessageId"`
+	}
+	if err := xml.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		return nil, &sfnExecutionError{Name: "States.Runtime", Cause: "Amazon SNS returned invalid XML: " + err.Error()}
+	}
+	return map[string]any{"MessageId": response.MessageID}, nil
 }
 
 func sfnInvokeNestedExecution(resource string, input, context any, cancel <-chan struct{}, heartbeat time.Duration) (any, *sfnExecutionError) {

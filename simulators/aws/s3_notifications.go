@@ -183,7 +183,7 @@ func s3FireObjectNotifications(bucket, key, eventName, etag string, size int64) 
 // caller has already authorized sns:Publish against the topic policy.
 func s3PublishToTopic(topicARN, message string) {
 	msgID := fmt.Sprintf("%016x", time.Now().UnixNano())
-	snsFanout(topicARN, msgID, "Amazon S3 Notification", message)
+	snsFanout(topicARN, msgID, "Amazon S3 Notification", message, nil)
 }
 
 // s3InvokeLambda performs a real in-process async Lambda invoke with the S3

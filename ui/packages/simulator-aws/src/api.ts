@@ -588,6 +588,10 @@ export interface LambdaConfigurationUpdate {
   timeout?: number;
   description?: string;
   environment?: { name: string; value: string }[];
+  runtime?: string;
+  handler?: string;
+  role?: string;
+  layers?: string[];
 }
 
 export const updateLambdaFunctionConfiguration = async (
@@ -603,6 +607,10 @@ export const updateLambdaFunctionConfiguration = async (
       Variables: Object.fromEntries(update.environment.map((entry) => [entry.name, entry.value])),
     };
   }
+  if (update.runtime !== undefined) body.Runtime = update.runtime;
+  if (update.handler !== undefined) body.Handler = update.handler;
+  if (update.role !== undefined) body.Role = update.role;
+  if (update.layers !== undefined) body.Layers = update.layers;
   await restJson(
     "lambda",
     "PUT",
@@ -781,6 +789,45 @@ export const createLambdaAlias = async (
   });
 };
 
+export const updateLambdaAlias = async (
+  functionName: string,
+  aliasName: string,
+  functionVersion: string,
+  description: string,
+): Promise<void> => {
+  await restJson(
+    "lambda",
+    "PUT",
+    `/2015-03-31/functions/${encodeURIComponent(functionName)}/aliases/${encodeURIComponent(aliasName)}`,
+    { FunctionVersion: functionVersion, Description: description },
+  );
+};
+
+export const deleteLambdaAlias = async (functionName: string, aliasName: string): Promise<void> => {
+  await restJson(
+    "lambda",
+    "DELETE",
+    `/2015-03-31/functions/${encodeURIComponent(functionName)}/aliases/${encodeURIComponent(aliasName)}`,
+  );
+};
+
+export interface LambdaCodeUpdate {
+  imageUri?: string;
+  s3Bucket?: string;
+  s3Key?: string;
+  publish?: boolean;
+}
+
+export const updateLambdaFunctionCode = async (
+  functionName: string,
+  update: LambdaCodeUpdate,
+): Promise<void> => {
+  await restJson("lambda", "PUT", `/2015-03-31/functions/${encodeURIComponent(functionName)}/code`, {
+    ...(update.imageUri ? { ImageUri: update.imageUri } : { S3Bucket: update.s3Bucket, S3Key: update.s3Key }),
+    Publish: update.publish ?? false,
+  });
+};
+
 export interface LambdaEventSourceMapping {
   uuid: string;
   eventSourceArn: string;
@@ -789,6 +836,13 @@ export interface LambdaEventSourceMapping {
   stateTransitionReason: string;
   batchSize: number;
   lastModified: number;
+}
+
+export interface LambdaEventSourceMappingUpdate {
+  eventSourceArn?: string;
+  enabled: boolean;
+  batchSize: number;
+  startingPosition?: "LATEST" | "TRIM_HORIZON";
 }
 
 export const fetchLambdaEventSourceMappings = async (
@@ -817,6 +871,33 @@ export const fetchLambdaEventSourceMappings = async (
   }));
 };
 
+export const createLambdaEventSourceMapping = async (
+  functionName: string,
+  update: LambdaEventSourceMappingUpdate,
+): Promise<void> => {
+  await restJson("lambda", "POST", "/2015-03-31/event-source-mappings", {
+    FunctionName: functionName,
+    EventSourceArn: update.eventSourceArn,
+    Enabled: update.enabled,
+    BatchSize: update.batchSize,
+    ...(update.startingPosition ? { StartingPosition: update.startingPosition } : {}),
+  });
+};
+
+export const updateLambdaEventSourceMapping = async (
+  uuid: string,
+  update: LambdaEventSourceMappingUpdate,
+): Promise<void> => {
+  await restJson("lambda", "PUT", `/2015-03-31/event-source-mappings/${encodeURIComponent(uuid)}`, {
+    Enabled: update.enabled,
+    BatchSize: update.batchSize,
+  });
+};
+
+export const deleteLambdaEventSourceMapping = async (uuid: string): Promise<void> => {
+  await restJson("lambda", "DELETE", `/2015-03-31/event-source-mappings/${encodeURIComponent(uuid)}`);
+};
+
 export interface LambdaConcurrency {
   reservedConcurrentExecutions?: number;
 }
@@ -839,6 +920,67 @@ export const putLambdaConcurrency = async (
 
 export const deleteLambdaConcurrency = async (functionName: string): Promise<void> => {
   await restJson("lambda", "DELETE", `/2017-10-31/functions/${encodeURIComponent(functionName)}/concurrency`);
+};
+
+export interface LambdaProvisionedConcurrency {
+  functionArn: string;
+  qualifier: string;
+  requested: number;
+  available: number;
+  allocated: number;
+  status: string;
+  lastModified: string;
+}
+
+export const fetchLambdaProvisionedConcurrency = async (
+  functionName: string,
+): Promise<LambdaProvisionedConcurrency[]> => {
+  const response = await restJson<{
+    ProvisionedConcurrencyConfigs?: {
+      FunctionArn?: string;
+      RequestedProvisionedConcurrentExecutions?: number;
+      AvailableProvisionedConcurrentExecutions?: number;
+      AllocatedProvisionedConcurrentExecutions?: number;
+      Status?: string;
+      LastModified?: string;
+    }[];
+  }>("lambda", "GET", `/2019-09-30/functions/${encodeURIComponent(functionName)}/provisioned-concurrency?List=ALL`);
+  return (response.ProvisionedConcurrencyConfigs ?? []).map((config) => {
+    const functionArn = config.FunctionArn ?? "";
+    return {
+      functionArn,
+      qualifier: functionArn.slice(functionArn.lastIndexOf(":") + 1),
+      requested: config.RequestedProvisionedConcurrentExecutions ?? 0,
+      available: config.AvailableProvisionedConcurrentExecutions ?? 0,
+      allocated: config.AllocatedProvisionedConcurrentExecutions ?? 0,
+      status: config.Status ?? "",
+      lastModified: config.LastModified ?? "",
+    };
+  });
+};
+
+export const putLambdaProvisionedConcurrency = async (
+  functionName: string,
+  qualifier: string,
+  executions: number,
+): Promise<void> => {
+  await restJson(
+    "lambda",
+    "PUT",
+    `/2019-09-30/functions/${encodeURIComponent(functionName)}/provisioned-concurrency?Qualifier=${encodeURIComponent(qualifier)}`,
+    { ProvisionedConcurrentExecutions: executions },
+  );
+};
+
+export const deleteLambdaProvisionedConcurrency = async (
+  functionName: string,
+  qualifier: string,
+): Promise<void> => {
+  await restJson(
+    "lambda",
+    "DELETE",
+    `/2019-09-30/functions/${encodeURIComponent(functionName)}/provisioned-concurrency?Qualifier=${encodeURIComponent(qualifier)}`,
+  );
 };
 
 interface LambdaConcurrencyWire {
@@ -886,8 +1028,90 @@ export const createLambdaFunctionUrl = async (
   });
 };
 
+export const updateLambdaFunctionUrl = async (
+  functionName: string,
+  authType: "AWS_IAM" | "NONE",
+  invokeMode: "BUFFERED" | "RESPONSE_STREAM",
+): Promise<void> => {
+  await restJson("lambda", "PUT", `/2021-10-31/functions/${encodeURIComponent(functionName)}/url`, {
+    AuthType: authType,
+    InvokeMode: invokeMode,
+  });
+};
+
 export const deleteLambdaFunctionUrl = async (functionName: string): Promise<void> => {
   await restJson("lambda", "DELETE", `/2021-10-31/functions/${encodeURIComponent(functionName)}/url`);
+};
+
+export interface LambdaEventInvokeConfig {
+  functionArn: string;
+  qualifier: string;
+  maximumRetryAttempts?: number;
+  maximumEventAgeInSeconds?: number;
+  onSuccessDestination?: string;
+  onFailureDestination?: string;
+  lastModified: number;
+}
+
+export const fetchLambdaEventInvokeConfigs = async (functionName: string): Promise<LambdaEventInvokeConfig[]> => {
+  const response = await restJson<{
+    FunctionEventInvokeConfigs?: {
+      FunctionArn?: string;
+      MaximumRetryAttempts?: number;
+      MaximumEventAgeInSeconds?: number;
+      LastModified?: number;
+      DestinationConfig?: {
+        OnSuccess?: { Destination?: string };
+        OnFailure?: { Destination?: string };
+      };
+    }[];
+  }>("lambda", "GET", `/2019-09-25/functions/${encodeURIComponent(functionName)}/event-invoke-config/list`);
+  return (response.FunctionEventInvokeConfigs ?? []).map((config) => {
+    const functionArn = config.FunctionArn ?? "";
+    const suffix = functionArn.slice(functionArn.lastIndexOf(":") + 1);
+    return {
+      functionArn,
+      qualifier: suffix === functionName ? "$LATEST" : suffix,
+      maximumRetryAttempts: config.MaximumRetryAttempts,
+      maximumEventAgeInSeconds: config.MaximumEventAgeInSeconds,
+      onSuccessDestination: config.DestinationConfig?.OnSuccess?.Destination,
+      onFailureDestination: config.DestinationConfig?.OnFailure?.Destination,
+      lastModified: config.LastModified ?? 0,
+    };
+  });
+};
+
+export const putLambdaEventInvokeConfig = async (
+  functionName: string,
+  qualifier: string,
+  config: {
+    maximumRetryAttempts: number;
+    maximumEventAgeInSeconds: number;
+    onSuccessDestination?: string;
+    onFailureDestination?: string;
+  },
+): Promise<void> => {
+  const destinationConfig: Record<string, { Destination: string }> = {};
+  if (config.onSuccessDestination) destinationConfig.OnSuccess = { Destination: config.onSuccessDestination };
+  if (config.onFailureDestination) destinationConfig.OnFailure = { Destination: config.onFailureDestination };
+  const query = qualifier === "$LATEST" ? "" : `?Qualifier=${encodeURIComponent(qualifier)}`;
+  await restJson("lambda", "PUT", `/2019-09-25/functions/${encodeURIComponent(functionName)}/event-invoke-config${query}`, {
+    MaximumRetryAttempts: config.maximumRetryAttempts,
+    MaximumEventAgeInSeconds: config.maximumEventAgeInSeconds,
+    DestinationConfig: destinationConfig,
+  });
+};
+
+export const deleteLambdaEventInvokeConfig = async (
+  functionName: string,
+  qualifier: string,
+): Promise<void> => {
+  const query = qualifier === "$LATEST" ? "" : `?Qualifier=${encodeURIComponent(qualifier)}`;
+  await restJson(
+    "lambda",
+    "DELETE",
+    `/2019-09-25/functions/${encodeURIComponent(functionName)}/event-invoke-config${query}`,
+  );
 };
 
 // Lambda resource tagging — TagResource (POST /2017-03-31/tags/{arn}) sets or
@@ -1198,6 +1422,20 @@ interface CWLogGroupEntry {
   storedBytes?: number;
 }
 
+export type CWStorageTier = "STANDARD" | "INTELLIGENT_TIERING";
+
+export interface CWStorageTierPolicy {
+  storageTier: CWStorageTier;
+  lastUpdatedTime: number;
+}
+
+export interface CWSyslogConfiguration {
+  logGroupArn: string;
+  sourceType: string;
+  vpcEndpointId: string;
+  createdAt: number;
+}
+
 // AWS Identity and Access Management (IAM) — the query protocol (Action +
 // Version=2010-05-08, form-encoded, XML responses), the same wire the aws CLI
 // signs. The console drives it with the operator's federated credentials, so
@@ -1436,6 +1674,43 @@ export const createCWLogGroup = async (logGroupName: string): Promise<void> => {
 
 export const deleteCWLogGroup = async (logGroupName: string): Promise<void> => {
   await awsJson("logs", "Logs_20140328.DeleteLogGroup", { logGroupName });
+};
+
+export const fetchCWStorageTierPolicy = async (): Promise<CWStorageTierPolicy> =>
+  awsJson<CWStorageTierPolicy>("logs", "Logs_20140328.GetStorageTierPolicy", {});
+
+export const putCWStorageTierPolicy = async (storageTier: CWStorageTier): Promise<CWStorageTierPolicy> =>
+  awsJson<CWStorageTierPolicy>("logs", "Logs_20140328.PutStorageTierPolicy", { storageTier });
+
+export const fetchCWSyslogConfigurations = async (
+  logGroupIdentifier?: string,
+): Promise<CWSyslogConfiguration[]> => {
+  const listed = await awsJson<{ syslogConfigurations?: CWSyslogConfiguration[] }>(
+    "logs",
+    "Logs_20140328.ListSyslogConfigurations",
+    logGroupIdentifier ? { logGroupIdentifier } : {},
+  );
+  return listed.syslogConfigurations ?? [];
+};
+
+export const putCWSyslogConfiguration = async (
+  logGroupIdentifier: string,
+  vpcEndpointId: string,
+): Promise<void> => {
+  await awsJson("logs", "Logs_20140328.PutSyslogConfiguration", {
+    logGroupIdentifier,
+    vpcEndpointId,
+  });
+};
+
+export const deleteCWSyslogConfiguration = async (
+  logGroupIdentifier: string,
+  vpcEndpointId: string,
+): Promise<void> => {
+  await awsJson("logs", "Logs_20140328.DeleteSyslogConfiguration", {
+    logGroupIdentifier,
+    vpcEndpointId,
+  });
 };
 
 // Retention — PutRetentionPolicy sets a fixed retention in days;
@@ -2663,6 +2938,40 @@ export const deleteSNSTopic = async (topicArn: string): Promise<void> => {
   await awsQuery("sns", SNS_VERSION, "DeleteTopic", { TopicArn: topicArn });
 };
 
+export const publishSNSMessage = async (topicArn: string, message: string, subject = ""): Promise<string> => {
+  const xml = await awsQuery("sns", SNS_VERSION, "Publish", { TopicArn: topicArn, Message: message, Subject: subject });
+  return childText(xml.documentElement, "MessageId");
+};
+
+export const subscribeSNSEndpoint = async (topicArn: string, protocol: string, endpoint: string): Promise<string> => {
+  const xml = await awsQuery("sns", SNS_VERSION, "Subscribe", {
+    TopicArn: topicArn,
+    Protocol: protocol,
+    Endpoint: endpoint,
+    ReturnSubscriptionArn: "true",
+  });
+  return childText(xml.documentElement, "SubscriptionArn");
+};
+
+export const unsubscribeSNSEndpoint = async (subscriptionArn: string): Promise<void> => {
+  await awsQuery("sns", SNS_VERSION, "Unsubscribe", { SubscriptionArn: subscriptionArn });
+};
+
+export const fetchSNSTopicAttributes = async (topicArn: string): Promise<Record<string, string>> => {
+  const xml = await awsQuery("sns", SNS_VERSION, "GetTopicAttributes", { TopicArn: topicArn });
+  return Object.fromEntries(
+    xmlList(xml, "Attributes").map((entry) => [childText(entry, "key"), childText(entry, "value")]),
+  );
+};
+
+export const setSNSTopicAttribute = async (topicArn: string, name: string, value: string): Promise<void> => {
+  await awsQuery("sns", SNS_VERSION, "SetTopicAttributes", {
+    TopicArn: topicArn,
+    AttributeName: name,
+    AttributeValue: value,
+  });
+};
+
 export interface SNSSubscription {
   subscriptionArn: string;
   topicArn: string;
@@ -2695,6 +3004,7 @@ export interface SQSQueue {
   approximateNumberOfMessagesNotVisible: number;
   createdTimestamp: number;
   visibilityTimeout: number;
+  policy: string;
 }
 
 /** A queue's name is the last path segment of its URL, which is how every SQS
@@ -2722,6 +3032,7 @@ export const fetchSQSQueues = async (): Promise<SQSQueue[]> => {
       approximateNumberOfMessagesNotVisible: Number(values.ApproximateNumberOfMessagesNotVisible ?? "0"),
       createdTimestamp: Number(values.CreatedTimestamp ?? "0"),
       visibilityTimeout: Number(values.VisibilityTimeout ?? "0"),
+      policy: values.Policy ?? "",
     });
   }
   return queues;
@@ -2733,6 +3044,54 @@ export const createSQSQueue = async (queueName: string): Promise<void> => {
 
 export const deleteSQSQueue = async (queueUrl: string): Promise<void> => {
   await awsJson10("sqs", "AmazonSQS.DeleteQueue", { QueueUrl: queueUrl });
+};
+
+export interface SQSMessage {
+  messageId: string;
+  receiptHandle: string;
+  body: string;
+  attributes: Record<string, string>;
+}
+
+export const sendSQSMessage = async (queueUrl: string, messageBody: string): Promise<string> => {
+  const response = await awsJson10<{ MessageId?: string }>("sqs", "AmazonSQS.SendMessage", {
+    QueueUrl: queueUrl,
+    MessageBody: messageBody,
+  });
+  return response.MessageId ?? "";
+};
+
+export const receiveSQSMessages = async (queueUrl: string): Promise<SQSMessage[]> => {
+  const response = await awsJson10<{
+    Messages?: { MessageId?: string; ReceiptHandle?: string; Body?: string; Attributes?: Record<string, string> }[];
+  }>("sqs", "AmazonSQS.ReceiveMessage", {
+    QueueUrl: queueUrl,
+    MaxNumberOfMessages: 10,
+    WaitTimeSeconds: 0,
+    AttributeNames: ["All"],
+    MessageAttributeNames: ["All"],
+  });
+  return (response.Messages ?? []).map((message) => ({
+    messageId: message.MessageId ?? "",
+    receiptHandle: message.ReceiptHandle ?? "",
+    body: message.Body ?? "",
+    attributes: message.Attributes ?? {},
+  }));
+};
+
+export const deleteSQSMessage = async (queueUrl: string, receiptHandle: string): Promise<void> => {
+  await awsJson10("sqs", "AmazonSQS.DeleteMessage", { QueueUrl: queueUrl, ReceiptHandle: receiptHandle });
+};
+
+export const purgeSQSQueue = async (queueUrl: string): Promise<void> => {
+  await awsJson10("sqs", "AmazonSQS.PurgeQueue", { QueueUrl: queueUrl });
+};
+
+export const setSQSQueueAttributes = async (
+  queueUrl: string,
+  attributes: Record<string, string>,
+): Promise<void> => {
+  await awsJson10("sqs", "AmazonSQS.SetQueueAttributes", { QueueUrl: queueUrl, Attributes: attributes });
 };
 
 // ---------------------------------------------------------------------------
@@ -2768,34 +3127,129 @@ export interface EventBridgeRule {
 }
 
 export const fetchEventBridgeRules = async (): Promise<EventBridgeRule[]> => {
-  const listed = await awsJson<{
-    Rules?: {
-      Name?: string;
-      Arn?: string;
-      EventBusName?: string;
-      State?: string;
-      ScheduleExpression?: string;
-      Description?: string;
-    }[];
-  }>("events", "AWSEvents.ListRules", {});
-  return (listed.Rules ?? []).map((rule) => ({
-    name: rule.Name ?? "",
-    arn: rule.Arn ?? "",
-    eventBusName: rule.EventBusName ?? "default",
-    state: rule.State ?? "",
-    scheduleExpression: rule.ScheduleExpression ?? "",
-    description: rule.Description ?? "",
+  const buses = await fetchEventBuses();
+  const lists = await Promise.all(buses.map(async (bus) => {
+    const listed = await awsJson<{
+      Rules?: {
+        Name?: string;
+        Arn?: string;
+        EventBusName?: string;
+        State?: string;
+        ScheduleExpression?: string;
+        Description?: string;
+      }[];
+    }>("events", "AWSEvents.ListRules", { EventBusName: bus.name });
+    return (listed.Rules ?? []).map((rule) => ({
+      name: rule.Name ?? "",
+      arn: rule.Arn ?? "",
+      eventBusName: rule.EventBusName ?? bus.name,
+      state: rule.State ?? "",
+      scheduleExpression: rule.ScheduleExpression ?? "",
+      description: rule.Description ?? "",
+    }));
   }));
+  return lists.flat();
 };
 
 // EnableRule and DisableRule are the two lifecycle actions the real console's
 // Rules table offers alongside Delete.
-export const setEventBridgeRuleState = async (name: string, enabled: boolean): Promise<void> => {
-  await awsJson("events", `AWSEvents.${enabled ? "EnableRule" : "DisableRule"}`, { Name: name });
+export const setEventBridgeRuleState = async (name: string, enabled: boolean, eventBusName = "default"): Promise<void> => {
+  await awsJson("events", `AWSEvents.${enabled ? "EnableRule" : "DisableRule"}`, { Name: name, EventBusName: eventBusName });
 };
 
-export const deleteEventBridgeRule = async (name: string): Promise<void> => {
-  await awsJson("events", "AWSEvents.DeleteRule", { Name: name });
+export const deleteEventBridgeRule = async (name: string, eventBusName = "default"): Promise<void> => {
+  await awsJson("events", "AWSEvents.DeleteRule", { Name: name, EventBusName: eventBusName });
+};
+
+export const putEventBridgeRule = async (input: {
+  name: string;
+  eventBusName?: string;
+  description?: string;
+  eventPattern?: string;
+  scheduleExpression?: string;
+  state?: string;
+}): Promise<string> => {
+  const response = await awsJson<{ RuleArn?: string }>("events", "AWSEvents.PutRule", {
+    Name: input.name,
+    EventBusName: input.eventBusName || "default",
+    Description: input.description,
+    EventPattern: input.eventPattern || undefined,
+    ScheduleExpression: input.scheduleExpression || undefined,
+    State: input.state || "ENABLED",
+  });
+  return response.RuleArn ?? "";
+};
+
+export interface EventBridgeTarget {
+  id: string;
+  arn: string;
+  roleArn: string;
+  input: string;
+  inputPath: string;
+}
+
+export const fetchEventBridgeTargets = async (rule: string, eventBusName = "default"): Promise<EventBridgeTarget[]> => {
+  const response = await awsJson<{
+    Targets?: { Id?: string; Arn?: string; RoleArn?: string; Input?: string; InputPath?: string }[];
+  }>("events", "AWSEvents.ListTargetsByRule", { Rule: rule, EventBusName: eventBusName });
+  return (response.Targets ?? []).map((target) => ({
+    id: target.Id ?? "",
+    arn: target.Arn ?? "",
+    roleArn: target.RoleArn ?? "",
+    input: target.Input ?? "",
+    inputPath: target.InputPath ?? "",
+  }));
+};
+
+export const putEventBridgeTarget = async (
+  rule: string,
+  target: EventBridgeTarget,
+  eventBusName = "default",
+): Promise<void> => {
+  await awsJson("events", "AWSEvents.PutTargets", {
+    Rule: rule,
+    EventBusName: eventBusName,
+    Targets: [{ Id: target.id, Arn: target.arn, RoleArn: target.roleArn || undefined, Input: target.input || undefined }],
+  });
+};
+
+export const removeEventBridgeTarget = async (
+  rule: string,
+  targetId: string,
+  eventBusName = "default",
+): Promise<void> => {
+  await awsJson("events", "AWSEvents.RemoveTargets", { Rule: rule, EventBusName: eventBusName, Ids: [targetId] });
+};
+
+export const putEventBridgeEvent = async (input: {
+  source: string;
+  detailType: string;
+  detail: string;
+  eventBusName?: string;
+}): Promise<string> => {
+  const response = await awsJson<{ FailedEntryCount?: number; Entries?: { EventId?: string; ErrorMessage?: string }[] }>(
+    "events",
+    "AWSEvents.PutEvents",
+    {
+      Entries: [{
+        Source: input.source,
+        DetailType: input.detailType,
+        Detail: input.detail,
+        EventBusName: input.eventBusName || "default",
+      }],
+    },
+  );
+  const entry = response.Entries?.[0];
+  if (response.FailedEntryCount || entry?.ErrorMessage) throw new Error(entry?.ErrorMessage || "EventBridge rejected the event");
+  return entry?.EventId ?? "";
+};
+
+export const createEventBus = async (name: string, description = ""): Promise<void> => {
+  await awsJson("events", "AWSEvents.CreateEventBus", { Name: name, Description: description || undefined });
+};
+
+export const deleteEventBus = async (name: string): Promise<void> => {
+  await awsJson("events", "AWSEvents.DeleteEventBus", { Name: name });
 };
 
 // ---------------------------------------------------------------------------
@@ -2852,6 +3306,52 @@ export const fetchScheduleGroups = async (): Promise<ScheduleGroup[]> => {
     state: group.State ?? "",
     creationDate: group.CreationDate ?? "",
   }));
+};
+
+export const createSchedule = async (input: {
+  name: string;
+  groupName: string;
+  expression: string;
+  targetArn: string;
+  roleArn: string;
+  targetInput: string;
+}): Promise<void> => {
+  await restJson("scheduler", "POST", `/schedules/${encodeURIComponent(input.name)}?groupName=${encodeURIComponent(input.groupName || "default")}`, {
+    ScheduleExpression: input.expression,
+    State: "ENABLED",
+    FlexibleTimeWindow: { Mode: "OFF" },
+    Target: { Arn: input.targetArn, RoleArn: input.roleArn, Input: input.targetInput || "{}" },
+  });
+};
+
+export const updateScheduleState = async (schedule: Schedule, state: "ENABLED" | "DISABLED"): Promise<void> => {
+  const current = await awsRestJson<Record<string, unknown>>(
+    "scheduler",
+    `/schedules/${encodeURIComponent(schedule.name)}?groupName=${encodeURIComponent(schedule.groupName || "default")}`,
+  );
+  const { Arn: _arn, CreationDate: _created, LastModificationDate: _modified, Name: _name, GroupName: _group, ...mutable } = current;
+  await restJson(
+    "scheduler",
+    "PUT",
+    `/schedules/${encodeURIComponent(schedule.name)}?groupName=${encodeURIComponent(schedule.groupName || "default")}`,
+    { ...mutable, State: state },
+  );
+};
+
+export const deleteSchedule = async (schedule: Schedule): Promise<void> => {
+  await restJson(
+    "scheduler",
+    "DELETE",
+    `/schedules/${encodeURIComponent(schedule.name)}?groupName=${encodeURIComponent(schedule.groupName || "default")}`,
+  );
+};
+
+export const createScheduleGroup = async (name: string): Promise<void> => {
+  await restJson("scheduler", "POST", `/schedule-groups/${encodeURIComponent(name)}`, {});
+};
+
+export const deleteScheduleGroup = async (name: string): Promise<void> => {
+  await restJson("scheduler", "DELETE", `/schedule-groups/${encodeURIComponent(name)}`);
 };
 
 // ---------------------------------------------------------------------------
@@ -2950,11 +3450,15 @@ export const fetchStateMachineExecutions = async (stateMachineArn: string): Prom
 
 // StartExecution with no input is what the real console's "Start execution"
 // dialog sends when the operator leaves the input at its `{}` default.
-export const startStateMachineExecution = async (stateMachineArn: string, input: string): Promise<string> => {
+export const startStateMachineExecution = async (
+  stateMachineArn: string,
+  input: string,
+  name?: string,
+): Promise<string> => {
   const started = await awsJson10<{ executionArn?: string }>(
     "states",
     "AWSStepFunctions.StartExecution",
-    { stateMachineArn, input },
+    { stateMachineArn, input, ...(name ? { name } : {}) },
   );
   return started.executionArn ?? "";
 };
@@ -3060,6 +3564,8 @@ export interface StateMachineAlias {
   name: string;
   creationDate: number;
   updateDate: number;
+  description: string;
+  routingConfiguration: { stateMachineVersionArn: string; weight: number }[];
 }
 
 export const fetchStateMachineAliases = async (stateMachineArn: string): Promise<StateMachineAlias[]> => {
@@ -3071,7 +3577,12 @@ export const fetchStateMachineAliases = async (stateMachineArn: string): Promise
   }>("states", "AWSStepFunctions.ListStateMachineAliases", { stateMachineArn });
   return Promise.all((response.stateMachineAliases ?? []).map(async (alias) => {
     const stateMachineAliasArn = alias.stateMachineAliasArn ?? "";
-    const described = await awsJson10<{ name?: string; updateDate?: number }>(
+    const described = await awsJson10<{
+      name?: string;
+      updateDate?: number;
+      description?: string;
+      routingConfiguration?: { stateMachineVersionArn?: string; weight?: number }[];
+    }>(
       "states",
       "AWSStepFunctions.DescribeStateMachineAlias",
       { stateMachineAliasArn },
@@ -3081,6 +3592,11 @@ export const fetchStateMachineAliases = async (stateMachineArn: string): Promise
       name: described.name ?? stateMachineAliasArn.slice(stateMachineAliasArn.lastIndexOf(":") + 1),
       creationDate: alias.creationDate ?? 0,
       updateDate: described.updateDate ?? 0,
+      description: described.description ?? "",
+      routingConfiguration: (described.routingConfiguration ?? []).map((route) => ({
+        stateMachineVersionArn: route.stateMachineVersionArn ?? "",
+        weight: route.weight ?? 0,
+      })),
     };
   }));
 };
@@ -3130,6 +3646,67 @@ export const createStateMachineAlias = async (
     description,
     routingConfiguration: [{ stateMachineVersionArn: versionArn, weight: 100 }],
   });
+};
+
+export const updateStateMachineAlias = async (
+  stateMachineAliasArn: string,
+  description: string,
+  routingConfiguration: { stateMachineVersionArn: string; weight: number }[],
+): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.UpdateStateMachineAlias", {
+    stateMachineAliasArn,
+    description,
+    routingConfiguration,
+  });
+};
+
+export const deleteStateMachineAlias = async (stateMachineAliasArn: string): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.DeleteStateMachineAlias", { stateMachineAliasArn });
+};
+
+export const deleteStateMachineVersion = async (stateMachineVersionArn: string): Promise<void> => {
+  await awsJson10("states", "AWSStepFunctions.DeleteStateMachineVersion", { stateMachineVersionArn });
+};
+
+export interface StateMachineDefinitionValidation {
+  result: "OK" | "FAIL";
+  diagnostics: { message: string }[];
+}
+
+export const validateStateMachineDefinition = async (
+  definition: string,
+): Promise<StateMachineDefinitionValidation> =>
+  awsJson10<StateMachineDefinitionValidation>(
+    "states",
+    "AWSStepFunctions.ValidateStateMachineDefinition",
+    { definition },
+  );
+
+export interface StateMachineTestResult {
+  status: string;
+  output: string;
+  error: string;
+  cause: string;
+  nextState: string;
+}
+
+export const testStateMachineState = async (
+  definition: string,
+  input: string,
+  stateName: string,
+): Promise<StateMachineTestResult> => {
+  const response = await awsJson10<Partial<StateMachineTestResult>>(
+    "states",
+    "AWSStepFunctions.TestState",
+    { definition, input, ...(stateName ? { stateName } : {}) },
+  );
+  return {
+    status: response.status ?? "",
+    output: response.output ?? "",
+    error: response.error ?? "",
+    cause: response.cause ?? "",
+    nextState: response.nextState ?? "",
+  };
 };
 
 export const tagStateMachineResource = async (
@@ -3190,6 +3767,52 @@ export const deleteCWAlarms = async (alarmNames: string[]): Promise<void> => {
   await awsQuery("monitoring", CLOUDWATCH_VERSION, "DeleteAlarms", xmlIndexedParams("AlarmNames.member", alarmNames));
 };
 
+export const putCWMetricData = async (namespace: string, metricName: string, value: number): Promise<void> => {
+  await awsQuery("monitoring", CLOUDWATCH_VERSION, "PutMetricData", {
+    Namespace: namespace,
+    "MetricData.member.1.MetricName": metricName,
+    "MetricData.member.1.Value": String(value),
+  });
+};
+
+export const putCWMetricAlarm = async (input: {
+  alarmName: string;
+  namespace: string;
+  metricName: string;
+  threshold: number;
+  alarmAction?: string;
+}): Promise<void> => {
+  await awsQuery("monitoring", CLOUDWATCH_VERSION, "PutMetricAlarm", {
+    AlarmName: input.alarmName,
+    Namespace: input.namespace,
+    MetricName: input.metricName,
+    Statistic: "Average",
+    Period: "60",
+    EvaluationPeriods: "1",
+    DatapointsToAlarm: "1",
+    Threshold: String(input.threshold),
+    ComparisonOperator: "GreaterThanOrEqualToThreshold",
+    ...(input.alarmAction ? { "AlarmActions.member.1": input.alarmAction, ActionsEnabled: "true" } : {}),
+  });
+};
+
+export const setCWAlarmActions = async (alarmNames: string[], enabled: boolean): Promise<void> => {
+  await awsQuery(
+    "monitoring",
+    CLOUDWATCH_VERSION,
+    enabled ? "EnableAlarmActions" : "DisableAlarmActions",
+    xmlIndexedParams("AlarmNames.member", alarmNames),
+  );
+};
+
+export const putCWDashboard = async (name: string, body: string): Promise<void> => {
+  await awsQuery("monitoring", CLOUDWATCH_VERSION, "PutDashboard", { DashboardName: name, DashboardBody: body });
+};
+
+export const deleteCWDashboards = async (names: string[]): Promise<void> => {
+  await awsQuery("monitoring", CLOUDWATCH_VERSION, "DeleteDashboards", xmlIndexedParams("DashboardNames.member", names));
+};
+
 export interface CWDashboard {
   dashboardName: string;
   dashboardArn: string;
@@ -3221,6 +3844,7 @@ export interface CloudTrailTrail {
   isMultiRegionTrail: boolean;
   includeGlobalServiceEvents: boolean;
   logFileValidationEnabled: boolean;
+  isLogging: boolean;
 }
 
 export const fetchCloudTrailTrails = async (): Promise<CloudTrailTrail[]> => {
@@ -3235,14 +3859,23 @@ export const fetchCloudTrailTrails = async (): Promise<CloudTrailTrail[]> => {
       LogFileValidationEnabled?: boolean;
     }[];
   }>("cloudtrail", `${CLOUDTRAIL_TARGET_PREFIX}DescribeTrails`, {});
-  return (described.trailList ?? []).map((trail) => ({
-    name: trail.Name ?? "",
-    trailARN: trail.TrailARN ?? "",
-    s3BucketName: trail.S3BucketName ?? "",
-    homeRegion: trail.HomeRegion ?? "",
-    isMultiRegionTrail: trail.IsMultiRegionTrail ?? false,
-    includeGlobalServiceEvents: trail.IncludeGlobalServiceEvents ?? false,
-    logFileValidationEnabled: trail.LogFileValidationEnabled ?? false,
+  return Promise.all((described.trailList ?? []).map(async (trail) => {
+    const name = trail.Name ?? "";
+    const status = await awsJson<{ IsLogging?: boolean }>(
+      "cloudtrail",
+      `${CLOUDTRAIL_TARGET_PREFIX}GetTrailStatus`,
+      { Name: name },
+    );
+    return {
+      name,
+      trailARN: trail.TrailARN ?? "",
+      s3BucketName: trail.S3BucketName ?? "",
+      homeRegion: trail.HomeRegion ?? "",
+      isMultiRegionTrail: trail.IsMultiRegionTrail ?? false,
+      includeGlobalServiceEvents: trail.IncludeGlobalServiceEvents ?? false,
+      logFileValidationEnabled: trail.LogFileValidationEnabled ?? false,
+      isLogging: status.IsLogging ?? false,
+    };
   }));
 };
 
@@ -3253,6 +3886,7 @@ export interface CloudTrailEvent {
   eventTime: number;
   username: string;
   readOnly: string;
+  cloudTrailEvent: string;
 }
 
 // LookupEvents is the API behind the real console's Event history page.
@@ -3265,6 +3899,7 @@ export const fetchCloudTrailEvents = async (): Promise<CloudTrailEvent[]> => {
       EventTime?: number;
       Username?: string;
       ReadOnly?: string;
+      CloudTrailEvent?: string;
     }[];
   }>("cloudtrail", `${CLOUDTRAIL_TARGET_PREFIX}LookupEvents`, { MaxResults: 50 });
   return (looked.Events ?? []).map((event) => ({
@@ -3274,7 +3909,30 @@ export const fetchCloudTrailEvents = async (): Promise<CloudTrailEvent[]> => {
     eventTime: event.EventTime ?? 0,
     username: event.Username ?? "",
     readOnly: event.ReadOnly ?? "",
+    cloudTrailEvent: event.CloudTrailEvent ?? "",
   }));
+};
+
+export const createCloudTrailTrail = async (name: string, s3BucketName: string): Promise<void> => {
+  await awsJson("cloudtrail", `${CLOUDTRAIL_TARGET_PREFIX}CreateTrail`, {
+    Name: name,
+    S3BucketName: s3BucketName,
+    IncludeGlobalServiceEvents: true,
+    IsMultiRegionTrail: true,
+    EnableLogFileValidation: true,
+  });
+};
+
+export const startCloudTrailLogging = async (name: string): Promise<void> => {
+  await awsJson("cloudtrail", `${CLOUDTRAIL_TARGET_PREFIX}StartLogging`, { Name: name });
+};
+
+export const stopCloudTrailLogging = async (name: string): Promise<void> => {
+  await awsJson("cloudtrail", `${CLOUDTRAIL_TARGET_PREFIX}StopLogging`, { Name: name });
+};
+
+export const deleteCloudTrailTrail = async (name: string): Promise<void> => {
+  await awsJson("cloudtrail", `${CLOUDTRAIL_TARGET_PREFIX}DeleteTrail`, { Name: name });
 };
 
 // ---------------------------------------------------------------------------

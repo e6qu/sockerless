@@ -15,7 +15,7 @@ func TestSNSNotificationEnvelopeValidJSON(t *testing.T) {
 	// control character. json.Marshal escapes it as \u0001, so the message
 	// string itself is valid JSON.
 	message := `{"AlarmName":"bad\u0001char","Description":"line1\nline2"}`
-	envelopeStr := snsNotificationEnvelope("arn:aws:sns:us-east-1:123456789012:t", "msg-id", "subj", message)
+	envelopeStr := snsNotificationEnvelope("arn:aws:sns:us-east-1:123456789012:t", "msg-id", "subj", message, nil)
 
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(envelopeStr), &envelope); err != nil {
@@ -46,7 +46,7 @@ func TestSNSNotificationEnvelopeQuotesAndBackslashes(t *testing.T) {
 	// JSON at both the outer envelope layer and the inner Message layer.
 	message := `{"AlarmName":"cpu\"alarm","AlarmDescription":"cpu above 50 \"adversarial\" line1\nline2 \\path","Region":"us-east-1"}`
 	subject := `ALARM: "cpu\"alarm" in us-east-1`
-	envelopeStr := snsNotificationEnvelope("arn:aws:sns:us-east-1:123456789012:t", "msg-id", subject, message)
+	envelopeStr := snsNotificationEnvelope("arn:aws:sns:us-east-1:123456789012:t", "msg-id", subject, message, nil)
 
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(envelopeStr), &envelope); err != nil {
