@@ -183,6 +183,12 @@ export function AzureResourceTable<T>({
       setDeleting(false);
       void queryClient.invalidateQueries({ queryKey });
     },
+    onError: () => {
+      // A failed Azure Resource Manager deletion remains actionable in the
+      // confirmation surface even if Fluent received a concurrent dismiss
+      // event while the request was settling.
+      setDeleting(true);
+    },
   });
 
   const rows = useMemo(() => {
@@ -224,7 +230,12 @@ export function AzureResourceTable<T>({
             icon: "delete",
             testid: deleteTestId,
             disabled: selected.size === 0 || !onDelete,
-            onSelect: onDelete ? () => setDeleting(true) : undefined,
+            onSelect: onDelete
+              ? () => {
+                  remove.reset();
+                  setDeleting(true);
+                }
+              : undefined,
           },
           { label: "Assign tags", icon: "tag", disabled: selected.size === 0 },
           { label: "Export to CSV", icon: "download", disabled: rows.length === 0 },
@@ -372,7 +383,11 @@ export function AzureResourceTable<T>({
             ) : undefined
           }
           onConfirm={() => remove.mutate()}
-          onCancel={() => setDeleting(false)}
+          onCancel={() => {
+            if (remove.isPending) return;
+            setDeleting(false);
+            remove.reset();
+          }}
         >
           <Text as="p">{deleteWarning}</Text>
           <ul>

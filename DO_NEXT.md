@@ -66,7 +66,10 @@ the transient Cloud Resource Manager 20260715 rollout disappeared from every
 sampled edge, so the pinned 20260709 documents remained the truthful source.
 The Azure Terraform job installed Ubuntu's signed Caddy package through its
 retry- and timeout-bounded APT path, so a third-party repository bootstrap
-could no longer consume the provider test's execution budget.
+could no longer consume the provider test's execution budget. Microsoft.Network
+subnets accepted AzureRM 5's plural `addressPrefixes` request and used it for
+the real network fabric. Failed portal deletions kept their provider error
+inside the open Fluent confirmation surface instead of racing with dismissal.
 
 The publication repair preserved current public contracts across the failing
 client surfaces. Amazon SQS redrive used the normal enqueue path and therefore

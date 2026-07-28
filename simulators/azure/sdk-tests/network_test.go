@@ -64,13 +64,16 @@ func TestNetwork_CreateSubnet(t *testing.T) {
 	require.NoError(t, err)
 	subnetPoller, err := subnetClient.BeginCreateOrUpdate(ctx, "subnet-rg", "subnet-vnet", "test-subnet", armnetwork.Subnet{
 		Properties: &armnetwork.SubnetPropertiesFormat{
-			AddressPrefix: ptrStr("10.1.1.0/24"),
+			AddressPrefixes: []*string{ptrStr("10.1.1.0/24")},
 		},
 	}, nil)
 	require.NoError(t, err)
 	subnetResp, err := subnetPoller.PollUntilDone(ctx, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "test-subnet", *subnetResp.Name)
+	require.NotNil(t, subnetResp.Properties)
+	require.Len(t, subnetResp.Properties.AddressPrefixes, 1)
+	assert.Equal(t, "10.1.1.0/24", *subnetResp.Properties.AddressPrefixes[0])
 }
 
 func TestNetwork_CreateNSG(t *testing.T) {

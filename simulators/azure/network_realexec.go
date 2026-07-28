@@ -129,11 +129,15 @@ func azureCreateRealSubnet(ctx context.Context, subnet Subnet) error {
 		network = azureRealVnets[vnetID]
 		azureRealMu.Unlock()
 	}
+	cidr, err := azureSubnetIPv4CIDR(subnet.Properties)
+	if err != nil {
+		return err
+	}
 	realSubnet, err := network.CreateSubnet(ctx, realexec.SubnetSpec{
 		Name:       subnet.ID,
 		BridgeName: azureRealName("zs", subnet.ID),
-		CIDR:       subnet.Properties.AddressPrefix,
-		Gateway:    azureSubnetGateway(subnet.Properties.AddressPrefix),
+		CIDR:       cidr,
+		Gateway:    azureSubnetGateway(cidr),
 	})
 	if err != nil {
 		return err
@@ -672,7 +676,11 @@ func azureConfigureRealNATGatewayForSubnet(ctx context.Context, subnet Subnet) e
 		network = azureRealVnets[vnetID]
 		azureRealMu.Unlock()
 	}
-	return network.ConfigureSNAT(ctx, subnet.Properties.AddressPrefix, publicIP, azureRealName("zsn", subnet.ID))
+	cidr, err := azureSubnetIPv4CIDR(subnet.Properties)
+	if err != nil {
+		return err
+	}
+	return network.ConfigureSNAT(ctx, cidr, publicIP, azureRealName("zsn", subnet.ID))
 }
 
 func azureDeleteRealNATGateway(natID string) {
@@ -691,6 +699,28 @@ func azureSubnetGateway(cidr string) net.IP {
 	out := append(net.IP(nil), ip.To4()...)
 	out[3]++
 	return out
+}
+
+func azureSubnetIPv4CIDR(properties SubnetProperties) (string, error) {
+	prefixes := make([]string, 0, len(properties.AddressPrefixes)+1)
+	if properties.AddressPrefix != "" {
+		prefixes = append(prefixes, properties.AddressPrefix)
+	}
+	prefixes = append(prefixes, properties.AddressPrefixes...)
+	selected := ""
+	for _, prefix := range prefixes {
+		ip, _, err := net.ParseCIDR(prefix)
+		if err != nil {
+			return "", fmt.Errorf("invalid subnet address prefix %q: %w", prefix, err)
+		}
+		if selected == "" && ip.To4() != nil {
+			selected = prefix
+		}
+	}
+	if selected != "" {
+		return selected, nil
+	}
+	return "", fmt.Errorf("subnet requires an IPv4 addressPrefix or addressPrefixes member")
 }
 
 func azureNICMAC(nicID string) string {

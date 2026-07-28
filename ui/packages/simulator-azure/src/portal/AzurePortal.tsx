@@ -692,7 +692,11 @@ export function AzureConfirmDialog({
   return (
     <Dialog
       open={open}
-      onOpenChange={(_, data) => {
+      onOpenChange={(event, data) => {
+        if (!data.open && busy) {
+          event.preventDefault();
+          return;
+        }
         if (!data.open) onCancel();
       }}
     >

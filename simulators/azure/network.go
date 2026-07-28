@@ -79,7 +79,8 @@ type Subnet struct {
 }
 
 type SubnetProperties struct {
-	AddressPrefix                     string             `json:"addressPrefix"`
+	AddressPrefix                     string             `json:"addressPrefix,omitempty"`
+	AddressPrefixes                   []string           `json:"addressPrefixes,omitempty"`
 	NetworkSecurityGroup              *NSGReference      `json:"networkSecurityGroup,omitempty"`
 	NatGateway                        *SubResource       `json:"natGateway,omitempty"`
 	Delegations                       []SubnetDelegation `json:"delegations,omitempty"`
@@ -427,6 +428,7 @@ func registerNetwork(srv *sim.Server) {
 			Type: "Microsoft.Network/virtualNetworks/subnets",
 			Properties: SubnetProperties{
 				AddressPrefix:                     req.Properties.AddressPrefix,
+				AddressPrefixes:                   req.Properties.AddressPrefixes,
 				NetworkSecurityGroup:              req.Properties.NetworkSecurityGroup,
 				NatGateway:                        req.Properties.NatGateway,
 				Delegations:                       req.Properties.Delegations,

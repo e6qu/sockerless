@@ -2832,3 +2832,20 @@ Cloudsmith key and repository downloads. It installed Ubuntu's signed Caddy
 package through the existing retry- and timeout-bounded APT path, preserving
 the job's twelve-minute budget for the real AzureRM apply, zero-drift plan,
 and destroy.
+
+AzureRM 5 then exposed its subnet wire change through that real apply:
+Microsoft.Network received `properties.addressPrefixes`, while the simulator
+had retained only the older singular member and tried to create host network
+fabric with an empty CIDR. Subnets now preserved both public API
+representations, the official Azure SDK round-tripped the plural member, and
+network namespaces plus source NAT resolved their IPv4 CIDR from either
+representation.
+
+The full frontend fan-out also exposed a timing-sensitive Microsoft Azure
+portal defect. A failed resource DELETE rendered Azure Resource Manager's
+error, but a concurrent Fluent dismiss event could detach the confirmation
+surface around it. The shared confirmation surface now refused dismissal
+while a mutation was pending, restored itself on provider failure, and reset
+the prior error only on a deliberate close or new open. The complete Azure
+portal package and repository frontend fan-outs passed with the error retained
+in an attached, accessible dialog.
