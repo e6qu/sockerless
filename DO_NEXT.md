@@ -84,5 +84,7 @@ followed launch type instead of applying Fargate restrictions universally).
 - Production builds created every frontend before any UI-bearing Go binary.
 - Workflow changes kept every ordinary job at or below 15 minutes and
   preserved exact AWS CLI and SDK shard coverage.
+- Dependency freshness retained authenticated GitHub API requests in both its
+  Bash and Zsh portability passes.
 - Every observed failure or warning was fixed or recorded with evidence in
   [BUGS.md](BUGS.md).

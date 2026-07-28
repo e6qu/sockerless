@@ -125,6 +125,10 @@ gh_token=${GITHUB_TOKEN:-${GH_TOKEN:-}}
 if [[ -z "$gh_token" ]] && command -v gh >/dev/null 2>&1; then
   gh_token=$(gh auth token 2>/dev/null || true)
 fi
+github_headers=()
+if [[ -n "$gh_token" ]]; then
+  github_headers=(-H "Authorization: Bearer $gh_token")
+fi
 if [[ -d .github/workflows ]]; then
   actions=$(
     while IFS= read -r workflow_file; do
@@ -146,7 +150,7 @@ if [[ -d .github/workflows ]]; then
     [[ -z "$action_ref" ]] && continue
     repo=${action_ref%@*}
     pinned=${action_ref#*@}
-    tags=$(curl -fsSL ${gh_token:+-H "Authorization: Bearer $gh_token"} \
+    tags=$(curl -fsSL "${github_headers[@]}" \
       "https://api.github.com/repos/${repo}/tags?per_page=100" 2>/dev/null | jq -r '.[].name' || true)
     if [[ -z "$tags" ]]; then
       echo "  FAIL  $file: $repo tags could not be read (set GITHUB_TOKEN, or authenticate the gh CLI; unauthenticated requests are rate limited)"

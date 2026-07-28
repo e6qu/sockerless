@@ -36,7 +36,8 @@ The next fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions
 6. Provisioned the official AWS Systems Manager Session Manager plugin inside the AWS CLI harness and cleaned every installed tool directory at suite exit.
 7. Separated route-introspection construction from runtime evaluator startup, preserving production evaluators while eliminating the conformance-harness store race.
 8. Made extracted AWS Lambda deployment packages and layers traversable by the managed runtime's sandbox user while preserving read-only mounts, with Linux SDK-shard coverage.
-9. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+9. Kept dependency freshness authenticated against the real GitHub API in both required shell portability passes.
+10. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

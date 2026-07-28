@@ -67,6 +67,12 @@ sandbox-readable filesystem permissions while their container mounts stayed
 read-only. The ordinary ZIP invocation, durable execution, durable callback
 replay, complete A–M AWS SDK shard, and Smithy response-shape ratchet passed.
 
+The dependency freshness job retained authentication across both of its real
+network-backed shell portability passes. Its GitHub authorization option moved
+from a scalar expansion that only Bash split correctly to a shell-portable
+argument array, so Zsh no longer converted a present token into unauthenticated
+GitHub API requests after Bash had consumed the public rate-limit window.
+
 ## 2026-07-27 — AWS Lambda `VpcConfig` became a runtime network
 
 AWS Lambda had described Hyperplane elastic network interfaces on the control

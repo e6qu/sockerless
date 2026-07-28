@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2700 filed - 2667 fixed - 17 open - 16 false positives.**
+**2701 filed - 2668 fixed - 17 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -32,6 +32,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2701~~ | P1 | dependency freshness continuous integration | token header depended on Bash word splitting | The dependency check assembled curl's GitHub authorization option through an unquoted conditional scalar expansion. Bash split it into the intended two arguments, but Zsh kept it as one malformed argument, so the required Zsh portability pass made unauthenticated GitHub API requests and exhausted the runner's public rate limit after the Bash pass had proved every dependency current. A shell-portable argument array now carried the same bearer header in both shells, and both real network-backed freshness passes succeeded. |
 | ~~2700~~ | P1 | AWS Lambda ZIP and layer execution on Linux | extracted mount roots were private to the simulator process | AWS Lambda deployment packages and layers were extracted beneath `os.MkdirTemp` roots that retained mode `0700`, while the faithful Lambda sandbox ran managed runtimes as `sbx_user1051`. Docker Desktop masked the ownership mismatch, but Linux retained it and the Node.js runtime could not traverse `/var/task`, producing `Runtime.ImportModuleError`. The mount roots now matched Lambda's sandbox-readable filesystem contract while remaining read-only in the container; a mode regression test, all three failing ZIP and durable-execution SDK flows, the complete A–M SDK shard, and the Smithy response validator passed. |
 | ~~2699~~ | P1 | AWS Step Functions execution history | history data details used the DescribeExecution shape | Execution history events had encoded `inputDetails` and `outputDetails` with DescribeExecution's `included` member instead of HistoryEventExecutionDataDetails' `truncated` member. Every history producer now reported `truncated:false`, `includeExecutionData:false` omitted only the payload while retaining service-shaped detail metadata, official SDK assertions covered both projections, and the AWS spec-shape ratchet reported no new divergence. |
 | ~~2698~~ | P1 | AWS Step Functions Lambda-task SDK coverage | cold managed-runtime image pull exceeded the execution assertion window | The services N–Z SDK shard created a ZIP Lambda and immediately started a Step Functions execution, so a clean Linux runner spent the entire 20-second assertion window pulling the managed Node.js runtime image while the execution correctly remained running. The integration test now used the suite's prebuilt real Runtime API image, which exercised the same direct Lambda task and service-history path without making assertion timing depend on an unrelated registry cold pull; separate Lambda ZIP and live-AWS differentials retained managed-runtime coverage. |
