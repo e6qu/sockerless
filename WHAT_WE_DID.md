@@ -59,6 +59,14 @@ introspection no longer rebound stores underneath old goroutines. The focused
 race suite and the complete AWS simulator package passed with this lifecycle
 separation.
 
+Clean Linux validation exposed that temporary AWS Lambda deployment-package and
+layer roots retained `0700`, although managed runtimes correctly ran as
+`sbx_user1051`. Docker Desktop had hidden the mismatch; Linux preserved it and
+made `/var/task` untraversable. Both mounted roots now carried Lambda's
+sandbox-readable filesystem permissions while their container mounts stayed
+read-only. The ordinary ZIP invocation, durable execution, durable callback
+replay, complete A–M AWS SDK shard, and Smithy response-shape ratchet passed.
+
 ## 2026-07-27 — AWS Lambda `VpcConfig` became a runtime network
 
 AWS Lambda had described Hyperplane elastic network interfaces on the control

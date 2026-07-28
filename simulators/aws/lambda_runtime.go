@@ -484,9 +484,9 @@ func materializeLambdaDeploymentPackage(fn LambdaFunction) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir, err := os.MkdirTemp("", "sockerless-aws-lambda-code-*")
+	dir, err := createLambdaMountRoot("sockerless-aws-lambda-code-*", "deployment-package")
 	if err != nil {
-		return "", fmt.Errorf("create deployment-package directory: %w", err)
+		return "", err
 	}
 	if err := extractLambdaZIP(dir, archiveBytes); err != nil {
 		_ = os.RemoveAll(dir)
@@ -499,9 +499,9 @@ func materializeLambdaLayers(layerARNs []string) (string, error) {
 	if len(layerARNs) == 0 {
 		return "", nil
 	}
-	dir, err := os.MkdirTemp("", "sockerless-aws-lambda-layers-*")
+	dir, err := createLambdaMountRoot("sockerless-aws-lambda-layers-*", "layer")
 	if err != nil {
-		return "", fmt.Errorf("create layer directory: %w", err)
+		return "", err
 	}
 	for _, arn := range layerARNs {
 		layer, ok := lambdaLayerVersionByARN(arn)
@@ -513,6 +513,22 @@ func materializeLambdaLayers(layerARNs []string) (string, error) {
 			_ = os.RemoveAll(dir)
 			return "", fmt.Errorf("extract layer version %s: %w", arn, err)
 		}
+	}
+	return dir, nil
+}
+
+func createLambdaMountRoot(pattern, description string) (string, error) {
+	dir, err := os.MkdirTemp("", pattern)
+	if err != nil {
+		return "", fmt.Errorf("create %s directory: %w", description, err)
+	}
+	// os.MkdirTemp deliberately creates mode 0700. AWS's managed runtime runs
+	// customer code as sbx_user1051, so a bind mount retaining that host mode
+	// makes /var/task or /opt untraversable on Linux. Real Lambda exposes both
+	// roots to the sandbox user while keeping the deployment immutable.
+	if err := os.Chmod(dir, 0755); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("make %s directory readable by the AWS Lambda sandbox: %w", description, err)
 	}
 	return dir, nil
 }

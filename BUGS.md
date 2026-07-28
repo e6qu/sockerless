@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2699 filed - 2666 fixed - 17 open - 16 false positives.**
+**2700 filed - 2667 fixed - 17 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -32,6 +32,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2700~~ | P1 | AWS Lambda ZIP and layer execution on Linux | extracted mount roots were private to the simulator process | AWS Lambda deployment packages and layers were extracted beneath `os.MkdirTemp` roots that retained mode `0700`, while the faithful Lambda sandbox ran managed runtimes as `sbx_user1051`. Docker Desktop masked the ownership mismatch, but Linux retained it and the Node.js runtime could not traverse `/var/task`, producing `Runtime.ImportModuleError`. The mount roots now matched Lambda's sandbox-readable filesystem contract while remaining read-only in the container; a mode regression test, all three failing ZIP and durable-execution SDK flows, the complete A–M SDK shard, and the Smithy response validator passed. |
 | ~~2699~~ | P1 | AWS Step Functions execution history | history data details used the DescribeExecution shape | Execution history events had encoded `inputDetails` and `outputDetails` with DescribeExecution's `included` member instead of HistoryEventExecutionDataDetails' `truncated` member. Every history producer now reported `truncated:false`, `includeExecutionData:false` omitted only the payload while retaining service-shaped detail metadata, official SDK assertions covered both projections, and the AWS spec-shape ratchet reported no new divergence. |
 | ~~2698~~ | P1 | AWS Step Functions Lambda-task SDK coverage | cold managed-runtime image pull exceeded the execution assertion window | The services N–Z SDK shard created a ZIP Lambda and immediately started a Step Functions execution, so a clean Linux runner spent the entire 20-second assertion window pulling the managed Node.js runtime image while the execution correctly remained running. The integration test now used the suite's prebuilt real Runtime API image, which exercised the same direct Lambda task and service-history path without making assertion timing depend on an unrelated registry cold pull; separate Lambda ZIP and live-AWS differentials retained managed-runtime coverage. |
 | ~~2697~~ | P2 | AWS simulator conformance harness | introspection builds started runtime evaluators against rebound stores | Each route-conformance simulator build had started Amazon CloudWatch alarm and Application Auto Scaling evaluator goroutines, then rebound their package stores when the next in-process simulator was built. Conformance-only builds now register the complete route surface without runtime evaluators, production builds retain both evaluators, and the AWS Lambda/AWS Step Functions conformance race suite plus the complete AWS simulator package passed. |

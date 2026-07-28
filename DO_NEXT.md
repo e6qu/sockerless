@@ -9,6 +9,9 @@ ZIP and image functions executed through the AWS Lambda Runtime API; layers,
 versions, aliases, function URLs, concurrency, capacity providers, response
 streaming, code signing, durable executions, callbacks, timeouts, pagination,
 and lifecycle validation retained real service state and response shapes.
+Deployment-package and layer roots were readable by Lambda's sandbox user and
+mounted read-only, so managed runtimes executed the same ZIP on Linux and
+Docker Desktop.
 
 AWS Step Functions implemented all 37 operations in its vendored Smithy model.
 Standard and Express Workflows executed JSONPath and JSONata definitions with
