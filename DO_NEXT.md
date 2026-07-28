@@ -41,6 +41,19 @@ full AWS surface without starting runtime evaluator goroutines, removing the
 store-rebinding race while production builds retained their Amazon CloudWatch
 and Application Auto Scaling evaluators.
 
+The publication repair preserved current public contracts across the failing
+client surfaces. Amazon SQS redrive used the normal enqueue path and therefore
+assigned a new message ID, millisecond enqueue timestamp, FIFO sequence, and
+destination delay; its validation audit used the current 1 MiB limit. An
+omitted Amazon ECS launch type selected EC2 capacity rather than an AWS Fargate
+sandbox. Azure Database for PostgreSQL flexible servers round-tripped their
+top-level SKU through create, update, get, list, the official Azure SDK, and
+the AzureRM provider. Google Cloud Run v1 collection validation located the
+projected resource within the real shared collection. The Azure console's
+embedded-root contract ran only in UI-bearing builds, while `noui` retained a
+real 404. Google Cloud DNS and Artifact Registry specifications were refreshed
+to Discovery revisions 20260723 and 20260724.
+
 ## Next Recommended Slice
 
 The next locally actionable AWS slice became BUG-2714: AWS Private Certificate

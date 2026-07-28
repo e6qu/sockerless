@@ -150,6 +150,7 @@ func handlePGUpdateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Tags       map[string]string `json:"tags,omitempty"`
+		SKU        map[string]any    `json:"sku,omitempty"`
 		Properties map[string]any    `json:"properties,omitempty"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -159,6 +160,9 @@ func handlePGUpdateServer(w http.ResponseWriter, r *http.Request) {
 	pgServers.Update(id, func(stored *PGFlexibleServer) {
 		if req.Tags != nil {
 			stored.Tags = req.Tags
+		}
+		if req.SKU != nil {
+			stored.SKU = req.SKU
 		}
 		if stored.Properties == nil {
 			stored.Properties = map[string]any{}

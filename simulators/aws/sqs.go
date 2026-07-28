@@ -673,9 +673,10 @@ type sqsSendEntry struct {
 }
 
 // sqsValidateSend applies the per-message validation real SQS performs
-// before enqueue: non-empty body, the 256 KiB body limit, and — for a
-// FIFO queue — the MessageGroupId and dedup requirements. It returns an
-// (errCode, message) pair on failure; empty code means the entry is valid.
+// before enqueue: non-empty body, the queue's message-size limit (1 MiB by
+// default), and — for a FIFO queue — the MessageGroupId and dedup
+// requirements. It returns an (errCode, message) pair on failure; empty code
+// means the entry is valid.
 func sqsValidateSend(q SQSQueue, e sqsSendEntry) (string, string) {
 	if e.MessageBody == "" {
 		return "MissingParameter", "MessageBody is required"
@@ -846,8 +847,8 @@ func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 
 // handleSQSSendMessageBatch sends up to 10 messages in a single call,
 // reporting per-entry success/failure the way real SQS does. Batch-level
-// failures (empty list, >10 entries, duplicate Ids, total payload over
-// the 256 KiB limit) are returned as top-level errors; per-entry
+// failures (empty list, >10 entries, duplicate Ids, or a total payload over the
+// queue's message-size limit) are returned as top-level errors; per-entry
 // validation failures (e.g. a FIFO entry missing MessageGroupId) land in
 // the Failed array with HTTP 200, matching the real wire contract.
 func handleSQSSendMessageBatch(w http.ResponseWriter, r *http.Request) {

@@ -2694,3 +2694,19 @@ implementations. The full AWS, Google Cloud, and Azure simulator packages,
 shared execution modules, AWS and Azure Terraform suites within their host
 capabilities, frontend typecheck/tests/build, cloud conformance ratchets, and
 the network-backed dependency audit passed.
+
+Publication hardening aligned the affected paths with their current external
+contracts. Amazon SQS redrive flowed through normal enqueue processing, which
+assigned a new message ID, millisecond enqueue timestamp, FIFO sequence, and
+destination delay, while its validation audit used the current 1 MiB maximum.
+Amazon ECS interpreted an omitted launch type as the cluster's EC2 capacity
+instead of imposing AWS Fargate restrictions on host-network tasks. Azure
+Database for PostgreSQL flexible servers persisted and returned the top-level
+SKU required by the AzureRM provider, with the official Azure SDK asserting
+the same response. Google Cloud Run projection validation found its resource
+inside the real project collection without assuming an otherwise empty
+account, and the Azure embedded-console root contract ran only in UI-bearing
+builds while `noui` retained a 404. Google Cloud DNS and Artifact Registry
+Discovery documents advanced to revisions 20260723 and 20260724. The affected
+unit, official SDK, vendor CLI, freshness, surface-generation, and full
+pre-commit gates passed.

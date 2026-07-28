@@ -92,7 +92,7 @@ func TestSQS_MessageMoveTask(t *testing.T) {
 
 	// Simulate a message that has landed in the DLQ (e.g. after exceeding
 	// maxReceiveCount on the source queue).
-	_, err = client.SendMessage(ctx, &sqs.SendMessageInput{
+	sent, err := client.SendMessage(ctx, &sqs.SendMessageInput{
 		QueueUrl:    aws.String(dlqURL),
 		MessageBody: aws.String("poisoned"),
 	})
@@ -110,10 +110,16 @@ func TestSQS_MessageMoveTask(t *testing.T) {
 	recv, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String(srcURL),
 		MaxNumberOfMessages: 10,
+		MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{
+			sqstypes.MessageSystemAttributeNameAll,
+		},
 	})
 	require.NoError(t, err)
 	require.Len(t, recv.Messages, 1)
 	assert.Equal(t, "poisoned", aws.ToString(recv.Messages[0].Body))
+	assert.NotEqual(t, aws.ToString(sent.MessageId), aws.ToString(recv.Messages[0].MessageId),
+		"Amazon SQS redrive assigns a new message ID")
+	assert.NotEmpty(t, recv.Messages[0].Attributes["SentTimestamp"])
 
 	// The DLQ is now empty.
 	drained, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{

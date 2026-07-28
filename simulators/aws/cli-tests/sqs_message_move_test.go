@@ -81,8 +81,12 @@ func TestSQSCLI_MessageMoveTask(t *testing.T) {
 	parseJSON(t, srcOut, &src)
 	t.Cleanup(func() { _ = awsCLI("sqs", "delete-queue", "--queue-url", src.QueueUrl).Run() })
 
-	runCLI(t, awsCLI("sqs", "send-message", "--queue-url", dlq.QueueUrl,
+	sentOut := runCLI(t, awsCLI("sqs", "send-message", "--queue-url", dlq.QueueUrl,
 		"--message-body", "poisoned"))
+	var sent struct {
+		MessageID string `json:"MessageId"`
+	}
+	parseJSON(t, sentOut, &sent)
 
 	startOut := runCLI(t, awsCLI("sqs", "start-message-move-task", "--source-arn", dlqARN))
 	var start struct {
@@ -93,15 +97,20 @@ func TestSQSCLI_MessageMoveTask(t *testing.T) {
 
 	// The redriven message is now on the source queue.
 	recvOut := runCLI(t, awsCLI("sqs", "receive-message", "--queue-url", src.QueueUrl,
-		"--max-number-of-messages", "10"))
+		"--max-number-of-messages", "10", "--message-system-attribute-names", "All"))
 	var recv struct {
 		Messages []struct {
-			Body string `json:"Body"`
+			Body       string            `json:"Body"`
+			MessageID  string            `json:"MessageId"`
+			Attributes map[string]string `json:"Attributes"`
 		} `json:"Messages"`
 	}
 	parseJSON(t, recvOut, &recv)
 	require.Len(t, recv.Messages, 1)
 	assert.Equal(t, "poisoned", recv.Messages[0].Body)
+	assert.NotEqual(t, sent.MessageID, recv.Messages[0].MessageID,
+		"Amazon SQS redrive assigns a new message ID")
+	assert.NotEmpty(t, recv.Messages[0].Attributes["SentTimestamp"])
 
 	listOut := runCLI(t, awsCLI("sqs", "list-message-move-tasks", "--source-arn", dlqARN))
 	var list struct {

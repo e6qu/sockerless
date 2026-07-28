@@ -84,8 +84,13 @@ func TestCloudRunV2Services_CLI_CreateGetDelete(t *testing.T) {
 		} `json:"items"`
 	}
 	parseJSON(t, v1ListOut, &v1List)
-	require.Len(t, v1List.Items, 1)
-	assert.Equal(t, "cli-svc-roundtrip", v1List.Items[0].Metadata.Name)
+	var matches int
+	for _, item := range v1List.Items {
+		if item.Metadata.Name == "cli-svc-roundtrip" {
+			matches++
+		}
+	}
+	assert.Equal(t, 1, matches, "the projected service must appear exactly once in the real v1 collection")
 
 	httpDoJSON(t, "DELETE", runServiceURL("cli-svc-roundtrip"), "")
 

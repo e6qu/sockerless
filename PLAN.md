@@ -35,7 +35,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 5. Added run-labelled abnormal-exit reaping, container-safe registry trust, generated surface-table enforcement, and multi-probe cloud-spec freshness gating.
 6. Exercised the changes through official SDK, vendor CLI, Terraform, Git, SMTP, RFC 8555, container-runtime, production frontend, and accessibility clients.
 7. Kept dependency freshness authenticated against the real GitHub API in both required shell portability passes.
-8. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+8. Hardened publication across Amazon SQS redrive identity/timestamps and its current 1 MiB limit, Amazon ECS omitted-launch-type selection, Azure Database for PostgreSQL SKU round-trip, Google Cloud Run shared-collection validation, and Azure `noui` console boundaries.
+9. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

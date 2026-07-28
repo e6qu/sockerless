@@ -1654,13 +1654,15 @@ func ecsContainerResourceLimits(td ECSTaskDefinition, cd ECSContainerDefinition)
 // launch type, where Amazon ECS does give the task the container instance's own
 // network stack, so the denial does not apply to it.
 func ecsTaskSandbox(launchType string, privileged bool) sim.SandboxProfile {
-	if launchType == "" || strings.EqualFold(launchType, "FARGATE") {
+	if strings.EqualFold(launchType, "FARGATE") {
 		return sim.SandboxFargate
 	}
 	// Amazon ECS on EC2 and EXTERNAL hosts exposes the container instance's
 	// Docker capabilities. The task definition, not Fargate, decides whether a
 	// workload is privileged; host networking and host bind mounts remain
-	// available exactly as on the registered container instance.
+	// available exactly as on the registered container instance. An omitted
+	// launch type follows the cluster's EC2 capacity when no capacity-provider
+	// strategy was supplied.
 	return sim.SandboxProfile{Privileged: privileged}
 }
 
