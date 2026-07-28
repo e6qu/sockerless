@@ -13,7 +13,17 @@ Surface registered in `simulators/aws/sts.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action GetCallerIdentity` | ✓ `simulators/aws/sts.go:11::handleGetCallerIdentity` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetCallerIdentity` | ✓ `simulators/aws/sts.go:48::handleGetCallerIdentity` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AssumeRole` | ✓ `simulators/aws/sts.go:49::handleSTSAssumeRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AssumeRoleWithWebIdentity` | ✓ `simulators/aws/sts.go:50::handleSTSAssumeRoleWithWebIdentity` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetSessionToken` | ✓ `simulators/aws/sts.go:51::handleSTSGetSessionToken` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetFederationToken` | ✓ `simulators/aws/sts.go:52::handleSTSGetFederationToken` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AssumeRoleWithSAML` | ✓ `simulators/aws/sts.go:53::handleSTSAssumeRoleWithSAML` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetWebIdentityToken` | ✓ `simulators/aws/sts.go:54::handleSTSGetWebIdentityToken` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetDelegatedAccessToken` | ✓ `simulators/aws/sts.go:55::handleSTSGetDelegatedAccessToken` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AssumeRoot` | ✓ `simulators/aws/sts.go:56::handleSTSAssumeRoot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DecodeAuthorizationMessage` | ✓ `simulators/aws/sts.go:57::handleSTSDecodeAuthorizationMessage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetAccessKeyInfo` | ✓ `simulators/aws/sts.go:58::handleSTSGetAccessKeyInfo` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

@@ -9,15 +9,14 @@ import (
 )
 
 // Microsoft.DBforPostgreSQL/flexibleServers ARM control plane.
-// Surface scoped to server-instance lifecycle + the immediately-
-// nested Database + FirewallRule resources. Configurations are
-// stubbed (real Azure exposes ~50 server-parameter knobs).
+// Surface scoped to server-instance lifecycle and its nested resources.
 
 type PGFlexibleServer struct {
 	ID         string            `json:"id"`
 	Name       string            `json:"name"`
 	Type       string            `json:"type"`
 	Location   string            `json:"location,omitempty"`
+	SKU        map[string]any    `json:"sku,omitempty"`
 	Properties map[string]any    `json:"properties,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 }
@@ -163,6 +162,7 @@ func handlePGCreateServer(w http.ResponseWriter, r *http.Request) {
 		Name:     name,
 		Type:     "Microsoft.DBforPostgreSQL/flexibleServers",
 		Location: req.Location,
+		SKU:      req.SKU,
 		Tags:     req.Tags,
 		Properties: map[string]any{
 			"state":                    "Starting",

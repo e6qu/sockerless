@@ -180,25 +180,23 @@ func handleSQSStartMessageMoveTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Move every message from the source DLQ to the destination queue. The
-	// moved messages get fresh receipt state (cleared on enqueue) so they are
-	// immediately receivable from the destination.
+	// Move every message from the source DLQ to the destination queue. Amazon
+	// SQS treats each redriven message as a new enqueue, so the common enqueue
+	// path assigns a new message ID, enqueue timestamp, FIFO sequence number,
+	// receipt state, and the destination queue's delivery delay.
 	var moved []SQSMessage
 	sqsQueues.Update(source.Name, func(q *SQSQueue) {
 		moved = q.Messages
 		q.Messages = nil
 	})
-	now := time.Now().Unix()
-	sqsQueues.Update(dest.Name, func(q *SQSQueue) {
-		for _, m := range moved {
-			m.ReceiptHandle = ""
-			m.VisibleAt = 0
-			m.ApproximateReceiveCount = 0
-			m.FirstReceivedAt = 0
-			m.SentTimestamp = now
-			q.Messages = append(q.Messages, m)
-		}
-	})
+	for _, m := range moved {
+		sqsEnqueue(dest.Name, sqsSendEntry{
+			MessageBody:            m.Body,
+			MessageAttributes:      m.MessageAttributes,
+			MessageGroupId:         m.MessageGroupID,
+			MessageDeduplicationId: m.MessageDeduplicationID,
+		})
+	}
 
 	task := SQSMessageMoveTask{
 		TaskHandle:                        generateUUID(),

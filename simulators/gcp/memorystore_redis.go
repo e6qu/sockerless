@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -148,11 +151,21 @@ type MSRedisBackupFile struct {
 
 // MSRedisAclPolicy mirrors google.cloud.redis.v1.AclPolicy.
 type MSRedisAclPolicy struct {
-	Name    string           `json:"name"`
-	Rules   []MSRedisAclRule `json:"rules,omitempty"`
-	State   string           `json:"state,omitempty"`
-	Version string           `json:"version,omitempty"`
-	Etag    string           `json:"etag,omitempty"`
+	Name       string           `json:"name"`
+	Rules      []MSRedisAclRule `json:"rules,omitempty"`
+	State      string           `json:"state,omitempty"`
+	Version    string           `json:"version,omitempty"`
+	Etag       string           `json:"etag,omitempty"`
+	CreateTime string           `json:"createTime,omitempty"`
+	UpdateTime string           `json:"updateTime,omitempty"`
+}
+
+type MSRedisAclPolicyRevision struct {
+	Name             string           `json:"name"`
+	RevisionNumber   string           `json:"revisionNumber"`
+	CreateTime       string           `json:"createTime"`
+	Snapshot         MSRedisAclPolicy `json:"snapshot"`
+	AttachedClusters []string         `json:"attachedClusters,omitempty"`
 }
 
 // MSRedisAclRule mirrors google.cloud.redis.v1.AclRule.
@@ -180,6 +193,7 @@ var (
 	msRedisBackupColls    sim.Store[MSRedisBackupCollection]
 	msRedisBackups        sim.Store[MSRedisBackup]
 	msRedisAclPolicies    sim.Store[MSRedisAclPolicy]
+	msRedisAclRevisions   sim.Store[MSRedisAclPolicyRevision]
 	msRedisTokenAuthUsers sim.Store[MSRedisTokenAuthUser]
 	msRedisAuthTokens     sim.Store[MSRedisAuthToken]
 )
@@ -191,6 +205,7 @@ func registerMemorystoreRedisClusters(srv *sim.Server) {
 	msRedisBackupColls = sim.MakeStore[MSRedisBackupCollection](srv.DB(), "memorystore_redis_backup_collections")
 	msRedisBackups = sim.MakeStore[MSRedisBackup](srv.DB(), "memorystore_redis_backups")
 	msRedisAclPolicies = sim.MakeStore[MSRedisAclPolicy](srv.DB(), "memorystore_redis_acl_policies")
+	msRedisAclRevisions = sim.MakeStore[MSRedisAclPolicyRevision](srv.DB(), "memorystore_redis_acl_policy_revisions")
 	msRedisTokenAuthUsers = sim.MakeStore[MSRedisTokenAuthUser](srv.DB(), "memorystore_redis_token_auth_users")
 	msRedisAuthTokens = sim.MakeStore[MSRedisAuthToken](srv.DB(), "memorystore_redis_auth_tokens")
 
@@ -231,6 +246,8 @@ func registerMemorystoreRedisClusters(srv *sim.Server) {
 	srv.HandleFunc("GET "+base+"/aclPolicies/{id}", handleMSRedisAclPolicyGet)
 	srv.HandleFunc("PATCH "+base+"/aclPolicies/{id}", handleMSRedisAclPolicyPatch)
 	srv.HandleFunc("DELETE "+base+"/aclPolicies/{id}", handleMSRedisAclPolicyDelete)
+	srv.HandleFunc("GET "+base+"/aclPolicies/{id}/revisions", handleMSRedisAclPolicyRevisionList)
+	srv.HandleFunc("GET "+base+"/aclPolicies/{id}/revisions/{revision}", handleMSRedisAclPolicyRevisionGet)
 
 	// Shared regional certificate authority.
 	srv.HandleFunc("GET "+base+"/sharedRegionalCertificateAuthority", handleMSRedisSharedRegionalCA)
@@ -725,10 +742,13 @@ func handleMSRedisAclPolicyCreate(w http.ResponseWriter, r *http.Request) {
 		State: "ACTIVE",
 		// version is a drift-resolution counter (int64 serialized as a
 		// string on the wire); a freshly created policy starts at 1.
-		Version: defaultStr(req.Version, "1"),
-		Etag:    generateUUID(),
+		Version:    defaultStr(req.Version, "1"),
+		Etag:       generateUUID(),
+		CreateTime: time.Now().UTC().Format(time.RFC3339),
+		UpdateTime: time.Now().UTC().Format(time.RFC3339),
 	}
 	msRedisAclPolicies.Put(name, policy)
+	msRedisPutAclRevision(policy, "1")
 	// aclPolicies.create returns the AclPolicy resource directly (not an LRO).
 	sim.WriteJSON(w, http.StatusOK, policy)
 }
@@ -784,8 +804,13 @@ func handleMSRedisAclPolicyPatch(w http.ResponseWriter, r *http.Request) {
 			p.Version = req.Version
 		}
 		p.Etag = generateUUID()
+		p.UpdateTime = time.Now().UTC().Format(time.RFC3339)
 	})
 	updated, _ := msRedisAclPolicies.Get(name)
+	revision := strconv.Itoa(msRedisAclRevisionCount(name) + 1)
+	updated.Version = revision
+	msRedisAclPolicies.Put(name, updated)
+	msRedisPutAclRevision(updated, revision)
 	op := newLRO(project, location, updated, "type.googleapis.com/google.cloud.redis.v1.AclPolicy")
 	sim.WriteJSON(w, http.StatusOK, op)
 }
@@ -798,8 +823,76 @@ func handleMSRedisAclPolicyDelete(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "aclPolicy not found: %s", name)
 		return
 	}
+	for _, revision := range msRedisAclRevisions.List() {
+		if strings.HasPrefix(revision.Name, name+"/revisions/") {
+			msRedisAclRevisions.Delete(revision.Name)
+		}
+	}
 	op := newLRO(project, location, nil, "type.googleapis.com/google.protobuf.Empty")
 	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func msRedisPutAclRevision(policy MSRedisAclPolicy, revisionNumber string) {
+	snapshot := policy
+	snapshot.Rules = append([]MSRedisAclRule(nil), policy.Rules...)
+	name := policy.Name + "/revisions/" + revisionNumber
+	msRedisAclRevisions.Put(name, MSRedisAclPolicyRevision{
+		Name:           name,
+		RevisionNumber: revisionNumber,
+		CreateTime:     time.Now().UTC().Format(time.RFC3339),
+		Snapshot:       snapshot,
+	})
+}
+
+func msRedisAclRevisionCount(policyName string) int {
+	count := 0
+	for _, revision := range msRedisAclRevisions.List() {
+		if strings.HasPrefix(revision.Name, policyName+"/revisions/") {
+			count++
+		}
+	}
+	return count
+}
+
+func handleMSRedisAclPolicyRevisionList(w http.ResponseWriter, r *http.Request) {
+	policyName := fmt.Sprintf("projects/%s/locations/%s/aclPolicies/%s",
+		sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "id"))
+	if _, ok := msRedisAclPolicies.Get(policyName); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "aclPolicy not found: %s", policyName)
+		return
+	}
+	var revisions []MSRedisAclPolicyRevision
+	for _, revision := range msRedisAclRevisions.List() {
+		if strings.HasPrefix(revision.Name, policyName+"/revisions/") {
+			revisions = append(revisions, revision)
+		}
+	}
+	sort.Slice(revisions, func(i, j int) bool {
+		left, _ := strconv.Atoi(revisions[i].RevisionNumber)
+		right, _ := strconv.Atoi(revisions[j].RevisionNumber)
+		return left > right
+	})
+	page, next, ok := paginateList(w, r, revisions)
+	if !ok {
+		return
+	}
+	response := map[string]any{"aclPolicyRevisions": page}
+	if next != "" {
+		response["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, response)
+}
+
+func handleMSRedisAclPolicyRevisionGet(w http.ResponseWriter, r *http.Request) {
+	name := fmt.Sprintf("projects/%s/locations/%s/aclPolicies/%s/revisions/%s",
+		sim.PathParam(r, "project"), sim.PathParam(r, "location"),
+		sim.PathParam(r, "id"), sim.PathParam(r, "revision"))
+	revision, ok := msRedisAclRevisions.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "aclPolicy revision not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, revision)
 }
 
 func handleMSRedisAction(w http.ResponseWriter, r *http.Request) {

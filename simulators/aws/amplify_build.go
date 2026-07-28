@@ -21,15 +21,15 @@ import (
 )
 
 // Real Amplify build pipeline. A job runs a real build when the app has a
-// clonable HTTP(S) git repository AND a buildSpec (branch-level wins over
-// app-level, real precedence). The sim host clones the repository in-process
+// clonable HTTP(S) git repository. A branch/app buildSpec wins when configured;
+// otherwise the build host reads amplify.yml from the checked-out repository,
+// matching Amplify Hosting's source-controlled build settings. The sim host clones the repository in-process
 // (go-git — the host prepares the workspace the way Amplify's build host
 // does), then executes the buildSpec's frontend phases inside a node
 // container on the host Docker daemon, collects the artifact baseDirectory
 // into a zip stored in the sim's S3, and reports SUCCEED/FAILED from the
-// container exit code. Jobs with no clonable repository or no buildSpec keep
-// the synthetic PENDING → RUNNING → SUCCEED flip (amplify.go): builds run
-// only when something real can build.
+// container exit code. A source that cannot be cloned is rejected by StartJob;
+// it never produces a successful job without executing work.
 
 // ---------- buildSpec ----------
 
@@ -86,10 +86,10 @@ func amplifyParseBuildSpec(text string) (amplifyBuildSpec, error) {
 	return spec, nil
 }
 
-// amplifyRealBuildPlan decides whether a StartJob runs a real build:
-// the repository must be a clonable HTTP(S) URL and a buildSpec must exist
-// (branch-level wins). Returns !ok for the common control-plane-test case
-// (no repository / no buildSpec), which keeps the synthetic job flip.
+// amplifyRealBuildPlan resolves the source and optional configured buildSpec.
+// An empty spec is valid at this stage: the provision phase reads amplify.yml
+// from the cloned repository. ok is false only when the source cannot be
+// cloned through the supported HTTPS Git transport.
 func amplifyRealBuildPlan(app AmplifyApp, br AmplifyBranch) (spec string, repo string, ok bool) {
 	repo = app.Repository
 	if !strings.HasPrefix(repo, "http://") && !strings.HasPrefix(repo, "https://") {
@@ -98,9 +98,6 @@ func amplifyRealBuildPlan(app AmplifyApp, br AmplifyBranch) (spec string, repo s
 	spec = br.BuildSpec
 	if spec == "" {
 		spec = app.BuildSpec
-	}
-	if spec == "" {
-		return "", "", false
 	}
 	return spec, repo, true
 }
@@ -137,13 +134,11 @@ func amplifyCancelRunningBuild(jobID string) {
 
 // ---------- build image ----------
 
-// amplifyBuildImage is the container image builds execute in. Default is the
-// Docker-Hub library node image via the ECR Public mirror (repo policy: no
-// direct Docker Hub pulls). Override with SIM_AMPLIFY_BUILD_IMAGE.
+// amplifyBuildImage is the managed build image used by this Amazon Amplify
+// Hosting runtime generation. AWS selects its build image service-side; it is
+// therefore fixed by the cloud implementation rather than caller-configurable
+// simulator state.
 func amplifyBuildImage() string {
-	if v := os.Getenv("SIM_AMPLIFY_BUILD_IMAGE"); v != "" {
-		return v
-	}
 	return "public.ecr.aws/docker/library/node:20-alpine"
 }
 
@@ -256,10 +251,6 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 	}
 
 	// PROVISION: workspace + clone.
-	spec, err := amplifyParseBuildSpec(specText)
-	if err != nil {
-		return failProvision("buildSpec error: %v", err)
-	}
 	workDir, err := os.MkdirTemp("", "sockerless-amplify-build-*")
 	if err != nil {
 		return failProvision("workspace: %v", err)
@@ -283,6 +274,18 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 				j.Job.Summary.CommitId = head.Hash().String()
 			})
 		}
+	}
+	if strings.TrimSpace(specText) == "" {
+		checkedIn, readErr := os.ReadFile(filepath.Join(workDir, "amplify.yml"))
+		if readErr != nil {
+			return failProvision("buildSpec error: repository has no readable amplify.yml: %v", readErr)
+		}
+		specText = string(checkedIn)
+		provisionLog.Printf("# Build specification: amplify.yml")
+	}
+	spec, err := amplifyParseBuildSpec(specText)
+	if err != nil {
+		return failProvision("buildSpec error: %v", err)
 	}
 	provisionLog.Printf("# Build image: %s", amplifyBuildImage())
 	finishStep("PROVISION", provisionLog, AmplifyJobStatusSucceed)

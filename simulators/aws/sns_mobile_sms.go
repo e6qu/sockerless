@@ -39,10 +39,9 @@ type SNSPlatformEndpoint struct {
 	Attributes             map[string]string
 }
 
-// SNSSandboxPhoneNumber models an SMS-sandbox destination phone number with its
-// Pending/Verified verification state. CreateSMSSandboxPhoneNumber adds it
-// Pending with a deterministic one-time password; VerifySMSSandboxPhoneNumber
-// flips it to Verified when the password matches.
+// SNSSandboxPhoneNumber models the Pending/Verified state returned by the
+// Amazon SNS SMS sandbox once its telecommunications carrier has delivered an
+// out-of-band one-time password.
 type SNSSandboxPhoneNumber struct {
 	PhoneNumber  string
 	LanguageCode string
@@ -395,19 +394,6 @@ func handleSNSListEndpointsByPlatformApplication(w http.ResponseWriter, r *http.
 
 // ---- SMS sandbox ---------------------------------------------------------
 
-// snsSandboxOTP derives the deterministic one-time password the sandbox
-// verification flow expects for a phone number. Real SNS sends a random OTP
-// via SMS; the sim issues a stable, derivable code so a test can verify
-// without an out-of-band channel — the faithful state machine (Pending →
-// Verified on a matching code) is preserved.
-func snsSandboxOTP(phoneNumber string) string {
-	var sum int
-	for _, c := range phoneNumber {
-		sum = (sum*31 + int(c)) % 1000000
-	}
-	return fmt.Sprintf("%06d", sum)
-}
-
 func handleSNSCreateSMSSandboxPhoneNumber(w http.ResponseWriter, r *http.Request) {
 	reqID := sim.RequestID(r.Context())
 	phone := r.FormValue("PhoneNumber")
@@ -415,22 +401,11 @@ func handleSNSCreateSMSSandboxPhoneNumber(w http.ResponseWriter, r *http.Request
 		snsErrorXML(w, "InvalidParameter", "PhoneNumber is required", http.StatusBadRequest, reqID)
 		return
 	}
-	if _, ok := snsSandboxNumbers.Get(phone); ok {
-		snsErrorXML(w, "OptedOut",
-			fmt.Sprintf("Destination phone number %s is already in the sandbox", phone),
-			http.StatusBadRequest, reqID)
-		return
-	}
-	lang := r.FormValue("LanguageCode")
-	if lang == "" {
-		lang = "en-US"
-	}
-	snsSandboxNumbers.Put(phone, SNSSandboxPhoneNumber{
-		PhoneNumber:  phone,
-		LanguageCode: lang,
-		Status:       "Pending",
-	})
-	snsXMLResponse(w, "CreateSMSSandboxPhoneNumber", "<CreateSMSSandboxPhoneNumberResult/>", reqID)
+	// Amazon SNS has no public API for provisioning the carrier transport
+	// behind SMS. Fail before creating state when this cloud installation has
+	// no telecommunications carrier; never expose a derivable or log-delivered
+	// one-time password as a substitute for a real SMS.
+	snsErrorXML(w, "InternalError", "The SMS carrier transport is unavailable", http.StatusInternalServerError, reqID)
 }
 
 func handleSNSDeleteSMSSandboxPhoneNumber(w http.ResponseWriter, r *http.Request) {
@@ -448,23 +423,14 @@ func handleSNSDeleteSMSSandboxPhoneNumber(w http.ResponseWriter, r *http.Request
 func handleSNSVerifySMSSandboxPhoneNumber(w http.ResponseWriter, r *http.Request) {
 	reqID := sim.RequestID(r.Context())
 	phone := r.FormValue("PhoneNumber")
-	otp := r.FormValue("OneTimePassword")
-	sb, ok := snsSandboxNumbers.Get(phone)
+	_, ok := snsSandboxNumbers.Get(phone)
 	if !ok {
 		snsErrorXML(w, "ResourceNotFound",
 			fmt.Sprintf("Destination phone number %s not found", phone),
 			http.StatusNotFound, reqID)
 		return
 	}
-	if otp != snsSandboxOTP(phone) {
-		snsErrorXML(w, "VerificationException",
-			"The one-time password (OTP) provided doesn't match the OTP sent to the phone number.",
-			http.StatusBadRequest, reqID)
-		return
-	}
-	sb.Status = "Verified"
-	snsSandboxNumbers.Put(phone, sb)
-	snsXMLResponse(w, "VerifySMSSandboxPhoneNumber", "<VerifySMSSandboxPhoneNumberResult/>", reqID)
+	snsErrorXML(w, "InternalError", "The SMS carrier transport is unavailable", http.StatusInternalServerError, reqID)
 }
 
 func handleSNSListSMSSandboxPhoneNumbers(w http.ResponseWriter, r *http.Request) {

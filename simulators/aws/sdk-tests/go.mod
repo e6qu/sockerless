@@ -50,9 +50,13 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/sockerless/simulator-testutil v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
 )
+
+replace github.com/sockerless/simulator-testutil => ../../testutil
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14 // indirect

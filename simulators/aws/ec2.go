@@ -1140,11 +1140,23 @@ func handleModifySubnetAttribute(w http.ResponseWriter, r *http.Request) {
 
 func handleDeleteSubnet(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("SubnetId")
-	ec2Subnets.Delete(id)
+	if _, ok := ec2Subnets.Get(id); !ok {
+		ec2ErrorXML(w, "InvalidSubnetID.NotFound", fmt.Sprintf("The subnet ID '%s' does not exist", id), http.StatusBadRequest)
+		return
+	}
+	for _, networkInterface := range ec2NetworkInterfaces.List() {
+		if networkInterface.SubnetId == id {
+			ec2ErrorXML(w, "DependencyViolation",
+				fmt.Sprintf("The subnet '%s' has dependencies and cannot be deleted.", id),
+				http.StatusBadRequest)
+			return
+		}
+	}
 	if err := ec2DeleteRealSubnet(r.Context(), id); err != nil {
 		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to delete real subnet network fabric: %v", err), http.StatusServiceUnavailable)
 		return
 	}
+	ec2Subnets.Delete(id)
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DeleteSubnetResponse %s>

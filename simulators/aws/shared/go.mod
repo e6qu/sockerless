@@ -7,6 +7,7 @@ require (
 	github.com/docker/go-connections v0.8.1
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/rs/zerolog v1.35.1
+	github.com/sockerless/simulator-realexec v0.0.0
 	github.com/sockerless/simulator-ui-auth v0.0.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.69.0
@@ -22,6 +23,8 @@ require (
 )
 
 replace github.com/sockerless/simulator-ui-auth => ../../ui-auth
+
+replace github.com/sockerless/simulator-realexec => ../../realexec
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect

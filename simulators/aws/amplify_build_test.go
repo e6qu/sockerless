@@ -58,20 +58,22 @@ func TestAmplifyRealBuildPlanBoundary(t *testing.T) {
 	app := func(repo, spec string) AmplifyApp { return AmplifyApp{Repository: repo, BuildSpec: spec} }
 	br := func(spec string) AmplifyBranch { return AmplifyBranch{BuildSpec: spec} }
 
-	// No repository → synthetic.
+	// No repository cannot start a build.
 	if _, _, ok := amplifyRealBuildPlan(app("", "spec"), br("")); ok {
 		t.Fatal("no repository must not build")
 	}
-	// Non-HTTP repository (SSH/CodeCommit URI) → synthetic.
+	// Non-HTTP repository (SSH/CodeCommit URI) cannot use this transport.
 	if _, _, ok := amplifyRealBuildPlan(app("git@github.com:acme/site.git", "spec"), br("")); ok {
 		t.Fatal("non-HTTP repository must not build")
 	}
-	// Repository but no buildSpec anywhere → synthetic.
-	if _, _, ok := amplifyRealBuildPlan(app("https://github.com/acme/site", ""), br("")); ok {
-		t.Fatal("no buildSpec must not build")
+	// A repository without a configured buildSpec resolves amplify.yml after
+	// clone, so it remains a real build plan with an empty pre-clone spec.
+	spec, repo, ok := amplifyRealBuildPlan(app("https://github.com/acme/site", ""), br(""))
+	if !ok || spec != "" || repo != "https://github.com/acme/site" {
+		t.Fatalf("checked-in build spec plan: %q %q %v", spec, repo, ok)
 	}
 	// App-level buildSpec builds.
-	spec, repo, ok := amplifyRealBuildPlan(app("https://github.com/acme/site", "app-spec"), br(""))
+	spec, repo, ok = amplifyRealBuildPlan(app("https://github.com/acme/site", "app-spec"), br(""))
 	if !ok || spec != "app-spec" || repo != "https://github.com/acme/site" {
 		t.Fatalf("app-level spec: %q %q %v", spec, repo, ok)
 	}
@@ -115,12 +117,7 @@ func TestAmplifyBuildEnvMerge(t *testing.T) {
 }
 
 func TestAmplifyBuildImageDefault(t *testing.T) {
-	t.Setenv("SIM_AMPLIFY_BUILD_IMAGE", "")
 	if img := amplifyBuildImage(); !strings.HasPrefix(img, "public.ecr.aws/docker/library/node:") {
-		t.Fatalf("default build image must come from the ECR Public mirror, got %q", img)
-	}
-	t.Setenv("SIM_AMPLIFY_BUILD_IMAGE", "custom:tag")
-	if img := amplifyBuildImage(); img != "custom:tag" {
-		t.Fatalf("override ignored: %q", img)
+		t.Fatalf("managed build image must come from the ECR Public mirror, got %q", img)
 	}
 }

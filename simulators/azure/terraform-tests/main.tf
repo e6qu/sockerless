@@ -587,6 +587,22 @@ resource "azurerm_storage_table" "az_st_table" {
   storage_account_name = azurerm_storage_account.az_st.name
 }
 
+resource "azurerm_storage_share" "az_st_share" {
+  name                 = "tfazrmshare"
+  storage_account_name = azurerm_storage_account.az_st.name
+  quota                = 50
+
+  acl {
+    id = "terraform-policy"
+
+    access_policy {
+      permissions = "rwdl"
+      start       = "2026-07-28T10:00:00Z"
+      expiry      = "2026-07-29T10:00:00Z"
+    }
+  }
+}
+
 # Linux Function App — AZF runner backend's host primitive.
 resource "azurerm_linux_function_app" "az_fa" {
   name                       = "tf-azrm-fa"
@@ -774,6 +790,33 @@ resource "azurerm_api_management_subscription" "az_apim_sub" {
   state               = "active"
 }
 
+# ---------- Azure Database for PostgreSQL flexible server ----------
+
+resource "azurerm_postgresql_flexible_server" "az_pg" {
+  name                   = "tf-azrm-pg"
+  resource_group_name    = azurerm_resource_group.az_rg.name
+  location               = azurerm_resource_group.az_rg.location
+  version                = "15"
+  administrator_login    = "psqladmin"
+  administrator_password = "Sup3rSecret!"
+  storage_mb             = 32768
+  sku_name               = "B_Standard_B1ms"
+}
+
+resource "azurerm_postgresql_flexible_server_database" "az_pg_db" {
+  name      = "tfapp"
+  server_id = azurerm_postgresql_flexible_server.az_pg.id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
+}
+
+resource "azurerm_postgresql_flexible_server_firewall_rule" "az_pg_fw" {
+  name             = "allow-ci"
+  server_id        = azurerm_postgresql_flexible_server.az_pg.id
+  start_ip_address = "10.0.0.1"
+  end_ip_address   = "10.0.0.10"
+}
+
 # ---------- Outputs (cross-resource invariants) ----------
 
 output "resource_group_id" {
@@ -826,6 +869,18 @@ output "azrm_key_vault_certificate_id" {
 
 output "azrm_resource_group_id" {
   value = azurerm_resource_group.az_rg.id
+}
+
+output "azrm_postgresql_flexible_server_id" {
+  value = azurerm_postgresql_flexible_server.az_pg.id
+}
+
+output "azrm_postgresql_flexible_server_database_id" {
+  value = azurerm_postgresql_flexible_server_database.az_pg_db.id
+}
+
+output "azrm_postgresql_flexible_server_firewall_rule_id" {
+  value = azurerm_postgresql_flexible_server_firewall_rule.az_pg_fw.id
 }
 
 output "azrm_acr_id" {

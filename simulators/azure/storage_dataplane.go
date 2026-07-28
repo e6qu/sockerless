@@ -52,6 +52,7 @@ type FileShareData struct {
 	Metadata map[string]string
 	Created  string
 	ETag     string
+	ACLs     []TableSignedIdentifier
 }
 
 // FileObject carries the properties of one file in a share that a filesystem
@@ -289,7 +290,7 @@ func fileObjectKey(account, share, p string) string {
 //	HEAD   /{share}/{path}                                GetFileProperties
 //	DELETE /{share}/{path}                                DeleteFile
 //
-// Everything else — the share ACL / lease / snapshot / permission / statistics
+// Everything else — the share lease / snapshot / permission / statistics
 // verbs, every directory operation below the share root, file leases, handles,
 // range lists, renames, hard and symbolic links — is a declared gap. The
 // directory verbs matter most here: without the check, `PUT /{share}/{dir}
@@ -323,6 +324,10 @@ func handleFilesDataPlane(w http.ResponseWriter, r *http.Request, account string
 	if !strings.Contains(path, "/") {
 		switch restype {
 		case "share":
+			if comp == "acl" {
+				handleFilesShareACL(w, r, account, path)
+				return
+			}
 			if comp != "" {
 				writeStorageOperationNotImplemented(w, r, "Files")
 				return
@@ -393,6 +398,44 @@ func handleFilesDataPlane(w http.ResponseWriter, r *http.Request, account string
 		handleFilesDeleteFile(w, r, account, share, filePath)
 	default:
 		writeStorageOperationNotImplemented(w, r, "Files")
+	}
+}
+
+func handleFilesShareACL(w http.ResponseWriter, r *http.Request, account, share string) {
+	key := fileShareKey(account, share)
+	data, ok := fileShareData.Get(key)
+	if !ok {
+		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/xml")
+		w.Header().Set("ETag", data.ETag)
+		w.Header().Set("Last-Modified", data.Created)
+		if err := xml.NewEncoder(w).Encode(TableSignedIdentifiers{Items: data.ACLs}); err != nil {
+			sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		}
+	case http.MethodPut:
+		var body TableSignedIdentifiers
+		if err := xml.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+			writeStorageError(w, "InvalidXmlDocument", "The XML specified is not syntactically valid.", http.StatusBadRequest)
+			return
+		}
+		if len(body.Items) > 5 {
+			writeStorageError(w, "InvalidXmlDocument", "A share can contain at most five stored access policies.", http.StatusBadRequest)
+			return
+		}
+		data.ACLs = body.Items
+		data.ETag = `"` + generateUUID() + `"`
+		data.Created = time.Now().UTC().Format(http.TimeFormat)
+		fileShareData.Put(key, data)
+		w.Header().Set("ETag", data.ETag)
+		w.Header().Set("Last-Modified", data.Created)
+		w.WriteHeader(http.StatusOK)
+	default:
+		writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 	}
 }
 

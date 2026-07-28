@@ -9,11 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/cgi"
-	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +18,7 @@ import (
 	amplifytypes "github.com/aws/aws-sdk-go-v2/service/amplify/types"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
+	"github.com/sockerless/simulator-testutil/githttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -225,48 +221,9 @@ http.createServer((req, res) => {
 	assert.Equal(t, "ssr-dynamic:/search?q=x", string(body))
 }
 
-// amplifyServeGitRepo creates a single-commit git repository with the given
-// files and serves it over smart HTTP (git http-backend via CGI) from the
-// test process. Returns the clone URL.
 func amplifyServeGitRepo(t *testing.T, branch string, files map[string]string) string {
 	t.Helper()
-	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatalf("git is required to serve the Amplify source repository; install git: %v", err)
-	}
-	root := t.TempDir()
-	workDir := filepath.Join(root, "work")
-	require.NoError(t, os.MkdirAll(workDir, 0o755))
-	run := func(args ...string) {
-		cmd := exec.Command(gitPath, args...)
-		cmd.Dir = workDir
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-	}
-	run("init", "-q", "-b", branch)
-	for name, content := range files {
-		dest := filepath.Join(workDir, filepath.FromSlash(name))
-		require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0o755))
-		require.NoError(t, os.WriteFile(dest, []byte(content), 0o644))
-	}
-	run("add", "-A")
-	run("-c", "user.email=test@sockerless.local", "-c", "user.name=sockerless", "commit", "-q", "-m", "initial")
-
-	bare := exec.Command(gitPath, "clone", "-q", "--bare", workDir, filepath.Join(root, "repo.git"))
-	out, err := bare.CombinedOutput()
-	require.NoError(t, err, "git clone --bare: %s", out)
-
-	handler := &cgi.Handler{
-		Path: gitPath,
-		Args: []string{"http-backend"},
-		Env: []string{
-			"GIT_PROJECT_ROOT=" + root,
-			"GIT_HTTP_EXPORT_ALL=1",
-		},
-	}
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	return server.URL + "/repo.git"
+	return githttp.Serve(t, branch, files)
 }
 
 func TestAmplifyRealBuildE2E(t *testing.T) {

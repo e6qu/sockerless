@@ -81,6 +81,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: simulator-surface-table-generation
+        name: Generated simulator surface tables
+        entry: bash scripts/check-surface-tables-generated.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: cli-shard-coverage
         name: AWS CLI shard coverage (every CLI test runs in exactly one CI shard)
         entry: bash scripts/check-cli-shard-coverage.sh

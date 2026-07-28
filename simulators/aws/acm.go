@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -19,19 +23,57 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// acmGenerateLeaf mints a real self-signed X.509 certificate + RSA private
-// key (PEM-encoded) for a PRIVATE certificate. This is genuine crypto — the
-// sim has no ACM Private CA, so the leaf is self-signed, but the material is
-// real and round-trips through GetCertificate / ExportCertificate exactly
-// like the PEM real ACM would return.
-func acmGenerateLeaf(commonName string, sans []string) (certPEM, keyPEM string, err error) {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+// acmIssueManagedLeaf creates a new key pair and issues a CA-signed X.509 leaf
+// from the persistent Amazon Certificate Manager service CA. The private key
+// remains service-side, as it does for an Amazon-issued certificate, while the
+// certificate and chain are returned by GetCertificate and loaded internally
+// by services such as Elastic Load Balancing.
+func acmIssueManagedLeaf(commonName string, sans []string, keyAlgorithm string) (
+	certPEM, chainPEM, keyPEM string,
+	leaf *x509.Certificate,
+	err error,
+) {
+	caState, err := acmManagedCertificateAuthority()
 	if err != nil {
-		return "", "", err
+		return "", "", "", nil, err
+	}
+	root, err := x509.ParseCertificate(caState.CertificateDER)
+	if err != nil {
+		return "", "", "", nil, fmt.Errorf("parse managed certificate authority: %w", err)
+	}
+	block, _ := pem.Decode(caState.PrivateKeyPEM)
+	if block == nil {
+		return "", "", "", nil, fmt.Errorf("managed certificate authority private key is invalid")
+	}
+	caPrivateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return "", "", "", nil, fmt.Errorf("parse managed certificate authority private key: %w", err)
+	}
+	caSigner, ok := caPrivateKey.(crypto.Signer)
+	if !ok {
+		return "", "", "", nil, fmt.Errorf("managed certificate authority private key cannot sign")
+	}
+	var leafSigner crypto.Signer
+	switch keyAlgorithm {
+	case "", "RSA_2048":
+		leafSigner, err = rsa.GenerateKey(rand.Reader, 2048)
+	case "RSA_3072":
+		leafSigner, err = rsa.GenerateKey(rand.Reader, 3072)
+	case "RSA_4096":
+		leafSigner, err = rsa.GenerateKey(rand.Reader, 4096)
+	case "EC_prime256v1":
+		leafSigner, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	case "EC_secp384r1":
+		leafSigner, err = ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	default:
+		return "", "", "", nil, fmt.Errorf("unsupported managed-certificate key algorithm %q", keyAlgorithm)
+	}
+	if err != nil {
+		return "", "", "", nil, err
 	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return "", "", err
+		return "", "", "", nil, err
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
@@ -42,13 +84,22 @@ func acmGenerateLeaf(commonName string, sans []string) (certPEM, keyPEM string, 
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, root, leafSigner.Public(), caSigner)
 	if err != nil {
-		return "", "", err
+		return "", "", "", nil, err
+	}
+	leaf, err = x509.ParseCertificate(der)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(leafSigner)
+	if err != nil {
+		return "", "", "", nil, err
 	}
 	certBlock := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyBlock := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	return string(certBlock), string(keyBlock), nil
+	chainBlock := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caState.CertificateDER})
+	keyBlock := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})
+	return string(certBlock), string(chainBlock), string(keyBlock), leaf, nil
 }
 
 // AWS Certificate Manager. Wire: AWS-JSON 1.1 (POST /, X-Amz-Target =
@@ -66,26 +117,29 @@ func acmGenerateLeaf(commonName string, sans []string) (certPEM, keyPEM string, 
 // deserialiser fails with "expected TStamp to be a JSON Number, got
 // string instead" if we send a string. Using float64 keeps it lossless.
 type ACMCertificate struct {
-	CertificateArn          string                      `json:"CertificateArn"`
-	DomainName              string                      `json:"DomainName"`
-	SubjectAlternativeNames []string                    `json:"SubjectAlternativeNames,omitempty"`
-	DomainValidationOptions []ACMDomainValidationOption `json:"DomainValidationOptions,omitempty"`
-	Status                  string                      `json:"Status"`
-	IssuedAt                *float64                    `json:"IssuedAt,omitempty"`
-	ImportedAt              *float64                    `json:"ImportedAt,omitempty"`
-	NotBefore               *float64                    `json:"NotBefore,omitempty"`
-	NotAfter                *float64                    `json:"NotAfter,omitempty"`
-	KeyAlgorithm            string                      `json:"KeyAlgorithm,omitempty"`
-	SignatureAlgorithm      string                      `json:"SignatureAlgorithm,omitempty"`
-	InUseBy                 []string                    `json:"InUseBy"`
-	Type                    string                      `json:"Type"`
-	RenewalEligibility      string                      `json:"RenewalEligibility,omitempty"`
-	Options                 *ACMCertificateOptions      `json:"Options,omitempty"`
-	CreatedAt               *float64                    `json:"CreatedAt,omitempty"`
-	CertificateAuthorityArn string                      `json:"CertificateAuthorityArn,omitempty"`
-	Serial                  string                      `json:"Serial,omitempty"`
-	Subject                 string                      `json:"Subject,omitempty"`
-	Issuer                  string                      `json:"Issuer,omitempty"`
+	CertificateArn           string                      `json:"CertificateArn"`
+	DomainName               string                      `json:"DomainName"`
+	SubjectAlternativeNames  []string                    `json:"SubjectAlternativeNames,omitempty"`
+	DomainValidationOptions  []ACMDomainValidationOption `json:"DomainValidationOptions,omitempty"`
+	Status                   string                      `json:"Status"`
+	IssuedAt                 *float64                    `json:"IssuedAt,omitempty"`
+	ImportedAt               *float64                    `json:"ImportedAt,omitempty"`
+	NotBefore                *float64                    `json:"NotBefore,omitempty"`
+	NotAfter                 *float64                    `json:"NotAfter,omitempty"`
+	KeyAlgorithm             string                      `json:"KeyAlgorithm,omitempty"`
+	SignatureAlgorithm       string                      `json:"SignatureAlgorithm,omitempty"`
+	InUseBy                  []string                    `json:"InUseBy"`
+	Type                     string                      `json:"Type"`
+	RenewalEligibility       string                      `json:"RenewalEligibility,omitempty"`
+	Options                  *ACMCertificateOptions      `json:"Options,omitempty"`
+	CreatedAt                *float64                    `json:"CreatedAt,omitempty"`
+	CertificateAuthorityArn  string                      `json:"CertificateAuthorityArn,omitempty"`
+	Serial                   string                      `json:"Serial,omitempty"`
+	Subject                  string                      `json:"Subject,omitempty"`
+	Issuer                   string                      `json:"Issuer,omitempty"`
+	AcmeAccountID            string                      `json:"AcmeAccountId,omitempty"`
+	AcmeEndpointArn          string                      `json:"AcmeEndpointArn,omitempty"`
+	CertificateKeyPairOrigin string                      `json:"CertificateKeyPairOrigin,omitempty"`
 }
 
 func acmEpochNow() *float64 {
@@ -132,8 +186,18 @@ type acmStoredCert struct {
 	RevokedAt *float64
 }
 
+type acmEmailValidation struct {
+	Token            string  `json:"token"`
+	CertificateID    string  `json:"certificateId"`
+	Domain           string  `json:"domain"`
+	ValidationDomain string  `json:"validationDomain"`
+	ExpiresAt        float64 `json:"expiresAt"`
+}
+
 var (
-	acmCertificates sim.Store[acmStoredCert]
+	acmCertificates     sim.Store[acmStoredCert]
+	acmManagedCAs       sim.Store[acmAcmeCA]
+	acmEmailValidations sim.Store[acmEmailValidation]
 )
 
 // acmCertMaterial returns the PEM-encoded certificate body and private key for
@@ -185,6 +249,10 @@ func acmARNToID(arn string) string {
 func registerACM(r *sim.AWSRouter, srv *sim.Server) {
 	acmCertificates = sim.MakeStore[acmStoredCert](srv.DB(), "acm_certificates")
 	acmAccountConfiguration = sim.MakeStore[acmAccountConfig](srv.DB(), "acm_account_config")
+	acmManagedCAs = sim.MakeStore[acmAcmeCA](srv.DB(), "acm_managed_certificate_authorities")
+	acmEmailValidations = sim.MakeStore[acmEmailValidation](srv.DB(), "acm_email_validations")
+	registerACMAcme(r, srv)
+	srv.HandleFunc("GET /acm/email-validation/{token}", handleACMEmailValidation)
 
 	r.Register("CertificateManager.RequestCertificate", handleACMRequestCertificate)
 	r.Register("CertificateManager.DescribeCertificate", handleACMDescribeCertificate)
@@ -208,12 +276,23 @@ func registerACM(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("CertificateManager.ListTagsForResource", handleACMListTagsForResource)
 }
 
+func acmManagedCertificateAuthority() (acmAcmeCA, error) {
+	const key = "amazon-managed"
+	if ca, ok := acmManagedCAs.Get(key); ok {
+		return ca, nil
+	}
+	ca, err := acmGenerateCertificateAuthority("Sockerless Amazon Certificate Manager CA")
+	if err != nil {
+		return acmAcmeCA{}, err
+	}
+	acmManagedCAs.Put(key, ca)
+	return ca, nil
+}
+
 // ---------- Cross-resource tagging API ----------
 //
-// TagResource / UntagResource / ListTagsForResource address any ACM resource by
-// ARN. Certificates are the taggable ACM resource the simulator hosts, so an
-// ARN that does not resolve to one is answered with ResourceNotFoundException —
-// the same answer real ACM gives for an ARN it does not own.
+// TagResource / UntagResource / ListTagsForResource address certificates and
+// every Amazon Certificate Manager ACME control-plane resource by ARN.
 
 type acmResourceTagReq struct {
 	ResourceArn string   `json:"ResourceArn"`
@@ -221,14 +300,37 @@ type acmResourceTagReq struct {
 	TagKeys     []string `json:"TagKeys"`
 }
 
-// acmTaggedResource resolves an ACM resource ARN to its stored certificate.
-func acmTaggedResource(arn string) (id string, stored acmStoredCert, ok bool) {
-	id = acmARNToID(arn)
-	if id == "" {
-		return "", acmStoredCert{}, false
+func acmResourceTags(arn string) ([]acmTag, bool) {
+	if id := acmARNToID(arn); id != "" {
+		if stored, ok := acmCertificates.Get(id); ok {
+			return stored.Tags, true
+		}
 	}
-	stored, ok = acmCertificates.Get(id)
-	return id, stored, ok
+	if endpoint, ok := acmAcmeEndpoints.Get(arn); ok {
+		return endpoint.Tags, true
+	}
+	if validation, ok := acmAcmeDomainValidations.Get(arn); ok {
+		return validation.Tags, true
+	}
+	if binding, ok := acmAcmeBindings.Get(arn); ok {
+		return binding.Tags, true
+	}
+	return nil, false
+}
+
+func acmSetResourceTags(arn string, tags []acmTag) bool {
+	if id := acmARNToID(arn); id != "" {
+		if acmCertificates.Update(id, func(stored *acmStoredCert) { stored.Tags = tags }) {
+			return true
+		}
+	}
+	if acmAcmeEndpoints.Update(arn, func(endpoint *acmAcmeEndpoint) { endpoint.Tags = tags }) {
+		return true
+	}
+	if acmAcmeDomainValidations.Update(arn, func(validation *acmAcmeDomainValidation) { validation.Tags = tags }) {
+		return true
+	}
+	return acmAcmeBindings.Update(arn, func(binding *acmAcmeExternalAccountBinding) { binding.Tags = tags })
 }
 
 func handleACMTagResource(w http.ResponseWriter, r *http.Request) {
@@ -241,13 +343,13 @@ func handleACMTagResource(w http.ResponseWriter, r *http.Request) {
 		acmWriteError(w, "ValidationException", "ResourceArn is required")
 		return
 	}
-	id, stored, ok := acmTaggedResource(req.ResourceArn)
+	current, ok := acmResourceTags(req.ResourceArn)
 	if !ok {
 		acmWriteError(w, "ResourceNotFoundException", "Could not find resource "+req.ResourceArn)
 		return
 	}
 	tagMap := map[string]string{}
-	for _, t := range stored.Tags {
+	for _, t := range current {
 		tagMap[t.Key] = t.Value
 	}
 	for _, t := range req.Tags {
@@ -262,8 +364,7 @@ func handleACMTagResource(w http.ResponseWriter, r *http.Request) {
 	for _, k := range keys {
 		merged = append(merged, acmTag{Key: k, Value: tagMap[k]})
 	}
-	stored.Tags = merged
-	acmCertificates.Put(id, stored)
+	acmSetResourceTags(req.ResourceArn, merged)
 	acmWriteJSON(w, http.StatusOK, struct{}{})
 }
 
@@ -273,7 +374,7 @@ func handleACMUntagResource(w http.ResponseWriter, r *http.Request) {
 		acmWriteError(w, "ValidationException", "could not decode request: "+err.Error())
 		return
 	}
-	id, stored, ok := acmTaggedResource(req.ResourceArn)
+	current, ok := acmResourceTags(req.ResourceArn)
 	if !ok {
 		acmWriteError(w, "ResourceNotFoundException", "Could not find resource "+req.ResourceArn)
 		return
@@ -282,14 +383,13 @@ func handleACMUntagResource(w http.ResponseWriter, r *http.Request) {
 	for _, k := range req.TagKeys {
 		drop[k] = true
 	}
-	kept := make([]acmTag, 0, len(stored.Tags))
-	for _, t := range stored.Tags {
+	kept := make([]acmTag, 0, len(current))
+	for _, t := range current {
 		if !drop[t.Key] {
 			kept = append(kept, t)
 		}
 	}
-	stored.Tags = kept
-	acmCertificates.Put(id, stored)
+	acmSetResourceTags(req.ResourceArn, kept)
 	acmWriteJSON(w, http.StatusOK, struct{}{})
 }
 
@@ -299,12 +399,11 @@ func handleACMListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		acmWriteError(w, "ValidationException", "could not decode request: "+err.Error())
 		return
 	}
-	_, stored, ok := acmTaggedResource(req.ResourceArn)
+	tags, ok := acmResourceTags(req.ResourceArn)
 	if !ok {
 		acmWriteError(w, "ResourceNotFoundException", "Could not find resource "+req.ResourceArn)
 		return
 	}
-	tags := stored.Tags
 	if tags == nil {
 		tags = []acmTag{}
 	}
@@ -322,9 +421,9 @@ var acmAccountConfiguration sim.Store[acmAccountConfig]
 
 // handleACMGetCertificate returns the certificate body and chain for an
 // ISSUED certificate. Real ACM serves the PEM the operator imported (or that
-// ACM minted); the sim returns the stored PEM for IMPORTED/PRIVATE certs and
-// the self-signed PEM minted at issuance for an AMAZON_ISSUED cert. It does
-// not return the private key — only ExportCertificate does that.
+// ACM minted); the simulator returns the stored PEM for imported/private
+// certificates and the CA-signed PEM minted at issuance for an Amazon-issued
+// certificate. It does not return the private key.
 func handleACMGetCertificate(w http.ResponseWriter, r *http.Request) {
 	var req acmCertARNReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -357,10 +456,8 @@ func handleACMGetCertificate(w http.ResponseWriter, r *http.Request) {
 // handleACMExportCertificate returns the certificate, chain, and the
 // passphrase-protected private key for a PRIVATE certificate. Real ACM only
 // permits export of PRIVATE certs (those issued by an ACM Private CA or
-// imported with EXPORT enabled); the sim enforces that and returns the stored
-// PEM material. The Passphrase is required by the API; the sim does not
-// re-encrypt the key with it (it has no real PCA-managed key), returning the
-// stored PEM, but it validates the passphrase is present like real ACM.
+// imported with EXPORT enabled); the simulator enforces that and encrypts the
+// stored private key with the caller's passphrase before returning it.
 func handleACMExportCertificate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CertificateArn string `json:"CertificateArn"`
@@ -390,9 +487,20 @@ func handleACMExportCertificate(w http.ResponseWriter, r *http.Request) {
 			"The certificate material is not yet available for "+req.CertificateArn)
 		return
 	}
+	keyBlock, _ := pem.Decode([]byte(stored.PrivateKey))
+	if keyBlock == nil {
+		acmWriteError(w, "InvalidStateException", "The certificate private key is invalid")
+		return
+	}
+	encryptedKey, err := x509.EncryptPEMBlock(rand.Reader, "ENCRYPTED PRIVATE KEY", keyBlock.Bytes,
+		req.Passphrase, x509.PEMCipherAES256)
+	if err != nil {
+		acmWriteError(w, "InvalidStateException", "The certificate private key could not be encrypted: "+err.Error())
+		return
+	}
 	resp := map[string]string{
 		"Certificate": stored.CertificateBody,
-		"PrivateKey":  stored.PrivateKey,
+		"PrivateKey":  string(pem.EncodeToMemory(encryptedKey)),
 	}
 	if stored.CertificateChain != "" {
 		resp["CertificateChain"] = stored.CertificateChain
@@ -643,9 +751,16 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 	domains := append([]string{req.DomainName}, req.SubjectAlternativeNames...)
 	dvOpts := make([]ACMDomainValidationOption, 0, len(domains))
 	for _, d := range domains {
+		validationDomain := d
+		for _, supplied := range req.DomainValidationOptions {
+			if strings.EqualFold(supplied.DomainName, d) && supplied.ValidationDomain != "" {
+				validationDomain = supplied.ValidationDomain
+				break
+			}
+		}
 		opt := ACMDomainValidationOption{
 			DomainName:       d,
-			ValidationDomain: d,
+			ValidationDomain: validationDomain,
 			ValidationMethod: method,
 			ValidationStatus: "PENDING_VALIDATION",
 		}
@@ -678,7 +793,7 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 		Status:                  "PENDING_VALIDATION",
 		Type:                    "AMAZON_ISSUED",
 		RenewalEligibility:      "INELIGIBLE",
-		KeyAlgorithm:            firstNonEmpty(req.KeyAlgorithm, "RSA-2048"),
+		KeyAlgorithm:            firstNonEmpty(req.KeyAlgorithm, "RSA_2048"),
 		SignatureAlgorithm:      "SHA256WITHRSA",
 		Options:                 options,
 		CreatedAt:               now,
@@ -686,30 +801,18 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 	}
 	stored := acmStoredCert{Tags: req.Tags}
 	if req.CertificateAuthorityArn != "" {
-		// A PCA-issued (PRIVATE) certificate is issued synchronously by
-		// real ACM — no public DNS validation. The sim mints real X.509
-		// material (a self-signed leaf via crypto/x509) so the cert is
-		// genuinely exportable/revocable; this is real crypto, not a fake
-		// blob. DomainValidationOptions don't apply to PCA-issued certs.
-		cert.CertificateAuthorityArn = req.CertificateAuthorityArn
-		cert.Type = "PRIVATE"
-		cert.DomainValidationOptions = nil
-		cert.Status = "ISSUED"
-		cert.IssuedAt = now
-		cert.NotBefore = now
-		notAfter := float64(time.Now().UTC().AddDate(1, 0, 0).Unix())
-		cert.NotAfter = &notAfter
-		cert.RenewalEligibility = "ELIGIBLE"
-		certPEM, keyPEM, err := acmGenerateLeaf(req.DomainName, domains)
-		if err != nil {
-			acmWriteError(w, "InvalidParameterValueException", "failed to mint certificate material: "+err.Error())
-			return
-		}
-		stored.CertificateBody = certPEM
-		stored.PrivateKey = keyPEM
+		// RequestCertificate delegates private issuance to the referenced
+		// AWS Private Certificate Authority resource. This cloud slice does
+		// not manufacture an unregistered CA from an ARN: a nonexistent CA
+		// is the same ResourceNotFoundException AWS returns.
+		acmWriteError(w, "ResourceNotFoundException", "The certificate authority "+req.CertificateAuthorityArn+" does not exist")
+		return
 	}
 	stored.Cert = cert
 	acmCertificates.Put(id, stored)
+	if method == "EMAIL" {
+		acmCreateAndSendValidationEmails(r, id, stored)
+	}
 	acmWriteJSON(w, http.StatusOK, map[string]string{"CertificateArn": cert.CertificateArn})
 }
 
@@ -744,61 +847,144 @@ func handleACMDescribeCertificate(w http.ResponseWriter, r *http.Request) {
 	acmWriteJSON(w, http.StatusOK, map[string]ACMCertificate{"Certificate": stored.Cert})
 }
 
-// acmReconcileIssuance transitions a DNS-validated AMAZON_ISSUED certificate
-// from PENDING_VALIDATION to ISSUED once every domain's _acm-challenge CNAME
-// exists in the Route53 sim store, mirroring real ACM (which issues after the
-// validation records propagate). At issuance the sim mints a real self-signed
-// X.509 leaf + RSA private key (PEM) so GetCertificate / ExportCertificate
-// serve genuine PEM material — the cert is self-signed because the sim has no
-// real public CA, but the key is real 2048-bit RSA. Persists and returns the
-// (possibly updated) record.
+// acmReconcileIssuance transitions an Amazon-issued certificate from
+// PENDING_VALIDATION to ISSUED once every DNS record or email validation has
+// succeeded. It creates fresh service-held key material and a leaf signed by
+// the persistent Amazon Certificate Manager service CA.
 func acmReconcileIssuance(id string, stored acmStoredCert) (acmStoredCert, error) {
 	cert := stored.Cert
 	if cert.Type != "AMAZON_ISSUED" || cert.Status != "PENDING_VALIDATION" {
 		return stored, nil
 	}
-	for _, dvo := range cert.DomainValidationOptions {
-		if dvo.ValidationMethod != "DNS" || dvo.ResourceRecord == nil {
-			return stored, nil // EMAIL / malformed — issuance not modeled, stays pending
+	for i := range cert.DomainValidationOptions {
+		dvo := &cert.DomainValidationOptions[i]
+		if dvo.ValidationStatus == "SUCCESS" {
+			continue
 		}
-		if !acmDNSRecordPresent(dvo.ResourceRecord.Name) {
-			return stored, nil // validation record not created yet — still pending
+		if dvo.ValidationMethod != "DNS" || dvo.ResourceRecord == nil ||
+			!acmDNSRecordMatches(dvo.ResourceRecord.Name, dvo.ResourceRecord.Value) {
+			return stored, nil
 		}
+		dvo.ValidationStatus = "SUCCESS"
 	}
 	domains := append([]string{cert.DomainName}, cert.SubjectAlternativeNames...)
-	certPEM, keyPEM, err := acmGenerateLeaf(cert.DomainName, domains)
+	certPEM, chainPEM, keyPEM, leaf, err := acmIssueManagedLeaf(cert.DomainName, domains, cert.KeyAlgorithm)
 	if err != nil {
 		return stored, fmt.Errorf("mint AMAZON_ISSUED certificate material: %w", err)
 	}
 	now := acmEpochNow()
-	notAfter := float64(time.Now().UTC().AddDate(1, 0, 0).Unix())
+	notBefore := float64(leaf.NotBefore.Unix())
+	notAfter := float64(leaf.NotAfter.Unix())
 	cert.Status = "ISSUED"
 	cert.IssuedAt = now
-	cert.NotBefore = now
+	cert.NotBefore = &notBefore
 	cert.NotAfter = &notAfter
 	cert.RenewalEligibility = "ELIGIBLE"
-	for i := range cert.DomainValidationOptions {
-		cert.DomainValidationOptions[i].ValidationStatus = "SUCCESS"
-	}
+	cert.Serial = leaf.SerialNumber.Text(16)
+	cert.Subject = leaf.Subject.String()
+	cert.Issuer = leaf.Issuer.String()
 	stored.Cert = cert
 	stored.CertificateBody = certPEM
-	stored.CertificateChain = certPEM
+	stored.CertificateChain = chainPEM
 	stored.PrivateKey = keyPEM
 	acmCertificates.Put(id, stored)
 	return stored, nil
+}
+
+func acmCreateAndSendValidationEmails(r *http.Request, certificateID string, stored acmStoredCert) {
+	baseURL := awsRequestURLBase(r)
+	for _, option := range stored.Cert.DomainValidationOptions {
+		if option.ValidationMethod != "EMAIL" {
+			continue
+		}
+		token := strings.ReplaceAll(acmRandomID(), "-", "")
+		validation := acmEmailValidation{
+			Token:            token,
+			CertificateID:    certificateID,
+			Domain:           option.DomainName,
+			ValidationDomain: option.ValidationDomain,
+			ExpiresAt:        float64(time.Now().Add(72 * time.Hour).Unix()),
+		}
+		acmEmailValidations.Put(token, validation)
+		go acmDeliverValidationEmail(validation, baseURL+"/acm/email-validation/"+token)
+	}
+}
+
+func acmDeliverValidationEmail(validation acmEmailValidation, validationURL string) {
+	domain := strings.TrimSuffix(validation.ValidationDomain, ".")
+	recipients := []string{
+		"administrator@" + domain,
+		"hostmaster@" + domain,
+		"postmaster@" + domain,
+		"webmaster@" + domain,
+		"admin@" + domain,
+	}
+	message := []byte("From: Amazon Web Services <no-reply-aws@amazon.com>\r\n" +
+		"To: " + strings.Join(recipients, ", ") + "\r\n" +
+		"Subject: Amazon Certificate Manager certificate validation\r\n" +
+		"MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" +
+		"Approve the Amazon Certificate Manager certificate request for " + validation.Domain + ":\r\n" +
+		validationURL + "\r\n")
+	if err := awsDeliverSMTP(domain, "no-reply-aws@amazon.com", recipients, message); err != nil {
+		cwEvalLogger.Error().Err(err).Str("domain", domain).Str("certificateID", validation.CertificateID).
+			Msg("Amazon Certificate Manager email validation delivery failed")
+	}
+}
+
+func handleACMEmailValidation(w http.ResponseWriter, r *http.Request) {
+	token := sim.PathParam(r, "token")
+	validation, ok := acmEmailValidations.Get(token)
+	if !ok || validation.ExpiresAt < float64(time.Now().Unix()) {
+		http.Error(w, "The Amazon Certificate Manager validation link is invalid or expired.", http.StatusBadRequest)
+		return
+	}
+	stored, ok := acmCertificates.Get(validation.CertificateID)
+	if !ok {
+		http.Error(w, "The Amazon Certificate Manager certificate request no longer exists.", http.StatusNotFound)
+		return
+	}
+	found := false
+	for i := range stored.Cert.DomainValidationOptions {
+		option := &stored.Cert.DomainValidationOptions[i]
+		if strings.EqualFold(option.DomainName, validation.Domain) && option.ValidationMethod == "EMAIL" {
+			option.ValidationStatus = "SUCCESS"
+			found = true
+		}
+	}
+	if !found {
+		http.Error(w, "The Amazon Certificate Manager validation request no longer exists.", http.StatusNotFound)
+		return
+	}
+	acmCertificates.Put(validation.CertificateID, stored)
+	acmEmailValidations.Delete(token)
+	if _, err := acmReconcileIssuance(validation.CertificateID, stored); err != nil {
+		http.Error(w, "Amazon Certificate Manager could not issue the certificate.", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, "<!doctype html><title>Certificate validated</title><p>Amazon Certificate Manager validated "+validation.Domain+".</p>")
 }
 
 // acmDNSRecordPresent reports whether a CNAME ResourceRecordSet with the given
 // name exists in any Route53 hosted zone — the signal that the operator
 // created the _acm-challenge validation record. DNS names are matched
 // case-insensitively and trailing-dot-insensitively.
-func acmDNSRecordPresent(name string) bool {
+func acmDNSRecordMatches(name, value string) bool {
 	want := strings.TrimSuffix(name, ".")
+	wantValue := strings.TrimSuffix(value, ".")
 	for _, z := range r53Zones.List() {
 		for _, rec := range z.Records {
 			if strings.EqualFold(rec.Type, "CNAME") &&
 				strings.EqualFold(strings.TrimSuffix(rec.Name, "."), want) {
-				return true
+				if rec.ResourceRecords == nil {
+					continue
+				}
+				for _, candidate := range rec.ResourceRecords.Items {
+					if strings.EqualFold(strings.TrimSuffix(candidate.Value, "."), wantValue) {
+						return true
+					}
+				}
 			}
 		}
 	}
@@ -979,27 +1165,59 @@ func handleACMImportCertificate(w http.ResponseWriter, r *http.Request) {
 		acmWriteError(w, "InvalidParameterValueException", "Certificate and PrivateKey are required")
 		return
 	}
+	certificate, privateKey, err := acmParseImportedCertificate(req.Certificate, req.PrivateKey)
+	if err != nil {
+		acmWriteError(w, "InvalidParameterValueException", err.Error())
+		return
+	}
+	if _, err := acmParseCertificateChain(req.CertificateChain); err != nil {
+		acmWriteError(w, "InvalidParameterValueException", err.Error())
+		return
+	}
+	certificatePublic, err := x509.MarshalPKIXPublicKey(certificate.PublicKey)
+	if err != nil {
+		acmWriteError(w, "InvalidParameterValueException", "Certificate public key is invalid")
+		return
+	}
+	privatePublic, err := x509.MarshalPKIXPublicKey(privateKey.Public())
+	if err != nil || !bytes.Equal(certificatePublic, privatePublic) {
+		acmWriteError(w, "InvalidParameterValueException", "The private key does not match the certificate public key")
+		return
+	}
 	now := acmEpochNow()
 	// If CertificateArn is provided, this is an update — replace in place.
 	id := acmARNToID(req.CertificateArn)
 	if id == "" {
 		id = acmRandomID()
+	} else if prior, ok := acmCertificates.Get(id); !ok || prior.Cert.Type != "IMPORTED" {
+		acmWriteError(w, "ResourceNotFoundException", "Could not find imported certificate "+req.CertificateArn)
+		return
 	}
+	domainName := certificate.Subject.CommonName
+	if domainName == "" && len(certificate.DNSNames) > 0 {
+		domainName = certificate.DNSNames[0]
+	}
+	notBefore := float64(certificate.NotBefore.Unix())
+	notAfter := float64(certificate.NotAfter.Unix())
 	cert := ACMCertificate{
-		CertificateArn:     acmCertARN(id),
-		Status:             "ISSUED",
-		Type:               "IMPORTED",
-		ImportedAt:         now,
-		CreatedAt:          now,
-		IssuedAt:           now,
-		KeyAlgorithm:       "RSA-2048",
-		SignatureAlgorithm: "SHA256WITHRSA",
-		InUseBy:            []string{},
-		// Sim doesn't parse the PEM — DomainName is left empty unless the
-		// caller updates it via a follow-up flow. Terraform-aws-provider
-		// uses the embedded x509 cert to read DomainName; for now we leave
-		// a synthesised placeholder so the SDK contract holds.
-		DomainName: "imported-" + id[:8] + ".example.com",
+		CertificateArn:           acmCertARN(id),
+		DomainName:               domainName,
+		SubjectAlternativeNames:  append([]string(nil), certificate.DNSNames...),
+		Status:                   "ISSUED",
+		Type:                     "IMPORTED",
+		ImportedAt:               now,
+		CreatedAt:                now,
+		IssuedAt:                 now,
+		NotBefore:                &notBefore,
+		NotAfter:                 &notAfter,
+		KeyAlgorithm:             acmPublicKeyAlgorithm(certificate.PublicKey),
+		SignatureAlgorithm:       acmSignatureAlgorithm(certificate.SignatureAlgorithm),
+		InUseBy:                  []string{},
+		RenewalEligibility:       "INELIGIBLE",
+		Serial:                   certificate.SerialNumber.Text(16),
+		Subject:                  certificate.Subject.String(),
+		Issuer:                   certificate.Issuer.String(),
+		CertificateKeyPairOrigin: "CUSTOMER_PROVIDED",
 	}
 	// Preserve any tags from a prior import when this is a re-import
 	// (CertificateArn supplied) and the caller omits tags.
@@ -1015,6 +1233,94 @@ func handleACMImportCertificate(w http.ResponseWriter, r *http.Request) {
 		PrivateKey:       string(req.PrivateKey),
 	})
 	acmWriteJSON(w, http.StatusOK, map[string]string{"CertificateArn": cert.CertificateArn})
+}
+
+func acmParseImportedCertificate(certificatePEM, privateKeyPEM []byte) (*x509.Certificate, crypto.Signer, error) {
+	certificateBlock, rest := pem.Decode(certificatePEM)
+	if certificateBlock == nil || certificateBlock.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, nil, fmt.Errorf("certificate must contain exactly one PEM-encoded X.509 certificate")
+	}
+	certificate, err := x509.ParseCertificate(certificateBlock.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("certificate is not a valid X.509 certificate: %w", err)
+	}
+	keyBlock, rest := pem.Decode(privateKeyPEM)
+	if keyBlock == nil || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, nil, fmt.Errorf("PrivateKey must contain exactly one PEM-encoded private key")
+	}
+	var parsed any
+	switch keyBlock.Type {
+	case "PRIVATE KEY":
+		parsed, err = x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	case "RSA PRIVATE KEY":
+		parsed, err = x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	case "EC PRIVATE KEY":
+		parsed, err = x509.ParseECPrivateKey(keyBlock.Bytes)
+	default:
+		return nil, nil, fmt.Errorf("PrivateKey PEM type %q is not supported", keyBlock.Type)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("PrivateKey is invalid: %w", err)
+	}
+	signer, ok := parsed.(crypto.Signer)
+	if !ok {
+		return nil, nil, fmt.Errorf("PrivateKey does not contain an RSA or EC signing key")
+	}
+	return certificate, signer, nil
+}
+
+func acmParseCertificateChain(chainPEM []byte) ([]*x509.Certificate, error) {
+	var chain []*x509.Certificate
+	rest := chainPEM
+	for len(bytes.TrimSpace(rest)) > 0 {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil || block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("CertificateChain must contain only PEM-encoded X.509 certificates")
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("CertificateChain contains an invalid X.509 certificate: %w", err)
+		}
+		chain = append(chain, certificate)
+	}
+	return chain, nil
+}
+
+func acmPublicKeyAlgorithm(publicKey any) string {
+	switch key := publicKey.(type) {
+	case *rsa.PublicKey:
+		return fmt.Sprintf("RSA_%d", key.N.BitLen())
+	case *ecdsa.PublicKey:
+		switch key.Curve {
+		case elliptic.P256():
+			return "EC_prime256v1"
+		case elliptic.P384():
+			return "EC_secp384r1"
+		case elliptic.P521():
+			return "EC_secp521r1"
+		}
+	}
+	return ""
+}
+
+func acmSignatureAlgorithm(algorithm x509.SignatureAlgorithm) string {
+	switch algorithm {
+	case x509.SHA256WithRSA:
+		return "SHA256WITHRSA"
+	case x509.SHA384WithRSA:
+		return "SHA384WITHRSA"
+	case x509.SHA512WithRSA:
+		return "SHA512WITHRSA"
+	case x509.ECDSAWithSHA256:
+		return "SHA256WITHECDSA"
+	case x509.ECDSAWithSHA384:
+		return "SHA384WITHECDSA"
+	case x509.ECDSAWithSHA512:
+		return "SHA512WITHECDSA"
+	default:
+		return strings.ToUpper(strings.ReplaceAll(algorithm.String(), "-", "WITH"))
+	}
 }
 
 type acmUpdateOptionsReq struct {
@@ -1040,7 +1346,39 @@ func handleACMUpdateOptions(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleACMResendValidationEmail(w http.ResponseWriter, r *http.Request) {
-	// Stub — accepted but no-op (real ACM re-sends the validation email).
+	var req struct {
+		CertificateArn   string `json:"CertificateArn"`
+		Domain           string `json:"Domain"`
+		ValidationDomain string `json:"ValidationDomain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		acmWriteError(w, "InvalidParameterValueException", "could not decode request: "+err.Error())
+		return
+	}
+	id := acmARNToID(req.CertificateArn)
+	stored, ok := acmCertificates.Get(id)
+	if !ok {
+		acmWriteError(w, "ResourceNotFoundException", "Could not find certificate "+req.CertificateArn)
+		return
+	}
+	if stored.Cert.Status != "PENDING_VALIDATION" {
+		acmWriteError(w, "InvalidStateException", "The certificate is not pending email validation")
+		return
+	}
+	found := false
+	for _, option := range stored.Cert.DomainValidationOptions {
+		if strings.EqualFold(option.DomainName, req.Domain) &&
+			option.ValidationMethod == "EMAIL" &&
+			strings.EqualFold(option.ValidationDomain, req.ValidationDomain) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		acmWriteError(w, "InvalidDomainValidationOptionsException", "The domain validation options do not match the certificate request")
+		return
+	}
+	acmCreateAndSendValidationEmails(r, id, stored)
 	acmWriteJSON(w, http.StatusOK, struct{}{})
 }
 
@@ -1056,9 +1394,21 @@ func handleACMRenewCertificate(w http.ResponseWriter, r *http.Request) {
 		acmWriteError(w, "ResourceNotFoundException", "Could not find certificate "+req.CertificateArn)
 		return
 	}
-	// In real ACM, RenewCertificate is async — sim just refreshes IssuedAt.
-	stored.Cert.IssuedAt = acmEpochNow()
-	acmCertificates.Put(id, stored)
+	if stored.Cert.Type != "AMAZON_ISSUED" || stored.Cert.Status != "ISSUED" ||
+		stored.Cert.RenewalEligibility != "ELIGIBLE" || stored.Cert.CertificateKeyPairOrigin == "ACME" {
+		acmWriteError(w, "InvalidStateException", "The certificate is not eligible for managed renewal")
+		return
+	}
+	stored.Cert.Status = "PENDING_VALIDATION"
+	rotated, err := acmReconcileIssuance(id, stored)
+	if err != nil {
+		acmWriteError(w, "InvalidStateException", "The certificate could not be renewed: "+err.Error())
+		return
+	}
+	if rotated.Cert.Status != "ISSUED" {
+		acmWriteError(w, "InvalidStateException", "The certificate validation is no longer complete")
+		return
+	}
 	acmWriteJSON(w, http.StatusOK, struct{}{})
 }
 

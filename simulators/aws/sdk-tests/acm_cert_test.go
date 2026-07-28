@@ -110,5 +110,23 @@ func TestACMIssuedCertHasPEMMaterial(t *testing.T) {
 	if chain := aws.ToString(getOut.CertificateChain); chain != "" {
 		chainBlock, _ := pem.Decode([]byte(chain))
 		require.NotNil(t, chainBlock, "certificate chain PEM must decode")
+		root, err := x509.ParseCertificate(chainBlock.Bytes)
+		require.NoError(t, err)
+		roots := x509.NewCertPool()
+		roots.AddCert(root)
+		_, err = leaf.Verify(x509.VerifyOptions{DNSName: domain, Roots: roots})
+		require.NoError(t, err, "Amazon-issued leaf must verify against its returned CA chain")
 	}
+
+	serialBefore := leaf.SerialNumber.String()
+	_, err = acmC.RenewCertificate(ctx, &acm.RenewCertificateInput{CertificateArn: aws.String(arn)})
+	require.NoError(t, err)
+	renewedOut, err := acmC.GetCertificate(ctx, &acm.GetCertificateInput{CertificateArn: aws.String(arn)})
+	require.NoError(t, err)
+	renewedBlock, _ := pem.Decode([]byte(aws.ToString(renewedOut.Certificate)))
+	require.NotNil(t, renewedBlock)
+	renewedLeaf, err := x509.ParseCertificate(renewedBlock.Bytes)
+	require.NoError(t, err)
+	require.NotEqual(t, serialBefore, renewedLeaf.SerialNumber.String(),
+		"managed renewal must rotate real certificate material")
 }

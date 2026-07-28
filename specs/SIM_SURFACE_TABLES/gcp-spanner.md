@@ -1,6 +1,6 @@
 # Sim surface — gcp-spanner
 
-Surface registered in `simulators/gcp/spanner.go`.
+Surface registered in `simulators/gcp/spanner.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -9,29 +9,17 @@ Surface registered in `simulators/gcp/spanner.go`.
 - 501 — stubbed NotImplemented (wire-visible gap)
 - n/a — no meaningful client/provider surface for this op
 
-## Implemented ops
+## Implemented ops (extracted from HandleFunc registrations)
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /spanner/v1/projects/{project}/instances` | ✓ `handleSpannerCreateInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | Service endpoint base maps to official `/v1` Spanner path. |
-| `GET /spanner/v1/projects/{project}/instances` | ✓ `handleSpannerListInstances` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | ✓ | |
-| `GET /spanner/v1/projects/{project}/instances/{instance}` | ✓ `handleSpannerGetInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /spanner/v1/projects/{project}/instances/{instance}` | ✓ `handleSpannerDeleteInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /spanner/v1/projects/{project}/instances/{instance}/operations/{operation}` | ✓ `handleSpannerGetOperation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /spanner/v1/projects/{project}/instances/{instance}/databases` | ✓ `handleSpannerCreateDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /spanner/v1/projects/{project}/instances/{instance}/databases` | ✓ `handleSpannerListDatabases` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | ✓ | |
-| `GET /spanner/v1/projects/{project}/instances/{instance}/databases/{database}` | ✓ `handleSpannerGetDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /spanner/v1/projects/{project}/instances/{instance}/databases/{database}` | ✓ `handleSpannerDeleteDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/ddl` | ✓ `handleSpannerUpdateDatabaseDdl` | ✓ (direct; see coverage matrix) | ✓ | n/a | Applies and persists database DDL statements; returns a database-scoped LRO. |
-| `GET /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/operations/{operation}` | ✓ `handleSpannerGetOperation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/sessions` | ✓ `handleSpannerCreateSession` | ✓ (direct; see coverage matrix) | n/a | n/a | |
-| `GET /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/sessions` | ✓ `handleSpannerListSessions` | ✓ (direct; see coverage matrix) | n/a | ✓ | |
-| `GET /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/sessions/{session}` | ✓ `handleSpannerGetSession` | ✓ (direct; see coverage matrix) | n/a | n/a | |
-| `DELETE /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/sessions/{session}` | ✓ `handleSpannerDeleteSession` | ✓ (direct; see coverage matrix) | n/a | n/a | |
+| `GET /spanner/v1/projects/{project}/instanceConfigOperations` | ✓ `simulators/gcp/spanner.go:105::handleSpannerListInstanceConfigOperationsCollection` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /spanner/v1/scans` | ✓ `simulators/gcp/spanner.go:106::handleSpannerListScans` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 
 - Row-level SDK/Terraform cells summarize the maintained coverage matrix in `specs/SIM_TEST_COVERAGE_MATRIX.md`; detailed client files and client-family `n/a` decisions live there.
+- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
 <!-- HAND-WRITTEN END -->

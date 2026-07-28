@@ -13,25 +13,48 @@ Surface registered in `simulators/gcp/bigquery.go` (and related files grouped un
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /bigquery/v2/projects/{project}/datasets` | ✓ `simulators/gcp/bigquery.go:126::handleBQInsertDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /bigquery/v2/projects/{project}/datasets` | ✓ `simulators/gcp/bigquery.go:127::handleBQListDatasets` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /bigquery/v2/projects/{project}/datasets/{dataset}` | ✓ `simulators/gcp/bigquery.go:128::handleBQGetDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /bigquery/v2/projects/{project}/datasets/{dataset}` | ✓ `simulators/gcp/bigquery.go:129::handleBQPatchDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /bigquery/v2/projects/{project}/datasets/{dataset}` | ✓ `simulators/gcp/bigquery.go:130::handleBQPatchDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /bigquery/v2/projects/{project}/datasets/{dataset}` | ✓ `simulators/gcp/bigquery.go:131::handleBQDeleteDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables` | ✓ `simulators/gcp/bigquery.go:133::handleBQInsertTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables` | ✓ `simulators/gcp/bigquery.go:134::handleBQListTables` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}` | ✓ `simulators/gcp/bigquery.go:135::handleBQGetTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}` | ✓ `simulators/gcp/bigquery.go:136::handleBQPatchTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}` | ✓ `simulators/gcp/bigquery.go:137::handleBQPatchTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}` | ✓ `simulators/gcp/bigquery.go:138::handleBQDeleteTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/insertAll` | ✓ `simulators/gcp/bigquery.go:140::handleBQInsertAll` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/data` | ✓ `simulators/gcp/bigquery.go:141::handleBQTableDataList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /bigquery/v2/projects/{project}/queries` | ✓ `simulators/gcp/bigquery.go:143::handleBQQuery` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /bigquery/v2/projects/{project}/jobs` | ✓ `simulators/gcp/bigquery.go:144::handleBQInsertJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /bigquery/v2/projects/{project}/jobs` | ✓ `simulators/gcp/bigquery.go:145::handleBQListJobs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /bigquery/v2/projects/{project}/jobs/{job}` | ✓ `simulators/gcp/bigquery.go:146::handleBQGetJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /bigquery/v2/projects/{project}/queries/{job}` | ✓ `simulators/gcp/bigquery.go:147::handleBQGetQueryResults` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects` | ✓ `simulators/gcp/bigquery.go:222::handleBQListProjects` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets` | ✓ `simulators/gcp/bigquery.go:224::handleBQInsertDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets` | ✓ `simulators/gcp/bigquery.go:225::handleBQListDatasets` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}` | ✓ `simulators/gcp/bigquery.go:226::handleBQGetDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /bigquery/v2/projects/{project}/datasets/{dataset}` | ✓ `simulators/gcp/bigquery.go:227::handleBQPatchDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /bigquery/v2/projects/{project}/datasets/{dataset}` | ✓ `simulators/gcp/bigquery.go:228::handleBQPatchDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /bigquery/v2/projects/{project}/datasets/{dataset}` | ✓ `simulators/gcp/bigquery.go:229::handleBQDeleteDataset` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets/{datasetVerb}` | ✓ `simulators/gcp/bigquery.go:232::handleBQDatasetVerb` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/serviceAccount` | ✓ `simulators/gcp/bigquery.go:234::handleBQGetServiceAccount` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables` | ✓ `simulators/gcp/bigquery.go:236::handleBQInsertTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables` | ✓ `simulators/gcp/bigquery.go:237::handleBQListTables` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}` | ✓ `simulators/gcp/bigquery.go:238::handleBQGetTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}` | ✓ `simulators/gcp/bigquery.go:239::handleBQPatchTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}` | ✓ `simulators/gcp/bigquery.go:240::handleBQPatchTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}` | ✓ `simulators/gcp/bigquery.go:241::handleBQDeleteTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{tableVerb}` | ✓ `simulators/gcp/bigquery.go:244::handleBQTableVerb` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/insertAll` | ✓ `simulators/gcp/bigquery.go:246::handleBQInsertAll` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/data` | ✓ `simulators/gcp/bigquery.go:247::handleBQTableDataList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/models` | ✓ `simulators/gcp/bigquery.go:251::handleBQListModels` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/models/{model}` | ✓ `simulators/gcp/bigquery.go:252::handleBQGetModel` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /bigquery/v2/projects/{project}/datasets/{dataset}/models/{model}` | ✓ `simulators/gcp/bigquery.go:253::handleBQPatchModel` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /bigquery/v2/projects/{project}/datasets/{dataset}/models/{model}` | ✓ `simulators/gcp/bigquery.go:254::handleBQDeleteModel` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/routines` | ✓ `simulators/gcp/bigquery.go:257::handleBQListRoutines` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/routines` | ✓ `simulators/gcp/bigquery.go:258::handleBQInsertRoutine` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/routines/{routine}` | ✓ `simulators/gcp/bigquery.go:259::handleBQGetRoutine` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /bigquery/v2/projects/{project}/datasets/{dataset}/routines/{routine}` | ✓ `simulators/gcp/bigquery.go:260::handleBQUpdateRoutine` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /bigquery/v2/projects/{project}/datasets/{dataset}/routines/{routine}` | ✓ `simulators/gcp/bigquery.go:261::handleBQDeleteRoutine` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/routines/{routineVerb}` | ✓ `simulators/gcp/bigquery.go:263::handleBQRoutineVerb` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies` | ✓ `simulators/gcp/bigquery.go:266::handleBQListRAPs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies` | ✓ `simulators/gcp/bigquery.go:267::handleBQInsertRAP` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies:batchDelete` | ✓ `simulators/gcp/bigquery.go:268::handleBQBatchDeleteRAP` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies/{policy}` | ✓ `simulators/gcp/bigquery.go:269::handleBQGetRAP` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies/{policy}` | ✓ `simulators/gcp/bigquery.go:270::handleBQUpdateRAP` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies/{policy}` | ✓ `simulators/gcp/bigquery.go:271::handleBQDeleteRAP` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies/{policyVerb}` | ✓ `simulators/gcp/bigquery.go:273::handleBQRAPVerb` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/queries` | ✓ `simulators/gcp/bigquery.go:275::handleBQQuery` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/jobs` | ✓ `simulators/gcp/bigquery.go:276::handleBQInsertJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/jobs` | ✓ `simulators/gcp/bigquery.go:277::handleBQListJobs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/jobs/{job}` | ✓ `simulators/gcp/bigquery.go:278::handleBQGetJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /bigquery/v2/projects/{project}/jobs/{job}/cancel` | ✓ `simulators/gcp/bigquery.go:279::handleBQCancelJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /bigquery/v2/projects/{project}/jobs/{job}/delete` | ✓ `simulators/gcp/bigquery.go:280::handleBQDeleteJob` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /bigquery/v2/projects/{project}/queries/{job}` | ✓ `simulators/gcp/bigquery.go:281::handleBQGetQueryResults` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

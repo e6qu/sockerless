@@ -13,15 +13,13 @@ Surface registered in `simulators/azure/acr.go` (and related files grouped under
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /subscriptions/{subscriptionId}/providers/Microsoft.ContainerRegistry/checknameavailability` | ✓ `simulators/azure/acr.go:103::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/{path...}` | ✓ `simulators/azure/acr.go:325::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `HEAD /v2/{path...}` | ✓ `simulators/azure/acr.go:425::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /v2/{path...}` | ✓ `simulators/azure/acr.go:457::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/{path...}` | ✓ `simulators/azure/acr.go:540::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/{path...}` | ✓ `simulators/azure/acr.go:565::func` | ✓ (direct; see coverage matrix) | n/a | n/a | manifest delete; removes digest aliases |
-| `GET /acr/v1/_catalog` | ✓ `simulators/azure/acr.go:589::func` | ✓ (direct; see coverage matrix) | n/a | n/a | lists distinct repository names |
-| `GET /acr/v1/{path...}` | ✓ `simulators/azure/acr.go:610::func` | ✓ (direct; see coverage matrix) | n/a | n/a | handles `{name}/_tags` and similar ACR data-plane paths |
-| `PATCH /v2/{path...}` | ✓ `simulators/azure/acr.go:645::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /subscriptions/{subscriptionId}/providers/Microsoft.ContainerRegistry/checknameavailability` | ✓ `simulators/azure/acr.go:92::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerRegistry/registries` | ✓ `simulators/azure/acr.go:216::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /acr/v1/_catalog` | ✓ `simulators/azure/acr.go:418::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /acr/v1/{path...}` | ✓ `simulators/azure/acr.go:445::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /oauth2/exchange` | ✓ `simulators/azure/acr.go:491::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /oauth2/token` | ✓ `simulators/azure/acr.go:508::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /providers/Microsoft.ContainerRegistry/operations` | ✓ `simulators/azure/acr.go:983::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

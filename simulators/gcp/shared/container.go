@@ -94,7 +94,7 @@ var (
 
 // InitDocker initializes the shared Docker client and verifies connectivity.
 // Must be called at simulator startup. Fatally exits if Docker is not available.
-func InitDocker() *client.Client {
+func InitDocker(provider string) *client.Client {
 	dockerClientOnce.Do(func() {
 		dockerClient, dockerClientErr = client.NewClientWithOpts(
 			client.FromEnv,
@@ -111,6 +111,10 @@ func InitDocker() *client.Client {
 	if dockerClientErr != nil {
 		fmt.Fprintf(os.Stderr, "FATAL: Docker/Podman not available: %v\n", dockerClientErr)
 		fmt.Fprintf(os.Stderr, "Simulators require Docker or Podman for workload execution. Install Docker/Podman, or set SIM_RUNTIME=process only for explicit API-only runs that do not execute workloads.\n")
+		os.Exit(1)
+	}
+	if err := startContainerReaper(provider); err != nil {
+		fmt.Fprintf(os.Stderr, "FATAL: %v\n", err)
 		os.Exit(1)
 	}
 	return dockerClient
@@ -148,7 +152,7 @@ func CleanupContainers() {
 	})
 
 	nets, err := dockerClient.NetworkList(ctx, network.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", "sockerless-sim=true")),
+		Filters: filters.NewArgs(filters.Arg("label", "sockerless-sim-run="+simulatorRunID)),
 	})
 	if err == nil {
 		for _, n := range nets {
@@ -280,7 +284,7 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 		env = append(env, k+"="+v)
 	}
 
-	labels := map[string]string{"sockerless-sim": "true"}
+	labels := simulatorLabels(nil)
 	for k, v := range cfg.Labels {
 		labels[k] = v
 	}
@@ -508,9 +512,7 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		env = append(env, k+"="+v)
 	}
 
-	labels := map[string]string{
-		"sockerless-sim": "true",
-	}
+	labels := simulatorLabels(nil)
 	for k, v := range cfg.Labels {
 		labels[k] = v
 	}
@@ -740,7 +742,7 @@ func EnsureDockerNetwork(name string) (string, error) {
 	}
 	resp, err := cli.NetworkCreate(ctx, name, network.CreateOptions{
 		Driver: "bridge",
-		Labels: map[string]string{"sockerless-sim": "true"},
+		Labels: simulatorLabels(nil),
 	})
 	if err != nil {
 		return "", fmt.Errorf("network create %s: %w", name, err)

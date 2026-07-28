@@ -319,6 +319,7 @@ func smSecretToProto(s Secret) *smpb.Secret {
 		Topics:         smTopicsToProto(s.Topics),
 		Rotation:       smRotationToProto(s.Rotation),
 		VersionAliases: smVersionAliasesToProto(s.VersionAliases),
+		SecretType:     smpb.Secret_SecretType(smpb.Secret_SecretType_value[s.SecretType]),
 	}
 	if s.ExpireTime != "" {
 		out.Expiration = &smpb.Secret_ExpireTime{ExpireTime: smParseRFC3339(s.ExpireTime)}
@@ -341,6 +342,7 @@ func smSecretFromProto(name string, s *smpb.Secret) Secret {
 		Replication: smReplicationFromProto(s.GetReplication()),
 		Topics:      smTopicsFromProto(s.GetTopics()),
 		Rotation:    smRotationFromProto(s.GetRotation()),
+		SecretType:  s.GetSecretType().String(),
 	}
 	switch exp := s.GetExpiration().(type) {
 	case *smpb.Secret_ExpireTime:
@@ -509,6 +511,7 @@ func (s *secretManagerGRPC) DeleteSecret(ctx context.Context, req *smpb.DeleteSe
 		return nil, status.Errorf(codes.NotFound, "Secret %s not found", name)
 	}
 	smVersionSeq.Delete(name)
+	smManagedRotation.Delete(name)
 	gcpResourceIAMStore().Delete(name)
 	prefix := smVersionPrefix(name)
 	for _, v := range smSecretVersions.List() {
@@ -569,8 +572,12 @@ func (s *secretManagerGRPC) GetSecretVersion(ctx context.Context, req *smpb.GetS
 
 func (s *secretManagerGRPC) AddSecretVersion(ctx context.Context, req *smpb.AddSecretVersionRequest) (*smpb.SecretVersion, error) {
 	parent := smNormalizeName(req.GetParent())
-	if _, ok := smSecrets.Get(parent); !ok {
+	secret, ok := smSecrets.Get(parent)
+	if !ok {
 		return nil, status.Errorf(codes.NotFound, "Secret %s not found", parent)
+	}
+	if secret.SecretType == "CLOUD_SQL_DB_CREDENTIALS" {
+		return nil, status.Error(codes.FailedPrecondition, "versions for CLOUD_SQL_DB_CREDENTIALS secrets are managed by Secret Manager")
 	}
 	payload := req.GetPayload()
 	if payload == nil {
@@ -581,6 +588,56 @@ func (s *secretManagerGRPC) AddSecretVersion(ctx context.Context, req *smpb.AddS
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	return smVersionToProto(ver), nil
+}
+
+func (s *secretManagerGRPC) EnableManagedRotation(ctx context.Context, req *smpb.EnableManagedRotationRequest) (*smpb.SecretVersion, error) {
+	parent := smNormalizeName(req.GetParent())
+	secret, ok := smSecrets.Get(parent)
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "Secret %s not found", parent)
+	}
+	if secret.SecretType != "CLOUD_SQL_DB_CREDENTIALS" {
+		return nil, status.Error(codes.FailedPrecondition, "managed rotation requires a CLOUD_SQL_DB_CREDENTIALS secret")
+	}
+	if _, exists := smManagedRotation.Get(parent); exists {
+		return nil, status.Error(codes.FailedPrecondition, "managed rotation has already been enabled")
+	}
+	credentials := req.GetCloudSqlSingleUserCredentials()
+	if credentials == nil || credentials.GetInstanceId() == "" || credentials.GetUsername() == "" {
+		return nil, status.Error(codes.InvalidArgument, "instance_id and username are required")
+	}
+	project := strings.Split(parent, "/")[1]
+	user, found := firstSQLUser(project, credentials.GetInstanceId(), credentials.GetUsername(), "")
+	if !found {
+		return nil, status.Errorf(codes.NotFound, "Cloud SQL user %s on instance %s not found", credentials.GetUsername(), credentials.GetInstanceId())
+	}
+	record := smManagedRotationRecord{
+		Project: project, InstanceID: credentials.GetInstanceId(),
+		Username: credentials.GetUsername(), UserHost: user.Host,
+	}
+	password := credentials.GetPassword()
+	if password == "" {
+		password = smGeneratedPassword()
+	}
+	version, err := smApplyManagedRotation(parent, record, password)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	smManagedRotation.Put(parent, record)
+	return smVersionToProto(version), nil
+}
+
+func (s *secretManagerGRPC) RotateSecret(ctx context.Context, req *smpb.RotateSecretRequest) (*smpb.SecretVersion, error) {
+	parent := smNormalizeName(req.GetParent())
+	record, ok := smManagedRotation.Get(parent)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "managed rotation is not enabled")
+	}
+	version, err := smApplyManagedRotation(parent, record, smGeneratedPassword())
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return smVersionToProto(version), nil
 }
 
 func (s *secretManagerGRPC) AccessSecretVersion(ctx context.Context, req *smpb.AccessSecretVersionRequest) (*smpb.AccessSecretVersionResponse, error) {

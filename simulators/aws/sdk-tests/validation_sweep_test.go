@@ -40,7 +40,7 @@ func TestValidationSweep(t *testing.T) {
 		cq, err := c.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("vq-size")})
 		require.NoError(t, err)
 		_, err = c.SendMessage(ctx, &sqs.SendMessageInput{
-			QueueUrl: cq.QueueUrl, MessageBody: aws.String(strings.Repeat("x", 262145)),
+			QueueUrl: cq.QueueUrl, MessageBody: aws.String(strings.Repeat("x", 1048577)),
 		})
 		assert.Equal(t, "InvalidParameterValue", errCode(t, err))
 	})

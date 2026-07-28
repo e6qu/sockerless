@@ -4186,6 +4186,215 @@ export const deleteACMCertificate = async (certificateArn: string): Promise<void
   await awsJson("acm", "CertificateManager.DeleteCertificate", { CertificateArn: certificateArn });
 };
 
+export interface ACMAcmeEndpoint {
+  acmeEndpointArn: string;
+  endpointUrl: string;
+  status: string;
+  contact: string;
+  authorizationBehavior: string;
+  createdAt: number;
+}
+
+export interface ACMAcmeDomainValidation {
+  acmeDomainValidationArn: string;
+  domainName: string;
+  status: string;
+  createdAt: number;
+  recordName: string;
+  recordValue: string;
+}
+
+export interface ACMAcmeExternalAccountBinding {
+  acmeExternalAccountBindingArn: string;
+  roleArn: string;
+  createdAt: number;
+  expiresAt: number;
+  revokedAt: number;
+}
+
+export interface ACMAcmeAccount {
+  accountUrl: string;
+  contacts: string[];
+  status: string;
+  publicKeyThumbprint: string;
+  createdAt: number;
+}
+
+export const fetchACMAcmeEndpoints = async (): Promise<ACMAcmeEndpoint[]> => {
+  const listed = await awsJson<{
+    AcmeEndpoints?: {
+      AcmeEndpointArn?: string;
+      EndpointUrl?: string;
+      Status?: string;
+      Contact?: string;
+      AuthorizationBehavior?: string;
+      CreatedAt?: number;
+    }[];
+  }>("acm", "CertificateManager.ListAcmeEndpoints", {});
+  return (listed.AcmeEndpoints ?? []).map((endpoint) => ({
+    acmeEndpointArn: endpoint.AcmeEndpointArn ?? "",
+    endpointUrl: endpoint.EndpointUrl ?? "",
+    status: endpoint.Status ?? "",
+    contact: endpoint.Contact ?? "",
+    authorizationBehavior: endpoint.AuthorizationBehavior ?? "",
+    createdAt: endpoint.CreatedAt ?? 0,
+  }));
+};
+
+export const createACMAcmeEndpoint = async (contact: "REQUIRED" | "NOT_REQUIRED"): Promise<void> => {
+  await awsJson("acm", "CertificateManager.CreateAcmeEndpoint", {
+    AuthorizationBehavior: "PRE_APPROVED",
+    CertificateAuthority: {
+      PublicCertificateAuthority: { AllowedKeyAlgorithms: ["RSA_2048", "EC_prime256v1", "EC_secp384r1"] },
+    },
+    Contact: contact,
+  });
+};
+
+export const deleteACMAcmeEndpoint = async (acmeEndpointArn: string): Promise<void> => {
+  await awsJson("acm", "CertificateManager.DeleteAcmeEndpoint", { AcmeEndpointArn: acmeEndpointArn });
+};
+
+export const fetchACMAcmeDomainValidations = async (
+  acmeEndpointArn: string,
+): Promise<ACMAcmeDomainValidation[]> => {
+  const listed = await awsJson<{
+    AcmeDomainValidations?: {
+      AcmeDomainValidationArn?: string;
+      DomainName?: string;
+      Status?: string;
+      CreatedAt?: number;
+      PrevalidationDetails?: {
+        DnsPrevalidation?: { ResourceRecord?: { Name?: string; Value?: string } };
+      };
+    }[];
+  }>("acm", "CertificateManager.ListAcmeDomainValidations", { AcmeEndpointArn: acmeEndpointArn });
+  return (listed.AcmeDomainValidations ?? []).map((validation) => ({
+    acmeDomainValidationArn: validation.AcmeDomainValidationArn ?? "",
+    domainName: validation.DomainName ?? "",
+    status: validation.Status ?? "",
+    createdAt: validation.CreatedAt ?? 0,
+    recordName: validation.PrevalidationDetails?.DnsPrevalidation?.ResourceRecord?.Name ?? "",
+    recordValue: validation.PrevalidationDetails?.DnsPrevalidation?.ResourceRecord?.Value ?? "",
+  }));
+};
+
+export const createACMAcmeDomainValidation = async (
+  acmeEndpointArn: string,
+  domainName: string,
+  hostedZoneId: string,
+): Promise<void> => {
+  await awsJson("acm", "CertificateManager.CreateAcmeDomainValidation", {
+    AcmeEndpointArn: acmeEndpointArn,
+    DomainName: domainName,
+    PrevalidationOptions: {
+      DnsPrevalidation: {
+        DomainScope: { ExactDomain: "ENABLED", Subdomains: "ENABLED", Wildcards: "ENABLED" },
+        ...(hostedZoneId ? { HostedZoneId: hostedZoneId } : {}),
+      },
+    },
+  });
+};
+
+export const deleteACMAcmeDomainValidation = async (acmeDomainValidationArn: string): Promise<void> => {
+  await awsJson("acm", "CertificateManager.DeleteAcmeDomainValidation", {
+    AcmeDomainValidationArn: acmeDomainValidationArn,
+  });
+};
+
+export const fetchACMAcmeExternalAccountBindings = async (
+  acmeEndpointArn: string,
+): Promise<ACMAcmeExternalAccountBinding[]> => {
+  const listed = await awsJson<{
+    ExternalAccountBindings?: {
+      AcmeExternalAccountBindingArn?: string;
+      RoleArn?: string;
+      CreatedAt?: number;
+      ExpiresAt?: number;
+      RevokedAt?: number;
+    }[];
+  }>("acm", "CertificateManager.ListAcmeExternalAccountBindings", { AcmeEndpointArn: acmeEndpointArn });
+  return (listed.ExternalAccountBindings ?? []).map((binding) => ({
+    acmeExternalAccountBindingArn: binding.AcmeExternalAccountBindingArn ?? "",
+    roleArn: binding.RoleArn ?? "",
+    createdAt: binding.CreatedAt ?? 0,
+    expiresAt: binding.ExpiresAt ?? 0,
+    revokedAt: binding.RevokedAt ?? 0,
+  }));
+};
+
+export const createACMAcmeExternalAccountBinding = async (
+  acmeEndpointArn: string,
+  roleArn: string,
+): Promise<ACMAcmeExternalAccountBinding> => {
+  const created = await awsJson<{
+    ExternalAccountBinding?: {
+      AcmeExternalAccountBindingArn?: string;
+      RoleArn?: string;
+      CreatedAt?: number;
+      ExpiresAt?: number;
+      RevokedAt?: number;
+    };
+  }>("acm", "CertificateManager.CreateAcmeExternalAccountBinding", {
+    AcmeEndpointArn: acmeEndpointArn,
+    RoleArn: roleArn,
+    Expiration: { Type: "DAYS", Value: 7 },
+  });
+  const binding = created.ExternalAccountBinding ?? {};
+  return {
+    acmeExternalAccountBindingArn: binding.AcmeExternalAccountBindingArn ?? "",
+    roleArn: binding.RoleArn ?? "",
+    createdAt: binding.CreatedAt ?? 0,
+    expiresAt: binding.ExpiresAt ?? 0,
+    revokedAt: binding.RevokedAt ?? 0,
+  };
+};
+
+export const getACMAcmeExternalAccountBindingCredentials = async (
+  acmeExternalAccountBindingArn: string,
+): Promise<{ keyId: string; macKey: string }> => {
+  const credentials = await awsJson<{ KeyId?: string; MacKey?: string }>(
+    "acm",
+    "CertificateManager.GetAcmeExternalAccountBindingCredentials",
+    { AcmeExternalAccountBindingArn: acmeExternalAccountBindingArn },
+  );
+  return { keyId: credentials.KeyId ?? "", macKey: credentials.MacKey ?? "" };
+};
+
+export const revokeACMAcmeExternalAccountBinding = async (
+  acmeExternalAccountBindingArn: string,
+): Promise<void> => {
+  await awsJson("acm", "CertificateManager.RevokeAcmeExternalAccountBinding", {
+    AcmeExternalAccountBindingArn: acmeExternalAccountBindingArn,
+  });
+};
+
+export const fetchACMAcmeAccounts = async (acmeEndpointArn: string): Promise<ACMAcmeAccount[]> => {
+  const listed = await awsJson<{
+    AcmeAccounts?: {
+      AccountUrl?: string;
+      Contacts?: string[];
+      Status?: string;
+      PublicKeyThumbprint?: string;
+      CreatedAt?: number;
+    }[];
+  }>("acm", "CertificateManager.ListAcmeAccounts", { AcmeEndpointArn: acmeEndpointArn });
+  return (listed.AcmeAccounts ?? []).map((account) => ({
+    accountUrl: account.AccountUrl ?? "",
+    contacts: account.Contacts ?? [],
+    status: account.Status ?? "",
+    publicKeyThumbprint: account.PublicKeyThumbprint ?? "",
+    createdAt: account.CreatedAt ?? 0,
+  }));
+};
+
+export const revokeACMAcmeAccount = async (acmeEndpointArn: string, accountUrl: string): Promise<void> => {
+  await awsJson("acm", "CertificateManager.RevokeAcmeAccount", {
+    AcmeEndpointArn: acmeEndpointArn,
+    AccountUrl: accountUrl,
+  });
+};
+
 // ---------------------------------------------------------------------------
 // AWS WAF — awsjson1.1, X-Amz-Target AWSWAF_20190729.<Op>. Every WAF read takes
 // a Scope: REGIONAL resources and CloudFront distributions are separate

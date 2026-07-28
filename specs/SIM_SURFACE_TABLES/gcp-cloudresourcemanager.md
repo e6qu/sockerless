@@ -1,6 +1,6 @@
 # Sim surface — gcp-cloudresourcemanager
 
-Surface registered in `simulators/gcp/cloudresourcemanager.go` — the Cloud Resource Manager v1 projects lifecycle (the wire `gcloud projects` and terraform-provider-google's `google_project` speak), the operations.get polls of both API versions, and the Cloud Billing project billing-info read. The v3 projects/folders/tags surface registered in `simulators/gcp/iam.go` (`registerCRMv3`) stays tabled under `gcp-iam`.
+Surface registered in `simulators/gcp/cloudresourcemanager.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,14 +13,14 @@ Surface registered in `simulators/gcp/cloudresourcemanager.go` — the Cloud Res
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/projects` | ✓ `simulators/gcp/cloudresourcemanager.go::registerCloudResourceManagerV1` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | settled v1 create Operation (`ProjectCreationStatus` metadata); duplicate projectId → 409 ALREADY_EXISTS |
-| `GET /v1/projects` | ✓ `simulators/gcp/cloudresourcemanager.go::registerCloudResourceManagerV1` | ✓ (direct; see coverage matrix) | n/a | ✓ | v1 filter subset incl. gcloud's always-sent `lifecycleState:ACTIVE` |
-| `DELETE /v1/projects/{project}` | ✓ `simulators/gcp/cloudresourcemanager.go::registerCloudResourceManagerV1` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | soft-delete → DELETE_REQUESTED; non-ACTIVE → 400 FAILED_PRECONDITION |
-| `PUT /v1/projects/{project}` | ✓ `simulators/gcp/cloudresourcemanager.go::registerCloudResourceManagerV1` | ✓ (direct; see coverage matrix) | n/a | n/a | gcloud projects update read-modify-write |
-| `POST /v1/projects/{projectAction}` | ✓ `simulators/gcp/cloudresourcemanager.go::registerCloudResourceManagerV1` | ✓ (direct; see coverage matrix) | n/a | n/a | `:undelete` + IAM triple; same per-project policy as the v3 verbs |
-| `GET /v1/operations/{operation}` | ✓ `simulators/gcp/cloudresourcemanager.go::crmGetOperation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | gcloud create waiter + terraform ResourceManagerOperationWaiter |
-| `GET /v3/operations/{operation}` | ✓ `simulators/gcp/cloudresourcemanager.go::crmGetOperation` | ✓ (direct; see coverage matrix) | n/a | n/a | resourcemanager GAPIC LRO poller |
-| `GET /v1/projects/{project}/billingInfo` | ✓ `simulators/gcp/cloudresourcemanager.go::registerCloudResourceManagerV1` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | Cloud Billing projects.getBillingInfo; read unconditionally by google_project's terraform Read |
+| `POST /v1/projects` | ✓ `simulators/gcp/cloudresourcemanager.go:335::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects` | ✓ `simulators/gcp/cloudresourcemanager.go:366::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v1/projects/{project}` | ✓ `simulators/gcp/cloudresourcemanager.go:398::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /v1/projects/{project}` | ✓ `simulators/gcp/cloudresourcemanager.go:417::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/projects/{projectAction}` | ✓ `simulators/gcp/cloudresourcemanager.go:448::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/operations/{operation}` | ✓ `simulators/gcp/cloudresourcemanager.go:486::crmGetOperation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/operations/{operation}` | ✓ `simulators/gcp/cloudresourcemanager.go:487::crmGetOperation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/billingInfo` | ✓ `simulators/gcp/cloudresourcemanager.go:492::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

@@ -50,6 +50,14 @@ func ConfigureLoopbackHTTPRegistry(ctx context.Context, coordinate string) (func
 		return func() error { return nil }, nil
 	}
 
+	// The Linux container harness reaches the host Podman engine through its
+	// Docker-compatible socket. Podman treats loopback registries as insecure
+	// on that engine already; configuration files and a user systemd instance
+	// inside the client container cannot configure or reload the remote engine.
+	if runtime.GOOS == "linux" && insideContainer() {
+		return func() error { return nil }, nil
+	}
+
 	content := "[[registry]]\nlocation = " + strconv.Quote(coordinate) + "\ninsecure = true\n"
 	name := fmt.Sprintf("sockerless-sdk-test-%d.conf", os.Getpid())
 	cleanup, err := configurePodman(ctx, name, content)
@@ -69,6 +77,15 @@ func ConfigureLoopbackHTTPRegistry(ctx context.Context, coordinate string) (func
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+func insideContainer() bool {
+	for _, marker := range []string{"/run/.containerenv", "/.dockerenv"} {
+		if _, err := os.Stat(marker); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func configurePodman(ctx context.Context, name, content string) (func() error, error) {

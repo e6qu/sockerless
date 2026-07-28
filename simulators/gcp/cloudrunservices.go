@@ -535,10 +535,9 @@ var crv2Services sim.Store[ServiceV2]
 // cloudfunctions auto-wire path so a single source of truth controls
 // the shape of "just-created" services.
 //
-// `host` is the simulator's HTTP host (Request.Host) so the URI we hand
-// back routes invocations to the sim's own /v2-services-invoke handler
-// rather than to the real *.run.app domain (which doesn't exist for
-// fake project IDs and would 401 on TLS even if it did).
+// `host` is the configured cloud API coordinate (Request.Host), so the URI
+// routes invocations through this Cloud Run data plane just as a real-cloud
+// coordinate routes them through run.app.
 func seedServiceV2Defaults(svc ServiceV2, host, project, location, serviceID string) ServiceV2 {
 	now := nowTimestamp()
 	svc.Name = fmt.Sprintf("projects/%s/locations/%s/services/%s", project, location, serviceID)
@@ -599,6 +598,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 	services := sim.MakeStore[ServiceV2](srv.DB(), "crv2_services")
 	crv2Services = services
 	revisions := sim.MakeStore[RevisionV2](srv.DB(), "crv2_revisions")
+	crv2Revisions = revisions
 	if crOperations == nil {
 		crOperations = sim.MakeStore[Operation](srv.DB(), "operations")
 	}
@@ -639,6 +639,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 
 		services.Put(name, svc)
 		reconcileServiceRevision(revisions, name, serviceID+"-00001-abc", svc)
+		projectCloudRunV2ToV1(svc)
 
 		lro := newLRO(project, location, svc, "type.googleapis.com/google.cloud.run.v2.Service")
 		sim.WriteJSON(w, http.StatusOK, lro)
@@ -705,6 +706,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			return
 		}
 		services.Delete(name)
+		deleteCloudRunServiceProjections(project, location, serviceID)
 		deleteCloudRunServiceInstance(name)
 		revPrefix := name + "/revisions/"
 		for _, rev := range revisions.Filter(func(r RevisionV2) bool { return strings.HasPrefix(r.Name, revPrefix) }) {
@@ -793,8 +795,8 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		// Cloud Run revisions are immutable, so each PATCH spawns a new
 		// revision. Charge its CPU load against the regional sliding-window
 		// quota — a quota-exhausted UpdateService is the failure mode
-		// behind (the gcf overlay-and-swap path issues an Update
-		// to flip the stub Buildpacks image to the real overlay).
+		// behind the Cloud Run functions overlay-and-swap path, which
+		// replaces the build output with the runtime overlay image.
 		if !regionalCPUQuotaInstance.tryDebit(project, location, serviceCPULoad(update)) {
 			regionalCPUQuotaErrorJSON(w, name)
 			return
@@ -821,6 +823,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 
 		services.Put(name, update)
 		reconcileServiceRevision(revisions, name, revName, update)
+		projectCloudRunV2ToV1(update)
 		lro := newLRO(project, location, update, "type.googleapis.com/google.cloud.run.v2.Service")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})

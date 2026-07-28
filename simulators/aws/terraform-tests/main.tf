@@ -59,8 +59,11 @@ provider "aws" {
     appautoscaling   = var.endpoint
     scheduler        = var.endpoint
     budgets          = var.endpoint
+    organizations    = var.endpoint
   }
 }
+
+data "aws_organizations_organization" "current" {}
 
 resource "aws_kinesis_stream" "tf_stream" {
   name             = "tf-kinesis-stream"
@@ -1872,6 +1875,10 @@ output "budgets_budget_limit_amount" {
 
 output "budgets_budget_tag_env" {
   value = aws_budgets_budget.tf_monthly.tags["env"]
+}
+
+output "organizations_id" {
+  value = data.aws_organizations_organization.current.id
 }
 
 output "service_discovery_namespace_arn" {

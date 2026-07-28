@@ -3,8 +3,11 @@ package aws_sdk_test
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -23,8 +26,7 @@ func amplifyClient() *amplify.Client {
 }
 
 // amplifyWaitJobStatus polls GetJob until the job reaches the wanted status
-// (the sim drives jobs through PENDING → RUNNING → SUCCEED on a short
-// synthetic timer).
+// while real builds and direct deployments drive PENDING → RUNNING → terminal.
 func amplifyWaitJobStatus(t *testing.T, ctx context.Context, c *amplify.Client, appID, branch, jobID string, want amplifytypes.JobStatus) *amplifytypes.Job {
 	t.Helper()
 	var job *amplifytypes.Job
@@ -262,11 +264,29 @@ func TestAmplifyWebhookLifecycle(t *testing.T) {
 
 func TestAmplifyJobLifecycle(t *testing.T) {
 	c := amplifyClient()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	repository := amplifyServeGitRepo(t, "main", map[string]string{
+		"index.html": "<html>job lifecycle</html>",
+	})
+	buildSpec := `version: 1
+frontend:
+  phases:
+    build:
+      commands:
+        - sleep 2
+        - mkdir -p dist
+        - cp index.html dist/index.html
+  artifacts:
+    baseDirectory: dist
+    files:
+      - '**/*'
+`
 	app, err := c.CreateApp(ctx, &amplify.CreateAppInput{
-		Name: aws.String("job-app-" + time.Now().Format("150405.000000")),
+		Name:       aws.String("job-app-" + time.Now().Format("150405.000000")),
+		Repository: aws.String(repository),
+		BuildSpec:  aws.String(buildSpec),
 	})
 	require.NoError(t, err)
 	appID := aws.ToString(app.App.AppId)
@@ -288,7 +308,7 @@ func TestAmplifyJobLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	jobID := aws.ToString(startOut.JobSummary.JobId)
 	require.NotEmpty(t, jobID)
-	// The job starts PENDING and settles through the synthetic pipeline.
+	// The job starts PENDING and settles only after the real repository build.
 	assert.Contains(t, []amplifytypes.JobStatus{
 		amplifytypes.JobStatusPending, amplifytypes.JobStatusRunning, amplifytypes.JobStatusSucceed,
 	}, startOut.JobSummary.Status)
@@ -334,7 +354,7 @@ func TestAmplifyJobLifecycle(t *testing.T) {
 	assert.Equal(t, http.StatusOK, artifactResp.StatusCode)
 	artifactBody, err := io.ReadAll(artifactResp.Body)
 	require.NoError(t, err)
-	assert.Contains(t, string(artifactBody), artifactID)
+	assert.True(t, bytes.HasPrefix(artifactBody, []byte("PK")), "build artifact must be a real zip")
 
 	logs, err := c.GenerateAccessLogs(ctx, &amplify.GenerateAccessLogsInput{
 		AppId:      aws.String(appID),
@@ -380,7 +400,7 @@ func TestAmplifyJobLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, amplifytypes.JobStatusCancelled, stopOut.JobSummary.Status)
-	// The synthetic pipeline must not resurrect the cancelled job.
+	// The cancelled clone/build must not resurrect the job.
 	time.Sleep(1200 * time.Millisecond)
 	cancelled, err := c.GetJob(ctx, &amplify.GetJobInput{
 		AppId: aws.String(appID), BranchName: aws.String("main"), JobId: aws.String(secondJobID),
@@ -531,14 +551,21 @@ func TestAmplifyDeploymentFlow(t *testing.T) {
 	})
 	require.ErrorAs(t, err, &notFound)
 
-	// sourceUrl-style deployment records sourceUrl/sourceUrlType.
+	// sourceUrl-style deployment fetches real bytes from the external source.
+	sourceBytes := []byte("PK\x03\x04 external deployment archive")
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(sourceBytes)
+	}))
+	defer source.Close()
 	srcDep, err := c.StartDeployment(ctx, &amplify.StartDeploymentInput{
 		AppId:      aws.String(appID),
 		BranchName: aws.String("main"),
-		SourceUrl:  aws.String("https://example.com/site-archive.zip"),
+		SourceUrl:  aws.String(source.URL + "/site-archive.zip"),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "https://example.com/site-archive.zip", aws.ToString(srcDep.JobSummary.SourceUrl))
+	assert.Equal(t, source.URL+"/site-archive.zip", aws.ToString(srcDep.JobSummary.SourceUrl))
 	assert.Equal(t, amplifytypes.SourceUrlTypeZip, srcDep.JobSummary.SourceUrlType)
 	amplifyWaitJobStatus(t, ctx, c, appID, "main", aws.ToString(srcDep.JobSummary.JobId), amplifytypes.JobStatusSucceed)
 }
@@ -566,8 +593,8 @@ func TestAmplifyDeploymentFileMapUploads(t *testing.T) {
 		"app.js":     []byte("console.log('filemap');"),
 	}
 	fileMap := map[string]string{}
-	for name := range files {
-		fileMap[name] = "0" // sim does not verify the md5 hashes
+	for name, contents := range files {
+		fileMap[name] = fmt.Sprintf("%x", md5.Sum(contents))
 	}
 	createDep, err := c.CreateDeployment(ctx, &amplify.CreateDeploymentInput{
 		AppId:      aws.String(appID),

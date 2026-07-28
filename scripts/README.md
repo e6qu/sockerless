@@ -11,6 +11,7 @@ Every script must be shellcheck-clean and run under both bash and zsh on macOS a
 | `check-cloud-backend-isolation.sh` | Verifies cloud backends stay stateless: no `BaseServer` lifecycle/query/exec calls, no `Store.Containers` writes — cloud backends operate exclusively through cloud APIs. | pre-commit (Go changes) + CI `test (core)` |
 | `check-simulator-tests.sh` | Simulator testing contract: every new `Register(...)` / `RegisterVersioned(...)` operation under `simulators/<cloud>/` must be referenced by an SDK / CLI / terraform test in the same commit (opt-outs via `simulators/<cloud>/tests-exempt.txt`). | pre-commit (always) |
 | `check-simulator-coverage-matrix.sh` | Keeps [`specs/SIM_TEST_COVERAGE_MATRIX.md`](../specs/SIM_TEST_COVERAGE_MATRIX.md) in lockstep with [`specs/SIM_SURFACE_TABLES/`](../specs/SIM_SURFACE_TABLES/README.md). | pre-commit (always) + CI `build-gates` |
+| `check-surface-tables-generated.sh` | Regenerates simulator surface tables in an isolated temporary directory and fails when the checked-in operation rows or index are stale. | pre-commit (always) + CI `build-gates` |
 | `check-cli-shard-coverage.sh` | Asserts every AWS CLI test function matches exactly one of the CI shard `-run` regexes — a test matching no shard would silently never run. | pre-commit (always) |
 | `check-no-public-cloud-services.sh` | Forbids Cloud Run / Cloud Functions resources granting invoke to `allUsers` / `allAuthenticatedUsers`; long-lived Services must default to `ingress=internal`. | pre-commit (always) |
 | `check-port-defaults.sh` | Fails on references to the two obsolete default ports it greps for (canonical default is `:3375`). | pre-commit (always) |
@@ -48,13 +49,13 @@ The four simulator scans run in pre-commit when matching files are touched and u
 
 | Script | What it does | When it runs |
 |---|---|---|
-| `seed-surface-tables.sh` | Regenerates [`specs/SIM_SURFACE_TABLES/`](../specs/SIM_SURFACE_TABLES/README.md) stubs from registered sim `HandleFunc` patterns; hand-written sections inside `<!-- HAND-WRITTEN BEGIN/END -->` are preserved. | manual, after adding sim routes |
+| `seed-surface-tables.sh` | Regenerates [`specs/SIM_SURFACE_TABLES/`](../specs/SIM_SURFACE_TABLES/README.md) stubs from registered sim `HandleFunc` patterns; hand-written sections inside `<!-- HAND-WRITTEN BEGIN/END -->` are preserved. `SEED_SURFACE_TABLES_OUT_DIR` selects an isolated output directory for verification. | manual, after adding sim routes |
 | `fetch-aws-spec.sh` | Vendors/refreshes one AWS Smithy model into [`specs/cloud-api/aws/`](../specs/cloud-api/README.md), pinned to an `aws/aws-sdk-go-v2` commit; rewrites the `SOURCES.md` row. | manual, when adding a service / refreshing pins |
 | `fetch-gcp-discovery.sh` | Vendors/refreshes one Google API Discovery document into `specs/cloud-api/gcp/`, pinned by the document's `revision`. | manual |
 | `fetch-azure-spec.sh` | Vendors/refreshes one Azure Swagger 2.0 spec into `specs/cloud-api/azure/`, pinned to an `Azure/azure-rest-api-specs` commit. | manual |
 | `spec-sources-row.sh` | Shared helper: idempotently upserts one provenance row in a `specs/cloud-api/<cloud>/SOURCES.md` table. Invoked by the three fetch scripts, not directly. | helper |
 | `check-spec-violations.sh` | Ratchet gate for runtime spec-shape validation: dedupes a `SOCKERLESS_SPEC_VALIDATE` report and fails on violations missing from `simulators/<cloud>/spec-violation-allowlist.txt` (the list only shrinks; burn-down entries carry a BUG ID — currently only GCP carries an allowlist, with two permanent documented exemptions). | CI sim jobs, after sdk/cli suites |
-| `check-spec-freshness.sh` | Reports (never gates) drift between the vendored cloud API spec pins and their upstreams. | manual |
+| `check-spec-freshness.sh` | Probes upstream cloud API specifications and fails on definite drift. Google Cloud compares each pin against the newest of repeated Discovery probes so concurrently served older revisions cannot make the result flap. | CI `check-deps` (Google Cloud) + manual |
 
 ## Setup / CI infrastructure
 

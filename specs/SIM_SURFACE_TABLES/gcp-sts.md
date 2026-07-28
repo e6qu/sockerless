@@ -13,8 +13,8 @@ Surface registered in `simulators/gcp/sts.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/token` | ✓ `simulators/gcp/sts.go::handleSTSTokenExchange` | ✓ (direct; see coverage matrix) | n/a | n/a | Workforce Identity Federation token exchange (RFC 8693); the external-account credential's `token_url` |
-| `POST /v1/introspect` | ✓ `simulators/gcp/sts.go::handleSTSIntrospect` | ✓ (direct; see coverage matrix) | n/a | n/a | Security Token Service token introspection (RFC 7662); the external-account credential's `token_info_url`, used by `gcloud auth login --cred-file` to resolve the workforce principal |
+| `POST /v1/token` | ✓ `simulators/gcp/sts.go:31::handleSTSTokenExchange` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1/introspect` | ✓ `simulators/gcp/sts.go:32::handleSTSIntrospect` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
 
 ## Coverage status
 

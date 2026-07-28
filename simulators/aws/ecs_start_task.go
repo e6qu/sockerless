@@ -1,11 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -14,7 +12,8 @@ import (
 // rather than letting the scheduler place it (RunTask). It is the EC2-launch-type
 // placement primitive: the caller has its own ECS agents (RegisterContainerInstance)
 // and assigns the task directly. The sim creates a task associated with the named
-// instances, reaching RUNNING as a control-plane object.
+// instances. It launches each assigned task through the same real container,
+// networking, logging, and lifecycle path as RunTask.
 
 func registerECSStartTask(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.StartTask", handleECSStartTask)
@@ -22,18 +21,18 @@ func registerECSStartTask(r *sim.AWSRouter, srv *sim.Server) {
 
 func handleECSStartTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Cluster              string           `json:"cluster"`
-		ContainerInstances   []string         `json:"containerInstances"`
-		TaskDefinition       string           `json:"taskDefinition"`
-		Group                string           `json:"group"`
-		StartedBy            string           `json:"startedBy"`
-		ReferenceId          string           `json:"referenceId"`
-		EnableExecuteCommand bool             `json:"enableExecuteCommand"`
-		EnableECSManagedTags bool             `json:"enableECSManagedTags"`
-		PropagateTags        string           `json:"propagateTags"`
-		Tags                 []ECSTag         `json:"tags"`
-		Overrides            *ECSTaskOverride `json:"overrides"`
-		NetworkConfiguration json.RawMessage  `json:"networkConfiguration"`
+		Cluster              string                `json:"cluster"`
+		ContainerInstances   []string              `json:"containerInstances"`
+		TaskDefinition       string                `json:"taskDefinition"`
+		Group                string                `json:"group"`
+		StartedBy            string                `json:"startedBy"`
+		ReferenceId          string                `json:"referenceId"`
+		EnableExecuteCommand bool                  `json:"enableExecuteCommand"`
+		EnableECSManagedTags bool                  `json:"enableECSManagedTags"`
+		PropagateTags        string                `json:"propagateTags"`
+		Tags                 []ECSTag              `json:"tags"`
+		Overrides            *ECSTaskOverride      `json:"overrides"`
+		NetworkConfiguration *ECSTaskNetworkConfig `json:"networkConfiguration"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -48,7 +47,7 @@ func handleECSStartTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clusterName := ecsClusterNameFromRef(req.Cluster)
-	cluster, ok := ecsClusters.Get(clusterName)
+	_, ok := ecsClusters.Get(clusterName)
 	if !ok {
 		sim.AWSErrorf(w, "ClusterNotFoundException", http.StatusBadRequest, "Cluster not found: %s", req.Cluster)
 		return
@@ -68,7 +67,7 @@ func handleECSStartTask(w http.ResponseWriter, r *http.Request) {
 			tdKey = fmt.Sprintf("%s:%d", tdKey, rev)
 		}
 	}
-	td, ok := ecsTaskDefinitions.Get(tdKey)
+	_, ok = ecsTaskDefinitions.Get(tdKey)
 	if !ok {
 		sim.AWSErrorf(w, "ClientException", http.StatusBadRequest,
 			"Unable to describe task definition: %s", req.TaskDefinition)
@@ -79,7 +78,8 @@ func handleECSStartTask(w http.ResponseWriter, r *http.Request) {
 	var failures []map[string]string
 	for _, instanceRef := range req.ContainerInstances {
 		instID := ecsContainerInstanceID(instanceRef)
-		ci, ciOK := ecsContainerInstances.Get(ecsContainerInstanceKey(clusterName, instID))
+		instanceKey := ecsContainerInstanceKey(clusterName, instID)
+		ci, ciOK := ecsContainerInstances.Get(instanceKey)
 		if !ciOK {
 			failures = append(failures, map[string]string{
 				"arn":    ecsArn("container-instance", clusterName+"/"+instID),
@@ -87,52 +87,26 @@ func handleECSStartTask(w http.ResponseWriter, r *http.Request) {
 			})
 			continue
 		}
-
-		taskID := generateUUID()
-		taskArn := fmt.Sprintf("arn:aws:ecs:"+awsRegion()+":"+awsAccountID()+":task/%s/%s", clusterName, taskID)
-		createdAt := float64(time.Now().Unix())
-		startedAt := time.Now().Unix()
-
-		var containers []ECSTaskContainer
-		for _, cd := range td.ContainerDefinitions {
-			containers = append(containers, ECSTaskContainer{
-				ContainerArn: fmt.Sprintf("arn:aws:ecs:"+awsRegion()+":"+awsAccountID()+":container/%s", generateUUID()),
-				Name:         cd.Name,
-				LastStatus:   "RUNNING",
-			})
-		}
-
-		var taskTags []ECSTag
-		if req.PropagateTags == "TASK_DEFINITION" && len(td.Tags) > 0 {
-			taskTags = append(taskTags, td.Tags...)
-		}
-		taskTags = append(taskTags, req.Tags...)
-
-		task := ECSTask{
-			TaskArn:              taskArn,
-			TaskDefinitionArn:    td.TaskDefinitionArn,
-			ClusterArn:           cluster.ClusterArn,
-			LastStatus:           ECSTaskStatusRunning,
-			DesiredStatus:        ECSTaskStatusRunning,
-			Connectivity:         "CONNECTED",
-			Containers:           containers,
-			CreatedAt:            &createdAt,
-			StartedAt:            &startedAt,
-			Tags:                 taskTags,
-			LaunchType:           "EC2",
-			Cpu:                  ecsTaskCPU(td, req.Overrides),
-			Memory:               ecsTaskMemory(td, req.Overrides),
+		launched, requestError := runECSTasks(r.Context(), ecsRunTaskInput{
+			Cluster:              req.Cluster,
+			TaskDefinition:       req.TaskDefinition,
+			Count:                1,
 			Group:                req.Group,
-			Overrides:            req.Overrides,
+			LaunchType:           "EC2",
+			Tags:                 req.Tags,
+			PropagateTags:        req.PropagateTags,
 			EnableExecuteCommand: req.EnableExecuteCommand,
+			Overrides:            req.Overrides,
+			NetworkConfiguration: req.NetworkConfiguration,
 			StartedBy:            req.StartedBy,
 			ContainerInstanceArn: ci.ContainerInstanceArn,
-		}
-		ecsTasks.Put(taskID, task)
-		ecsContainerInstances.Update(ecsContainerInstanceKey(clusterName, instID), func(c *ECSContainerInstance) {
-			c.RunningTasksCount++
+			ContainerInstanceKey: instanceKey,
 		})
-		tasks = append(tasks, task)
+		if requestError != nil {
+			sim.AWSError(w, requestError.code, requestError.message, requestError.status)
+			return
+		}
+		tasks = append(tasks, launched...)
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{

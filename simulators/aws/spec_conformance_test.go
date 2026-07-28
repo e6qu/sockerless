@@ -297,6 +297,8 @@ var allowedNonSpecPrefixes = map[string]string{
 	"/sockerless/":                "simulator-internal host-dispatch surface",
 	"/ecs-exec/":                  "ECS ExecuteCommand session WebSocket bridge — the real wire surface is SSM session-manager streaming, which has no Smithy HTTP model",
 	"/SimpleNotificationService-": "Amazon SNS HTTP notification signing certificates — documented data-plane support routes absent from the awsQuery Smithy model",
+	"/acme/":                      "Amazon Certificate Manager ACME RFC 8555 certificate-authority data plane advertised by CreateAcmeEndpoint, which has no Smithy HTTP model",
+	"/acm/email-validation/":      "Amazon Certificate Manager email-approval link delivered out of band, which has no Smithy HTTP model",
 }
 
 func TestRESTRoutesExistInSmithyModels(t *testing.T) {

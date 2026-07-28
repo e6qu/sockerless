@@ -13,21 +13,76 @@ Surface registered in `simulators/gcp/iam.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `GET /v1/projects/{project}` | ✓ `simulators/gcp/iam.go:45::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v3/projects/{project}` | ✓ `simulators/gcp/iam.go:56::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/serviceAccounts` | ✓ `simulators/gcp/iam.go:67::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/serviceAccounts/{email}` | ✓ `simulators/gcp/iam.go:99::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v1/projects/{project}/serviceAccounts/{email}` | ✓ `simulators/gcp/iam.go:113::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/serviceAccounts/{emailAction}` | ✓ `simulators/gcp/iam.go:134::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/serviceAccounts/{email}/keys` | ✓ `simulators/gcp/iam.go:146::func` | ✓ (direct; see coverage matrix) | n/a | n/a | generates real RSA-2048 key; returns base64 JSON credential as `privateKeyData` on create only |
-| `GET /v1/projects/{project}/serviceAccounts/{email}/keys/{keyId}` | ✓ `simulators/gcp/iam.go:181::func` | ✓ (direct; see coverage matrix) | n/a | n/a | `privateKeyData` absent on get/list (real GCP spec) |
-| `GET /v1/projects/{project}/serviceAccounts/{email}/keys` | ✓ `simulators/gcp/iam.go:198::func` | ✓ (direct; see coverage matrix) | n/a | n/a | |
-| `DELETE /v1/projects/{project}/serviceAccounts/{email}/keys/{keyId}` | ✓ `simulators/gcp/iam.go:215::func` | ✓ (direct; see coverage matrix) | n/a | n/a | |
-| `GET /v1/projects/{project}/serviceAccounts` | ✓ `simulators/gcp/iam.go:182::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/projects/{projectAction}` | ✓ `simulators/gcp/iam.go:196::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/{resource...}` | ✓ `simulators/gcp/iam.go:236::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /storage/v1/b/{bucket}/iam` | ✓ `simulators/gcp/iam.go:254::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /storage/v1/b/{bucket}/iam` | ✓ `simulators/gcp/iam.go:269::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/serviceAccounts` | ✓ `simulators/gcp/iam.go:126::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/serviceAccounts/{email}` | ✓ `simulators/gcp/iam.go:164::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v1/projects/{project}/serviceAccounts/{email}` | ✓ `simulators/gcp/iam.go:183::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /v1/projects/{project}/serviceAccounts/{email}` | ✓ `simulators/gcp/iam.go:228::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v1/projects/{project}/serviceAccounts/{email}` | ✓ `simulators/gcp/iam.go:258::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/serviceAccounts/{email}/keys` | ✓ `simulators/gcp/iam.go:277::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/serviceAccounts/{email}/keys/{keyId}` | ✓ `simulators/gcp/iam.go:319::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/serviceAccounts/{email}/keys` | ✓ `simulators/gcp/iam.go:336::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v1/projects/{project}/serviceAccounts/{email}/keys/{keyId}` | ✓ `simulators/gcp/iam.go:353::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/serviceAccounts/{emailAction}` | ✓ `simulators/gcp/iam.go:385::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/serviceAccounts` | ✓ `simulators/gcp/iam.go:517::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/serviceAccounts/{email}/allowedLocations` | ✓ `simulators/gcp/iam.go:540::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/{location}/workloadIdentityPools/{pool}/allowedLocations` | ✓ `simulators/gcp/iam.go:547::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/locations/{location}/workforcePools/{pool}/allowedLocations` | ✓ `simulators/gcp/iam.go:554::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/{resource...}` | ✓ `simulators/gcp/iam.go:570::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/permissions:queryTestablePermissions` | ✓ `simulators/gcp/iam.go:594::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/roles` | ✓ `simulators/gcp/iam.go:640::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/roles/{role...}` | ✓ `simulators/gcp/iam.go:651::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /storage/v1/b/{bucket}/iam` | ✓ `simulators/gcp/iam.go:664::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /storage/v1/b/{bucket}/iam` | ✓ `simulators/gcp/iam.go:685::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}` | ✓ `simulators/gcp/iam.go:909::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/projects:search` | ✓ `simulators/gcp/iam.go:928::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/projects` | ✓ `simulators/gcp/iam.go:942::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/projects` | ✓ `simulators/gcp/iam.go:966::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/projects/{project}` | ✓ `simulators/gcp/iam.go:994::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v3/projects/{project}` | ✓ `simulators/gcp/iam.go:1002::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v3/projects/{project}` | ✓ `simulators/gcp/iam.go:1026::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/projects/{projectAction}` | ✓ `simulators/gcp/iam.go:1046::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/folders:search` | ✓ `simulators/gcp/iam.go:1096::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/folders` | ✓ `simulators/gcp/iam.go:1109::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/folders` | ✓ `simulators/gcp/iam.go:1123::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/folders/{folder}` | ✓ `simulators/gcp/iam.go:1141::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v3/folders/{folder}` | ✓ `simulators/gcp/iam.go:1149::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v3/folders/{folder}` | ✓ `simulators/gcp/iam.go:1169::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/folders/{folderAction}` | ✓ `simulators/gcp/iam.go:1181::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/organizations:search` | ✓ `simulators/gcp/iam.go:1214::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/organizations/{org}` | ✓ `simulators/gcp/iam.go:1225::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/organizations/{orgAction}` | ✓ `simulators/gcp/iam.go:1233::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/liens` | ✓ `simulators/gcp/iam.go:1242::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/liens` | ✓ `simulators/gcp/iam.go:1259::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/liens/{lien}` | ✓ `simulators/gcp/iam.go:1273::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v3/liens/{lien}` | ✓ `simulators/gcp/iam.go:1281::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/tagKeys/namespaced` | ✓ `simulators/gcp/iam.go:1296::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/tagKeys` | ✓ `simulators/gcp/iam.go:1306::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/tagKeys` | ✓ `simulators/gcp/iam.go:1320::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/tagKeys/{key}` | ✓ `simulators/gcp/iam.go:1341::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v3/tagKeys/{key}` | ✓ `simulators/gcp/iam.go:1349::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v3/tagKeys/{key}` | ✓ `simulators/gcp/iam.go:1370::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/tagKeys/{keyAction}` | ✓ `simulators/gcp/iam.go:1380::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/tagValues/namespaced` | ✓ `simulators/gcp/iam.go:1388::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/tagValues` | ✓ `simulators/gcp/iam.go:1398::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/tagValues` | ✓ `simulators/gcp/iam.go:1412::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/tagValues/{val}` | ✓ `simulators/gcp/iam.go:1431::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v3/tagValues/{val}` | ✓ `simulators/gcp/iam.go:1439::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v3/tagValues/{val}` | ✓ `simulators/gcp/iam.go:1460::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/tagValues/{val}/tagHolds` | ✓ `simulators/gcp/iam.go:1471::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/tagValues/{val}/tagHolds` | ✓ `simulators/gcp/iam.go:1485::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v3/tagValues/{val}/tagHolds/{hold}` | ✓ `simulators/gcp/iam.go:1501::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/tagValues/{valAction}` | ✓ `simulators/gcp/iam.go:1510::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v3/tagBindings` | ✓ `simulators/gcp/iam.go:1518::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/tagBindings` | ✓ `simulators/gcp/iam.go:1533::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v3/tagBindings/{binding...}` | ✓ `simulators/gcp/iam.go:1547::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/effectiveTags` | ✓ `simulators/gcp/iam.go:1554::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/folders/{folder}/capabilities/{capability}` | ✓ `simulators/gcp/iam.go:1562::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v3/folders/{folder}/capabilities/{capability}` | ✓ `simulators/gcp/iam.go:1568::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/locations/{location}/tagBindingCollections/{collection}` | ✓ `simulators/gcp/iam.go:1584::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v3/locations/{location}/tagBindingCollections/{collection}` | ✓ `simulators/gcp/iam.go:1592::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v3/locations/{location}/effectiveTagBindingCollections/{collection}` | ✓ `simulators/gcp/iam.go:1606::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /.well-known/openid-configuration` | ✓ `simulators/gcp/token_signing.go:293::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /.well-known/jwks.json` | ✓ `simulators/gcp/token_signing.go:304::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

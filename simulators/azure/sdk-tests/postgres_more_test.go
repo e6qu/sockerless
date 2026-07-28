@@ -28,6 +28,10 @@ func pgCreateServer(t *testing.T, rg, name string) {
 	require.NoError(t, err)
 	poller, err := client.BeginCreate(ctx, rg, name, armpostgresqlflexibleservers.Server{
 		Location: to.Ptr("eastus"),
+		SKU: &armpostgresqlflexibleservers.SKU{
+			Name: to.Ptr("Standard_B1ms"),
+			Tier: to.Ptr(armpostgresqlflexibleservers.SKUTierBurstable),
+		},
 		Properties: &armpostgresqlflexibleservers.ServerProperties{
 			AdministratorLogin:         to.Ptr("psqladmin"),
 			AdministratorLoginPassword: to.Ptr("Sup3rSecret!"),
@@ -39,6 +43,9 @@ func pgCreateServer(t *testing.T, rg, name string) {
 	resp, err := poller.PollUntilDone(ctx, nil)
 	require.NoError(t, err)
 	assert.Equal(t, name, *resp.Name)
+	require.NotNil(t, resp.SKU)
+	assert.Equal(t, "Standard_B1ms", *resp.SKU.Name)
+	assert.Equal(t, armpostgresqlflexibleservers.SKUTierBurstable, *resp.SKU.Tier)
 }
 
 func TestAzurePGFlexibleServer_LifecycleActions(t *testing.T) {

@@ -23,14 +23,13 @@ import (
 // surface here; domains + backendenvironments live in amplify_domains.go.
 //
 // Sim policy:
-//   - RELEASE/RETRY/WEB_HOOK jobs run a REAL build (amplify_build.go) when
-//     the app has a clonable HTTP(S) git repository and a buildSpec (branch
-//     wins over app). Otherwise — the common control-plane-test case — jobs
-//     pass through the observable PENDING → RUNNING → SUCCEED states on a
-//     short synthetic timer (same shape as the ECS task PROVISIONING →
-//     PENDING → RUNNING flip) so clients see the documented state machine
-//     and StopJob has a real cancellation window. MANUAL deployment jobs
-//     (StartDeployment) never build: they deploy the uploaded content as-is.
+//   - StartJob clones the app's HTTP(S) Git repository and runs the configured
+//     branch/app build specification or the checked-in amplify.yml. An
+//     unbuildable source is rejected or reaches FAILED; it never reports
+//     success without executing work.
+//   - StartDeployment publishes bytes uploaded through CreateDeployment or
+//     fetched from the requested HTTP/Amazon S3 source. Missing and partial
+//     uploads fail before a job is created.
 //   - Deployed branch content is served by the hosting data plane
 //     (amplify_dataplane.go) on the app's default-domain, cloudfront.net,
 //     and verified custom-domain hosts.
@@ -251,6 +250,7 @@ type amplifyStoredDeployment struct {
 	BranchName string
 	ZipKey     string
 	FileKeys   map[string]string
+	FileHashes map[string]string
 	CreateTime float64
 }
 
@@ -1072,11 +1072,9 @@ func handleAmplifyListWebhooks(w http.ResponseWriter, r *http.Request) {
 
 // ---------- Jobs ----------
 
-// Synthetic job pipeline timing: PENDING → (running delay) → RUNNING →
-// (succeed delay) → SUCCEED. Short enough that polling clients settle
-// quickly, long enough that a StopJob issued right after StartJob — even
-// through a freshly spawned `aws` CLI process on a contended host — lands
-// inside the cancellation window.
+// Direct deployment timing preserves Amplify's asynchronous PENDING → RUNNING
+// → terminal lifecycle while the bytes being deployed remain real uploaded or
+// externally fetched artifacts.
 const (
 	amplifyJobRunningDelay = 200 * time.Millisecond
 	amplifyJobSucceedDelay = 1300 * time.Millisecond
@@ -1120,6 +1118,13 @@ func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "jobType is required")
 		return
 	}
+	br := stored.Branches[branch]
+	spec, repo, buildable := amplifyRealBuildPlan(stored.App, br)
+	if !buildable {
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+			"the app must have a clonable HTTP or HTTPS repository before a job can start")
+		return
+	}
 	now := amplifyEpoch()
 	jobID := amplifyJobID()
 	if req.JobId != "" {
@@ -1138,16 +1143,8 @@ func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
 	job := AmplifyJob{Summary: summary, Steps: amplifyJobSteps(now, AmplifyJobStatusPending)}
 	amplifyJobs.Put(jobID, amplifyStoredJob{Job: job, AppId: appID, BranchName: branch})
 	amplifyTrackJobStart(appID, branch, jobID)
-	// Only the build-shaped job types run a real build; a MANUAL StartJob
-	// deploys without building, like StartDeployment.
-	buildJobType := req.JobType == "RELEASE" || req.JobType == "RETRY" || req.JobType == "WEB_HOOK"
-	br := stored.Branches[branch]
-	if spec, repo, ok := amplifyRealBuildPlan(stored.App, br); ok && buildJobType {
-		amplifyScheduleRealBuild(appID, branch, jobID, amplifyURLBase(r), repo, spec,
-			amplifyBuildEnv(stored.App, br, jobID), req.CommitId)
-	} else {
-		amplifyScheduleJobRun(appID, branch, jobID, amplifyURLBase(r), nil, "e2e-test-artifacts.zip")
-	}
+	amplifyScheduleRealBuild(appID, branch, jobID, amplifyURLBase(r), repo, spec,
+		amplifyBuildEnv(stored.App, br, jobID), req.CommitId)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": summary})
 }
 
@@ -1174,11 +1171,9 @@ type amplifyUploadedArtifact struct {
 	Key      string
 }
 
-// amplifyScheduleJobRun drives the synthetic PENDING → RUNNING → SUCCEED
-// transition. At SUCCEED it materializes the job artifacts — the uploaded
-// deployment objects when the client PUT real bytes, otherwise the
-// sim-shaped placeholder — and records the production-branch deploy.
-func amplifyScheduleJobRun(appID, branch, jobID, urlBase string, uploads []amplifyUploadedArtifact, syntheticName string) {
+// amplifyScheduleDeployment publishes already-uploaded or externally fetched
+// deployment objects through Amplify's asynchronous job lifecycle.
+func amplifyScheduleDeployment(appID, branch, jobID, urlBase string, uploads []amplifyUploadedArtifact) {
 	go func() {
 		time.Sleep(amplifyJobRunningDelay)
 		amplifyAdvanceJob(jobID, AmplifyJobStatusPending, AmplifyJobStatusRunning)
@@ -1186,15 +1181,8 @@ func amplifyScheduleJobRun(appID, branch, jobID, urlBase string, uploads []ampli
 		if !amplifyAdvanceJob(jobID, AmplifyJobStatusRunning, AmplifyJobStatusSucceed) {
 			return
 		}
-		if len(uploads) == 0 {
-			key := "artifacts/" + appID + "/" + branch + "/" + jobID + "/" + syntheticName
-			artifactID := amplifyArtifactID(jobID)
-			amplifyPutS3Object(key, "application/zip", []byte("amplify artifact "+artifactID+"\n"))
-			amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, artifactID, syntheticName, key)
-		} else {
-			for _, up := range uploads {
-				amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, amplifyArtifactID(jobID), up.FileName, up.Key)
-			}
+		for _, up := range uploads {
+			amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, amplifyArtifactID(jobID), up.FileName, up.Key)
 		}
 		amplifyMarkProductionDeploy(appID, branch, jobID)
 	}()
@@ -1603,12 +1591,14 @@ func handleAmplifyCreateDeployment(w http.ResponseWriter, r *http.Request) {
 		BranchName: branch,
 		ZipKey:     keyBase + "/archive.zip",
 		FileKeys:   map[string]string{},
+		FileHashes: map[string]string{},
 		CreateTime: amplifyEpoch(),
 	}
 	fileUploadUrls := map[string]string{}
 	for name := range req.FileMap {
 		key := keyBase + "/files/" + name
 		dep.FileKeys[name] = key
+		dep.FileHashes[name] = strings.ToLower(req.FileMap[name])
 		fileUploadUrls[name] = amplifyPresignedS3URL(r, key, http.MethodPut)
 	}
 	amplifyDeployments.Put(jobID, dep)
@@ -1670,11 +1660,27 @@ func handleAmplifyStartDeployment(w http.ResponseWriter, r *http.Request) {
 		bucket := amplifyArtifactBucketName()
 		if _, ok := s3Objects.Get(s3ObjectKey(bucket, dep.ZipKey)); ok {
 			uploads = append(uploads, amplifyUploadedArtifact{FileName: "archive.zip", Key: dep.ZipKey})
-		}
-		for name, key := range dep.FileKeys {
-			if _, ok := s3Objects.Get(s3ObjectKey(bucket, key)); ok {
+		} else {
+			for name, key := range dep.FileKeys {
+				object, ok := s3Objects.Get(s3ObjectKey(bucket, key))
+				if !ok {
+					amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+						"deployment upload is incomplete; missing "+name)
+					return
+				}
+				sum := md5.Sum(object.Data)
+				if expected := dep.FileHashes[name]; expected != "" && fmt.Sprintf("%x", sum) != expected {
+					amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+						"deployment upload checksum does not match fileMap for "+name)
+					return
+				}
 				uploads = append(uploads, amplifyUploadedArtifact{FileName: name, Key: key})
 			}
+		}
+		if len(uploads) == 0 {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+				"deployment has no uploaded files")
+			return
 		}
 		sort.Slice(uploads, func(i, j int) bool { return uploads[i].FileName < uploads[j].FileName })
 		// Consumed: the uploaded objects now belong to the job's artifacts.
@@ -1698,13 +1704,84 @@ func handleAmplifyStartDeployment(w http.ResponseWriter, r *http.Request) {
 		summary.JobId = amplifyJobID()
 		summary.SourceUrl = req.SourceUrl
 		summary.SourceUrlType = sourceURLType
+		var resolveErr error
+		uploads, resolveErr = amplifyResolveDeploymentSource(r, appID, branch, summary.JobId, req.SourceUrl, sourceURLType)
+		if resolveErr != nil {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", resolveErr.Error())
+			return
+		}
 	}
 	summary.JobArn = amplifyJobARN(appID, branch, summary.JobId)
 	job := AmplifyJob{Summary: summary, Steps: amplifyJobSteps(now, AmplifyJobStatusPending)}
 	amplifyJobs.Put(summary.JobId, amplifyStoredJob{Job: job, AppId: appID, BranchName: branch})
 	amplifyTrackJobStart(appID, branch, summary.JobId)
-	amplifyScheduleJobRun(appID, branch, summary.JobId, amplifyURLBase(r), uploads, "deployment-artifacts.zip")
+	amplifyScheduleDeployment(appID, branch, summary.JobId, amplifyURLBase(r), uploads)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": summary})
+}
+
+func amplifyResolveDeploymentSource(r *http.Request, appID, branch, jobID, source string, sourceType AmplifySourceUrlType) ([]amplifyUploadedArtifact, error) {
+	destinationBase := "deployments/" + appID + "/" + branch + "/" + jobID + "/external/"
+	if strings.HasPrefix(source, "s3://") {
+		location := strings.TrimPrefix(source, "s3://")
+		parts := strings.SplitN(location, "/", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("sourceUrl must identify an Amazon S3 object or prefix")
+		}
+		bucket, key := parts[0], parts[1]
+		if sourceType == AmplifySourceUrlZip {
+			object, ok := s3Objects.Get(s3ObjectKey(bucket, key))
+			if !ok {
+				return nil, fmt.Errorf("sourceUrl Amazon S3 object does not exist")
+			}
+			destination := destinationBase + "archive.zip"
+			amplifyPutS3Object(destination, object.ContentType, object.Data)
+			return []amplifyUploadedArtifact{{FileName: "archive.zip", Key: destination}}, nil
+		}
+		prefix := s3ObjectKey(bucket, strings.TrimSuffix(key, "/")+"/")
+		var uploads []amplifyUploadedArtifact
+		for _, object := range s3Objects.List() {
+			if !strings.HasPrefix(object.Key, prefix) {
+				continue
+			}
+			name := strings.TrimPrefix(object.Key, prefix)
+			if name == "" {
+				continue
+			}
+			destination := destinationBase + "files/" + name
+			amplifyPutS3Object(destination, object.ContentType, object.Data)
+			uploads = append(uploads, amplifyUploadedArtifact{FileName: name, Key: destination})
+		}
+		if len(uploads) == 0 {
+			return nil, fmt.Errorf("sourceUrl Amazon S3 prefix contains no objects")
+		}
+		sort.Slice(uploads, func(i, j int) bool { return uploads[i].FileName < uploads[j].FileName })
+		return uploads, nil
+	}
+	if sourceType != AmplifySourceUrlZip {
+		return nil, fmt.Errorf("BUCKET_PREFIX sourceUrlType requires an s3:// sourceUrl")
+	}
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, source, nil)
+	if err != nil {
+		return nil, fmt.Errorf("invalid sourceUrl: %w", err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("fetch sourceUrl: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetch sourceUrl returned HTTP %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1024*1024*1024))
+	if err != nil {
+		return nil, fmt.Errorf("read sourceUrl: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("sourceUrl returned an empty deployment")
+	}
+	destination := destinationBase + "archive.zip"
+	amplifyPutS3Object(destination, response.Header.Get("Content-Type"), data)
+	return []amplifyUploadedArtifact{{FileName: "archive.zip", Key: destination}}, nil
 }
 
 // ---------- Tagging ----------

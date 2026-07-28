@@ -55,6 +55,7 @@ type ECSContainerDefinition struct {
 	Command           []string             `json:"command,omitempty"`
 	PseudoTerminal    bool                 `json:"pseudoTerminal,omitempty"`
 	Interactive       bool                 `json:"interactive,omitempty"`
+	Privileged        bool                 `json:"privileged,omitempty"`
 	// healthCheck and secrets are decoded for the runtime (secret injection reads
 	// Secrets); every other field rides the verbatim `raw` capture below.
 	HealthCheck json.RawMessage `json:"healthCheck,omitempty"`
@@ -117,8 +118,13 @@ type ECSLogConfiguration struct {
 
 type ECSVolume struct {
 	Name                   string              `json:"name"`
+	Host                   *ECSHostVolume      `json:"host,omitempty"`
 	EfsVolumeConfiguration *ECSEfsVolumeConfig `json:"efsVolumeConfiguration,omitempty"`
 	ConfiguredAtLaunch     bool                `json:"configuredAtLaunch,omitempty"`
+}
+
+type ECSHostVolume struct {
+	SourcePath string `json:"sourcePath,omitempty"`
 }
 
 type ECSEfsVolumeConfig struct {
@@ -1190,6 +1196,36 @@ type ecsRunTaskInput struct {
 	VolumeConfigurations []ECSTaskVolumeConfiguration
 	NetworkConfiguration *ECSTaskNetworkConfig
 	StartedBy            string
+	ContainerInstanceArn string
+	ContainerInstanceKey string
+}
+
+func ecsUpdateContainerInstanceTaskCounts(key string, pendingDelta, runningDelta int) {
+	if key == "" {
+		return
+	}
+	ecsContainerInstances.Update(key, func(instance *ECSContainerInstance) {
+		instance.PendingTasksCount += pendingDelta
+		instance.RunningTasksCount += runningDelta
+		if instance.PendingTasksCount < 0 {
+			instance.PendingTasksCount = 0
+		}
+		if instance.RunningTasksCount < 0 {
+			instance.RunningTasksCount = 0
+		}
+	})
+}
+
+func ecsContainerInstanceKeyFromARN(arn string) string {
+	resource := arn
+	if i := strings.LastIndex(resource, ":"); i >= 0 {
+		resource = resource[i+1:]
+	}
+	parts := strings.Split(resource, "/")
+	if len(parts) < 3 {
+		return ""
+	}
+	return ecsContainerInstanceKey(parts[len(parts)-2], parts[len(parts)-1])
 }
 
 func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
@@ -1399,6 +1435,7 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 			Overrides:            in.Overrides,
 			EnableExecuteCommand: in.EnableExecuteCommand,
 			StartedBy:            in.StartedBy,
+			ContainerInstanceArn: in.ContainerInstanceArn,
 		}
 		if networkMode == ecsNetworkModeAwsvpc {
 			task.Attachments = append(task.Attachments, ECSAttachment{
@@ -1426,6 +1463,11 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 		}
 
 		ecsTasks.Put(taskID, task)
+		if in.ContainerInstanceKey != "" {
+			ecsContainerInstances.Update(in.ContainerInstanceKey, func(instance *ECSContainerInstance) {
+				instance.PendingTasksCount++
+			})
+		}
 		tasks = append(tasks, task)
 
 		// Simulate async transition: PROVISIONING → PENDING → RUNNING.
@@ -1433,7 +1475,7 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 		// started and their Docker handles are stored. This matches real ECS
 		// semantics and eliminates a class of races where callers (e.g.
 		// ExecuteCommand, task metadata) see RUNNING before the container exists.
-		go func(id string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string) {
+		go func(id string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, launchType, containerInstanceKey string) {
 			// PROVISIONING → PENDING
 			time.Sleep(100 * time.Millisecond)
 			ecsTasks.Update(id, func(t *ECSTask) {
@@ -1448,7 +1490,7 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 			sink := ecsTaskCloudWatchSink(td, id)
 
 			// Start containers. This is the real work that RUNNING must wait for.
-			processes, err := startECSTaskContainers(id, td, taskTags, overrides, taskVolumeHosts, sink)
+			processes, err := startECSTaskContainers(id, td, taskTags, overrides, taskVolumeHosts, sink, launchType)
 			if err != nil {
 				// Surface the start failure: it's otherwise only recorded in
 				// the task's StoppedReason, so an intermittent awsvpc netns /
@@ -1469,6 +1511,7 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 					}
 					ecsCleanupTaskManagedEBS(t)
 				})
+				ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, -1, 0)
 				return
 			}
 
@@ -1487,6 +1530,7 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 					t.Attachments[j].Status = "ATTACHED"
 				}
 			})
+			ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, -1, 1)
 			if processes != nil {
 				ecsProcessHandles.Store(id, processes)
 
@@ -1495,10 +1539,12 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 						result := handle.Wait()
 						ecsProcessHandles.Delete(taskID)
 						stoppedAt := time.Now().Unix()
+						transitioned := false
 						ecsTasks.Update(taskID, func(t *ECSTask) {
 							if t.LastStatus == ECSTaskStatusStopped {
 								return // already stopped (e.g. by StopTask)
 							}
+							transitioned = true
 							t.LastStatus = ECSTaskStatusStopped
 							t.DesiredStatus = ECSTaskStatusStopped
 							t.StoppedAt = &stoppedAt
@@ -1511,11 +1557,14 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 							}
 							ecsCleanupTaskManagedEBS(t)
 						})
+						if transitioned {
+							ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, 0, -1)
+						}
 						cleanupECSTaskProcesses(taskID, processes)
 					}(id, name, handle)
 				}
 			}
-		}(taskID, td, taskTags, in.Overrides, taskVolumeHosts)
+		}(taskID, td, taskTags, in.Overrides, taskVolumeHosts, in.LaunchType, in.ContainerInstanceKey)
 	}
 
 	return tasks, nil
@@ -1604,15 +1653,20 @@ func ecsContainerResourceLimits(td ECSTaskDefinition, cd ECSContainerDefinition)
 // for the host network mode is by definition running on the EC2 or EXTERNAL
 // launch type, where Amazon ECS does give the task the container instance's own
 // network stack, so the denial does not apply to it.
-func ecsTaskSandbox(networkMode string) sim.SandboxProfile {
-	profile := sim.SandboxFargate
-	if networkMode == ecsNetworkModeHost {
-		profile.DenyHostNetwork = false
+func ecsTaskSandbox(launchType string, privileged bool) sim.SandboxProfile {
+	if strings.EqualFold(launchType, "FARGATE") {
+		return sim.SandboxFargate
 	}
-	return profile
+	// Amazon ECS on EC2 and EXTERNAL hosts exposes the container instance's
+	// Docker capabilities. The task definition, not Fargate, decides whether a
+	// workload is privileged; host networking and host bind mounts remain
+	// available exactly as on the registered container instance. An omitted
+	// launch type follows the cluster's EC2 capacity when no capacity-provider
+	// strategy was supplied.
+	return sim.SandboxProfile{Privileged: privileged}
 }
 
-func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, sink sim.LogSink) (*ecsTaskProcesses, error) {
+func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, sink sim.LogSink, launchType string) (*ecsTaskProcesses, error) {
 	if len(td.ContainerDefinitions) == 0 {
 		return nil, nil
 	}
@@ -1647,6 +1701,10 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 				volMap[v.Name] = host
 				continue
 			}
+		}
+		if v.Host != nil && v.Host.SourcePath != "" {
+			volMap[v.Name] = v.Host.SourcePath
+			continue
 		}
 		volMap[v.Name] = v.Name
 	}
@@ -1773,7 +1831,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			Tty:       wantTTY || cd.PseudoTerminal,
 			OpenStdin: wantTTY || cd.Interactive,
 			Binds:     binds,
-			Sandbox:   ecsTaskSandbox(networkMode),
+			Sandbox:   ecsTaskSandbox(launchType, cd.Privileged),
 		}
 		cfg.MemoryBytes, cfg.NanoCPU = ecsContainerResourceLimits(td, cd)
 		switch {
@@ -2138,7 +2196,8 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 // Returns false when the task is unknown. Used by the StopTask API handler
 // and the in-process service scheduler.
 func stopECSTask(taskID, reason, code string) bool {
-	if _, ok := ecsTasks.Get(taskID); !ok {
+	existing, ok := ecsTasks.Get(taskID)
+	if !ok {
 		return false
 	}
 
@@ -2172,6 +2231,13 @@ func stopECSTask(taskID, reason, code string) bool {
 		}
 		ecsCleanupTaskManagedEBS(t)
 	})
+	instanceKey := ecsContainerInstanceKeyFromARN(existing.ContainerInstanceArn)
+	switch existing.LastStatus {
+	case ECSTaskStatusProvisioning, ECSTaskStatusPending:
+		ecsUpdateContainerInstanceTaskCounts(instanceKey, -1, 0)
+	case ECSTaskStatusRunning:
+		ecsUpdateContainerInstanceTaskCounts(instanceKey, 0, -1)
+	}
 
 	// Tear down the task's VPC veth (netns tier) after cloud-visible state is
 	// updated; Docker/netns cleanup can take seconds on CI.

@@ -13,10 +13,11 @@ Surface registered in `simulators/gcp/vpcaccess.go` (and related files grouped u
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/projects/{project}/locations/{location}/connectors` | ✓ `simulators/gcp/vpcaccess.go:30::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/{location}/connectors/{name}` | ✓ `simulators/gcp/vpcaccess.go:71::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1/projects/{project}/locations/{location}/connectors/{name}` | ✓ `simulators/gcp/vpcaccess.go:86::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/{location}/connectors` | ✓ `simulators/gcp/vpcaccess.go:98::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/locations/{location}/connectors` | ✓ `simulators/gcp/vpcaccess.go:31::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v1/projects/{project}/locations/{location}/connectors/{name}` | ✓ `simulators/gcp/vpcaccess.go:83::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/{location}/connectors/{name}` | ✓ `simulators/gcp/vpcaccess.go:127::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v1/projects/{project}/locations/{location}/connectors/{name}` | ✓ `simulators/gcp/vpcaccess.go:142::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/{location}/connectors` | ✓ `simulators/gcp/vpcaccess.go:154::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

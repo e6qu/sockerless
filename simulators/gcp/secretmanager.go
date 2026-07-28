@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -37,8 +38,9 @@ type Secret struct {
 	Replication    map[string]any    `json:"replication,omitempty"`
 	// Nested writable objects the sim persists verbatim so create→get
 	// round-trips byte-exact for the terraform-provider-google read path.
-	Rotation json.RawMessage `json:"rotation,omitempty"`
-	Topics   json.RawMessage `json:"topics,omitempty"`
+	Rotation   json.RawMessage `json:"rotation,omitempty"`
+	Topics     json.RawMessage `json:"topics,omitempty"`
+	SecretType string          `json:"secretType,omitempty"`
 }
 
 // SecretVersion is the wire shape for a single secret version —
@@ -72,8 +74,9 @@ var (
 	// secret name. AddSecretVersion bumps it atomically (store Update holds the
 	// write lock) so concurrent adds never collide on a version ID. Kept out of
 	// the Secret wire shape because GCP's Secret resource has no such field.
-	smVersionSeq  sim.Store[smSeqRecord]
-	smCRC32CTable = crc32.MakeTable(crc32.Castagnoli)
+	smVersionSeq      sim.Store[smSeqRecord]
+	smManagedRotation sim.Store[smManagedRotationRecord]
+	smCRC32CTable     = crc32.MakeTable(crc32.Castagnoli)
 )
 
 // smSeqRecord is the persisted monotonic version counter for one secret.
@@ -81,11 +84,19 @@ type smSeqRecord struct {
 	Next int `json:"next"`
 }
 
+type smManagedRotationRecord struct {
+	Project    string `json:"project"`
+	InstanceID string `json:"instanceId"`
+	Username   string `json:"username"`
+	UserHost   string `json:"userHost,omitempty"`
+}
+
 func registerSecretManager(srv *sim.Server) {
 	smSecrets = sim.MakeStore[Secret](srv.DB(), "sm_secrets")
 	smSecretVersions = sim.MakeStore[SecretVersion](srv.DB(), "sm_secret_versions")
 	smSecretPayloads = sim.MakeStore[smPayloadRecord](srv.DB(), "sm_secret_payloads")
 	smVersionSeq = sim.MakeStore[smSeqRecord](srv.DB(), "sm_version_seq")
+	smManagedRotation = sim.MakeStore[smManagedRotationRecord](srv.DB(), "sm_managed_rotation")
 
 	// Global secret surface: secrets live directly under the project.
 	registerSecretManagerSecretRoutes(srv, "/v1/projects/{project}/secrets", smSecretParentGlobal)
@@ -182,6 +193,7 @@ func secretManagerCreateSecret(w http.ResponseWriter, r *http.Request, parent st
 		Replication    map[string]any    `json:"replication,omitempty"`
 		Rotation       json.RawMessage   `json:"rotation,omitempty"`
 		Topics         json.RawMessage   `json:"topics,omitempty"`
+		SecretType     string            `json:"secretType,omitempty"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
@@ -205,6 +217,7 @@ func secretManagerCreateSecret(w http.ResponseWriter, r *http.Request, parent st
 		Replication:    req.Replication,
 		Rotation:       req.Rotation,
 		Topics:         req.Topics,
+		SecretType:     req.SecretType,
 	}
 	smSecrets.Put(name, secret)
 	smVersionSeq.Put(name, smSeqRecord{Next: 0})
@@ -302,6 +315,7 @@ func secretManagerDeleteSecret(w http.ResponseWriter, r *http.Request, parent st
 	}
 
 	smVersionSeq.Delete(name)
+	smManagedRotation.Delete(name)
 	gcpResourceIAMStore().Delete(name)
 	prefix := name + "/versions/"
 	for _, v := range smSecretVersions.List() {
@@ -336,7 +350,7 @@ func secretManagerSecretGetAction(w http.ResponseWriter, r *http.Request, parent
 }
 
 // secretManagerSecretPostAction fans in the POST colon-verbs on a secret
-// resource: `:addVersion`, `:setIamPolicy`, `:testIamPermissions`.
+// resource.
 func secretManagerSecretPostAction(w http.ResponseWriter, r *http.Request, parent string) {
 	secretAction := sim.PathParam(r, "secretAction")
 	secretID, action, found := gcpCustomMethod(secretAction)
@@ -354,20 +368,111 @@ func secretManagerSecretPostAction(w http.ResponseWriter, r *http.Request, paren
 	}
 	switch action {
 	case "addVersion":
+		secret, _ := smSecrets.Get(secretName)
+		if secret.SecretType == "CLOUD_SQL_DB_CREDENTIALS" {
+			sim.GCPError(w, http.StatusBadRequest, "versions for CLOUD_SQL_DB_CREDENTIALS secrets are managed by Secret Manager", "FAILED_PRECONDITION")
+			return
+		}
 		secretManagerAddVersion(w, r, secretName)
+	case "enableManagedRotation":
+		secretManagerEnableManagedRotation(w, r, secretName)
+	case "rotateSecret":
+		secretManagerRotate(w, secretName)
 	case "setIamPolicy", "testIamPermissions":
 		handleResourceIAM(w, r, gcpResourceIAMStore(), secretName, action)
 	}
 }
 
-// secretManagerSecretPOSTMethods are the POST custom methods the simulator
-// serves on a secret. Secret Manager documents two more — rotateSecret and
-// enableManagedRotation — that the simulator does not implement; they are
-// answered as unrouted methods rather than pretended into existence.
+// secretManagerSecretPOSTMethods are the POST custom methods served on a
+// secret, including managed Cloud SQL credential rotation.
 var secretManagerSecretPOSTMethods = map[string]bool{
-	"addVersion":         true,
-	"setIamPolicy":       true,
-	"testIamPermissions": true,
+	"addVersion":            true,
+	"enableManagedRotation": true,
+	"rotateSecret":          true,
+	"setIamPolicy":          true,
+	"testIamPermissions":    true,
+}
+
+func secretManagerEnableManagedRotation(w http.ResponseWriter, r *http.Request, secretName string) {
+	secret, _ := smSecrets.Get(secretName)
+	if secret.SecretType != "CLOUD_SQL_DB_CREDENTIALS" {
+		sim.GCPError(w, http.StatusBadRequest, "managed rotation requires a CLOUD_SQL_DB_CREDENTIALS secret", "FAILED_PRECONDITION")
+		return
+	}
+	if _, exists := smManagedRotation.Get(secretName); exists {
+		sim.GCPError(w, http.StatusBadRequest, "managed rotation has already been enabled", "FAILED_PRECONDITION")
+		return
+	}
+	var req struct {
+		Credentials struct {
+			InstanceID string `json:"instanceId"`
+			Username   string `json:"username"`
+			Password   string `json:"password"`
+		} `json:"cloudSqlSingleUserCredentials"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	project := strings.Split(secretName, "/")[1]
+	if req.Credentials.InstanceID == "" || req.Credentials.Username == "" {
+		sim.GCPError(w, http.StatusBadRequest, "instanceId and username are required", "INVALID_ARGUMENT")
+		return
+	}
+	user, ok := firstSQLUser(project, req.Credentials.InstanceID, req.Credentials.Username, "")
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Cloud SQL user %s on instance %s not found", req.Credentials.Username, req.Credentials.InstanceID)
+		return
+	}
+	record := smManagedRotationRecord{
+		Project: project, InstanceID: req.Credentials.InstanceID,
+		Username: req.Credentials.Username, UserHost: user.Host,
+	}
+	password := req.Credentials.Password
+	if password == "" {
+		password = smGeneratedPassword()
+	}
+	version, err := smApplyManagedRotation(secretName, record, password)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "%v", err)
+		return
+	}
+	smManagedRotation.Put(secretName, record)
+	sim.WriteJSON(w, http.StatusOK, version)
+}
+
+func secretManagerRotate(w http.ResponseWriter, secretName string) {
+	record, ok := smManagedRotation.Get(secretName)
+	if !ok {
+		sim.GCPError(w, http.StatusBadRequest, "managed rotation is not enabled", "FAILED_PRECONDITION")
+		return
+	}
+	version, err := smApplyManagedRotation(secretName, record, smGeneratedPassword())
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "%v", err)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, version)
+}
+
+func smApplyManagedRotation(secretName string, record smManagedRotationRecord, password string) (SecretVersion, error) {
+	user, ok := firstSQLUser(record.Project, record.InstanceID, record.Username, record.UserHost)
+	if !ok {
+		return SecretVersion{}, fmt.Errorf("managed rotation could not find Cloud SQL user %s on instance %s", record.Username, record.InstanceID)
+	}
+	sqlUserSecrets.Put(
+		sqlUserKey(record.Project, record.InstanceID, user.Host, user.Name),
+		sqlUserCredential{Password: password},
+	)
+	return smAddVersionPayload(secretName, []byte(password), false, 0)
+}
+
+func smGeneratedPassword() string {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		panic(fmt.Sprintf("crypto/rand: %v", err))
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
 func secretManagerAddVersion(w http.ResponseWriter, r *http.Request, secretName string) {
@@ -547,8 +652,8 @@ func secretManagerVersionGetAction(w http.ResponseWriter, r *http.Request, paren
 
 // secretManagerVersionPostAction handles :enable / :disable / :destroy.
 // The terraform-provider-google secret_version resource POSTs :enable after
-// creating a version (versions default to ENABLED on create; the explicit
-// enable is a no-op but the provider still expects 200).
+// creating a version. Versions default to ENABLED on create, so an explicit
+// enable is an idempotent state transition that still returns the version.
 func secretManagerVersionPostAction(w http.ResponseWriter, r *http.Request, parent string) {
 	secretName := parent + "/" + sim.PathParam(r, "secret")
 	versionAction := sim.PathParam(r, "versionAction")

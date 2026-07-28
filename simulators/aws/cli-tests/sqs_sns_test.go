@@ -152,11 +152,40 @@ func TestSQSCLI_FifoCouplingAndGroupId(t *testing.T) {
 		"--message-body", "nogroup"))
 	assert.Contains(t, errOut, "MissingParameter")
 
-	// Send with MessageGroupId → succeeds.
-	runCLI(t, awsCLI("sqs", "send-message",
+	// Sending the same content twice within the FIFO deduplication window
+	// returns the original identifiers and enqueues one message.
+	firstOut := runCLI(t, awsCLI("sqs", "send-message",
 		"--queue-url", created.QueueUrl,
 		"--message-body", "withgroup",
 		"--message-group-id", "g1"))
+	secondOut := runCLI(t, awsCLI("sqs", "send-message",
+		"--queue-url", created.QueueUrl,
+		"--message-body", "withgroup",
+		"--message-group-id", "g1"))
+	var first, second struct {
+		MessageID      string `json:"MessageId"`
+		SequenceNumber string `json:"SequenceNumber"`
+	}
+	parseJSON(t, firstOut, &first)
+	parseJSON(t, secondOut, &second)
+	assert.Equal(t, first.MessageID, second.MessageID)
+	assert.Equal(t, first.SequenceNumber, second.SequenceNumber)
+	require.NotEmpty(t, first.SequenceNumber)
+
+	receivedOut := runCLI(t, awsCLI("sqs", "receive-message",
+		"--queue-url", created.QueueUrl,
+		"--max-number-of-messages", "10",
+		"--message-system-attribute-names", "All"))
+	var received struct {
+		Messages []struct {
+			Body       string            `json:"Body"`
+			Attributes map[string]string `json:"Attributes"`
+		} `json:"Messages"`
+	}
+	parseJSON(t, receivedOut, &received)
+	require.Len(t, received.Messages, 1)
+	assert.Equal(t, "withgroup", received.Messages[0].Body)
+	assert.Equal(t, first.SequenceNumber, received.Messages[0].Attributes["SequenceNumber"])
 }
 
 // TestSQSCLI_SendMessageBatch exercises a batch send plus a duplicate-Id

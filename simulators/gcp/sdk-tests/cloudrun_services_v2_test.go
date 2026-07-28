@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	runv1 "google.golang.org/api/run/v1"
 )
 
 // v2 Cloud Run Services routes contract. The cloudrun backend uses
@@ -86,6 +87,63 @@ func TestSDK_CloudRunV2Services_ListPaginationAndWireShape(t *testing.T) {
 	var empty map[string]any
 	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&empty))
 	require.IsType(t, []any{}, empty["services"], "empty service list must serialize as [] not null")
+}
+
+func TestSDK_CloudRunServiceV1V2AreOneResource(t *testing.T) {
+	const (
+		project  = "cross-version-project"
+		location = "us-central1"
+		fromV2   = "created-through-v2"
+		fromV1   = "created-through-v1"
+	)
+	v2 := newServicesClient(t)
+	parent := "projects/" + project + "/locations/" + location
+	createV2, err := v2.CreateService(ctx, &runpb.CreateServiceRequest{
+		Parent: parent, ServiceId: fromV2,
+		Service: &runpb.Service{Template: &runpb.RevisionTemplate{
+			Containers: []*runpb.Container{{Image: "gcr.io/cross/version"}},
+		}},
+	})
+	require.NoError(t, err)
+	_, err = createV2.Wait(ctx)
+	require.NoError(t, err)
+
+	v1, err := runv1.NewService(ctx,
+		option.WithEndpoint(baseURL+"/"),
+		option.WithTokenSource(simTokenSource()),
+	)
+	require.NoError(t, err)
+	v1List, err := v1.Namespaces.Services.List("namespaces/" + project).Do()
+	require.NoError(t, err)
+	require.Len(t, v1List.Items, 1)
+	assert.Equal(t, fromV2, v1List.Items[0].Metadata.Name)
+
+	_, err = v1.Namespaces.Services.Create("namespaces/"+project, &runv1.Service{
+		ApiVersion: "serving.knative.dev/v1",
+		Kind:       "Service",
+		Metadata:   &runv1.ObjectMeta{Name: fromV1},
+		Spec: &runv1.ServiceSpec{Template: &runv1.RevisionTemplate{
+			Spec: &runv1.RevisionSpec{Containers: []*runv1.Container{{Image: "gcr.io/cross/reverse"}}},
+		}},
+	}).Do()
+	require.NoError(t, err)
+	gotV2, err := v2.GetService(ctx, &runpb.GetServiceRequest{Name: parent + "/services/" + fromV1})
+	require.NoError(t, err)
+	assert.Equal(t, parent+"/services/"+fromV1, gotV2.Name)
+	require.Len(t, gotV2.Template.Containers, 1)
+	assert.Equal(t, "gcr.io/cross/reverse", gotV2.Template.Containers[0].Image)
+
+	deleteV2, err := v2.DeleteService(ctx, &runpb.DeleteServiceRequest{Name: parent + "/services/" + fromV2})
+	require.NoError(t, err)
+	_, err = deleteV2.Wait(ctx)
+	require.NoError(t, err)
+	_, err = v1.Namespaces.Services.Get("namespaces/" + project + "/services/" + fromV2).Do()
+	require.Error(t, err, "deleting the v2 representation must remove the v1 representation")
+
+	_, err = v1.Namespaces.Services.Delete("namespaces/" + project + "/services/" + fromV1).Do()
+	require.NoError(t, err)
+	_, err = v2.GetService(ctx, &runpb.GetServiceRequest{Name: parent + "/services/" + fromV1})
+	require.Error(t, err, "deleting the v1 representation must remove the v2 representation")
 }
 
 func TestSDK_CloudRunV2Service_OperationMetadataAndTimestampShape(t *testing.T) {

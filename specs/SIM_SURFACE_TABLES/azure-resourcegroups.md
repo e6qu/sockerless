@@ -13,13 +13,13 @@ Surface registered in `simulators/azure/resourcegroups.go` (and related files gr
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}` | ✓ `simulators/azure/resourcegroups.go:27::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}` | ✓ `simulators/azure/resourcegroups.go:62::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/resourceGroups` | ✓ `simulators/azure/resourcegroups.go:77::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}` | ✓ `simulators/azure/resourcegroups.go:91::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/resources` | ✓ `simulators/azure/resourcegroups.go:101::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/resources` | ✓ `simulators/azure/resourcegroups.go:117::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `HEAD /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}` | ✓ `simulators/azure/resourcegroups.go:131::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}` | ✓ `simulators/azure/resourcegroups.go:32::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}` | ✓ `simulators/azure/resourcegroups.go:67::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/resourceGroups` | ✓ `simulators/azure/resourcegroups.go:82::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}` | ✓ `simulators/azure/resourcegroups.go:96::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/resources` | ✓ `simulators/azure/resourcegroups.go:106::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/resources` | ✓ `simulators/azure/resourcegroups.go:122::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `HEAD /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}` | ✓ `simulators/azure/resourcegroups.go:136::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

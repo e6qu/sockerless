@@ -13,15 +13,15 @@ Surface registered in `simulators/azure/insights.go` (and related files grouped 
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `PUT /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}` | ✓ `simulators/azure/insights.go:40::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | upsert; preserves instrumentation key across updates |
-| `GET /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}` | ✓ `simulators/azure/insights.go:94::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}` | ✓ `simulators/azure/insights.go:112::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}/currentbillingfeatures` | ✓ `simulators/azure/insights.go:138::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}/currentbillingfeatures` | ✓ `simulators/azure/insights.go:141::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/apps/{appId}/query` | ✓ `simulators/azure/insights.go:143::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:381::queryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:382::queryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /dataCollectionRules/{dcrId}/streams/{streamName}` | ✓ `simulators/azure/monitor.go:385::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Insights/components` | ✓ `simulators/azure/insights.go:237::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/apps/{appId}/query` | ✓ `simulators/azure/insights.go:330::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.OperationalInsights/workspaces` | ✓ `simulators/azure/monitor.go:314::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:359::postQueryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:360::getQueryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/workspaces/{workspaceId}/metadata` | ✓ `simulators/azure/monitor.go:367::metadataHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/workspaces/{workspaceId}/metadata` | ✓ `simulators/azure/monitor.go:368::metadataHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/$batch` | ✓ `simulators/azure/monitor.go:372::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /dataCollectionRules/{dcrId}/streams/{streamName}` | ✓ `simulators/azure/monitor.go:396::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

@@ -164,9 +164,9 @@ func registerCloudFunctions(srv *sim.Server) {
 		// the real overlay. Mirror that linkage here: stamp the
 		// service name onto the function, and seed a backing ServiceV2
 		// row so subsequent Get/PATCH on the service round-trip.
-		stubImage := ""
+		buildOutputImage := ""
 		if fn.BuildConfig != nil {
-			stubImage = fn.BuildConfig.DockerRepository
+			buildOutputImage = fn.BuildConfig.DockerRepository
 		}
 		// Compose the backing service spec first so we can charge its CPU
 		// load against the regional quota BEFORE persisting the function.
@@ -177,7 +177,7 @@ func registerCloudFunctions(srv *sim.Server) {
 			Template: &RevisionTemplate{
 				Containers: []Container{{
 					Name:      functionID,
-					Image:     stubImage,
+					Image:     buildOutputImage,
 					Resources: functionCPUResources(fn),
 				}},
 			},
@@ -188,6 +188,7 @@ func registerCloudFunctions(srv *sim.Server) {
 		}
 		fn.ServiceConfig.Service = backingService.Name
 		crv2Services.Put(backingService.Name, backingService)
+		projectCloudRunV2ToV1(backingService)
 
 		functions.Put(name, fn)
 

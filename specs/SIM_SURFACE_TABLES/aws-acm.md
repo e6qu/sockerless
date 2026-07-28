@@ -13,17 +13,27 @@ Surface registered in `simulators/aws/acm.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action CertificateManager.RequestCertificate` | ✓ `simulators/aws/acm.go:116::handleACMRequestCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.DescribeCertificate` | ✓ `simulators/aws/acm.go:117::handleACMDescribeCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.DeleteCertificate` | ✓ `simulators/aws/acm.go:118::handleACMDeleteCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.ListCertificates` | ✓ `simulators/aws/acm.go:119::handleACMListCertificates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.AddTagsToCertificate` | ✓ `simulators/aws/acm.go:120::handleACMAddTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.RemoveTagsFromCertificate` | ✓ `simulators/aws/acm.go:121::handleACMRemoveTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.ListTagsForCertificate` | ✓ `simulators/aws/acm.go:122::handleACMListTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.ImportCertificate` | ✓ `simulators/aws/acm.go:123::handleACMImportCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.UpdateCertificateOptions` | ✓ `simulators/aws/acm.go:124::handleACMUpdateOptions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.ResendValidationEmail` | ✓ `simulators/aws/acm.go:125::handleACMResendValidationEmail` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CertificateManager.RenewCertificate` | ✓ `simulators/aws/acm.go:126::handleACMRenewCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /acm/email-validation/{token}` | ✓ `simulators/aws/acm.go:255::handleACMEmailValidation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.RequestCertificate` | ✓ `simulators/aws/acm.go:257::handleACMRequestCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.DescribeCertificate` | ✓ `simulators/aws/acm.go:258::handleACMDescribeCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.DeleteCertificate` | ✓ `simulators/aws/acm.go:259::handleACMDeleteCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.ListCertificates` | ✓ `simulators/aws/acm.go:260::handleACMListCertificates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.AddTagsToCertificate` | ✓ `simulators/aws/acm.go:261::handleACMAddTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.RemoveTagsFromCertificate` | ✓ `simulators/aws/acm.go:262::handleACMRemoveTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.ListTagsForCertificate` | ✓ `simulators/aws/acm.go:263::handleACMListTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.ImportCertificate` | ✓ `simulators/aws/acm.go:264::handleACMImportCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.UpdateCertificateOptions` | ✓ `simulators/aws/acm.go:265::handleACMUpdateOptions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.ResendValidationEmail` | ✓ `simulators/aws/acm.go:266::handleACMResendValidationEmail` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.RenewCertificate` | ✓ `simulators/aws/acm.go:267::handleACMRenewCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.GetCertificate` | ✓ `simulators/aws/acm.go:268::handleACMGetCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.ExportCertificate` | ✓ `simulators/aws/acm.go:269::handleACMExportCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.RevokeCertificate` | ✓ `simulators/aws/acm.go:270::handleACMRevokeCertificate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.GetAccountConfiguration` | ✓ `simulators/aws/acm.go:271::handleACMGetAccountConfiguration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.PutAccountConfiguration` | ✓ `simulators/aws/acm.go:272::handleACMPutAccountConfiguration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.SearchCertificates` | ✓ `simulators/aws/acm.go:273::handleACMSearchCertificates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.TagResource` | ✓ `simulators/aws/acm.go:274::handleACMTagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.UntagResource` | ✓ `simulators/aws/acm.go:275::handleACMUntagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CertificateManager.ListTagsForResource` | ✓ `simulators/aws/acm.go:276::handleACMListTagsForResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 
