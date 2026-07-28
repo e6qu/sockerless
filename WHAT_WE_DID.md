@@ -28,7 +28,11 @@ Step Functions state-machine versions and aliases. The CLI covered the expanded
 control planes and runtime behavior, including the previously exempt
 ListStateMachineVersions operation. Its harness installed AWS's official
 architecture-specific Session Manager plugin when necessary and removed all
-provisioned tools after the suite.
+provisioned tools after the suite. The Step Functions Lambda-task SDK flow used
+the suite's prebuilt real Runtime API image, so its history assertion measured
+the integration rather than a clean runner's unrelated managed-runtime image
+download; separate ZIP and live-AWS differentials retained managed-runtime
+coverage.
 
 Selected flows also ran against short-lived live AWS resources. The differential
 covered Step Functions validation, execution history, Lambda task history,

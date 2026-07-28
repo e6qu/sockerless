@@ -22,10 +22,9 @@ func TestSFN_LambdaTaskHistory_SDK(t *testing.T) {
 	_, err := lambdaAPI.CreateFunction(ctx, &lambda.CreateFunctionInput{
 		FunctionName: aws.String(functionName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
-		Runtime:      lambdatypes.RuntimeNodejs20x,
-		Handler:      aws.String("index.handler"),
+		PackageType:  lambdatypes.PackageTypeImage,
 		Code: &lambdatypes.FunctionCode{
-			ZipFile: lambdaNodeDeploymentZip(t, `({called:true,input:event})`),
+			ImageUri: aws.String(lambdaHandlerImageName),
 		},
 	})
 	require.NoError(t, err)
@@ -85,7 +84,7 @@ func TestSFN_LambdaTaskHistory_SDK(t *testing.T) {
 	assert.Equal(t, functionARN, aws.ToString(history.Events[2].LambdaFunctionScheduledEventDetails.Resource))
 	assert.JSONEq(t, `{"request":"history"}`, aws.ToString(history.Events[2].LambdaFunctionScheduledEventDetails.Input))
 	require.NotNil(t, history.Events[4].LambdaFunctionSucceededEventDetails)
-	assert.JSONEq(t, `{"called":true,"input":{"request":"history"}}`,
+	assert.JSONEq(t, `{"request":"history"}`,
 		aws.ToString(history.Events[4].LambdaFunctionSucceededEventDetails.Output))
 }
 
