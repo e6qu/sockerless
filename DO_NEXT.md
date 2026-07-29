@@ -151,6 +151,16 @@ delayed Amazon SQS side effect. The macOS/Linux Docker validation harness loaded
 Buildx output and shared the container host's PID namespace; the full
 production-shaped HashiCorp AWS provider graph completed apply, a real
 VPC-attached Lambda invocation, refresh, and destroy through HTTPS.
+The Amazon ECS integration harness loaded its real arithmetic workload through
+the backend's Docker Image Load API instead of building it outside the backend
+catalog; live-cloud runs required the corresponding pre-provisioned Amazon ECR
+coordinate, and all six simulator-backed real-container cases passed.
+The AWS external Terraform harness preserved the original request host through
+Caddy for AWS Signature Version 4, serialized heavyweight packages locally,
+and assigned the root, Amazon ElastiCache, and three Amazon RDS graphs to
+separate hosted runners. All five HTTPS packages completed apply, real
+workload or data-plane assertions, and destroy without cross-package resource
+contention.
 Publication also upgraded every newly drifted SQLite and Google Cloud client
 module, moved Firestore and Spanner protobuf imports to their current
 canonical modules, and passed the complete official Google Cloud SDK suite.

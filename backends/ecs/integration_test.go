@@ -70,7 +70,8 @@ func requireExe(name string) {
 //	SOCKERLESS_ECS_CLUSTER,
 //	SOCKERLESS_ECS_SUBNETS,
 //	SOCKERLESS_ECS_EXECUTION_ROLE_ARN,
-//	SOCKERLESS_ECS_CPU_ARCHITECTURE) and fails
+//	SOCKERLESS_ECS_CPU_ARCHITECTURE,
+//	SOCKERLESS_ECS_EVAL_IMAGE) and fails
 //	loud on any missing.
 //
 // The Test* functions don't know which target they're running against.
@@ -96,10 +97,11 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
-	evalImageName = "sockerless-eval-arithmetic:test"
-	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
-	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
+	if target == "sim" {
+		evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
+		evalImageName = "sockerless-eval-arithmetic:test"
+		fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
+		evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
@@ -107,12 +109,15 @@ FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
-	evalImageBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
-		"-t", evalImageName, "-f", "-", evalDir)
-	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
-	if out, err := evalImageBuild.CombinedOutput(); err != nil {
-		failClean("ERROR: docker build eval-arithmetic image: %v\n%s", err, out)
+		evalImageBuild := exec.Command("docker", "build",
+			"--platform", "linux/arm64",
+			"-t", evalImageName, "-f", "-", evalDir)
+		evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
+		if out, err := evalImageBuild.CombinedOutput(); err != nil {
+			failClean("ERROR: docker build eval-arithmetic image: %v\n%s", err, out)
+		}
+	} else {
+		evalImageName = requireEnv("SOCKERLESS_ECS_EVAL_IMAGE")
 	}
 
 	var endpointURL, cluster, subnets, executionRoleARN, cpuArch string
@@ -230,6 +235,39 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	)
 	if err != nil {
 		failClean("ERROR: docker client: %v\n", err)
+	}
+	if target == "sim" {
+		// Provision the simulator coordinate through the same Docker Image Load
+		// API an operator uses. Building the fixture directly in the host
+		// daemon is not enough: the Amazon ECS backend owns its image catalog,
+		// and an image absent from that catalog is correctly treated as a
+		// Docker Hub reference.
+		save := exec.Command("docker", "save", evalImageName)
+		savedImage, err := save.StdoutPipe()
+		if err != nil {
+			failClean("ERROR: create docker save pipe for %s: %v\n", evalImageName, err)
+		}
+		var saveStderr bytes.Buffer
+		save.Stderr = &saveStderr
+		if err := save.Start(); err != nil {
+			failClean("ERROR: start docker save for %s: %v\n", evalImageName, err)
+		}
+		loaded, err := dockerClient.ImageLoad(context.Background(), savedImage)
+		if err != nil {
+			_ = save.Process.Kill()
+			_ = save.Wait()
+			failClean("ERROR: load %s through Amazon ECS backend: %v\n", evalImageName, err)
+		}
+		loadOutput, readErr := io.ReadAll(loaded.Body)
+		_ = loaded.Body.Close()
+		saveErr := save.Wait()
+		if readErr != nil {
+			failClean("ERROR: read Amazon ECS backend image-load response for %s: %v\n", evalImageName, readErr)
+		}
+		if saveErr != nil {
+			failClean("ERROR: docker save %s: %v\n%s", evalImageName, saveErr, saveStderr.String())
+		}
+		fmt.Printf("[setup] Loaded %s through Amazon ECS backend: %s", evalImageName, loadOutput)
 	}
 
 	code := m.Run()

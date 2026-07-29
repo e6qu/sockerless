@@ -3013,3 +3013,21 @@ Linux harness. The complete production-shaped HashiCorp AWS provider graph
 then applied through the real Caddy HTTPS gateway, invoked a Lambda function
 inside its attached VPC, refreshed every resource, and destroyed the graph
 cleanly.
+
+The Amazon ECS backend integration had built its arithmetic workload only in
+the adjacent host daemon, leaving the backend image catalog unaware of it.
+The harness now loaded that real multi-stage image through the backend's Docker
+Image Load API, while live-cloud runs required an explicitly provisioned
+Amazon ECR coordinate. All six arithmetic cases ran in real containers and
+passed their exit-code, log, label, and environment assertions.
+
+The hosted AWS Terraform job had launched the root, Amazon ElastiCache, and
+three Amazon RDS provider graphs concurrently on one runner, combining five
+simulators, five HTTPS gateways, and their real database and container
+workloads. Caddy had also redundantly replaced the upstream `Host` header that
+formed part of each AWS Signature Version 4 canonical request. The gateway now
+used Caddy's native host preservation, local package execution stayed
+serialized while Terraform retained resource-level concurrency, and CI
+assigned each production-shaped package to a separate hosted runner. All five
+HTTPS packages completed apply, real workload or data-plane assertions, and
+destroy without signature failures or cross-package resource contention.

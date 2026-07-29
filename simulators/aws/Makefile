@@ -20,6 +20,10 @@ CLI_TEST_ARGS    ?= ./...
 TERRAFORM_TEST_TIMEOUT ?= 300s
 TERRAFORM_TEST_ARGS    ?=
 TERRAFORM_TEST_PACKAGES ?= . ./elasticache ./rds-instance ./rds-restore ./rds-snapshot
+# Each package launches its own simulator, Caddy gateway, Terraform provider,
+# and real database/container workloads. Keep packages isolated while Terraform
+# retains its own resource-level parallelism inside each production-shaped graph.
+TERRAFORM_TEST_PACKAGE_PARALLELISM ?= 1
 TERRAFORM_TEST_JSON ?= 1
 TERRAFORM_TEST_JSON_FLAG := $(if $(filter 1 true yes,$(TERRAFORM_TEST_JSON)),-json,)
 
@@ -46,14 +50,14 @@ cli-test: build ## go test the CLI-driven sim tests
 	cd cli-tests && $(GO_ENV) go test -v -count=1 -timeout $(CLI_TEST_TIMEOUT) $(CLI_TEST_ARGS)
 
 terraform-test: build ## go test the terraform-driven sim tests
-	cd terraform-tests && SOCKERLESS_AWS_SIMULATOR_BINARY=$(CURDIR)/$(APP_NAME) $(GO_ENV) go test $(TERRAFORM_TEST_JSON_FLAG) -v -count=1 -timeout $(TERRAFORM_TEST_TIMEOUT) $(TERRAFORM_TEST_ARGS) $(TERRAFORM_TEST_PACKAGES)
+	cd terraform-tests && SOCKERLESS_AWS_SIMULATOR_BINARY=$(CURDIR)/$(APP_NAME) $(GO_ENV) go test -p $(TERRAFORM_TEST_PACKAGE_PARALLELISM) $(TERRAFORM_TEST_JSON_FLAG) -v -count=1 -timeout $(TERRAFORM_TEST_TIMEOUT) $(TERRAFORM_TEST_ARGS) $(TERRAFORM_TEST_PACKAGES)
 
 terraform-https-test: ## go test terraform via the optional Caddy HTTPS gateway
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
 	  $(MAKE) terraform-https-test-docker; \
 	else \
 	  $(MAKE) build; \
-	  cd terraform-tests && SOCKERLESS_AWS_SIMULATOR_BINARY=$(CURDIR)/$(APP_NAME) SOCKERLESS_TF_HTTPS_GATEWAY=1 $(GO_ENV) go test $(TERRAFORM_TEST_JSON_FLAG) -v -count=1 -timeout $(TERRAFORM_TEST_TIMEOUT) $(TERRAFORM_TEST_ARGS) $(TERRAFORM_TEST_PACKAGES); \
+	  cd terraform-tests && SOCKERLESS_AWS_SIMULATOR_BINARY=$(CURDIR)/$(APP_NAME) SOCKERLESS_TF_HTTPS_GATEWAY=1 $(GO_ENV) go test -p $(TERRAFORM_TEST_PACKAGE_PARALLELISM) $(TERRAFORM_TEST_JSON_FLAG) -v -count=1 -timeout $(TERRAFORM_TEST_TIMEOUT) $(TERRAFORM_TEST_ARGS) $(TERRAFORM_TEST_PACKAGES); \
 	fi
 
 # Aggregate that runs all four legacy test categories.
@@ -115,4 +119,4 @@ terraform-https-test-docker: docker-test-build ## run terraform HTTPS tests insi
 		-w /src/simulators/aws \
 		$(DOCKER_REALNET_TEST_ENV) \
 		-e SOCKERLESS_TF_HTTPS_GATEWAY=1 \
-		$(DOCKER_TEST_IMAGE) make terraform-https-test TERRAFORM_TEST_TIMEOUT=$(TERRAFORM_TEST_TIMEOUT) TERRAFORM_TEST_PACKAGES="$(TERRAFORM_TEST_PACKAGES)" TERRAFORM_TEST_ARGS="$(TERRAFORM_TEST_ARGS)" TERRAFORM_TEST_JSON=$(TERRAFORM_TEST_JSON)
+		$(DOCKER_TEST_IMAGE) make terraform-https-test TERRAFORM_TEST_TIMEOUT=$(TERRAFORM_TEST_TIMEOUT) TERRAFORM_TEST_PACKAGES="$(TERRAFORM_TEST_PACKAGES)" TERRAFORM_TEST_PACKAGE_PARALLELISM=$(TERRAFORM_TEST_PACKAGE_PARALLELISM) TERRAFORM_TEST_ARGS="$(TERRAFORM_TEST_ARGS)" TERRAFORM_TEST_JSON=$(TERRAFORM_TEST_JSON)

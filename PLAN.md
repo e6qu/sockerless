@@ -60,7 +60,9 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 30. Made all three console skip-link tests start keyboard traversal from deterministic in-document focus and reran them in real Chromium.
 31. Preserved explicit Amazon ECR Public workload coordinates, made cancellation terminate CodeBuild containers on every Docker wait path, and externally proved the stopped build emitted no delayed Amazon SQS message.
 32. Loaded Docker Buildx test images, shared the container host PID namespace for real VPC attachment, and completed the full production-shaped AWS Terraform graph through HTTPS.
-33. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+33. Loaded the Amazon ECS arithmetic workload through the backend's Docker Image Load API, required an explicit Amazon ECR workload coordinate for live-cloud runs, and passed all six real-container lifecycle cases.
+34. Preserved the AWS Signature Version 4 host through the HTTPS gateway, serialized heavyweight Terraform packages locally, isolated all five production-shaped graphs on separate hosted runners, and passed every HTTPS apply, real workload or data-plane assertion, and destroy.
+35. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

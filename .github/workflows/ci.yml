@@ -650,6 +650,23 @@ jobs:
         include:
           - suite: aws
             cloud: aws
+            tf_packages: "."
+            timeout_minutes: 12
+          - suite: aws Amazon ElastiCache
+            cloud: aws
+            tf_packages: "./elasticache"
+            timeout_minutes: 12
+          - suite: aws Amazon RDS instance
+            cloud: aws
+            tf_packages: "./rds-instance"
+            timeout_minutes: 12
+          - suite: aws Amazon RDS restore
+            cloud: aws
+            tf_packages: "./rds-restore"
+            timeout_minutes: 12
+          - suite: aws Amazon RDS snapshot
+            cloud: aws
+            tf_packages: "./rds-snapshot"
             timeout_minutes: 12
           - suite: gcp
             cloud: gcp
@@ -695,7 +712,7 @@ jobs:
           if [ "${{ matrix.cloud }}" = "aws" ]; then
             sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
               SOCKERLESS_SPEC_VALIDATE="$SOCKERLESS_SPEC_VALIDATE" SOCKERLESS_SPEC_DIR="$SOCKERLESS_SPEC_DIR" \
-              make terraform-https-test TERRAFORM_TEST_TIMEOUT=600s
+              make terraform-https-test TERRAFORM_TEST_TIMEOUT=600s TERRAFORM_TEST_PACKAGES="${{ matrix.tf_packages }}"
           elif [ "${{ matrix.cloud }}" = "azure" ]; then
             sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
               SOCKERLESS_SPEC_VALIDATE="$SOCKERLESS_SPEC_VALIDATE" SOCKERLESS_SPEC_DIR="$SOCKERLESS_SPEC_DIR" \
