@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2771 filed - 2767 fixed - 10 open - 16 false positives.**
+**2772 filed - 2768 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -25,6 +25,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2772~~ | P1 | AWS Lambda VPC workload image acquisition | platform inspection discarded Docker's JSON pull stream, so a registry-side failure surfaced later as an opaque `No such image` and failed the CLI appdata shard | Pre-inspection image acquisition now uses the simulator runtime's existing bounded, transient-aware pull implementation, which parses daemon stream errors and retries registry throttling or temporary unavailability before inspecting the downloaded platform. |
 | ~~2771~~ | P1 | AWS Step Functions Terraform-in-ECS validation | a private-subnet task tried to download its provider through undeclared internet egress, then the Linux real-VPC tier left Docker's outer-host coordinate unroutable from the isolated task namespace; failure output was discarded while the assertion polled an already-terminal workflow | The unchanged Terraform image carries an ahead-of-time filesystem mirror of the exact AWS provider, and the ECS task explicitly selects it while an invalid HTTPS proxy proves initialization cannot borrow host egress. Real-VPC tasks map only the simulator listener's outer-host coordinate onto the existing managed task-local route, without granting a private subnet general host access. Initialization and apply each have a 120-second deadline; exact output is published through Amazon CloudWatch Logs and reported for both terminal workflow failures and the outer test deadline. Focused real-container, mapping-unit, and exact N-Z SDK validation passed. |
 | ~~2770~~ | P1 | core filesystem-driver validation | staging tests assumed a path below `/usr/local` was unwritable, but a privileged Linux runner could create it | Both staging tests now force direct extraction to fail portably by targeting a child beneath a real regular file; focused local and hosted core tests pass without relying on runner permissions. |
 | ~~2769~~ | P1 | dependency freshness | coordinated AWS SDK patch releases and a new Google Cloud Spanner client appeared during pre-push validation | Every drifted direct dependency and its resolved transitive graph was refreshed with the repository-owned per-module upgrade target; the complete freshness gate and affected module validation passed. |

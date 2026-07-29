@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 
-	dockerimage "github.com/docker/docker/api/types/image"
 	sim "github.com/sockerless/simulator"
 )
 
@@ -16,16 +14,8 @@ func localImagePlatform(ctx context.Context, imageRef string) (string, error) {
 	}
 	inspect, _, err := cli.ImageInspectWithRaw(ctx, imageRef)
 	if err != nil {
-		rc, pullErr := cli.ImagePull(ctx, imageRef, dockerimage.PullOptions{})
-		if pullErr != nil {
+		if pullErr := sim.PullImage(ctx, imageRef, ""); pullErr != nil {
 			return "", fmt.Errorf("inspect image %q platform: %w; pull image: %w", imageRef, err, pullErr)
-		}
-		if _, copyErr := io.Copy(io.Discard, rc); copyErr != nil {
-			_ = rc.Close()
-			return "", fmt.Errorf("pull image %q: %w", imageRef, copyErr)
-		}
-		if closeErr := rc.Close(); closeErr != nil {
-			return "", fmt.Errorf("close image pull stream %q: %w", imageRef, closeErr)
 		}
 		inspect, _, err = cli.ImageInspectWithRaw(ctx, imageRef)
 		if err != nil {
