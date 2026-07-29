@@ -55,7 +55,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 25. Retained the exact CI-captured Cloud Logging v2 and IAM Service Account Credentials v1 Discovery revisions and revalidated the unchanged public method, path, and schema-field sets.
 26. Closed the hosted-runner concurrency findings: AWS Amplify preserved sub-second release ordering, Microsoft Azure NAT gateways accepted subnet association before public addressing, and the real AWS Step Functions workload test allowed cloud-shaped cold container provisioning.
 27. Upgraded the newly released SQLite and Google Cloud client graphs, including canonical Firestore and Spanner protobuf modules, and reran every affected module plus the complete official Google Cloud SDK suite.
-28. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+28. Retained the exact CI-captured Cloud Run v2 Discovery revision 20260727 and revalidated its unchanged public method, path, and schema-field sets.
+29. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

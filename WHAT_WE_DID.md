@@ -2970,3 +2970,11 @@ their gRPC data planes imported the canonical protobuf packages from the
 official Firestore and Spanner client modules. Every affected module and the
 complete official Google Cloud SDK simulator suite passed, and the authenticated
 freshness audit reported no remaining drift.
+
+The hosted specification freshness gate then observed Google Cloud Run v2
+Discovery revision 20260727 while the maintainer edge still served revision
+20260717. Its exact compressed artifact and provenance pin were retained. A
+canonical comparison found no public method, path, or schema-field changes;
+only the revision and descriptions changed. The Google simulator route,
+specification, and measured-coverage tests passed against the newer document,
+and the authenticated freshness audit accepted the pin.
