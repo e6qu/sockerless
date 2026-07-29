@@ -140,7 +140,10 @@ deployed workloads used the standard SDK endpoint environment variables.
 Hosted concurrency validation preserved sub-second AWS Amplify release order,
 accepted Microsoft Azure's valid subnet-before-public-prefix NAT-gateway
 state, and gave the real Step Functions container integrations a
-cloud-shaped cold-provisioning window with useful terminal diagnostics.
+cloud-shaped cold-provisioning window with useful terminal diagnostics. The
+AWS SDK shard provisioned the exact configured Alpine and official AWS CLI
+images before `m.Run`, so registry transfer no longer consumed that
+integration's lifecycle deadline while both real containers still executed.
 Publication also upgraded every newly drifted SQLite and Google Cloud client
 module, moved Firestore and Spanner protobuf imports to their current
 canonical modules, and passed the complete official Google Cloud SDK suite.

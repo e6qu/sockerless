@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -266,6 +267,16 @@ func TestMain(m *testing.M) {
 	// container "failing to start" (ExitCode -1) rather than a clear pull
 	// error. Fetching it once here removes that race from every test.
 	pullImageWithRetry("public.ecr.aws/docker/library/busybox:latest")
+	if testRunSelects("TestSFN_AmazonECSAndCodeBuildIntegrations_SDK") {
+		// The integration's timeout measures the Step Functions execution,
+		// not registry transfer on a newly provisioned test host. These are the
+		// exact public images configured on the Amazon ECS task definition and
+		// AWS CodeBuild project; pulling them before m.Run still executes both
+		// real containers while keeping image acquisition outside the per-test
+		// lifecycle deadline.
+		pullImageWithRetry("public.ecr.aws/docker/library/alpine:3.21")
+		pullImageWithRetry("public.ecr.aws/aws-cli/aws-cli:2.27.49")
+	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -346,6 +357,35 @@ func pullImageWithRetry(image string) {
 		time.Sleep(time.Duration(attempt*attempt) * time.Second)
 	}
 	log.Fatalf("Failed to pull %s after retries: %v", image, lastErr)
+}
+
+// testRunSelects reports whether Go's configured -test.run pattern selects the
+// named top-level test. CI also exports the same shard expression as SHARD_RUN;
+// accepting either source keeps pre-M.Run provisioning scoped to the shard
+// that actually executes the workload.
+func testRunSelects(name string) bool {
+	pattern := os.Getenv("SHARD_RUN")
+	if pattern == "" {
+		for i, arg := range os.Args {
+			switch {
+			case strings.HasPrefix(arg, "-test.run="):
+				pattern = strings.TrimPrefix(arg, "-test.run=")
+			case arg == "-test.run" && i+1 < len(os.Args):
+				pattern = os.Args[i+1]
+			}
+			if pattern != "" {
+				break
+			}
+		}
+	}
+	if pattern == "" {
+		return true
+	}
+	selected, err := regexp.MatchString(pattern, name)
+	if err != nil {
+		log.Fatalf("Invalid -test.run expression %q: %v", pattern, err)
+	}
+	return selected
 }
 
 func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {

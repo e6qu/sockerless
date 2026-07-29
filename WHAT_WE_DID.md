@@ -2978,3 +2978,11 @@ canonical comparison found no public method, path, or schema-field changes;
 only the revision and descriptions changed. The Google simulator route,
 specification, and measured-coverage tests passed against the newer document,
 and the authenticated freshness audit accepted the pin.
+
+The next hosted AWS SDK N–Z run showed that cold registry transfer, rather than
+either cloud workload, had consumed the entire Step Functions execution
+assertion window. The shard now provisioned the exact configured public Alpine
+Amazon ECS image and official AWS CLI CodeBuild image before `m.Run`. Image
+acquisition therefore stayed outside the per-test lifecycle deadline while the
+simulator still started, observed, and cancelled the real containers. The
+focused official AWS SDK integration passed in 35 seconds.
