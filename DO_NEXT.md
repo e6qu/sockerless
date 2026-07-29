@@ -141,6 +141,9 @@ Hosted concurrency validation preserved sub-second AWS Amplify release order,
 accepted Microsoft Azure's valid subnet-before-public-prefix NAT-gateway
 state, and gave the real Step Functions container integrations a
 cloud-shaped cold-provisioning window with useful terminal diagnostics.
+Publication also upgraded every newly drifted SQLite and Google Cloud client
+module, moved Firestore and Spanner protobuf imports to their current
+canonical modules, and passed the complete official Google Cloud SDK suite.
 Explicit Lambda deployment remained intentional because AWS Lambda itself runs
 only functions a caller creates. The repository retained its truthful
 unaudited/non-production warning because functional validation did not

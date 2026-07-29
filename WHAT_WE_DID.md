@@ -2959,3 +2959,14 @@ Amazon ECS and AWS CodeBuild images. Its official AWS SDK assertion now allowed
 the same multi-minute provisioning window as the cloud services and reported
 the final execution status, error, and cause. The focused real-container
 integration passed.
+
+The publication freshness gate then found a new SQLite release in all four
+simulator modules that consumed it. They upgraded to `modernc.org/sqlite`
+v1.55.0 and the current supporting graph. The Google simulator's complete
+direct-dependency refresh also upgraded Firestore to v1.24.0, Spanner to
+v1.93.0, Google APIs to v0.291.0, and the latest generated APIs. Because the
+root `genproto` module no longer carried the Firestore and Spanner services,
+their gRPC data planes imported the canonical protobuf packages from the
+official Firestore and Spanner client modules. Every affected module and the
+complete official Google Cloud SDK simulator suite passed, and the authenticated
+freshness audit reported no remaining drift.
