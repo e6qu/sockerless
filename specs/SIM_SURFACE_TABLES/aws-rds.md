@@ -13,69 +13,69 @@ Surface registered in `simulators/aws/rds.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action CreateDBInstance` | ✓ `simulators/aws/rds.go:271::handleRDSCreate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBInstances` | ✓ `simulators/aws/rds.go:272::handleRDSDescribe` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyDBInstance` | ✓ `simulators/aws/rds.go:273::handleRDSModify` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteDBInstance` | ✓ `simulators/aws/rds.go:274::handleRDSDelete` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AddTagsToResource` | ✓ `simulators/aws/rds.go:275::handleRDSAddTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ListTagsForResource` | ✓ `simulators/aws/rds.go:276::handleRDSListTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action RemoveTagsFromResource` | ✓ `simulators/aws/rds.go:277::handleRDSRemoveTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateDBSnapshot` | ✓ `simulators/aws/rds.go:278::handleRDSCreateSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBSnapshots` | ✓ `simulators/aws/rds.go:279::handleRDSDescribeSnapshots` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBSnapshotAttributes` | ✓ `simulators/aws/rds.go:280::handleRDSDescribeSnapshotAttributes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteDBSnapshot` | ✓ `simulators/aws/rds.go:281::handleRDSDeleteSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action RestoreDBInstanceFromDBSnapshot` | ✓ `simulators/aws/rds.go:282::handleRDSRestoreFromSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CopyDBSnapshot` | ✓ `simulators/aws/rds.go:283::handleRDSCopySnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action RebootDBInstance` | ✓ `simulators/aws/rds.go:284::handleRDSReboot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateDBInstanceReadReplica` | ✓ `simulators/aws/rds.go:285::handleRDSCreateReadReplica` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action StartDBInstance` | ✓ `simulators/aws/rds.go:286::handleRDSStartInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action StopDBInstance` | ✓ `simulators/aws/rds.go:287::handleRDSStopInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action PromoteReadReplica` | ✓ `simulators/aws/rds.go:288::handleRDSPromoteReadReplica` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyDBSnapshotAttribute` | ✓ `simulators/aws/rds.go:289::handleRDSModifySnapshotAttribute` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBParameters` | ✓ `simulators/aws/rds.go:290::handleRDSDescribeParameters` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyDBParameterGroup` | ✓ `simulators/aws/rds.go:291::handleRDSModifyParameterGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ResetDBParameterGroup` | ✓ `simulators/aws/rds.go:292::handleRDSResetParameterGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateDBCluster` | ✓ `simulators/aws/rds.go:295::handleRDSCreateCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBClusters` | ✓ `simulators/aws/rds.go:296::handleRDSDescribeClusters` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyDBCluster` | ✓ `simulators/aws/rds.go:297::handleRDSModifyCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteDBCluster` | ✓ `simulators/aws/rds.go:298::handleRDSDeleteCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action StartDBCluster` | ✓ `simulators/aws/rds.go:299::handleRDSStartCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action StopDBCluster` | ✓ `simulators/aws/rds.go:300::handleRDSStopCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action FailoverDBCluster` | ✓ `simulators/aws/rds.go:301::handleRDSFailoverCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBClusterParameters` | ✓ `simulators/aws/rds.go:302::handleRDSDescribeClusterParameters` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyDBClusterParameterGroup` | ✓ `simulators/aws/rds.go:303::handleRDSModifyClusterParameterGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateGlobalCluster` | ✓ `simulators/aws/rds.go:306::handleRDSCreateGlobalCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeGlobalClusters` | ✓ `simulators/aws/rds.go:307::handleRDSDescribeGlobalClusters` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyGlobalCluster` | ✓ `simulators/aws/rds.go:308::handleRDSModifyGlobalCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteGlobalCluster` | ✓ `simulators/aws/rds.go:309::handleRDSDeleteGlobalCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateEventSubscription` | ✓ `simulators/aws/rds.go:312::handleRDSCreateEventSubscription` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeEventSubscriptions` | ✓ `simulators/aws/rds.go:313::handleRDSDescribeEventSubscriptions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyEventSubscription` | ✓ `simulators/aws/rds.go:314::handleRDSModifyEventSubscription` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteEventSubscription` | ✓ `simulators/aws/rds.go:315::handleRDSDeleteEventSubscription` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateDBClusterEndpoint` | ✓ `simulators/aws/rds.go:318::handleRDSCreateClusterEndpoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBClusterEndpoints` | ✓ `simulators/aws/rds.go:319::handleRDSDescribeClusterEndpoints` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteDBClusterEndpoint` | ✓ `simulators/aws/rds.go:320::handleRDSDeleteClusterEndpoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateDBClusterSnapshot` | ✓ `simulators/aws/rds.go:323::handleRDSCreateClusterSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBClusterSnapshots` | ✓ `simulators/aws/rds.go:324::handleRDSDescribeClusterSnapshots` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteDBClusterSnapshot` | ✓ `simulators/aws/rds.go:325::handleRDSDeleteClusterSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CopyDBClusterSnapshot` | ✓ `simulators/aws/rds.go:326::handleRDSCopyClusterSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateDBClusterParameterGroup` | ✓ `simulators/aws/rds.go:329::handleRDSCreateClusterParamGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBClusterParameterGroups` | ✓ `simulators/aws/rds.go:330::handleRDSDescribeClusterParamGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteDBClusterParameterGroup` | ✓ `simulators/aws/rds.go:331::handleRDSDeleteClusterParamGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateOptionGroup` | ✓ `simulators/aws/rds.go:334::handleRDSCreateOptionGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeOptionGroups` | ✓ `simulators/aws/rds.go:335::handleRDSDescribeOptionGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteOptionGroup` | ✓ `simulators/aws/rds.go:336::handleRDSDeleteOptionGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeEvents` | ✓ `simulators/aws/rds.go:338::handleRDSDescribeEvents` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeEventCategories` | ✓ `simulators/aws/rds.go:339::handleRDSDescribeEventCategories` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBEngineVersions` | ✓ `simulators/aws/rds.go:340::handleRDSDescribeEngineVersions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeOrderableDBInstanceOptions` | ✓ `simulators/aws/rds.go:341::handleRDSDescribeOrderableOptions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateDBSubnetGroup` | ✓ `simulators/aws/rds.go:344::handleRDSCreateSubnetGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBSubnetGroups` | ✓ `simulators/aws/rds.go:345::handleRDSDescribeSubnetGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyDBSubnetGroup` | ✓ `simulators/aws/rds.go:346::handleRDSModifySubnetGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteDBSubnetGroup` | ✓ `simulators/aws/rds.go:347::handleRDSDeleteSubnetGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateDBParameterGroup` | ✓ `simulators/aws/rds.go:350::handleRDSCreateParamGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeDBParameterGroups` | ✓ `simulators/aws/rds.go:351::handleRDSDescribeParamGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteDBParameterGroup` | ✓ `simulators/aws/rds.go:352::handleRDSDeleteParamGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBInstance` | ✓ `simulators/aws/rds.go:276::handleRDSCreate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBInstances` | ✓ `simulators/aws/rds.go:277::handleRDSDescribe` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyDBInstance` | ✓ `simulators/aws/rds.go:278::handleRDSModify` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBInstance` | ✓ `simulators/aws/rds.go:279::handleRDSDelete` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AddTagsToResource` | ✓ `simulators/aws/rds.go:280::handleRDSAddTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListTagsForResource` | ✓ `simulators/aws/rds.go:281::handleRDSListTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RemoveTagsFromResource` | ✓ `simulators/aws/rds.go:282::handleRDSRemoveTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBSnapshot` | ✓ `simulators/aws/rds.go:283::handleRDSCreateSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBSnapshots` | ✓ `simulators/aws/rds.go:284::handleRDSDescribeSnapshots` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBSnapshotAttributes` | ✓ `simulators/aws/rds.go:285::handleRDSDescribeSnapshotAttributes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBSnapshot` | ✓ `simulators/aws/rds.go:286::handleRDSDeleteSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RestoreDBInstanceFromDBSnapshot` | ✓ `simulators/aws/rds.go:287::handleRDSRestoreFromSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CopyDBSnapshot` | ✓ `simulators/aws/rds.go:288::handleRDSCopySnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RebootDBInstance` | ✓ `simulators/aws/rds.go:289::handleRDSReboot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBInstanceReadReplica` | ✓ `simulators/aws/rds.go:290::handleRDSCreateReadReplica` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action StartDBInstance` | ✓ `simulators/aws/rds.go:291::handleRDSStartInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action StopDBInstance` | ✓ `simulators/aws/rds.go:292::handleRDSStopInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action PromoteReadReplica` | ✓ `simulators/aws/rds.go:293::handleRDSPromoteReadReplica` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyDBSnapshotAttribute` | ✓ `simulators/aws/rds.go:294::handleRDSModifySnapshotAttribute` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBParameters` | ✓ `simulators/aws/rds.go:295::handleRDSDescribeParameters` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyDBParameterGroup` | ✓ `simulators/aws/rds.go:296::handleRDSModifyParameterGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ResetDBParameterGroup` | ✓ `simulators/aws/rds.go:297::handleRDSResetParameterGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBCluster` | ✓ `simulators/aws/rds.go:300::handleRDSCreateCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBClusters` | ✓ `simulators/aws/rds.go:301::handleRDSDescribeClusters` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyDBCluster` | ✓ `simulators/aws/rds.go:302::handleRDSModifyCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBCluster` | ✓ `simulators/aws/rds.go:303::handleRDSDeleteCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action StartDBCluster` | ✓ `simulators/aws/rds.go:304::handleRDSStartCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action StopDBCluster` | ✓ `simulators/aws/rds.go:305::handleRDSStopCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action FailoverDBCluster` | ✓ `simulators/aws/rds.go:306::handleRDSFailoverCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBClusterParameters` | ✓ `simulators/aws/rds.go:307::handleRDSDescribeClusterParameters` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyDBClusterParameterGroup` | ✓ `simulators/aws/rds.go:308::handleRDSModifyClusterParameterGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateGlobalCluster` | ✓ `simulators/aws/rds.go:311::handleRDSCreateGlobalCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeGlobalClusters` | ✓ `simulators/aws/rds.go:312::handleRDSDescribeGlobalClusters` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyGlobalCluster` | ✓ `simulators/aws/rds.go:313::handleRDSModifyGlobalCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteGlobalCluster` | ✓ `simulators/aws/rds.go:314::handleRDSDeleteGlobalCluster` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateEventSubscription` | ✓ `simulators/aws/rds.go:317::handleRDSCreateEventSubscription` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeEventSubscriptions` | ✓ `simulators/aws/rds.go:318::handleRDSDescribeEventSubscriptions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyEventSubscription` | ✓ `simulators/aws/rds.go:319::handleRDSModifyEventSubscription` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteEventSubscription` | ✓ `simulators/aws/rds.go:320::handleRDSDeleteEventSubscription` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBClusterEndpoint` | ✓ `simulators/aws/rds.go:323::handleRDSCreateClusterEndpoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBClusterEndpoints` | ✓ `simulators/aws/rds.go:324::handleRDSDescribeClusterEndpoints` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBClusterEndpoint` | ✓ `simulators/aws/rds.go:325::handleRDSDeleteClusterEndpoint` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBClusterSnapshot` | ✓ `simulators/aws/rds.go:328::handleRDSCreateClusterSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBClusterSnapshots` | ✓ `simulators/aws/rds.go:329::handleRDSDescribeClusterSnapshots` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBClusterSnapshot` | ✓ `simulators/aws/rds.go:330::handleRDSDeleteClusterSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CopyDBClusterSnapshot` | ✓ `simulators/aws/rds.go:331::handleRDSCopyClusterSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBClusterParameterGroup` | ✓ `simulators/aws/rds.go:334::handleRDSCreateClusterParamGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBClusterParameterGroups` | ✓ `simulators/aws/rds.go:335::handleRDSDescribeClusterParamGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBClusterParameterGroup` | ✓ `simulators/aws/rds.go:336::handleRDSDeleteClusterParamGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateOptionGroup` | ✓ `simulators/aws/rds.go:339::handleRDSCreateOptionGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeOptionGroups` | ✓ `simulators/aws/rds.go:340::handleRDSDescribeOptionGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteOptionGroup` | ✓ `simulators/aws/rds.go:341::handleRDSDeleteOptionGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeEvents` | ✓ `simulators/aws/rds.go:343::handleRDSDescribeEvents` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeEventCategories` | ✓ `simulators/aws/rds.go:344::handleRDSDescribeEventCategories` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBEngineVersions` | ✓ `simulators/aws/rds.go:345::handleRDSDescribeEngineVersions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeOrderableDBInstanceOptions` | ✓ `simulators/aws/rds.go:346::handleRDSDescribeOrderableOptions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBSubnetGroup` | ✓ `simulators/aws/rds.go:349::handleRDSCreateSubnetGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBSubnetGroups` | ✓ `simulators/aws/rds.go:350::handleRDSDescribeSubnetGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyDBSubnetGroup` | ✓ `simulators/aws/rds.go:351::handleRDSModifySubnetGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBSubnetGroup` | ✓ `simulators/aws/rds.go:352::handleRDSDeleteSubnetGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBParameterGroup` | ✓ `simulators/aws/rds.go:355::handleRDSCreateParamGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBParameterGroups` | ✓ `simulators/aws/rds.go:356::handleRDSDescribeParamGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBParameterGroup` | ✓ `simulators/aws/rds.go:357::handleRDSDeleteParamGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CreateCustomDBEngineVersion` | ✓ `simulators/aws/rds_complete.go:100::handleRDSCreateCustomEngineVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action ModifyCustomDBEngineVersion` | ✓ `simulators/aws/rds_complete.go:101::handleRDSModifyCustomEngineVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DeleteCustomDBEngineVersion` | ✓ `simulators/aws/rds_complete.go:102::handleRDSDeleteCustomEngineVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -184,4 +184,15 @@ Surface registered in `simulators/aws/rds.go` (and related files grouped under t
 - Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
+Amazon Relational Database Service DB instances using PostgreSQL, MySQL, or
+MariaDB expose the native database protocol at the returned `Endpoint`. The
+engine starts lazily in its real vendor container, retains data in an
+instance-owned volume, terminates TLS at the service endpoint, and accepts
+either the encrypted master credential or a TLS-protected, 15-minute SigV4 IAM
+database authentication token authorized through `rds-db:connect`.
+`ModifyDBInstance` changes IAM authentication and rotates the actual database
+account both while running and across a stopped/start lifecycle without
+replacing the volume. Stock pgx and MySQL drivers prove authentication denial,
+TLS enforcement, password rotation, stop/start persistence, and SQL reads and
+writes against all three engines.
 <!-- HAND-WRITTEN END -->

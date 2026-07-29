@@ -193,21 +193,27 @@ provider "aws" {
 | **S3** | `/{bucket}/{key}` | `s3.go` |
 | **CloudFront** | `/2020-05-31/…` (REST + XML) | `cloudfront.go` + `cloudfront_policies.go` + `cloudfront_functions.go` + `cloudfront_keys.go` |
 | **Route 53** | `/2013-04-01/…` (REST + XML) | `route53.go` |
-| **Amazon Amplify** | `/apps/…` (REST + JSON, versionless); authenticated Git repository connections, real Node.js and Python builds in a managed multi-language image from Amazon ECR Public, a host-addressed hosting data plane (`{branch}.{appId}.amplifyapp.com`, per-app `{hash}.cloudfront.net`, verified custom domains), server-side rendering per the deployment-manifest specification, and Route 53-backed domain verification | `amplify.go` + `amplify_domains.go` + `amplify_build.go` + `amplify_dataplane.go` + `amplify_compute.go` |
+| **Amazon Amplify** | `/apps/…` (REST + JSON, versionless); encrypted authenticated Git repository connections, real backend/frontend/test and monorepo builds with declared caches in a managed multi-language image from Amazon ECR Public, a host-addressed hosting data plane (`{branch}.{appId}.amplifyapp.com`, per-app `{hash}.cloudfront.net`, verified custom domains), server-side rendering per the deployment-manifest specification, and Route 53-backed domain verification | `amplify.go` + `amplify_domains.go` + `amplify_build.go` + `amplify_dataplane.go` + `amplify_compute.go` |
 
 Amazon RDS DB instances backed by PostgreSQL, MySQL, or MariaDB expose their
 native database wire protocol at the `Endpoint` returned by
 `CreateDBInstance`. The engine starts on the first data-plane connection,
 retains its files in an instance-owned volume, and accepts the configured
 master password or a TLS-protected, 15-minute SigV4 IAM database authentication
-token. Official AWS token generation plus stock PostgreSQL and MySQL drivers
-exercise schema, insert, and query operations against the real engine.
+token. `ModifyDBInstance` changes IAM authentication and rotates the actual
+database account while running or across a stopped/start lifecycle without
+replacing its data volume. Official AWS token generation plus stock PostgreSQL
+and MySQL drivers exercise schema, insert, query, denial, TLS enforcement,
+password rotation, and persistence operations against all three real engines.
 
 AWS Step Functions Task states support optimized Amazon ECS `RunTask`
 request/response, `.sync`, and callback-token integrations, plus the optimized
 AWS CodeBuild build and build-batch operations. Synchronous workflows poll the
 actual service resources, propagate terminal failures, and stop work they
-started when the execution is aborted.
+started when the execution is aborted. CodeBuild clones private Git sources
+with encrypted imported or AWS Secrets Manager credentials and executes the
+checked-in build specification inside the project's exact configured image;
+stopping a build or build batch cancels that container.
 
 Full per-verb wire shape: see [API_SPEC.md](API_SPEC.md).
 

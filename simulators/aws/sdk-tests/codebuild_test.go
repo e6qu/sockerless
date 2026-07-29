@@ -1,12 +1,15 @@
 package aws_sdk_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/sockerless/simulator-testutil/githttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +33,7 @@ func TestCodeBuild_ProjectCRUD_SDK(t *testing.T) {
 		},
 		Environment: &cbtypes.ProjectEnvironment{
 			Type:        cbtypes.EnvironmentTypeLinuxContainer,
-			Image:       aws.String("aws/codebuild/standard:7.0"),
+			Image:       aws.String("public.ecr.aws/docker/library/alpine:3.21"),
 			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
 		},
 		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
@@ -96,14 +99,14 @@ func TestCodeBuild_BuildLifecycle_SDK(t *testing.T) {
 		Name: aws.String("cb-sdk-build-project"),
 		Source: &cbtypes.ProjectSource{
 			Type:      cbtypes.SourceTypeNoSource,
-			Buildspec: aws.String("version: 0.2\nphases:\n  build:\n    commands:\n      - printf codebuild-sdk-ready\n"),
+			Buildspec: aws.String("version: 0.2\nphases:\n  build:\n    commands:\n      - test -f /etc/alpine-release\n      - printf codebuild-sdk-ready\n"),
 		},
 		Artifacts: &cbtypes.ProjectArtifacts{
 			Type: cbtypes.ArtifactsTypeNoArtifacts,
 		},
 		Environment: &cbtypes.ProjectEnvironment{
 			Type:        cbtypes.EnvironmentTypeLinuxContainer,
-			Image:       aws.String("aws/codebuild/standard:7.0"),
+			Image:       aws.String("public.ecr.aws/docker/library/alpine:3.21"),
 			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
 		},
 		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
@@ -153,6 +156,131 @@ func TestCodeBuild_BuildLifecycle_SDK(t *testing.T) {
 	require.Contains(t, allBuilds.Ids, buildID)
 }
 
+// TestCodeBuild_PrivateGitSourceRealContainer_SDK proves that imported source
+// credentials are used by the real Git transport and that the checked-out
+// buildspec executes inside the configured image rather than on the simulator
+// host. The private repository, official AWS SDK, Git smart-HTTP server, and
+// Docker image are all independent boundaries.
+func TestCodeBuild_PrivateGitSourceRealContainer_SDK(t *testing.T) {
+	c := codebuildClient()
+	secretsAPI := smClient()
+	testContext, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	const token = "codebuild-private-source-token"
+	repository := githttp.ServeBasicAuth(t, "main", map[string]string{
+		"buildspec.yml": `version: 0.2
+phases:
+  build:
+    commands:
+      - test -f /etc/alpine-release
+      - test "$CODEBUILD_PROJECT_NAME" = "cb-private-source"
+      - printf private-source-built
+`,
+	}, "oauth2", token)
+	imported, err := c.ImportSourceCredentials(testContext, &codebuild.ImportSourceCredentialsInput{
+		ServerType: cbtypes.ServerTypeGithub,
+		AuthType:   cbtypes.AuthTypePersonalAccessToken,
+		Username:   aws.String("oauth2"),
+		Token:      aws.String(token),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteSourceCredentials(context.Background(), &codebuild.DeleteSourceCredentialsInput{Arn: imported.Arn})
+	})
+
+	const projectName = "cb-private-source"
+	_, err = c.CreateProject(testContext, &codebuild.CreateProjectInput{
+		Name: aws.String(projectName),
+		Source: &cbtypes.ProjectSource{
+			Type:     cbtypes.SourceTypeGithub,
+			Location: aws.String(repository),
+		},
+		Artifacts: &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
+		Environment: &cbtypes.ProjectEnvironment{
+			Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("public.ecr.aws/docker/library/alpine:3.21"),
+			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
+		},
+		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteProject(context.Background(), &codebuild.DeleteProjectInput{Name: aws.String(projectName)})
+	})
+
+	started, err := c.StartBuild(testContext, &codebuild.StartBuildInput{
+		ProjectName:   aws.String(projectName),
+		SourceVersion: aws.String("main"),
+	})
+	require.NoError(t, err)
+	buildID := aws.ToString(started.Build.Id)
+	require.Eventually(t, func() bool {
+		builds, getErr := c.BatchGetBuilds(testContext, &codebuild.BatchGetBuildsInput{Ids: []string{buildID}})
+		return getErr == nil && len(builds.Builds) == 1 &&
+			builds.Builds[0].BuildStatus == cbtypes.StatusTypeSucceeded
+	}, 4*time.Minute, 100*time.Millisecond)
+
+	const (
+		secretsToken = "codebuild-secrets-manager-source-token"
+		secretName   = "/CodeBuild/private-source"
+		secretProj   = "cb-private-secrets-manager"
+	)
+	secretsRepository := githttp.ServeBasicAuth(t, "main", map[string]string{
+		"buildspec.yml": `version: 0.2
+phases:
+  build:
+    commands:
+      - test -f /etc/alpine-release
+      - test "$CODEBUILD_PROJECT_NAME" = "cb-private-secrets-manager"
+`,
+	}, "oauth2", secretsToken)
+	secret, err := secretsAPI.CreateSecret(testContext, &secretsmanager.CreateSecretInput{
+		Name: aws.String(secretName),
+		SecretString: aws.String(
+			`{"ServerType":"GITHUB","AuthType":"PERSONAL_ACCESS_TOKEN","Token":"` + secretsToken + `"}`,
+		),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = secretsAPI.DeleteSecret(context.Background(), &secretsmanager.DeleteSecretInput{
+			SecretId:                   secret.ARN,
+			ForceDeleteWithoutRecovery: aws.Bool(true),
+		})
+	})
+	_, err = c.CreateProject(testContext, &codebuild.CreateProjectInput{
+		Name: aws.String(secretProj),
+		Source: &cbtypes.ProjectSource{
+			Type:     cbtypes.SourceTypeGithub,
+			Location: aws.String(secretsRepository),
+			Auth: &cbtypes.SourceAuth{
+				Type:     cbtypes.SourceAuthTypeSecretsManager,
+				Resource: secret.ARN,
+			},
+		},
+		Artifacts: &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
+		Environment: &cbtypes.ProjectEnvironment{
+			Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("public.ecr.aws/docker/library/alpine:3.21"),
+			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
+		},
+		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteProject(context.Background(), &codebuild.DeleteProjectInput{Name: aws.String(secretProj)})
+	})
+	secretsBuild, err := c.StartBuild(testContext, &codebuild.StartBuildInput{
+		ProjectName: aws.String(secretProj), SourceVersion: aws.String("main"),
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		builds, getErr := c.BatchGetBuilds(testContext, &codebuild.BatchGetBuildsInput{
+			Ids: []string{aws.ToString(secretsBuild.Build.Id)},
+		})
+		return getErr == nil && len(builds.Builds) == 1 &&
+			builds.Builds[0].BuildStatus == cbtypes.StatusTypeSucceeded
+	}, 4*time.Minute, 100*time.Millisecond)
+}
+
 // TestCodeBuild_ListBuildsSortOrder_SDK pins that ListBuildsForProject honors
 // the sortOrder parameter: DESCENDING (the AWS default) returns most-recent
 // builds first, ASCENDING reverses it. The sim used to ignore sortOrder and
@@ -164,7 +292,7 @@ func TestCodeBuild_ListBuildsSortOrder_SDK(t *testing.T) {
 		Name:        aws.String(proj),
 		Source:      &cbtypes.ProjectSource{Type: cbtypes.SourceTypeNoSource, Buildspec: aws.String("version: 0.2\nphases:\n  build:\n    commands:\n      - printf ok\n")},
 		Artifacts:   &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
-		Environment: &cbtypes.ProjectEnvironment{Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("aws/codebuild/standard:7.0"), ComputeType: cbtypes.ComputeTypeBuildGeneral1Small},
+		Environment: &cbtypes.ProjectEnvironment{Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("public.ecr.aws/docker/library/alpine:3.21"), ComputeType: cbtypes.ComputeTypeBuildGeneral1Small},
 		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
 	})
 	require.NoError(t, err)
@@ -212,7 +340,7 @@ func TestCodeBuild_FailedBuildPhaseContext_SDK(t *testing.T) {
 		},
 		Environment: &cbtypes.ProjectEnvironment{
 			Type:        cbtypes.EnvironmentTypeLinuxContainer,
-			Image:       aws.String("aws/codebuild/standard:7.0"),
+			Image:       aws.String("public.ecr.aws/docker/library/alpine:3.21"),
 			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
 		},
 		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
@@ -261,7 +389,7 @@ func TestCodeBuild_StopAndRetryBuild_SDK(t *testing.T) {
 		// A short sleep keeps the build IN_PROGRESS long enough to stop it.
 		Source:      &cbtypes.ProjectSource{Type: cbtypes.SourceTypeNoSource, Buildspec: aws.String("version: 0.2\nphases:\n  build:\n    commands:\n      - sleep 5\n")},
 		Artifacts:   &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
-		Environment: &cbtypes.ProjectEnvironment{Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("aws/codebuild/standard:7.0"), ComputeType: cbtypes.ComputeTypeBuildGeneral1Small},
+		Environment: &cbtypes.ProjectEnvironment{Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("public.ecr.aws/docker/library/alpine:3.21"), ComputeType: cbtypes.ComputeTypeBuildGeneral1Small},
 		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
 	})
 	require.NoError(t, err)
@@ -330,7 +458,7 @@ func TestCodeBuild_ReportGroupsAndReports_SDK(t *testing.T) {
 		Name:        aws.String(proj),
 		Source:      &cbtypes.ProjectSource{Type: cbtypes.SourceTypeNoSource, Buildspec: aws.String(buildspec)},
 		Artifacts:   &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
-		Environment: &cbtypes.ProjectEnvironment{Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("aws/codebuild/standard:7.0"), ComputeType: cbtypes.ComputeTypeBuildGeneral1Small},
+		Environment: &cbtypes.ProjectEnvironment{Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("public.ecr.aws/docker/library/alpine:3.21"), ComputeType: cbtypes.ComputeTypeBuildGeneral1Small},
 		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
 	})
 	require.NoError(t, err)

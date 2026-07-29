@@ -11,6 +11,7 @@ import {
   deleteRDSInstance,
   fetchRDSClusters,
   fetchRDSInstances,
+  modifyRDSInstanceAuthentication,
   type RDSCluster,
   type RDSInstance,
 } from "../api.js";
@@ -143,6 +144,60 @@ function CreateInstanceModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function ModifyAuthenticationModal({ instance, onClose }: { instance: RDSInstance; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [iamAuthentication, setIamAuthentication] = useState(instance.iamDatabaseAuthenticationEnabled);
+  const [password, setPassword] = useState("");
+  const valid = password.length === 0 || password.length >= 8;
+  const modify = useMutation({
+    mutationFn: () =>
+      modifyRDSInstanceAuthentication({
+        dbInstanceIdentifier: instance.dbInstanceIdentifier,
+        enableIAMDatabaseAuthentication: iamAuthentication,
+        masterUserPassword: password || undefined,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["rds-instances"] });
+      onClose();
+    },
+  });
+  return (
+    <AwsModal
+      title={`Modify authentication for ${instance.dbInstanceIdentifier}`}
+      onDismiss={onClose}
+      footer={
+        <>
+          <AwsButton onClick={onClose}>Cancel</AwsButton>
+          <AwsButton
+            variant="primary"
+            data-testid="rds-modify-authentication-submit"
+            disabled={!valid || modify.isPending}
+            onClick={() => modify.mutate()}
+          >
+            {modify.isPending ? "Applying…" : "Apply immediately"}
+          </AwsButton>
+        </>
+      }
+    >
+      <SpaceBetween size="l">
+        <Checkbox checked={iamAuthentication} onChange={(event) => setIamAuthentication(event.detail.checked)}>
+          Enable IAM database authentication
+        </Checkbox>
+        <FormField
+          label="New master password"
+          description="Optional. When supplied, Amazon RDS rotates the live database-engine credential and preserves the database volume."
+          constraintText="At least 8 characters."
+        >
+          <Input value={password} type="password" onChange={(event) => setPassword(event.detail.value)} />
+        </FormField>
+        {modify.isError && (
+          <AwsErrorAlert>{modify.error instanceof Error ? modify.error.message : "The modification failed."}</AwsErrorAlert>
+        )}
+      </SpaceBetween>
+    </AwsModal>
+  );
+}
+
 function ConnectInstanceModal({ instance, onClose }: { instance: RDSInstance; onClose: () => void }) {
   const endpoint = `${instance.endpointAddress}:${instance.endpointPort}`;
   const command =
@@ -247,6 +302,7 @@ export function RDSPage() {
   const [deleting, setDeleting] = useState<{ instances: RDSInstance[]; clearSelection: () => void } | null>(null);
   const [creating, setCreating] = useState(false);
   const [connecting, setConnecting] = useState<RDSInstance | null>(null);
+  const [modifying, setModifying] = useState<RDSInstance | null>(null);
   return (
     <>
       <AwsResourceTable<RDSInstance>
@@ -269,6 +325,13 @@ export function RDSPage() {
               onClick={() => setConnecting(selected[0])}
             >
               Connect
+            </AwsButton>
+            <AwsButton
+              data-testid="rds-modify-authentication"
+              disabled={selected.length !== 1}
+              onClick={() => setModifying(selected[0])}
+            >
+              Modify authentication
             </AwsButton>
             <AwsButton
               data-testid="rds-delete-instance"
@@ -314,6 +377,7 @@ export function RDSPage() {
       )}
       {creating && <CreateInstanceModal onClose={() => setCreating(false)} />}
       {connecting && <ConnectInstanceModal instance={connecting} onClose={() => setConnecting(null)} />}
+      {modifying && <ModifyAuthenticationModal instance={modifying} onClose={() => setModifying(null)} />}
     </>
   );
 }

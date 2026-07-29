@@ -35,6 +35,9 @@ export interface AwsResourceTableProps<T> {
   emptyTitle: string;
   emptyDescription: string;
   rowKey: (row: T) => string;
+  /** Optional polling cadence for resources whose public cloud API exposes an
+   * asynchronous lifecycle (for example AWS CodeBuild builds). */
+  refreshInterval?: number;
   /** Page-specific header actions. Without it the header carries the standard
    * selection-aware controls. */
   actions?: (context: AwsTableActions<T>) => ReactNode;
@@ -63,12 +66,17 @@ export function AwsResourceTable<T>({
   emptyTitle,
   emptyDescription,
   rowKey,
+  refreshInterval,
   actions,
   headingVariant = "h1",
   tableTestId,
   errorTestId,
 }: AwsResourceTableProps<T>) {
-  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({ queryKey, queryFn });
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
+    queryKey,
+    queryFn,
+    refetchInterval: refreshInterval,
+  });
   const [filter, setFilter] = useState("");
   const [sortingColumnId, setSortingColumnId] = useState<string | null>(null);
   const [sortingDescending, setSortingDescending] = useState(false);

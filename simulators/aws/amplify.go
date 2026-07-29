@@ -584,6 +584,7 @@ func handleAmplifyDeleteApp(w http.ResponseWriter, r *http.Request) {
 	}
 	amplifyApps.Delete(id)
 	amplifyRepositoryConnections.Delete(id)
+	amplifyRemoveBuildCache(id, "")
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyApp{"app": stored.App})
 }
 
@@ -999,6 +1000,7 @@ func handleAmplifyDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	amplifyStopCompute(appID, name)
 	amplifyInvalidateHostingCache(appID, name)
+	amplifyRemoveBuildCache(appID, name)
 	delete(stored.Branches, name)
 	amplifyApps.Put(appID, stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyBranch{"branch": br})

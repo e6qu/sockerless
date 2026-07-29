@@ -13,13 +13,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/google/uuid"
 	sim "github.com/sockerless/simulator"
 	"gopkg.in/yaml.v3"
 )
 
 // AWS CodeBuild — AWS JSON 1.1 protocol (X-Amz-Target: CodeBuild_20161006.<Op>).
-// Builds execute project buildspec commands and record terminal state from exit status.
+// Builds execute project buildspec commands inside the project's configured
+// build-environment image and record terminal state from the real container.
 
 type CBProject struct {
 	Name         string         `json:"name"`
@@ -35,16 +39,17 @@ type CBProject struct {
 }
 
 type CBBuild struct {
-	ID          string         `json:"id"`
-	Arn         string         `json:"arn"`
-	ProjectName string         `json:"projectName"`
-	BuildStatus string         `json:"buildStatus"`
-	StartTime   float64        `json:"startTime"`
-	EndTime     float64        `json:"endTime"`
-	Phases      []CBPhase      `json:"phases"`
-	Logs        map[string]any `json:"logs"`
-	Environment map[string]any `json:"environment,omitempty"`
-	ReportArns  []string       `json:"reportArns,omitempty"`
+	ID            string         `json:"id"`
+	Arn           string         `json:"arn"`
+	ProjectName   string         `json:"projectName"`
+	SourceVersion string         `json:"sourceVersion,omitempty"`
+	BuildStatus   string         `json:"buildStatus"`
+	StartTime     float64        `json:"startTime"`
+	EndTime       float64        `json:"endTime"`
+	Phases        []CBPhase      `json:"phases"`
+	Logs          map[string]any `json:"logs"`
+	Environment   map[string]any `json:"environment,omitempty"`
+	ReportArns    []string       `json:"reportArns,omitempty"`
 	// Seq is a sim-internal monotonic creation order used to sort ListBuilds
 	// faithfully by start order; it's not part of the CodeBuild wire shape.
 	Seq int64 `json:"-"`
@@ -120,13 +125,24 @@ type CBSourceCredential struct {
 	Resource   string `json:"resource,omitempty"`
 }
 
+type cbSourceCredentialSecret struct {
+	Arn        string `json:"arn"`
+	Username   string `json:"username,omitempty"`
+	Ciphertext []byte `json:"ciphertext"`
+}
+
+const cbAWSOwnedKMSKeyID = "aws-owned-codebuild"
+
 var (
-	cbProjects    sim.Store[CBProject]
-	cbBuilds      sim.Store[CBBuild]
-	cbReportGrps  sim.Store[CBReportGroup]
-	cbReports     sim.Store[CBReport]
-	cbSourceCreds sim.Store[CBSourceCredential]
-	cbMu          sync.Mutex
+	cbProjects          sim.Store[CBProject]
+	cbBuilds            sim.Store[CBBuild]
+	cbReportGrps        sim.Store[CBReportGroup]
+	cbReports           sim.Store[CBReport]
+	cbSourceCreds       sim.Store[CBSourceCredential]
+	cbSourceCredSecrets sim.Store[cbSourceCredentialSecret]
+	cbMu                sync.Mutex
+	cbBuildCancelMu     sync.Mutex
+	cbBuildCancels      = map[string]func(){}
 )
 
 func registerCodeBuild(r *sim.AWSRouter, srv *sim.Server) {
@@ -135,6 +151,7 @@ func registerCodeBuild(r *sim.AWSRouter, srv *sim.Server) {
 	cbReportGrps = sim.MakeStore[CBReportGroup](srv.DB(), "codebuild_report_groups")
 	cbReports = sim.MakeStore[CBReport](srv.DB(), "codebuild_reports")
 	cbSourceCreds = sim.MakeStore[CBSourceCredential](srv.DB(), "codebuild_source_credentials")
+	cbSourceCredSecrets = sim.MakeStore[cbSourceCredentialSecret](srv.DB(), "codebuild_source_credential_secrets")
 
 	r.Register("CodeBuild_20161006.CreateProject", handleCBCreateProject)
 	r.Register("CodeBuild_20161006.BatchGetProjects", handleCBBatchGetProjects)
@@ -371,6 +388,7 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProjectName                  string           `json:"projectName"`
 		BuildspecOverride            string           `json:"buildspecOverride"`
+		SourceVersion                string           `json:"sourceVersion"`
 		EnvironmentVariablesOverride []map[string]any `json:"environmentVariablesOverride"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -383,7 +401,7 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 		cbWriteError(w, "ResourceNotFoundException", "Project not found: "+req.ProjectName)
 		return
 	}
-	commands, err := cbBuildCommands(p, req.BuildspecOverride)
+	plan, err := cbBuildPlanForProject(p, req.BuildspecOverride, req.SourceVersion)
 	if err != nil {
 		cbWriteError(w, "InvalidInputException", err.Error())
 		return
@@ -396,15 +414,16 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 	buildID := req.ProjectName + ":" + uuid.New().String()
 	now := cbEpochNow()
 	build := CBBuild{
-		ID:           buildID,
-		Arn:          cbARN("build/" + buildID),
-		ProjectName:  req.ProjectName,
-		BuildStatus:  "IN_PROGRESS",
-		Seq:          cbNextBuildSeq(),
-		StartTime:    now,
-		EndTime:      now,
-		Environment:  p.Environment,
-		ReportGroups: reportGroups,
+		ID:            buildID,
+		Arn:           cbARN("build/" + buildID),
+		ProjectName:   req.ProjectName,
+		SourceVersion: req.SourceVersion,
+		BuildStatus:   "IN_PROGRESS",
+		Seq:           cbNextBuildSeq(),
+		StartTime:     now,
+		EndTime:       now,
+		Environment:   p.Environment,
+		ReportGroups:  reportGroups,
 		Phases: []CBPhase{
 			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
 			{PhaseType: "BUILD", PhaseStatus: "IN_PROGRESS", StartTime: now},
@@ -412,7 +431,7 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 		Logs: cbLogsLocation(),
 	}
 	cbBuilds.Put(buildID, build)
-	go cbRunBuild(buildID, commands, cbEnvironment(p.Environment, req.EnvironmentVariablesOverride))
+	go cbRunBuild(buildID, p, plan, cbEnvironment(p.Environment, req.EnvironmentVariablesOverride))
 	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
 }
 
@@ -444,6 +463,7 @@ func cbStopBuildByID(buildID string) CBBuild {
 	// StopBuild transitions a running build to STOPPED. A build that already
 	// settled keeps its terminal status (real CodeBuild is idempotent here).
 	if build.BuildStatus == "IN_PROGRESS" {
+		cbCancelBuild(buildID)
 		now := cbEpochNow()
 		build.BuildStatus = "STOPPED"
 		build.EndTime = now
@@ -476,7 +496,7 @@ func handleCBRetryBuild(w http.ResponseWriter, r *http.Request) {
 		cbWriteError(w, "ResourceNotFoundException", "Project not found: "+prior.ProjectName)
 		return
 	}
-	commands, err := cbBuildCommands(p, "")
+	plan, err := cbBuildPlanForProject(p, "", prior.SourceVersion)
 	if err != nil {
 		cbWriteError(w, "InvalidInputException", err.Error())
 		return
@@ -490,14 +510,15 @@ func handleCBRetryBuild(w http.ResponseWriter, r *http.Request) {
 	buildID := prior.ProjectName + ":" + uuid.New().String()
 	now := cbEpochNow()
 	build := CBBuild{
-		ID:          buildID,
-		Arn:         cbARN("build/" + buildID),
-		ProjectName: prior.ProjectName,
-		BuildStatus: "IN_PROGRESS",
-		Seq:         cbNextBuildSeq(),
-		StartTime:   now,
-		EndTime:     now,
-		Environment: p.Environment,
+		ID:            buildID,
+		Arn:           cbARN("build/" + buildID),
+		ProjectName:   prior.ProjectName,
+		SourceVersion: prior.SourceVersion,
+		BuildStatus:   "IN_PROGRESS",
+		Seq:           cbNextBuildSeq(),
+		StartTime:     now,
+		EndTime:       now,
+		Environment:   p.Environment,
 		Phases: []CBPhase{
 			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
 			{PhaseType: "BUILD", PhaseStatus: "IN_PROGRESS", StartTime: now},
@@ -505,7 +526,7 @@ func handleCBRetryBuild(w http.ResponseWriter, r *http.Request) {
 		Logs: cbLogsLocation(),
 	}
 	cbBuilds.Put(buildID, build)
-	go cbRunBuild(buildID, commands, cbEnvironment(p.Environment, nil))
+	go cbRunBuild(buildID, p, plan, cbEnvironment(p.Environment, nil))
 	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
 }
 
@@ -518,6 +539,11 @@ type cbBuildspec struct {
 	Reports map[string]struct {
 		Files []string `yaml:"files"`
 	} `yaml:"reports"`
+}
+
+type cbBuildPlan struct {
+	Commands      []string
+	SourceVersion string
 }
 
 // cbBuildReportGroups returns the report-group names a project's buildspec
@@ -564,39 +590,236 @@ func cbBuildCommands(p CBProject, override string) ([]string, error) {
 	return commands, nil
 }
 
-func cbRunBuild(buildID string, commands []string, env map[string]string) {
-	exitCode, reason := cbRunCommands(commands, env)
+func cbBuildPlanForProject(project CBProject, override, sourceVersion string) (cbBuildPlan, error) {
+	if override == "" && cbString(project.Source["buildspec"]) == "" &&
+		!strings.EqualFold(cbString(project.Source["type"]), "NO_SOURCE") {
+		return cbBuildPlan{SourceVersion: sourceVersion}, nil
+	}
+	commands, err := cbBuildCommands(project, override)
+	if err != nil {
+		return cbBuildPlan{}, err
+	}
+	return cbBuildPlan{Commands: commands, SourceVersion: sourceVersion}, nil
+}
+
+func cbRunBuild(buildID string, project CBProject, plan cbBuildPlan, env map[string]string) {
+	exitCode, reason := cbRunCommands(buildID, project, plan, env)
 	cbCompleteBuild(buildID, exitCode, reason)
 }
 
-func cbRunCommands(commands []string, env map[string]string) (int, string) {
+func cbRunCommands(buildID string, project CBProject, plan cbBuildPlan, env map[string]string) (int, string) {
 	workDir, err := os.MkdirTemp("", "sockerless-codebuild-*")
 	if err != nil {
 		return -1, err.Error()
 	}
 	defer os.RemoveAll(workDir)
 
-	exitCode := 0
-	var reason string
-	for _, command := range commands {
-		handle := sim.StartProcess(sim.ProcessConfig{
-			Command: []string{"/bin/sh", "-c", command},
-			Dir:     filepath.Clean(workDir),
-			Env:     env,
-		}, sim.NoopSink{})
-		result := handle.Wait()
-		if result.Error != nil {
-			exitCode = -1
-			reason = result.Error.Error()
-			break
+	if err := cbCheckoutSource(project, plan.SourceVersion, workDir); err != nil {
+		return -1, err.Error()
+	}
+	if len(plan.Commands) == 0 {
+		buildspec, err := os.ReadFile(filepath.Join(workDir, "buildspec.yml"))
+		if err != nil {
+			return -1, fmt.Sprintf("read source buildspec.yml: %v", err)
 		}
-		if result.ExitCode != 0 {
-			exitCode = result.ExitCode
-			reason = fmt.Sprintf("Build command exited with status %d", result.ExitCode)
-			break
+		projectWithBuildspec := project
+		projectWithBuildspec.Source = make(map[string]any, len(project.Source)+1)
+		for key, value := range project.Source {
+			projectWithBuildspec.Source[key] = value
+		}
+		projectWithBuildspec.Source["buildspec"] = string(buildspec)
+		plan.Commands, err = cbBuildCommands(projectWithBuildspec, "")
+		if err != nil {
+			return -1, err.Error()
 		}
 	}
-	return exitCode, reason
+	image := cbString(project.Environment["image"])
+	if image == "" {
+		return -1, "build environment image is required"
+	}
+	architecture := "linux/amd64"
+	if strings.Contains(strings.ToUpper(cbString(project.Environment["type"])), "ARM") {
+		architecture = "linux/arm64"
+	}
+	env["CODEBUILD_BUILD_ID"] = buildID
+	env["CODEBUILD_PROJECT_NAME"] = project.Name
+	env["CODEBUILD_SRC_DIR"] = "/codebuild/output/src"
+	env["AWS_DEFAULT_REGION"] = firstNonEmpty(env["AWS_DEFAULT_REGION"], awsRegion())
+	env["AWS_REGION"] = firstNonEmpty(env["AWS_REGION"], awsRegion())
+	env = rewriteHostDockerInternalEnv(env)
+
+	var script strings.Builder
+	script.WriteString("set -e\n")
+	for _, command := range plan.Commands {
+		script.WriteString(command)
+		script.WriteByte('\n')
+	}
+	handle, err := sim.StartContainerSync(sim.ContainerConfig{
+		Image:        image,
+		Architecture: architecture,
+		Command:      []string{"/bin/sh"},
+		Args:         []string{"-c", script.String()},
+		WorkingDir:   "/codebuild/output/src",
+		Binds:        []string{filepath.Clean(workDir) + ":/codebuild/output/src:z"},
+		Env:          env,
+		ExtraHosts:   hostMetadataExtraHosts(),
+		Timeout:      time.Hour,
+		Labels:       map[string]string{"sockerless-codebuild-build": buildID},
+		Sandbox:      sim.SandboxFargate,
+	}, sim.NoopSink{})
+	if err != nil {
+		return -1, fmt.Sprintf("start build environment %s: %v", image, err)
+	}
+	cbRegisterBuildCancel(buildID, handle.Cancel)
+	result := handle.Wait()
+	cbUnregisterBuildCancel(buildID)
+	if result.Error != nil {
+		return -1, result.Error.Error()
+	}
+	if result.ExitCode != 0 {
+		return result.ExitCode, fmt.Sprintf("Build command exited with status %d", result.ExitCode)
+	}
+	return 0, ""
+}
+
+func cbCheckoutSource(project CBProject, sourceVersion, workDir string) error {
+	sourceType := strings.ToUpper(cbString(project.Source["type"]))
+	switch sourceType {
+	case "", "NO_SOURCE":
+		return nil
+	case "GITHUB", "GITHUB_ENTERPRISE", "GITLAB", "GITLAB_SELF_MANAGED", "BITBUCKET":
+		location := cbString(project.Source["location"])
+		if location == "" {
+			return fmt.Errorf("source.location is required for %s", sourceType)
+		}
+		options := &git.CloneOptions{URL: location, Depth: 1, SingleBranch: true}
+		if sourceVersion != "" && sourceVersion != "HEAD" {
+			options.Depth = 0
+			options.SingleBranch = false
+		}
+		if secret, ok := cbSourceCredentialForProject(project); ok {
+			options.Auth = &githttp.BasicAuth{Username: secret.Username, Password: secret.Password}
+		}
+		repository, err := git.PlainClone(workDir, false, options)
+		if err != nil {
+			return fmt.Errorf("clone %s source %s: %w", sourceType, location, err)
+		}
+		if sourceVersion != "" && sourceVersion != "HEAD" {
+			revision, err := repository.ResolveRevision(plumbing.Revision(sourceVersion))
+			if err != nil {
+				return fmt.Errorf("resolve source version %s: %w", sourceVersion, err)
+			}
+			tree, err := repository.Worktree()
+			if err != nil {
+				return fmt.Errorf("open source worktree: %w", err)
+			}
+			if err := tree.Checkout(&git.CheckoutOptions{Hash: *revision}); err != nil {
+				return fmt.Errorf("checkout source version %s: %w", sourceVersion, err)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("source type %s is not executable by the AWS service slice", sourceType)
+	}
+}
+
+type cbDecryptedSourceCredential struct {
+	Username string
+	Password string
+}
+
+func cbSourceCredentialForProject(project CBProject) (cbDecryptedSourceCredential, bool) {
+	sourceType := strings.ToUpper(cbString(project.Source["type"]))
+	if auth, ok := project.Source["auth"].(map[string]any); ok &&
+		strings.EqualFold(cbString(auth["type"]), "SECRETS_MANAGER") {
+		return cbSecretsManagerSourceCredential(cbString(auth["resource"]), sourceType)
+	}
+	serverType := sourceType
+	switch sourceType {
+	case "GITLAB_SELF_MANAGED":
+		serverType = "GITLAB_SELF_MANAGED"
+	case "GITHUB_ENTERPRISE":
+		serverType = "GITHUB_ENTERPRISE"
+	}
+	for _, credential := range cbSourceCreds.List() {
+		if !strings.EqualFold(credential.ServerType, serverType) {
+			continue
+		}
+		if strings.EqualFold(credential.AuthType, "SECRETS_MANAGER") {
+			return cbSecretsManagerSourceCredential(credential.Resource, serverType)
+		}
+		secret, ok := cbSourceCredSecrets.Get(credential.Arn)
+		if !ok {
+			return cbDecryptedSourceCredential{}, false
+		}
+		_, plaintext, decrypted := kmsDecryptBytes(secret.Ciphertext)
+		if !decrypted {
+			return cbDecryptedSourceCredential{}, false
+		}
+		username := secret.Username
+		if username == "" {
+			username = "oauth2"
+		}
+		return cbDecryptedSourceCredential{Username: username, Password: string(plaintext)}, true
+	}
+	return cbDecryptedSourceCredential{}, false
+}
+
+func cbSecretsManagerSourceCredential(resource, sourceType string) (cbDecryptedSourceCredential, bool) {
+	secret, ok := resolveSMSecret(resource)
+	if !ok {
+		return cbDecryptedSourceCredential{}, false
+	}
+	version, ok := secret.versionByIDOrStage("", "")
+	if !ok || version.SecretString == "" {
+		return cbDecryptedSourceCredential{}, false
+	}
+	var value struct {
+		ServerType string `json:"ServerType"`
+		AuthType   string `json:"AuthType"`
+		Token      string `json:"Token"`
+		Username   string `json:"Username"`
+	}
+	if json.Unmarshal([]byte(version.SecretString), &value) != nil ||
+		!strings.EqualFold(value.ServerType, sourceType) ||
+		value.Token == "" {
+		return cbDecryptedSourceCredential{}, false
+	}
+	username := value.Username
+	if username == "" {
+		username = "oauth2"
+	}
+	return cbDecryptedSourceCredential{Username: username, Password: value.Token}, true
+}
+
+func cbRegisterBuildCancel(buildID string, cancel func()) {
+	cbBuildCancelMu.Lock()
+	cbBuildCancels[buildID] = cancel
+	build, exists := cbBuilds.Get(buildID)
+	batch, batchExists := cbBuildBatches.Get(buildID)
+	if (exists && build.BuildStatus == "IN_PROGRESS") ||
+		(batchExists && batch.BuildBatchStatus == "IN_PROGRESS") {
+		cbBuildCancelMu.Unlock()
+		return
+	}
+	delete(cbBuildCancels, buildID)
+	cbBuildCancelMu.Unlock()
+	cancel()
+}
+
+func cbUnregisterBuildCancel(buildID string) {
+	cbBuildCancelMu.Lock()
+	defer cbBuildCancelMu.Unlock()
+	delete(cbBuildCancels, buildID)
+}
+
+func cbCancelBuild(buildID string) {
+	cbBuildCancelMu.Lock()
+	cancel := cbBuildCancels[buildID]
+	cbBuildCancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func cbCompleteBuild(buildID string, exitCode int, reason string) {
@@ -604,7 +827,7 @@ func cbCompleteBuild(buildID string, exitCode int, reason string) {
 	defer cbMu.Unlock()
 
 	build, ok := cbBuilds.Get(buildID)
-	if !ok {
+	if !ok || build.BuildStatus != "IN_PROGRESS" {
 		return
 	}
 	now := cbEpochNow()
@@ -1034,6 +1257,10 @@ func handleCBImportSourceCredentials(w http.ResponseWriter, r *http.Request) {
 		cbWriteError(w, "InvalidInputException", "serverType and authType are required")
 		return
 	}
+	if req.Token == "" {
+		cbWriteError(w, "InvalidInputException", "token is required")
+		return
+	}
 
 	cbMu.Lock()
 	defer cbMu.Unlock()
@@ -1057,7 +1284,21 @@ func handleCBImportSourceCredentials(w http.ResponseWriter, r *http.Request) {
 		AuthType:   req.AuthType,
 		Resource:   resource,
 	}
+	if _, ok := kmsGetKeyMaterial(cbAWSOwnedKMSKeyID); !ok {
+		if _, err := kmsGenerateKeyMaterial(cbAWSOwnedKMSKeyID); err != nil {
+			cbWriteError(w, "InternalFailure", "AWS owned KMS key material could not be generated")
+			return
+		}
+	}
+	ciphertext, encrypted := kmsEncryptBytes(cbAWSOwnedKMSKeyID, []byte(req.Token))
+	if !encrypted {
+		cbWriteError(w, "InternalFailure", "source credential could not be encrypted")
+		return
+	}
 	cbSourceCreds.Put(arn, cred)
+	cbSourceCredSecrets.Put(arn, cbSourceCredentialSecret{
+		Arn: arn, Username: req.Username, Ciphertext: ciphertext,
+	})
 	cbWriteJSON(w, http.StatusOK, map[string]any{"arn": arn})
 }
 
@@ -1087,6 +1328,7 @@ func handleCBDeleteSourceCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cbSourceCreds.Delete(req.Arn)
+	cbSourceCredSecrets.Delete(req.Arn)
 	cbWriteJSON(w, http.StatusOK, map[string]any{"arn": req.Arn})
 }
 

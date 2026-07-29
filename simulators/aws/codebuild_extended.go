@@ -249,6 +249,7 @@ func handleCBStartBuildBatch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProjectName       string `json:"projectName"`
 		BuildspecOverride string `json:"buildspecOverride"`
+		SourceVersion     string `json:"sourceVersion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		cbWriteError(w, "InvalidInputException", "invalid JSON")
@@ -259,7 +260,7 @@ func handleCBStartBuildBatch(w http.ResponseWriter, r *http.Request) {
 		cbWriteError(w, "ResourceNotFoundException", "Project not found: "+req.ProjectName)
 		return
 	}
-	commands, err := cbBuildCommands(p, req.BuildspecOverride)
+	plan, err := cbBuildPlanForProject(p, req.BuildspecOverride, req.SourceVersion)
 	if err != nil {
 		cbWriteError(w, "InvalidInputException", err.Error())
 		return
@@ -290,12 +291,12 @@ func handleCBStartBuildBatch(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	cbBuildBatches.Put(batchID, batch)
-	go cbRunBuildBatch(batchID, commands, cbEnvironment(p.Environment, nil))
+	go cbRunBuildBatch(batchID, p, plan, cbEnvironment(p.Environment, nil))
 	cbWriteJSON(w, http.StatusOK, map[string]any{"buildBatch": batch})
 }
 
-func cbRunBuildBatch(batchID string, commands []string, environment map[string]string) {
-	exitCode, reason := cbRunCommands(commands, environment)
+func cbRunBuildBatch(batchID string, project CBProject, plan cbBuildPlan, environment map[string]string) {
+	exitCode, reason := cbRunCommands(batchID, project, plan, environment)
 	cbMu.Lock()
 	defer cbMu.Unlock()
 	batch, ok := cbBuildBatches.Get(batchID)
@@ -348,6 +349,7 @@ func cbStopBuildBatchByID(batchID string) CBBuildBatch {
 		return CBBuildBatch{}
 	}
 	if batch.BuildBatchStatus == "IN_PROGRESS" {
+		cbCancelBuild(batchID)
 		now := cbEpochNow()
 		batch.BuildBatchStatus = "STOPPED"
 		batch.CurrentPhase = "STOPPED"
@@ -380,7 +382,7 @@ func handleCBRetryBuildBatch(w http.ResponseWriter, r *http.Request) {
 		cbWriteError(w, "ResourceNotFoundException", "Project not found: "+prior.ProjectName)
 		return
 	}
-	commands, err := cbBuildCommands(project, "")
+	plan, err := cbBuildPlanForProject(project, "", "")
 	if err != nil {
 		cbWriteError(w, "InvalidInputException", err.Error())
 		return
@@ -408,7 +410,7 @@ func handleCBRetryBuildBatch(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	cbBuildBatches.Put(batchID, batch)
-	go cbRunBuildBatch(batchID, commands, cbEnvironment(project.Environment, nil))
+	go cbRunBuildBatch(batchID, project, plan, cbEnvironment(project.Environment, nil))
 	cbWriteJSON(w, http.StatusOK, map[string]any{"buildBatch": batch})
 }
 

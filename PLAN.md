@@ -35,10 +35,10 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 5. Made the deployment reverse proxy report bounded cold-start `503 Retry-After` responses and preserved sparse Amazon Elastic Block Store extents through snapshot, restore, and copy.
 6. Regenerated public surface tables and assigned every new official AWS CLI test to exactly one continuous-integration shard.
 7. Upgraded every same-day AWS SDK dependency drift in the open branch and retested all affected modules and service wire paths.
-8. Added optimized and SDK AWS Step Functions integrations for Amazon ECS and AWS CodeBuild, including synchronous and callback lifecycles.
-9. Made AWS Amplify retain encrypted connected-repository credentials and execute authenticated multi-language builds with corresponding AWS console workflows.
-10. Added real PostgreSQL and MySQL Amazon Relational Database Service data planes with native TLS, durable volumes, encrypted master secrets, and IAM database authentication.
-11. Documented and externally proved standard AWS endpoint propagation from explicitly deployed AWS Lambda and AWS CodeBuild workloads.
+8. Added optimized and SDK AWS Step Functions integrations for Amazon ECS and AWS CodeBuild, including synchronous, callback, failure, timeout, stop, and real-container cancellation lifecycles.
+9. Made AWS CodeBuild authenticate private Git revisions, execute checked-in or explicit build specifications inside the exact configured image, and cancel build and build-batch containers on public stop operations.
+10. Made AWS Amplify retain encrypted connected-repository credentials and execute complete authenticated multi-language monorepo phase, environment, cache, and artifact lifecycles.
+11. Added persistent PostgreSQL, MySQL, and MariaDB Amazon Relational Database Service data planes with native TLS, encrypted master secrets, TLS-only IAM database authentication, and live or pending password rotation.
 12. Upgraded every same-day Google Cloud API dependency drift, fixed Buildx external-test image loading, and reran the complete affected SDK, CLI, Terraform, browser, and production-build gates.
 13. Migrated Azure Container Apps, Azure Functions, and the production-shaped Azure simulator Terraform stack to HashiCorp AzureRM 5.0.0, including every provider-required resource-ID field.
 14. Made region-skewed Google Discovery drift retain the exact upstream documents as short-lived CI artifacts, and replaced CloudWatch metric-stream test placeholders with real Amazon S3, IAM, and Amazon Data Firehose resources.
@@ -50,7 +50,9 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 20. Advanced five Google Discovery documents from the exact hosted-runner artifacts, implemented the newly published Bigtable memory-layer update and Cloud Resource Manager resource-semantics methods, and ratcheted their measured coverage floors.
 21. Made Microsoft.OperationalInsights network-access defaults and Microsoft.Storage File-share access policies survive AzureRM 5 apply and refresh through the real ARM contracts.
 22. Updated the external AzureRM 5 post-plan assertions to its canonical Microsoft.Storage ARM resource IDs.
-23. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+23. Added Cloudscape operating workflows for AWS CodeBuild projects and builds, AWS Amplify branches and deployments, and Amazon RDS authentication, then proved them through the authenticated browser matrix.
+24. Documented and externally proved standard AWS endpoint propagation from explicitly deployed AWS Lambda and AWS CodeBuild workloads.
+25. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

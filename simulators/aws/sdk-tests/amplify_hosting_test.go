@@ -353,28 +353,59 @@ func TestAmplifyPrivateRepositoryPythonBuildE2E(t *testing.T) {
 
 	const token = "private-repository-token"
 	repoURL := amplifyServePrivateGitRepo(t, "main", map[string]string{
-		"render.py": `from pathlib import Path
-Path("dist").mkdir(exist_ok=True)
-Path("dist/index.html").write_text("<html>private python build</html>")
+		"apps/site/render.py": `from pathlib import Path
+Path("apps/site/dist").mkdir(exist_ok=True)
+Path("apps/site/dist/index.html").write_text("<html>private python monorepo build</html>")
 `,
 	}, token)
 	buildSpec := `version: 1
-frontend:
-  phases:
-    build:
-      commands:
-        - python3 render.py
-        - node --version > dist/node-version.txt
-  artifacts:
-    baseDirectory: dist
-    files:
-      - '**/*'
+applications:
+  - appRoot: apps/site
+    env:
+      variables:
+        FROM_SPEC: build-spec
+    backend:
+      phases:
+        build:
+          commands:
+            - mkdir -p apps/site/dist
+            - echo "$FROM_SPEC/$APP_OVERRIDE" > apps/site/dist/backend.txt
+    frontend:
+      buildPath: /
+      phases:
+        preBuild:
+          commands:
+            - python3 apps/site/render.py
+        build:
+          commands:
+            - if [ -f apps/site/.cache/seen ]; then echo cache-restored > apps/site/dist/cache.txt; else echo first-build > apps/site/dist/cache.txt; fi
+            - mkdir -p apps/site/.cache
+            - touch apps/site/.cache/seen
+        postBuild:
+          commands:
+            - node --version > apps/site/dist/node-version.txt
+      artifacts:
+        baseDirectory: apps/site/dist
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - apps/site/.cache/**/*
+    test:
+      phases:
+        test:
+          commands:
+            - test -s apps/site/dist/index.html
 `
 	app, err := c.CreateApp(testContext, &amplify.CreateAppInput{
 		Name:        aws.String("private-python-" + time.Now().Format("150405.000000")),
 		Repository:  aws.String(repoURL),
 		AccessToken: aws.String(token),
 		BuildSpec:   aws.String(buildSpec),
+		EnvironmentVariables: map[string]string{
+			"AMPLIFY_MONOREPO_APP_ROOT": "apps/site",
+			"APP_OVERRIDE":              "app-environment",
+		},
 	})
 	require.NoError(t, err)
 	appID := aws.ToString(app.App.AppId)
@@ -402,10 +433,27 @@ frontend:
 	host := "main." + appID + ".amplifyapp.com"
 	response, body := amplifyHostGet(t, host, "/", nil)
 	require.Equal(t, http.StatusOK, response.StatusCode)
-	assert.Equal(t, "<html>private python build</html>", string(body))
+	assert.Equal(t, "<html>private python monorepo build</html>", string(body))
 	response, body = amplifyHostGet(t, host, "/node-version.txt", nil)
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	assert.Regexp(t, `^v22\.`, string(body))
+	response, body = amplifyHostGet(t, host, "/backend.txt", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, "build-spec/app-environment\n", string(body))
+	response, body = amplifyHostGet(t, host, "/cache.txt", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, "first-build\n", string(body))
+
+	second, err := c.StartJob(testContext, &amplify.StartJobInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"), JobType: amplifytypes.JobTypeRelease,
+	})
+	require.NoError(t, err)
+	amplifyWaitJobStatus(
+		t, testContext, c, appID, "main", aws.ToString(second.JobSummary.JobId), amplifytypes.JobStatusSucceed,
+	)
+	response, body = amplifyHostGet(t, host, "/cache.txt", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, "cache-restored\n", string(body))
 }
 
 func TestAmplifyDomainVerificationRoute53Flow(t *testing.T) {

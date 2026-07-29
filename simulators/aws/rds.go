@@ -45,7 +45,12 @@ type RDSInstance struct {
 	Tags         map[string]string
 	// MasterUserSecret is encrypted under the simulator cloud's AWS-owned RDS
 	// KMS key and is never rendered on the API.
-	MasterUserSecret                []byte
+	MasterUserSecret []byte
+	// BackendMasterUserSecret records the password currently installed in the
+	// native database engine. It can temporarily differ from MasterUserSecret
+	// when a stopped instance receives a password change; the engine applies
+	// that pending change when it next starts.
+	BackendMasterUserSecret         []byte
 	EnableIAMDatabaseAuthentication bool
 }
 
@@ -486,23 +491,33 @@ func handleRDSDescribe(w http.ResponseWriter, r *http.Request) {
 
 func handleRDSModify(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("DBInstanceIdentifier")
-	if _, ok := rdsInstances.Get(id); !ok {
+	instance, ok := rdsInstances.Get(id)
+	if !ok {
 		rdsErrorXML(w, "DBInstanceNotFound", "DB instance not found", http.StatusNotFound, sim.RequestID(r.Context()))
 		return
 	}
-	rdsInstances.Update(id, func(i *RDSInstance) {
-		if v := r.FormValue("DBInstanceClass"); v != "" {
-			i.DBInstanceClass = v
-		}
-		if v := r.FormValue("AllocatedStorage"); v != "" {
-			i.AllocatedStorage = atoiOrZero(v)
-		}
-		if v := r.FormValue("EngineVersion"); v != "" {
-			i.EngineVersion = v
-		}
-	})
-	updated, _ := rdsInstances.Get(id)
-	rdsXMLResponse(w, "ModifyDBInstance", renderRDSInstance(updated), sim.RequestID(r.Context()))
+	if value := r.FormValue("DBInstanceClass"); value != "" {
+		instance.DBInstanceClass = value
+	}
+	if value := r.FormValue("AllocatedStorage"); value != "" {
+		instance.AllocatedStorage = atoiOrZero(value)
+	}
+	if value := r.FormValue("EngineVersion"); value != "" {
+		instance.EngineVersion = value
+	}
+	if value := r.FormValue("EnableIAMDatabaseAuthentication"); value != "" {
+		instance.EnableIAMDatabaseAuthentication = strings.EqualFold(value, "true")
+	}
+	var newPassword *string
+	if value := r.FormValue("MasterUserPassword"); value != "" {
+		newPassword = &value
+	}
+	if err := rdsModifyDataPlaneAuthentication(&instance, newPassword); err != nil {
+		rdsErrorXML(w, "ProvisioningFailure", err.Error(), http.StatusInternalServerError, sim.RequestID(r.Context()))
+		return
+	}
+	rdsInstances.Put(id, instance)
+	rdsXMLResponse(w, "ModifyDBInstance", renderRDSInstance(instance), sim.RequestID(r.Context()))
 }
 
 func handleRDSDelete(w http.ResponseWriter, r *http.Request) {

@@ -3,7 +3,9 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -33,57 +35,122 @@ import (
 
 // ---------- buildSpec ----------
 
-// amplifyBuildSpec is the parsed amplify.yml surface the sim executes:
-// frontend preBuild/build commands + the artifacts collection rule.
+// amplifyBuildSpec is one executable application from an Amplify build
+// specification. It covers the backend, frontend, and test phase sequences,
+// monorepo roots/build paths, build-spec environment variables, cache paths,
+// and the frontend artifact collection rule.
 type amplifyBuildSpec struct {
 	Version          string
-	PreBuildCommands []string
-	BuildCommands    []string
+	AppRoot          string
+	BuildPath        string
+	Environment      map[string]string
+	BackendCommands  []string
+	FrontendCommands []string
+	TestCommands     []string
 	BaseDirectory    string
 	Files            []string
+	CachePaths       []string
+}
+
+type amplifyBuildPhaseYAML struct {
+	Commands []string `yaml:"commands"`
+}
+
+type amplifyBuildSectionYAML struct {
+	Phases map[string]amplifyBuildPhaseYAML `yaml:"phases"`
+}
+
+type amplifyFrontendYAML struct {
+	amplifyBuildSectionYAML `yaml:",inline"`
+	BuildPath               string `yaml:"buildPath"`
+	Artifacts               struct {
+		BaseDirectory string   `yaml:"baseDirectory"`
+		Files         []string `yaml:"files"`
+	} `yaml:"artifacts"`
+	Cache struct {
+		Paths []string `yaml:"paths"`
+	} `yaml:"cache"`
+}
+
+type amplifyBuildApplicationYAML struct {
+	AppRoot  string                  `yaml:"appRoot"`
+	Env      amplifyBuildEnvYAML     `yaml:"env"`
+	Backend  amplifyBuildSectionYAML `yaml:"backend"`
+	Frontend amplifyFrontendYAML     `yaml:"frontend"`
+	Test     amplifyBuildSectionYAML `yaml:"test"`
+}
+
+type amplifyBuildEnvYAML struct {
+	Variables map[string]string `yaml:"variables"`
 }
 
 type amplifyBuildSpecYAML struct {
-	Version  any `yaml:"version"`
-	Frontend struct {
-		Phases struct {
-			PreBuild struct {
-				Commands []string `yaml:"commands"`
-			} `yaml:"preBuild"`
-			Build struct {
-				Commands []string `yaml:"commands"`
-			} `yaml:"build"`
-		} `yaml:"phases"`
-		Artifacts struct {
-			BaseDirectory string   `yaml:"baseDirectory"`
-			Files         []string `yaml:"files"`
-		} `yaml:"artifacts"`
-	} `yaml:"frontend"`
+	Version      any                           `yaml:"version"`
+	Env          amplifyBuildEnvYAML           `yaml:"env"`
+	Backend      amplifyBuildSectionYAML       `yaml:"backend"`
+	Frontend     amplifyFrontendYAML           `yaml:"frontend"`
+	Test         amplifyBuildSectionYAML       `yaml:"test"`
+	Applications []amplifyBuildApplicationYAML `yaml:"applications"`
 }
 
 // amplifyParseBuildSpec parses an amplify.yml buildSpec. It requires at
 // least one frontend build-phase command — a spec with nothing to execute
 // is a configuration error the build surfaces as FAILED, not a silent
 // success.
-func amplifyParseBuildSpec(text string) (amplifyBuildSpec, error) {
+func amplifyParseBuildSpec(text string, monorepoRoot ...string) (amplifyBuildSpec, error) {
 	var raw amplifyBuildSpecYAML
 	if err := yaml.Unmarshal([]byte(text), &raw); err != nil {
 		return amplifyBuildSpec{}, fmt.Errorf("invalid buildSpec YAML: %w", err)
 	}
+	application := amplifyBuildApplicationYAML{
+		Env: raw.Env, Backend: raw.Backend, Frontend: raw.Frontend, Test: raw.Test,
+	}
+	if len(raw.Applications) > 0 {
+		wanted := ""
+		if len(monorepoRoot) > 0 {
+			wanted = filepath.ToSlash(filepath.Clean(monorepoRoot[0]))
+		}
+		found := false
+		for _, candidate := range raw.Applications {
+			if filepath.ToSlash(filepath.Clean(candidate.AppRoot)) == wanted {
+				application = candidate
+				found = true
+				break
+			}
+		}
+		if !found {
+			return amplifyBuildSpec{}, fmt.Errorf(
+				"buildSpec applications has no appRoot matching AMPLIFY_MONOREPO_APP_ROOT %q", wanted,
+			)
+		}
+	}
 	spec := amplifyBuildSpec{
 		Version:          fmt.Sprintf("%v", raw.Version),
-		PreBuildCommands: raw.Frontend.Phases.PreBuild.Commands,
-		BuildCommands:    raw.Frontend.Phases.Build.Commands,
-		BaseDirectory:    raw.Frontend.Artifacts.BaseDirectory,
-		Files:            raw.Frontend.Artifacts.Files,
+		AppRoot:          application.AppRoot,
+		BuildPath:        application.Frontend.BuildPath,
+		Environment:      application.Env.Variables,
+		BackendCommands:  amplifyBuildPhaseCommands(application.Backend.Phases, "preBuild", "build", "postBuild"),
+		FrontendCommands: amplifyBuildPhaseCommands(application.Frontend.Phases, "preBuild", "build", "postBuild"),
+		TestCommands:     amplifyBuildPhaseCommands(application.Test.Phases, "preTest", "test", "postTest"),
+		BaseDirectory:    application.Frontend.Artifacts.BaseDirectory,
+		Files:            application.Frontend.Artifacts.Files,
+		CachePaths:       application.Frontend.Cache.Paths,
 	}
-	if len(spec.PreBuildCommands)+len(spec.BuildCommands) == 0 {
-		return amplifyBuildSpec{}, fmt.Errorf("buildSpec has no frontend.phases.preBuild/build commands")
+	if len(spec.BackendCommands)+len(spec.FrontendCommands)+len(spec.TestCommands) == 0 {
+		return amplifyBuildSpec{}, fmt.Errorf("buildSpec has no backend, frontend, or test commands")
 	}
 	if spec.BaseDirectory == "" {
 		return amplifyBuildSpec{}, fmt.Errorf("buildSpec has no frontend.artifacts.baseDirectory")
 	}
 	return spec, nil
+}
+
+func amplifyBuildPhaseCommands(phases map[string]amplifyBuildPhaseYAML, names ...string) []string {
+	var commands []string
+	for _, name := range names {
+		commands = append(commands, phases[name].Commands...)
+	}
+	return commands
 }
 
 // amplifyRealBuildPlan resolves the source and optional configured buildSpec.
@@ -290,9 +357,21 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 		specText = string(checkedIn)
 		provisionLog.Printf("# Build specification: amplify.yml")
 	}
-	spec, err := amplifyParseBuildSpec(specText)
+	spec, err := amplifyParseBuildSpec(specText, env["AMPLIFY_MONOREPO_APP_ROOT"])
 	if err != nil {
 		return failProvision("buildSpec error: %v", err)
+	}
+	projectDir, err := amplifyBuildProjectDirectory(workDir, spec.AppRoot, spec.BuildPath)
+	if err != nil {
+		return failProvision("buildSpec path error: %v", err)
+	}
+	if err := amplifyRestoreBuildCache(appID, branch, workDir); err != nil {
+		return failProvision("restore build cache: %v", err)
+	}
+	for key, value := range spec.Environment {
+		if _, configured := env[key]; !configured {
+			env[key] = value
+		}
 	}
 	provisionLog.Printf("# Build image: %s", amplifyBuildImage())
 	finishStep("PROVISION", provisionLog, AmplifyJobStatusSucceed)
@@ -302,16 +381,17 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 	buildLog := &amplifyStepLog{}
 	var script strings.Builder
 	script.WriteString("set -e\n")
-	for _, phase := range [][]string{spec.PreBuildCommands, spec.BuildCommands} {
+	for _, phase := range [][]string{spec.BackendCommands, spec.FrontendCommands, spec.TestCommands} {
 		for _, command := range phase {
 			script.WriteString(command + "\n")
 		}
 	}
+	projectRelative, _ := filepath.Rel(workDir, projectDir)
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
 		Image:        amplifyBuildImage(),
 		Architecture: "linux/amd64",
 		Command:      []string{"/bin/sh", "-c", script.String()},
-		WorkingDir:   "/workspace",
+		WorkingDir:   path.Join("/workspace", filepath.ToSlash(projectRelative)),
 		// The build writes real artifacts back into this workspace. A shared
 		// SELinux relabel gives the confined build container that access on
 		// enforcing hosts and is accepted as a no-op by Docker elsewhere.
@@ -339,11 +419,16 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 		finishStep("BUILD", buildLog, AmplifyJobStatusFailed)
 		return AmplifyJobStatusFailed
 	}
+	if err := amplifySaveBuildCache(appID, branch, workDir, spec.CachePaths); err != nil {
+		buildLog.Printf("# save build cache: %v", err)
+		finishStep("BUILD", buildLog, AmplifyJobStatusFailed)
+		return AmplifyJobStatusFailed
+	}
 	finishStep("BUILD", buildLog, AmplifyJobStatusSucceed)
 
 	// DEPLOY: collect baseDirectory into the job's artifact zip.
 	deployLog := &amplifyStepLog{}
-	zipBytes, fileCount, err := amplifyZipArtifacts(filepath.Join(workDir, spec.BaseDirectory), spec.Files, deployLog)
+	zipBytes, fileCount, err := amplifyZipArtifacts(filepath.Join(projectDir, spec.BaseDirectory), spec.Files, deployLog)
 	if err != nil {
 		deployLog.Printf("# artifact collection: %v", err)
 		finishStep("DEPLOY", deployLog, AmplifyJobStatusFailed)
@@ -420,6 +505,163 @@ func amplifyArtifactMatch(patterns []string, rel string) bool {
 		}
 	}
 	return false
+}
+
+func amplifyBuildProjectDirectory(workDir, appRoot, buildPath string) (string, error) {
+	projectDir := workDir
+	if appRoot != "" && appRoot != "." {
+		projectDir = filepath.Join(workDir, filepath.FromSlash(appRoot))
+	}
+	switch buildPath {
+	case "", ".":
+	case "/":
+		projectDir = workDir
+	default:
+		projectDir = filepath.Join(projectDir, filepath.FromSlash(buildPath))
+	}
+	clean := filepath.Clean(projectDir)
+	relative, err := filepath.Rel(workDir, clean)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("appRoot/buildPath escapes the checked-out repository")
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return "", fmt.Errorf("build directory %s: %w", filepath.ToSlash(relative), err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("build directory %s is not a directory", filepath.ToSlash(relative))
+	}
+	return clean, nil
+}
+
+func amplifyBuildCacheDirectory(appID, branch string) string {
+	return filepath.Join(
+		os.TempDir(),
+		"sockerless-amplify-cache",
+		appID,
+		fmt.Sprintf("%x", sha256.Sum256([]byte(branch))),
+	)
+}
+
+func amplifyRestoreBuildCache(appID, branch, workDir string) error {
+	cacheDir := amplifyBuildCacheDirectory(appID, branch)
+	if _, err := os.Stat(cacheDir); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return amplifyCopyTree(cacheDir, workDir)
+}
+
+func amplifySaveBuildCache(appID, branch, workDir string, patterns []string) error {
+	if len(patterns) == 0 {
+		return nil
+	}
+	cacheDir := amplifyBuildCacheDirectory(appID, branch)
+	if err := os.RemoveAll(cacheDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		return err
+	}
+	for _, pattern := range patterns {
+		pattern = filepath.Clean(filepath.FromSlash(pattern))
+		for _, suffix := range []string{
+			string(filepath.Separator) + "**" + string(filepath.Separator) + "*",
+			string(filepath.Separator) + "**",
+			string(filepath.Separator) + "*",
+		} {
+			pattern = strings.TrimSuffix(pattern, suffix)
+		}
+		if pattern == "." || filepath.IsAbs(pattern) ||
+			pattern == ".." || strings.HasPrefix(pattern, ".."+string(filepath.Separator)) {
+			continue
+		}
+		matches, err := filepath.Glob(filepath.Join(workDir, pattern))
+		if err != nil {
+			return err
+		}
+		for _, source := range matches {
+			relative, err := filepath.Rel(workDir, source)
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				continue
+			}
+			if err := amplifyCopyTree(source, filepath.Join(cacheDir, relative)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func amplifyCopyTree(source, destination string) error {
+	info, err := os.Lstat(source)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return amplifyCopyBuildFile(source, destination, info)
+	}
+	return filepath.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, current)
+		if err != nil {
+			return err
+		}
+		target := destination
+		if relative != "." {
+			target = filepath.Join(destination, relative)
+		}
+		entryInfo, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, entryInfo.Mode().Perm())
+		}
+		return amplifyCopyBuildFile(current, target, entryInfo)
+	})
+}
+
+func amplifyCopyBuildFile(source, destination string, info fs.FileInfo) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(source)
+		if err != nil {
+			return err
+		}
+		_ = os.Remove(destination)
+		return os.Symlink(target, destination)
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(output, input); err != nil {
+		_ = output.Close()
+		return err
+	}
+	return output.Close()
+}
+
+func amplifyRemoveBuildCache(appID, branch string) {
+	target := filepath.Join(os.TempDir(), "sockerless-amplify-cache", appID)
+	if branch != "" {
+		target = filepath.Join(target, fmt.Sprintf("%x", sha256.Sum256([]byte(branch))))
+	}
+	_ = os.RemoveAll(target)
 }
 
 // amplifyBuildEnv merges the app- and branch-level environment variables

@@ -1148,6 +1148,7 @@ test.describe("Automated accessibility audit", () => {
       { path: "/ui/lambda", createTestId: "lambda-create-function", dialogName: "Create function" },
       { path: "/ui/ecs", createTestId: "ecs-run-task", dialogName: "Run new task" },
       { path: "/ui/rds", createTestId: "rds-create-instance", dialogName: "Create database" },
+      { path: "/ui/codebuild", createTestId: "codebuild-create-project", dialogName: "Create build project" },
       { path: "/ui/amplify", createTestId: "amplify-create-app", dialogName: "Create Amplify app" },
     ];
     for (const { path, createTestId, dialogName } of CREATE_DIALOGS) {

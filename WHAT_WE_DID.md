@@ -2895,3 +2895,37 @@ their legacy data-plane URL formats. AzureRM 5's ID-based resources stored the
 canonical Microsoft.Storage ARM paths returned by the APIs they used. The
 external assertions now covered those ARM IDs for the Blob container, Table,
 and File share.
+
+The follow-up external workload audit replaced the remaining implementation
+shortcuts behind the AWS workload surfaces. AWS CodeBuild cloned requested Git
+revisions with encrypted imported credentials or AWS Secrets Manager
+authentication and executed the checked-in or explicit build specification in
+the project's exact configured container image. StopBuild, StopBuildBatch, and
+an aborted synchronous AWS Step Functions task cancelled the underlying
+container. The official AWS SDK and AWS CLI proved private clone, success,
+failure, retry, batch, stop, and an AWS CLI process reaching Amazon SQS from a
+Step Functions-launched Amazon ECS or CodeBuild workload.
+
+AWS Amplify executed backend, frontend, and test pre/build/post phases in one
+real managed build container. Build-spec applications, monorepo app roots and
+build paths, app/branch/build-spec environment precedence, declared branch
+caches, and configured artifacts governed the job. A private authenticated Git
+repository ran Python and Node.js, deployed the resulting site, and restored
+its cache on a second release job.
+
+Amazon Relational Database Service used the real vendor engine for PostgreSQL,
+MySQL, and MariaDB instances. ModifyDBInstance rotated the database account
+while running or retained the pending secret for the next start, the volume
+preserved SQL data across stop/start, and SigV4 IAM database authentication
+required TLS. Stock pgx and MySQL drivers proved rejected credentials,
+authorized IAM connections, password rotation, and retained rows across all
+three engines.
+
+The AWS Cloudscape console gained complete operator paths for creating,
+starting, polling, stopping, and deleting CodeBuild projects and builds;
+creating and operating Amplify branches and deployments; and changing RDS IAM
+database authentication and master credentials. Its 241-case Chromium suite
+and authenticated Shauth, Ory Hydra, PostgreSQL, simulator, and Chromium matrix
+passed. The complete official AWS SDK suite, focused AWS CLI suites,
+production-shaped HashiCorp AWS provider apply/destroy, and native database
+driver coverage passed against the same implementations.

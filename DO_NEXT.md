@@ -32,20 +32,25 @@ Functions experience exposed the graph, editable definition, execution input,
 history, input/output inspection, publishing, aliases, tags, and redrive. AWS
 Private Certificate Authority and Amazon Data Firehose added complete
 authority lifecycle, encrypted delivery-stream, and Amazon S3 delivery
-workflows. The production UI passed 239 Chromium package tests, and the
+workflows. The production UI passed 241 Chromium package tests, and the
 authenticated Shauth/Ory Hydra/PostgreSQL matrix exercised all four services
 through federated AWS credentials.
 
 AWS Step Functions executed optimized and SDK Amazon ECS and AWS CodeBuild
 tasks with request/response, synchronous, callback, failure, and cancellation
-semantics. AWS Amplify encrypted connected-repository credentials, cloned
-private repositories, and executed Python and Node.js build specifications.
-Amazon Relational Database Service ran real PostgreSQL and MySQL data planes
-with native TLS and IAM database authentication. Explicit AWS Lambda
-deployments and AWS CodeBuild workloads reached downstream AWS APIs through
-the standard global or per-service endpoint coordinates. The production AWS
-console passed 239 Chromium tests and its authenticated browser matrix covered
-the Amplify and RDS workflows.
+semantics. CodeBuild cloned authenticated Git revisions and ran checked-in or
+explicit build specifications inside each project's exact configured image;
+stop and workflow abort cancelled the real container. AWS Amplify encrypted
+connected-repository credentials and executed backend, frontend, and test
+pre/build/post phases with monorepo roots, environment precedence, declared
+caches, and artifacts in a managed Python and Node.js image. Amazon Relational
+Database Service ran real PostgreSQL, MySQL, and MariaDB data planes with
+native TLS, IAM database authentication, live password rotation, and
+stop/start volume persistence. Explicit AWS Lambda deployments and CodeBuild
+workloads reached downstream AWS APIs through the standard global or
+per-service endpoint coordinates. The production AWS console passed 241
+Chromium tests and its authenticated browser matrix operated CodeBuild,
+Amplify, and RDS through federated AWS credentials.
 
 The AWS CLI harness provisioned and validated the official Session Manager
 plugin when the host lacked it, so Amazon ECS ExecuteCommand coverage no longer
@@ -118,15 +123,18 @@ delivery for direct writes, Amazon SNS subscriptions, and Amazon CloudWatch
 metric streams. Both services shipped with official AWS SDK, AWS CLI,
 Terraform, and authenticated browser coverage.
 
-The external review's locally actionable gaps were closed: AWS Step Functions
-ran Amazon ECS and AWS CodeBuild workloads, AWS Amplify authenticated private
-repositories and ran multi-language builds, Amazon RDS exposed real native data
-planes with IAM database authentication, and deployed workloads used the
-standard SDK endpoint environment variables. Explicit Lambda deployment
-remained intentional because AWS Lambda itself runs only functions a caller
-creates; the repository retained its truthful unaudited/non-production
-warning because functional validation did not constitute an independent
-security audit.
+The external review's locally actionable gaps and the follow-up implementation
+audit were closed. AWS Step Functions ran and cancelled real Amazon ECS and
+AWS CodeBuild workloads; CodeBuild used the requested source revision,
+credential, build specification, and image; AWS Amplify ran authenticated
+multi-language monorepo builds with complete phase, cache, and artifact
+lifecycle; Amazon RDS exposed persistent PostgreSQL, MySQL, and MariaDB native
+data planes with TLS-only IAM authentication and real password rotation; and
+deployed workloads used the standard SDK endpoint environment variables.
+Explicit Lambda deployment remained intentional because AWS Lambda itself runs
+only functions a caller creates. The repository retained its truthful
+unaudited/non-production warning because functional validation did not
+constitute an independent security audit.
 
 The next pass should recheck the six external blockers below and resume only
 when their missing credentials, upstream API coordinates, published schemas,
