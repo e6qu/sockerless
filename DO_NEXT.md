@@ -164,6 +164,10 @@ contention.
 The mandatory publication audit upgraded the AWS simulator to `go-git` 5.19.2
 and its current transitive graph. The complete module suite passed, and the
 authenticated dependency audit reported no drift.
+The shared e2e harness loaded its compiled arithmetic fixture through every
+active cloud backend's Docker Image Load API, keeping the backend catalog
+authoritative. The exact e2e suite and its optional second Amazon ECS
+simulator-backend path passed.
 Publication also upgraded every newly drifted SQLite and Google Cloud client
 module, moved Firestore and Spanner protobuf imports to their current
 canonical modules, and passed the complete official Google Cloud SDK suite.

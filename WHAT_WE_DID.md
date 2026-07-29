@@ -3037,3 +3037,10 @@ during push validation. The AWS simulator upgraded to that patch and its
 current `go-billy`, expression-evaluation, and decimal transitive graph. The
 complete module suite passed, and the authenticated dependency audit reported
 no remaining drift.
+
+The shared end-to-end harness had repeated the adjacent-daemon assumption for
+its compiled arithmetic fixture. It now streamed the real image through every
+active cloud backend's Docker Image Load API before creating the workload, so
+the backend image catalog remained the source of truth. The exact hosted e2e
+command and the optional path that launched a second Amazon ECS simulator and
+backend both passed the compiled workload's exit-code and log assertions.
