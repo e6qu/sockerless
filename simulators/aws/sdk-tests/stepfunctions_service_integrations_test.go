@@ -545,8 +545,8 @@ resource "aws_sqs_queue" "proof" {
 mkdir -p /workspace
 cd /workspace
 printf '%s' "$TF_CONFIGURATION" > main.tf
-terraform init -input=false -no-color
-terraform apply -auto-approve -input=false -no-color`,
+timeout -s TERM 120 terraform init -input=false -no-color
+timeout -s TERM 120 terraform apply -auto-approve -input=false -no-color`,
 			},
 			Environment: []ecstypes.KeyValuePair{
 				{Name: aws.String("AWS_ACCESS_KEY_ID"), Value: aws.String("test")},
@@ -554,6 +554,10 @@ terraform apply -auto-approve -input=false -no-color`,
 				{Name: aws.String("AWS_DEFAULT_REGION"), Value: aws.String("us-east-1")},
 				{Name: aws.String("AWS_ENDPOINT_URL"), Value: aws.String(containerEndpoint)},
 				{Name: aws.String("TF_IN_AUTOMATION"), Value: aws.String("true")},
+				{Name: aws.String("TF_CLI_CONFIG_FILE"), Value: aws.String("/terraformrc")},
+				// Prove provider installation is fully offline: any accidental
+				// HTTPS registry access fails instead of borrowing host egress.
+				{Name: aws.String("HTTPS_PROXY"), Value: aws.String("http://127.0.0.1:1")},
 				{Name: aws.String("CHECKPOINT_DISABLE"), Value: aws.String("1")},
 				{Name: aws.String("TF_CONFIGURATION"), Value: aws.String(terraformConfiguration)},
 			},
@@ -611,6 +615,19 @@ terraform apply -auto-approve -input=false -no-color`,
 		StateMachineArn: machine.StateMachineArn,
 	})
 	require.NoError(t, err)
+	taskOutput := func() string {
+		logs, logsErr := logsAPI.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+			LogGroupName: aws.String(logGroup),
+		})
+		if logsErr != nil {
+			return fmt.Sprintf("failed to read task output: %v", logsErr)
+		}
+		var messages []string
+		for _, event := range logs.Events {
+			messages = append(messages, aws.ToString(event.Message))
+		}
+		return strings.Join(messages, "\n")
+	}
 	deadline := time.Now().Add(5 * time.Minute)
 	for {
 		described, describeErr := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
@@ -621,23 +638,21 @@ terraform apply -auto-approve -input=false -no-color`,
 		case sfntypes.ExecutionStatusSucceeded:
 			goto executionSucceeded
 		case sfntypes.ExecutionStatusFailed, sfntypes.ExecutionStatusAborted, sfntypes.ExecutionStatusTimedOut:
-			logs, logsErr := logsAPI.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
-				LogGroupName: aws.String(logGroup),
-			})
-			require.NoError(t, logsErr)
-			var messages []string
-			for _, event := range logs.Events {
-				messages = append(messages, aws.ToString(event.Message))
-			}
 			t.Fatalf(
 				"Terraform workflow reached %s: %s: %s\ncontainer output:\n%s",
 				described.Status,
 				aws.ToString(described.Error),
 				aws.ToString(described.Cause),
-				strings.Join(messages, "\n"),
+				taskOutput(),
 			)
 		}
-		require.True(t, time.Now().Before(deadline), "Terraform workflow did not finish within five minutes")
+		if !time.Now().Before(deadline) {
+			t.Fatalf(
+				"Terraform workflow remained %s after five minutes\ncontainer output:\n%s",
+				described.Status,
+				taskOutput(),
+			)
+		}
 		time.Sleep(500 * time.Millisecond)
 	}
 

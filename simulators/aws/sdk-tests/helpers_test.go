@@ -456,12 +456,7 @@ func buildTerraformAWSImage(platform string) {
 			log.Fatalf("Failed to stage Terraform AWS image content: %v\n%s", copyErr, copyOut)
 		}
 	}
-	commit := exec.Command(
-		"docker", "commit",
-		"--change", "ENV TF_CLI_CONFIG_FILE=/terraformrc",
-		containerID,
-		terraformECSImage,
-	)
+	commit := exec.Command("docker", "commit", containerID, terraformECSImage)
 	if commitOut, commitErr := commit.CombinedOutput(); commitErr != nil {
 		log.Fatalf("Failed to commit Terraform AWS workload image: %v\n%s", commitErr, commitOut)
 	}
