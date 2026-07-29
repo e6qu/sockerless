@@ -296,8 +296,16 @@ func hostMetadataHostEntries() []sim.HostEntry {
 }
 
 func rewriteHostDockerInternalEnv(env map[string]string) map[string]string {
+	containerized := runningInsideContainer()
+	if !containerized {
+		return env
+	}
 	gateway := workloadHostGatewayIPv4(net.LookupHost, defaultRouteGatewayIPv4)
-	if gateway == "" {
+	return rewriteHostDockerInternalEnvForRuntime(env, containerized, gateway)
+}
+
+func rewriteHostDockerInternalEnvForRuntime(env map[string]string, containerized bool, gateway string) map[string]string {
+	if !containerized || gateway == "" {
 		return env
 	}
 	return rewriteHostDockerInternalEnvWithGateway(env, gateway)

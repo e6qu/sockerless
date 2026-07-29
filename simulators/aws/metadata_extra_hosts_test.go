@@ -42,6 +42,18 @@ func TestRewriteHostDockerInternalEnv(t *testing.T) {
 	}
 }
 
+func TestRewriteHostDockerInternalEnvLeavesNativeHostAlias(t *testing.T) {
+	env := map[string]string{
+		"AWS_ENDPOINT_URL": "http://host.docker.internal:4566",
+	}
+
+	got := rewriteHostDockerInternalEnvForRuntime(env, false, "10.0.0.1")
+
+	if got["AWS_ENDPOINT_URL"] != env["AWS_ENDPOINT_URL"] {
+		t.Fatalf("native-host endpoint = %q, want %q", got["AWS_ENDPOINT_URL"], env["AWS_ENDPOINT_URL"])
+	}
+}
+
 func TestWorkloadHostGatewayIPv4PrefersDockerHostAlias(t *testing.T) {
 	lookups := make([]string, 0, 1)
 	got := workloadHostGatewayIPv4(func(host string) ([]string, error) {

@@ -3050,3 +3050,11 @@ local audit had passed. Both immutable multi-architecture publication jobs
 upgraded to the current action. Actionlint, the repository's container
 publication contract, and the authenticated whole-repository freshness audit
 all passed.
+
+The native Linux AWS simulator had rewritten `host.docker.internal` in child
+workload environments to the virtual machine's default route gateway, even
+though Docker's `host-gateway` alias was the correct coordinate. Rewriting now
+occurred only when the simulator itself ran inside a container; native
+workloads retained Docker's real alias. Focused coordinate tests and the
+official AWS SDK Step Functions integration passed a real Amazon ECS task,
+AWS CodeBuild container, and vendor AWS CLI in 7.45 seconds.

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2754 filed - 2754 fixed - 6 open - 16 false positives.**
+**2755 filed - 2755 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2755~~ | P1 | AWS workload endpoint coordinates | a native Linux simulator rewrote `host.docker.internal` to the virtual machine's default gateway instead of Docker's host gateway | Host-address rewriting now applied only when the simulator itself ran inside a container; a native simulator retained Docker's real `host.docker.internal:host-gateway` coordinate for child workloads. Focused coordinate tests and the official AWS SDK Step Functions integration passed a real Amazon ECS task, AWS CodeBuild container, and vendor AWS CLI in 7.45 seconds. |
 | ~~2754~~ | P1 | dependency freshness | `docker/login-action` 4.6.0 was published during hosted validation | Both immutable multi-architecture publication jobs upgraded to `docker/login-action` 4.6.0. Actionlint, the container-publication contract, and the authenticated whole-repository freshness audit passed. |
 | ~~2753~~ | P1 | end-to-end Amazon ECS workload validation | the shared e2e harness built its arithmetic image beside the backend instead of loading it through the Docker API | The shared harness streamed the real image through every active cloud backend's Docker Image Load API before running it, so each backend's image catalog remained authoritative. The exact hosted e2e suite and the optional second Amazon ECS simulator-backend path passed the compiled arithmetic workload. |
 | ~~2752~~ | P1 | dependency freshness | `go-git` 5.19.2 was published during the push validation | The AWS simulator upgraded to `github.com/go-git/go-git/v5` 5.19.2 and its current `go-billy`, expression-evaluation, and decimal transitive graph. The complete AWS simulator module suite passed, and the authenticated freshness audit reported no drift. |

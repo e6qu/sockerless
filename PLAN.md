@@ -65,7 +65,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 35. Upgraded the newly published `go-git` patch and its current transitive graph, passed the complete AWS simulator module suite, and reran the authenticated freshness audit.
 36. Loaded the shared compiled arithmetic fixture through every active cloud backend's Docker Image Load API and passed both the exact e2e suite and the optional second Amazon ECS simulator-backend path.
 37. Upgraded both immutable multi-architecture publication jobs to the newly released `docker/login-action` 4.6.0 and passed action syntax, publication-contract, and authenticated freshness validation.
-38. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+38. Kept native Linux workload endpoints on Docker's host-gateway alias, reserved gateway rewriting for a containerized simulator, and passed the real Step Functions → Amazon ECS → AWS CodeBuild → AWS CLI integration.
+39. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

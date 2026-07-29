@@ -172,6 +172,12 @@ The hosted publication edge then advanced `docker/login-action` to 4.6.0.
 Both immutable multi-architecture publication jobs upgraded, and action
 syntax, the publication contract, and the authenticated freshness audit
 passed.
+Native Linux workload coordinates retained Docker's
+`host.docker.internal:host-gateway` alias instead of rewriting it to the
+virtual machine's default gateway; rewriting remained correct for a simulator
+that itself ran in a container. The official AWS SDK Step Functions
+integration passed its real Amazon ECS task, AWS CodeBuild container, and
+vendor AWS CLI flow.
 Publication also upgraded every newly drifted SQLite and Google Cloud client
 module, moved Firestore and Spanner protobuf imports to their current
 canonical modules, and passed the complete official Google Cloud SDK suite.
