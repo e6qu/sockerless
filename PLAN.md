@@ -62,7 +62,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 32. Loaded Docker Buildx test images, shared the container host PID namespace for real VPC attachment, and completed the full production-shaped AWS Terraform graph through HTTPS.
 33. Loaded the Amazon ECS arithmetic workload through the backend's Docker Image Load API, required an explicit Amazon ECR workload coordinate for live-cloud runs, and passed all six real-container lifecycle cases.
 34. Preserved the AWS Signature Version 4 host through the HTTPS gateway, serialized heavyweight Terraform packages locally, isolated all five production-shaped graphs on separate hosted runners, and passed every HTTPS apply, real workload or data-plane assertion, and destroy.
-35. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+35. Upgraded the newly published `go-git` patch and its current transitive graph, passed the complete AWS simulator module suite, and reran the authenticated freshness audit.
+36. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

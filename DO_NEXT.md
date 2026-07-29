@@ -161,6 +161,9 @@ and assigned the root, Amazon ElastiCache, and three Amazon RDS graphs to
 separate hosted runners. All five HTTPS packages completed apply, real
 workload or data-plane assertions, and destroy without cross-package resource
 contention.
+The mandatory publication audit upgraded the AWS simulator to `go-git` 5.19.2
+and its current transitive graph. The complete module suite passed, and the
+authenticated dependency audit reported no drift.
 Publication also upgraded every newly drifted SQLite and Google Cloud client
 module, moved Firestore and Spanner protobuf imports to their current
 canonical modules, and passed the complete official Google Cloud SDK suite.

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2751 filed - 2751 fixed - 6 open - 16 false positives.**
+**2752 filed - 2752 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2752~~ | P1 | dependency freshness | `go-git` 5.19.2 was published during the push validation | The AWS simulator upgraded to `github.com/go-git/go-git/v5` 5.19.2 and its current `go-billy`, expression-evaluation, and decimal transitive graph. The complete AWS simulator module suite passed, and the authenticated freshness audit reported no drift. |
 | ~~2751~~ | P1 | AWS simulator external Terraform validation | five heavyweight provider graphs shared one hosted runner while the HTTPS gateway redundantly rewrote the signed request host | Caddy's native reverse-proxy behavior preserved the original `Host` header used by AWS Signature Version 4, local package execution was serialized while retaining Terraform's resource-level concurrency, and CI assigned the root, Amazon ElastiCache, and three Amazon RDS graphs to separate hosted runners. All five production-shaped HTTPS packages completed apply, real workload or data-plane assertions, and destroy. |
 | ~~2750~~ | P1 | Amazon ECS backend external workload validation | the test built its workload beside the backend instead of loading it through the Docker API | The integration harness loaded its real multi-stage arithmetic image through the Amazon ECS backend's Docker Image Load API, so the backend image catalog distinguished it from an absent Docker Hub image. The simulator coordinate built and loaded the fixture locally, the live-cloud coordinate required an explicitly provisioned Amazon ECR image, and all six real-container arithmetic lifecycle cases passed. |
 | ~~2749~~ | P1 | AWS simulator external Terraform harness | Docker Buildx left the Linux test image only in its cache and the socket-sharing harness could not see workload network namespaces | The AWS simulator Docker recipes loaded Buildx output into the local runtime, and the privileged real-network harness shared the container host's PID namespace. The production-shaped HashiCorp AWS provider completed the full apply, real VPC-attached Lambda invocation, refresh, and destroy through the Caddy HTTPS gateway. |

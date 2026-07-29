@@ -3031,3 +3031,9 @@ serialized while Terraform retained resource-level concurrency, and CI
 assigned each production-shaped package to a separate hosted runner. All five
 HTTPS packages completed apply, real workload or data-plane assertions, and
 destroy without signature failures or cross-package resource contention.
+
+The mandatory publication audit found `go-git` 5.19.2 after it was released
+during push validation. The AWS simulator upgraded to that patch and its
+current `go-billy`, expression-evaluation, and decimal transitive graph. The
+complete module suite passed, and the authenticated dependency audit reported
+no remaining drift.
