@@ -68,7 +68,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 38. Kept native Linux workload endpoints on Docker's host-gateway alias, reserved gateway rewriting for a containerized simulator, and passed the real Step Functions → Amazon ECS → AWS CodeBuild → AWS CLI integration.
 39. Declared HashiCorp AWS provider 6.50.0 across every simulator Terraform graph, passed the complete root graph through HTTPS with runtime Smithy validation, and made the Microsoft Azure failed-delete UI assertion await its retained accessible dialog.
 40. Persisted AWS Key Management Service custom policies across SQLite reads and simulator restarts, with focused durable-store and production-shaped HashiCorp AWS provider coverage.
-41. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+41. Refreshed the coordinated AWS SDK patch wave, Google Cloud Spanner client, and resolved transitive graphs across every affected Go module after the pre-push freshness gate detected their publication.
+42. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

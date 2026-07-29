@@ -4,6 +4,13 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-29 — Dependency pins caught up with coordinated releases
+
+The authenticated pre-push freshness gate detected a coordinated AWS SDK patch
+wave and a new Google Cloud Spanner client published after the branch began.
+The repository-owned per-module upgrade fan-out refreshed every affected direct
+pin and its resolved transitive graph.
+
 ## 2026-07-29 — AWS Key Management Service policies became durable state
 
 Customer-managed AWS Key Management Service policies survived the simulator's

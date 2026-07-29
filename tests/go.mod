@@ -3,7 +3,7 @@ module github.com/sockerless/tests
 go 1.25.0
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.43.1
+	github.com/aws/aws-sdk-go-v2 v1.43.2
 	github.com/docker/docker v28.5.2+incompatible
 )
 

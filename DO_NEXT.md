@@ -4,6 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The pre-push dependency audit's coordinated AWS SDK patch wave and Google Cloud
+Spanner client release were applied across every affected Go module with the
+repository-owned upgrade target. Direct pins and their resolved transitive
+graphs were current again.
+
 AWS Key Management Service custom key policies persisted in the simulator's
 SQLite key record instead of disappearing during JSON serialization. A
 store-close-and-reopen regression proved durable read-back, and the
