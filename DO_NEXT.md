@@ -144,6 +144,13 @@ cloud-shaped cold-provisioning window with useful terminal diagnostics. The
 AWS SDK shard provisioned the exact configured Alpine and official AWS CLI
 images before `m.Run`, so registry transfer no longer consumed that
 integration's lifecycle deadline while both real containers still executed.
+Explicit Amazon ECR Public coordinates reached the container runtime unchanged,
+and cancellation killed the CodeBuild workload whether Docker completed its
+wait through the context or error channel, so a stopped build produced no
+delayed Amazon SQS side effect. The macOS/Linux Docker validation harness loaded
+Buildx output and shared the container host's PID namespace; the full
+production-shaped HashiCorp AWS provider graph completed apply, a real
+VPC-attached Lambda invocation, refresh, and destroy through HTTPS.
 Publication also upgraded every newly drifted SQLite and Google Cloud client
 module, moved Firestore and Spanner protobuf imports to their current
 canonical modules, and passed the complete official Google Cloud SDK suite.

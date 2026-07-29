@@ -70,10 +70,14 @@ DOCKER_SOCK_GID := $(shell stat -f '%g' /var/run/docker.sock 2>/dev/null || stat
 DOCKER_TEST_GROUPS := $(DOCKER_SOCK_GID),0
 DOCKER_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e SOCKERLESS_DOCKER_TEST_UIDGID=$(DOCKER_TEST_USER) -e SOCKERLESS_DOCKER_TEST_GROUPS=$(DOCKER_TEST_GROUPS) -e GOWORK=off -e CGO_ENABLED=0 -e TF_IN_AUTOMATION=1 -e CLOUDSDK_CORE_DISABLE_PROMPTS=1 -e AZURE_CORE_NO_COLOR=true -e AWS_PAGER=
 DOCKER_REALNET_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e GOWORK=off -e CGO_ENABLED=0 -e TF_IN_AUTOMATION=1 -e CLOUDSDK_CORE_DISABLE_PROMPTS=1 -e AZURE_CORE_NO_COLOR=true -e AWS_PAGER=
-DOCKER_REALNET_FLAGS := --privileged
+DOCKER_REALNET_FLAGS := --privileged --pid host
 
 docker-build: ## build the docker image
-	docker build -t $(IMAGE) -f Dockerfile ..
+	@if docker buildx version >/dev/null 2>&1; then \
+		docker buildx build --load -t $(IMAGE) -f Dockerfile ..; \
+	else \
+		docker build -t $(IMAGE) -f Dockerfile ..; \
+	fi
 
 docker-run: docker-build ## run the docker image
 	docker run --rm -p $(DEFAULT_PORT):$(DEFAULT_PORT) \
@@ -82,7 +86,11 @@ docker-run: docker-build ## run the docker image
 		$(IMAGE)
 
 docker-test-build: ## build the test docker image
-	docker build -t $(DOCKER_TEST_IMAGE) -f $(REPO_ROOT)/simulators/Dockerfile.test $(REPO_ROOT)
+	@if docker buildx version >/dev/null 2>&1; then \
+		docker buildx build --load -t $(DOCKER_TEST_IMAGE) -f $(REPO_ROOT)/simulators/Dockerfile.test $(REPO_ROOT); \
+	else \
+		docker build -t $(DOCKER_TEST_IMAGE) -f $(REPO_ROOT)/simulators/Dockerfile.test $(REPO_ROOT); \
+	fi
 
 docker-test: docker-test-build ## run all tests inside docker
 	docker run --rm --network host \

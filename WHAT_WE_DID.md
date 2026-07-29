@@ -2985,10 +2985,31 @@ assertion window. The shard now provisioned the exact configured public Alpine
 Amazon ECS image and official AWS CLI CodeBuild image before `m.Run`. Image
 acquisition therefore stayed outside the per-test lifecycle deadline while the
 simulator still started, observed, and cancelled the real containers. The
-focused official AWS SDK integration passed in 35 seconds.
+focused official AWS SDK integration passed.
 
 The console accessibility checks no longer depended on whether hosted
 Chromium began with browser chrome or the document as its focus origin. The
 AWS, Google Cloud, and Microsoft Azure tests focused the loaded document body
 before pressing Tab, then asserted the product skip link received focus first.
 All three focused browser tests passed against their real console processes.
+
+The cold-image follow-up found that the shared AWS container runtime had
+rewritten explicit Amazon ECR Public image coordinates to Docker Hub. Public
+registry coordinates now remained intact, so the AWS SDK shard's exact
+pre-provisioned Alpine and AWS CLI images were the images Amazon ECS and AWS
+CodeBuild executed. The focused official AWS SDK Step Functions integration
+ran both real containers successfully.
+
+That integration also exposed Docker's two cancellation completion paths.
+When a cancelled container wait completed through the error channel, the
+CodeBuild status had changed to `STOPPED` while the shell could continue and
+send its delayed Amazon SQS message. Both cancellation paths now killed the
+real container, and the external SDK scenario proved no post-stop side effect
+escaped.
+
+The macOS HTTPS validation recipe loaded Docker Buildx output into the local
+runtime and shared the container host's PID namespace with its privileged
+Linux harness. The complete production-shaped HashiCorp AWS provider graph
+then applied through the real Caddy HTTPS gateway, invoked a Lambda function
+inside its attached VPC, refreshed every resource, and destroyed the graph
+cleanly.

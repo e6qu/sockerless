@@ -58,7 +58,9 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 28. Retained the exact CI-captured Cloud Run v1 and v2 Discovery revision 20260727 documents and revalidated their unchanged public method, path, and schema-field sets.
 29. Provisioned the exact public Amazon ECS and AWS CodeBuild workload images before the AWS SDK shard's per-test lifecycle deadline, then reran the real-container integration.
 30. Made all three console skip-link tests start keyboard traversal from deterministic in-document focus and reran them in real Chromium.
-31. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+31. Preserved explicit Amazon ECR Public workload coordinates, made cancellation terminate CodeBuild containers on every Docker wait path, and externally proved the stopped build emitted no delayed Amazon SQS message.
+32. Loaded Docker Buildx test images, shared the container host PID namespace for real VPC attachment, and completed the full production-shaped AWS Terraform graph through HTTPS.
+33. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
