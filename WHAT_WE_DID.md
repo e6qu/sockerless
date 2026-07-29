@@ -3058,3 +3058,15 @@ occurred only when the simulator itself ran inside a container; native
 workloads retained Docker's real alias. Focused coordinate tests and the
 official AWS SDK Step Functions integration passed a real Amazon ECS task,
 AWS CodeBuild container, and vendor AWS CLI in 7.45 seconds.
+
+The final hosted rerun exposed two reproducibility assumptions. The root AWS
+Terraform graph had not declared a HashiCorp AWS provider version while its
+sibling packages still declared 6.47.0. Every graph now declared 6.50.0, and
+the complete root graph passed concurrent apply, real workload assertions,
+refresh, and destroy through Caddy HTTPS with runtime Smithy validation armed.
+
+The Microsoft Azure console's failed Container Registry deletion test had
+queried the confirmation dialog synchronously while React Query was settling
+the error mutation. The assertion now awaited the retained accessible Fluent
+dialog after Azure Resource Manager's real error rendered. All 131 Azure
+console tests and the complete UI build/test fan-out passed.

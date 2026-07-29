@@ -155,7 +155,7 @@ describe("ACRRegistriesPage delete", () => {
 
     const alert = await within(dialog).findByRole("alert");
     expect(alert.textContent).toContain("active replications");
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(await screen.findByRole("dialog")).toBeTruthy();
   });
 });
 

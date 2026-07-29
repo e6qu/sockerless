@@ -81,6 +81,14 @@ module's Step Functions differential role built its policy ARNs from the
 module's declared `region` input, and all six production modules validated.
 The complete Terraform tree also retained canonical HCL formatting.
 
+Every AWS Terraform graph declared HashiCorp AWS provider 6.50.0, so the root
+production graph and its sibling packages executed one reproducible provider
+implementation. The root graph passed its complete concurrent apply, workload
+assertions, refresh, and destroy through Caddy HTTPS with runtime Smithy
+validation armed. The Microsoft Azure console's failed-delete assertion awaited
+React Query's settled mutation before checking the retained accessible Fluent
+dialog; all 131 package tests and the complete UI fan-out passed.
+
 The final hosted freshness pass advanced the exact Google Discovery documents
 for Bigtable Admin v2, Cloud Logging v2, Pub/Sub v1, and Cloud Resource Manager
 v1/v3. The two methods newly present in those specifications were real
