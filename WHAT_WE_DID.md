@@ -2895,3 +2895,178 @@ their legacy data-plane URL formats. AzureRM 5's ID-based resources stored the
 canonical Microsoft.Storage ARM paths returned by the APIs they used. The
 external assertions now covered those ARM IDs for the Blob container, Table,
 and File share.
+
+The follow-up external workload audit replaced the remaining implementation
+shortcuts behind the AWS workload surfaces. AWS CodeBuild cloned requested Git
+revisions with encrypted imported credentials or AWS Secrets Manager
+authentication and executed the checked-in or explicit build specification in
+the project's exact configured container image. StopBuild, StopBuildBatch, and
+an aborted synchronous AWS Step Functions task cancelled the underlying
+container. The official AWS SDK and AWS CLI proved private clone, success,
+failure, retry, batch, stop, and an AWS CLI process reaching Amazon SQS from a
+Step Functions-launched Amazon ECS or CodeBuild workload.
+
+AWS Amplify executed backend, frontend, and test pre/build/post phases in one
+real managed build container. Build-spec applications, monorepo app roots and
+build paths, app/branch/build-spec environment precedence, declared branch
+caches, and configured artifacts governed the job. A private authenticated Git
+repository ran Python and Node.js, deployed the resulting site, and restored
+its cache on a second release job.
+
+Amazon Relational Database Service used the real vendor engine for PostgreSQL,
+MySQL, and MariaDB instances. ModifyDBInstance rotated the database account
+while running or retained the pending secret for the next start, the volume
+preserved SQL data across stop/start, and SigV4 IAM database authentication
+required TLS. Stock pgx and MySQL drivers proved rejected credentials,
+authorized IAM connections, password rotation, and retained rows across all
+three engines.
+
+The AWS Cloudscape console gained complete operator paths for creating,
+starting, polling, stopping, and deleting CodeBuild projects and builds;
+creating and operating Amplify branches and deployments; and changing RDS IAM
+database authentication and master credentials. Its 241-case Chromium suite
+and authenticated Shauth, Ory Hydra, PostgreSQL, simulator, and Chromium matrix
+passed. The complete official AWS SDK suite, focused AWS CLI suites,
+production-shaped HashiCorp AWS provider apply/destroy, and native database
+driver coverage passed against the same implementations.
+
+The pull-request dependency job then captured two newer official Google
+Discovery documents from the hosted runner. Cloud Logging v2 advanced to
+revision 20260724 and IAM Service Account Credentials v1 to revision 20260723.
+Their public methods, paths, and schema fields were unchanged; the repository
+retained the exact compressed artifacts and provenance, and the complete Google
+simulator route, specification, and measured-coverage unit suite passed.
+
+Hosted concurrency then found three ordering assumptions that local warm runs
+had not exposed. AWS Amplify had rounded job start times to whole seconds, so
+two releases in one second could make the hosting plane select the older
+artifact by random job ID. Amplify now retained sub-second AWS timestamp
+precision; the official AWS SDK private authenticated Python and Node.js build
+restored and served its second-release cache in five consecutive real-container
+runs.
+
+AzureRM independently created a NAT gateway, subnet association, and public IP
+prefix association. When the subnet update won that race, Microsoft Azure's
+valid intermediate gateway had no public addressing yet. The simulator now
+retained that control-plane association without inventing outbound behavior,
+then programmed the real network fabric when the later public-prefix update
+arrived. The production-shaped AzureRM apply/destroy path exercised the same
+ordering.
+
+The AWS Step Functions workload integration remained genuinely asynchronous:
+a clean hosted runner needed more than one minute to provision the configured
+Amazon ECS and AWS CodeBuild images. Its official AWS SDK assertion now allowed
+the same multi-minute provisioning window as the cloud services and reported
+the final execution status, error, and cause. The focused real-container
+integration passed.
+
+The publication freshness gate then found a new SQLite release in all four
+simulator modules that consumed it. They upgraded to `modernc.org/sqlite`
+v1.55.0 and the current supporting graph. The Google simulator's complete
+direct-dependency refresh also upgraded Firestore to v1.24.0, Spanner to
+v1.93.0, Google APIs to v0.291.0, and the latest generated APIs. Because the
+root `genproto` module no longer carried the Firestore and Spanner services,
+their gRPC data planes imported the canonical protobuf packages from the
+official Firestore and Spanner client modules. Every affected module and the
+complete official Google Cloud SDK simulator suite passed, and the authenticated
+freshness audit reported no remaining drift.
+
+The hosted specification freshness gate observed Google Cloud Run v1 and v2
+Discovery revision 20260727 while the maintainer edge still served revision
+20260717. Their exact compressed artifacts and provenance pins were retained.
+A canonical comparison found no public method, path, or schema-field changes;
+only the revisions and descriptions changed. The Google simulator route,
+specification, and measured-coverage tests passed against both newer documents,
+and the authenticated freshness audit accepted both pins.
+
+The next hosted AWS SDK N–Z run showed that cold registry transfer, rather than
+either cloud workload, had consumed the entire Step Functions execution
+assertion window. The shard now provisioned the exact configured public Alpine
+Amazon ECS image and official AWS CLI CodeBuild image before `m.Run`. Image
+acquisition therefore stayed outside the per-test lifecycle deadline while the
+simulator still started, observed, and cancelled the real containers. The
+focused official AWS SDK integration passed.
+
+The console accessibility checks no longer depended on whether hosted
+Chromium began with browser chrome or the document as its focus origin. The
+AWS, Google Cloud, and Microsoft Azure tests focused the loaded document body
+before pressing Tab, then asserted the product skip link received focus first.
+All three focused browser tests passed against their real console processes.
+
+The cold-image follow-up found that the shared AWS container runtime had
+rewritten explicit Amazon ECR Public image coordinates to Docker Hub. Public
+registry coordinates now remained intact, so the AWS SDK shard's exact
+pre-provisioned Alpine and AWS CLI images were the images Amazon ECS and AWS
+CodeBuild executed. The focused official AWS SDK Step Functions integration
+ran both real containers successfully.
+
+That integration also exposed Docker's two cancellation completion paths.
+When a cancelled container wait completed through the error channel, the
+CodeBuild status had changed to `STOPPED` while the shell could continue and
+send its delayed Amazon SQS message. Both cancellation paths now killed the
+real container, and the external SDK scenario proved no post-stop side effect
+escaped.
+
+The macOS HTTPS validation recipe loaded Docker Buildx output into the local
+runtime and shared the container host's PID namespace with its privileged
+Linux harness. The complete production-shaped HashiCorp AWS provider graph
+then applied through the real Caddy HTTPS gateway, invoked a Lambda function
+inside its attached VPC, refreshed every resource, and destroyed the graph
+cleanly.
+
+The Amazon ECS backend integration had built its arithmetic workload only in
+the adjacent host daemon, leaving the backend image catalog unaware of it.
+The harness now loaded that real multi-stage image through the backend's Docker
+Image Load API, while live-cloud runs required an explicitly provisioned
+Amazon ECR coordinate. All six arithmetic cases ran in real containers and
+passed their exit-code, log, label, and environment assertions.
+
+The hosted AWS Terraform job had launched the root, Amazon ElastiCache, and
+three Amazon RDS provider graphs concurrently on one runner, combining five
+simulators, five HTTPS gateways, and their real database and container
+workloads. Caddy had also redundantly replaced the upstream `Host` header that
+formed part of each AWS Signature Version 4 canonical request. The gateway now
+used Caddy's native host preservation, local package execution stayed
+serialized while Terraform retained resource-level concurrency, and CI
+assigned each production-shaped package to a separate hosted runner. All five
+HTTPS packages completed apply, real workload or data-plane assertions, and
+destroy without signature failures or cross-package resource contention.
+
+The mandatory publication audit found `go-git` 5.19.2 after it was released
+during push validation. The AWS simulator upgraded to that patch and its
+current `go-billy`, expression-evaluation, and decimal transitive graph. The
+complete module suite passed, and the authenticated dependency audit reported
+no remaining drift.
+
+The shared end-to-end harness had repeated the adjacent-daemon assumption for
+its compiled arithmetic fixture. It now streamed the real image through every
+active cloud backend's Docker Image Load API before creating the workload, so
+the backend image catalog remained the source of truth. The exact hosted e2e
+command and the optional path that launched a second Amazon ECS simulator and
+backend both passed the compiled workload's exit-code and log assertions.
+
+The hosted publication edge then exposed `docker/login-action` 4.6.0 after the
+local audit had passed. Both immutable multi-architecture publication jobs
+upgraded to the current action. Actionlint, the repository's container
+publication contract, and the authenticated whole-repository freshness audit
+all passed.
+
+The native Linux AWS simulator had rewritten `host.docker.internal` in child
+workload environments to the virtual machine's default route gateway, even
+though Docker's `host-gateway` alias was the correct coordinate. Rewriting now
+occurred only when the simulator itself ran inside a container; native
+workloads retained Docker's real alias. Focused coordinate tests and the
+official AWS SDK Step Functions integration passed a real Amazon ECS task,
+AWS CodeBuild container, and vendor AWS CLI in 7.45 seconds.
+
+The final hosted rerun exposed two reproducibility assumptions. The root AWS
+Terraform graph had not declared a HashiCorp AWS provider version while its
+sibling packages still declared 6.47.0. Every graph now declared 6.50.0, and
+the complete root graph passed concurrent apply, real workload assertions,
+refresh, and destroy through Caddy HTTPS with runtime Smithy validation armed.
+
+The Microsoft Azure console's failed Container Registry deletion test had
+queried the confirmation dialog synchronously while React Query was settling
+the error mutation. The assertion now awaited the retained accessible Fluent
+dialog after Azure Resource Manager's real error rendered. All 131 Azure
+console tests and the complete UI build/test fan-out passed.

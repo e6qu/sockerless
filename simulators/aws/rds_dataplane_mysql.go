@@ -46,21 +46,22 @@ type mysqlLogin struct {
 }
 
 func rdsServeMySQL(runtime *rdsDataPlaneRuntime, client net.Conn) {
-	backend, err := net.DialTimeout("tcp", runtime.backend, 5*time.Second)
+	instance, backendAddress, _ := runtime.snapshot()
+	backend, err := net.DialTimeout("tcp", backendAddress, 5*time.Second)
 	if err != nil {
-		log.Printf("Amazon RDS %s MySQL backend dial: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s MySQL backend dial: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
 	defer backend.Close()
 
 	_, backendHandshakePayload, err := mysqlReadPacket(backend)
 	if err != nil {
-		log.Printf("Amazon RDS %s MySQL backend handshake: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s MySQL backend handshake: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
 	backendHandshake, err := mysqlParseHandshake(backendHandshakePayload)
 	if err != nil {
-		log.Printf("Amazon RDS %s MySQL backend handshake parse: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s MySQL backend handshake parse: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
 	frontendHandshake := backendHandshake
@@ -76,7 +77,7 @@ func rdsServeMySQL(runtime *rdsDataPlaneRuntime, client net.Conn) {
 
 	sequence, loginPayload, err := mysqlReadPacket(client)
 	if err != nil {
-		log.Printf("Amazon RDS %s MySQL client login: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s MySQL client login: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
 	secure := false
@@ -90,7 +91,7 @@ func rdsServeMySQL(runtime *rdsDataPlaneRuntime, client net.Conn) {
 			MinVersion:   tls.VersionTLS12,
 		})
 		if err := tlsClient.Handshake(); err != nil {
-			log.Printf("Amazon RDS %s MySQL TLS handshake: %v", runtime.instance.DBInstanceIdentifier, err)
+			log.Printf("Amazon RDS %s MySQL TLS handshake: %v", instance.DBInstanceIdentifier, err)
 			return
 		}
 		client = tlsClient
@@ -98,44 +99,48 @@ func rdsServeMySQL(runtime *rdsDataPlaneRuntime, client net.Conn) {
 		secure = true
 		sequence, loginPayload, err = mysqlReadPacket(client)
 		if err != nil {
-			log.Printf("Amazon RDS %s MySQL secure login: %v", runtime.instance.DBInstanceIdentifier, err)
+			log.Printf("Amazon RDS %s MySQL secure login: %v", instance.DBInstanceIdentifier, err)
 			return
 		}
 	}
 	login, err := mysqlParseLogin(loginPayload)
 	if err != nil {
-		log.Printf("Amazon RDS %s MySQL login parse: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s MySQL login parse: %v", instance.DBInstanceIdentifier, err)
 		mysqlWriteAuthError(client, sequence+1, "Access denied")
 		return
 	}
-	if !rdsMySQLPasswordValid(runtime.instance, login.username, login.password, secure) {
-		log.Printf("Amazon RDS %s MySQL authentication rejected for %s", runtime.instance.DBInstanceIdentifier, login.username)
+	if !rdsMySQLPasswordValid(instance, login.username, login.password, secure) {
+		log.Printf("Amazon RDS %s MySQL authentication rejected for %s", instance.DBInstanceIdentifier, login.username)
 		mysqlWriteAuthError(client, sequence+1, fmt.Sprintf("Access denied for user '%s'", login.username))
 		return
 	}
 
-	_, masterPassword, ok := kmsDecryptBytes(runtime.instance.MasterUserSecret)
+	backendSecret := instance.BackendMasterUserSecret
+	if len(backendSecret) == 0 {
+		backendSecret = instance.MasterUserSecret
+	}
+	_, masterPassword, ok := kmsDecryptBytes(backendSecret)
 	if !ok {
 		mysqlWriteAuthError(client, sequence+1, "RDS credential could not be decrypted")
 		return
 	}
 	backendLogin := mysqlEncodeBackendLogin(
-		backendHandshake, login.capabilities, runtime.instance.MasterUsername,
+		backendHandshake, login.capabilities, instance.MasterUsername,
 		string(masterPassword), login.database, login.charset,
 	)
 	if err := mysqlWritePacket(backend, 1, backendLogin); err != nil {
-		log.Printf("Amazon RDS %s MySQL backend login write: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s MySQL backend login write: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
 	backendSequence, authResult, err := mysqlReadPacket(backend)
 	if err != nil {
-		log.Printf("Amazon RDS %s MySQL backend auth result: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s MySQL backend auth result: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
 	if len(authResult) > 1 && authResult[0] == 0xfe {
 		plugin, offset, valid := mysqlNULTerminated(authResult, 1)
 		if !valid {
-			log.Printf("Amazon RDS %s MySQL backend auth switch was malformed", runtime.instance.DBInstanceIdentifier)
+			log.Printf("Amazon RDS %s MySQL backend auth switch was malformed", instance.DBInstanceIdentifier)
 			return
 		}
 		seed := []byte(strings.TrimRight(string(authResult[offset:]), "\x00"))
@@ -146,7 +151,7 @@ func rdsServeMySQL(runtime *rdsDataPlaneRuntime, client net.Conn) {
 		case "caching_sha2_password":
 			response = mysqlCachingSHA2Password(string(masterPassword), seed)
 		default:
-			log.Printf("Amazon RDS %s MySQL backend requested unsupported auth plugin %s", runtime.instance.DBInstanceIdentifier, plugin)
+			log.Printf("Amazon RDS %s MySQL backend requested unsupported auth plugin %s", instance.DBInstanceIdentifier, plugin)
 			return
 		}
 		if err := mysqlWritePacket(backend, backendSequence+1, response); err != nil {
@@ -154,12 +159,12 @@ func rdsServeMySQL(runtime *rdsDataPlaneRuntime, client net.Conn) {
 		}
 		_, authResult, err = mysqlReadPacket(backend)
 		if err != nil {
-			log.Printf("Amazon RDS %s MySQL backend auth switch result: %v", runtime.instance.DBInstanceIdentifier, err)
+			log.Printf("Amazon RDS %s MySQL backend auth switch result: %v", instance.DBInstanceIdentifier, err)
 			return
 		}
 	}
 	if len(authResult) == 0 || authResult[0] != 0x00 {
-		log.Printf("Amazon RDS %s MySQL backend rejected the proxied login: %x", runtime.instance.DBInstanceIdentifier, authResult)
+		log.Printf("Amazon RDS %s MySQL backend rejected the proxied login: %x", instance.DBInstanceIdentifier, authResult)
 		_ = mysqlWritePacket(client, sequence+1, authResult)
 		return
 	}

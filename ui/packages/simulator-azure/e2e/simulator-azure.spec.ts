@@ -135,6 +135,7 @@ test.describe("Azure portal shell", () => {
 
   test("exposes a skip link ahead of the portal content", async ({ page }) => {
     await page.goto("/ui/");
+    await page.locator("body").focus();
     await page.keyboard.press("Tab");
     await expect(page.locator(".sl-skip-link")).toBeFocused();
     await expect(page.locator("#main-content")).toHaveCount(1);

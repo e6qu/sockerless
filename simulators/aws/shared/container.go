@@ -557,6 +557,11 @@ func MissingNetfilterTableHint(err error) string {
 
 func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID string, cfg ContainerConfig, sink LogSink) ProcessResult {
 	startedAt := time.Now()
+	killCancelledContainer := func() {
+		killCtx, killCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer killCancel()
+		_ = cli.ContainerKill(killCtx, containerID, "KILL")
+	}
 
 	// Enforce timeout via a separate goroutine.
 	if cfg.Timeout > 0 {
@@ -579,6 +584,13 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 	select {
 	case err := <-errCh:
 		if err != nil {
+			if ctx.Err() != nil {
+				// ContainerWait reports the cancelled request on errCh as
+				// well as closing ctx.Done. Kill the workload on either
+				// branch so a cancelled AWS CodeBuild command cannot keep
+				// running and produce effects after StopBuild returned.
+				killCancelledContainer()
+			}
 			result = ProcessResult{
 				ExitCode:  -1,
 				StartedAt: startedAt,
@@ -593,10 +605,7 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 			StoppedAt: time.Now(),
 		}
 	case <-ctx.Done():
-		timeout := 5
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer stopCancel()
-		_ = cli.ContainerStop(stopCtx, containerID, container.StopOptions{Timeout: &timeout})
+		killCancelledContainer()
 		result = ProcessResult{
 			ExitCode:  137,
 			StartedAt: startedAt,
@@ -672,14 +681,15 @@ func streamDockerLogs(reader io.ReadCloser, sink LogSink) {
 	wg.Wait()
 }
 
-// ResolveLocalImage maps cloud registry URIs back to Docker Hub images for local execution.
-// Cloud backends resolve "alpine:latest" to cloud-specific registries:
+// ResolveLocalImage maps pull-through-cache coordinates back to their upstream
+// Docker Hub images for local execution. Cloud backends can resolve
+// "alpine:latest" to cloud-specific private registry caches:
 //   - GCP AR: "us-central1-docker.pkg.dev/project/docker-hub/library/alpine:latest"
 //   - AWS ECR: "123456789.dkr.ecr.eu-west-1.amazonaws.com/alpine:latest"
 //   - Azure ACR: "myacr.azurecr.io/library/alpine:latest"
 //
-// The simulator runs containers locally where only Docker Hub images exist,
-// so these URIs must be resolved back to their original form.
+// Public registry coordinates are already directly pullable by the local
+// container engine and remain unchanged.
 func ResolveLocalImage(image string) string {
 	// GCP Artifact Registry pull-through cache
 	if strings.Contains(image, "-docker.pkg.dev/") && strings.Contains(image, "/docker-hub/") {
@@ -705,19 +715,6 @@ func ResolveLocalImage(image string) string {
 		dockerPath := image[idx+len(".azurecr.io/"):]
 		dockerPath = strings.TrimPrefix(dockerPath, "library/")
 		return dockerPath
-	}
-	// AWS Public Gallery. The ECS backend's resolveImageURI
-	// routes Docker Hub library refs to
-	// `public.ecr.aws/docker/library/<name>:<tag>` for direct pulls
-	// from Fargate. The simulator runs containers locally on Podman /
-	// Docker; locally-built test images and standard Docker Hub
-	// library images both want the bare `<name>:<tag>` form. Strip
-	// the prefix so e.g. `public.ecr.aws/docker/library/alpine:latest`
-	// → `alpine:latest`, and
-	// `public.ecr.aws/docker/library/sockerless-eval-arithmetic:test`
-	// → `sockerless-eval-arithmetic:test`.
-	if strings.HasPrefix(image, "public.ecr.aws/docker/library/") {
-		return strings.TrimPrefix(image, "public.ecr.aws/docker/library/")
 	}
 	return image
 }

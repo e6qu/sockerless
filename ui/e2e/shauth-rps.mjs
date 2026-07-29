@@ -52,6 +52,7 @@ try {
       await assertRanStepFunctionsWorkflow(page, app);
       await assertManagedAwsEventingAndObservability(page, app);
       await assertManagedFirehoseAndPrivateCA(page, app);
+      await assertManagedCodeBuild(page, app);
       await assertManagedAmplifyAndRDS(page, app);
     }
     if (app.name === "Sockerless Microsoft Azure simulator") {
@@ -1117,6 +1118,42 @@ async function assertManagedFirehoseAndPrivateCA(page, app) {
   );
 }
 
+// assertManagedCodeBuild drives the same public AWS CodeBuild APIs as the
+// vendor clients while signed in through the production console boundary. The
+// terminal SUCCEEDED state comes from the configured Alpine container's exit
+// status, not from a console-only job route.
+async function assertManagedCodeBuild(page, app) {
+  const origin = new URL(app.launch).origin;
+  const projectName = `rps-codebuild-${Date.now() % 1_000_000}`;
+
+  await page.goto(`${origin}/ui/codebuild`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("codebuild-create-project").click();
+  const create = page.getByRole("dialog", { name: "Create build project" });
+  await create.getByLabel("Project name").fill(projectName);
+  await create.getByLabel("Service role").fill("arn:aws:iam::123456789012:role/codebuild-role");
+  await create.getByTestId("codebuild-create-project-submit").click();
+  await create.waitFor({ state: "detached" });
+
+  const projectRow = page.getByTestId("codebuild-table").getByRole("row", { name: new RegExp(projectName) });
+  await projectRow.waitFor({ state: "visible" });
+  await projectRow.getByRole("checkbox").click();
+  await page.getByTestId("codebuild-start-build").click();
+  const buildRow = page.getByTestId("codebuild-builds-table").getByRole("row", { name: new RegExp(projectName) });
+  await buildRow.getByText("SUCCEEDED", { exact: true }).waitFor({ state: "visible", timeout: 60_000 });
+
+  await page.getByTestId("codebuild-delete-project").click();
+  const deletion = page.getByRole("dialog", { name: `Delete ${projectName}?` });
+  await deletion.getByRole("button", { name: "Delete", exact: true }).click();
+  await deletion.waitFor({ state: "detached" });
+  await projectRow.waitFor({ state: "detached" });
+
+  assert.equal(
+    await page.getByTestId("codebuild-error").count() + await page.getByTestId("codebuild-builds-error").count(),
+    0,
+    `${app.name} AWS CodeBuild browser flow reported an API error`,
+  );
+}
+
 // assertManagedAmplifyAndRDS proves the new operator workflows use the real
 // federated cloud data plane. The independent official-client suite exercises
 // the private Git clone/build and native database wire protocols; this browser
@@ -1137,6 +1174,18 @@ async function assertManagedAmplifyAndRDS(page, app) {
   await amplify.waitFor({ state: "detached" });
   const appRow = page.getByRole("row", { name: new RegExp(appName) });
   await appRow.getByText("TOKEN", { exact: true }).waitFor({ state: "visible" });
+  await appRow.getByRole("checkbox").click();
+  await page.getByTestId("amplify-manage-hosting").click();
+  const hosting = page.getByRole("dialog", { name: `Hosting for ${appName}` });
+  await hosting.getByTestId("amplify-branch-name").locator("input").fill("main");
+  await hosting.getByTestId("amplify-create-branch").click();
+  await hosting.getByText("main", { exact: true }).first().waitFor({ state: "visible" });
+  await hosting.getByRole("button", { name: "Close" }).last().click();
+  await page.getByTestId("amplify-delete-app").click();
+  const appDeletion = page.getByRole("dialog", { name: `Delete ${appName}?` });
+  await appDeletion.getByRole("button", { name: "Delete", exact: true }).click();
+  await appDeletion.waitFor({ state: "detached" });
+  await appRow.waitFor({ state: "detached" });
 
   await page.goto(`${origin}/ui/rds`, { waitUntil: "domcontentloaded" });
   await page.getByTestId("rds-create-instance").click();
@@ -1154,6 +1203,21 @@ async function assertManagedAmplifyAndRDS(page, app) {
   await connection.getByText("IAM database authentication", { exact: true }).waitFor({ state: "visible" });
   await connection.getByText(/aws rds generate-db-auth-token/).waitFor({ state: "visible" });
   await connection.getByRole("button", { name: "Close" }).last().click();
+  await page.getByTestId("rds-modify-authentication").click();
+  const modification = page.getByRole("dialog", { name: `Modify authentication for ${databaseID}` });
+  await modification.getByLabel("Enable IAM database authentication").uncheck();
+  await modification.getByLabel("New master password").fill(`RpsRotated-${suffix}!`);
+  await modification.getByTestId("rds-modify-authentication-submit").click();
+  await modification.waitFor({ state: "detached" });
+  await page.getByTestId("rds-connect-instance").click();
+  const updatedConnection = page.getByRole("dialog", { name: `Connect to ${databaseID}` });
+  await updatedConnection.getByText("Connect with the native client", { exact: true }).waitFor({ state: "visible" });
+  assert.equal(
+    await updatedConnection.getByText("IAM database authentication", { exact: true }).count(),
+    0,
+    "the Amazon RDS connection panel retained disabled IAM database authentication",
+  );
+  await updatedConnection.getByRole("button", { name: "Close" }).last().click();
 
   await page.getByTestId("rds-delete-instance").click();
   const deletion = page.getByRole("dialog", { name: `Delete ${databaseID}?` });

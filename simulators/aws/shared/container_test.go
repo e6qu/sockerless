@@ -34,6 +34,13 @@ func TestResolveLocalImage_Passthrough(t *testing.T) {
 	}
 }
 
+func TestResolveLocalImage_AmazonECRPublicPassthrough(t *testing.T) {
+	const image = "public.ecr.aws/docker/library/alpine:3.21"
+	if got := ResolveLocalImage(image); got != image {
+		t.Errorf("expected Amazon ECR Public coordinate %q, got %q", image, got)
+	}
+}
+
 func TestResolveLocalImage_ECR_DockerHub(t *testing.T) {
 	// ECR pull-through cache hit for a Docker Hub library image:
 	// `docker-hub/` and `library/` both get stripped so the resolved

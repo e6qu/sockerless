@@ -638,6 +638,14 @@ func azureConfigureRealNATGatewayForSubnet(ctx context.Context, subnet Subnet) e
 	if !ok {
 		return fmt.Errorf("NAT gateway %s not found", subnet.Properties.NatGateway.ID)
 	}
+	// Microsoft Azure permits a NAT gateway to be created and associated with
+	// a subnet before a public IP address or public IP prefix is associated.
+	// That intermediate control-plane state has no outbound data plane yet.
+	// A later NAT-gateway update carrying the public addressing calls this
+	// function again and programs the real network fabric.
+	if len(gw.Properties.PublicIPAddresses) == 0 && len(gw.Properties.PublicIPPrefixes) == 0 {
+		return nil
+	}
 	var publicIP net.IP
 	if len(gw.Properties.PublicIPAddresses) > 0 {
 		pip, ok := azurePublicIPs.Get(gw.Properties.PublicIPAddresses[0].ID)

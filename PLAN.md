@@ -35,10 +35,10 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 5. Made the deployment reverse proxy report bounded cold-start `503 Retry-After` responses and preserved sparse Amazon Elastic Block Store extents through snapshot, restore, and copy.
 6. Regenerated public surface tables and assigned every new official AWS CLI test to exactly one continuous-integration shard.
 7. Upgraded every same-day AWS SDK dependency drift in the open branch and retested all affected modules and service wire paths.
-8. Added optimized and SDK AWS Step Functions integrations for Amazon ECS and AWS CodeBuild, including synchronous and callback lifecycles.
-9. Made AWS Amplify retain encrypted connected-repository credentials and execute authenticated multi-language builds with corresponding AWS console workflows.
-10. Added real PostgreSQL and MySQL Amazon Relational Database Service data planes with native TLS, durable volumes, encrypted master secrets, and IAM database authentication.
-11. Documented and externally proved standard AWS endpoint propagation from explicitly deployed AWS Lambda and AWS CodeBuild workloads.
+8. Added optimized and SDK AWS Step Functions integrations for Amazon ECS and AWS CodeBuild, including synchronous, callback, failure, timeout, stop, and real-container cancellation lifecycles.
+9. Made AWS CodeBuild authenticate private Git revisions, execute checked-in or explicit build specifications inside the exact configured image, and cancel build and build-batch containers on public stop operations.
+10. Made AWS Amplify retain encrypted connected-repository credentials and execute complete authenticated multi-language monorepo phase, environment, cache, and artifact lifecycles.
+11. Added persistent PostgreSQL, MySQL, and MariaDB Amazon Relational Database Service data planes with native TLS, encrypted master secrets, TLS-only IAM database authentication, and live or pending password rotation.
 12. Upgraded every same-day Google Cloud API dependency drift, fixed Buildx external-test image loading, and reran the complete affected SDK, CLI, Terraform, browser, and production-build gates.
 13. Migrated Azure Container Apps, Azure Functions, and the production-shaped Azure simulator Terraform stack to HashiCorp AzureRM 5.0.0, including every provider-required resource-ID field.
 14. Made region-skewed Google Discovery drift retain the exact upstream documents as short-lived CI artifacts, and replaced CloudWatch metric-stream test placeholders with real Amazon S3, IAM, and Amazon Data Firehose resources.
@@ -50,7 +50,24 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 20. Advanced five Google Discovery documents from the exact hosted-runner artifacts, implemented the newly published Bigtable memory-layer update and Cloud Resource Manager resource-semantics methods, and ratcheted their measured coverage floors.
 21. Made Microsoft.OperationalInsights network-access defaults and Microsoft.Storage File-share access policies survive AzureRM 5 apply and refresh through the real ARM contracts.
 22. Updated the external AzureRM 5 post-plan assertions to its canonical Microsoft.Storage ARM resource IDs.
-23. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+23. Added Cloudscape operating workflows for AWS CodeBuild projects and builds, AWS Amplify branches and deployments, and Amazon RDS authentication, then proved them through the authenticated browser matrix.
+24. Documented and externally proved standard AWS endpoint propagation from explicitly deployed AWS Lambda and AWS CodeBuild workloads.
+25. Retained the exact CI-captured Cloud Logging v2 and IAM Service Account Credentials v1 Discovery revisions and revalidated the unchanged public method, path, and schema-field sets.
+26. Closed the hosted-runner concurrency findings: AWS Amplify preserved sub-second release ordering, Microsoft Azure NAT gateways accepted subnet association before public addressing, and the real AWS Step Functions workload test allowed cloud-shaped cold container provisioning.
+27. Upgraded the newly released SQLite and Google Cloud client graphs, including canonical Firestore and Spanner protobuf modules, and reran every affected module plus the complete official Google Cloud SDK suite.
+28. Retained the exact CI-captured Cloud Run v1 and v2 Discovery revision 20260727 documents and revalidated their unchanged public method, path, and schema-field sets.
+29. Provisioned the exact public Amazon ECS and AWS CodeBuild workload images before the AWS SDK shard's per-test lifecycle deadline, then reran the real-container integration.
+30. Made all three console skip-link tests start keyboard traversal from deterministic in-document focus and reran them in real Chromium.
+31. Preserved explicit Amazon ECR Public workload coordinates, made cancellation terminate CodeBuild containers on every Docker wait path, and externally proved the stopped build emitted no delayed Amazon SQS message.
+32. Loaded Docker Buildx test images, shared the container host PID namespace for real VPC attachment, and completed the full production-shaped AWS Terraform graph through HTTPS.
+33. Loaded the Amazon ECS arithmetic workload through the backend's Docker Image Load API, required an explicit Amazon ECR workload coordinate for live-cloud runs, and passed all six real-container lifecycle cases.
+34. Preserved the AWS Signature Version 4 host through the HTTPS gateway, serialized heavyweight Terraform packages locally, isolated all five production-shaped graphs on separate hosted runners, and passed every HTTPS apply, real workload or data-plane assertion, and destroy.
+35. Upgraded the newly published `go-git` patch and its current transitive graph, passed the complete AWS simulator module suite, and reran the authenticated freshness audit.
+36. Loaded the shared compiled arithmetic fixture through every active cloud backend's Docker Image Load API and passed both the exact e2e suite and the optional second Amazon ECS simulator-backend path.
+37. Upgraded both immutable multi-architecture publication jobs to the newly released `docker/login-action` 4.6.0 and passed action syntax, publication-contract, and authenticated freshness validation.
+38. Kept native Linux workload endpoints on Docker's host-gateway alias, reserved gateway rewriting for a containerized simulator, and passed the real Step Functions → Amazon ECS → AWS CodeBuild → AWS CLI integration.
+39. Declared HashiCorp AWS provider 6.50.0 across every simulator Terraform graph, passed the complete root graph through HTTPS with runtime Smithy validation, and made the Microsoft Azure failed-delete UI assertion await its retained accessible dialog.
+40. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

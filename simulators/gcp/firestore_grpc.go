@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	fspb "google.golang.org/genproto/googleapis/firestore/v1"
+	fspb "cloud.google.com/go/firestore/apiv1/firestorepb"
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 	latpb "google.golang.org/genproto/googleapis/type/latlng"
 	"google.golang.org/grpc"

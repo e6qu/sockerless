@@ -191,6 +191,12 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		simCmd.Process.Kill()
 		os.Exit(1)
 	}
+	if err := loadImageThroughDockerAPI("tcp://"+serverAddr, evalImageName); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load eval-arithmetic through ECS backend: %v\n", err)
+		backendCmd.Process.Kill()
+		simCmd.Process.Kill()
+		os.Exit(1)
+	}
 
 	// Start simulator backends if SOCKERLESS_SIM is set
 	var simProcesses []*simProcess
@@ -271,4 +277,50 @@ func waitForReady(url string, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for %s", url)
+}
+
+// loadImageThroughDockerAPI provisions an image through the backend's public
+// Docker API. The host daemon used to build the fixture is deliberately not
+// authoritative for a cloud backend's image catalog.
+func loadImageThroughDockerAPI(host, imageName string) error {
+	c, err := client.NewClientWithOpts(
+		client.WithHost(host),
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return fmt.Errorf("create Docker client for %s: %w", host, err)
+	}
+	defer c.Close()
+
+	save := exec.Command("docker", "save", imageName)
+	savedImage, err := save.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("create docker save pipe for %s: %w", imageName, err)
+	}
+	var saveStderr bytes.Buffer
+	save.Stderr = &saveStderr
+	if err := save.Start(); err != nil {
+		return fmt.Errorf("start docker save for %s: %w", imageName, err)
+	}
+
+	loaded, err := c.ImageLoad(context.Background(), savedImage)
+	if err != nil {
+		_ = save.Process.Kill()
+		_ = save.Wait()
+		return fmt.Errorf("load %s through %s: %w", imageName, host, err)
+	}
+	loadOutput, readErr := io.ReadAll(loaded.Body)
+	closeErr := loaded.Body.Close()
+	saveErr := save.Wait()
+	if readErr != nil {
+		return fmt.Errorf("read image-load response for %s through %s: %w", imageName, host, readErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close image-load response for %s through %s: %w", imageName, host, closeErr)
+	}
+	if saveErr != nil {
+		return fmt.Errorf("docker save %s: %w: %s", imageName, saveErr, saveStderr.String())
+	}
+	fmt.Printf("Loaded %s through %s: %s", imageName, host, loadOutput)
+	return nil
 }

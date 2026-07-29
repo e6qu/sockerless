@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -20,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	dockercontainer "github.com/docker/docker/api/types/container"
 	sim "github.com/sockerless/simulator"
 )
 
@@ -27,12 +30,32 @@ const rdsAWSOwnedKMSKeyID = "aws-owned-rds"
 const rdsEmptyPayloadSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 type rdsDataPlaneRuntime struct {
+	mu       sync.RWMutex
 	instance RDSInstance
 	listener net.Listener
 	backend  string
 	handle   *sim.ContainerHandle
 	start    sync.Once
 	startErr error
+}
+
+func (runtime *rdsDataPlaneRuntime) snapshot() (RDSInstance, string, *sim.ContainerHandle) {
+	runtime.mu.RLock()
+	defer runtime.mu.RUnlock()
+	return runtime.instance, runtime.backend, runtime.handle
+}
+
+func (runtime *rdsDataPlaneRuntime) snapshotInstance() RDSInstance {
+	instance, _, _ := runtime.snapshot()
+	return instance
+}
+
+func (runtime *rdsDataPlaneRuntime) update(instance RDSInstance, backend string, handle *sim.ContainerHandle) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	runtime.instance = instance
+	runtime.backend = backend
+	runtime.handle = handle
 }
 
 var (
@@ -55,11 +78,16 @@ func rdsInstallDataPlane(instance *RDSInstance, masterPassword string) error {
 			return fmt.Errorf("generate AWS owned RDS key: %w", err)
 		}
 	}
-	ciphertext, ok := kmsEncryptBytes(rdsAWSOwnedKMSKeyID, []byte(masterPassword))
-	if !ok {
-		return fmt.Errorf("encrypt RDS master-user credential")
+	if len(instance.MasterUserSecret) == 0 {
+		ciphertext, ok := kmsEncryptBytes(rdsAWSOwnedKMSKeyID, []byte(masterPassword))
+		if !ok {
+			return fmt.Errorf("encrypt RDS master-user credential")
+		}
+		instance.MasterUserSecret = ciphertext
 	}
-	instance.MasterUserSecret = ciphertext
+	if len(instance.BackendMasterUserSecret) == 0 {
+		instance.BackendMasterUserSecret = append([]byte(nil), instance.MasterUserSecret...)
+	}
 
 	listener, err := rdsListenOnLoopback(instance.DBInstanceIdentifier, instance.Port)
 	if err != nil {
@@ -116,7 +144,12 @@ func (runtime *rdsDataPlaneRuntime) ensureBackend() error {
 }
 
 func (runtime *rdsDataPlaneRuntime) startBackend() error {
-	_, password, ok := kmsDecryptBytes(runtime.instance.MasterUserSecret)
+	instance := runtime.snapshotInstance()
+	backendSecret := instance.BackendMasterUserSecret
+	if len(backendSecret) == 0 {
+		backendSecret = instance.MasterUserSecret
+	}
+	_, password, ok := kmsDecryptBytes(backendSecret)
 	if !ok {
 		return fmt.Errorf("RDS master-user credential could not be decrypted")
 	}
@@ -133,11 +166,11 @@ func (runtime *rdsDataPlaneRuntime) startBackend() error {
 	if err := backendListener.Close(); err != nil {
 		return fmt.Errorf("release database engine port: %w", err)
 	}
-	database := runtime.instance.DBName
+	database := instance.DBName
 	if database == "" {
-		database = runtime.instance.MasterUsername
+		database = instance.MasterUsername
 	}
-	engine := strings.ToLower(runtime.instance.Engine)
+	engine := strings.ToLower(instance.Engine)
 	var image string
 	var containerPort int
 	var env map[string]string
@@ -149,46 +182,72 @@ func (runtime *rdsDataPlaneRuntime) startBackend() error {
 		containerPort = 5432
 		dataPath = "/var/lib/postgresql/data"
 		env = map[string]string{
-			"POSTGRES_USER":             runtime.instance.MasterUsername,
+			"POSTGRES_USER":             instance.MasterUsername,
 			"POSTGRES_PASSWORD":         string(password),
 			"POSTGRES_DB":               database,
 			"POSTGRES_HOST_AUTH_METHOD": "trust",
 		}
-	case engine == "mysql", engine == "mariadb":
+	case engine == "mysql":
 		image = "public.ecr.aws/docker/library/mysql:8.0"
 		containerPort = 3306
 		dataPath = "/var/lib/mysql"
 		env = map[string]string{
-			"MYSQL_USER":          runtime.instance.MasterUsername,
+			"MYSQL_USER":          instance.MasterUsername,
 			"MYSQL_PASSWORD":      string(password),
 			"MYSQL_ROOT_PASSWORD": string(password),
 			"MYSQL_DATABASE":      database,
 		}
 		args = []string{"--default-authentication-plugin=mysql_native_password"}
+	case engine == "mariadb":
+		image = "public.ecr.aws/docker/library/mariadb:11.4"
+		containerPort = 3306
+		dataPath = "/var/lib/mysql"
+		env = map[string]string{
+			"MARIADB_USER":          instance.MasterUsername,
+			"MARIADB_PASSWORD":      string(password),
+			"MARIADB_ROOT_PASSWORD": string(password),
+			"MARIADB_DATABASE":      database,
+		}
 	default:
-		return fmt.Errorf("database engine %q has no data plane", runtime.instance.Engine)
+		return fmt.Errorf("database engine %q has no data plane", instance.Engine)
 	}
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
 		Image: image, Architecture: "linux/amd64", Args: args, Env: env,
 		PublishPorts: map[int]int{containerPort: backendPort},
-		Binds:        []string{"sockerless-rds-" + runtime.instance.DBInstanceIdentifier + ":" + dataPath},
-		Labels:       map[string]string{"sockerless-rds-instance": runtime.instance.DBInstanceIdentifier},
+		Binds:        []string{"sockerless-rds-" + instance.DBInstanceIdentifier + ":" + dataPath},
+		Labels:       map[string]string{"sockerless-rds-instance": instance.DBInstanceIdentifier},
 		Sandbox:      sim.SandboxFargate,
 	}, sim.NoopSink{})
 	if err != nil {
-		return fmt.Errorf("start %s database engine: %w", runtime.instance.Engine, err)
+		return fmt.Errorf("start %s database engine: %w", instance.Engine, err)
 	}
-	runtime.handle = handle
-	runtime.backend = net.JoinHostPort("127.0.0.1", strconv.Itoa(backendPort))
+	backend := net.JoinHostPort("127.0.0.1", strconv.Itoa(backendPort))
+	runtime.update(instance, backend, handle)
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
-		if rdsDatabaseEngineReady(engine, runtime.backend, runtime.instance.MasterUsername, database) {
+		if rdsDatabaseEngineReady(engine, backend, instance.MasterUsername, database) {
+			if !bytes.Equal(instance.BackendMasterUserSecret, instance.MasterUserSecret) {
+				_, desiredPassword, decrypted := kmsDecryptBytes(instance.MasterUserSecret)
+				if !decrypted {
+					handle.Cancel()
+					return fmt.Errorf("decrypt pending Amazon RDS master-user credential")
+				}
+				if err := rdsRotateBackendMasterPassword(runtime, string(desiredPassword)); err != nil {
+					handle.Cancel()
+					return fmt.Errorf("apply pending Amazon RDS master-user password: %w", err)
+				}
+				instance.BackendMasterUserSecret = append([]byte(nil), instance.MasterUserSecret...)
+				runtime.update(instance, backend, handle)
+				rdsInstances.Update(instance.DBInstanceIdentifier, func(stored *RDSInstance) {
+					stored.BackendMasterUserSecret = append([]byte(nil), instance.MasterUserSecret...)
+				})
+			}
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	handle.Cancel()
-	return fmt.Errorf("%s database engine did not become ready", runtime.instance.Engine)
+	return fmt.Errorf("%s database engine did not become ready", instance.Engine)
 }
 
 func rdsDatabaseEngineReady(engine, address, username, database string) bool {
@@ -216,12 +275,13 @@ func rdsDatabaseEngineReady(engine, address, username, database string) bool {
 }
 
 func (runtime *rdsDataPlaneRuntime) serveConnection(client net.Conn) {
+	instance := runtime.snapshotInstance()
 	defer client.Close()
 	if err := runtime.ensureBackend(); err != nil {
-		log.Printf("Amazon RDS %s data plane: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s data plane: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
-	if strings.HasPrefix(strings.ToLower(runtime.instance.Engine), "postgres") {
+	if strings.HasPrefix(strings.ToLower(runtime.snapshotInstance().Engine), "postgres") {
 		runtime.servePostgreSQL(client)
 		return
 	}
@@ -229,9 +289,10 @@ func (runtime *rdsDataPlaneRuntime) serveConnection(client net.Conn) {
 }
 
 func (runtime *rdsDataPlaneRuntime) servePostgreSQL(client net.Conn) {
+	instance := runtime.snapshotInstance()
 	startup, secure, err := rdsReadPostgreSQLStartup(client)
 	if err != nil {
-		log.Printf("Amazon RDS %s PostgreSQL startup: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s PostgreSQL startup: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
 	if secure != nil {
@@ -239,18 +300,19 @@ func (runtime *rdsDataPlaneRuntime) servePostgreSQL(client net.Conn) {
 		defer client.Close()
 	}
 	user := rdsPostgreSQLStartupParameter(startup, "user")
-	if err := rdsPostgreSQLAuthenticate(client, runtime.instance, user); err != nil {
+	if err := rdsPostgreSQLAuthenticate(client, instance, user, secure != nil); err != nil {
 		rdsPostgreSQLAuthError(client, err.Error())
 		return
 	}
-	backend, err := net.DialTimeout("tcp", runtime.backend, 5*time.Second)
+	_, backendAddress, _ := runtime.snapshot()
+	backend, err := net.DialTimeout("tcp", backendAddress, 5*time.Second)
 	if err != nil {
-		log.Printf("Amazon RDS %s PostgreSQL backend dial: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s PostgreSQL backend dial: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
 	defer backend.Close()
 	if _, err := backend.Write(startup); err != nil {
-		log.Printf("Amazon RDS %s PostgreSQL backend startup: %v", runtime.instance.DBInstanceIdentifier, err)
+		log.Printf("Amazon RDS %s PostgreSQL backend startup: %v", instance.DBInstanceIdentifier, err)
 		return
 	}
 	rdsRelay(client, backend)
@@ -310,7 +372,7 @@ func rdsPostgreSQLStartupParameter(packet []byte, wanted string) string {
 	return ""
 }
 
-func rdsPostgreSQLAuthenticate(connection net.Conn, instance RDSInstance, user string) error {
+func rdsPostgreSQLAuthenticate(connection net.Conn, instance RDSInstance, user string, secure bool) error {
 	request := make([]byte, 9)
 	request[0] = 'R'
 	binary.BigEndian.PutUint32(request[1:5], 8)
@@ -338,10 +400,110 @@ func rdsPostgreSQLAuthenticate(connection net.Conn, instance RDSInstance, user s
 	if ok && user == instance.MasterUsername && password == string(masterPassword) {
 		return nil
 	}
-	if instance.EnableIAMDatabaseAuthentication && rdsValidateIAMAuthToken(instance, user, password) {
+	if secure && instance.EnableIAMDatabaseAuthentication && rdsValidateIAMAuthToken(instance, user, password) {
 		return nil
 	}
 	return fmt.Errorf("password authentication failed for user %q", user)
+}
+
+func rdsModifyDataPlaneAuthentication(instance *RDSInstance, newPassword *string) error {
+	if newPassword != nil {
+		if *newPassword == "" {
+			return fmt.Errorf("MasterUserPassword cannot be empty")
+		}
+		ciphertext, encrypted := kmsEncryptBytes(rdsAWSOwnedKMSKeyID, []byte(*newPassword))
+		if !encrypted {
+			return fmt.Errorf("encrypt Amazon RDS master-user credential")
+		}
+		instance.MasterUserSecret = ciphertext
+	}
+	value, ok := rdsDataPlanes.Load(instance.DBInstanceIdentifier)
+	if !ok {
+		return nil
+	}
+	runtime, ok := value.(*rdsDataPlaneRuntime)
+	if !ok {
+		return fmt.Errorf("data-plane runtime has an invalid type")
+	}
+	if newPassword != nil {
+		current, backend, handle := runtime.snapshot()
+		if handle != nil {
+			if err := rdsRotateBackendMasterPassword(runtime, *newPassword); err != nil {
+				return err
+			}
+			instance.BackendMasterUserSecret = append([]byte(nil), instance.MasterUserSecret...)
+		} else {
+			instance.BackendMasterUserSecret = append([]byte(nil), current.BackendMasterUserSecret...)
+		}
+		runtime.update(*instance, backend, handle)
+		return nil
+	}
+	_, backend, handle := runtime.snapshot()
+	runtime.update(*instance, backend, handle)
+	return nil
+}
+
+func rdsRotateBackendMasterPassword(runtime *rdsDataPlaneRuntime, newPassword string) error {
+	instance, _, handle := runtime.snapshot()
+	if handle == nil {
+		return fmt.Errorf("database engine is not running")
+	}
+	database := instance.DBName
+	if database == "" {
+		database = instance.MasterUsername
+	}
+	var command []string
+	if strings.HasPrefix(strings.ToLower(instance.Engine), "postgres") {
+		statement := "ALTER ROLE " + rdsPostgreSQLQuoteIdentifier(instance.MasterUsername) +
+			" WITH PASSWORD " + rdsSQLQuoteLiteral(newPassword)
+		command = []string{"psql", "-v", "ON_ERROR_STOP=1", "-U", instance.MasterUsername, "-d", database, "-c", statement}
+	} else {
+		backendSecret := instance.BackendMasterUserSecret
+		if len(backendSecret) == 0 {
+			backendSecret = instance.MasterUserSecret
+		}
+		_, oldPassword, decrypted := kmsDecryptBytes(backendSecret)
+		if !decrypted {
+			return fmt.Errorf("decrypt Amazon RDS master-user credential")
+		}
+		statement := "ALTER USER " + rdsSQLQuoteLiteral(instance.MasterUsername) +
+			"@'%' IDENTIFIED BY " + rdsSQLQuoteLiteral(newPassword)
+		client := "mysql"
+		if strings.EqualFold(instance.Engine, "mariadb") {
+			client = "mariadb"
+		}
+		command = []string{client, "--user=root", "--password=" + string(oldPassword), "--execute=" + statement}
+	}
+	execContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	created, err := sim.DockerClient().ContainerExecCreate(execContext, handle.ContainerID, dockercontainer.ExecOptions{
+		Cmd: command, AttachStdout: true, AttachStderr: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create database password rotation command: %w", err)
+	}
+	attached, err := sim.DockerClient().ContainerExecAttach(execContext, created.ID, dockercontainer.ExecAttachOptions{})
+	if err != nil {
+		return fmt.Errorf("attach database password rotation command: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, attached.Reader)
+	attached.Close()
+	inspected, err := sim.DockerClient().ContainerExecInspect(execContext, created.ID)
+	if err != nil {
+		return fmt.Errorf("inspect database password rotation command: %w", err)
+	}
+	if inspected.ExitCode != 0 {
+		return fmt.Errorf("database engine rejected master-user password rotation with status %d", inspected.ExitCode)
+	}
+	return nil
+}
+
+func rdsPostgreSQLQuoteIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
+func rdsSQLQuoteLiteral(value string) string {
+	return `'` + strings.ReplaceAll(value, `'`, `''`) + `'`
 }
 
 func rdsValidateIAMAuthToken(instance RDSInstance, user, token string) bool {
@@ -453,11 +615,12 @@ func rdsStopDataPlane(instanceID string, deleteVolume bool) {
 		return
 	}
 	_ = runtime.listener.Close()
-	if runtime.handle != nil {
-		runtime.handle.Cancel()
-		_ = runtime.handle.Wait()
+	instance, _, handle := runtime.snapshot()
+	if handle != nil {
+		handle.Cancel()
+		_ = handle.Wait()
 		if deleteVolume {
-			_ = sim.RemoveVolume("sockerless-rds-" + runtime.instance.DBInstanceIdentifier)
+			_ = sim.RemoveVolume("sockerless-rds-" + instance.DBInstanceIdentifier)
 		}
 	}
 }

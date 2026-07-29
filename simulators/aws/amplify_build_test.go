@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -28,11 +30,8 @@ frontend:
 	if spec.Version != "1" {
 		t.Fatalf("version: got %q", spec.Version)
 	}
-	if len(spec.PreBuildCommands) != 1 || spec.PreBuildCommands[0] != "echo prebuild" {
-		t.Fatalf("preBuild commands: %v", spec.PreBuildCommands)
-	}
-	if len(spec.BuildCommands) != 2 {
-		t.Fatalf("build commands: %v", spec.BuildCommands)
+	if len(spec.FrontendCommands) != 3 || spec.FrontendCommands[0] != "echo prebuild" {
+		t.Fatalf("frontend commands: %v", spec.FrontendCommands)
 	}
 	if spec.BaseDirectory != "dist" {
 		t.Fatalf("baseDirectory: %q", spec.BaseDirectory)
@@ -51,6 +50,64 @@ frontend:
 		if _, err := amplifyParseBuildSpec(text); err == nil {
 			t.Fatalf("%s: expected error", name)
 		}
+	}
+}
+
+func TestAmplifyParseMonorepoBuildSpec(t *testing.T) {
+	spec, err := amplifyParseBuildSpec(`
+version: 1
+applications:
+  - appRoot: apps/web
+    env:
+      variables:
+        FROM_SPEC: present
+    backend:
+      phases:
+        build:
+          commands: [echo backend]
+    frontend:
+      buildPath: /
+      phases:
+        preBuild:
+          commands: [echo frontend]
+        postBuild:
+          commands: [echo post]
+      artifacts:
+        baseDirectory: apps/web/dist
+        files: ['**/*']
+      cache:
+        paths: [apps/web/.cache/**/*]
+    test:
+      phases:
+        test:
+          commands: [echo test]
+`, "apps/web")
+	if err != nil {
+		t.Fatalf("parse monorepo: %v", err)
+	}
+	if spec.AppRoot != "apps/web" || spec.BuildPath != "/" {
+		t.Fatalf("monorepo paths: %#v", spec)
+	}
+	if spec.Environment["FROM_SPEC"] != "present" {
+		t.Fatalf("environment: %#v", spec.Environment)
+	}
+	if len(spec.BackendCommands) != 1 || len(spec.FrontendCommands) != 2 || len(spec.TestCommands) != 1 {
+		t.Fatalf("phase commands: %#v", spec)
+	}
+	if len(spec.CachePaths) != 1 {
+		t.Fatalf("cache paths: %#v", spec.CachePaths)
+	}
+	if _, err := amplifyParseBuildSpec(`version: 1
+applications:
+  - appRoot: apps/other
+    frontend:
+      phases:
+        build:
+          commands: [echo no]
+      artifacts:
+        baseDirectory: dist
+`, "apps/web"); err == nil {
+		t.Fatal("a missing AMPLIFY_MONOREPO_APP_ROOT match must fail")
 	}
 }
 
@@ -119,5 +176,13 @@ func TestAmplifyBuildEnvMerge(t *testing.T) {
 func TestAmplifyBuildImageDefault(t *testing.T) {
 	if img := amplifyBuildImage(); !strings.HasPrefix(img, "public.ecr.aws/docker/library/node:22-bookworm") {
 		t.Fatalf("managed multi-language build image must come from Amazon ECR Public, got %q", img)
+	}
+}
+
+func TestAmplifyBuildCacheBranchKeyCannotEscapeAppDirectory(t *testing.T) {
+	appDirectory := filepath.Join(os.TempDir(), "sockerless-amplify-cache", "dapp")
+	cacheDirectory := amplifyBuildCacheDirectory("dapp", "../../outside")
+	if filepath.Dir(cacheDirectory) != appDirectory {
+		t.Fatalf("branch cache escaped app directory: got %q, want child of %q", cacheDirectory, appDirectory)
 	}
 }

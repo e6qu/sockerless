@@ -32,20 +32,25 @@ Functions experience exposed the graph, editable definition, execution input,
 history, input/output inspection, publishing, aliases, tags, and redrive. AWS
 Private Certificate Authority and Amazon Data Firehose added complete
 authority lifecycle, encrypted delivery-stream, and Amazon S3 delivery
-workflows. The production UI passed 239 Chromium package tests, and the
+workflows. The production UI passed 241 Chromium package tests, and the
 authenticated Shauth/Ory Hydra/PostgreSQL matrix exercised all four services
 through federated AWS credentials.
 
 AWS Step Functions executed optimized and SDK Amazon ECS and AWS CodeBuild
 tasks with request/response, synchronous, callback, failure, and cancellation
-semantics. AWS Amplify encrypted connected-repository credentials, cloned
-private repositories, and executed Python and Node.js build specifications.
-Amazon Relational Database Service ran real PostgreSQL and MySQL data planes
-with native TLS and IAM database authentication. Explicit AWS Lambda
-deployments and AWS CodeBuild workloads reached downstream AWS APIs through
-the standard global or per-service endpoint coordinates. The production AWS
-console passed 239 Chromium tests and its authenticated browser matrix covered
-the Amplify and RDS workflows.
+semantics. CodeBuild cloned authenticated Git revisions and ran checked-in or
+explicit build specifications inside each project's exact configured image;
+stop and workflow abort cancelled the real container. AWS Amplify encrypted
+connected-repository credentials and executed backend, frontend, and test
+pre/build/post phases with monorepo roots, environment precedence, declared
+caches, and artifacts in a managed Python and Node.js image. Amazon Relational
+Database Service ran real PostgreSQL, MySQL, and MariaDB data planes with
+native TLS, IAM database authentication, live password rotation, and
+stop/start volume persistence. Explicit AWS Lambda deployments and CodeBuild
+workloads reached downstream AWS APIs through the standard global or
+per-service endpoint coordinates. The production AWS console passed 241
+Chromium tests and its authenticated browser matrix operated CodeBuild,
+Amplify, and RDS through federated AWS credentials.
 
 The AWS CLI harness provisioned and validated the official Session Manager
 plugin when the host lacked it, so Amazon ECS ExecuteCommand coverage no longer
@@ -76,6 +81,14 @@ module's Step Functions differential role built its policy ARNs from the
 module's declared `region` input, and all six production modules validated.
 The complete Terraform tree also retained canonical HCL formatting.
 
+Every AWS Terraform graph declared HashiCorp AWS provider 6.50.0, so the root
+production graph and its sibling packages executed one reproducible provider
+implementation. The root graph passed its complete concurrent apply, workload
+assertions, refresh, and destroy through Caddy HTTPS with runtime Smithy
+validation armed. The Microsoft Azure console's failed-delete assertion awaited
+React Query's settled mutation before checking the retained accessible Fluent
+dialog; all 131 package tests and the complete UI fan-out passed.
+
 The final hosted freshness pass advanced the exact Google Discovery documents
 for Bigtable Admin v2, Cloud Logging v2, Pub/Sub v1, and Cloud Resource Manager
 v1/v3. The two methods newly present in those specifications were real
@@ -93,6 +106,12 @@ Azure SDK round-tripped the share policy and Azure CLI round-tripped the
 workspace defaults. The external stack's post-plan assertions used AzureRM
 5's canonical Microsoft.Storage ARM IDs for Blob containers, Tables, and File
 shares instead of the removed legacy data-plane IDs.
+
+The pull-request CI freshness pass supplied the exact newer official Cloud
+Logging v2 revision 20260724 and IAM Service Account Credentials v1 revision
+20260723 Discovery documents. Their method, route, and schema-field sets were
+unchanged; the newer descriptions and provenance pins were retained, and the
+Google simulator route, specification, and measured-coverage suite passed.
 
 The publication repair preserved current public contracts across the failing
 client surfaces. Amazon SQS redrive used the normal enqueue path and therefore
@@ -118,15 +137,69 @@ delivery for direct writes, Amazon SNS subscriptions, and Amazon CloudWatch
 metric streams. Both services shipped with official AWS SDK, AWS CLI,
 Terraform, and authenticated browser coverage.
 
-The external review's locally actionable gaps were closed: AWS Step Functions
-ran Amazon ECS and AWS CodeBuild workloads, AWS Amplify authenticated private
-repositories and ran multi-language builds, Amazon RDS exposed real native data
-planes with IAM database authentication, and deployed workloads used the
-standard SDK endpoint environment variables. Explicit Lambda deployment
-remained intentional because AWS Lambda itself runs only functions a caller
-creates; the repository retained its truthful unaudited/non-production
-warning because functional validation did not constitute an independent
-security audit.
+The external review's locally actionable gaps and the follow-up implementation
+audit were closed. AWS Step Functions ran and cancelled real Amazon ECS and
+AWS CodeBuild workloads; CodeBuild used the requested source revision,
+credential, build specification, and image; AWS Amplify ran authenticated
+multi-language monorepo builds with complete phase, cache, and artifact
+lifecycle; Amazon RDS exposed persistent PostgreSQL, MySQL, and MariaDB native
+data planes with TLS-only IAM authentication and real password rotation; and
+deployed workloads used the standard SDK endpoint environment variables.
+Hosted concurrency validation preserved sub-second AWS Amplify release order,
+accepted Microsoft Azure's valid subnet-before-public-prefix NAT-gateway
+state, and gave the real Step Functions container integrations a
+cloud-shaped cold-provisioning window with useful terminal diagnostics. The
+AWS SDK shard provisioned the exact configured Alpine and official AWS CLI
+images before `m.Run`, so registry transfer no longer consumed that
+integration's lifecycle deadline while both real containers still executed.
+Explicit Amazon ECR Public coordinates reached the container runtime unchanged,
+and cancellation killed the CodeBuild workload whether Docker completed its
+wait through the context or error channel, so a stopped build produced no
+delayed Amazon SQS side effect. The macOS/Linux Docker validation harness loaded
+Buildx output and shared the container host's PID namespace; the full
+production-shaped HashiCorp AWS provider graph completed apply, a real
+VPC-attached Lambda invocation, refresh, and destroy through HTTPS.
+The Amazon ECS integration harness loaded its real arithmetic workload through
+the backend's Docker Image Load API instead of building it outside the backend
+catalog; live-cloud runs required the corresponding pre-provisioned Amazon ECR
+coordinate, and all six simulator-backed real-container cases passed.
+The AWS external Terraform harness preserved the original request host through
+Caddy for AWS Signature Version 4, serialized heavyweight packages locally,
+and assigned the root, Amazon ElastiCache, and three Amazon RDS graphs to
+separate hosted runners. All five HTTPS packages completed apply, real
+workload or data-plane assertions, and destroy without cross-package resource
+contention.
+The mandatory publication audit upgraded the AWS simulator to `go-git` 5.19.2
+and its current transitive graph. The complete module suite passed, and the
+authenticated dependency audit reported no drift.
+The shared e2e harness loaded its compiled arithmetic fixture through every
+active cloud backend's Docker Image Load API, keeping the backend catalog
+authoritative. The exact e2e suite and its optional second Amazon ECS
+simulator-backend path passed.
+The hosted publication edge then advanced `docker/login-action` to 4.6.0.
+Both immutable multi-architecture publication jobs upgraded, and action
+syntax, the publication contract, and the authenticated freshness audit
+passed.
+Native Linux workload coordinates retained Docker's
+`host.docker.internal:host-gateway` alias instead of rewriting it to the
+virtual machine's default gateway; rewriting remained correct for a simulator
+that itself ran in a container. The official AWS SDK Step Functions
+integration passed its real Amazon ECS task, AWS CodeBuild container, and
+vendor AWS CLI flow.
+Publication also upgraded every newly drifted SQLite and Google Cloud client
+module, moved Firestore and Spanner protobuf imports to their current
+canonical modules, and passed the complete official Google Cloud SDK suite.
+The exact hosted Cloud Run v1 and v2 Discovery revision 20260727 documents were
+also retained; their public methods, paths, and schema fields were unchanged,
+and the Google simulator route, specification, and measured-coverage suite
+passed against their newer descriptions.
+The three console accessibility checks anchored keyboard traversal at the
+loaded document before pressing Tab, so real Chromium consistently proved each
+skip link was the first in-document focus target.
+Explicit Lambda deployment remained intentional because AWS Lambda itself runs
+only functions a caller creates. The repository retained its truthful
+unaudited/non-production warning because functional validation did not
+constitute an independent security audit.
 
 The next pass should recheck the six external blockers below and resume only
 when their missing credentials, upstream API coordinates, published schemas,

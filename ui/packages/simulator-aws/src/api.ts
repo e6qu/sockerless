@@ -2320,6 +2320,20 @@ export const createRDSInstance = async (input: {
   });
 };
 
+export const modifyRDSInstanceAuthentication = async (input: {
+  dbInstanceIdentifier: string;
+  enableIAMDatabaseAuthentication: boolean;
+  masterUserPassword?: string;
+}): Promise<void> => {
+  const parameters: Record<string, string> = {
+    DBInstanceIdentifier: input.dbInstanceIdentifier,
+    EnableIAMDatabaseAuthentication: String(input.enableIAMDatabaseAuthentication),
+    ApplyImmediately: "true",
+  };
+  if (input.masterUserPassword) parameters.MasterUserPassword = input.masterUserPassword;
+  await awsQuery("rds", RDS_VERSION, "ModifyDBInstance", parameters);
+};
+
 export interface RDSCluster {
   dbClusterIdentifier: string;
   engine: string;
@@ -2797,6 +2811,72 @@ export const fetchCodeBuildProjects = async (): Promise<CodeBuildProject[]> => {
   }));
 };
 
+export const createCodeBuildProject = async (input: {
+  name: string;
+  image: string;
+  buildspec: string;
+  serviceRole: string;
+}): Promise<void> => {
+  await awsJson("codebuild", "CodeBuild_20161006.CreateProject", {
+    name: input.name,
+    source: { type: "NO_SOURCE", buildspec: input.buildspec },
+    artifacts: { type: "NO_ARTIFACTS" },
+    environment: {
+      type: "LINUX_CONTAINER",
+      image: input.image,
+      computeType: "BUILD_GENERAL1_SMALL",
+    },
+    serviceRole: input.serviceRole,
+  });
+};
+
+export const deleteCodeBuildProject = async (name: string): Promise<void> => {
+  await awsJson("codebuild", "CodeBuild_20161006.DeleteProject", { name });
+};
+
+export const startCodeBuild = async (projectName: string): Promise<void> => {
+  await awsJson("codebuild", "CodeBuild_20161006.StartBuild", { projectName });
+};
+
+export const stopCodeBuild = async (id: string): Promise<void> => {
+  await awsJson("codebuild", "CodeBuild_20161006.StopBuild", { id });
+};
+
+export interface CodeBuildBuild {
+  id: string;
+  projectName: string;
+  status: string;
+  startTime: number;
+  endTime: number;
+  environmentImage: string;
+}
+
+export const fetchCodeBuildBuilds = async (): Promise<CodeBuildBuild[]> => {
+  const listed = await awsJson<{ ids?: string[] }>("codebuild", "CodeBuild_20161006.ListBuilds", {
+    sortOrder: "DESCENDING",
+  });
+  const ids = listed.ids ?? [];
+  if (ids.length === 0) return [];
+  const described = await awsJson<{
+    builds?: {
+      id?: string;
+      projectName?: string;
+      buildStatus?: string;
+      startTime?: number;
+      endTime?: number;
+      environment?: { image?: string };
+    }[];
+  }>("codebuild", "CodeBuild_20161006.BatchGetBuilds", { ids });
+  return (described.builds ?? []).map((build) => ({
+    id: build.id ?? "",
+    projectName: build.projectName ?? "",
+    status: build.buildStatus ?? "",
+    startTime: build.startTime ?? 0,
+    endTime: build.endTime ?? 0,
+    environmentImage: build.environment?.image ?? "",
+  }));
+};
+
 // ---------------------------------------------------------------------------
 // AWS Amplify — the REST-JSON protocol (GET /apps).
 // ---------------------------------------------------------------------------
@@ -2851,6 +2931,93 @@ export const createAmplifyApp = async (input: {
     platform: input.platform,
     buildSpec: input.buildSpec || undefined,
   });
+};
+
+export const deleteAmplifyApp = async (appId: string): Promise<void> => {
+  await restJson("amplify", "DELETE", `/apps/${encodeURIComponent(appId)}`);
+};
+
+export interface AmplifyBranch {
+  branchName: string;
+  stage: string;
+  framework: string;
+  activeJobId: string;
+  enableAutoBuild: boolean;
+  updateTime: number;
+}
+
+export const fetchAmplifyBranches = async (appId: string): Promise<AmplifyBranch[]> => {
+  const result = await awsRestJson<{
+    branches?: {
+      branchName?: string;
+      stage?: string;
+      framework?: string;
+      activeJobId?: string;
+      enableAutoBuild?: boolean;
+      updateTime?: number;
+    }[];
+  }>("amplify", `/apps/${encodeURIComponent(appId)}/branches`);
+  return (result.branches ?? []).map((branch) => ({
+    branchName: branch.branchName ?? "",
+    stage: branch.stage ?? "",
+    framework: branch.framework ?? "",
+    activeJobId: branch.activeJobId ?? "",
+    enableAutoBuild: branch.enableAutoBuild ?? false,
+    updateTime: branch.updateTime ?? 0,
+  }));
+};
+
+export const createAmplifyBranch = async (appId: string, branchName: string): Promise<void> => {
+  await restJson("amplify", "POST", `/apps/${encodeURIComponent(appId)}/branches`, {
+    branchName,
+    enableAutoBuild: true,
+    stage: "PRODUCTION",
+  });
+};
+
+export const startAmplifyJob = async (appId: string, branchName: string): Promise<void> => {
+  await restJson(
+    "amplify",
+    "POST",
+    `/apps/${encodeURIComponent(appId)}/branches/${encodeURIComponent(branchName)}/jobs`,
+    { jobType: "RELEASE" },
+  );
+};
+
+export interface AmplifyJob {
+  jobId: string;
+  status: string;
+  jobType: string;
+  commitId: string;
+  commitMessage: string;
+  startTime: number;
+  endTime: number;
+}
+
+export const fetchAmplifyJobs = async (appId: string, branchName: string): Promise<AmplifyJob[]> => {
+  const result = await awsRestJson<{
+    jobSummaries?: {
+      jobId?: string;
+      status?: string;
+      jobType?: string;
+      commitId?: string;
+      commitMessage?: string;
+      startTime?: number;
+      endTime?: number;
+    }[];
+  }>(
+    "amplify",
+    `/apps/${encodeURIComponent(appId)}/branches/${encodeURIComponent(branchName)}/jobs?maxResults=50`,
+  );
+  return (result.jobSummaries ?? []).map((job) => ({
+    jobId: job.jobId ?? "",
+    status: job.status ?? "",
+    jobType: job.jobType ?? "",
+    commitId: job.commitId ?? "",
+    commitMessage: job.commitMessage ?? "",
+    startTime: job.startTime ?? 0,
+    endTime: job.endTime ?? 0,
+  }));
 };
 
 // ---------------------------------------------------------------------------

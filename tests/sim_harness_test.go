@@ -381,7 +381,14 @@ func startSimBackends(simVal string) ([]*simProcess, []string, error) {
 		fmt.Printf("[sim] %s backend is ready on :%d (serving Docker API)\n", name, backendPort)
 
 		// Backend serves Docker API directly — set env var to TCP address
-		os.Setenv(info.EnvVarSocket, fmt.Sprintf("tcp://localhost:%d", backendPort))
+		backendHost := fmt.Sprintf("tcp://localhost:%d", backendPort)
+		if evalImageName != "" {
+			if err := loadImageThroughDockerAPI(backendHost, evalImageName); err != nil {
+				cleanup()
+				return nil, nil, fmt.Errorf("load eval-arithmetic through %s backend: %w", name, err)
+			}
+		}
+		os.Setenv(info.EnvVarSocket, backendHost)
 	}
 
 	return allProcesses, allSocketPaths, nil

@@ -247,7 +247,7 @@ phases:
 		},
 		Artifacts: &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
 		Environment: &cbtypes.ProjectEnvironment{
-			Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("aws/codebuild/standard:7.0"),
+			Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("public.ecr.aws/aws-cli/aws-cli:2.27.49"),
 			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
 		},
 		ServiceRole: aws.String("arn:aws:iam::123456789012:role/codebuild-role"),
@@ -256,6 +256,13 @@ phases:
 	t.Cleanup(func() {
 		_, _ = buildAPI.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: aws.String(projectName)})
 	})
+	containerEndpoint := fmt.Sprintf("http://host.docker.internal:%d", simPort)
+	containerQueueURL := strings.Replace(
+		aws.ToString(queue.QueueUrl),
+		baseURL,
+		containerEndpoint,
+		1,
+	)
 
 	definition, err := json.Marshal(map[string]any{
 		"StartAt": "RunContainer",
@@ -280,8 +287,8 @@ phases:
 						map[string]any{"Name": "AWS_ACCESS_KEY_ID", "Value": "test", "Type": "PLAINTEXT"},
 						map[string]any{"Name": "AWS_SECRET_ACCESS_KEY", "Value": "test", "Type": "PLAINTEXT"},
 						map[string]any{"Name": "AWS_DEFAULT_REGION", "Value": "us-east-1", "Type": "PLAINTEXT"},
-						map[string]any{"Name": "AWS_ENDPOINT_URL", "Value": baseURL, "Type": "PLAINTEXT"},
-						map[string]any{"Name": "QUEUE_URL", "Value": aws.ToString(queue.QueueUrl), "Type": "PLAINTEXT"},
+						map[string]any{"Name": "AWS_ENDPOINT_URL", "Value": containerEndpoint, "Type": "PLAINTEXT"},
+						map[string]any{"Name": "QUEUE_URL", "Value": containerQueueURL, "Type": "PLAINTEXT"},
 					},
 				},
 				"End": true,
@@ -299,16 +306,174 @@ phases:
 	})
 	execution, err := statesAPI.StartExecution(ctx, &sfn.StartExecutionInput{StateMachineArn: machine.StateMachineArn})
 	require.NoError(t, err)
-	require.Eventually(t, func() bool {
+	// Amazon Elastic Container Service (Amazon ECS) and AWS CodeBuild both
+	// provision containers asynchronously. A cold external runner may need
+	// longer than one minute to fetch both configured images, just as the real
+	// services may spend several minutes in provisioning and queued states.
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		described, describeErr := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{ExecutionArn: execution.ExecutionArn})
-		return describeErr == nil && described.Status == sfntypes.ExecutionStatusSucceeded
-	}, 60*time.Second, 200*time.Millisecond)
+		if !assert.NoError(collect, describeErr) {
+			return
+		}
+		assert.Equal(collect, sfntypes.ExecutionStatusSucceeded, described.Status)
+		assert.Empty(collect, aws.ToString(described.Error))
+		assert.Empty(collect, aws.ToString(described.Cause))
+	}, 3*time.Minute, 200*time.Millisecond)
 
+	var deliveredReceipt string
 	require.Eventually(t, func() bool {
 		received, receiveErr := queueAPI.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
-			QueueUrl: queue.QueueUrl, MaxNumberOfMessages: 1, VisibilityTimeout: 0,
+			QueueUrl: queue.QueueUrl, MaxNumberOfMessages: 1, VisibilityTimeout: 30,
 		})
-		return receiveErr == nil && len(received.Messages) == 1 &&
-			aws.ToString(received.Messages[0].Body) == "from-step-functions-codebuild"
+		if receiveErr != nil || len(received.Messages) != 1 ||
+			aws.ToString(received.Messages[0].Body) != "from-step-functions-codebuild" {
+			return false
+		}
+		deliveredReceipt = aws.ToString(received.Messages[0].ReceiptHandle)
+		return true
 	}, 10*time.Second, 100*time.Millisecond)
+	_, err = queueAPI.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+		QueueUrl: queue.QueueUrl, ReceiptHandle: aws.String(deliveredReceipt),
+	})
+	require.NoError(t, err)
+
+	const failingProject = "sfn-codebuild-real-failure"
+	_, err = buildAPI.CreateProject(ctx, &codebuild.CreateProjectInput{
+		Name: aws.String(failingProject),
+		Source: &cbtypes.ProjectSource{
+			Type: cbtypes.SourceTypeNoSource,
+			Buildspec: aws.String(`version: 0.2
+phases:
+  build:
+    commands:
+      - test -f /etc/alpine-release
+      - exit 7
+`),
+		},
+		Artifacts: &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
+		Environment: &cbtypes.ProjectEnvironment{
+			Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("public.ecr.aws/docker/library/alpine:3.21"),
+			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
+		},
+		ServiceRole: aws.String("arn:aws:iam::123456789012:role/codebuild-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = buildAPI.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: aws.String(failingProject)})
+	})
+	failingDefinition, err := json.Marshal(map[string]any{
+		"StartAt": "FailingBuild",
+		"States": map[string]any{
+			"FailingBuild": map[string]any{
+				"Type": "Task", "Resource": "arn:aws:states:::codebuild:startBuild.sync",
+				"Parameters": map[string]any{"ProjectName": failingProject},
+				"End":        true,
+			},
+		},
+	})
+	require.NoError(t, err)
+	failingMachine, err := statesAPI.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name: aws.String("sfn-codebuild-real-failure"), Definition: aws.String(string(failingDefinition)),
+		RoleArn: aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = statesAPI.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: failingMachine.StateMachineArn})
+	})
+	failingExecution, err := statesAPI.StartExecution(ctx, &sfn.StartExecutionInput{
+		StateMachineArn: failingMachine.StateMachineArn,
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		described, describeErr := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+			ExecutionArn: failingExecution.ExecutionArn,
+		})
+		return describeErr == nil && described.Status == sfntypes.ExecutionStatusFailed &&
+			aws.ToString(described.Error) == "CodeBuild.BuildFailed"
+	}, 30*time.Second, 100*time.Millisecond)
+
+	const cancelledProject = "sfn-codebuild-real-cancellation"
+	_, err = buildAPI.CreateProject(ctx, &codebuild.CreateProjectInput{
+		Name: aws.String(cancelledProject),
+		Source: &cbtypes.ProjectSource{
+			Type: cbtypes.SourceTypeNoSource,
+			Buildspec: aws.String(`version: 0.2
+phases:
+  build:
+    commands:
+      - sleep 5
+      - aws sqs send-message --queue-url "$QUEUE_URL" --message-body cancelled-build-leaked
+`),
+		},
+		Artifacts: &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
+		Environment: &cbtypes.ProjectEnvironment{
+			Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("public.ecr.aws/aws-cli/aws-cli:2.27.49"),
+			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
+		},
+		ServiceRole: aws.String("arn:aws:iam::123456789012:role/codebuild-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = buildAPI.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: aws.String(cancelledProject)})
+	})
+	cancelDefinition, err := json.Marshal(map[string]any{
+		"StartAt": "LongBuild",
+		"States": map[string]any{
+			"LongBuild": map[string]any{
+				"Type": "Task", "Resource": "arn:aws:states:::codebuild:startBuild.sync",
+				"Parameters": map[string]any{
+					"ProjectName": cancelledProject,
+					"EnvironmentVariablesOverride": []any{
+						map[string]any{"Name": "AWS_ACCESS_KEY_ID", "Value": "test", "Type": "PLAINTEXT"},
+						map[string]any{"Name": "AWS_SECRET_ACCESS_KEY", "Value": "test", "Type": "PLAINTEXT"},
+						map[string]any{"Name": "AWS_DEFAULT_REGION", "Value": "us-east-1", "Type": "PLAINTEXT"},
+						map[string]any{"Name": "AWS_ENDPOINT_URL", "Value": containerEndpoint, "Type": "PLAINTEXT"},
+						map[string]any{"Name": "QUEUE_URL", "Value": containerQueueURL, "Type": "PLAINTEXT"},
+					},
+				},
+				"End": true,
+			},
+		},
+	})
+	require.NoError(t, err)
+	cancelMachine, err := statesAPI.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name: aws.String("sfn-codebuild-real-cancellation"), Definition: aws.String(string(cancelDefinition)),
+		RoleArn: aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = statesAPI.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: cancelMachine.StateMachineArn})
+	})
+	cancelExecution, err := statesAPI.StartExecution(ctx, &sfn.StartExecutionInput{
+		StateMachineArn: cancelMachine.StateMachineArn,
+	})
+	require.NoError(t, err)
+	var cancelledBuildID string
+	require.Eventually(t, func() bool {
+		listed, listErr := buildAPI.ListBuildsForProject(ctx, &codebuild.ListBuildsForProjectInput{
+			ProjectName: aws.String(cancelledProject),
+		})
+		if listErr != nil || len(listed.Ids) == 0 {
+			return false
+		}
+		cancelledBuildID = listed.Ids[0]
+		builds, getErr := buildAPI.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{Ids: []string{cancelledBuildID}})
+		return getErr == nil && len(builds.Builds) == 1 && builds.Builds[0].BuildStatus == cbtypes.StatusTypeInProgress
+	}, 20*time.Second, 100*time.Millisecond)
+	_, err = statesAPI.StopExecution(ctx, &sfn.StopExecutionInput{
+		ExecutionArn: cancelExecution.ExecutionArn,
+		Error:        aws.String("OperatorCancelled"),
+		Cause:        aws.String("external cancellation validation"),
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		builds, getErr := buildAPI.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{Ids: []string{cancelledBuildID}})
+		return getErr == nil && len(builds.Builds) == 1 && builds.Builds[0].BuildStatus == cbtypes.StatusTypeStopped
+	}, 10*time.Second, 100*time.Millisecond)
+	time.Sleep(6 * time.Second)
+	received, err := queueAPI.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl: queue.QueueUrl, MaxNumberOfMessages: 10, VisibilityTimeout: 0,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, received.Messages, "a stopped CodeBuild container must not complete its delayed Amazon SQS write")
 }

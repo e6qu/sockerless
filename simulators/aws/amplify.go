@@ -304,7 +304,14 @@ func amplifyArtifactID(jobID string) string {
 	return jobID + "-" + amplifyJobID()
 }
 
-func amplifyEpoch() float64 { return float64(time.Now().UTC().Unix()) }
+// AWS Amplify returns timestamps with sub-second precision. Preserve that
+// precision so consecutive jobs started within one second retain their real
+// creation order when the hosting data plane selects the latest successful
+// deployment.
+func amplifyEpoch() float64 {
+	now := time.Now().UTC()
+	return float64(now.Unix()) + float64(now.Nanosecond())/float64(time.Second)
+}
 
 func amplifyWriteJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -584,6 +591,7 @@ func handleAmplifyDeleteApp(w http.ResponseWriter, r *http.Request) {
 	}
 	amplifyApps.Delete(id)
 	amplifyRepositoryConnections.Delete(id)
+	amplifyRemoveBuildCache(id, "")
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyApp{"app": stored.App})
 }
 
@@ -999,6 +1007,7 @@ func handleAmplifyDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	amplifyStopCompute(appID, name)
 	amplifyInvalidateHostingCache(appID, name)
+	amplifyRemoveBuildCache(appID, name)
 	delete(stored.Branches, name)
 	amplifyApps.Put(appID, stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyBranch{"branch": br})
