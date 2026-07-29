@@ -425,13 +425,21 @@ func handleCBStopBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cbMu.Lock()
-	defer cbMu.Unlock()
-
 	build, ok := cbBuilds.Get(req.ID)
 	if !ok {
 		cbWriteError(w, "ResourceNotFoundException", "Build not found: "+req.ID)
 		return
+	}
+	build = cbStopBuildByID(req.ID)
+	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
+}
+
+func cbStopBuildByID(buildID string) CBBuild {
+	cbMu.Lock()
+	defer cbMu.Unlock()
+	build, ok := cbBuilds.Get(buildID)
+	if !ok {
+		return CBBuild{}
 	}
 	// StopBuild transitions a running build to STOPPED. A build that already
 	// settled keeps its terminal status (real CodeBuild is idempotent here).
@@ -444,9 +452,9 @@ func handleCBStopBuild(w http.ResponseWriter, r *http.Request) {
 			{PhaseType: "BUILD", PhaseStatus: "STOPPED", StartTime: build.StartTime, EndTime: now, DurationInSeconds: now - build.StartTime},
 			{PhaseType: "COMPLETED", PhaseStatus: "STOPPED", StartTime: now, EndTime: now, DurationInSeconds: 0},
 		}
-		cbBuilds.Put(req.ID, build)
+		cbBuilds.Put(buildID, build)
 	}
-	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
+	return build
 }
 
 func handleCBRetryBuild(w http.ResponseWriter, r *http.Request) {
@@ -557,10 +565,14 @@ func cbBuildCommands(p CBProject, override string) ([]string, error) {
 }
 
 func cbRunBuild(buildID string, commands []string, env map[string]string) {
+	exitCode, reason := cbRunCommands(commands, env)
+	cbCompleteBuild(buildID, exitCode, reason)
+}
+
+func cbRunCommands(commands []string, env map[string]string) (int, string) {
 	workDir, err := os.MkdirTemp("", "sockerless-codebuild-*")
 	if err != nil {
-		cbCompleteBuild(buildID, -1, err.Error())
-		return
+		return -1, err.Error()
 	}
 	defer os.RemoveAll(workDir)
 
@@ -584,7 +596,7 @@ func cbRunBuild(buildID string, commands []string, env map[string]string) {
 			break
 		}
 	}
-	cbCompleteBuild(buildID, exitCode, reason)
+	return exitCode, reason
 }
 
 func cbCompleteBuild(buildID string, exitCode int, reason string) {

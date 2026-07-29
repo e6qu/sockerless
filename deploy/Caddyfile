@@ -47,5 +47,17 @@ https://{$AZURE_CLOUD_SIM_HOSTNAME}:{$CADDY_PORT} {
 
 https://{$AZURE_CONSOLE_SIM_HOSTNAME}:{$CADDY_PORT} {
 	tls internal
-	reverse_proxy simulator-azure-console:4568
+	reverse_proxy simulator-azure-console:4568 {
+		# A freshly scheduled console may still be binding its listener when
+		# the deployment proxy is already reachable. Keep the original request
+		# pending across bounded connection retries instead of returning the
+		# first dial failure to the browser.
+		lb_try_duration 10s
+		lb_try_interval 250ms
+	}
+	handle_errors 502 503 504 {
+		header Retry-After "5"
+		header Content-Type "text/plain; charset=utf-8"
+		respond "Microsoft Azure simulator console is starting; retry shortly." 503
+	}
 }

@@ -54,8 +54,8 @@ func TestRDS_DBInstanceLifecycle(t *testing.T) {
 	assert.Equal(t, "postgres", aws.ToString(got.Engine))
 	assert.Equal(t, "available", aws.ToString(got.DBInstanceStatus))
 	assert.NotNil(t, got.Endpoint)
-	assert.Equal(t, int32(5432), aws.ToInt32(got.Endpoint.Port),
-		"postgres engine should map to port 5432")
+	assert.Positive(t, aws.ToInt32(got.Endpoint.Port),
+		"the PostgreSQL data-plane endpoint must expose a concrete port")
 
 	_, err = c.ModifyDBInstance(ctx, &rds.ModifyDBInstanceInput{
 		DBInstanceIdentifier: aws.String(id),

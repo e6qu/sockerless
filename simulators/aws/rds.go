@@ -15,8 +15,10 @@ import (
 // DeleteDBInstance, AddTagsToResource, ListTagsForResource,
 // RemoveTagsFromResource, CreateDBSnapshot, DescribeDBSnapshots,
 // DescribeDBSnapshotAttributes, DeleteDBSnapshot, and
-// RestoreDBInstanceFromDBSnapshot. Database engine itself is not
-// simulated; the sim returns Status=available immediately on Create.
+// RestoreDBInstanceFromDBSnapshot. PostgreSQL and MySQL-compatible instances
+// expose their real database wire protocols through managed engine containers;
+// the control plane returns Status=available once their endpoint listener is
+// installed and starts the engine lazily on the first data-plane connection.
 
 type RDSInstance struct {
 	DBInstanceIdentifier string
@@ -41,6 +43,10 @@ type RDSInstance struct {
 	// this instance (populated on the source when a replica is created).
 	ReadReplicas []string
 	Tags         map[string]string
+	// MasterUserSecret is encrypted under the simulator cloud's AWS-owned RDS
+	// KMS key and is never rendered on the API.
+	MasterUserSecret                []byte
+	EnableIAMDatabaseAuthentication bool
 }
 
 // RDSSnapshot models the canonical RDS DB snapshot state machine:
@@ -389,6 +395,7 @@ func renderRDSInstance(i RDSInstance) string {
 	fmt.Fprintf(&b, "<InstanceCreateTime>%s</InstanceCreateTime>", xmlEscape(i.InstanceCreateTime))
 	fmt.Fprintf(&b, "<DBInstanceArn>%s</DBInstanceArn>", xmlEscape(i.ARN))
 	fmt.Fprintf(&b, "<Endpoint><Address>%s</Address><Port>%d</Port></Endpoint>", xmlEscape(i.Endpoint), i.Port)
+	fmt.Fprintf(&b, "<IAMDatabaseAuthenticationEnabled>%t</IAMDatabaseAuthenticationEnabled>", i.EnableIAMDatabaseAuthentication)
 	if i.ReadReplicaSource != "" {
 		fmt.Fprintf(&b, "<ReadReplicaSourceDBInstanceIdentifier>%s</ReadReplicaSourceDBInstanceIdentifier>", xmlEscape(i.ReadReplicaSource))
 	}
@@ -426,21 +433,26 @@ func handleRDSCreate(w http.ResponseWriter, r *http.Request) {
 		engineVersion = rdsDefaultEngineVersion(engine)
 	}
 	inst := RDSInstance{
-		DBInstanceIdentifier: id,
-		DbiResourceId:        rdsResourceID(),
-		DBInstanceClass:      r.FormValue("DBInstanceClass"),
-		Engine:               engine,
-		EngineVersion:        engineVersion,
-		DBInstanceStatus:     "available",
-		MasterUsername:       r.FormValue("MasterUsername"),
-		DBName:               r.FormValue("DBName"),
-		AllocatedStorage:     atoiOrZero(r.FormValue("AllocatedStorage")),
-		Endpoint:             fmt.Sprintf("%s.%s.rds.amazonaws.com", id, awsRegion()),
-		Port:                 port,
-		AvailabilityZone:     az,
-		InstanceCreateTime:   time.Now().UTC().Format(time.RFC3339),
-		ARN:                  rdsInstanceARN(id),
-		Tags:                 parseAWSQueryTagMap(r, "Tags.Tag"),
+		DBInstanceIdentifier:            id,
+		DbiResourceId:                   rdsResourceID(),
+		DBInstanceClass:                 r.FormValue("DBInstanceClass"),
+		Engine:                          engine,
+		EngineVersion:                   engineVersion,
+		DBInstanceStatus:                "available",
+		MasterUsername:                  r.FormValue("MasterUsername"),
+		DBName:                          r.FormValue("DBName"),
+		AllocatedStorage:                atoiOrZero(r.FormValue("AllocatedStorage")),
+		Endpoint:                        fmt.Sprintf("%s.%s.rds.amazonaws.com", id, awsRegion()),
+		Port:                            port,
+		AvailabilityZone:                az,
+		InstanceCreateTime:              time.Now().UTC().Format(time.RFC3339),
+		ARN:                             rdsInstanceARN(id),
+		Tags:                            parseAWSQueryTagMap(r, "Tags.Tag"),
+		EnableIAMDatabaseAuthentication: strings.EqualFold(r.FormValue("EnableIAMDatabaseAuthentication"), "true"),
+	}
+	if err := rdsInstallDataPlane(&inst, r.FormValue("MasterUserPassword")); err != nil {
+		rdsErrorXML(w, "ProvisioningFailure", err.Error(), http.StatusInternalServerError, sim.RequestID(r.Context()))
+		return
 	}
 	rdsInstances.Put(id, inst)
 	rdsXMLResponse(w, "CreateDBInstance", renderRDSInstance(inst), sim.RequestID(r.Context()))
@@ -501,6 +513,7 @@ func handleRDSDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inst.DBInstanceStatus = "deleting"
+	rdsStopDataPlane(id, true)
 	rdsInstances.Delete(id)
 	rdsXMLResponse(w, "DeleteDBInstance", renderRDSInstance(inst), sim.RequestID(r.Context()))
 }
@@ -1022,10 +1035,19 @@ func handleRDSReboot(w http.ResponseWriter, r *http.Request) {
 		rdsErrorXML(w, "DBInstanceNotFound", "DB instance not found", http.StatusNotFound, sim.RequestID(r.Context()))
 		return
 	}
-	// Real RDS transitions creating→rebooting→available; with no
-	// engine to restart, the sim returns the steady-state instance
-	// (Status stays "available"). The response carries the full
-	// DBInstance, which is what the waiter and SDK consumers read.
+	if len(inst.MasterUserSecret) > 0 {
+		rdsStopDataPlane(id, false)
+		_, password, decrypted := kmsDecryptBytes(inst.MasterUserSecret)
+		if !decrypted {
+			rdsErrorXML(w, "ProvisioningFailure", "RDS master-user credential could not be decrypted", http.StatusInternalServerError, sim.RequestID(r.Context()))
+			return
+		}
+		if err := rdsInstallDataPlane(&inst, string(password)); err != nil {
+			rdsErrorXML(w, "ProvisioningFailure", err.Error(), http.StatusInternalServerError, sim.RequestID(r.Context()))
+			return
+		}
+		rdsInstances.Put(id, inst)
+	}
 	rdsXMLResponse(w, "RebootDBInstance", renderRDSInstance(inst), sim.RequestID(r.Context()))
 }
 
@@ -2017,8 +2039,8 @@ func handleRDSDescribeOrderableOptions(w http.ResponseWriter, r *http.Request) {
 // ----- Instance/cluster state transitions -----
 
 // Real RDS transitions an instance through starting→available and
-// stopping→stopped; with no engine to start/stop the sim flips the
-// stored status to the steady state and returns the full DBInstance.
+// stopping→stopped. The simulator keeps the instance volume but tears down
+// the engine and listener while stopped, then reinstalls them on start.
 
 func handleRDSStartInstance(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("DBInstanceIdentifier")
@@ -2026,8 +2048,21 @@ func handleRDSStartInstance(w http.ResponseWriter, r *http.Request) {
 		rdsErrorXML(w, "DBInstanceNotFound", "DB instance not found", http.StatusNotFound, sim.RequestID(r.Context()))
 		return
 	}
-	rdsInstances.Update(id, func(i *RDSInstance) { i.DBInstanceStatus = "available" })
-	updated, _ := rdsInstances.Get(id)
+	instance, _ := rdsInstances.Get(id)
+	if len(instance.MasterUserSecret) > 0 {
+		_, password, decrypted := kmsDecryptBytes(instance.MasterUserSecret)
+		if !decrypted {
+			rdsErrorXML(w, "ProvisioningFailure", "RDS master-user credential could not be decrypted", http.StatusInternalServerError, sim.RequestID(r.Context()))
+			return
+		}
+		if err := rdsInstallDataPlane(&instance, string(password)); err != nil {
+			rdsErrorXML(w, "ProvisioningFailure", err.Error(), http.StatusInternalServerError, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	instance.DBInstanceStatus = "available"
+	rdsInstances.Put(id, instance)
+	updated := instance
 	rdsXMLResponse(w, "StartDBInstance", renderRDSInstance(updated), sim.RequestID(r.Context()))
 }
 
@@ -2037,6 +2072,7 @@ func handleRDSStopInstance(w http.ResponseWriter, r *http.Request) {
 		rdsErrorXML(w, "DBInstanceNotFound", "DB instance not found", http.StatusNotFound, sim.RequestID(r.Context()))
 		return
 	}
+	rdsStopDataPlane(id, false)
 	rdsInstances.Update(id, func(i *RDSInstance) { i.DBInstanceStatus = "stopped" })
 	updated, _ := rdsInstances.Get(id)
 	rdsXMLResponse(w, "StopDBInstance", renderRDSInstance(updated), sim.RequestID(r.Context()))

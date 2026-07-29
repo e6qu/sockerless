@@ -2,6 +2,7 @@ package rds_instance_test
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,8 +22,9 @@ func TestRDSInstanceTerraform(t *testing.T) {
 		"RDS instance ARN must end with :db:<identifier>")
 	require.Equal(t, "postgres", outputs.must(t, "rds_instance_engine"),
 		"RDS engine must round-trip through terraform-provider-aws refresh")
-	require.Equal(t, "5432", outputs.must(t, "rds_instance_port"),
-		"RDS postgres port must round-trip through provider refresh")
+	port, err := strconv.Atoi(outputs.must(t, "rds_instance_port"))
+	require.NoError(t, err)
+	require.Positive(t, port, "RDS endpoint port must round-trip through provider refresh")
 	require.Equal(t, "terraform", outputs.must(t, "rds_instance_tags_env"),
 		"RDS tags must round-trip through ListTagsForResource")
 

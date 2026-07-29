@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,9 +33,11 @@ const federationAudience = "api://AzureADTokenExchange"
 // federated client assertion, and signs tokens with the matching key. It stands
 // in for the external identity provider the console federates through.
 type externalIssuer struct {
-	server *httptest.Server
-	key    *rsa.PrivateKey
-	keyID  string
+	server            *httptest.Server
+	key               *rsa.PrivateKey
+	keyID             string
+	discoveryRequests atomic.Int64
+	jwksRequests      atomic.Int64
 }
 
 func newExternalIssuer(t *testing.T) *externalIssuer {
@@ -45,6 +48,7 @@ func newExternalIssuer(t *testing.T) *externalIssuer {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		issuer.discoveryRequests.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"issuer":                                issuer.server.URL,
 			"jwks_uri":                              issuer.server.URL + "/jwks",
@@ -52,6 +56,7 @@ func newExternalIssuer(t *testing.T) *externalIssuer {
 		})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
+		issuer.jwksRequests.Add(1)
 		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
 			Key:       key.Public(),
 			KeyID:     issuer.keyID,
@@ -155,6 +160,12 @@ func TestFederation_ClientAssertion(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "federation exchange must succeed: %v", body)
 	assert.NotEmpty(t, body["access_token"], "federation must return an Azure Resource Manager access token")
 	assert.Equal(t, "Bearer", body["token_type"])
+
+	secondAssertion := issuer.mint(t, "operator@example.test", federationAudience, time.Now().Add(10*time.Minute))
+	status, body = exchangeFederatedAssertion(t, clientID, secondAssertion)
+	require.Equal(t, http.StatusOK, status, "repeated federation exchange must succeed: %v", body)
+	assert.Equal(t, int64(1), issuer.discoveryRequests.Load(), "the issuer discovery document must be reused")
+	assert.Equal(t, int64(1), issuer.jwksRequests.Load(), "the remote JSON Web Key Set must be reused while its keys remain current")
 }
 
 // TestFederation_RejectsUnregisteredIssuer proves an assertion from an issuer no

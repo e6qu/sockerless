@@ -226,6 +226,11 @@ func amplifyServeGitRepo(t *testing.T, branch string, files map[string]string) s
 	return githttp.Serve(t, branch, files)
 }
 
+func amplifyServePrivateGitRepo(t *testing.T, branch string, files map[string]string, token string) string {
+	t.Helper()
+	return githttp.ServeBasicAuth(t, branch, files, "oauth2", token)
+}
+
 func TestAmplifyRealBuildE2E(t *testing.T) {
 	c := amplifyClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -339,6 +344,68 @@ frontend:
 	// Files outside the artifact baseDirectory are not deployed.
 	resp, _ = amplifyHostGet(t, host, "/data.txt", nil)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestAmplifyPrivateRepositoryPythonBuildE2E(t *testing.T) {
+	c := amplifyClient()
+	testContext, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	const token = "private-repository-token"
+	repoURL := amplifyServePrivateGitRepo(t, "main", map[string]string{
+		"render.py": `from pathlib import Path
+Path("dist").mkdir(exist_ok=True)
+Path("dist/index.html").write_text("<html>private python build</html>")
+`,
+	}, token)
+	buildSpec := `version: 1
+frontend:
+  phases:
+    build:
+      commands:
+        - python3 render.py
+        - node --version > dist/node-version.txt
+  artifacts:
+    baseDirectory: dist
+    files:
+      - '**/*'
+`
+	app, err := c.CreateApp(testContext, &amplify.CreateAppInput{
+		Name:        aws.String("private-python-" + time.Now().Format("150405.000000")),
+		Repository:  aws.String(repoURL),
+		AccessToken: aws.String(token),
+		BuildSpec:   aws.String(buildSpec),
+	})
+	require.NoError(t, err)
+	appID := aws.ToString(app.App.AppId)
+	t.Cleanup(func() {
+		_, _ = c.DeleteApp(context.Background(), &amplify.DeleteAppInput{AppId: aws.String(appID)})
+	})
+	// The credential is write-only: an official SDK read returns neither the
+	// token nor a credential-bearing repository URL.
+	readBack, err := c.GetApp(testContext, &amplify.GetAppInput{AppId: aws.String(appID)})
+	require.NoError(t, err)
+	assert.Equal(t, repoURL, aws.ToString(readBack.App.Repository))
+	assert.NotContains(t, aws.ToString(readBack.App.Repository), token)
+
+	_, err = c.CreateBranch(testContext, &amplify.CreateBranchInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"),
+	})
+	require.NoError(t, err)
+	started, err := c.StartJob(testContext, &amplify.StartJobInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"), JobType: amplifytypes.JobTypeRelease,
+	})
+	require.NoError(t, err)
+	jobID := aws.ToString(started.JobSummary.JobId)
+	amplifyWaitJobStatus(t, testContext, c, appID, "main", jobID, amplifytypes.JobStatusSucceed)
+
+	host := "main." + appID + ".amplifyapp.com"
+	response, body := amplifyHostGet(t, host, "/", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, "<html>private python build</html>", string(body))
+	response, body = amplifyHostGet(t, host, "/node-version.txt", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Regexp(t, `^v22\.`, string(body))
 }
 
 func TestAmplifyDomainVerificationRoute53Flow(t *testing.T) {

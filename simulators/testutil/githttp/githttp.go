@@ -3,6 +3,8 @@
 package githttp
 
 import (
+	"crypto/subtle"
+	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,17 @@ import (
 // Serve creates a single-commit repository and serves it through git
 // http-backend. The returned URL is directly clonable by a real Git client.
 func Serve(t *testing.T, branch string, files map[string]string) string {
+	return serve(t, branch, files, "", "")
+}
+
+// ServeBasicAuth creates and serves a repository whose smart HTTP data plane
+// requires the supplied username and password on every request.
+func ServeBasicAuth(t *testing.T, branch string, files map[string]string, username, password string) string {
+	t.Helper()
+	return serve(t, branch, files, username, password)
+}
+
+func serve(t *testing.T, branch string, files map[string]string, username, password string) string {
 	t.Helper()
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
@@ -57,7 +70,21 @@ func Serve(t *testing.T, branch string, files map[string]string) string {
 			"GIT_HTTP_EXPORT_ALL=1",
 		},
 	}
-	server := httptest.NewServer(handler)
+	var gitHandler = http.Handler(handler)
+	if username != "" || password != "" {
+		gitHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotUsername, gotPassword, ok := r.BasicAuth()
+			usernameOK := subtle.ConstantTimeCompare([]byte(gotUsername), []byte(username)) == 1
+			passwordOK := subtle.ConstantTimeCompare([]byte(gotPassword), []byte(password)) == 1
+			if !ok || !usernameOK || !passwordOK {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Git"`)
+				http.Error(w, "authentication required", http.StatusUnauthorized)
+				return
+			}
+			handler.ServeHTTP(w, r)
+		})
+	}
+	server := httptest.NewServer(gitHandler)
 	t.Cleanup(server.Close)
 	return server.URL + "/repo.git"
 }

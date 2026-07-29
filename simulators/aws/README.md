@@ -52,7 +52,8 @@ aws iam create-service-linked-role --aws-service-name cloudfront.amazonaws.com
 | `SIM_TLS_CERT`, `SIM_TLS_KEY` | unset | Enable HTTPS with the given cert/key. |
 | `SIM_RUNTIME` | `docker` | Initializes Docker/Podman for workload execution. Set `process` only for explicit API-only runs that do not invoke ECS/Lambda workload execution. |
 | `SIM_EBS_DATA_DIR` | `$TMPDIR/sockerless-sim-ebs` | Root directory for EC2/Firecracker EBS block images and snapshots derived from EC2 volumes. **Not used for ECS managed EBS volumes** — those use Docker named volumes (`sockerless-ebs-*`) so they are topology-independent. |
-| `AWS_ENDPOINT_URL` | (client-side) | Tells the SDK / CLI / Terraform to route to the sim. |
+| `AWS_ENDPOINT_URL` | (client-side) | The AWS SDKs and AWS CLI's standard global endpoint setting. It routes every supported service to the simulator. |
+| `AWS_ENDPOINT_URL_<SERVICE>` | (client-side) | The AWS SDKs' standard per-service setting (for example `AWS_ENDPOINT_URL_SQS`). It overrides the global coordinate for that service. |
 | `AWS_DEFAULT_REGION` | `us-east-1` | The sim accepts any region; some validation (CloudFront → ACM us-east-1 pin) is region-aware. |
 
 Docker or Podman is required for ECS and Lambda execution paths. For
@@ -61,6 +62,23 @@ control-plane or data-plane API checks that do not start workloads,
 The `/health` response reports `runtime` and
 `capabilities.workloadExecution`; clients must require that capability before
 submitting work that needs a running container.
+
+The same endpoint convention applies inside workloads. Pass
+`AWS_ENDPOINT_URL` (or `AWS_ENDPOINT_URL_<SERVICE>`) and ordinary AWS
+credentials through the real workload configuration surface—Amazon ECS
+container overrides, AWS CodeBuild environment overrides, or AWS Lambda
+function environment variables. The simulator does not inject, translate, or
+broker a private endpoint variable. The official-client suite proves this by
+having an AWS Step Functions-launched AWS CodeBuild process invoke the vendor
+AWS CLI against Amazon SQS and by having explicitly deployed AWS Lambda code
+invoke the bundled AWS SDK against Amazon SQS.
+
+AWS Lambda follows the real deployment contract: `CreateFunction` supplies a
+ZIP archive or image plus handler, role, and environment configuration.
+Repository files and database settings are not discovered from the simulator
+host. An end-to-end SDK test deploys code and environment explicitly, invokes
+the managed runtime, and observes its authenticated downstream Amazon SQS
+write.
 
 **ECS managed EBS volumes** use Docker named volumes (`sockerless-ebs-<id>`) rather than bind-mounts on the sim process's filesystem. This means the sim can run in a container (with the Docker socket mounted) and task containers will see the correct volume data — no path-sharing between host and sim container is required.
 
@@ -175,7 +193,21 @@ provider "aws" {
 | **S3** | `/{bucket}/{key}` | `s3.go` |
 | **CloudFront** | `/2020-05-31/…` (REST + XML) | `cloudfront.go` + `cloudfront_policies.go` + `cloudfront_functions.go` + `cloudfront_keys.go` |
 | **Route 53** | `/2013-04-01/…` (REST + XML) | `route53.go` |
-| **Amazon Amplify** | `/apps/…` (REST + JSON, versionless); real builds in the managed Node.js build image, a host-addressed hosting data plane (`{branch}.{appId}.amplifyapp.com`, per-app `{hash}.cloudfront.net`, verified custom domains), server-side rendering per the deployment-manifest specification, and Route 53-backed domain verification | `amplify.go` + `amplify_domains.go` + `amplify_build.go` + `amplify_dataplane.go` + `amplify_compute.go` |
+| **Amazon Amplify** | `/apps/…` (REST + JSON, versionless); authenticated Git repository connections, real Node.js and Python builds in a managed multi-language image from Amazon ECR Public, a host-addressed hosting data plane (`{branch}.{appId}.amplifyapp.com`, per-app `{hash}.cloudfront.net`, verified custom domains), server-side rendering per the deployment-manifest specification, and Route 53-backed domain verification | `amplify.go` + `amplify_domains.go` + `amplify_build.go` + `amplify_dataplane.go` + `amplify_compute.go` |
+
+Amazon RDS DB instances backed by PostgreSQL, MySQL, or MariaDB expose their
+native database wire protocol at the `Endpoint` returned by
+`CreateDBInstance`. The engine starts on the first data-plane connection,
+retains its files in an instance-owned volume, and accepts the configured
+master password or a TLS-protected, 15-minute SigV4 IAM database authentication
+token. Official AWS token generation plus stock PostgreSQL and MySQL drivers
+exercise schema, insert, and query operations against the real engine.
+
+AWS Step Functions Task states support optimized Amazon ECS `RunTask`
+request/response, `.sync`, and callback-token integrations, plus the optimized
+AWS CodeBuild build and build-batch operations. Synchronous workflows poll the
+actual service resources, propagate terminal failures, and stop work they
+started when the execution is aborted.
 
 Full per-verb wire shape: see [API_SPEC.md](API_SPEC.md).
 

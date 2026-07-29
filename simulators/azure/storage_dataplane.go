@@ -112,14 +112,14 @@ type TableSignedIdentifiers struct {
 }
 
 type TableSignedIdentifier struct {
-	ID           string            `xml:"Id"`
-	AccessPolicy TableAccessPolicy `xml:"AccessPolicy"`
+	ID           string            `json:"id" xml:"Id"`
+	AccessPolicy TableAccessPolicy `json:"accessPolicy" xml:"AccessPolicy"`
 }
 
 type TableAccessPolicy struct {
-	Start      string `xml:"Start,omitempty"`
-	Expiry     string `xml:"Expiry,omitempty"`
-	Permission string `xml:"Permission,omitempty"`
+	Start      string `json:"startTime,omitempty" xml:"Start,omitempty"`
+	Expiry     string `json:"expiryTime,omitempty" xml:"Expiry,omitempty"`
+	Permission string `json:"permission,omitempty" xml:"Permission,omitempty"`
 }
 
 // TableEntity stores arbitrary OData properties keyed by name. Real
@@ -431,6 +431,7 @@ func handleFilesShareACL(w http.ResponseWriter, r *http.Request, account, share 
 		data.ETag = `"` + generateUUID() + `"`
 		data.Created = time.Now().UTC().Format(http.TimeFormat)
 		fileShareData.Put(key, data)
+		updateFileShareARMAccessPolicies(account, share, body.Items)
 		w.Header().Set("ETag", data.ETag)
 		w.Header().Set("Last-Modified", data.Created)
 		w.WriteHeader(http.StatusOK)

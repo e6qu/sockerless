@@ -12,6 +12,7 @@ Legend:
 |---|---|---|---|---|
 | `aws-acm` | direct | direct | direct | `simulators/aws/sdk-tests/acm_test.go`; `simulators/aws/cli-tests/acm_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-acm_acme` | direct | direct | not applicable | `simulators/aws/sdk-tests/acm_acme_test.go`; `simulators/aws/cli-tests/acm_acme_test.go`; the RFC 8555 data-plane routes are listed in `simulators/aws/tests-exempt.txt` because no Terraform resource wraps them |
+| `aws-acmpca` | direct | direct | direct | `simulators/aws/sdk-tests/acmpca_test.go`; `simulators/aws/cli-tests/acmpca_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-amplify` | direct | direct | direct | `simulators/aws/sdk-tests/amplify_test.go`; `simulators/aws/cli-tests/amplify_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-apigateway` | direct | direct | direct | `simulators/aws/sdk-tests/apigateway_test.go`; `simulators/aws/sdk-tests/apigateway_method_response_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-apigatewayv2` | direct | direct | direct | `simulators/aws/sdk-tests/apigatewayv2_deployment_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
@@ -29,6 +30,7 @@ Legend:
 | `aws-elasticache` | direct | direct | direct | `simulators/aws/sdk-tests/rds_elasticache_test.go`; `simulators/aws/cli-tests/rds_elasticache_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-elbv2` | direct | direct | direct | `simulators/aws/sdk-tests/elbv2_test.go`; `simulators/aws/cli-tests/elbv2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-eventbridge` | direct | direct | direct | `simulators/aws/sdk-tests/eventbridge_test.go`; `simulators/aws/cli-tests/eventbridge_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-firehose` | direct | direct | direct | `simulators/aws/sdk-tests/firehose_test.go`; `simulators/aws/cli-tests/firehose_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-iam` | direct | direct | direct | `simulators/aws/sdk-tests/iam_test.go`; `simulators/aws/cli-tests/iam_slr_oidc_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-kinesis` | direct | direct | direct | `simulators/aws/sdk-tests/kinesis_test.go`; `simulators/aws/cli-tests/kinesis_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-kms` | direct | direct | direct | `simulators/aws/sdk-tests/kms_test.go`; `simulators/aws/cli-tests/kms_test.go`; `simulators/aws/terraform-tests/main.tf` |

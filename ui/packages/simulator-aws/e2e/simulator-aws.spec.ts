@@ -1147,6 +1147,8 @@ test.describe("Automated accessibility audit", () => {
       { path: "/ui/logs", createTestId: "logs-create-log-group", dialogName: "Create log group" },
       { path: "/ui/lambda", createTestId: "lambda-create-function", dialogName: "Create function" },
       { path: "/ui/ecs", createTestId: "ecs-run-task", dialogName: "Run new task" },
+      { path: "/ui/rds", createTestId: "rds-create-instance", dialogName: "Create database" },
+      { path: "/ui/amplify", createTestId: "amplify-create-app", dialogName: "Create Amplify app" },
     ];
     for (const { path, createTestId, dialogName } of CREATE_DIALOGS) {
       test(`the ${dialogName} dialog has no detectable violations (${theme})`, async ({ page }) => {
@@ -1181,7 +1183,7 @@ const SERVICE_PAGES = [
   { path: "/ui/autoscaling", nav: "EC2 Auto Scaling", title: "Auto Scaling groups", columns: ["Name", "Desired capacity"] },
   { path: "/ui/batch", nav: "AWS Batch", title: "Job queues", columns: ["Priority", "Compute environments"] },
   { path: "/ui/efs", nav: "Elastic File System", title: "File systems", columns: ["File system ID", "Mount targets"] },
-  { path: "/ui/rds", nav: "RDS", title: "DB instances", columns: ["Size", "Storage"] },
+  { path: "/ui/rds", nav: "RDS", title: "DB instances", columns: ["Size", "Endpoint", "Storage"] },
   { path: "/ui/dynamodb", nav: "DynamoDB", title: "Tables", columns: ["Name", "Partition key"] },
   { path: "/ui/elasticache", nav: "ElastiCache", title: "Caches", columns: ["Cache name", "Node type"] },
   { path: "/ui/vpc", nav: "VPC", title: "Your VPCs", columns: ["VPC ID", "IPv4 CIDR"] },
@@ -1191,8 +1193,9 @@ const SERVICE_PAGES = [
   { path: "/ui/elb", nav: "Elastic Load Balancing", title: "Load balancers", columns: ["DNS name", "Scheme"] },
   { path: "/ui/cloudmap", nav: "AWS Cloud Map", title: "Namespaces", columns: ["Namespace name", "Service count"] },
   { path: "/ui/codebuild", nav: "CodeBuild", title: "Build projects", columns: ["Name", "Source provider"] },
-  { path: "/ui/amplify", nav: "AWS Amplify", title: "Apps", columns: ["App name", "Default domain"] },
+  { path: "/ui/amplify", nav: "AWS Amplify", title: "Apps", columns: ["App name", "Default domain", "Repository access"] },
   { path: "/ui/kinesis", nav: "Kinesis Data Streams", title: "Data streams", columns: ["Stream name", "Open shards"] },
+  { path: "/ui/firehose", nav: "Amazon Data Firehose", title: "Delivery streams", columns: ["Delivery stream", "Destination"] },
   { path: "/ui/glue", nav: "AWS Glue", title: "Databases", columns: ["Description", "Location"] },
   { path: "/ui/sns", nav: "Simple Notification Service", title: "Topics", columns: ["Name", "ARN"] },
   { path: "/ui/sqs", nav: "Simple Queue Service", title: "Queues", columns: ["Name", "Messages available"] },
@@ -1205,6 +1208,7 @@ const SERVICE_PAGES = [
   { path: "/ui/secretsmanager", nav: "Secrets Manager", title: "Secrets", columns: ["Secret name", "Rotation"] },
   { path: "/ui/kms", nav: "Key Management Service", title: "Customer managed keys", columns: ["Key ID", "Key usage"] },
   { path: "/ui/acm", nav: "AWS Certificate Manager", title: "Certificates", columns: ["Domain name", "Expires"] },
+  { path: "/ui/private-ca", nav: "AWS Private Certificate Authority", title: "Private certificate authorities", columns: ["Common name", "Status"] },
   { path: "/ui/waf", nav: "AWS WAF", title: "Web ACLs", columns: ["Web ACL ID", "ARN"] },
   { path: "/ui/budgets", nav: "AWS Budgets", title: "Budgets", columns: ["Budget name", "Budget type"] },
 ];
@@ -1216,7 +1220,7 @@ test.describe("Service coverage", () => {
         await page.goto(service.path);
         await expect(page.getByRole("heading", { name: service.title })).toBeVisible();
         for (const column of service.columns) {
-          await expect(page.getByRole("columnheader", { name: column, exact: true })).toBeVisible();
+          await expect(page.getByRole("columnheader", { name: column, exact: true }).first()).toBeVisible();
         }
       });
 

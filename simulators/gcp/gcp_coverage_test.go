@@ -56,8 +56,8 @@ import (
 // an unserved one contributes neither.
 var gcpMethodFloor = map[string]int{
 	"compute-v1":              1116,
-	"cloudresourcemanager-v3": 124,
-	"bigtableadmin-v2":        162,
+	"cloudresourcemanager-v3": 126,
+	"bigtableadmin-v2":        164,
 	"cloudrun-v1":             100,
 	"dataflow-v1b3":           84,
 	"cloudrun-v2":             102,

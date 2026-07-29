@@ -34,6 +34,7 @@ const CRUMBS: Record<string, string> = {
   "/ui/codebuild": "CodeBuild",
   "/ui/amplify": "AWS Amplify",
   "/ui/kinesis": "Kinesis Data Streams",
+  "/ui/firehose": "Amazon Data Firehose",
   "/ui/glue": "AWS Glue",
   "/ui/sns": "Simple Notification Service",
   "/ui/sqs": "Simple Queue Service",
@@ -46,6 +47,7 @@ const CRUMBS: Record<string, string> = {
   "/ui/secretsmanager": "Secrets Manager",
   "/ui/kms": "Key Management Service",
   "/ui/acm": "AWS Certificate Manager",
+  "/ui/private-ca": "AWS Private Certificate Authority",
   "/ui/waf": "AWS WAF",
   "/ui/budgets": "AWS Budgets",
 };

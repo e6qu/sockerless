@@ -124,10 +124,13 @@ func TestCloudWatch_CompositeAlarm(t *testing.T) {
 func TestCloudWatch_MetricStreams(t *testing.T) {
 	client := cloudwatchClient()
 	name := "sdk-stream"
+	firehoseARN, _ := createImmediateFirehose(t, "sdk-stream-firehose")
+	roleARN := createFirehoseServiceRole(t, "sdk-stream-cloudwatch-role",
+		"streams.metrics.cloudwatch.amazonaws.com", []string{"firehose:PutRecord"}, []string{firehoseARN})
 	_, err := client.PutMetricStream(ctx, &cloudwatch.PutMetricStreamInput{
 		Name:         aws.String(name),
-		FirehoseArn:  aws.String("arn:aws:firehose:us-east-1:000000000000:deliverystream/s"),
-		RoleArn:      aws.String("arn:aws:iam::000000000000:role/r"),
+		FirehoseArn:  aws.String(firehoseARN),
+		RoleArn:      aws.String(roleARN),
 		OutputFormat: cwtypes.MetricStreamOutputFormatJson,
 		IncludeFilters: []cwtypes.MetricStreamFilter{
 			{Namespace: aws.String("AWS/EC2")},
@@ -338,10 +341,13 @@ func TestCloudWatch_AlarmMuteRules(t *testing.T) {
 func TestCloudWatch_TagResource(t *testing.T) {
 	client := cloudwatchClient()
 	name := "sdk-stream-tagged"
+	firehoseARN, _ := createImmediateFirehose(t, "sdk-stream-tagged-firehose")
+	roleARN := createFirehoseServiceRole(t, "sdk-stream-tagged-cloudwatch-role",
+		"streams.metrics.cloudwatch.amazonaws.com", []string{"firehose:PutRecord"}, []string{firehoseARN})
 	_, err := client.PutMetricStream(ctx, &cloudwatch.PutMetricStreamInput{
 		Name:         aws.String(name),
-		FirehoseArn:  aws.String("arn:aws:firehose:us-east-1:000000000000:deliverystream/s"),
-		RoleArn:      aws.String("arn:aws:iam::000000000000:role/r"),
+		FirehoseArn:  aws.String(firehoseARN),
+		RoleArn:      aws.String(roleARN),
 		OutputFormat: cwtypes.MetricStreamOutputFormatJson,
 	})
 	require.NoError(t, err)

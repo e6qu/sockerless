@@ -10,6 +10,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	"github.com/aws/aws-sdk-go-v2/service/codebuild"
+	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	eventtypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
@@ -182,4 +186,129 @@ func TestSFN_EventingAndObservabilityIntegrations_SDK(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, metrics.MetricDataResults, 1)
 	assert.Equal(t, []float64{1}, metrics.MetricDataResults[0].Values)
+}
+
+// TestSFN_AmazonECSAndCodeBuildIntegrations_SDK proves the optimized
+// RunTask.sync and StartBuild.sync resources execute their actual cloud
+// workloads. The AWS CodeBuild workload uses the vendor AWS CLI with the
+// standard global endpoint coordinate to send a message back through Amazon
+// SQS; no simulator-only endpoint or execution branch participates.
+func TestSFN_AmazonECSAndCodeBuildIntegrations_SDK(t *testing.T) {
+	statesAPI := sfnClient()
+	ecsAPI := ecsClient()
+	buildAPI := codebuildClient()
+	queueAPI := sqsClient()
+
+	const (
+		clusterName = "sfn-ecs-integration"
+		familyName  = "sfn-ecs-integration"
+		projectName = "sfn-codebuild-integration"
+	)
+	subnetID := createECSTestSubnet(t, "sfn-ecs-integration")
+	_, err := ecsAPI.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(clusterName)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = ecsAPI.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(clusterName)})
+	})
+	taskDefinition, err := ecsAPI.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String(familyName),
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:    aws.String("work"),
+			Image:   aws.String("public.ecr.aws/docker/library/alpine:3.21"),
+			Command: []string{"sh", "-c", "printf step-functions-ecs"},
+		}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = ecsAPI.DeregisterTaskDefinition(ctx, &ecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: taskDefinition.TaskDefinition.TaskDefinitionArn,
+		})
+	})
+
+	queue, err := queueAPI.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("sfn-workload-endpoint")})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = queueAPI.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: queue.QueueUrl})
+	})
+	_, err = buildAPI.CreateProject(ctx, &codebuild.CreateProjectInput{
+		Name: aws.String(projectName),
+		Source: &cbtypes.ProjectSource{
+			Type: cbtypes.SourceTypeNoSource,
+			Buildspec: aws.String(`version: 0.2
+phases:
+  build:
+    commands:
+      - aws sqs send-message --queue-url "$QUEUE_URL" --message-body from-step-functions-codebuild
+`),
+		},
+		Artifacts: &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
+		Environment: &cbtypes.ProjectEnvironment{
+			Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("aws/codebuild/standard:7.0"),
+			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
+		},
+		ServiceRole: aws.String("arn:aws:iam::123456789012:role/codebuild-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = buildAPI.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: aws.String(projectName)})
+	})
+
+	definition, err := json.Marshal(map[string]any{
+		"StartAt": "RunContainer",
+		"States": map[string]any{
+			"RunContainer": map[string]any{
+				"Type": "Task", "Resource": "arn:aws:states:::ecs:runTask.sync",
+				"Parameters": map[string]any{
+					"Cluster":        clusterName,
+					"TaskDefinition": aws.ToString(taskDefinition.TaskDefinition.TaskDefinitionArn),
+					"LaunchType":     "FARGATE",
+					"NetworkConfiguration": map[string]any{"AwsvpcConfiguration": map[string]any{
+						"Subnets": []string{subnetID},
+					}},
+				},
+				"Next": "RunBuild",
+			},
+			"RunBuild": map[string]any{
+				"Type": "Task", "Resource": "arn:aws:states:::codebuild:startBuild.sync",
+				"Parameters": map[string]any{
+					"ProjectName": projectName,
+					"EnvironmentVariablesOverride": []any{
+						map[string]any{"Name": "AWS_ACCESS_KEY_ID", "Value": "test", "Type": "PLAINTEXT"},
+						map[string]any{"Name": "AWS_SECRET_ACCESS_KEY", "Value": "test", "Type": "PLAINTEXT"},
+						map[string]any{"Name": "AWS_DEFAULT_REGION", "Value": "us-east-1", "Type": "PLAINTEXT"},
+						map[string]any{"Name": "AWS_ENDPOINT_URL", "Value": baseURL, "Type": "PLAINTEXT"},
+						map[string]any{"Name": "QUEUE_URL", "Value": aws.ToString(queue.QueueUrl), "Type": "PLAINTEXT"},
+					},
+				},
+				"End": true,
+			},
+		},
+	})
+	require.NoError(t, err)
+	machine, err := statesAPI.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name: aws.String("sfn-ecs-codebuild-integrations"), Definition: aws.String(string(definition)),
+		RoleArn: aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = statesAPI.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: machine.StateMachineArn})
+	})
+	execution, err := statesAPI.StartExecution(ctx, &sfn.StartExecutionInput{StateMachineArn: machine.StateMachineArn})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		described, describeErr := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{ExecutionArn: execution.ExecutionArn})
+		return describeErr == nil && described.Status == sfntypes.ExecutionStatusSucceeded
+	}, 60*time.Second, 200*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		received, receiveErr := queueAPI.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl: queue.QueueUrl, MaxNumberOfMessages: 1, VisibilityTimeout: 0,
+		})
+		return receiveErr == nil && len(received.Messages) == 1 &&
+			aws.ToString(received.Messages[0].Body) == "from-step-functions-codebuild"
+	}, 10*time.Second, 100*time.Millisecond)
 }

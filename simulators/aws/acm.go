@@ -174,14 +174,15 @@ type acmStoredCert struct {
 	Cert ACMCertificate
 	Tags []acmTag
 	// Material holds the PEM bytes — for an IMPORTED cert, the bytes the
-	// caller supplied; for a PRIVATE cert, a self-signed leaf minted at
-	// RequestCertificate time; for an AMAZON_ISSUED DNS-validated cert, a
-	// self-signed leaf minted at issuance time (PENDING_VALIDATION →
-	// ISSUED). PrivateKey is only ever returned by ExportCertificate for a
-	// PRIVATE cert, matching real ACM.
-	CertificateBody  string
-	CertificateChain string
-	PrivateKey       string
+	// caller supplied; for a PRIVATE cert, the leaf and chain issued by the
+	// selected AWS Private Certificate Authority; for an AMAZON_ISSUED
+	// DNS-validated cert, the managed service CA-signed certificate minted at issuance
+	// time (PENDING_VALIDATION → ISSUED). PrivateKey is only ever returned by
+	// ExportCertificate for a PRIVATE cert, matching real ACM.
+	CertificateBody       string
+	CertificateChain      string
+	PrivateKey            string
+	PrivateCertificateArn string
 	// RevokedAt records the revocation time once RevokeCertificate runs.
 	RevokedAt *float64
 }
@@ -535,6 +536,10 @@ func handleACMRevokeCertificate(w http.ResponseWriter, r *http.Request) {
 			"Only private certificates can be revoked")
 		return
 	}
+	if err := privateCARevokeIssuedCertificate(stored.PrivateCertificateArn, req.RevocationReason); err != nil {
+		acmWriteError(w, "InvalidStateException", err.Error())
+		return
+	}
 	now := acmEpochNow()
 	stored.Cert.Status = "REVOKED"
 	stored.RevokedAt = now
@@ -801,11 +806,45 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 	}
 	stored := acmStoredCert{Tags: req.Tags}
 	if req.CertificateAuthorityArn != "" {
-		// RequestCertificate delegates private issuance to the referenced
-		// AWS Private Certificate Authority resource. This cloud slice does
-		// not manufacture an unregistered CA from an ARN: a nonexistent CA
-		// is the same ResourceNotFoundException AWS returns.
-		acmWriteError(w, "ResourceNotFoundException", "The certificate authority "+req.CertificateAuthorityArn+" does not exist")
+		ca, exists := privateCAs.Get(privateCAID(req.CertificateAuthorityArn))
+		if !exists {
+			acmWriteError(w, "ResourceNotFoundException",
+				"Could not find AWS Private Certificate Authority "+req.CertificateAuthorityArn)
+			return
+		}
+		if ca.Status != "ACTIVE" {
+			acmWriteError(w, "InvalidParameterException",
+				"The AWS Private Certificate Authority must be ACTIVE to issue a certificate")
+			return
+		}
+		dnsNames := append([]string{req.DomainName}, req.SubjectAlternativeNames...)
+		issued, keyPEM, leaf, err := privateCAIssueManagedCertificate(
+			req.CertificateAuthorityArn, req.DomainName, dnsNames, cert.KeyAlgorithm)
+		if err != nil {
+			acmWriteError(w, "InvalidParameterException", err.Error())
+			return
+		}
+		notBefore := float64(leaf.NotBefore.Unix())
+		notAfter := float64(leaf.NotAfter.Unix())
+		cert.Status = "ISSUED"
+		cert.Type = "PRIVATE"
+		cert.CertificateAuthorityArn = req.CertificateAuthorityArn
+		cert.DomainValidationOptions = nil
+		cert.IssuedAt = now
+		cert.NotBefore = &notBefore
+		cert.NotAfter = &notAfter
+		cert.RenewalEligibility = "ELIGIBLE"
+		cert.Serial = leaf.SerialNumber.Text(16)
+		cert.Subject = leaf.Subject.String()
+		cert.Issuer = leaf.Issuer.String()
+		cert.SignatureAlgorithm = acmSignatureAlgorithm(leaf.SignatureAlgorithm)
+		stored.Cert = cert
+		stored.CertificateBody = issued.Certificate
+		stored.CertificateChain = issued.Chain
+		stored.PrivateKey = keyPEM
+		stored.PrivateCertificateArn = issued.ARN
+		acmCertificates.Put(id, stored)
+		acmWriteJSON(w, http.StatusOK, map[string]string{"CertificateArn": cert.CertificateArn})
 		return
 	}
 	stored.Cert = cert

@@ -29,10 +29,23 @@ and temporary IAM roles were removed after validation.
 The AWS console exposed Lambda overview, code, test, logs, configuration,
 layers, environment, concurrency, versions, aliases, URLs, and tags. Its Step
 Functions experience exposed the graph, editable definition, execution input,
-history, input/output inspection, publishing, aliases, tags, and redrive. The
-production UI passed 229 Chromium package tests, and the authenticated
-Shauth/Ory Hydra/PostgreSQL matrix created a state machine through federated AWS
-credentials, started it, and inspected its graph and execution history.
+history, input/output inspection, publishing, aliases, tags, and redrive. AWS
+Private Certificate Authority and Amazon Data Firehose added complete
+authority lifecycle, encrypted delivery-stream, and Amazon S3 delivery
+workflows. The production UI passed 239 Chromium package tests, and the
+authenticated Shauth/Ory Hydra/PostgreSQL matrix exercised all four services
+through federated AWS credentials.
+
+AWS Step Functions executed optimized and SDK Amazon ECS and AWS CodeBuild
+tasks with request/response, synchronous, callback, failure, and cancellation
+semantics. AWS Amplify encrypted connected-repository credentials, cloned
+private repositories, and executed Python and Node.js build specifications.
+Amazon Relational Database Service ran real PostgreSQL and MySQL data planes
+with native TLS and IAM database authentication. Explicit AWS Lambda
+deployments and AWS CodeBuild workloads reached downstream AWS APIs through
+the standard global or per-service endpoint coordinates. The production AWS
+console passed 239 Chromium tests and its authenticated browser matrix covered
+the Amplify and RDS workflows.
 
 The AWS CLI harness provisioned and validated the official Session Manager
 plugin when the host lacked it, so Amazon ECS ExecuteCommand coverage no longer
@@ -40,6 +53,46 @@ depended on undeclared host tooling. Route-conformance builds registered the
 full AWS surface without starting runtime evaluator goroutines, removing the
 store-rebinding race while production builds retained their Amazon CloudWatch
 and Application Auto Scaling evaluators.
+
+The CI closure kept the external-client contracts real. CloudWatch
+metric-stream CLI coverage provisioned Amazon S3, IAM, and Amazon Data Firehose
+resources instead of using placeholder ARNs. Azure Container Apps and Azure
+Functions Terraform modules and examples used HashiCorp AzureRM 5.0.0, and the
+production-shaped Azure simulator stack migrated every resource whose provider
+schema became ID-based. The official provider completed a
+Microsoft.Subscription apply, zero-drift plan, and destroy. Google Discovery
+drift failures retained the exact newest response as a short-lived artifact;
+the transient Cloud Resource Manager 20260715 rollout disappeared from every
+sampled edge, so the pinned 20260709 documents remained the truthful source.
+The Azure Terraform job installed Ubuntu's signed Caddy package through its
+retry- and timeout-bounded APT path, so a third-party repository bootstrap
+could no longer consume the provider test's execution budget. Microsoft.Network
+subnets accepted AzureRM 5's plural `addressPrefixes` request and used it for
+the real network fabric. Azure Container Apps environments that linked a Log
+Analytics workspace explicitly selected the provider-required `log-analytics`
+destination. Failed portal deletions kept their provider error inside the open
+Fluent confirmation surface instead of racing with dismissal. The AWS Lambda
+module's Step Functions differential role built its policy ARNs from the
+module's declared `region` input, and all six production modules validated.
+The complete Terraform tree also retained canonical HCL formatting.
+
+The final hosted freshness pass advanced the exact Google Discovery documents
+for Bigtable Admin v2, Cloud Logging v2, Pub/Sub v1, and Cloud Resource Manager
+v1/v3. The two methods newly present in those specifications were real
+implementations: Bigtable memory layers retained enable/disable state and
+etags and returned durable operations, while Cloud Resource Manager returned
+resource-semantics metadata through its published v3 route. Authenticated
+official-SDK transports exercised both methods, and generated surface coverage
+measured Bigtable at 164 of 164 and Cloud Resource Manager v3 at 126 of 126.
+
+AzureRM 5's complete external stack also converged after refresh.
+Microsoft.OperationalInsights workspaces returned Azure's default public
+network access values, and Microsoft.Storage File-share policies stayed
+consistent between the ARM resource and Azure Files data plane. The official
+Azure SDK round-tripped the share policy and Azure CLI round-tripped the
+workspace defaults. The external stack's post-plan assertions used AzureRM
+5's canonical Microsoft.Storage ARM IDs for Blob containers, Tables, and File
+shares instead of the removed legacy data-plane IDs.
 
 The publication repair preserved current public contracts across the failing
 client surfaces. Amazon SQS redrive used the normal enqueue path and therefore
@@ -56,18 +109,30 @@ to Discovery revisions 20260723 and 20260724.
 
 ## Next Recommended Slice
 
-The next locally actionable AWS slice became BUG-2714: AWS Private Certificate
-Authority. Completion required a real authority/key/certificate lifecycle,
-AWS Certificate Manager issuance from an existing authority ARN, encrypted
-private-key export, revocation, and official AWS SDK, AWS CLI, and Terraform
-coverage.
+No locally actionable bug remained in this workspace. AWS Private Certificate
+Authority implemented all 23 vendored operations and supplied real authority,
+key, certificate, revocation-list, permission, policy, and audit-report state
+to AWS Certificate Manager. Amazon Data Firehose implemented all 12 vendored
+operations with durable encrypted buffering and IAM-authorized Amazon S3
+delivery for direct writes, Amazon SNS subscriptions, and Amazon CloudWatch
+metric streams. Both services shipped with official AWS SDK, AWS CLI,
+Terraform, and authenticated browser coverage.
 
-BUG-2712 retained the adjacent outbound-delivery work. Amazon SNS email and
-email-json completed real SMTP confirmation and delivery, while an Amazon Data
-Firehose service remained necessary for both SNS subscriptions and Amazon
-CloudWatch metric streams. Mobile push and SMS could be connected only through
-provider/carrier primitives represented in a public AWS contract; the simulator
-did not invent private configuration for them.
+The external review's locally actionable gaps were closed: AWS Step Functions
+ran Amazon ECS and AWS CodeBuild workloads, AWS Amplify authenticated private
+repositories and ran multi-language builds, Amazon RDS exposed real native data
+planes with IAM database authentication, and deployed workloads used the
+standard SDK endpoint environment variables. Explicit Lambda deployment
+remained intentional because AWS Lambda itself runs only functions a caller
+creates; the repository retained its truthful unaudited/non-production
+warning because functional validation did not constitute an independent
+security audit.
+
+The next pass should recheck the six external blockers below and resume only
+when their missing credentials, upstream API coordinates, published schemas,
+provider transports, or external repository become available. Mobile push and
+SMS remained under BUG-2712 because no available public AWS configuration
+exposed the carrier/provider primitives needed for faithful delivery.
 
 ## Externally Blocked Work
 

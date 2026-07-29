@@ -181,6 +181,7 @@ resource "azurerm_container_app_environment" "this" {
   name                       = "${var.name_prefix}-${var.environment}-env"
   location                   = var.location
   resource_group_name        = local.resource_group_name
+  logs_destination           = "log-analytics"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.this.id
   infrastructure_subnet_id   = azurerm_subnet.container_apps.id
 
@@ -211,9 +212,9 @@ resource "azurerm_storage_account" "this" {
 # Azure Files Share — default share for volume mounts
 # ---------------------------------------------------------------------------
 resource "azurerm_storage_share" "this" {
-  name                 = "sockerless-volumes"
-  storage_account_name = azurerm_storage_account.this.name
-  quota                = var.file_share_quota
+  name               = "sockerless-volumes"
+  storage_account_id = azurerm_storage_account.this.id
+  quota              = var.file_share_quota
 }
 
 # ---------------------------------------------------------------------------
@@ -316,10 +317,9 @@ resource "azurerm_private_dns_zone" "this" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "this" {
-  name                  = "${var.name_prefix}-${var.environment}-dns-link"
-  resource_group_name   = local.resource_group_name
-  private_dns_zone_name = azurerm_private_dns_zone.this.name
-  virtual_network_id    = azurerm_virtual_network.this.id
-  registration_enabled  = true
-  tags                  = local.common_tags
+  name                 = "${var.name_prefix}-${var.environment}-dns-link"
+  private_dns_zone_id  = azurerm_private_dns_zone.this.id
+  virtual_network_id   = azurerm_virtual_network.this.id
+  registration_enabled = true
+  tags                 = local.common_tags
 }

@@ -39,11 +39,17 @@ check_repo_pinned() {
 check_gcp() {
   local sources="$ROOT/specs/cloud-api/gcp/SOURCES.md"
   local probes="${SPEC_FRESHNESS_GCP_PROBES:-3}"
+  local capture_dir="${SPEC_FRESHNESS_CAPTURE_DIR:-}"
+  local probe_dir
   local probe
   [ -f "$sources" ] || return 0
   if ! [[ "$probes" =~ ^[1-9][0-9]*$ ]]; then
     echo "SPEC_FRESHNESS_GCP_PROBES must be a positive integer, got $probes" >&2
     return 2
+  fi
+  probe_dir="$(mktemp -d)"
+  if [ -n "$capture_dir" ]; then
+    mkdir -p "$capture_dir"
   fi
   while IFS='|' read -r _ file host path _lic pin _; do
     file="$(echo "$file" | tr -d ' \`')"
@@ -52,11 +58,20 @@ check_gcp() {
     pin="$(echo "$pin" | tr -d ' \`')"
     url="https://$host/${path//\\/}"
     revisions=()
+    newest_file=""
+    newest_revision=""
     for ((probe = 1; probe <= probes; probe++)); do
-      live="$(curl -fsSL -H 'Cache-Control: no-cache' "$url" 2>/dev/null |
-        jq -er '.revision | select(type == "string" or type == "number") | tostring' 2>/dev/null || true)"
+      candidate="$probe_dir/${file%.gz}-$probe.json"
+      if ! curl -fsSL -H 'Cache-Control: no-cache' -o "$candidate" "$url" 2>/dev/null; then
+        continue
+      fi
+      live="$(jq -er '.revision | select(type == "string" or type == "number") | tostring' "$candidate" 2>/dev/null || true)"
       if [[ "$live" =~ ^[0-9]+$ ]]; then
         revisions+=("$live")
+        if [ -z "$newest_revision" ] || [ "$live" -gt "$newest_revision" ]; then
+          newest_revision="$live"
+          newest_file="$candidate"
+        fi
       fi
     done
     if [ "${#revisions[@]}" -eq 0 ]; then
@@ -71,11 +86,16 @@ check_gcp() {
       fail=1
     elif [ "$pinned" -lt "$newest" ]; then
       echo "DRIFT $file: pinned $pin, newest sampled revision $newest (${#revisions[@]}/$probes probes succeeded)"
+      if [ -n "$capture_dir" ] && [ -n "$newest_file" ]; then
+        gzip -9 -n -c "$newest_file" >"$capture_dir/$file"
+        echo "      captured revision $newest in $capture_dir/$file"
+      fi
       fail=1
     else
       echo "ok    $file (pinned $pinned, newest sampled $newest; ${#revisions[@]}/$probes probes succeeded)"
     fi
   done < <(grep '^| `' "$sources")
+  rm -rf "$probe_dir"
 }
 
 for cloud in $CLOUDS; do

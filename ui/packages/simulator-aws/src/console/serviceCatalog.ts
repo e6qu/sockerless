@@ -108,6 +108,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Analytics",
     items: [
       { label: "Kinesis Data Streams", to: "/ui/kinesis" },
+      { label: "Amazon Data Firehose", to: "/ui/firehose" },
       { label: "AWS Glue", to: "/ui/glue" },
       { label: "Amazon Athena", to: NOT_SUPPORTED + "athena", supported: false },
       { label: "Amazon EMR", to: NOT_SUPPORTED + "emr", supported: false },
@@ -150,6 +151,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Secrets Manager", to: "/ui/secretsmanager" },
       { label: "Key Management Service", to: "/ui/kms" },
       { label: "AWS Certificate Manager", to: "/ui/acm" },
+      { label: "AWS Private Certificate Authority", to: "/ui/private-ca" },
       { label: "AWS WAF", to: "/ui/waf" },
       { label: "Amazon Cognito", to: NOT_SUPPORTED + "cognito", supported: false },
       { label: "GuardDuty", to: NOT_SUPPORTED + "guardduty", supported: false },

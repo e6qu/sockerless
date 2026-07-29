@@ -29,7 +29,7 @@ data "aws_iam_policy_document" "step_functions_conformance" {
     effect  = "Allow"
     actions = ["lambda:InvokeFunction"]
     resources = [
-      "arn:${data.aws_partition.current.partition}:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:sockerless-*",
+      "arn:${data.aws_partition.current.partition}:lambda:${var.region}:${data.aws_caller_identity.current.account_id}:function:sockerless-*",
     ]
   }
 
@@ -38,7 +38,7 @@ data "aws_iam_policy_document" "step_functions_conformance" {
     effect  = "Allow"
     actions = ["states:StartExecution"]
     resources = [
-      "arn:${data.aws_partition.current.partition}:states:${var.aws_region}:${data.aws_caller_identity.current.account_id}:stateMachine:sockerless-*",
+      "arn:${data.aws_partition.current.partition}:states:${var.region}:${data.aws_caller_identity.current.account_id}:stateMachine:sockerless-*",
     ]
   }
 
@@ -50,7 +50,7 @@ data "aws_iam_policy_document" "step_functions_conformance" {
       "states:StopExecution",
     ]
     resources = [
-      "arn:${data.aws_partition.current.partition}:states:${var.aws_region}:${data.aws_caller_identity.current.account_id}:execution:sockerless-*:*",
+      "arn:${data.aws_partition.current.partition}:states:${var.region}:${data.aws_caller_identity.current.account_id}:execution:sockerless-*:*",
     ]
   }
 
@@ -63,7 +63,7 @@ data "aws_iam_policy_document" "step_functions_conformance" {
       "events:PutTargets",
     ]
     resources = [
-      "arn:${data.aws_partition.current.partition}:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule",
+      "arn:${data.aws_partition.current.partition}:events:${var.region}:${data.aws_caller_identity.current.account_id}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule",
     ]
   }
 }

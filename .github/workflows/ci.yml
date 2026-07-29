@@ -93,7 +93,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Check Google Cloud API specification freshness
+        id: gcp-spec-freshness
         run: bash scripts/check-spec-freshness.sh gcp
+        env:
+          SPEC_FRESHNESS_CAPTURE_DIR: ${{ runner.temp }}/gcp-spec-drift
+      - name: Preserve drifted Google Cloud API specifications
+        if: failure() && steps.gcp-spec-freshness.outcome == 'failure'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gcp-discovery-drift
+          path: ${{ runner.temp }}/gcp-spec-drift
+          if-no-files-found: ignore
+          retention-days: 1
       # README badges are refreshed by the update-readme-badges pre-push hook.
       # Re-run it here so a push that skipped the hook (e.g. --no-verify) can't
       # land stale badges — the line counts are computed from committed files
@@ -546,11 +557,11 @@ jobs:
       matrix:
         include:
           - suite: edge-routing
-            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|Budgets)'
+            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|Budgets|PrivateCA)'
             timeout: 1200s
             timeout_minutes: 15
           - suite: edge-delivery
-            run: '^Test(CloudFront|CloudTrail|CodeBuild|ELBv2|Glue)'
+            run: '^Test(CloudFront|CloudTrail|CodeBuild|ELBv2|Firehose|Glue)'
             timeout: 1200s
             timeout_minutes: 15
           - suite: ec2-a-m
@@ -675,11 +686,6 @@ jobs:
           bash scripts/install-firecracker.sh
       - name: Install Caddy
         run: |
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y debian-keyring debian-archive-keyring apt-transport-https curl
-          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
-          sudo chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
-          bash scripts/ci-apt-update.sh
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y caddy
       - name: Run terraform tests
         run: |

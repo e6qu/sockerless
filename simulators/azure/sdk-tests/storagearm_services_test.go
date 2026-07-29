@@ -2,6 +2,7 @@ package azure_sdk_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
@@ -134,8 +135,20 @@ func TestStorageARM_FileServicesAndShares(t *testing.T) {
 	shareClient, err := armstorage.NewFileSharesClient(subscriptionID, &fakeCredential{}, clientOpts())
 	require.NoError(t, err)
 	share := "arm-share"
+	start := time.Date(2026, time.July, 28, 10, 0, 0, 0, time.UTC)
+	expiry := start.Add(24 * time.Hour)
 	_, err = shareClient.Create(ctx, rg, account, share, armstorage.FileShare{
-		FileShareProperties: &armstorage.FileShareProperties{ShareQuota: to.Ptr(int32(100))},
+		FileShareProperties: &armstorage.FileShareProperties{
+			ShareQuota: to.Ptr(int32(100)),
+			SignedIdentifiers: []*armstorage.SignedIdentifier{{
+				ID: to.Ptr("arm-policy"),
+				AccessPolicy: &armstorage.AccessPolicy{
+					StartTime:  &start,
+					ExpiryTime: &expiry,
+					Permission: to.Ptr("rwdl"),
+				},
+			}},
+		},
 	}, nil)
 	require.NoError(t, err)
 	upd, err := shareClient.Update(ctx, rg, account, share, armstorage.FileShare{
@@ -145,6 +158,13 @@ func TestStorageARM_FileServicesAndShares(t *testing.T) {
 	require.NotNil(t, upd.FileShareProperties)
 	require.NotNil(t, upd.FileShareProperties.ShareQuota)
 	assert.Equal(t, int32(200), *upd.FileShareProperties.ShareQuota)
+	require.Len(t, upd.FileShareProperties.SignedIdentifiers, 1)
+	require.NotNil(t, upd.FileShareProperties.SignedIdentifiers[0].ID)
+	require.NotNil(t, upd.FileShareProperties.SignedIdentifiers[0].AccessPolicy)
+	assert.Equal(t, "arm-policy", *upd.FileShareProperties.SignedIdentifiers[0].ID)
+	assert.Equal(t, "rwdl", *upd.FileShareProperties.SignedIdentifiers[0].AccessPolicy.Permission)
+	assert.Equal(t, start, *upd.FileShareProperties.SignedIdentifiers[0].AccessPolicy.StartTime)
+	assert.Equal(t, expiry, *upd.FileShareProperties.SignedIdentifiers[0].AccessPolicy.ExpiryTime)
 
 	leaseResp, err := shareClient.Lease(ctx, rg, account, share, &armstorage.FileSharesClientLeaseOptions{
 		Parameters: &armstorage.LeaseShareRequest{

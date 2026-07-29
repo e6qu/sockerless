@@ -37,7 +37,7 @@ func TestRDSCLI_DBInstanceLifecycle(t *testing.T) {
 	assert.Equal(t, "available", created.DBInstance.DBInstanceStatus)
 	arn := created.DBInstance.DBInstanceArn
 	require.NotEmpty(t, arn)
-	assert.Equal(t, 5432, created.DBInstance.Endpoint.Port)
+	assert.Positive(t, created.DBInstance.Endpoint.Port)
 	t.Cleanup(func() {
 		_ = awsCLI("rds", "delete-db-instance",
 			"--db-instance-identifier", id,

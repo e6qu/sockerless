@@ -284,6 +284,18 @@ func StopContainer(containerID string) {
 	_ = dockerClient.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 }
 
+// RemoveVolume removes one explicitly named simulator-managed Docker volume.
+// Callers own the lifecycle decision; this helper never enumerates or prunes
+// unrelated volumes.
+func RemoveVolume(name string) error {
+	if dockerClient == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return dockerClient.VolumeRemove(ctx, name, true)
+}
+
 func runContainer(ctx context.Context, cli *client.Client, cfg ContainerConfig, sink LogSink) ProcessResult {
 	containerID, err := createAndStartContainer(ctx, cli, cfg)
 	if err != nil {

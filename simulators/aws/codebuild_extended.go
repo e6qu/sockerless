@@ -259,6 +259,11 @@ func handleCBStartBuildBatch(w http.ResponseWriter, r *http.Request) {
 		cbWriteError(w, "ResourceNotFoundException", "Project not found: "+req.ProjectName)
 		return
 	}
+	commands, err := cbBuildCommands(p, req.BuildspecOverride)
+	if err != nil {
+		cbWriteError(w, "InvalidInputException", err.Error())
+		return
+	}
 
 	cbMu.Lock()
 	defer cbMu.Unlock()
@@ -285,14 +290,12 @@ func handleCBStartBuildBatch(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	cbBuildBatches.Put(batchID, batch)
-	go cbSettleBuildBatch(batchID)
+	go cbRunBuildBatch(batchID, commands, cbEnvironment(p.Environment, nil))
 	cbWriteJSON(w, http.StatusOK, map[string]any{"buildBatch": batch})
 }
 
-// cbSettleBuildBatch drives a batch to SUCCEEDED. A build batch in this sim
-// orchestrates builds; with no failing sub-build it completes successfully —
-// the real terminal state for a batch whose builds all pass.
-func cbSettleBuildBatch(batchID string) {
+func cbRunBuildBatch(batchID string, commands []string, environment map[string]string) {
+	exitCode, reason := cbRunCommands(commands, environment)
 	cbMu.Lock()
 	defer cbMu.Unlock()
 	batch, ok := cbBuildBatches.Get(batchID)
@@ -300,14 +303,21 @@ func cbSettleBuildBatch(batchID string) {
 		return
 	}
 	now := cbEpochNow()
-	batch.BuildBatchStatus = "SUCCEEDED"
+	status := "SUCCEEDED"
+	if exitCode != 0 {
+		status = "FAILED"
+	}
+	batch.BuildBatchStatus = status
 	batch.CurrentPhase = "COMPLETED"
 	batch.EndTime = now
 	batch.Complete = true
 	batch.Phases = []CBPhase{
 		{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: batch.StartTime, EndTime: batch.StartTime, DurationInSeconds: 0},
-		{PhaseType: "COMBINE_ARTIFACTS", PhaseStatus: "SUCCEEDED", StartTime: batch.StartTime, EndTime: now, DurationInSeconds: now - batch.StartTime},
-		{PhaseType: "COMPLETED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
+		{PhaseType: "COMBINE_ARTIFACTS", PhaseStatus: status, StartTime: batch.StartTime, EndTime: now, DurationInSeconds: now - batch.StartTime},
+		{PhaseType: "COMPLETED", PhaseStatus: status, StartTime: now, EndTime: now, DurationInSeconds: 0},
+	}
+	if reason != "" {
+		batch.Phases[1].Contexts = []CBPhaseContext{{StatusCode: "COMMAND_EXECUTION_ERROR", Message: reason}}
 	}
 	cbBuildBatches.Put(batchID, batch)
 }
@@ -321,13 +331,21 @@ func handleCBStopBuildBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cbMu.Lock()
-	defer cbMu.Unlock()
-
 	batch, ok := cbResolveBuildBatch(req.ID)
 	if !ok {
 		cbWriteError(w, "ResourceNotFoundException", "Build batch not found: "+req.ID)
 		return
+	}
+	batch = cbStopBuildBatchByID(batch.ID)
+	cbWriteJSON(w, http.StatusOK, map[string]any{"buildBatch": batch})
+}
+
+func cbStopBuildBatchByID(batchID string) CBBuildBatch {
+	cbMu.Lock()
+	defer cbMu.Unlock()
+	batch, ok := cbResolveBuildBatch(batchID)
+	if !ok {
+		return CBBuildBatch{}
 	}
 	if batch.BuildBatchStatus == "IN_PROGRESS" {
 		now := cbEpochNow()
@@ -337,7 +355,7 @@ func handleCBStopBuildBatch(w http.ResponseWriter, r *http.Request) {
 		batch.Complete = true
 		cbBuildBatches.Put(batch.ID, batch)
 	}
-	cbWriteJSON(w, http.StatusOK, map[string]any{"buildBatch": batch})
+	return batch
 }
 
 func handleCBRetryBuildBatch(w http.ResponseWriter, r *http.Request) {
@@ -355,6 +373,16 @@ func handleCBRetryBuildBatch(w http.ResponseWriter, r *http.Request) {
 	prior, ok := cbResolveBuildBatch(req.ID)
 	if !ok {
 		cbWriteError(w, "ResourceNotFoundException", "Build batch not found: "+req.ID)
+		return
+	}
+	project, ok := cbProjects.Get(prior.ProjectName)
+	if !ok {
+		cbWriteError(w, "ResourceNotFoundException", "Project not found: "+prior.ProjectName)
+		return
+	}
+	commands, err := cbBuildCommands(project, "")
+	if err != nil {
+		cbWriteError(w, "InvalidInputException", err.Error())
 		return
 	}
 	// RetryBuildBatch starts a fresh batch of the same project (a new id),
@@ -380,7 +408,7 @@ func handleCBRetryBuildBatch(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	cbBuildBatches.Put(batchID, batch)
-	go cbSettleBuildBatch(batchID)
+	go cbRunBuildBatch(batchID, commands, cbEnvironment(project.Environment, nil))
 	cbWriteJSON(w, http.StatusOK, map[string]any{"buildBatch": batch})
 }
 

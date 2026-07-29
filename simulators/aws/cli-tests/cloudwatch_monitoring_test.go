@@ -5,6 +5,87 @@ import (
 	"testing"
 )
 
+func createCLICloudWatchMetricStreamDestination(t *testing.T, suffix string) (string, string) {
+	t.Helper()
+	bucket := "cli-cloudwatch-metric-stream-" + suffix
+	deliveryRole := "cli-cloudwatch-firehose-" + suffix
+	cloudWatchRole := "cli-cloudwatch-metrics-" + suffix
+	deliveryStream := "cli-cloudwatch-destination-" + suffix
+
+	runCLI(t, awsCLI("s3api", "create-bucket", "--bucket", bucket))
+	t.Cleanup(func() {
+		objects := runCLI(t, awsCLI("s3api", "list-objects-v2", "--bucket", bucket, "--output", "json"))
+		var listed struct {
+			Contents []struct {
+				Key string `json:"Key"`
+			} `json:"Contents"`
+		}
+		parseJSON(t, objects, &listed)
+		for _, object := range listed.Contents {
+			runCLI(t, awsCLI("s3api", "delete-object", "--bucket", bucket, "--key", object.Key))
+		}
+		runCLI(t, awsCLI("s3api", "delete-bucket", "--bucket", bucket))
+	})
+
+	deliveryRoleOutput := runCLI(t, awsCLI("iam", "create-role",
+		"--role-name", deliveryRole,
+		"--assume-role-policy-document",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"firehose.amazonaws.com"},"Action":"sts:AssumeRole"}]}`,
+		"--output", "json"))
+	var delivery struct {
+		Role struct {
+			ARN string `json:"Arn"`
+		} `json:"Role"`
+	}
+	parseJSON(t, deliveryRoleOutput, &delivery)
+	runCLI(t, awsCLI("iam", "put-role-policy",
+		"--role-name", deliveryRole,
+		"--policy-name", "delivery",
+		"--policy-document",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket","s3:PutObject"],"Resource":["arn:aws:s3:::`+bucket+`","arn:aws:s3:::`+bucket+`/*"]}]}`))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("iam", "delete-role-policy", "--role-name", deliveryRole, "--policy-name", "delivery"))
+		runCLI(t, awsCLI("iam", "delete-role", "--role-name", deliveryRole))
+	})
+
+	createdStream := runCLI(t, awsCLI("firehose", "create-delivery-stream",
+		"--delivery-stream-name", deliveryStream,
+		"--extended-s3-destination-configuration",
+		`{"RoleARN":"`+delivery.Role.ARN+`","BucketARN":"arn:aws:s3:::`+bucket+`","BufferingHints":{"SizeInMBs":1,"IntervalInSeconds":0}}`,
+		"--output", "json"))
+	var stream struct {
+		DeliveryStreamARN string `json:"DeliveryStreamARN"`
+	}
+	parseJSON(t, createdStream, &stream)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("firehose", "delete-delivery-stream",
+			"--delivery-stream-name", deliveryStream, "--allow-force-delete"))
+	})
+
+	cloudWatchRoleOutput := runCLI(t, awsCLI("iam", "create-role",
+		"--role-name", cloudWatchRole,
+		"--assume-role-policy-document",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"streams.metrics.cloudwatch.amazonaws.com"},"Action":"sts:AssumeRole"}]}`,
+		"--output", "json"))
+	var cloudWatch struct {
+		Role struct {
+			ARN string `json:"Arn"`
+		} `json:"Role"`
+	}
+	parseJSON(t, cloudWatchRoleOutput, &cloudWatch)
+	runCLI(t, awsCLI("iam", "put-role-policy",
+		"--role-name", cloudWatchRole,
+		"--policy-name", "delivery",
+		"--policy-document",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"firehose:PutRecord","Resource":"`+stream.DeliveryStreamARN+`"}]}`))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("iam", "delete-role-policy", "--role-name", cloudWatchRole, "--policy-name", "delivery"))
+		runCLI(t, awsCLI("iam", "delete-role", "--role-name", cloudWatchRole))
+	})
+
+	return stream.DeliveryStreamARN, cloudWatch.Role.ARN
+}
+
 // TestCloudWatchCLI_AlarmActionsAndState covers enable/disable-alarm-actions,
 // set-alarm-state and describe-alarm-history over the CLI surface.
 func TestCloudWatchCLI_AlarmActionsAndState(t *testing.T) {
@@ -75,10 +156,11 @@ func TestCloudWatchCLI_CompositeAlarm(t *testing.T) {
 // TestCloudWatchCLI_MetricStreams covers the stream lifecycle over the CLI.
 func TestCloudWatchCLI_MetricStreams(t *testing.T) {
 	name := "cli-stream"
+	firehoseARN, roleARN := createCLICloudWatchMetricStreamDestination(t, "lifecycle")
 	runCLI(t, awsCLI("cloudwatch", "put-metric-stream",
 		"--name", name,
-		"--firehose-arn", "arn:aws:firehose:us-east-1:123456789012:deliverystream/s",
-		"--role-arn", "arn:aws:iam::123456789012:role/r",
+		"--firehose-arn", firehoseARN,
+		"--role-arn", roleARN,
 		"--output-format", "json",
 		"--include-filters", `[{"Namespace":"AWS/EC2"}]`))
 	defer func() { _ = awsCLI("cloudwatch", "delete-metric-stream", "--name", name).Run() }()
@@ -217,10 +299,11 @@ func TestCloudWatchCLI_AlarmMuteRules(t *testing.T) {
 // metric-stream ARN.
 func TestCloudWatchCLI_TagResource(t *testing.T) {
 	name := "cli-stream-tagged"
+	firehoseARN, roleARN := createCLICloudWatchMetricStreamDestination(t, "tags")
 	runCLI(t, awsCLI("cloudwatch", "put-metric-stream",
 		"--name", name,
-		"--firehose-arn", "arn:aws:firehose:us-east-1:123456789012:deliverystream/s",
-		"--role-arn", "arn:aws:iam::123456789012:role/r",
+		"--firehose-arn", firehoseARN,
+		"--role-arn", roleARN,
 		"--output-format", "json"))
 	defer func() { _ = awsCLI("cloudwatch", "delete-metric-stream", "--name", name).Run() }()
 	arn := strings.TrimSpace(runCLI(t, awsCLI("cloudwatch", "get-metric-stream", "--name", name,

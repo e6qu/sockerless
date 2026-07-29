@@ -212,6 +212,8 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 	registerEFS(srv)
 	registerLambda(srv, options.startBackgroundEvaluators)
 	registerS3(srv)
+	registerFirehose(awsRouter, srv)
+	registerACMPrivateCA(awsRouter, srv)
 	registerCloudFront(srv)
 	registerRoute53(srv)
 	registerAmplify(srv)

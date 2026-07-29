@@ -15,13 +15,13 @@ Surface registered in `simulators/azure/insights.go` (and related files grouped 
 |---|---|---|---|---|---|
 | `GET /subscriptions/{subscriptionId}/providers/Microsoft.Insights/components` | ✓ `simulators/azure/insights.go:237::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /v1/apps/{appId}/query` | ✓ `simulators/azure/insights.go:330::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.OperationalInsights/workspaces` | ✓ `simulators/azure/monitor.go:314::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:359::postQueryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:360::getQueryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v1/workspaces/{workspaceId}/metadata` | ✓ `simulators/azure/monitor.go:367::metadataHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/workspaces/{workspaceId}/metadata` | ✓ `simulators/azure/monitor.go:368::metadataHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v1/$batch` | ✓ `simulators/azure/monitor.go:372::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /dataCollectionRules/{dcrId}/streams/{streamName}` | ✓ `simulators/azure/monitor.go:396::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.OperationalInsights/workspaces` | ✓ `simulators/azure/monitor.go:330::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:375::postQueryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:376::getQueryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/workspaces/{workspaceId}/metadata` | ✓ `simulators/azure/monitor.go:383::metadataHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/workspaces/{workspaceId}/metadata` | ✓ `simulators/azure/monitor.go:384::metadataHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/$batch` | ✓ `simulators/azure/monitor.go:388::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /dataCollectionRules/{dcrId}/streams/{streamName}` | ✓ `simulators/azure/monitor.go:412::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

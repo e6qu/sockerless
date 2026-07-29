@@ -55,6 +55,23 @@ func lambdaNodeSourceZip(t *testing.T, source string) []byte {
 	return out.Bytes()
 }
 
+func lambdaPythonSourceZip(t *testing.T, source string) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	entry, err := zw.Create("index.py")
+	if err != nil {
+		t.Fatalf("create AWS Lambda Python deployment entry: %v", err)
+	}
+	if _, err := entry.Write([]byte(source)); err != nil {
+		t.Fatalf("write AWS Lambda Python deployment entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close AWS Lambda Python deployment archive: %v", err)
+	}
+	return out.Bytes()
+}
+
 func lambdaDeploymentZip(t *testing.T) []byte {
 	t.Helper()
 	return lambdaNodeDeploymentZip(t, "event")

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,9 +25,11 @@ import (
 // verify a web identity token, and signs tokens with the matching key. It
 // stands in for the external identity provider the console federates through.
 type webIdentityIssuer struct {
-	server *httptest.Server
-	key    *rsa.PrivateKey
-	keyID  string
+	server            *httptest.Server
+	key               *rsa.PrivateKey
+	keyID             string
+	discoveryRequests atomic.Int32
+	jwksRequests      atomic.Int32
 }
 
 func newWebIdentityIssuer(t *testing.T) *webIdentityIssuer {
@@ -37,6 +40,7 @@ func newWebIdentityIssuer(t *testing.T) *webIdentityIssuer {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		issuer.discoveryRequests.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"issuer":                                issuer.server.URL,
 			"jwks_uri":                              issuer.server.URL + "/jwks",
@@ -44,6 +48,7 @@ func newWebIdentityIssuer(t *testing.T) *webIdentityIssuer {
 		})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
+		issuer.jwksRequests.Add(1)
 		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
 			Key:       key.Public(),
 			KeyID:     issuer.keyID,
@@ -121,6 +126,20 @@ func TestSTS_AssumeRoleWithWebIdentity(t *testing.T) {
 	assert.Contains(t, aws.ToString(out.Credentials.AccessKeyId), "ASIA")
 	assert.Equal(t, "operator@example.test", aws.ToString(out.SubjectFromWebIdentityToken),
 		"the subject must come from the verified token, not a fixed placeholder")
+
+	secondToken := issuer.mint(t, "second-operator@example.test", audience, time.Now().Add(10*time.Minute))
+	second, err := stsClient().AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityInput{
+		RoleArn:          aws.String(roleArn),
+		RoleSessionName:  aws.String("second-console"),
+		WebIdentityToken: aws.String(secondToken),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "second-operator@example.test", aws.ToString(second.SubjectFromWebIdentityToken),
+		"every assertion must still be verified independently")
+	assert.Equal(t, int32(1), issuer.discoveryRequests.Load(),
+		"repeated exchanges for one issuer must reuse OpenID Connect discovery")
+	assert.Equal(t, int32(1), issuer.jwksRequests.Load(),
+		"repeated exchanges for one issuer and signing key must reuse its JSON Web Key Set")
 }
 
 // TestSTS_AssumeRoleWithWebIdentity_RejectsUnregisteredIssuer proves a token

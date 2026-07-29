@@ -110,6 +110,33 @@ func s3ObjectKey(bucket, key string) string {
 	return bucket + "/" + key
 }
 
+// s3PutServiceObject stores bytes through Amazon Simple Storage Service's
+// object data plane on behalf of another AWS service. Amazon Data Firehose,
+// AWS Private CA audit reports, and certificate-revocation lists use the same
+// durable object representation and notification pipeline as PutObject.
+func s3PutServiceObject(bucket, key string, body []byte, contentType string, metadata map[string]string) (S3Object, error) {
+	if _, ok := s3Buckets_.Get(bucket); !ok {
+		return S3Object{}, fmt.Errorf("bucket %q does not exist", bucket)
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	hash := md5.Sum(body)
+	etag := fmt.Sprintf("\"%x\"", hash)
+	obj := S3Object{
+		Key:          s3ObjectKey(bucket, key),
+		Data:         append([]byte(nil), body...),
+		ContentType:  contentType,
+		ETag:         etag,
+		LastModified: time.Now(),
+		Size:         int64(len(body)),
+		Metadata:     metadata,
+	}
+	s3Objects.Put(obj.Key, obj)
+	s3FireObjectNotifications(bucket, key, "ObjectCreated:Put", etag, obj.Size)
+	return obj, nil
+}
+
 // s3BucketARN returns the canonical S3 bucket ARN (no account/region — S3
 // bucket ARNs are global: arn:aws:s3:::bucket-name).
 func s3BucketARN(bucket string) string {
@@ -920,13 +947,7 @@ func handleS3PutObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash := md5.Sum(body)
-	etag := fmt.Sprintf("\"%x\"", hash)
-
 	contentType := r.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
 
 	// Collect user metadata from x-amz-meta-* headers
 	metadata := make(map[string]string)
@@ -938,21 +959,14 @@ func handleS3PutObject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	obj := S3Object{
-		Key:          s3ObjectKey(bucket, key),
-		Data:         body,
-		ContentType:  contentType,
-		ETag:         etag,
-		LastModified: time.Now(),
-		Size:         int64(len(body)),
-		Metadata:     metadata,
+	obj, err := s3PutServiceObject(bucket, key, body, contentType, metadata)
+	if err != nil {
+		sim.S3ErrorXML(w, "NoSuchBucket", "The specified bucket does not exist",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
 	}
-	storeKey := s3ObjectKey(bucket, key)
-	s3Objects.Put(storeKey, obj)
 
-	s3FireObjectNotifications(bucket, key, "ObjectCreated:Put", etag, obj.Size)
-
-	w.Header().Set("ETag", etag)
+	w.Header().Set("ETag", obj.ETag)
 	w.WriteHeader(http.StatusOK)
 }
 

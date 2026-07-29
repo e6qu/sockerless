@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -10,10 +12,8 @@ import (
 )
 
 // CloudWatch metric streams: a named stream resource (ARN, RUNNING/STOPPED
-// state) that continuously delivers metrics to a Firehose. The sim is an
-// API-only slice — it stores the stream's configuration and lifecycle state but
-// does not perform the actual continuous delivery (there is no Firehose to
-// deliver to in the sim). Served on awsJson1.0, rpc-v2-cbor, and query.
+// state) that continuously delivers metrics to Amazon Data Firehose. Served on
+// awsJson1.0, rpc-v2-cbor, and query.
 
 // CWMetricStreamFilter is an include/exclude namespace filter on a stream.
 type CWMetricStreamFilter struct {
@@ -51,12 +51,104 @@ func cwMetricStreamByArn(arn string) (CWMetricStream, bool) {
 	return CWMetricStream{}, false
 }
 
+func cwMetricStreamFilterMatches(filters []CWMetricStreamFilter, datum CWMetricDatum) bool {
+	for _, filter := range filters {
+		if filter.Namespace != datum.Namespace {
+			continue
+		}
+		if len(filter.MetricNames) == 0 {
+			return true
+		}
+		for _, name := range filter.MetricNames {
+			if name == datum.MetricName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func cwMetricStreamAccepts(stream CWMetricStream, datum CWMetricDatum) bool {
+	if len(stream.IncludeFilters) > 0 && !cwMetricStreamFilterMatches(stream.IncludeFilters, datum) {
+		return false
+	}
+	return !cwMetricStreamFilterMatches(stream.ExcludeFilters, datum)
+}
+
+// cwDeliverMetricDatum renders the documented CloudWatch metric-stream JSON
+// record and sends it through the configured Firehose stream. Every object is
+// newline terminated because one Firehose record can carry multiple metric
+// objects separated by newlines.
+func cwDeliverMetricDatum(datum CWMetricDatum) {
+	for _, stream := range cwMetricStreams.List() {
+		if stream.State != "running" || !cwMetricStreamAccepts(stream, datum) {
+			continue
+		}
+		if stream.OutputFormat != "json" {
+			cwEvalLogger.Error().Str("metricStream", stream.Name).Str("outputFormat", stream.OutputFormat).
+				Msg("CloudWatch metric stream output format cannot be delivered")
+			continue
+		}
+		dimensions := map[string]string{}
+		for _, dimension := range datum.Dimensions {
+			dimensions[dimension.Name] = dimension.Value
+		}
+		unit := datum.Unit
+		if unit == "" {
+			unit = "None"
+		}
+		record, err := json.Marshal(map[string]any{
+			"metric_stream_name": stream.Name,
+			"account_id":         awsAccountID(),
+			"region":             awsRegion(),
+			"namespace":          datum.Namespace,
+			"metric_name":        datum.MetricName,
+			"dimensions":         dimensions,
+			"timestamp":          int64(datum.Timestamp * 1000),
+			"value": map[string]float64{
+				"count": 1,
+				"sum":   datum.Value,
+				"max":   datum.Value,
+				"min":   datum.Value,
+			},
+			"unit": unit,
+		})
+		if err != nil {
+			cwEvalLogger.Error().Err(err).Str("metricStream", stream.Name).Msg("CloudWatch metric stream record encoding failed")
+			continue
+		}
+		if err := iamValidateServiceRole(stream.RoleArn, "streams.metrics.cloudwatch.amazonaws.com", map[string]string{
+			"firehose:PutRecord": stream.FirehoseArn,
+		}); err != nil {
+			cwEvalLogger.Error().Err(err).Str("metricStream", stream.Name).Str("firehoseARN", stream.FirehoseArn).
+				Msg("CloudWatch cannot assume its Amazon Data Firehose delivery role")
+			continue
+		}
+		record = append(record, '\n')
+		if err := firehosePutServiceRecord(stream.FirehoseArn, record); err != nil {
+			cwEvalLogger.Error().Err(err).Str("metricStream", stream.Name).Str("firehoseARN", stream.FirehoseArn).
+				Msg("CloudWatch metric stream delivery failed")
+		}
+	}
+}
+
 // cwPutMetricStream creates or updates a stream, defaulting OutputFormat to JSON
 // and starting in the RUNNING state (real PutMetricStream creates a running
 // stream). Returns the stream's ARN.
-func cwPutMetricStream(name, firehoseArn, roleArn, outputFormat string, include, exclude []CWMetricStreamFilter, tags []cwTagKV) string {
+func cwPutMetricStream(name, firehoseArn, roleArn, outputFormat string, include, exclude []CWMetricStreamFilter, tags []cwTagKV) (string, error) {
 	if outputFormat == "" {
 		outputFormat = "json"
+	}
+	if _, ok := firehoseStreamByARN(firehoseArn); !ok {
+		return "", fmt.Errorf("delivery stream %q does not exist", firehoseArn)
+	}
+	if err := iamValidateServiceRole(roleArn, "streams.metrics.cloudwatch.amazonaws.com", map[string]string{
+		"firehose:PutRecord": firehoseArn,
+	}); err != nil {
+		return "", err
+	}
+	if outputFormat != "json" {
+		return "", fmt.Errorf("output format %q is not supported by the configured Firehose destination", outputFormat)
 	}
 	now := time.Now().UTC().Unix()
 	existing, exists := cwMetricStreams.Get(name)
@@ -85,7 +177,7 @@ func cwPutMetricStream(name, firehoseArn, roleArn, outputFormat string, include,
 		}
 	}
 	cwMetricStreams.Put(name, s)
-	return s.Arn
+	return s.Arn, nil
 }
 
 func cwSetMetricStreamState(names []string, state string) {
@@ -151,7 +243,11 @@ func handleCWJSONPutMetricStream(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "MissingParameter", "FirehoseArn and RoleArn are required.", http.StatusBadRequest)
 		return
 	}
-	arn := cwPutMetricStream(req.Name, req.FirehoseArn, req.RoleArn, req.OutputFormat, req.IncludeFilters, req.ExcludeFilters, req.Tags)
+	arn, err := cwPutMetricStream(req.Name, req.FirehoseArn, req.RoleArn, req.OutputFormat, req.IncludeFilters, req.ExcludeFilters, req.Tags)
+	if err != nil {
+		sim.AWSError(w, "InvalidParameterValue", err.Error(), http.StatusBadRequest)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Arn": arn})
 }
 
@@ -277,7 +373,11 @@ func handleCWCBORPutMetricStream(w http.ResponseWriter, r *http.Request) {
 		cwWriteCBORError(w, "MissingParameter", "FirehoseArn and RoleArn are required.", http.StatusBadRequest)
 		return
 	}
-	arn := cwPutMetricStream(req.Name, req.FirehoseArn, req.RoleArn, req.OutputFormat, req.IncludeFilters, req.ExcludeFilters, req.Tags)
+	arn, err := cwPutMetricStream(req.Name, req.FirehoseArn, req.RoleArn, req.OutputFormat, req.IncludeFilters, req.ExcludeFilters, req.Tags)
+	if err != nil {
+		cwWriteCBORError(w, "InvalidParameterValue", err.Error(), http.StatusBadRequest)
+		return
+	}
 	cwWriteCBOR(w, map[string]any{"Arn": arn})
 }
 
@@ -430,8 +530,12 @@ func handleCWQueryPutMetricStream(w http.ResponseWriter, r *http.Request) {
 		cwQueryError(w, "MissingParameter", "FirehoseArn and RoleArn are required.")
 		return
 	}
-	arn := cwPutMetricStream(name, firehose, role, r.FormValue("OutputFormat"),
+	arn, err := cwPutMetricStream(name, firehose, role, r.FormValue("OutputFormat"),
 		cwQueryStreamFilters(r, "IncludeFilters"), cwQueryStreamFilters(r, "ExcludeFilters"), nil)
+	if err != nil {
+		cwQueryError(w, "InvalidParameterValue", err.Error())
+		return
+	}
 	cwQueryResult(w, "PutMetricStream", "<Arn>"+xmlEscape(arn)+"</Arn>")
 }
 

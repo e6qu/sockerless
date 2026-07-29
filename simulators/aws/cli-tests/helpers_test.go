@@ -441,9 +441,14 @@ func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
 COPY %s /usr/local/bin/%s
 ENTRYPOINT ["/usr/local/bin/%s"]
 `, binaryName, binaryName, binaryName)
-	dockerBuild := exec.Command("docker", "build",
-		"--platform", platform,
-		"-t", imageName, "-f", "-", buildDir)
+	var args []string
+	if exec.Command("docker", "buildx", "version").Run() == nil {
+		args = []string{"buildx", "build", "--load"}
+	} else {
+		args = []string{"build"}
+	}
+	args = append(args, "--platform", platform, "-t", imageName, "-f", "-", buildDir)
+	dockerBuild := exec.Command("docker", args...)
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build %s Docker image: %v\n%s", binaryName, err, out)

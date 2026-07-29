@@ -11,6 +11,7 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/sockerless/simulator v0.0.0
 	github.com/sockerless/simulator-realexec v0.0.0
+	golang.org/x/sync v0.22.0
 )
 
 require (
@@ -58,7 +59,6 @@ require (
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect

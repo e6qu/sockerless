@@ -204,13 +204,14 @@ type FileShare struct {
 
 // FileShareProperties holds the properties of a file share.
 type FileShareProperties struct {
-	ShareQuota       int               `json:"shareQuota,omitempty"`
-	AccessTier       string            `json:"accessTier,omitempty"`
-	EnabledProtocols string            `json:"enabledProtocols,omitempty"`
-	LastModifiedTime string            `json:"lastModifiedTime,omitempty"`
-	LeaseStatus      string            `json:"leaseStatus,omitempty"`
-	LeaseState       string            `json:"leaseState,omitempty"`
-	Metadata         map[string]string `json:"metadata,omitempty"`
+	ShareQuota        int                     `json:"shareQuota,omitempty"`
+	AccessTier        string                  `json:"accessTier,omitempty"`
+	EnabledProtocols  string                  `json:"enabledProtocols,omitempty"`
+	LastModifiedTime  string                  `json:"lastModifiedTime,omitempty"`
+	LeaseStatus       string                  `json:"leaseStatus,omitempty"`
+	LeaseState        string                  `json:"leaseState,omitempty"`
+	Metadata          map[string]string       `json:"metadata,omitempty"`
+	SignedIdentifiers []TableSignedIdentifier `json:"signedIdentifiers,omitempty"`
 }
 
 // Package-level stores for cross-plane projections and dashboard access.
@@ -356,6 +357,25 @@ func deleteFileShareARMProjection(account, share string) {
 	if resourceID, ok := fileShareResourceIDForAccount(account, share); ok {
 		azFileShares.Delete(resourceID)
 	}
+}
+
+// updateFileShareARMAccessPolicies keeps the ARM and Azure Files data-plane
+// representations of one share consistent. Azure exposes the same stored
+// access policies through both File Shares APIs.
+func updateFileShareARMAccessPolicies(account, share string, policies []TableSignedIdentifier) {
+	if azFileShares == nil {
+		return
+	}
+	resourceID, ok := fileShareResourceIDForAccount(account, share)
+	if !ok {
+		return
+	}
+	resource, ok := azFileShares.Get(resourceID)
+	if !ok {
+		return
+	}
+	resource.Properties.SignedIdentifiers = policies
+	azFileShares.Put(resourceID, resource)
 }
 
 func registerAzureFiles(srv *sim.Server) {
@@ -607,19 +627,25 @@ func registerAzureFiles(srv *sim.Server) {
 			protocols = "SMB"
 		}
 
+		signedIdentifiers := req.Properties.SignedIdentifiers
+		if existing, ok := fileShares.Get(shareID); ok && signedIdentifiers == nil {
+			signedIdentifiers = existing.Properties.SignedIdentifiers
+		}
+
 		share := FileShare{
 			ID:   shareID,
 			Name: shareName,
 			Type: "Microsoft.Storage/storageAccounts/fileServices/shares",
 			Etag: fmt.Sprintf("\"0x%s\"", randomSuffix(16)),
 			Properties: FileShareProperties{
-				ShareQuota:       quota,
-				AccessTier:       accessTier,
-				EnabledProtocols: protocols,
-				LastModifiedTime: time.Now().UTC().Format(time.RFC3339),
-				LeaseStatus:      "Unlocked",
-				LeaseState:       "Available",
-				Metadata:         req.Properties.Metadata,
+				ShareQuota:        quota,
+				AccessTier:        accessTier,
+				EnabledProtocols:  protocols,
+				LastModifiedTime:  time.Now().UTC().Format(time.RFC3339),
+				LeaseStatus:       "Unlocked",
+				LeaseState:        "Available",
+				Metadata:          req.Properties.Metadata,
+				SignedIdentifiers: signedIdentifiers,
 			},
 		}
 
@@ -634,6 +660,9 @@ func registerAzureFiles(srv *sim.Server) {
 				"Failed to materialize file share %q: %v", shareName, err)
 			return
 		}
+		data, _ := fileShareData.Get(fileShareKey(account, shareName))
+		data.ACLs = signedIdentifiers
+		fileShareData.Put(fileShareKey(account, shareName), data)
 
 		// go-azure-sdk expects 200 for sync creates
 		sim.WriteJSON(w, http.StatusOK, share)

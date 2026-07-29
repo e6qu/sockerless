@@ -54,9 +54,10 @@ async function restJson<T>(
   return (text ? JSON.parse(text) : {}) as T;
 }
 
-// The console reads the real AWS APIs — ECS, Lambda, ECR, S3, CloudWatch Logs,
-// IAM, and AWS Organizations — over federated, SigV4-signed requests, rendering
-// the true resource shapes rather than a hand-picked subset.
+// The console reads the real AWS APIs — including ECS, Lambda, ECR, S3,
+// CloudWatch, IAM, Amazon Data Firehose, AWS Private Certificate Authority,
+// and AWS Organizations — over federated, SigV4-signed requests, rendering the
+// true resource shapes rather than a console-specific projection.
 
 export type ECSTaskStatus = "PROVISIONING" | "PENDING" | "RUNNING" | "STOPPED" | "DEPROVISIONING";
 
@@ -2268,6 +2269,9 @@ export interface RDSInstance {
   availabilityZone: string;
   allocatedStorage: number;
   multiAZ: boolean;
+  masterUsername: string;
+  dbName: string;
+  iamDatabaseAuthenticationEnabled: boolean;
   arn: string;
 }
 
@@ -2286,8 +2290,33 @@ export const fetchRDSInstances = async (): Promise<RDSInstance[]> => {
       availabilityZone: childText(item, "AvailabilityZone"),
       allocatedStorage: Number(childText(item, "AllocatedStorage") || "0"),
       multiAZ: childText(item, "MultiAZ") === "true",
+      masterUsername: childText(item, "MasterUsername"),
+      dbName: childText(item, "DBName"),
+      iamDatabaseAuthenticationEnabled: childText(item, "IAMDatabaseAuthenticationEnabled") === "true",
       arn: childText(item, "DBInstanceArn"),
     };
+  });
+};
+
+export const createRDSInstance = async (input: {
+  dbInstanceIdentifier: string;
+  engine: "postgres" | "mysql";
+  dbInstanceClass: string;
+  allocatedStorage: number;
+  masterUsername: string;
+  masterUserPassword: string;
+  dbName: string;
+  enableIAMDatabaseAuthentication: boolean;
+}): Promise<void> => {
+  await awsQuery("rds", RDS_VERSION, "CreateDBInstance", {
+    DBInstanceIdentifier: input.dbInstanceIdentifier,
+    Engine: input.engine,
+    DBInstanceClass: input.dbInstanceClass,
+    AllocatedStorage: String(input.allocatedStorage),
+    MasterUsername: input.masterUsername,
+    MasterUserPassword: input.masterUserPassword,
+    DBName: input.dbName,
+    EnableIAMDatabaseAuthentication: String(input.enableIAMDatabaseAuthentication),
   });
 };
 
@@ -2779,6 +2808,7 @@ export interface AmplifyApp {
   platform: string;
   defaultDomain: string;
   repository: string;
+  repositoryCloneMethod: string;
   createTime: number;
 }
 
@@ -2791,6 +2821,7 @@ export const fetchAmplifyApps = async (): Promise<AmplifyApp[]> => {
       platform?: string;
       defaultDomain?: string;
       repository?: string;
+      repositoryCloneMethod?: string;
       createTime?: number;
     }[];
   }>("amplify", "/apps");
@@ -2801,8 +2832,25 @@ export const fetchAmplifyApps = async (): Promise<AmplifyApp[]> => {
     platform: app.platform ?? "",
     defaultDomain: app.defaultDomain ?? "",
     repository: app.repository ?? "",
+    repositoryCloneMethod: app.repositoryCloneMethod ?? "",
     createTime: app.createTime ?? 0,
   }));
+};
+
+export const createAmplifyApp = async (input: {
+  name: string;
+  repository: string;
+  accessToken: string;
+  platform: "WEB" | "WEB_COMPUTE";
+  buildSpec: string;
+}): Promise<void> => {
+  await restJson("amplify", "POST", "/apps", {
+    name: input.name,
+    repository: input.repository || undefined,
+    accessToken: input.accessToken || undefined,
+    platform: input.platform,
+    buildSpec: input.buildSpec || undefined,
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -3933,6 +3981,236 @@ export const stopCloudTrailLogging = async (name: string): Promise<void> => {
 
 export const deleteCloudTrailTrail = async (name: string): Promise<void> => {
   await awsJson("cloudtrail", `${CLOUDTRAIL_TARGET_PREFIX}DeleteTrail`, { Name: name });
+};
+
+// ---------------------------------------------------------------------------
+// Amazon Data Firehose — awsjson1.1, X-Amz-Target
+// Firehose_20150804.<Op>. The browser uses the same control plane as the AWS
+// SDK and AWS CLI; delivered records travel through the configured cloud
+// destination rather than a console-only endpoint.
+// ---------------------------------------------------------------------------
+
+const FIREHOSE_TARGET_PREFIX = "Firehose_20150804.";
+
+const firehoseJson = <T>(operation: string, input: Record<string, unknown> = {}): Promise<T> =>
+  awsJson<T>("firehose", `${FIREHOSE_TARGET_PREFIX}${operation}`, input);
+
+function base64UTF8(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+export interface FirehoseDeliveryStream {
+  name: string;
+  arn: string;
+  status: string;
+  type: string;
+  versionId: string;
+  createdAt: number;
+  destinationId: string;
+  bucketArn: string;
+  prefix: string;
+  compressionFormat: string;
+  encryptionStatus: string;
+}
+
+export const fetchFirehoseDeliveryStreams = async (): Promise<FirehoseDeliveryStream[]> => {
+  const listed = await firehoseJson<{ DeliveryStreamNames?: string[] }>("ListDeliveryStreams");
+  return Promise.all((listed.DeliveryStreamNames ?? []).map(async (name) => {
+    const described = await firehoseJson<{
+      DeliveryStreamDescription?: {
+        DeliveryStreamName?: string;
+        DeliveryStreamARN?: string;
+        DeliveryStreamStatus?: string;
+        DeliveryStreamType?: string;
+        VersionId?: string;
+        CreateTimestamp?: number;
+        DeliveryStreamEncryptionConfiguration?: { Status?: string };
+        Destinations?: {
+          DestinationId?: string;
+          ExtendedS3DestinationDescription?: {
+            BucketARN?: string;
+            Prefix?: string;
+            CompressionFormat?: string;
+          };
+        }[];
+      };
+    }>("DescribeDeliveryStream", { DeliveryStreamName: name });
+    const stream = described.DeliveryStreamDescription ?? {};
+    const destination = stream.Destinations?.[0] ?? {};
+    const s3 = destination.ExtendedS3DestinationDescription ?? {};
+    return {
+      name: stream.DeliveryStreamName ?? name,
+      arn: stream.DeliveryStreamARN ?? "",
+      status: stream.DeliveryStreamStatus ?? "",
+      type: stream.DeliveryStreamType ?? "",
+      versionId: stream.VersionId ?? "",
+      createdAt: stream.CreateTimestamp ?? 0,
+      destinationId: destination.DestinationId ?? "",
+      bucketArn: s3.BucketARN ?? "",
+      prefix: s3.Prefix ?? "",
+      compressionFormat: s3.CompressionFormat ?? "UNCOMPRESSED",
+      encryptionStatus: stream.DeliveryStreamEncryptionConfiguration?.Status ?? "DISABLED",
+    };
+  }));
+};
+
+export const createFirehoseDeliveryStream = async (input: {
+  name: string;
+  bucketArn: string;
+  roleArn: string;
+  prefix: string;
+  compressionFormat: "UNCOMPRESSED" | "GZIP" | "ZIP";
+}): Promise<void> => {
+  await firehoseJson("CreateDeliveryStream", {
+    DeliveryStreamName: input.name,
+    DeliveryStreamType: "DirectPut",
+    ExtendedS3DestinationConfiguration: {
+      BucketARN: input.bucketArn,
+      RoleARN: input.roleArn,
+      Prefix: input.prefix,
+      CompressionFormat: input.compressionFormat,
+      BufferingHints: { SizeInMBs: 1, IntervalInSeconds: 60 },
+    },
+  });
+};
+
+export const deleteFirehoseDeliveryStream = async (name: string): Promise<void> => {
+  await firehoseJson("DeleteDeliveryStream", { DeliveryStreamName: name, AllowForceDelete: true });
+};
+
+export const setFirehoseEncryption = async (name: string, enabled: boolean): Promise<void> => {
+  await firehoseJson(enabled ? "StartDeliveryStreamEncryption" : "StopDeliveryStreamEncryption", {
+    DeliveryStreamName: name,
+    ...(enabled
+      ? { DeliveryStreamEncryptionConfigurationInput: { KeyType: "AWS_OWNED_CMK" } }
+      : {}),
+  });
+};
+
+export const putFirehoseRecord = async (name: string, data: string): Promise<string> => {
+  const result = await firehoseJson<{ RecordId?: string }>("PutRecord", {
+    DeliveryStreamName: name,
+    Record: { Data: base64UTF8(data) },
+  });
+  return result.RecordId ?? "";
+};
+
+// ---------------------------------------------------------------------------
+// AWS Private Certificate Authority — awsjson1.1, X-Amz-Target
+// ACMPrivateCA.<Op>. Root activation deliberately follows AWS's public
+// CSR → IssueCertificate → GetCertificate → ImportCertificate chain.
+// ---------------------------------------------------------------------------
+
+const PRIVATE_CA_TARGET_PREFIX = "ACMPrivateCA.";
+
+const privateCAJson = <T>(operation: string, input: Record<string, unknown> = {}): Promise<T> =>
+  awsJson<T>("acm-pca", `${PRIVATE_CA_TARGET_PREFIX}${operation}`, input);
+
+export interface PrivateCertificateAuthority {
+  arn: string;
+  commonName: string;
+  organization: string;
+  type: string;
+  status: string;
+  keyAlgorithm: string;
+  signingAlgorithm: string;
+  createdAt: number;
+  notAfter: number;
+  usageMode: string;
+}
+
+export const fetchPrivateCertificateAuthorities = async (): Promise<PrivateCertificateAuthority[]> => {
+  const listed = await privateCAJson<{
+    CertificateAuthorities?: {
+      Arn?: string;
+      Type?: string;
+      Status?: string;
+      CreatedAt?: number;
+      NotAfter?: number;
+      UsageMode?: string;
+      CertificateAuthorityConfiguration?: {
+        KeyAlgorithm?: string;
+        SigningAlgorithm?: string;
+        Subject?: { CommonName?: string; Organization?: string };
+      };
+    }[];
+  }>("ListCertificateAuthorities");
+  return (listed.CertificateAuthorities ?? []).map((authority) => ({
+    arn: authority.Arn ?? "",
+    commonName: authority.CertificateAuthorityConfiguration?.Subject?.CommonName ?? "",
+    organization: authority.CertificateAuthorityConfiguration?.Subject?.Organization ?? "",
+    type: authority.Type ?? "",
+    status: authority.Status ?? "",
+    keyAlgorithm: authority.CertificateAuthorityConfiguration?.KeyAlgorithm ?? "",
+    signingAlgorithm: authority.CertificateAuthorityConfiguration?.SigningAlgorithm ?? "",
+    createdAt: authority.CreatedAt ?? 0,
+    notAfter: authority.NotAfter ?? 0,
+    usageMode: authority.UsageMode ?? "",
+  }));
+};
+
+export const createAndActivateRootPrivateCA = async (input: {
+  commonName: string;
+  organization: string;
+  keyAlgorithm: "RSA_2048" | "RSA_3072" | "RSA_4096";
+  validityYears: number;
+}): Promise<string> => {
+  const signingAlgorithm = input.keyAlgorithm === "RSA_4096" ? "SHA512WITHRSA" : "SHA256WITHRSA";
+  const created = await privateCAJson<{ CertificateAuthorityArn?: string }>("CreateCertificateAuthority", {
+    CertificateAuthorityType: "ROOT",
+    CertificateAuthorityConfiguration: {
+      KeyAlgorithm: input.keyAlgorithm,
+      SigningAlgorithm: signingAlgorithm,
+      Subject: { CommonName: input.commonName, Organization: input.organization },
+    },
+    Tags: [{ Key: "ManagedBy", Value: "AWSConsole" }],
+  });
+  const arn = created.CertificateAuthorityArn ?? "";
+  if (!arn) throw new Error("CreateCertificateAuthority returned no certificate authority ARN.");
+  const csr = await privateCAJson<{ Csr?: string }>("GetCertificateAuthorityCsr", {
+    CertificateAuthorityArn: arn,
+  });
+  if (!csr.Csr) throw new Error("GetCertificateAuthorityCsr returned no certificate signing request.");
+  const issued = await privateCAJson<{ CertificateArn?: string }>("IssueCertificate", {
+    CertificateAuthorityArn: arn,
+    Csr: base64UTF8(csr.Csr),
+    SigningAlgorithm: signingAlgorithm,
+    TemplateArn: "arn:aws:acm-pca:::template/RootCACertificate/V1",
+    Validity: { Type: "YEARS", Value: input.validityYears },
+  });
+  if (!issued.CertificateArn) throw new Error("IssueCertificate returned no certificate ARN.");
+  const certificate = await privateCAJson<{ Certificate?: string; CertificateChain?: string }>("GetCertificate", {
+    CertificateAuthorityArn: arn,
+    CertificateArn: issued.CertificateArn,
+  });
+  if (!certificate.Certificate) throw new Error("GetCertificate returned no certificate.");
+  await privateCAJson("ImportCertificateAuthorityCertificate", {
+    CertificateAuthorityArn: arn,
+    Certificate: base64UTF8(certificate.Certificate),
+    ...(certificate.CertificateChain ? { CertificateChain: base64UTF8(certificate.CertificateChain) } : {}),
+  });
+  return arn;
+};
+
+export const setPrivateCertificateAuthorityEnabled = async (arn: string, enabled: boolean): Promise<void> => {
+  await privateCAJson("UpdateCertificateAuthority", {
+    CertificateAuthorityArn: arn,
+    Status: enabled ? "ACTIVE" : "DISABLED",
+  });
+};
+
+export const deletePrivateCertificateAuthority = async (arn: string): Promise<void> => {
+  await privateCAJson("DeleteCertificateAuthority", {
+    CertificateAuthorityArn: arn,
+    PermanentDeletionTimeInDays: 7,
+  });
+};
+
+export const restorePrivateCertificateAuthority = async (arn: string): Promise<void> => {
+  await privateCAJson("RestoreCertificateAuthority", { CertificateAuthorityArn: arn });
 };
 
 // ---------------------------------------------------------------------------

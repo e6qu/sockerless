@@ -1,6 +1,9 @@
 package main
 
-import "net/http"
+import (
+	"fmt"
+	"net/http"
+)
 
 // Service-initiation IAM condition keys (aws:ViaAWSService / aws:CalledVia /
 // aws:SourceArn / aws:SourceAccount) and Service-principal matching.
@@ -46,6 +49,39 @@ func iamAuthorizeServiceDelivery(targetArn, action string, src iamServiceSource)
 		return false
 	}
 	return iamEvalServiceInitiated(docs, action, targetArn, src)
+}
+
+// iamValidateServiceRole proves that an AWS service can assume a configured
+// IAM role and that the role's identity policies authorize each cloud action
+// the service will perform. Service integrations call this when accepting a
+// role ARN and again at delivery time, so deleting or narrowing the role takes
+// effect without cached simulator-local authority.
+func iamValidateServiceRole(roleARN, service string, actions map[string]string) error {
+	roleName := iamRoleNameFromArn(roleARN)
+	role, ok := iamRoles.Get(roleName)
+	if !ok || role.Arn != roleARN {
+		return fmt.Errorf("IAM role %s does not exist", roleARN)
+	}
+	trust, err := parseIAMPolicy(role.AssumeRolePolicyDocument)
+	if err != nil {
+		return fmt.Errorf("IAM role %s has an invalid trust policy: %w", roleARN, err)
+	}
+	ctx := map[string][]string{
+		"aws:CalledVia":     {service},
+		"aws:ViaAWSService": {"true"},
+	}
+	if decision, _ := iamEvalDecisionForPrincipal(
+		[]iamPolicyDoc{trust}, "sts:AssumeRole", roleARN, "service:"+service, ctx,
+	); decision != "allowed" {
+		return fmt.Errorf("IAM role %s does not trust %s", roleARN, service)
+	}
+	docs := iamPolicyDocsForRole(roleName)
+	for action, resource := range actions {
+		if decision, _ := iamEvalDecision(docs, action, resource, nil); decision != "allowed" {
+			return fmt.Errorf("IAM role %s does not allow %s on %s", roleARN, action, resource)
+		}
+	}
+	return nil
 }
 
 // iamEvalServiceInitiated authorizes an AWS-service-initiated call against the

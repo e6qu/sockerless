@@ -68,6 +68,16 @@ import (
 //     UpdateTrail, GetTrailStatus, StartLogging, StopLogging,
 //     LookupEvents, DeleteTrail, AddTags, RemoveTags, ListTags,
 //     PutEventSelectors, GetEventSelectors
+//   - Amazon Data Firehose: CreateDeliveryStream, DescribeDeliveryStream,
+//     ListTagsForDeliveryStream, TagDeliveryStream,
+//     UntagDeliveryStream, DeleteDeliveryStream
+//   - AWS Private Certificate Authority: CreateCertificateAuthority,
+//     GetCertificateAuthorityCsr, DescribeCertificateAuthority,
+//     IssueCertificate, GetCertificate,
+//     ImportCertificateAuthorityCertificate,
+//     GetCertificateAuthorityCertificate, ListTags,
+//     TagCertificateAuthority, UntagCertificateAuthority,
+//     UpdateCertificateAuthority, DeleteCertificateAuthority
 //   - Budgets: CreateBudget, UpdateBudget, DescribeBudget,
 //     DescribeBudgets, DeleteBudget, ListTagsForResource,
 //     TagResource, UntagResource
@@ -169,6 +179,16 @@ func TestStackProductionShape(t *testing.T) {
 
 	require.True(t, strings.HasPrefix(acmARN, "arn:aws:acm:us-east-1:"),
 		"ACM certificate must live in us-east-1 for CloudFront use; got %s", acmARN)
+
+	firehoseARN := outputs.must(t, "firehose_delivery_stream_arn")
+	require.Contains(t, firehoseARN, ":firehose:us-east-1:",
+		"Amazon Data Firehose ARN must include the regional service namespace; got %s", firehoseARN)
+
+	privateCAARN := outputs.must(t, "acmpca_certificate_authority_arn")
+	require.Contains(t, privateCAARN, ":acm-pca:us-east-1:",
+		"AWS Private Certificate Authority ARN must include the regional service namespace; got %s", privateCAARN)
+	require.Contains(t, outputs.must(t, "acmpca_certificate"), "BEGIN CERTIFICATE",
+		"the provider's create → sign → import sequence must return the active AWS Private Certificate Authority certificate")
 
 	require.True(t, strings.HasPrefix(amplifyARN, "arn:aws:amplify:"),
 		"Amplify app ARN must have aws_amplify_app prefix; got %s", amplifyARN)
