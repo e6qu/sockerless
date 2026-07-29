@@ -2865,3 +2865,26 @@ while a mutation was pending, restored itself on provider failure, and reset
 the prior error only on a deliberate close or new open. The complete Azure
 portal package and repository frontend fan-outs passed with the error retained
 in an attached, accessible dialog.
+
+The hosted dependency gate then captured five newer official Google Discovery
+documents. The repository retained those exact artifacts: Bigtable Admin v2
+revision 20260725, Cloud Logging v2 revision 20260713, Pub/Sub v1 revision
+20260721, and Cloud Resource Manager v1 and v3 revision 20260715. Bigtable's
+new `updateMemoryLayer` method enabled and disabled a durable cluster memory
+layer, enforced its etag, listed the real cluster-scoped state, and returned a
+completed long-running operation. Cloud Resource Manager v3's new
+`fetchResourceSemantics` method validated full resource names and returned the
+resource's published semantics shape. Authenticated official-SDK transports
+exercised both methods because the current generated clients had not yet
+acquired their call types, and generated coverage measured all 164 Bigtable
+and all 126 Cloud Resource Manager v3 methods.
+
+AzureRM 5's successful production-shaped apply exposed two final refresh
+contracts. Microsoft.OperationalInsights workspaces now returned Azure's
+default `Enabled` public network access values for ingestion and query.
+Microsoft.Storage File shares retained `signedIdentifiers` through their ARM
+resource, projected the same stored access policies onto the Azure Files XML
+data plane, and reflected data-plane updates back to ARM. The official Azure
+SDK round-tripped the complete policy across create and update, while Azure
+CLI round-tripped both Log Analytics defaults. These changes removed the two
+updates from the provider's post-apply plan.

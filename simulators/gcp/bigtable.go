@@ -33,6 +33,17 @@ type bigtableTable struct {
 	DeletionProtection bool                      `json:"deletionProtection,omitempty"`
 }
 
+type bigtableMemoryConfig struct {
+	StorageSizeGiB int `json:"storageSizeGib,omitempty"`
+}
+
+type bigtableMemoryLayer struct {
+	Name         string                `json:"name"`
+	MemoryConfig *bigtableMemoryConfig `json:"memoryConfig,omitempty"`
+	State        string                `json:"state"`
+	Etag         string                `json:"etag"`
+}
+
 // bigtableResource stores the JSON body of resource families whose schema is
 // large and pass-through (app profiles, backups, authorized views, schema
 // bundles, logical/materialized views). The map preserves every field the
@@ -43,6 +54,7 @@ type bigtableResource map[string]any
 var (
 	bigtableInstances    sim.Store[bigtableInstance]
 	bigtableClusters     sim.Store[bigtableCluster]
+	bigtableMemoryLayers sim.Store[bigtableMemoryLayer]
 	bigtableTables       sim.Store[bigtableTable]
 	bigtableAppProfiles  sim.Store[bigtableResource]
 	bigtableBackups      sim.Store[bigtableResource]
@@ -55,6 +67,7 @@ var (
 func registerBigtable(srv *sim.Server) {
 	bigtableInstances = sim.MakeStore[bigtableInstance](srv.DB(), "bigtable_instances")
 	bigtableClusters = sim.MakeStore[bigtableCluster](srv.DB(), "bigtable_clusters")
+	bigtableMemoryLayers = sim.MakeStore[bigtableMemoryLayer](srv.DB(), "bigtable_memory_layers")
 	bigtableTables = sim.MakeStore[bigtableTable](srv.DB(), "bigtable_tables")
 	bigtableAppProfiles = sim.MakeStore[bigtableResource](srv.DB(), "bigtable_app_profiles")
 	bigtableBackups = sim.MakeStore[bigtableResource](srv.DB(), "bigtable_backups")
@@ -90,6 +103,7 @@ func registerBigtable(srv *sim.Server) {
 	// Hot tablets + memory layers (cluster-scoped read surfaces).
 	srv.HandleFunc("GET /v2/projects/{project}/instances/{instance}/clusters/{cluster}/hotTablets", handleBigtableListHotTablets)
 	srv.HandleFunc("GET /v2/projects/{project}/instances/{instance}/clusters/{cluster}/memoryLayer", handleBigtableGetMemoryLayer)
+	srv.HandleFunc("PATCH /v2/projects/{project}/instances/{instance}/clusters/{cluster}/memoryLayer", handleBigtableUpdateMemoryLayer)
 	srv.HandleFunc("GET /v2/projects/{project}/instances/{instance}/clusters/{cluster}/memoryLayers", handleBigtableListMemoryLayers)
 
 	// Backups (cluster-scoped). The collection-level "backups:copy" rides the
@@ -326,6 +340,7 @@ func handleBigtableDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	for _, cluster := range bigtableClusters.List() {
 		if strings.HasPrefix(cluster.Name, name+"/clusters/") {
 			bigtableClusters.Delete(cluster.Name)
+			bigtableMemoryLayers.Delete(cluster.Name + "/memoryLayer")
 		}
 	}
 	for _, table := range bigtableTables.List() {
@@ -434,6 +449,7 @@ func handleBigtableDeleteCluster(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "cluster %q not found", name)
 		return
 	}
+	bigtableMemoryLayers.Delete(name + "/memoryLayer")
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -453,20 +469,100 @@ func handleBigtableGetMemoryLayer(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "cluster %q not found", name)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"name":  name + "/memoryLayer",
-		"state": "ACTIVE",
-		"etag":  gcpPolicyETag(),
-	})
+	sim.WriteJSON(w, http.StatusOK, bigtableMemoryLayerForCluster(name))
+}
+
+func bigtableMemoryLayerForCluster(clusterName string) bigtableMemoryLayer {
+	name := clusterName + "/memoryLayer"
+	if layer, ok := bigtableMemoryLayers.Get(name); ok {
+		return layer
+	}
+	layer := bigtableMemoryLayer{
+		Name:  name,
+		State: "DISABLED",
+		Etag:  gcpPolicyETag(),
+	}
+	bigtableMemoryLayers.Put(name, layer)
+	return layer
+}
+
+func handleBigtableUpdateMemoryLayer(w http.ResponseWriter, r *http.Request) {
+	clusterName := bigtableClusterName(sim.PathParam(r, "project"), sim.PathParam(r, "instance"), sim.PathParam(r, "cluster"))
+	if _, ok := bigtableClusters.Get(clusterName); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "cluster %q not found", clusterName)
+		return
+	}
+	var req bigtableMemoryLayer
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	name := clusterName + "/memoryLayer"
+	if req.Name != "" && req.Name != name {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "memory layer name %q does not match request path %q", req.Name, name)
+		return
+	}
+	layer := bigtableMemoryLayerForCluster(clusterName)
+	if req.Etag != "" && req.Etag != layer.Etag {
+		sim.GCPError(w, http.StatusConflict, "etag mismatch", "ABORTED")
+		return
+	}
+	mask := strings.TrimSpace(r.URL.Query().Get("updateMask"))
+	if mask != "" {
+		for _, field := range strings.Split(mask, ",") {
+			switch strings.TrimSpace(field) {
+			case "memoryConfig", "memory_config":
+			default:
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "field %q cannot be updated", field)
+				return
+			}
+		}
+	}
+	if req.MemoryConfig == nil {
+		layer.MemoryConfig = nil
+		layer.State = "DISABLED"
+	} else {
+		// storageSizeGib is output-only; Bigtable owns the measured capacity.
+		layer.MemoryConfig = &bigtableMemoryConfig{}
+		layer.State = "READY"
+	}
+	layer.Etag = gcpPolicyETag()
+	bigtableMemoryLayers.Put(name, layer)
+	op := newBigtableAdminLRO(sim.PathParam(r, "project"), layer, "type.googleapis.com/google.bigtable.admin.v2.MemoryLayer")
+	sim.WriteJSON(w, http.StatusOK, op)
 }
 
 func handleBigtableListMemoryLayers(w http.ResponseWriter, r *http.Request) {
-	name := bigtableClusterName(sim.PathParam(r, "project"), sim.PathParam(r, "instance"), sim.PathParam(r, "cluster"))
-	if _, ok := bigtableClusters.Get(name); !ok {
-		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "cluster %q not found", name)
+	project, instance, cluster := sim.PathParam(r, "project"), sim.PathParam(r, "instance"), sim.PathParam(r, "cluster")
+	prefix := bigtableInstanceName(project, instance) + "/clusters/"
+	clusters := []bigtableCluster{}
+	if cluster == "-" {
+		clusters = bigtableClusters.Filter(func(item bigtableCluster) bool {
+			return strings.HasPrefix(item.Name, prefix)
+		})
+	} else {
+		name := bigtableClusterName(project, instance, cluster)
+		item, ok := bigtableClusters.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "cluster %q not found", name)
+			return
+		}
+		clusters = append(clusters, item)
+	}
+	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Name < clusters[j].Name })
+	layers := make([]bigtableMemoryLayer, 0, len(clusters))
+	for _, item := range clusters {
+		layers = append(layers, bigtableMemoryLayerForCluster(item.Name))
+	}
+	page, next, ok := paginateList(w, r, layers)
+	if !ok {
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"memoryLayers": []any{}})
+	resp := map[string]any{"memoryLayers": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 // ----- Backups -----

@@ -47,7 +47,9 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 17. Made the production Azure Container Apps module and external provider stack select AzureRM 5's required `log-analytics` destination when linking a Log Analytics workspace.
 18. Corrected the AWS Lambda module's Step Functions live-differential IAM policy to use its declared region input and revalidated every production Terraform module.
 19. Restored canonical HCL formatting across the complete Terraform tree.
-20. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+20. Advanced five Google Discovery documents from the exact hosted-runner artifacts, implemented the newly published Bigtable memory-layer update and Cloud Resource Manager resource-semantics methods, and ratcheted their measured coverage floors.
+21. Made Microsoft.OperationalInsights network-access defaults and Microsoft.Storage File-share access policies survive AzureRM 5 apply and refresh through the real ARM contracts.
+22. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

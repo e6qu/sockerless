@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2731 filed - 2731 fixed - 6 open - 16 false positives.**
+**2733 filed - 2733 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2733~~ | P1 | AzureRM 5 simulator refresh | an apply succeeded but the following plan restored two values omitted by the simulator | Microsoft.OperationalInsights workspaces returned Azure's `Enabled` defaults for public ingestion and query access, and Microsoft.Storage File shares retained the same stored access policies across their ARM and Azure Files data-plane projections. Official Azure SDK and Azure CLI clients round-tripped both contracts, closing the two-change provider plan. |
+| ~~2732~~ | P1 | Google Cloud specification freshness | hosted Google Discovery published five revisions newer than the repository pins | The exact hosted-runner artifacts updated Bigtable Admin v2 to 20260725, Cloud Logging v2 to 20260713, Pub/Sub v1 to 20260721, and Cloud Resource Manager v1/v3 to 20260715. Bigtable implemented durable memory-layer update, list, state, etag, and operation behavior; Cloud Resource Manager v3 implemented resource-semantics reads; authenticated official-SDK transports exercised both newly published methods; and measured coverage floors advanced to 164/164 and 126/126. |
 | ~~2731~~ | P3 | Amazon ECS Terraform module | committed runner policy formatting drifted from canonical HCL | Terraform's recursive formatter restored canonical alignment in the runner task's `iam:PassRole` statement, and the complete Terraform tree passed the recursive format gate. |
 | ~~2730~~ | P1 | AWS Lambda Terraform module | Step Functions conformance IAM policy referenced an undeclared region variable | The live-differential execution role now constructed AWS Lambda, Step Functions, and EventBridge ARNs from the module's declared `region` input, and every production Terraform module validated with its real provider. |
 | ~~2729~~ | P1 | Azure Container Apps Terraform | AzureRM 5 rejected a linked Log Analytics workspace without an explicit logs destination | The production Azure Container Apps module and the production-shaped external stack now selected the real `log-analytics` destination whenever they supplied `log_analytics_workspace_id`; both configurations validated with AzureRM 5, and the external apply proceeded through the provider's cross-field contract. |

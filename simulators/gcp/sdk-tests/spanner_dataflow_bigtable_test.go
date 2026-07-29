@@ -2,6 +2,9 @@ package gcp_sdk_test
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -415,7 +418,63 @@ func TestBigtable_AdminSurfaceSDK(t *testing.T) {
 	assert.Empty(t, hot.HotTablets)
 	ml, err := svc.Projects.Instances.Clusters.GetMemoryLayer(clusterName + "/memoryLayer").Do()
 	require.NoError(t, err)
-	assert.Equal(t, "ACTIVE", ml.State)
+	assert.Equal(t, "DISABLED", ml.State)
+	require.NotEmpty(t, ml.Etag)
+	memoryLayers, err := svc.Projects.Instances.Clusters.MemoryLayers.List(clusterName).Do()
+	require.NoError(t, err)
+	require.Len(t, memoryLayers.MemoryLayers, 1)
+	assert.Equal(t, "DISABLED", memoryLayers.MemoryLayers[0].State)
+
+	// updateMemoryLayer was published in Discovery before the generated Go
+	// client acquired a call type. Drive its exact
+	// PATCH /v2/projects/{project}/instances/{instance}/clusters/{cluster}/memoryLayer
+	// route through the same authenticated OAuth2 transport used by the
+	// official SDK.
+	enableBody := `{"name":"` + clusterName + `/memoryLayer","memoryConfig":{},"etag":"` + ml.Etag + `"}`
+	enableReq, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+		baseURL+"/v2/"+clusterName+"/memoryLayer?updateMask=memoryConfig", strings.NewReader(enableBody))
+	require.NoError(t, err)
+	enableReq.Header.Set("Content-Type", "application/json")
+	enableResp, err := simAuthHTTPClient().Do(enableReq)
+	require.NoError(t, err)
+	defer enableResp.Body.Close()
+	enablePayload, err := io.ReadAll(enableResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, enableResp.StatusCode, string(enablePayload))
+	var enableOp bigtableadmin.Operation
+	require.NoError(t, json.Unmarshal(enablePayload, &enableOp))
+	assert.True(t, enableOp.Done)
+
+	ml, err = svc.Projects.Instances.Clusters.GetMemoryLayer(clusterName + "/memoryLayer").Do()
+	require.NoError(t, err)
+	assert.Equal(t, "READY", ml.State)
+	require.NotNil(t, ml.MemoryConfig)
+	require.NotEqual(t, memoryLayers.MemoryLayers[0].Etag, ml.Etag)
+
+	staleReq, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+		baseURL+"/v2/"+clusterName+"/memoryLayer?updateMask=memoryConfig", strings.NewReader(enableBody))
+	require.NoError(t, err)
+	staleReq.Header.Set("Content-Type", "application/json")
+	staleResp, err := simAuthHTTPClient().Do(staleReq)
+	require.NoError(t, err)
+	defer staleResp.Body.Close()
+	assert.Equal(t, http.StatusConflict, staleResp.StatusCode)
+
+	disableBody := `{"name":"` + clusterName + `/memoryLayer","etag":"` + ml.Etag + `"}`
+	disableReq, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+		baseURL+"/v2/"+clusterName+"/memoryLayer?updateMask=memoryConfig", strings.NewReader(disableBody))
+	require.NoError(t, err)
+	disableReq.Header.Set("Content-Type", "application/json")
+	disableResp, err := simAuthHTTPClient().Do(disableReq)
+	require.NoError(t, err)
+	defer disableResp.Body.Close()
+	disablePayload, err := io.ReadAll(disableResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, disableResp.StatusCode, string(disablePayload))
+	ml, err = svc.Projects.Instances.Clusters.GetMemoryLayer(clusterName + "/memoryLayer").Do()
+	require.NoError(t, err)
+	assert.Equal(t, "DISABLED", ml.State)
+	assert.Nil(t, ml.MemoryConfig)
 
 	// App profile.
 	ap, err := svc.Projects.Instances.AppProfiles.Create(inst, &bigtableadmin.AppProfile{

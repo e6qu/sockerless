@@ -29,11 +29,13 @@ type Workspace struct {
 
 // WorkspaceProperties holds the properties of a Log Analytics Workspace.
 type WorkspaceProperties struct {
-	CustomerID        string             `json:"customerId"`
-	ProvisioningState string             `json:"provisioningState"`
-	RetentionInDays   int                `json:"retentionInDays,omitempty"`
-	Sku               *WorkspaceSku      `json:"sku,omitempty"`
-	Features          *WorkspaceFeatures `json:"features,omitempty"`
+	CustomerID                      string             `json:"customerId"`
+	ProvisioningState               string             `json:"provisioningState"`
+	RetentionInDays                 int                `json:"retentionInDays,omitempty"`
+	Sku                             *WorkspaceSku      `json:"sku,omitempty"`
+	Features                        *WorkspaceFeatures `json:"features,omitempty"`
+	PublicNetworkAccessForIngestion string             `json:"publicNetworkAccessForIngestion,omitempty"`
+	PublicNetworkAccessForQuery     string             `json:"publicNetworkAccessForQuery,omitempty"`
 }
 
 // WorkspaceSku holds the SKU of a Log Analytics Workspace.
@@ -197,10 +199,12 @@ func registerAzureMonitor(srv *sim.Server) {
 			Location: req.Location,
 			Tags:     req.Tags,
 			Properties: WorkspaceProperties{
-				CustomerID:        customerID,
-				ProvisioningState: "Succeeded",
-				RetentionInDays:   30,
-				Sku:               &WorkspaceSku{Name: "PerGB2018"},
+				CustomerID:                      customerID,
+				ProvisioningState:               "Succeeded",
+				RetentionInDays:                 30,
+				Sku:                             &WorkspaceSku{Name: "PerGB2018"},
+				PublicNetworkAccessForIngestion: "Enabled",
+				PublicNetworkAccessForQuery:     "Enabled",
 				Features: &WorkspaceFeatures{
 					EnableLogAccessUsingOnlyResourcePermissions: &boolTrue,
 					DisableLocalAuth:           &boolFalse,
@@ -212,6 +216,12 @@ func registerAzureMonitor(srv *sim.Server) {
 
 		if req.Properties.RetentionInDays > 0 {
 			ws.Properties.RetentionInDays = req.Properties.RetentionInDays
+		}
+		if req.Properties.PublicNetworkAccessForIngestion != "" {
+			ws.Properties.PublicNetworkAccessForIngestion = req.Properties.PublicNetworkAccessForIngestion
+		}
+		if req.Properties.PublicNetworkAccessForQuery != "" {
+			ws.Properties.PublicNetworkAccessForQuery = req.Properties.PublicNetworkAccessForQuery
 		}
 
 		workspaces.Put(resourceID, ws)
@@ -246,6 +256,12 @@ func registerAzureMonitor(srv *sim.Server) {
 		}
 		if patch.Properties.RetentionInDays > 0 {
 			ws.Properties.RetentionInDays = patch.Properties.RetentionInDays
+		}
+		if patch.Properties.PublicNetworkAccessForIngestion != "" {
+			ws.Properties.PublicNetworkAccessForIngestion = patch.Properties.PublicNetworkAccessForIngestion
+		}
+		if patch.Properties.PublicNetworkAccessForQuery != "" {
+			ws.Properties.PublicNetworkAccessForQuery = patch.Properties.PublicNetworkAccessForQuery
 		}
 		ws.Properties.ProvisioningState = "Succeeded"
 		workspaces.Put(resourceID, ws)

@@ -76,6 +76,22 @@ module's Step Functions differential role built its policy ARNs from the
 module's declared `region` input, and all six production modules validated.
 The complete Terraform tree also retained canonical HCL formatting.
 
+The final hosted freshness pass advanced the exact Google Discovery documents
+for Bigtable Admin v2, Cloud Logging v2, Pub/Sub v1, and Cloud Resource Manager
+v1/v3. The two methods newly present in those specifications were real
+implementations: Bigtable memory layers retained enable/disable state and
+etags and returned durable operations, while Cloud Resource Manager returned
+resource-semantics metadata through its published v3 route. Authenticated
+official-SDK transports exercised both methods, and generated surface coverage
+measured Bigtable at 164 of 164 and Cloud Resource Manager v3 at 126 of 126.
+
+AzureRM 5's complete external stack also converged after refresh.
+Microsoft.OperationalInsights workspaces returned Azure's default public
+network access values, and Microsoft.Storage File-share policies stayed
+consistent between the ARM resource and Azure Files data plane. The official
+Azure SDK round-tripped the share policy and Azure CLI round-tripped the
+workspace defaults.
+
 The publication repair preserved current public contracts across the failing
 client surfaces. Amazon SQS redrive used the normal enqueue path and therefore
 assigned a new message ID, millisecond enqueue timestamp, FIFO sequence, and

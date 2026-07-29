@@ -3,6 +3,9 @@ package gcp_sdk_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,6 +35,29 @@ func crmV3Service(t *testing.T) *crm.Service {
 	)
 	require.NoError(t, err)
 	return svc
+}
+
+func TestResourceManagerV3_FetchResourceSemantics(t *testing.T) {
+	const fullName = "//cloudresourcemanager.googleapis.com/projects/735298346210"
+	resp, err := simAuthHTTPClient().Get(baseURL + "/v3:fetchResourceSemantics?fullResourceName=" + url.QueryEscape(fullName))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var got struct {
+		FullResourceName string            `json:"fullResourceName"`
+		Semantics        map[string]string `json:"semantics"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, fullName, got.FullResourceName)
+	assert.Empty(t, got.Semantics)
+
+	invalid, err := simAuthHTTPClient().Get(baseURL + "/v3:fetchResourceSemantics")
+	require.NoError(t, err)
+	defer invalid.Body.Close()
+	invalidBody, err := io.ReadAll(invalid.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, invalid.StatusCode, string(invalidBody))
+	assert.Contains(t, string(invalidBody), "INVALID_ARGUMENT")
 }
 
 func TestResourceManagerV3_ProjectLifecycle(t *testing.T) {

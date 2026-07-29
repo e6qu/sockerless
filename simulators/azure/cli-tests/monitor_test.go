@@ -24,20 +24,26 @@ func TestMonitorWorkspace_CreateAndShow(t *testing.T) {
 		Name       string `json:"name"`
 		Location   string `json:"location"`
 		Properties struct {
-			ProvisioningState string `json:"provisioningState"`
-			WorkspaceId       string `json:"customerId"`
+			ProvisioningState               string `json:"provisioningState"`
+			WorkspaceID                     string `json:"customerId"`
+			PublicNetworkAccessForIngestion string `json:"publicNetworkAccessForIngestion"`
+			PublicNetworkAccessForQuery     string `json:"publicNetworkAccessForQuery"`
 		} `json:"properties"`
 	}
 	parseJSON(t, out, &ws)
 	assert.Equal(t, "cli-test-workspace", ws.Name)
 	assert.Equal(t, "eastus", ws.Location)
 	assert.Equal(t, "Succeeded", ws.Properties.ProvisioningState)
-	assert.NotEmpty(t, ws.Properties.WorkspaceId)
+	assert.NotEmpty(t, ws.Properties.WorkspaceID)
+	assert.Equal(t, "Enabled", ws.Properties.PublicNetworkAccessForIngestion)
+	assert.Equal(t, "Enabled", ws.Properties.PublicNetworkAccessForQuery)
 
 	// GET
 	out = runCLI(t, azRest("GET", url, ""))
 	parseJSON(t, out, &ws)
 	assert.Equal(t, "cli-test-workspace", ws.Name)
+	assert.Equal(t, "Enabled", ws.Properties.PublicNetworkAccessForIngestion)
+	assert.Equal(t, "Enabled", ws.Properties.PublicNetworkAccessForQuery)
 
 	// Cleanup
 	runCLI(t, azRest("DELETE", url, ""))

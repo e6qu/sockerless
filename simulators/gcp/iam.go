@@ -902,6 +902,24 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		typeEmpty    = "type.googleapis.com/google.protobuf.Empty"
 	)
 
+	// ---- resource semantics ----------------------------------------------
+	// Resource semantics are optional cloud metadata. Resources with no
+	// assigned semantics return the requested full resource name and an empty
+	// map; this simulator currently exposes no API that assigns semantics.
+	srv.HandleFunc("GET /v3:fetchResourceSemantics", func(w http.ResponseWriter, r *http.Request) {
+		fullName := r.URL.Query().Get("fullResourceName")
+		trimmed := strings.TrimPrefix(fullName, "//")
+		service, resourcePath, found := strings.Cut(trimmed, "/")
+		if fullName == "" || !strings.HasPrefix(fullName, "//") || !found || service == "" || resourcePath == "" {
+			sim.GCPError(w, http.StatusBadRequest, "fullResourceName must be a full Google Cloud resource name", "INVALID_ARGUMENT")
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"fullResourceName": fullName,
+			"semantics":        map[string]string{},
+		})
+	})
+
 	// ---- Cloud Resource Manager v1 GetProject --------------------------
 	// gcloud projects describe and google_project's terraform Read speak
 	// the v1 read. A project the sim has never seen is a real 403 — the
