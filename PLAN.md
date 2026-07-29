@@ -76,7 +76,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 46. Recorded the remaining real boundaries as BUG-2764 through BUG-2767 instead of hiding them behind skips, HTTP 501 responses, unbound listeners, or partial WAF semantics.
 47. Persisted AWS Key Management Service custom policies across SQLite reads and simulator restarts, with focused durable-store and production-shaped HashiCorp AWS provider coverage.
 48. Refreshed the coordinated AWS SDK patch wave, Google Cloud Spanner client, and resolved transitive graphs across every affected Go module after the pre-push freshness gate detected their publication.
-49. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+49. Made filesystem staging validation privilege-independent by forcing the direct destination beneath a regular file instead of assuming `/usr/local` was unwritable.
+50. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

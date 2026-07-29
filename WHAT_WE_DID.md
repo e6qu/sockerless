@@ -4,6 +4,13 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-29 — Filesystem staging tests became privilege-independent
+
+Core filesystem-driver tests stopped assuming a path below `/usr/local` was
+unwritable. Each staging case now targets a child beneath a real regular file,
+which makes direct directory creation fail consistently on local and hosted
+runners regardless of user privilege.
+
 ## 2026-07-29 — Dependency pins caught up with coordinated releases
 
 The authenticated pre-push freshness gate detected a coordinated AWS SDK patch

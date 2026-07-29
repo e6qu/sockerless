@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2769 filed - 2765 fixed - 10 open - 16 false positives.**
+**2770 filed - 2766 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -25,6 +25,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2770~~ | P1 | core filesystem-driver validation | staging tests assumed a path below `/usr/local` was unwritable, but a privileged Linux runner could create it | Both staging tests now force direct extraction to fail portably by targeting a child beneath a real regular file; focused local and hosted core tests pass without relying on runner permissions. |
 | ~~2769~~ | P1 | dependency freshness | coordinated AWS SDK patch releases and a new Google Cloud Spanner client appeared during pre-push validation | Every drifted direct dependency and its resolved transitive graph was refreshed with the repository-owned per-module upgrade target; the complete freshness gate and affected module validation passed. |
 | ~~2768~~ | P1 | AWS Key Management Service persistence | custom key policies disappeared when the persistent simulator store serialized a key | `KMSKey` now persists its JSON policy alongside the key, a store-reopen regression test proves the policy survives a simulator restart, and the production-shaped HashiCorp AWS provider graph supplies a custom key policy so its post-create waiter permanently exercises the contract. |
 | ~~2763~~ | P1 | Google Terraform external validation | the macOS test silently skipped the production Compute/Network graph and Buildx left the Linux test image only in cache | The capability check failed loudly, `make terraform-test` selected the privileged real-network container harness on macOS, Buildx loaded the image into the runtime, and the shared image carried the real Firecracker and squashfs tools. |
