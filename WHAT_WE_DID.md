@@ -4,6 +4,19 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-29 — AWS Key Management Service policies became durable state
+
+Customer-managed AWS Key Management Service policies survived the simulator's
+SQLite serialization and process restart. The stored key record retained the
+exact JSON policy accepted by `CreateKey` and `PutKeyPolicy`, so
+`GetKeyPolicy` returned the requested document after a subsequent durable-store
+read instead of silently substituting the default root policy.
+
+A focused regression closed and reopened the real simulator state database
+before asserting the policy. The production-shaped HashiCorp AWS provider graph
+also created a policy-bearing key, making the provider's create-time policy
+waiter an integration guard for the persistent read-back path.
+
 ## 2026-07-28 — AWS Lambda and AWS Step Functions became complete executable cloud slices
 
 AWS Lambda implemented every one of the 85 operations in its vendored Smithy

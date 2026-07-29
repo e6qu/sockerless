@@ -1467,6 +1467,18 @@ resource "aws_kms_key" "tf_kms" {
   description             = "tf-test runner KMS key"
   deletion_window_in_days = 7
   enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "EnableIamUserPermissions"
+      Effect   = "Allow"
+      Action   = "kms:*"
+      Resource = "*"
+      Principal = {
+        AWS = "arn:aws:iam::123456789012:root"
+      }
+    }]
+  })
 
   # Tags drive TagResource + ListResourceTags; the provider polls
   # ListResourceTags until they propagate, so broken KMS tagging hangs apply.

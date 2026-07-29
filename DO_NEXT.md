@@ -4,6 +4,12 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+AWS Key Management Service custom key policies persisted in the simulator's
+SQLite key record instead of disappearing during JSON serialization. A
+store-close-and-reopen regression proved durable read-back, and the
+production-shaped HashiCorp AWS provider graph supplied a custom policy so its
+post-create policy waiter exercised the same contract.
+
 AWS Lambda implemented all 85 operations in the vendored Smithy service model.
 ZIP and image functions executed through the AWS Lambda Runtime API; layers,
 versions, aliases, function URLs, concurrency, capacity providers, response

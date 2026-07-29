@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2757 filed - 2757 fixed - 6 open - 16 false positives.**
+**2758 filed - 2758 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2758~~ | P1 | AWS Key Management Service persistence | custom key policies disappeared when the persistent simulator store serialized a key | `KMSKey` now persists its JSON policy alongside the key, a store-reopen regression test proves the policy survives a simulator restart, and the production-shaped HashiCorp AWS provider graph supplies a custom key policy so its post-create waiter permanently exercises the contract. |
 | ~~2757~~ | P1 | AWS simulator external Terraform validation | the root graph selected an undeclared HashiCorp AWS provider version while sibling packages remained pinned to an older release | Every AWS Terraform package declared HashiCorp AWS provider 6.50.0. The complete root production graph passed concurrent apply, workload assertions, refresh, and destroy through Caddy HTTPS with runtime Smithy validation armed. |
 | ~~2756~~ | P2 | Microsoft Azure console deletion validation | a failed-delete test synchronously queried the Fluent dialog while React Query was still settling the error mutation | The assertion awaited the retained accessible dialog after the real Azure Resource Manager error rendered. All 131 Microsoft Azure console tests and the complete UI build/test fan-out passed. |
 | ~~2755~~ | P1 | AWS workload endpoint coordinates | a native Linux simulator rewrote `host.docker.internal` to the virtual machine's default gateway instead of Docker's host gateway | Host-address rewriting now applied only when the simulator itself ran inside a container; a native simulator retained Docker's real `host.docker.internal:host-gateway` coordinate for child workloads. Focused coordinate tests and the official AWS SDK Step Functions integration passed a real Amazon ECS task, AWS CodeBuild container, and vendor AWS CLI in 7.45 seconds. |
