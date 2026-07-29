@@ -137,6 +137,10 @@ multi-language monorepo builds with complete phase, cache, and artifact
 lifecycle; Amazon RDS exposed persistent PostgreSQL, MySQL, and MariaDB native
 data planes with TLS-only IAM authentication and real password rotation; and
 deployed workloads used the standard SDK endpoint environment variables.
+Hosted concurrency validation preserved sub-second AWS Amplify release order,
+accepted Microsoft Azure's valid subnet-before-public-prefix NAT-gateway
+state, and gave the real Step Functions container integrations a
+cloud-shaped cold-provisioning window with useful terminal diagnostics.
 Explicit Lambda deployment remained intentional because AWS Lambda itself runs
 only functions a caller creates. The repository retained its truthful
 unaudited/non-production warning because functional validation did not

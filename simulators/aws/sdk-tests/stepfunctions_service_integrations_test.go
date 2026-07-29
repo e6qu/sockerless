@@ -306,10 +306,19 @@ phases:
 	})
 	execution, err := statesAPI.StartExecution(ctx, &sfn.StartExecutionInput{StateMachineArn: machine.StateMachineArn})
 	require.NoError(t, err)
-	require.Eventually(t, func() bool {
+	// Amazon Elastic Container Service (Amazon ECS) and AWS CodeBuild both
+	// provision containers asynchronously. A cold external runner may need
+	// longer than one minute to fetch both configured images, just as the real
+	// services may spend several minutes in provisioning and queued states.
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		described, describeErr := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{ExecutionArn: execution.ExecutionArn})
-		return describeErr == nil && described.Status == sfntypes.ExecutionStatusSucceeded
-	}, 60*time.Second, 200*time.Millisecond)
+		if !assert.NoError(collect, describeErr) {
+			return
+		}
+		assert.Equal(collect, sfntypes.ExecutionStatusSucceeded, described.Status)
+		assert.Empty(collect, aws.ToString(described.Error))
+		assert.Empty(collect, aws.ToString(described.Cause))
+	}, 3*time.Minute, 200*time.Millisecond)
 
 	var deliveredReceipt string
 	require.Eventually(t, func() bool {

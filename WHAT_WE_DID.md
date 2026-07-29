@@ -2936,3 +2936,26 @@ revision 20260724 and IAM Service Account Credentials v1 to revision 20260723.
 Their public methods, paths, and schema fields were unchanged; the repository
 retained the exact compressed artifacts and provenance, and the complete Google
 simulator route, specification, and measured-coverage unit suite passed.
+
+Hosted concurrency then found three ordering assumptions that local warm runs
+had not exposed. AWS Amplify had rounded job start times to whole seconds, so
+two releases in one second could make the hosting plane select the older
+artifact by random job ID. Amplify now retained sub-second AWS timestamp
+precision; the official AWS SDK private authenticated Python and Node.js build
+restored and served its second-release cache in five consecutive real-container
+runs.
+
+AzureRM independently created a NAT gateway, subnet association, and public IP
+prefix association. When the subnet update won that race, Microsoft Azure's
+valid intermediate gateway had no public addressing yet. The simulator now
+retained that control-plane association without inventing outbound behavior,
+then programmed the real network fabric when the later public-prefix update
+arrived. The production-shaped AzureRM apply/destroy path exercised the same
+ordering.
+
+The AWS Step Functions workload integration remained genuinely asynchronous:
+a clean hosted runner needed more than one minute to provision the configured
+Amazon ECS and AWS CodeBuild images. Its official AWS SDK assertion now allowed
+the same multi-minute provisioning window as the cloud services and reported
+the final execution status, error, and cause. The focused real-container
+integration passed.

@@ -304,7 +304,14 @@ func amplifyArtifactID(jobID string) string {
 	return jobID + "-" + amplifyJobID()
 }
 
-func amplifyEpoch() float64 { return float64(time.Now().UTC().Unix()) }
+// AWS Amplify returns timestamps with sub-second precision. Preserve that
+// precision so consecutive jobs started within one second retain their real
+// creation order when the hosting data plane selects the latest successful
+// deployment.
+func amplifyEpoch() float64 {
+	now := time.Now().UTC()
+	return float64(now.Unix()) + float64(now.Nanosecond())/float64(time.Second)
+}
 
 func amplifyWriteJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

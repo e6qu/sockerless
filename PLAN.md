@@ -53,7 +53,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 23. Added Cloudscape operating workflows for AWS CodeBuild projects and builds, AWS Amplify branches and deployments, and Amazon RDS authentication, then proved them through the authenticated browser matrix.
 24. Documented and externally proved standard AWS endpoint propagation from explicitly deployed AWS Lambda and AWS CodeBuild workloads.
 25. Retained the exact CI-captured Cloud Logging v2 and IAM Service Account Credentials v1 Discovery revisions and revalidated the unchanged public method, path, and schema-field sets.
-26. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+26. Closed the hosted-runner concurrency findings: AWS Amplify preserved sub-second release ordering, Microsoft Azure NAT gateways accepted subnet association before public addressing, and the real AWS Step Functions workload test allowed cloud-shaped cold container provisioning.
+27. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2739 filed - 2739 fixed - 6 open - 16 false positives.**
+**2742 filed - 2742 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2742~~ | P1 | AWS Step Functions external integration validation | cold Amazon ECS and AWS CodeBuild image provisioning exceeded a one-minute assertion window | The official AWS SDK integration retained the real asynchronous service behavior and allowed three minutes for two cold configured images, while its final assertion reported the execution status, error, and cause. The focused real-container flow passed. |
+| ~~2741~~ | P1 | Microsoft Azure NAT gateway association ordering | concurrent AzureRM association resources could attach a subnet before the public IP prefix and the simulator rejected Azure's valid intermediate state | The Microsoft Azure data plane retained the subnet association without programming outbound fabric until a public IP address or prefix arrived; the later gateway update programmed the real network. The official AzureRM apply/destroy path no longer retried the valid intermediate control-plane state to its timeout. |
+| ~~2740~~ | P1 | AWS Amplify deployment ordering | whole-second job timestamps let two releases started in one second select the older successful artifact by random job ID | AWS Amplify retained sub-second timestamp precision, so the hosting data plane deterministically selected the later successful deployment. The official AWS SDK private authenticated Python/Node.js build restored its declared cache and served the second artifact in five consecutive real-container runs. |
 | ~~2739~~ | P2 | Google Cloud API specification freshness | hosted CI received newer Cloud Logging and IAM Service Account Credentials Discovery revisions | The exact CI-captured official documents advanced Cloud Logging v2 to revision 20260724 and IAM Service Account Credentials v1 to revision 20260723. Their public methods, paths, and schema fields were unchanged; the complete Google simulator route, specification, and measured-coverage unit suite passed against the newer descriptions. |
 | ~~2738~~ | P1 | AWS console workload workflows | AWS CodeBuild, AWS Amplify, and Amazon RDS pages exposed inventory or creation without the corresponding operating lifecycle | The Cloudscape console now created, started, polled, stopped, and deleted AWS CodeBuild projects and builds; created and operated AWS Amplify branches and deployments; and changed Amazon RDS IAM database authentication and live master credentials. The authenticated Shauth/Ory Hydra/PostgreSQL/Chromium matrix exercised the real federated AWS APIs and a real CodeBuild container, while all 241 package browser cases passed. |
 | ~~2737~~ | P1 | Amazon Relational Database Service lifecycle fidelity | `ModifyDBInstance` changed only the control-plane row, MariaDB instances ran a MySQL image, and IAM database authentication accepted plaintext connections | Amazon RDS now rotated the actual PostgreSQL, MySQL, or MariaDB account while running or on the next start, retained the native engine volume across stop/start, used MariaDB 11.4 for MariaDB instances, and required TLS for SigV4 IAM database authentication. Stock pgx and MySQL drivers proved denial, rotation, persistence, and SQL data retention against all three engines. |
