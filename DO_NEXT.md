@@ -4,6 +4,12 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The Terraform-in-ECS proof pre-pulls the unchanged HashiCorp Terraform image
+with bounded retry, retries only provider initialization before its single
+apply, and publishes exact task output through Amazon CloudWatch Logs. Terminal
+Step Functions failures report that output immediately; five focused
+real-container executions and the exact AWS SDK N-Z shard passed.
+
 Core filesystem-driver staging validation no longer assumed `/usr/local` was
 unwritable. Both tests force the direct path to fail portably by creating the
 requested destination beneath a regular file, independent of runner privilege.

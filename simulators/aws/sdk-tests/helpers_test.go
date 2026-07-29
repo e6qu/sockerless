@@ -128,6 +128,8 @@ var (
 	ctx                    = context.Background()
 )
 
+const terraformECSImage = "docker.io/hashicorp/terraform:1.15.8"
+
 func sdkConfig() aws.Config {
 	return aws.Config{
 		Region:      "us-east-1",
@@ -276,6 +278,12 @@ func TestMain(m *testing.M) {
 		// lifecycle deadline.
 		pullImageWithRetry("public.ecr.aws/docker/library/alpine:3.21")
 		pullImageWithRetry("public.ecr.aws/aws-cli/aws-cli:2.27.49")
+	}
+	if testRunSelects("TestSFN_AmazonECSRunsTerraformAgainstSimulator_SDK") {
+		// Keep image transfer outside the workflow lifecycle and give transient
+		// registry errors the same bounded retry treatment as every other
+		// external workload image used by this suite.
+		pullImageWithRetry(terraformECSImage)
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

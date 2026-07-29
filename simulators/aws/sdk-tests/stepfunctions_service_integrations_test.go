@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -487,11 +488,13 @@ func TestSFN_AmazonECSRunsTerraformAgainstSimulator_SDK(t *testing.T) {
 	statesAPI := sfnClient()
 	ecsAPI := ecsClient()
 	queueAPI := sqsClient()
+	logsAPI := cwLogsClient()
 
 	const (
 		clusterName = "sfn-terraform-apply"
 		familyName  = "sfn-terraform-apply"
 		queueName   = "sfn-terraform-apply"
+		logGroup    = "/ecs/sfn-terraform-apply"
 	)
 	subnetID := createECSTestSubnet(t, "sfn-terraform-apply")
 	_, err := ecsAPI.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(clusterName)})
@@ -535,10 +538,23 @@ resource "aws_sqs_queue" "proof" {
 		Memory:                  aws.String("1024"),
 		ContainerDefinitions: []ecstypes.ContainerDefinition{{
 			Name:       aws.String("terraform"),
-			Image:      aws.String("docker.io/hashicorp/terraform:1.15.8"),
+			Image:      aws.String(terraformECSImage),
 			EntryPoint: []string{"sh", "-c"},
 			Command: []string{
-				`mkdir -p /workspace && cd /workspace && printf '%s' "$TF_CONFIGURATION" > main.tf && terraform init -input=false -no-color && terraform apply -auto-approve -input=false -no-color`,
+				`set -eu
+mkdir -p /workspace
+cd /workspace
+printf '%s' "$TF_CONFIGURATION" > main.tf
+attempt=1
+while ! terraform init -input=false -no-color; do
+  if [ "$attempt" -ge 3 ]; then
+    exit 1
+  fi
+  rm -rf .terraform .terraform.lock.hcl
+  sleep $((attempt * 2))
+  attempt=$((attempt + 1))
+done
+terraform apply -auto-approve -input=false -no-color`,
 			},
 			Environment: []ecstypes.KeyValuePair{
 				{Name: aws.String("AWS_ACCESS_KEY_ID"), Value: aws.String("test")},
@@ -546,8 +562,18 @@ resource "aws_sqs_queue" "proof" {
 				{Name: aws.String("AWS_DEFAULT_REGION"), Value: aws.String("us-east-1")},
 				{Name: aws.String("AWS_ENDPOINT_URL"), Value: aws.String(containerEndpoint)},
 				{Name: aws.String("TF_IN_AUTOMATION"), Value: aws.String("true")},
+				{Name: aws.String("TF_REGISTRY_CLIENT_TIMEOUT"), Value: aws.String("30")},
+				{Name: aws.String("TF_REGISTRY_DISCOVERY_RETRY"), Value: aws.String("5")},
 				{Name: aws.String("CHECKPOINT_DISABLE"), Value: aws.String("1")},
 				{Name: aws.String("TF_CONFIGURATION"), Value: aws.String(terraformConfiguration)},
+			},
+			LogConfiguration: &ecstypes.LogConfiguration{
+				LogDriver: ecstypes.LogDriverAwslogs,
+				Options: map[string]string{
+					"awslogs-group":         logGroup,
+					"awslogs-region":        "us-east-1",
+					"awslogs-stream-prefix": "ecs",
+				},
 			},
 		}},
 	})
@@ -555,6 +581,9 @@ resource "aws_sqs_queue" "proof" {
 	t.Cleanup(func() {
 		_, _ = ecsAPI.DeregisterTaskDefinition(ctx, &ecs.DeregisterTaskDefinitionInput{
 			TaskDefinition: taskDefinition.TaskDefinition.TaskDefinitionArn,
+		})
+		_, _ = logsAPI.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{
+			LogGroupName: aws.String(logGroup),
 		})
 	})
 
@@ -592,17 +621,46 @@ resource "aws_sqs_queue" "proof" {
 		StateMachineArn: machine.StateMachineArn,
 	})
 	require.NoError(t, err)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+	deadline := time.Now().Add(5 * time.Minute)
+	for {
 		described, describeErr := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
 			ExecutionArn: execution.ExecutionArn,
 		})
-		if !assert.NoError(collect, describeErr) {
-			return
+		require.NoError(t, describeErr)
+		switch described.Status {
+		case sfntypes.ExecutionStatusSucceeded:
+			goto executionSucceeded
+		case sfntypes.ExecutionStatusFailed, sfntypes.ExecutionStatusAborted, sfntypes.ExecutionStatusTimedOut:
+			logs, logsErr := logsAPI.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+				LogGroupName: aws.String(logGroup),
+			})
+			require.NoError(t, logsErr)
+			var messages []string
+			for _, event := range logs.Events {
+				messages = append(messages, aws.ToString(event.Message))
+			}
+			t.Fatalf(
+				"Terraform workflow reached %s: %s: %s\ncontainer output:\n%s",
+				described.Status,
+				aws.ToString(described.Error),
+				aws.ToString(described.Cause),
+				strings.Join(messages, "\n"),
+			)
 		}
-		assert.Equal(collect, sfntypes.ExecutionStatusSucceeded, described.Status)
-		assert.Empty(collect, aws.ToString(described.Error))
-		assert.Empty(collect, aws.ToString(described.Cause))
-	}, 5*time.Minute, 500*time.Millisecond)
+		require.True(t, time.Now().Before(deadline), "Terraform workflow did not finish within five minutes")
+		time.Sleep(500 * time.Millisecond)
+	}
+
+executionSucceeded:
+	taskLogs, err := logsAPI.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName: aws.String(logGroup),
+	})
+	require.NoError(t, err)
+	var taskMessages []string
+	for _, event := range taskLogs.Events {
+		taskMessages = append(taskMessages, aws.ToString(event.Message))
+	}
+	assert.Contains(t, strings.Join(taskMessages, "\n"), "Apply complete! Resources: 1 added")
 
 	queues, err := queueAPI.ListQueues(ctx, &sqs.ListQueuesInput{QueueNamePrefix: aws.String(queueName)})
 	require.NoError(t, err)

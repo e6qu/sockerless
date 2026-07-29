@@ -4,6 +4,19 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Terraform-in-ECS failures became bounded and diagnosable
+
+The Step Functions integration kept the same HashiCorp Terraform 1.15.8 image
+and AWS provider 6.50.0, while moving image transfer outside the workflow
+lifecycle and retrying only provider initialization with explicit registry
+bounds. The single Terraform apply remained fail-loud.
+
+The Amazon ECS task now sends its complete output to Amazon CloudWatch Logs.
+The test requires the successful apply message and, on a terminal workflow
+failure, reports the task output immediately instead of polling the failed
+execution for five minutes. Five focused real-container executions and the
+exact official AWS SDK N-Z shard passed.
+
 ## 2026-07-29 — Filesystem staging tests became privilege-independent
 
 Core filesystem-driver tests stopped assuming a path below `/usr/local` was
