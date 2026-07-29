@@ -560,7 +560,7 @@ timeout -s TERM 120 terraform apply -auto-approve -input=false -no-color`,
 				// The simulator is the task's declared cloud endpoint, so it
 				// must bypass environment proxies just as localhost does.
 				{Name: aws.String("HTTPS_PROXY"), Value: aws.String("http://127.0.0.1:1")},
-				{Name: aws.String("NO_PROXY"), Value: aws.String("host.docker.internal")},
+				{Name: aws.String("NO_PROXY"), Value: aws.String("host.docker.internal,169.254.170.2")},
 				{Name: aws.String("CHECKPOINT_DISABLE"), Value: aws.String("1")},
 				{Name: aws.String("TF_CONFIGURATION"), Value: aws.String(terraformConfiguration)},
 			},

@@ -67,8 +67,12 @@ The same endpoint convention applies inside workloads. Pass
 `AWS_ENDPOINT_URL` (or `AWS_ENDPOINT_URL_<SERVICE>`) and ordinary AWS
 credentials through the real workload configuration surface—Amazon ECS
 container overrides, AWS CodeBuild environment overrides, or AWS Lambda
-function environment variables. The simulator does not inject, translate, or
-broker a private endpoint variable. The official-client suite proves this by
+function environment variables. The simulator does not inject or broker a
+private endpoint variable. In the Linux real-VPC tier, an explicitly supplied
+outer-host simulator-listener authority is mapped onto the existing managed
+task-local route because the isolated namespace intentionally has no route to
+Docker's host gateway; other host authorities remain unreachable. The
+official-client suite proves this by
 having an AWS Step Functions-launched AWS CodeBuild process invoke the vendor
 AWS CLI against Amazon SQS and by having explicitly deployed AWS Lambda code
 invoke the bundled AWS SDK against Amazon SQS.

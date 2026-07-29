@@ -336,6 +336,26 @@ func rewriteHostDockerInternalEnvWithGateway(env map[string]string, gateway stri
 	return out
 }
 
+// rewriteSimulatorEndpointForRealVPC maps the outer-host coordinate used by
+// cross-platform task definitions onto the task-local link address that the
+// real VPC network tier DNATs to the simulator listener. A real-VPC task has no
+// route to Docker's host gateway (and a private subnet should not gain one),
+// while 169.254.170.2 is already the managed ECS task-metadata route into the
+// same listener. Only this simulator listener authority is rewritten; other
+// outer-host services remain unreachable from the isolated VPC.
+func rewriteSimulatorEndpointForRealVPC(env map[string]string, simulatorPort int) map[string]string {
+	out := make(map[string]string, len(env))
+	target := "http://" + realexec.ECSTaskMetadataIPv4
+	for key, value := range env {
+		for _, hostname := range []string{"host.docker.internal", "host.containers.internal"} {
+			source := fmt.Sprintf("http://%s:%d", hostname, simulatorPort)
+			value = strings.ReplaceAll(value, source, target)
+		}
+		out[key] = value
+	}
+	return out
+}
+
 func defaultRouteGatewayIPv4() string {
 	content, err := os.ReadFile("/proc/net/route")
 	if err != nil {
