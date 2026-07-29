@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2745 filed - 2745 fixed - 6 open - 16 false positives.**
+**2747 filed - 2747 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2747~~ | P2 | simulator console browser accessibility validation | Chromium's initial focus origin was not deterministic on a hosted runner | The AWS, Google Cloud, and Microsoft Azure console skip-link tests explicitly focused the loaded document body before pressing Tab, so they still proved the skip link was the first in-document keyboard target without depending on browser-chrome focus state. All three focused real Chromium tests passed. |
+| ~~2746~~ | P2 | Google Cloud API specification freshness | hosted CI received a newer Cloud Run v1 Discovery revision after the v2 rollout | The exact CI-captured official document advanced Cloud Run v1 to revision 20260727. Its public methods, paths, and schema fields were unchanged; both Cloud Run Discovery versions, the Google simulator route, specification, and measured-coverage suite passed, and the authenticated freshness audit accepted both new pins. |
 | ~~2745~~ | P1 | AWS Step Functions external integration validation | cold public-image transfer consumed the execution assertion's entire lifecycle window | The official AWS SDK shard provisioned the exact Alpine Amazon ECS image and official AWS CLI CodeBuild image before `m.Run`, outside the per-test Step Functions lifecycle deadline. The simulator still started and waited for both real configured containers, and the focused external-client flow passed in 35 seconds. |
 | ~~2744~~ | P2 | Google Cloud API specification freshness | hosted CI received a newer Cloud Run v2 Discovery revision | The exact CI-captured official document advanced Cloud Run v2 to revision 20260727. Its public methods, paths, and schema fields were unchanged; the Google simulator route, specification, and measured-coverage suite passed against the newer descriptions, and the authenticated freshness audit accepted the new pin. |
 | ~~2743~~ | P1 | dependency freshness | `modernc.org/sqlite` and Google Cloud client releases appeared during publication | All four drifted simulator modules upgraded to `modernc.org/sqlite` v1.55.0 and its current transitive graph. The Google simulator also upgraded Firestore v1.24.0, Spanner v1.93.0, Google APIs v0.291.0, and the current generated APIs, migrating its Firestore and Spanner protobuf imports to their canonical client modules after the root `genproto` module removed them. Every affected module and the complete official Google Cloud SDK suite passed, and the authenticated freshness audit reported no drift. |

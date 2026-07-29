@@ -2971,13 +2971,13 @@ official Firestore and Spanner client modules. Every affected module and the
 complete official Google Cloud SDK simulator suite passed, and the authenticated
 freshness audit reported no remaining drift.
 
-The hosted specification freshness gate then observed Google Cloud Run v2
+The hosted specification freshness gate observed Google Cloud Run v1 and v2
 Discovery revision 20260727 while the maintainer edge still served revision
-20260717. Its exact compressed artifact and provenance pin were retained. A
-canonical comparison found no public method, path, or schema-field changes;
-only the revision and descriptions changed. The Google simulator route,
-specification, and measured-coverage tests passed against the newer document,
-and the authenticated freshness audit accepted the pin.
+20260717. Their exact compressed artifacts and provenance pins were retained.
+A canonical comparison found no public method, path, or schema-field changes;
+only the revisions and descriptions changed. The Google simulator route,
+specification, and measured-coverage tests passed against both newer documents,
+and the authenticated freshness audit accepted both pins.
 
 The next hosted AWS SDK N–Z run showed that cold registry transfer, rather than
 either cloud workload, had consumed the entire Step Functions execution
@@ -2986,3 +2986,9 @@ Amazon ECS image and official AWS CLI CodeBuild image before `m.Run`. Image
 acquisition therefore stayed outside the per-test lifecycle deadline while the
 simulator still started, observed, and cancelled the real containers. The
 focused official AWS SDK integration passed in 35 seconds.
+
+The console accessibility checks no longer depended on whether hosted
+Chromium began with browser chrome or the document as its focus origin. The
+AWS, Google Cloud, and Microsoft Azure tests focused the loaded document body
+before pressing Tab, then asserted the product skip link received focus first.
+All three focused browser tests passed against their real console processes.

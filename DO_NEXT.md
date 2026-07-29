@@ -147,10 +147,13 @@ integration's lifecycle deadline while both real containers still executed.
 Publication also upgraded every newly drifted SQLite and Google Cloud client
 module, moved Firestore and Spanner protobuf imports to their current
 canonical modules, and passed the complete official Google Cloud SDK suite.
-The exact hosted Cloud Run v2 Discovery revision 20260727 was also retained;
-its public methods, paths, and schema fields were unchanged, and the Google
-simulator route, specification, and measured-coverage suite passed against its
-newer descriptions.
+The exact hosted Cloud Run v1 and v2 Discovery revision 20260727 documents were
+also retained; their public methods, paths, and schema fields were unchanged,
+and the Google simulator route, specification, and measured-coverage suite
+passed against their newer descriptions.
+The three console accessibility checks anchored keyboard traversal at the
+loaded document before pressing Tab, so real Chromium consistently proved each
+skip link was the first in-document focus target.
 Explicit Lambda deployment remained intentional because AWS Lambda itself runs
 only functions a caller creates. The repository retained its truthful
 unaudited/non-production warning because functional validation did not
