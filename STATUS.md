@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | | |
 |---|---|
 | Active branch | `fix/kms-policy-persistence` |
-| Terraform-in-ECS validation | The unchanged HashiCorp Terraform 1.15.8 image is pre-pulled with bounded retry, provider discovery retries independently of the single apply, and the task publishes its exact output through Amazon CloudWatch Logs. A terminal Step Functions failure now reports that output immediately instead of polling for five minutes; five focused executions and the exact AWS SDK N-Z shard passed. |
+| Terraform-in-ECS validation | The HashiCorp Terraform 1.15.8 workload image carries an ahead-of-time filesystem mirror of AWS provider 6.50.0, so its private-subnet task performs one offline initialization and one apply without undeclared internet egress. The task publishes exact output through Amazon CloudWatch Logs, and terminal Step Functions failures report it immediately; the focused execution and exact AWS SDK N-Z shard passed. |
 | Filesystem staging validation | Core filesystem-driver tests force the direct extraction path to fail with a child beneath a regular file, proving staging without relying on `/usr/local` permissions that differ between local and hosted runners. |
 | Dependency freshness | The repository-owned upgrade fan-out refreshed the coordinated AWS SDK patch wave, Google Cloud Spanner client, and every affected resolved transitive graph after pre-push validation detected their publication. |
 | AWS Key Management Service policy persistence | Customer-managed key policies survived the simulator's SQLite serialization and process restart. The focused persistent-store regression passed, and the production-shaped HashiCorp AWS provider graph declared a custom policy so its create-time `GetKeyPolicy` waiter exercised the same durable read-back contract that ECS Dev Desktop required. |
@@ -38,7 +38,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 - An unmodified ecs-dev-desktop Terraform consumer applied 178 resources through the standard `AWS_ENDPOINT_URL`, passed its external shared-infrastructure assertions, produced a zero-change plan with runtime Smithy validation reporting no violations, destroyed all 178 resources, and retained a clean external working tree.
 - The complete official AWS SDK suite passed in 487 seconds after the same-day dependency upgrade; all five official HashiCorp AWS provider packages passed apply, refresh, workload/data-plane assertions, and destroy.
-- The Terraform-in-ECS proof passed five focused real-container executions and the exact AWS SDK N-Z shard after provider initialization gained bounded retry and task output became a required Amazon CloudWatch Logs assertion.
+- The Terraform-in-ECS proof passed a focused real-container execution and the exact AWS SDK N-Z shard with its exact provider mirrored into the private-subnet workload image and task output required through Amazon CloudWatch Logs.
 - The complete official Google Cloud SDK suite passed, and the focused HashiCorp Google provider Cloud Spanner graph passed apply, a zero-change plan, and destroy.
 - The shared simulator Linux test image loaded through Buildx and contained Firecracker v1.15.1 plus `unsquashfs` 4.5.1; the macOS Podman host's absent `/dev/kvm` remained explicit under BUG-2764 instead of skipping the test.
 - The authenticated whole-repository dependency freshness audit reported no drift.

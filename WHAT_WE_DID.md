@@ -6,16 +6,17 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 
 ## 2026-07-30 — Terraform-in-ECS failures became bounded and diagnosable
 
-The Step Functions integration kept the same HashiCorp Terraform 1.15.8 image
-and AWS provider 6.50.0, while moving image transfer outside the workflow
-lifecycle and retrying only provider initialization with explicit registry
-bounds. The single Terraform apply remained fail-loud.
+The Step Functions integration kept HashiCorp Terraform 1.15.8 and AWS
+provider 6.50.0, while packaging the provider into the workload image through
+an ahead-of-time filesystem mirror. The private-subnet Amazon ECS task now
+performs one offline provider initialization and one fail-loud apply without
+depending on undeclared internet egress.
 
 The Amazon ECS task now sends its complete output to Amazon CloudWatch Logs.
 The test requires the successful apply message and, on a terminal workflow
 failure, reports the task output immediately instead of polling the failed
-execution for five minutes. Five focused real-container executions and the
-exact official AWS SDK N-Z shard passed.
+execution for five minutes. The focused real-container execution and exact
+official AWS SDK N-Z shard passed.
 
 ## 2026-07-29 — Filesystem staging tests became privilege-independent
 

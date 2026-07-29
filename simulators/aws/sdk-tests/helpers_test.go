@@ -128,7 +128,10 @@ var (
 	ctx                    = context.Background()
 )
 
-const terraformECSImage = "docker.io/hashicorp/terraform:1.15.8"
+const (
+	terraformECSBaseImage = "docker.io/hashicorp/terraform:1.15.8"
+	terraformECSImage     = "sockerless-terraform-aws:test"
+)
 
 func sdkConfig() aws.Config {
 	return aws.Config{
@@ -280,10 +283,7 @@ func TestMain(m *testing.M) {
 		pullImageWithRetry("public.ecr.aws/aws-cli/aws-cli:2.27.49")
 	}
 	if testRunSelects("TestSFN_AmazonECSRunsTerraformAgainstSimulator_SDK") {
-		// Keep image transfer outside the workflow lifecycle and give transient
-		// registry errors the same bounded retry treatment as every other
-		// external workload image used by this suite.
-		pullImageWithRetry(terraformECSImage)
+		buildTerraformAWSImage(workloadPlatform)
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -365,6 +365,106 @@ func pullImageWithRetry(image string) {
 		time.Sleep(time.Duration(attempt*attempt) * time.Second)
 	}
 	log.Fatalf("Failed to pull %s after retries: %v", image, lastErr)
+}
+
+// buildTerraformAWSImage prepares the exact Terraform workload used by the
+// Step Functions → Amazon ECS provider proof. A Fargate task in a private
+// subnet has no contractually implied route to registry.terraform.io, so the
+// provider is fetched before the task starts and committed into the workload
+// image as a filesystem mirror. The task itself therefore proves the AWS API
+// path without depending on undeclared internet egress.
+func buildTerraformAWSImage(platform string) {
+	pullImageWithRetry(terraformECSBaseImage)
+
+	buildDir, err := os.MkdirTemp("", "sockerless-terraform-aws-*")
+	if err != nil {
+		log.Fatalf("Failed to create Terraform AWS image directory: %v", err)
+	}
+	defer os.RemoveAll(buildDir)
+
+	configuration := `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.50.0"
+    }
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(buildDir, "main.tf"), []byte(configuration), 0600); err != nil {
+		log.Fatalf("Failed to write Terraform AWS provider mirror configuration: %v", err)
+	}
+	cliConfig := `provider_installation {
+  filesystem_mirror {
+    path    = "/providers"
+    include = ["registry.terraform.io/hashicorp/aws"]
+  }
+}
+`
+	cliConfigPath := filepath.Join(buildDir, "terraformrc")
+	if err := os.WriteFile(cliConfigPath, []byte(cliConfig), 0600); err != nil {
+		log.Fatalf("Failed to write Terraform AWS provider installation configuration: %v", err)
+	}
+
+	mirrorPath := filepath.Join(buildDir, "provider-mirror")
+	platformName := strings.Replace(platform, "/", "_", 1)
+	var lastErr error
+	for attempt := 1; attempt <= 5; attempt++ {
+		if err := os.RemoveAll(mirrorPath); err != nil {
+			log.Fatalf("Failed to reset Terraform AWS provider mirror: %v", err)
+		}
+		if err := os.MkdirAll(mirrorPath, 0755); err != nil {
+			log.Fatalf("Failed to create Terraform AWS provider mirror: %v", err)
+		}
+		cmd := exec.Command(
+			"docker", "run", "--rm",
+			"--network", "host",
+			"--platform", platform,
+			"-v", buildDir+":/workspace",
+			"-w", "/workspace",
+			terraformECSBaseImage,
+			"providers", "mirror",
+			"-platform="+platformName,
+			"/workspace/provider-mirror",
+		)
+		if out, runErr := cmd.CombinedOutput(); runErr == nil {
+			lastErr = nil
+			break
+		} else {
+			lastErr = fmt.Errorf("%w\n%s", runErr, out)
+		}
+		time.Sleep(time.Duration(attempt*attempt) * time.Second)
+	}
+	if lastErr != nil {
+		log.Fatalf("Failed to mirror the Terraform AWS provider after retries: %v", lastErr)
+	}
+
+	create := exec.Command("docker", "create", "--platform", platform, terraformECSBaseImage)
+	out, err := create.CombinedOutput()
+	if err != nil {
+		log.Fatalf("Failed to create Terraform AWS image staging container: %v\n%s", err, out)
+	}
+	containerID := strings.TrimSpace(string(out))
+	defer exec.Command("docker", "rm", "-f", containerID).Run() //nolint:errcheck
+
+	for _, copySpec := range [][2]string{
+		{mirrorPath, containerID + ":/providers"},
+		{cliConfigPath, containerID + ":/terraformrc"},
+	} {
+		copyCmd := exec.Command("docker", "cp", copySpec[0], copySpec[1])
+		if copyOut, copyErr := copyCmd.CombinedOutput(); copyErr != nil {
+			log.Fatalf("Failed to stage Terraform AWS image content: %v\n%s", copyErr, copyOut)
+		}
+	}
+	commit := exec.Command(
+		"docker", "commit",
+		"--change", "ENV TF_CLI_CONFIG_FILE=/terraformrc",
+		containerID,
+		terraformECSImage,
+	)
+	if commitOut, commitErr := commit.CombinedOutput(); commitErr != nil {
+		log.Fatalf("Failed to commit Terraform AWS workload image: %v\n%s", commitErr, commitOut)
+	}
 }
 
 // testRunSelects reports whether Go's configured -test.run pattern selects the

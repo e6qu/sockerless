@@ -77,7 +77,7 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 47. Persisted AWS Key Management Service custom policies across SQLite reads and simulator restarts, with focused durable-store and production-shaped HashiCorp AWS provider coverage.
 48. Refreshed the coordinated AWS SDK patch wave, Google Cloud Spanner client, and resolved transitive graphs across every affected Go module after the pre-push freshness gate detected their publication.
 49. Made filesystem staging validation privilege-independent by forcing the direct destination beneath a regular file instead of assuming `/usr/local` was unwritable.
-50. Hardened the Terraform-in-ECS provider boundary with exact-image pre-pull, bounded provider-initialization retry, Amazon CloudWatch task output, immediate terminal-failure reporting, and repeated exact-shard validation.
+50. Packaged the exact AWS provider into the Terraform-in-ECS workload image, removed undeclared private-subnet internet egress, published task output through Amazon CloudWatch Logs, failed immediately on terminal workflow errors, and passed the exact N-Z shard.
 51. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps

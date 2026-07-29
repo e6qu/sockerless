@@ -545,15 +545,7 @@ resource "aws_sqs_queue" "proof" {
 mkdir -p /workspace
 cd /workspace
 printf '%s' "$TF_CONFIGURATION" > main.tf
-attempt=1
-while ! terraform init -input=false -no-color; do
-  if [ "$attempt" -ge 3 ]; then
-    exit 1
-  fi
-  rm -rf .terraform .terraform.lock.hcl
-  sleep $((attempt * 2))
-  attempt=$((attempt + 1))
-done
+terraform init -input=false -no-color
 terraform apply -auto-approve -input=false -no-color`,
 			},
 			Environment: []ecstypes.KeyValuePair{
@@ -562,8 +554,6 @@ terraform apply -auto-approve -input=false -no-color`,
 				{Name: aws.String("AWS_DEFAULT_REGION"), Value: aws.String("us-east-1")},
 				{Name: aws.String("AWS_ENDPOINT_URL"), Value: aws.String(containerEndpoint)},
 				{Name: aws.String("TF_IN_AUTOMATION"), Value: aws.String("true")},
-				{Name: aws.String("TF_REGISTRY_CLIENT_TIMEOUT"), Value: aws.String("30")},
-				{Name: aws.String("TF_REGISTRY_DISCOVERY_RETRY"), Value: aws.String("5")},
 				{Name: aws.String("CHECKPOINT_DISABLE"), Value: aws.String("1")},
 				{Name: aws.String("TF_CONFIGURATION"), Value: aws.String(terraformConfiguration)},
 			},
