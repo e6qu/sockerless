@@ -2929,3 +2929,10 @@ and authenticated Shauth, Ory Hydra, PostgreSQL, simulator, and Chromium matrix
 passed. The complete official AWS SDK suite, focused AWS CLI suites,
 production-shaped HashiCorp AWS provider apply/destroy, and native database
 driver coverage passed against the same implementations.
+
+The pull-request dependency job then captured two newer official Google
+Discovery documents from the hosted runner. Cloud Logging v2 advanced to
+revision 20260724 and IAM Service Account Credentials v1 to revision 20260723.
+Their public methods, paths, and schema fields were unchanged; the repository
+retained the exact compressed artifacts and provenance, and the complete Google
+simulator route, specification, and measured-coverage unit suite passed.

@@ -99,6 +99,12 @@ workspace defaults. The external stack's post-plan assertions used AzureRM
 5's canonical Microsoft.Storage ARM IDs for Blob containers, Tables, and File
 shares instead of the removed legacy data-plane IDs.
 
+The pull-request CI freshness pass supplied the exact newer official Cloud
+Logging v2 revision 20260724 and IAM Service Account Credentials v1 revision
+20260723 Discovery documents. Their method, route, and schema-field sets were
+unchanged; the newer descriptions and provenance pins were retained, and the
+Google simulator route, specification, and measured-coverage suite passed.
+
 The publication repair preserved current public contracts across the failing
 client surfaces. Amazon SQS redrive used the normal enqueue path and therefore
 assigned a new message ID, millisecond enqueue timestamp, FIFO sequence, and
