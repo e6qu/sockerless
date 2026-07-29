@@ -119,6 +119,11 @@ func TestLambda_ConcurrencyAndUrlList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int32(5), aws.ToInt32(got.ReservedConcurrentExecutions))
 
+	function, err := lc.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String(fn)})
+	require.NoError(t, err)
+	require.NotNil(t, function.Concurrency)
+	assert.Equal(t, int32(5), aws.ToInt32(function.Concurrency.ReservedConcurrentExecutions))
+
 	_, err = lc.DeleteFunctionConcurrency(ctx, &lambda.DeleteFunctionConcurrencyInput{FunctionName: aws.String(fn)})
 	require.NoError(t, err)
 

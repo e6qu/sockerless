@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -15,10 +14,11 @@ import (
 	"time"
 
 	sppb "cloud.google.com/go/spanner/apiv1/spannerpb"
-	sim "github.com/sockerless/simulator"
+	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	structpb "google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -69,18 +69,34 @@ type spannerBackend struct {
 var (
 	spannerBackends      = map[string]*spannerBackend{}
 	spannerBackendsMutex sync.Mutex
-	// spannerTxns tracks begun read-write transaction ids and the database they
-	// belong to. A process restart drops all in-flight transactions, which is
-	// faithful to a real Spanner session pool losing its session on restart; it
-	// does not need the on-disk persistence the resource stores use.
-	spannerTxns = sim.NewStateStore[spannerTxnState]()
+	spannerTxns          = map[string]*spannerTxnRuntime{}
+	spannerTxnsMutex     sync.Mutex
+	spannerPartitions    = map[string]spannerPartitionRuntime{}
+	spannerPartitionsMu  sync.RWMutex
 )
 
-// spannerTxnState records the database a begun transaction is pinned to so
-// Commit / Rollback can reject a transaction used against a different session.
-type spannerTxnState struct {
-	Database string `json:"database"`
-	ReadOnly bool   `json:"readOnly"`
+// spannerTxnRuntime owns the real SQLite transaction behind one Spanner
+// transaction ID. Reads, SQL DML, mutations, commit, and rollback all use this
+// same transaction, so uncommitted writes remain isolated and rollback really
+// discards them.
+type spannerTxnRuntime struct {
+	mu             sync.Mutex
+	session        string
+	database       string
+	readOnly       bool
+	partitionedDML bool
+	tx             *sql.Tx
+	lastSeqno      int64
+	lastStatements bool
+	dmlResponses   map[int64]*sppb.ResultSet
+	batchResponses map[int64]*sppb.ExecuteBatchDmlResponse
+}
+
+type spannerPartitionRuntime struct {
+	session       string
+	transactionID []byte
+	query         *sppb.PartitionQueryRequest
+	read          *sppb.PartitionReadRequest
 }
 
 // spannerBackendFor returns the materialized SQLite backend for a database,
@@ -116,23 +132,14 @@ func spannerBackendFor(dbName string) (*spannerBackend, error) {
 		stmt := ddl.Statements[i]
 		translated, ok := spannerTranslateDDL(stmt)
 		if !ok {
-			// Honest degradation: an untranslatable statement is skipped with a
-			// logged warning, so the table it would have created is simply
-			// absent and queries against it fail loudly at execute time.
-			fmt.Fprintf(simStderr(), "spanner: skipping untranslatable DDL for %s: %s\n", dbName, stmt)
-			continue
+			return nil, status.Errorf(codes.Unimplemented, "Cloud Spanner DDL is not supported: %s", stmt)
 		}
 		if _, err := b.db.Exec(translated); err != nil {
-			fmt.Fprintf(simStderr(), "spanner: DDL apply failed for %s (%q): %v\n", dbName, translated, err)
+			return nil, status.Errorf(codes.InvalidArgument, "apply Cloud Spanner DDL %q: %v", stmt, err)
 		}
+		b.appliedDDLCount++
 	}
-	b.appliedDDLCount = len(ddl.Statements)
 	return b, nil
-}
-
-// simStderr returns os.Stderr; wrapped so tests can stub it if needed.
-func simStderr() *os.File {
-	return os.Stderr
 }
 
 // ---------------------------------------------------------------------------
@@ -144,23 +151,62 @@ var (
 )
 
 // spannerTranslateDDL converts a Spanner DDL statement to a SQLite-equivalent
-// one. It currently handles CREATE TABLE and DROP TABLE / CREATE / DROP INDEX
-// faithfully; other statements (ALTER TABLE, CREATE VIEW, inter-leaved DDL)
-// return ok=false so the caller can skip them loudly rather than fake support.
+// statement. Unsupported statements return ok=false and make UpdateDatabaseDdl
+// complete with an UNIMPLEMENTED operation error; schema updates are never
+// silently skipped.
 func spannerTranslateDDL(stmt string) (string, bool) {
 	trimmed := strings.TrimSpace(stmt)
 	upper := strings.ToUpper(trimmed)
 	switch {
 	case strings.HasPrefix(upper, "CREATE TABLE"):
 		return spannerTranslateCreateTable(trimmed)
-	case strings.HasPrefix(upper, "DROP TABLE"):
+	case strings.HasPrefix(upper, "DROP TABLE"),
+		strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, " ADD COLUMN "),
+		strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, " DROP COLUMN "),
+		strings.HasPrefix(upper, "ALTER TABLE") && strings.Contains(upper, " RENAME TO "):
 		return spannerRewriteTypes(trimmed), true
 	case strings.HasPrefix(upper, "CREATE") && strings.Contains(upper, "INDEX"):
 		return trimmed, true
 	case strings.HasPrefix(upper, "DROP INDEX"):
 		return trimmed, true
+	case strings.HasPrefix(upper, "CREATE VIEW"),
+		strings.HasPrefix(upper, "DROP VIEW"):
+		return spannerRewriteTypes(trimmed), true
 	}
 	return "", false
+}
+
+// spannerApplyDDLStatements executes one UpdateDatabaseDdl request atomically
+// against the database's real backing engine. The durable DDL store is updated
+// only after the backing schema commits, so a rejected statement never becomes
+// a latent failure on the next data-plane request.
+func spannerApplyDDLStatements(dbName string, statements []string) error {
+	b, err := spannerBackendFor(dbName)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	tx, err := b.db.Begin()
+	if err != nil {
+		return status.Errorf(codes.Internal, "begin Cloud Spanner schema update: %v", err)
+	}
+	for _, stmt := range statements {
+		translated, ok := spannerTranslateDDL(stmt)
+		if !ok {
+			_ = tx.Rollback()
+			return status.Errorf(codes.Unimplemented, "Cloud Spanner DDL is not supported: %s", stmt)
+		}
+		if _, err := tx.Exec(translated); err != nil {
+			_ = tx.Rollback()
+			return status.Errorf(codes.InvalidArgument, "apply Cloud Spanner DDL %q: %v", stmt, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return status.Errorf(codes.Internal, "commit Cloud Spanner schema update: %v", err)
+	}
+	b.appliedDDLCount += len(statements)
+	return nil
 }
 
 // spannerCreateTableHeadRe captures the CREATE TABLE keyword, the table name,
@@ -218,7 +264,7 @@ func spannerTranslateCreateTable(stmt string) (string, bool) {
 
 // spannerTypeRe matches Spanner column type tokens. It also handles the
 // column-name prefix so the rewrite leaves names intact.
-var spannerTypeRe = regexp.MustCompile(`(?i)\b(ARRAY\s*<[^>]+>|STRING\s*\(\s*(?:MAX|\d+)\s*\)|BYTES\s*\(\s*(?:MAX|\d+)\s*\)|INT64|FLOAT64|BOOL|TIMESTAMP|DATE|NUMERIC|JSON|TOKENLIST)\b`)
+var spannerTypeRe = regexp.MustCompile(`(?i)\b(ARRAY\s*<[^>]+>|STRING\s*\(\s*(?:MAX|\d+)\s*\)|BYTES\s*\(\s*(?:MAX|\d+)\s*\)|INT64\b|FLOAT64\b|BOOL\b|TIMESTAMP\b|DATE\b|NUMERIC\b|JSON\b|TOKENLIST\b)`)
 
 func spannerRewriteTypes(s string) string {
 	return spannerTypeRe.ReplaceAllStringFunc(s, func(tok string) string {
@@ -543,14 +589,22 @@ type spannerExecResult struct {
 	rows    []*structpb.ListValue
 }
 
+type spannerQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+type spannerExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 // spannerRunQuery executes a SQL statement (with optional bind args) against
 // the database's SQLite backend and returns its rows shaped for Spanner's
 // ResultSet. The column types are derived from the SQLite result columns; for
 // SELECTs these come from the declared schema, for expressions they default to
 // STRING. Args may be sql.NamedArg (for @name placeholders in ExecuteSql) or
 // plain positional values (for ? placeholders in Read).
-func spannerRunQuery(ctx context.Context, b *spannerBackend, sqlText string, args []any) (*spannerExecResult, error) {
-	q, err := b.db.QueryContext(ctx, sqlText, args...)
+func spannerRunQuery(ctx context.Context, b *spannerBackend, queryer spannerQueryer, sqlText string, args []any) (*spannerExecResult, error) {
+	q, err := queryer.QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "execute sql: %v", err)
 	}
@@ -601,6 +655,33 @@ func spannerRunQuery(ctx context.Context, b *spannerBackend, sqlText string, arg
 		return nil, status.Errorf(codes.Internal, "query rows: %v", err)
 	}
 	return res, nil
+}
+
+func spannerIsDML(sqlText string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(sqlText))
+	return strings.HasPrefix(upper, "INSERT ") ||
+		strings.HasPrefix(upper, "UPDATE ") ||
+		strings.HasPrefix(upper, "DELETE ")
+}
+
+func spannerRunDML(ctx context.Context, execer spannerExecer, sqlText string, args []any) (*sppb.ResultSet, error) {
+	if !spannerIsDML(sqlText) {
+		return nil, status.Error(codes.InvalidArgument, "statement is not Cloud Spanner DML")
+	}
+	result, err := execer.ExecContext(ctx, sqlText, args...)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "execute DML: %v", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read DML affected-row count: %v", err)
+	}
+	return &sppb.ResultSet{
+		Metadata: &sppb.ResultSetMetadata{},
+		Stats: &sppb.ResultSetStats{
+			RowCount: &sppb.ResultSetStats_RowCountExact{RowCountExact: rows},
+		},
+	}, nil
 }
 
 // spannerColumnDeclType extracts the declared type name a *sql.ColumnType
@@ -705,26 +786,92 @@ func spannerShapeResultSet(r *spannerExecResult) *sppb.ResultSet {
 // metadata (the high-level client relies on this inline-begin path for
 // ReadWriteTransaction). A selector carrying an existing id is validated against
 // the store; single-use and absent selectors are no-ops.
-func spannerResolveTxn(dbName string, sel *sppb.TransactionSelector) (id []byte, begun bool, err error) {
+func spannerBeginTxn(session, dbName string, readOnly, partitionedDML bool) ([]byte, *spannerTxnRuntime, error) {
+	b, err := spannerBackendFor(dbName)
+	if err != nil {
+		return nil, nil, err
+	}
+	// A Spanner transaction outlives the BeginTransaction RPC that created it.
+	// database/sql rolls back a BeginTx transaction when its context ends, so use
+	// Begin and let Commit, Rollback, or session deletion own the lifecycle.
+	tx, err := b.db.Begin()
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal, "begin Cloud Spanner transaction: %v", err)
+	}
+	id := generateUUID()
+	runtime := &spannerTxnRuntime{
+		session:        session,
+		database:       dbName,
+		readOnly:       readOnly,
+		partitionedDML: partitionedDML,
+		tx:             tx,
+		dmlResponses:   map[int64]*sppb.ResultSet{},
+		batchResponses: map[int64]*sppb.ExecuteBatchDmlResponse{},
+	}
+	spannerTxnsMutex.Lock()
+	spannerTxns[id] = runtime
+	spannerTxnsMutex.Unlock()
+	return []byte(id), runtime, nil
+}
+
+func spannerGetTxn(id []byte) (*spannerTxnRuntime, bool) {
+	spannerTxnsMutex.Lock()
+	defer spannerTxnsMutex.Unlock()
+	runtime, ok := spannerTxns[string(id)]
+	return runtime, ok
+}
+
+func spannerDeleteTxn(id []byte) {
+	spannerTxnsMutex.Lock()
+	delete(spannerTxns, string(id))
+	spannerTxnsMutex.Unlock()
+}
+
+func spannerRollbackSessionTransactions(session string) {
+	spannerTxnsMutex.Lock()
+	var doomed []*spannerTxnRuntime
+	for id, runtime := range spannerTxns {
+		if runtime.session == session {
+			doomed = append(doomed, runtime)
+			delete(spannerTxns, id)
+		}
+	}
+	spannerTxnsMutex.Unlock()
+	for _, runtime := range doomed {
+		runtime.mu.Lock()
+		_ = runtime.tx.Rollback()
+		runtime.mu.Unlock()
+	}
+	spannerPartitionsMu.Lock()
+	for token, partition := range spannerPartitions {
+		if partition.session == session {
+			delete(spannerPartitions, token)
+		}
+	}
+	spannerPartitionsMu.Unlock()
+}
+
+func spannerResolveTxn(session, dbName string, sel *sppb.TransactionSelector) (id []byte, begun bool, runtime *spannerTxnRuntime, err error) {
 	if sel == nil {
-		return nil, false, nil
+		return nil, false, nil, nil
 	}
 	switch sel.Selector.(type) {
 	case *sppb.TransactionSelector_Begin:
-		newID := generateUUID()
-		spannerTxns.Put(newID, spannerTxnState{Database: dbName})
-		return []byte(newID), true, nil
+		readOnly := sel.GetBegin().GetReadOnly() != nil
+		partitionedDML := sel.GetBegin().GetPartitionedDml() != nil
+		newID, runtime, err := spannerBeginTxn(session, dbName, readOnly, partitionedDML)
+		return newID, true, runtime, err
 	case *sppb.TransactionSelector_Id:
-		st, ok := spannerTxns.Get(string(sel.GetId()))
+		runtime, ok := spannerGetTxn(sel.GetId())
 		if !ok {
-			return nil, false, status.Error(codes.InvalidArgument, "invalid transaction id")
+			return nil, false, nil, status.Error(codes.InvalidArgument, "invalid transaction id")
 		}
-		if st.Database != dbName {
-			return nil, false, status.Error(codes.InvalidArgument, "transaction does not belong to this session's database")
+		if runtime.database != dbName || runtime.session != session {
+			return nil, false, nil, status.Error(codes.InvalidArgument, "transaction does not belong to this session")
 		}
-		return sel.GetId(), false, nil
+		return sel.GetId(), false, runtime, nil
 	}
-	return nil, false, nil
+	return nil, false, nil, nil
 }
 
 func (s *spannerDataGRPC) CreateSession(_ context.Context, req *sppb.CreateSessionRequest) (*sppb.Session, error) {
@@ -764,7 +911,7 @@ func (s *spannerDataGRPC) BatchCreateSessions(_ context.Context, req *sppb.Batch
 	}
 	count := int(req.GetSessionCount())
 	if count <= 0 {
-		count = 1
+		return nil, status.Error(codes.InvalidArgument, "session_count must be greater than zero")
 	}
 	tmpl := req.GetSessionTemplate()
 	resp := &sppb.BatchCreateSessionsResponse{Session: make([]*sppb.Session, 0, count)}
@@ -809,6 +956,7 @@ func (s *spannerDataGRPC) DeleteSession(_ context.Context, req *sppb.DeleteSessi
 	if !spannerSessions.Delete(req.GetName()) {
 		return nil, status.Errorf(codes.NotFound, "session not found: %s", req.GetName())
 	}
+	spannerRollbackSessionTransactions(req.GetName())
 	return &emptypb.Empty{}, nil
 }
 
@@ -835,61 +983,90 @@ func (s *spannerDataGRPC) ExecuteSql(ctx context.Context, req *sppb.ExecuteSqlRe
 	if err != nil {
 		return nil, err
 	}
-	res, err := spannerRunQuery(ctx, b, req.GetSql(), spannerBindArgs(req.GetParams(), req.GetParamTypes()))
+	if err := spannerValidateQueryPartition(req); err != nil {
+		return nil, err
+	}
+	txnID, begun, runtime, err := spannerResolveTxn(req.GetSession(), dbName, req.GetTransaction())
+	if err != nil {
+		return nil, err
+	}
+	var target spannerQueryer = b.db
+	if runtime != nil {
+		runtime.mu.Lock()
+		defer runtime.mu.Unlock()
+		if runtime.lastStatements {
+			return nil, status.Error(codes.FailedPrecondition, "transaction accepted its final DML statements and must be committed or rolled back")
+		}
+		target = runtime.tx
+	}
+	args := spannerBindArgs(req.GetParams(), req.GetParamTypes())
+	if spannerIsDML(req.GetSql()) {
+		if runtime == nil {
+			return nil, status.Error(codes.FailedPrecondition, "Cloud Spanner DML requires a read-write transaction")
+		}
+		if runtime.readOnly {
+			return nil, status.Error(codes.FailedPrecondition, "Cloud Spanner DML cannot execute in a read-only transaction")
+		}
+		if cached, ok := runtime.dmlResponses[req.GetSeqno()]; ok {
+			return cached, nil
+		}
+		if _, usedByBatch := runtime.batchResponses[req.GetSeqno()]; usedByBatch {
+			return nil, status.Error(codes.Aborted, "sequence number was already used by a different DML request")
+		}
+		if len(runtime.dmlResponses)+len(runtime.batchResponses) > 0 && req.GetSeqno() <= runtime.lastSeqno {
+			return nil, status.Error(codes.Aborted, "ExecuteSql sequence number is not monotonically increasing")
+		}
+		rs, err := spannerRunDML(ctx, runtime.tx, req.GetSql(), args)
+		if err != nil {
+			return nil, err
+		}
+		if begun {
+			rs.Metadata.Transaction = &sppb.Transaction{Id: txnID}
+		}
+		runtime.lastSeqno = req.GetSeqno()
+		runtime.dmlResponses[req.GetSeqno()] = rs
+		if req.GetLastStatement() {
+			runtime.lastStatements = true
+		}
+		if runtime.partitionedDML {
+			exact := rs.GetStats().GetRowCountExact()
+			rs.Stats.RowCount = &sppb.ResultSetStats_RowCountLowerBound{RowCountLowerBound: exact}
+			if err := runtime.tx.Commit(); err != nil {
+				spannerDeleteTxn(txnID)
+				return nil, status.Errorf(codes.Internal, "commit partitioned DML: %v", err)
+			}
+			spannerDeleteTxn(txnID)
+		}
+		return rs, nil
+	}
+	res, err := spannerRunQuery(ctx, b, target, req.GetSql(), args)
 	if err != nil {
 		return nil, err
 	}
 	rs := spannerShapeResultSet(res)
-	if txnID, begun, err := spannerResolveTxn(dbName, req.GetTransaction()); err != nil {
-		return nil, err
-	} else if begun {
+	if begun {
 		rs.Metadata.Transaction = &sppb.Transaction{Id: txnID}
 	}
 	return rs, nil
 }
 
 func (s *spannerDataGRPC) ExecuteStreamingSql(req *sppb.ExecuteSqlRequest, stream sppb.Spanner_ExecuteStreamingSqlServer) error {
-	ctx := stream.Context()
-	dbName, err := spannerSessionDatabase(req.GetSession())
+	rs, err := s.ExecuteSql(stream.Context(), req)
 	if err != nil {
 		return err
 	}
-	b, err := spannerBackendFor(dbName)
-	if err != nil {
+	if err := stream.Send(spannerResultSetToPartial(rs)); err != nil {
 		return err
-	}
-	res, err := spannerRunQuery(ctx, b, req.GetSql(), spannerBindArgs(req.GetParams(), req.GetParamTypes()))
-	if err != nil {
-		return err
-	}
-	txnID, begun, err := spannerResolveTxn(dbName, req.GetTransaction())
-	if err != nil {
-		return err
-	}
-	fields := make([]*sppb.StructType_Field, len(res.columns))
-	for i, name := range res.columns {
-		fields[i] = &sppb.StructType_Field{Name: name, Type: res.types[i]}
-	}
-	// First chunk carries the metadata so the client can shape the stream.
-	first := &sppb.PartialResultSet{
-		Metadata: &sppb.ResultSetMetadata{RowType: &sppb.StructType{Fields: fields}},
-	}
-	if begun {
-		first.Metadata.Transaction = &sppb.Transaction{Id: txnID}
-	}
-	if err := stream.Send(first); err != nil {
-		return err
-	}
-	// Stream rows as flattened values (Spanner's PartialResultSet merges
-	// per-row values into one flat list). One row per chunk keeps the shaping
-	// simple and faithful.
-	for _, row := range res.rows {
-		chunk := &sppb.PartialResultSet{Values: row.GetValues()}
-		if err := stream.Send(chunk); err != nil {
-			return err
-		}
 	}
 	return nil
+}
+
+func spannerResultSetToPartial(rs *sppb.ResultSet) *sppb.PartialResultSet {
+	partial := &sppb.PartialResultSet{Metadata: rs.GetMetadata(), Stats: rs.GetStats(), Last: true}
+	for _, row := range rs.GetRows() {
+		partial.Values = append(partial.Values, row.GetValues()...)
+	}
+	return partial
 }
 
 // ---------------------------------------------------------------------------
@@ -897,10 +1074,8 @@ func (s *spannerDataGRPC) ExecuteStreamingSql(req *sppb.ExecuteSqlRequest, strea
 // ---------------------------------------------------------------------------
 
 // spannerBuildReadQuery translates a Spanner Read request into a parameterized
-// SQLite SELECT plus the bind args. Only the shapes the high-level client emits
-// are translated: AllKeys, a flat point-key list, and (single-column) ranges.
-// Multi-column range reads return a loud Unimplemented rather than a wrong
-// result.
+// SQLite SELECT plus the bind args. It supports AllKeys, point-key lists, and
+// lexicographic ranges over full or prefix primary keys.
 func spannerBuildReadQuery(b *spannerBackend, req *sppb.ReadRequest) (string, []any, error) {
 	table := req.GetTable()
 	cols := req.GetColumns()
@@ -910,6 +1085,14 @@ func spannerBuildReadQuery(b *spannerBackend, req *sppb.ReadRequest) (string, []
 	pkCols, err := spannerPrimaryKeyColumns(b, table)
 	if err != nil {
 		return "", nil, err
+	}
+	declNames, declTypes, err := spannerTableColumns(b, table)
+	if err != nil {
+		return "", nil, err
+	}
+	typeByName := make(map[string]*sppb.Type, len(declNames))
+	for i, name := range declNames {
+		typeByName[name] = declTypes[i]
 	}
 	colList := "*"
 	if len(cols) > 0 {
@@ -927,18 +1110,6 @@ func spannerBuildReadQuery(b *spannerBackend, req *sppb.ReadRequest) (string, []
 	} else if len(ks.GetKeys()) > 0 {
 		// Point keys. Each key is a ListValue of the PK columns in declared
 		// order. Build (pk1=? AND pk2=?) OR (pk1=? AND pk2=?) …
-		declNames, declTypes, err := spannerTableColumns(b, table)
-		if err != nil {
-			return "", nil, err
-		}
-		pkIndex := map[int]int{} // pk position -> columns-table index
-		for i, n := range declNames {
-			for pi, pk := range pkCols {
-				if n == pk {
-					pkIndex[pi] = i
-				}
-			}
-		}
 		var ors []string
 		for _, key := range ks.GetKeys() {
 			vals := key.GetValues()
@@ -948,43 +1119,29 @@ func spannerBuildReadQuery(b *spannerBackend, req *sppb.ReadRequest) (string, []
 			var conds []string
 			for pi, pk := range pkCols {
 				val := vals[pi]
-				args = append(args, spannerProtoToGo(val, declTypes[pkIndex[pi]]))
+				args = append(args, spannerProtoToGo(val, typeByName[pk]))
 				conds = append(conds, quoteIdent(pk)+" = ?")
 			}
 			ors = append(ors, "("+strings.Join(conds, " AND ")+")")
 		}
 		where = "WHERE " + strings.Join(ors, " OR ")
 	} else if len(ks.GetRanges()) > 0 {
-		if len(pkCols) != 1 {
-			return "", nil, status.Error(codes.Unimplemented, "range reads over composite primary keys are not supported by the simulator")
+		rangeSQL, rangeArgs, err := spannerKeyRangesPredicate(ks.GetRanges(), pkCols, typeByName)
+		if err != nil {
+			return "", nil, err
 		}
-		pk := pkCols[0]
-		var ors []string
-		for _, r := range ks.GetRanges() {
-			if sc := r.GetStartClosed(); sc != nil && len(sc.GetValues()) == 1 {
-				args = append(args, spannerProtoToGo(sc.GetValues()[0], &sppb.Type{Code: sppb.TypeCode_STRING}))
-				ors = append(ors, quoteIdent(pk)+" >= ?")
-			}
-			if so := r.GetStartOpen(); so != nil && len(so.GetValues()) == 1 {
-				args = append(args, spannerProtoToGo(so.GetValues()[0], &sppb.Type{Code: sppb.TypeCode_STRING}))
-				ors = append(ors, quoteIdent(pk)+" > ?")
-			}
-			if ec := r.GetEndClosed(); ec != nil && len(ec.GetValues()) == 1 {
-				args = append(args, spannerProtoToGo(ec.GetValues()[0], &sppb.Type{Code: sppb.TypeCode_STRING}))
-				ors = append(ors, quoteIdent(pk)+" <= ?")
-			}
-			if eo := r.GetEndOpen(); eo != nil && len(eo.GetValues()) == 1 {
-				args = append(args, spannerProtoToGo(eo.GetValues()[0], &sppb.Type{Code: sppb.TypeCode_STRING}))
-				ors = append(ors, quoteIdent(pk)+" < ?")
-			}
-		}
-		if len(ors) > 0 {
-			where = "WHERE " + strings.Join(ors, " AND ")
+		if rangeSQL != "" {
+			where = "WHERE " + rangeSQL
+			args = append(args, rangeArgs...)
 		}
 	}
 	// ORDER BY the primary key so a read returns rows in key order, matching
 	// Spanner's guarantee.
-	order := " ORDER BY " + quoteIdent(pkCols[0])
+	orderedPK := make([]string, len(pkCols))
+	for i, pk := range pkCols {
+		orderedPK[i] = quoteIdent(pk)
+	}
+	order := " ORDER BY " + strings.Join(orderedPK, ", ")
 	q := "SELECT " + colList + " FROM " + quoteIdent(table) + " " + where + order
 	if limit := req.GetLimit(); limit > 0 {
 		q += " LIMIT " + strconv.FormatInt(limit, 10)
@@ -992,9 +1149,67 @@ func spannerBuildReadQuery(b *spannerBackend, req *sppb.ReadRequest) (string, []
 	return q, args, nil
 }
 
+func spannerKeyRangesPredicate(ranges []*sppb.KeyRange, pkCols []string, typeByName map[string]*sppb.Type) (string, []any, error) {
+	var (
+		rangePredicates []string
+		args            []any
+	)
+	for _, keyRange := range ranges {
+		var bounds []string
+		addBound := func(values []*structpb.Value, operator string) error {
+			if len(values) == 0 {
+				return nil
+			}
+			if len(values) > len(pkCols) {
+				return status.Errorf(codes.InvalidArgument, "range endpoint has %d values, primary key has %d columns", len(values), len(pkCols))
+			}
+			columns := make([]string, len(values))
+			placeholders := make([]string, len(values))
+			for i, value := range values {
+				columns[i] = quoteIdent(pkCols[i])
+				placeholders[i] = "?"
+				args = append(args, spannerProtoToGo(value, typeByName[pkCols[i]]))
+			}
+			if len(values) == 1 {
+				bounds = append(bounds, columns[0]+" "+operator+" ?")
+			} else {
+				bounds = append(bounds, "("+strings.Join(columns, ", ")+") "+operator+" ("+strings.Join(placeholders, ", ")+")")
+			}
+			return nil
+		}
+		switch start := keyRange.GetStartKeyType().(type) {
+		case *sppb.KeyRange_StartClosed:
+			if err := addBound(start.StartClosed.GetValues(), ">="); err != nil {
+				return "", nil, err
+			}
+		case *sppb.KeyRange_StartOpen:
+			if err := addBound(start.StartOpen.GetValues(), ">"); err != nil {
+				return "", nil, err
+			}
+		}
+		switch end := keyRange.GetEndKeyType().(type) {
+		case *sppb.KeyRange_EndClosed:
+			if err := addBound(end.EndClosed.GetValues(), "<="); err != nil {
+				return "", nil, err
+			}
+		case *sppb.KeyRange_EndOpen:
+			if err := addBound(end.EndOpen.GetValues(), "<"); err != nil {
+				return "", nil, err
+			}
+		}
+		if len(bounds) > 0 {
+			rangePredicates = append(rangePredicates, "("+strings.Join(bounds, " AND ")+")")
+		}
+	}
+	return strings.Join(rangePredicates, " OR "), args, nil
+}
+
 func (s *spannerDataGRPC) Read(ctx context.Context, req *sppb.ReadRequest) (*sppb.ResultSet, error) {
 	dbName, err := spannerSessionDatabase(req.GetSession())
 	if err != nil {
+		return nil, err
+	}
+	if err := spannerValidateReadPartition(req); err != nil {
 		return nil, err
 	}
 	b, err := spannerBackendFor(dbName)
@@ -1005,7 +1220,20 @@ func (s *spannerDataGRPC) Read(ctx context.Context, req *sppb.ReadRequest) (*spp
 	if err != nil {
 		return nil, err
 	}
-	res, err := spannerRunQuery(ctx, b, q, args)
+	txnID, begun, runtime, err := spannerResolveTxn(req.GetSession(), dbName, req.GetTransaction())
+	if err != nil {
+		return nil, err
+	}
+	var target spannerQueryer = b.db
+	if runtime != nil {
+		runtime.mu.Lock()
+		defer runtime.mu.Unlock()
+		if runtime.lastStatements {
+			return nil, status.Error(codes.FailedPrecondition, "transaction accepted its final DML statements and must be committed or rolled back")
+		}
+		target = runtime.tx
+	}
+	res, err := spannerRunQuery(ctx, b, target, q, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1013,55 +1241,19 @@ func (s *spannerDataGRPC) Read(ctx context.Context, req *sppb.ReadRequest) (*spp
 	// columns to match if the query selected * (which preserves declared order).
 	res = spannerReorderReadColumns(req, res)
 	rs := spannerShapeResultSet(res)
-	if txnID, begun, err := spannerResolveTxn(dbName, req.GetTransaction()); err != nil {
-		return nil, err
-	} else if begun {
+	if begun {
 		rs.Metadata.Transaction = &sppb.Transaction{Id: txnID}
 	}
 	return rs, nil
 }
 
 func (s *spannerDataGRPC) StreamingRead(req *sppb.ReadRequest, stream sppb.Spanner_StreamingReadServer) error {
-	ctx := stream.Context()
-	dbName, err := spannerSessionDatabase(req.GetSession())
+	rs, err := s.Read(stream.Context(), req)
 	if err != nil {
 		return err
 	}
-	b, err := spannerBackendFor(dbName)
-	if err != nil {
+	if err := stream.Send(spannerResultSetToPartial(rs)); err != nil {
 		return err
-	}
-	q, args, err := spannerBuildReadQuery(b, req)
-	if err != nil {
-		return err
-	}
-	res, err := spannerRunQuery(ctx, b, q, args)
-	if err != nil {
-		return err
-	}
-	res = spannerReorderReadColumns(req, res)
-	txnID, begun, err := spannerResolveTxn(dbName, req.GetTransaction())
-	if err != nil {
-		return err
-	}
-	fields := make([]*sppb.StructType_Field, len(res.columns))
-	for i, name := range res.columns {
-		fields[i] = &sppb.StructType_Field{Name: name, Type: res.types[i]}
-	}
-	first := &sppb.PartialResultSet{
-		Metadata: &sppb.ResultSetMetadata{RowType: &sppb.StructType{Fields: fields}},
-	}
-	if begun {
-		first.Metadata.Transaction = &sppb.Transaction{Id: txnID}
-	}
-	if err := stream.Send(first); err != nil {
-		return err
-	}
-	for _, row := range res.rows {
-		chunk := &sppb.PartialResultSet{Values: row.GetValues()}
-		if err := stream.Send(chunk); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -1124,16 +1316,16 @@ func (s *spannerDataGRPC) BeginTransaction(_ context.Context, req *sppb.BeginTra
 	if err != nil {
 		return nil, err
 	}
-	if _, err := spannerBackendFor(dbName); err != nil {
+	readOnly := req.GetOptions().GetReadOnly() != nil
+	partitionedDML := req.GetOptions().GetPartitionedDml() != nil
+	id, _, err := spannerBeginTxn(req.GetSession(), dbName, readOnly, partitionedDML)
+	if err != nil {
 		return nil, err
 	}
-	id := generateUUID()
-	readOnly := req.GetOptions().GetReadOnly() != nil
-	spannerTxns.Put(id, spannerTxnState{Database: dbName, ReadOnly: readOnly})
-	return &sppb.Transaction{Id: []byte(id)}, nil
+	return &sppb.Transaction{Id: id}, nil
 }
 
-func (s *spannerDataGRPC) Commit(_ context.Context, req *sppb.CommitRequest) (*sppb.CommitResponse, error) {
+func (s *spannerDataGRPC) Commit(ctx context.Context, req *sppb.CommitRequest) (*sppb.CommitResponse, error) {
 	dbName, err := spannerSessionDatabase(req.GetSession())
 	if err != nil {
 		return nil, err
@@ -1142,31 +1334,47 @@ func (s *spannerDataGRPC) Commit(_ context.Context, req *sppb.CommitRequest) (*s
 	if err != nil {
 		return nil, err
 	}
-	// Validate / retire the begun transaction if one was supplied. A single-use
-	// commit (no begun id) is accepted as-is.
+	var tx *sql.Tx
+	var runtime *spannerTxnRuntime
 	if txID := req.GetTransactionId(); len(txID) > 0 {
-		st, ok := spannerTxns.Get(string(txID))
+		var ok bool
+		runtime, ok = spannerGetTxn(txID)
 		if !ok {
 			return nil, status.Error(codes.InvalidArgument, "invalid transaction id")
 		}
-		if st.Database != dbName {
-			return nil, status.Error(codes.InvalidArgument, "transaction does not belong to this session's database")
+		if runtime.database != dbName || runtime.session != req.GetSession() {
+			return nil, status.Error(codes.InvalidArgument, "transaction does not belong to this session")
 		}
-		defer spannerTxns.Delete(string(txID))
+		if runtime.readOnly {
+			return nil, status.Error(codes.FailedPrecondition, "cannot commit mutations in a read-only transaction")
+		}
+		runtime.mu.Lock()
+		defer runtime.mu.Unlock()
+		tx = runtime.tx
+	} else {
+		tx, err = b.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "begin commit transaction: %v", err)
+		}
 	}
 
-	tx, err := b.db.BeginTx(context.Background(), nil)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "begin commit tx: %v", err)
-	}
 	for _, m := range req.GetMutations() {
 		if err := spannerApplyMutation(tx, m); err != nil {
 			_ = tx.Rollback()
+			if len(req.GetTransactionId()) > 0 {
+				spannerDeleteTxn(req.GetTransactionId())
+			}
 			return nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
+		if len(req.GetTransactionId()) > 0 {
+			spannerDeleteTxn(req.GetTransactionId())
+		}
 		return nil, status.Errorf(codes.Internal, "commit: %v", err)
+	}
+	if len(req.GetTransactionId()) > 0 {
+		spannerDeleteTxn(req.GetTransactionId())
 	}
 	return &sppb.CommitResponse{CommitTimestamp: timestamppb.Now()}, nil
 }
@@ -1176,18 +1384,24 @@ func (s *spannerDataGRPC) Rollback(_ context.Context, req *sppb.RollbackRequest)
 	if len(txID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "transaction_id is required")
 	}
-	st, ok := spannerTxns.Get(string(txID))
+	runtime, ok := spannerGetTxn(txID)
 	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "invalid transaction id")
+		return &emptypb.Empty{}, nil
 	}
 	dbName, err := spannerSessionDatabase(req.GetSession())
 	if err != nil {
 		return nil, err
 	}
-	if st.Database != dbName {
-		return nil, status.Error(codes.InvalidArgument, "transaction does not belong to this session's database")
+	if runtime.database != dbName || runtime.session != req.GetSession() {
+		return nil, status.Error(codes.InvalidArgument, "transaction does not belong to this session")
 	}
-	spannerTxns.Delete(string(txID))
+	runtime.mu.Lock()
+	err = runtime.tx.Rollback()
+	runtime.mu.Unlock()
+	spannerDeleteTxn(txID)
+	if err != nil && err != sql.ErrTxDone {
+		return nil, status.Errorf(codes.Internal, "rollback: %v", err)
+	}
 	return &emptypb.Empty{}, nil
 }
 
@@ -1329,15 +1543,6 @@ func spannerExecDelete(tx *sql.Tx, d *sppb.Mutation_Delete) error {
 	for i, n := range declCols {
 		typeByName[n] = declTypes[i]
 	}
-	pkIndex := map[int]int{}
-	for i, n := range declCols {
-		for pi, pk := range pkCols {
-			if n == pk {
-				pkIndex[pi] = i
-			}
-		}
-	}
-
 	ks := d.GetKeySet()
 	if ks == nil || ks.GetAll() {
 		if _, err := tx.Exec("DELETE FROM " + quoteIdent(table)); err != nil {
@@ -1356,7 +1561,6 @@ func spannerExecDelete(tx *sql.Tx, d *sppb.Mutation_Delete) error {
 			var conds []string
 			for pi, pk := range pkCols {
 				args = append(args, spannerProtoToGo(vals[pi], typeByName[pkCols[pi]]))
-				_ = pkIndex
 				conds = append(conds, quoteIdent(pk)+" = ?")
 			}
 			ors = append(ors, "("+strings.Join(conds, " AND ")+")")
@@ -1368,31 +1572,14 @@ func spannerExecDelete(tx *sql.Tx, d *sppb.Mutation_Delete) error {
 		return nil
 	}
 	if len(ks.GetRanges()) > 0 {
-		if len(pkCols) != 1 {
-			return status.Error(codes.Unimplemented, "range deletes over composite primary keys are not supported by the simulator")
+		predicate, args, err := spannerKeyRangesPredicate(ks.GetRanges(), pkCols, typeByName)
+		if err != nil {
+			return err
 		}
-		pk := pkCols[0]
-		var conds []string
-		var args []any
-		for _, r := range ks.GetRanges() {
-			if sc := r.GetStartClosed(); sc != nil && len(sc.GetValues()) == 1 {
-				args = append(args, spannerProtoToGo(sc.GetValues()[0], typeByName[pk]))
-				conds = append(conds, quoteIdent(pk)+" >= ?")
-			}
-			if so := r.GetStartOpen(); so != nil && len(so.GetValues()) == 1 {
-				args = append(args, spannerProtoToGo(so.GetValues()[0], typeByName[pk]))
-				conds = append(conds, quoteIdent(pk)+" > ?")
-			}
-			if ec := r.GetEndClosed(); ec != nil && len(ec.GetValues()) == 1 {
-				args = append(args, spannerProtoToGo(ec.GetValues()[0], typeByName[pk]))
-				conds = append(conds, quoteIdent(pk)+" <= ?")
-			}
-			if eo := r.GetEndOpen(); eo != nil && len(eo.GetValues()) == 1 {
-				args = append(args, spannerProtoToGo(eo.GetValues()[0], typeByName[pk]))
-				conds = append(conds, quoteIdent(pk)+" < ?")
-			}
+		if predicate == "" {
+			return nil
 		}
-		stmt := "DELETE FROM " + quoteIdent(table) + " WHERE " + strings.Join(conds, " AND ")
+		stmt := "DELETE FROM " + quoteIdent(table) + " WHERE " + predicate
 		if _, err := tx.Exec(stmt, args...); err != nil {
 			return status.Errorf(codes.Internal, "delete range from %s: %v", table, err)
 		}
@@ -1466,29 +1653,255 @@ func spannerPrimaryKeyColumnsFromTx(tx *sql.Tx, table string) ([]string, error) 
 }
 
 // ---------------------------------------------------------------------------
+// Batch DML and batch mutations
+// ---------------------------------------------------------------------------
+
+func (s *spannerDataGRPC) ExecuteBatchDml(ctx context.Context, req *sppb.ExecuteBatchDmlRequest) (*sppb.ExecuteBatchDmlResponse, error) {
+	if len(req.GetStatements()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "at least one DML statement is required")
+	}
+	dbName, err := spannerSessionDatabase(req.GetSession())
+	if err != nil {
+		return nil, err
+	}
+	txnID, begun, runtime, err := spannerResolveTxn(req.GetSession(), dbName, req.GetTransaction())
+	if err != nil {
+		return nil, err
+	}
+	if runtime == nil {
+		return nil, status.Error(codes.FailedPrecondition, "ExecuteBatchDml requires a read-write transaction")
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.readOnly {
+		return nil, status.Error(codes.FailedPrecondition, "ExecuteBatchDml cannot execute in a read-only transaction")
+	}
+	if runtime.partitionedDML {
+		return nil, status.Error(codes.FailedPrecondition, "ExecuteBatchDml cannot execute in a partitioned DML transaction")
+	}
+	if runtime.lastStatements {
+		return nil, status.Error(codes.FailedPrecondition, "transaction accepted its final DML statements and must be committed or rolled back")
+	}
+	if cached, ok := runtime.batchResponses[req.GetSeqno()]; ok {
+		return cached, nil
+	}
+	if _, usedByDML := runtime.dmlResponses[req.GetSeqno()]; usedByDML {
+		return nil, status.Error(codes.Aborted, "sequence number was already used by a different DML request")
+	}
+	if len(runtime.dmlResponses)+len(runtime.batchResponses) > 0 && req.GetSeqno() <= runtime.lastSeqno {
+		return nil, status.Error(codes.Aborted, "ExecuteBatchDml sequence number is not monotonically increasing")
+	}
+
+	response := &sppb.ExecuteBatchDmlResponse{
+		Status: &statuspb.Status{Code: int32(codes.OK)},
+	}
+	for i, statement := range req.GetStatements() {
+		rs, execErr := spannerRunDML(ctx, runtime.tx, statement.GetSql(), spannerBindArgs(statement.GetParams(), statement.GetParamTypes()))
+		if execErr != nil {
+			response.Status = status.Convert(execErr).Proto()
+			break
+		}
+		if i == 0 && begun {
+			rs.Metadata.Transaction = &sppb.Transaction{Id: txnID}
+		}
+		response.ResultSets = append(response.ResultSets, rs)
+	}
+	runtime.lastSeqno = req.GetSeqno()
+	runtime.batchResponses[req.GetSeqno()] = response
+	if req.GetLastStatements() && response.Status.GetCode() == int32(codes.OK) {
+		runtime.lastStatements = true
+	}
+	return response, nil
+}
+
+func spannerApplyMutationGroup(ctx context.Context, b *spannerBackend, index int, group *sppb.BatchWriteRequest_MutationGroup) *sppb.BatchWriteResponse {
+	response := &sppb.BatchWriteResponse{Indexes: []int32{int32(index)}}
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		response.Status = status.Convert(status.Errorf(codes.Internal, "begin mutation group: %v", err)).Proto()
+		return response
+	}
+	for _, mutation := range group.GetMutations() {
+		if err := spannerApplyMutation(tx, mutation); err != nil {
+			_ = tx.Rollback()
+			response.Status = status.Convert(err).Proto()
+			return response
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		response.Status = status.Convert(status.Errorf(codes.Internal, "commit mutation group: %v", err)).Proto()
+		return response
+	}
+	response.Status = &statuspb.Status{Code: int32(codes.OK)}
+	response.CommitTimestamp = timestamppb.Now()
+	return response
+}
+
+func (s *spannerDataGRPC) BatchWrite(req *sppb.BatchWriteRequest, stream sppb.Spanner_BatchWriteServer) error {
+	dbName, err := spannerSessionDatabase(req.GetSession())
+	if err != nil {
+		return err
+	}
+	b, err := spannerBackendFor(dbName)
+	if err != nil {
+		return err
+	}
+	if len(req.GetMutationGroups()) == 0 {
+		return status.Error(codes.InvalidArgument, "at least one mutation group is required")
+	}
+	for i, group := range req.GetMutationGroups() {
+		if err := stream.Send(spannerApplyMutationGroup(stream.Context(), b, i, group)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // Partitioning
 // ---------------------------------------------------------------------------
 
-// PartitionQuery / PartitionRead return a single empty partition. The simulator
-// holds each database in one process, so the faithful partition of any query is
-// a single unpartitioned run; the response shape is preserved so clients that
-// fan out across partitions still function.
+// The backing database lives in one SQLite engine, so a partition request has
+// exactly one real partition. Its opaque token remains bound to the session,
+// read-only transaction, and original query/read fields, matching Cloud
+// Spanner's rule that an execution request must exactly match the request that
+// created the token.
 func (s *spannerDataGRPC) PartitionQuery(_ context.Context, req *sppb.PartitionQueryRequest) (*sppb.PartitionResponse, error) {
-	return spannerSinglePartition(req.GetSession()), nil
+	if strings.TrimSpace(req.GetSql()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "sql is required")
+	}
+	if spannerIsDML(req.GetSql()) {
+		return nil, status.Error(codes.InvalidArgument, "DML statements cannot be partitioned as queries")
+	}
+	return spannerCreatePartition(req.GetSession(), req.GetTransaction(), req, nil)
 }
 
 func (s *spannerDataGRPC) PartitionRead(_ context.Context, req *sppb.PartitionReadRequest) (*sppb.PartitionResponse, error) {
-	return spannerSinglePartition(req.GetSession()), nil
-}
-
-func spannerSinglePartition(session string) *sppb.PartitionResponse {
-	tok := []byte(session + "-p0")
-	return &sppb.PartitionResponse{
-		Partitions: []*sppb.Partition{{PartitionToken: tok}},
+	if req.GetTable() == "" || len(req.GetColumns()) == 0 || req.GetKeySet() == nil {
+		return nil, status.Error(codes.InvalidArgument, "table, columns, and key_set are required")
 	}
+	return spannerCreatePartition(req.GetSession(), req.GetTransaction(), nil, req)
 }
 
-// ExecuteBatchDml, BatchWrite, and ExecuteAction remain on the
-// UnimplementedSpannerServer default. They are outside the high-level client's
-// Apply / Read / Query / ReadWriteTransaction paths exercised here, and shipping
-// a partial or synthetic implementation would violate the no-stubs rule.
+func spannerCreatePartition(session string, selector *sppb.TransactionSelector, query *sppb.PartitionQueryRequest, read *sppb.PartitionReadRequest) (*sppb.PartitionResponse, error) {
+	dbName, err := spannerSessionDatabase(session)
+	if err != nil {
+		return nil, err
+	}
+	transactionID, begun, runtime, err := spannerResolveTxn(session, dbName, selector)
+	if err != nil {
+		return nil, err
+	}
+	if runtime == nil || !runtime.readOnly || runtime.partitionedDML {
+		return nil, status.Error(codes.FailedPrecondition, "partitioning requires a read-only transaction")
+	}
+	token := generateUUID()
+	partition := spannerPartitionRuntime{
+		session:       session,
+		transactionID: append([]byte(nil), transactionID...),
+	}
+	if query != nil {
+		cloned, ok := proto.Clone(query).(*sppb.PartitionQueryRequest)
+		if !ok {
+			return nil, status.Error(codes.Internal, "failed to clone partition query")
+		}
+		partition.query = cloned
+	}
+	if read != nil {
+		cloned, ok := proto.Clone(read).(*sppb.PartitionReadRequest)
+		if !ok {
+			return nil, status.Error(codes.Internal, "failed to clone partition read")
+		}
+		partition.read = cloned
+	}
+	spannerPartitionsMu.Lock()
+	spannerPartitions[token] = partition
+	spannerPartitionsMu.Unlock()
+	response := &sppb.PartitionResponse{
+		Partitions: []*sppb.Partition{{PartitionToken: []byte(token)}},
+	}
+	if begun {
+		response.Transaction = &sppb.Transaction{Id: transactionID}
+	}
+	return response, nil
+}
+
+func spannerPartitionFor(token []byte) (spannerPartitionRuntime, error) {
+	if len(token) == 0 {
+		return spannerPartitionRuntime{}, nil
+	}
+	spannerPartitionsMu.RLock()
+	partition, ok := spannerPartitions[string(token)]
+	spannerPartitionsMu.RUnlock()
+	if !ok {
+		return spannerPartitionRuntime{}, status.Error(codes.InvalidArgument, "invalid partition token")
+	}
+	return partition, nil
+}
+
+func spannerValidateQueryPartition(req *sppb.ExecuteSqlRequest) error {
+	partition, err := spannerPartitionFor(req.GetPartitionToken())
+	if err != nil || len(req.GetPartitionToken()) == 0 {
+		return err
+	}
+	if partition.query == nil || partition.session != req.GetSession() {
+		return status.Error(codes.InvalidArgument, "partition token does not belong to this query session")
+	}
+	if !proto.Equal(partition.query.GetParams(), req.GetParams()) ||
+		partition.query.GetSql() != req.GetSql() ||
+		!spannerTypeMapsEqual(partition.query.GetParamTypes(), req.GetParamTypes()) ||
+		!spannerSelectorUsesID(req.GetTransaction(), partition.transactionID) {
+		return status.Error(codes.InvalidArgument, "query fields do not match the partition request")
+	}
+	return nil
+}
+
+func spannerValidateReadPartition(req *sppb.ReadRequest) error {
+	partition, err := spannerPartitionFor(req.GetPartitionToken())
+	if err != nil || len(req.GetPartitionToken()) == 0 {
+		return err
+	}
+	if partition.read == nil || partition.session != req.GetSession() {
+		return status.Error(codes.InvalidArgument, "partition token does not belong to this read session")
+	}
+	want := partition.read
+	if want.GetTable() != req.GetTable() ||
+		want.GetIndex() != req.GetIndex() ||
+		!slicesEqual(want.GetColumns(), req.GetColumns()) ||
+		!proto.Equal(want.GetKeySet(), req.GetKeySet()) ||
+		!spannerSelectorUsesID(req.GetTransaction(), partition.transactionID) {
+		return status.Error(codes.InvalidArgument, "read fields do not match the partition request")
+	}
+	if req.GetLimit() != 0 {
+		return status.Error(codes.InvalidArgument, "limit cannot be specified with a partition token")
+	}
+	return nil
+}
+
+func spannerSelectorUsesID(selector *sppb.TransactionSelector, id []byte) bool {
+	return selector != nil && string(selector.GetId()) == string(id)
+}
+
+func spannerTypeMapsEqual(a, b map[string]*sppb.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for name, typ := range a {
+		if !proto.Equal(typ, b[name]) {
+			return false
+		}
+	}
+	return true
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

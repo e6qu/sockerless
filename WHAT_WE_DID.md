@@ -24,6 +24,55 @@ before asserting the policy. The production-shaped HashiCorp AWS provider graph
 also created a policy-bearing key, making the provider's create-time policy
 waiter an integration guard for the persistent read-back path.
 
+## 2026-07-29 — Cloud data planes passed external provider ratchets
+
+Google Cloud Spanner moved from an administrative projection to a transactional
+cloud slice. Official REST and gRPC clients executed SQL, DML, batch DML,
+key-set reads, mutations, begin/commit/rollback, partitioned work, and batch
+writes against real SQLite transactions. DDL validation became strict,
+composite primary keys preserved range semantics, gcloud executed SQL and
+partitioned DML, and the official HashiCorp Google provider completed
+instance/database/DDL apply, a zero-change plan, and destroy. The served
+Discovery floor advanced from 58 to 82 of 198 methods.
+
+AWS Step Functions launched the official HashiCorp Terraform image in a
+synchronous Amazon ECS task. The process used only `AWS_ENDPOINT_URL` and
+ordinary AWS credentials, applied a tagged Amazon SQS queue back into the
+simulator, and an independent official AWS SDK client read the created queue
+and tags. This made the infrastructure-as-code-in-a-workload review claim an
+executable test rather than an assumption.
+
+AWS Amplify retained release build ZIPs, end-to-end test artifacts,
+configuration URLs, retry lineage, build phases, and cleanup through the public
+job and artifact APIs. AWS WAF association updated the Amplify app, protected
+the hosted data plane with default and IP-set actions, and returned observed
+traffic from `GetSampledRequests`; WebACL capacity came from the real recursive
+statement calculation. Repeated AWS Certificate Manager requests for one
+normalized domain reused a stable account-scoped DNS validation value.
+
+The independent ecs-dev-desktop Terraform module exercised the standard global
+AWS endpoint without simulator-aware module branches. It applied 178 resources,
+passed its own shared-infrastructure assertions, produced a zero-change
+follow-up plan, emitted no runtime Smithy violations, destroyed all 178
+resources, and retained a clean working tree. That run exposed and fixed API
+Gateway v2 defaults, update fields and stage tags, plus durable AWS Lambda
+reserved concurrency returned by `GetFunction`.
+
+The same-day dependency ratchet upgraded Google Cloud Spanner to v1.94.0 and
+the affected AWS SDK graph to v1.43.2 with current service releases. The
+complete official Google Cloud and AWS SDK suites passed, all five
+production-shaped HashiCorp AWS provider packages passed, and the authenticated
+freshness audit reported no drift.
+
+The Google Terraform harness stopped treating absent real-execution
+capabilities as a passing skip. macOS selected the privileged Linux harness,
+Buildx loaded its output into the runtime, and the shared image contained
+Firecracker v1.15.1 plus `unsquashfs` 4.5.1. Podman's macOS virtual machine
+still exposed no nested `/dev/kvm`; that external host boundary, occupied
+macOS load-balancer listener ports, AWS Amplify Hosting image optimization, and
+the remaining AWS WAF statement evaluator were retained explicitly in
+BUGS.md.
+
 ## 2026-07-28 — AWS Lambda and AWS Step Functions became complete executable cloud slices
 
 AWS Lambda implemented every one of the 85 operations in its vendored Smithy

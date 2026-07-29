@@ -56,10 +56,10 @@ func TestSpanner_InstanceDatabaseSessionSDK(t *testing.T) {
 	assert.Contains(t, ddlOp.Name, "/databases/sdkdb/operations/")
 	var ddlMetadata map[string]any
 	require.NoError(t, json.Unmarshal(ddlOp.Metadata, &ddlMetadata))
-	assert.Equal(t, db.Name, ddlMetadata["resource"])
+	assert.Equal(t, db.Name, ddlMetadata["database"])
 	var ddlResponse map[string]any
 	require.NoError(t, json.Unmarshal(ddlOp.Response, &ddlResponse))
-	assert.Equal(t, db.Name, ddlResponse["resource"])
+	assert.Equal(t, "type.googleapis.com/google.protobuf.Empty", ddlResponse["@type"])
 
 	session, err := svc.Projects.Instances.Databases.Sessions.Create(db.Name, &spanner.CreateSessionRequest{
 		Session: &spanner.Session{Labels: map[string]string{"kind": "sdk"}},

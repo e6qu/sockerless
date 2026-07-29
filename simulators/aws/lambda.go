@@ -276,7 +276,10 @@ func lambdaNumber(value any) (int, bool) {
 }
 
 // State store
-var lambdaFunctions sim.Store[LambdaFunction]
+var (
+	lambdaFunctions   sim.Store[LambdaFunction]
+	lambdaConcurrency sim.Store[int]
+)
 
 func lambdaArn(name string) string {
 	return fmt.Sprintf("arn:aws:lambda:%s:%s:function:%s", awsRegion(), awsAccountID(), name)
@@ -348,6 +351,7 @@ func registerLambda(srv *sim.Server, startBackgroundPollers bool) {
 	// function-management ops are management events.
 	cloudTrailDeclareDataEvents("lambda.amazonaws.com", "Invoke")
 	lambdaFunctions = sim.MakeStore[LambdaFunction](srv.DB(), "lambda_functions")
+	lambdaConcurrency = sim.MakeStore[int](srv.DB(), "lambda_concurrency")
 	lambdaESMLogger = srv.Logger()
 	if startBackgroundPollers {
 		startLambdaEventSourcePollers()
@@ -738,11 +742,17 @@ func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
 	if tags == nil {
 		tags = map[string]string{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"Configuration": lambdaConfiguration(fn),
 		"Code":          code,
 		"Tags":          tags,
-	})
+	}
+	if reserved, ok := lambdaConcurrency.Get(name); ok {
+		out["Concurrency"] = map[string]any{
+			"ReservedConcurrentExecutions": reserved,
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func lambdaArtifactBucketName() string {
@@ -846,9 +856,7 @@ func handleLambdaDeleteFunction(w http.ResponseWriter, r *http.Request) {
 	lambdaURLConfigsMu.Lock()
 	delete(lambdaURLConfigs, name)
 	lambdaURLConfigsMu.Unlock()
-	lambdaConcurrencyMu.Lock()
-	delete(lambdaConcurrency, name)
-	lambdaConcurrencyMu.Unlock()
+	lambdaConcurrency.Delete(name)
 	lambdaFnCSCMu.Lock()
 	delete(lambdaFnCSC, name)
 	lambdaFnCSCMu.Unlock()

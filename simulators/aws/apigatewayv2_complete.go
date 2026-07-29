@@ -811,9 +811,10 @@ func handleAPIGWv2UpdateApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name                     *string `json:"name"`
-		Description              *string `json:"description"`
-		RouteSelectionExpression *string `json:"routeSelectionExpression"`
+		ApiKeySelectionExpression *string `json:"apiKeySelectionExpression"`
+		Name                      *string `json:"name"`
+		Description               *string `json:"description"`
+		RouteSelectionExpression  *string `json:"routeSelectionExpression"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
@@ -821,6 +822,9 @@ func handleAPIGWv2UpdateApi(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name != nil {
 		api.Name = *req.Name
+	}
+	if req.ApiKeySelectionExpression != nil {
+		api.ApiKeySelectionExpression = *req.ApiKeySelectionExpression
 	}
 	if req.RouteSelectionExpression != nil {
 		api.RouteKey = *req.RouteSelectionExpression

@@ -15,13 +15,14 @@ import (
 // percentile "deploy an HTTP API + integration + stage" flow.
 
 type APIGWv2Api struct {
-	ApiId        string            `json:"apiId"`
-	Name         string            `json:"name"`
-	ProtocolType string            `json:"protocolType"`
-	RouteKey     string            `json:"routeSelectionExpression,omitempty"`
-	ApiEndpoint  string            `json:"apiEndpoint,omitempty"` // external: the HTTP API invoke URL (<api-id>.execute-api.<region>.amazonaws.com) — a canonical AWS host the sim does not serve as a data plane (like ECR repositoryUri / Amplify WebhookUrl)
-	CreatedDate  string            `json:"createdDate"`
-	Tags         map[string]string `json:"tags,omitempty"`
+	ApiId                     string            `json:"apiId"`
+	ApiKeySelectionExpression string            `json:"apiKeySelectionExpression,omitempty"`
+	Name                      string            `json:"name"`
+	ProtocolType              string            `json:"protocolType"`
+	RouteKey                  string            `json:"routeSelectionExpression,omitempty"`
+	ApiEndpoint               string            `json:"apiEndpoint,omitempty"` // external: the HTTP API invoke URL (<api-id>.execute-api.<region>.amazonaws.com) — a canonical AWS host the sim does not serve as a data plane (like ECR repositoryUri / Amplify WebhookUrl)
+	CreatedDate               string            `json:"createdDate"`
+	Tags                      map[string]string `json:"tags,omitempty"`
 }
 
 // Inner fields whose JSON tag is `apiIdRef` (custom, non-public)
@@ -42,6 +43,7 @@ type APIGWv2Route struct {
 type APIGWv2Integration struct {
 	IntegrationId        string `json:"integrationId"`
 	ApiId                string `json:"apiIdRef,omitempty"`
+	ConnectionType       string `json:"connectionType,omitempty"`
 	IntegrationType      string `json:"integrationType"`
 	IntegrationUri       string `json:"integrationUri,omitempty"` // external (operator-supplied): integration target — Lambda ARN, HTTP backend, or VPC link target
 	IntegrationMethod    string `json:"integrationMethod,omitempty"`
@@ -50,11 +52,13 @@ type APIGWv2Integration struct {
 }
 
 type APIGWv2Stage struct {
-	StageName   string `json:"stageName"`
-	ApiId       string `json:"apiIdRef,omitempty"`
-	Description string `json:"description,omitempty"`
-	AutoDeploy  bool   `json:"autoDeploy"`
-	CreatedDate string `json:"createdDate"`
+	StageName    string            `json:"stageName"`
+	ApiId        string            `json:"apiIdRef,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	DeploymentId string            `json:"deploymentId,omitempty"`
+	AutoDeploy   bool              `json:"autoDeploy"`
+	CreatedDate  string            `json:"createdDate"`
+	Tags         map[string]string `json:"tags,omitempty"`
 }
 
 // APIGWv2Deployment models the snapshot of an HTTP API's routes +
@@ -187,10 +191,12 @@ func registerAPIGatewayV2(srv *sim.Server) {
 	mux.HandleFunc("POST /v2/apis/{apiId}/integrations", cloudTrailRecordedREST("CreateIntegration", "apigateway.amazonaws.com", apiResource, handleAPIGWv2CreateIntegration))
 	mux.HandleFunc("GET /v2/apis/{apiId}/integrations", cloudTrailRecordedREST("GetIntegrations", "apigateway.amazonaws.com", apiResource, handleAPIGWv2ListIntegrations))
 	mux.HandleFunc("GET /v2/apis/{apiId}/integrations/{integrationId}", cloudTrailRecordedREST("GetIntegration", "apigateway.amazonaws.com", apiResource, handleAPIGWv2GetIntegration))
+	mux.HandleFunc("PATCH /v2/apis/{apiId}/integrations/{integrationId}", cloudTrailRecordedREST("UpdateIntegration", "apigateway.amazonaws.com", apiResource, handleAPIGWv2UpdateIntegration))
 	mux.HandleFunc("DELETE /v2/apis/{apiId}/integrations/{integrationId}", cloudTrailRecordedREST("DeleteIntegration", "apigateway.amazonaws.com", apiResource, handleAPIGWv2DeleteIntegration))
 	mux.HandleFunc("POST /v2/apis/{apiId}/stages", cloudTrailRecordedREST("CreateStage", "apigateway.amazonaws.com", apiResource, handleAPIGWv2CreateStage))
 	mux.HandleFunc("GET /v2/apis/{apiId}/stages", cloudTrailRecordedREST("GetStages", "apigateway.amazonaws.com", apiResource, handleAPIGWv2ListStages))
 	mux.HandleFunc("GET /v2/apis/{apiId}/stages/{stageName}", cloudTrailRecordedREST("GetStage", "apigateway.amazonaws.com", apiResource, handleAPIGWv2GetStage))
+	mux.HandleFunc("PATCH /v2/apis/{apiId}/stages/{stageName}", cloudTrailRecordedREST("UpdateStage", "apigateway.amazonaws.com", apiResource, handleAPIGWv2UpdateStage))
 	mux.HandleFunc("DELETE /v2/apis/{apiId}/stages/{stageName}", cloudTrailRecordedREST("DeleteStage", "apigateway.amazonaws.com", apiResource, handleAPIGWv2DeleteStage))
 	mux.HandleFunc("POST /v2/apis/{apiId}/deployments", cloudTrailRecordedREST("CreateDeployment", "apigateway.amazonaws.com", apiResource, handleAPIGWv2CreateDeployment))
 	mux.HandleFunc("GET /v2/apis/{apiId}/deployments", cloudTrailRecordedREST("GetDeployments", "apigateway.amazonaws.com", apiResource, handleAPIGWv2ListDeployments))
@@ -236,21 +242,26 @@ func apigwv2StoreKey(apiId, resource string) string { return apiId + "/" + resou
 
 func handleAPIGWv2CreateApi(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name                     string            `json:"Name"`
-		ProtocolType             string            `json:"ProtocolType"`
-		RouteSelectionExpression string            `json:"RouteSelectionExpression"`
-		Tags                     map[string]string `json:"Tags"`
+		ApiKeySelectionExpression string            `json:"ApiKeySelectionExpression"`
+		Name                      string            `json:"Name"`
+		ProtocolType              string            `json:"ProtocolType"`
+		RouteSelectionExpression  string            `json:"RouteSelectionExpression"`
+		Tags                      map[string]string `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "BadRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	if req.ApiKeySelectionExpression == "" {
+		req.ApiKeySelectionExpression = "$request.header.x-api-key"
+	}
 	apiID := generateUUID()[:10]
 	api := APIGWv2Api{
-		ApiId:        apiID,
-		Name:         req.Name,
-		ProtocolType: req.ProtocolType,
-		RouteKey:     req.RouteSelectionExpression,
+		ApiId:                     apiID,
+		ApiKeySelectionExpression: req.ApiKeySelectionExpression,
+		Name:                      req.Name,
+		ProtocolType:              req.ProtocolType,
+		RouteKey:                  req.RouteSelectionExpression,
 		// external: canonical HTTP API invoke host; the sim does not serve the
 		// execute-api data plane (see the ApiEndpoint field comment).
 		ApiEndpoint: fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com", apiID, awsRegion()),
@@ -424,6 +435,7 @@ func handleAPIGWv2CreateIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		ConnectionType       string `json:"ConnectionType"`
 		IntegrationType      string `json:"IntegrationType"`
 		IntegrationUri       string `json:"IntegrationUri"`
 		IntegrationMethod    string `json:"IntegrationMethod"`
@@ -434,9 +446,13 @@ func handleAPIGWv2CreateIntegration(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
 		return
 	}
+	if req.ConnectionType == "" {
+		req.ConnectionType = "INTERNET"
+	}
 	in := APIGWv2Integration{
 		IntegrationId:        generateUUID()[:10],
 		ApiId:                apiId,
+		ConnectionType:       req.ConnectionType,
 		IntegrationType:      req.IntegrationType,
 		IntegrationUri:       req.IntegrationUri,
 		IntegrationMethod:    req.IntegrationMethod,
@@ -445,6 +461,49 @@ func handleAPIGWv2CreateIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	apigwv2Integrations.Put(apigwv2StoreKey(apiId, in.IntegrationId), in)
 	sim.WriteJSON(w, http.StatusCreated, in)
+}
+
+func handleAPIGWv2UpdateIntegration(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	integrationId := sim.PathParam(r, "integrationId")
+	integration, ok := apigwv2Integrations.Get(apigwv2StoreKey(apiId, integrationId))
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Integration identifier specified %s", integrationId)
+		return
+	}
+	var req struct {
+		ConnectionType       *string `json:"ConnectionType"`
+		IntegrationType      *string `json:"IntegrationType"`
+		IntegrationUri       *string `json:"IntegrationUri"`
+		IntegrationMethod    *string `json:"IntegrationMethod"`
+		PayloadFormatVersion *string `json:"PayloadFormatVersion"`
+		TimeoutInMillis      *int    `json:"TimeoutInMillis"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.ConnectionType != nil {
+		integration.ConnectionType = *req.ConnectionType
+	}
+	if req.IntegrationType != nil {
+		integration.IntegrationType = *req.IntegrationType
+	}
+	if req.IntegrationUri != nil {
+		integration.IntegrationUri = *req.IntegrationUri
+	}
+	if req.IntegrationMethod != nil {
+		integration.IntegrationMethod = *req.IntegrationMethod
+	}
+	if req.PayloadFormatVersion != nil {
+		integration.PayloadFormatVersion = *req.PayloadFormatVersion
+	}
+	if req.TimeoutInMillis != nil {
+		integration.TimeoutInMillis = *req.TimeoutInMillis
+	}
+	apigwv2Integrations.Put(apigwv2StoreKey(apiId, integrationId), integration)
+	sim.WriteJSON(w, http.StatusOK, integration)
 }
 
 func handleAPIGWv2ListIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -491,23 +550,58 @@ func handleAPIGWv2CreateStage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		StageName   string `json:"StageName"`
-		Description string `json:"Description"`
-		AutoDeploy  bool   `json:"AutoDeploy"`
+		StageName    string            `json:"StageName"`
+		Description  string            `json:"Description"`
+		DeploymentId string            `json:"DeploymentId"`
+		AutoDeploy   bool              `json:"AutoDeploy"`
+		Tags         map[string]string `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
 		return
 	}
 	s := APIGWv2Stage{
-		StageName:   req.StageName,
-		ApiId:       apiId,
-		Description: req.Description,
-		AutoDeploy:  req.AutoDeploy,
-		CreatedDate: time.Now().UTC().Format(time.RFC3339),
+		StageName:    req.StageName,
+		ApiId:        apiId,
+		Description:  req.Description,
+		DeploymentId: req.DeploymentId,
+		AutoDeploy:   req.AutoDeploy,
+		CreatedDate:  time.Now().UTC().Format(time.RFC3339),
+		Tags:         req.Tags,
 	}
 	apigwv2Stages.Put(apigwv2StoreKey(apiId, s.StageName), s)
 	sim.WriteJSON(w, http.StatusCreated, s)
+}
+
+func handleAPIGWv2UpdateStage(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	stageName := sim.PathParam(r, "stageName")
+	stage, ok := apigwv2Stages.Get(apigwv2StoreKey(apiId, stageName))
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Stage identifier specified %s", stageName)
+		return
+	}
+	var req struct {
+		Description  *string `json:"Description"`
+		DeploymentId *string `json:"DeploymentId"`
+		AutoDeploy   *bool   `json:"AutoDeploy"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Description != nil {
+		stage.Description = *req.Description
+	}
+	if req.DeploymentId != nil {
+		stage.DeploymentId = *req.DeploymentId
+	}
+	if req.AutoDeploy != nil {
+		stage.AutoDeploy = *req.AutoDeploy
+	}
+	apigwv2Stages.Put(apigwv2StoreKey(apiId, stageName), stage)
+	sim.WriteJSON(w, http.StatusOK, stage)
 }
 
 func handleAPIGWv2ListStages(w http.ResponseWriter, r *http.Request) {

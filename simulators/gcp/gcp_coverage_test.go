@@ -152,17 +152,15 @@ var gcpMethodFloor = map[string]int{
 	"sqladmin-v1beta4": 146,
 
 	// Cloud Spanner: instances, instance configs, databases (create, get,
-	// list, delete, DDL update), sessions (create, get, delete) and the
-	// operations polls are served over REST. The session data plane —
-	// executeSql, executeStreamingSql, executeBatchDml, read, streamingRead,
-	// commit, rollback, beginTransaction, batchWrite, partitionQuery,
-	// partitionRead, adapter, adaptMessage — is served over gRPC only, and
-	// backups, backup schedules, instance partitions, database roles, the IAM
-	// verbs and the operations collections are not served at all. The
-	// "instances/{rest...}" mount that routes this surface has the shape of
-	// every path in the document, so only its answer — a method-not-found for
-	// each tail it does not route — distinguishes the two.
-	"spanner-v1": 58,
+	// list, delete, DDL update), sessions, and the complete public session data
+	// plane except adapter/adaptMessage are served over REST. The same data
+	// plane is served over gRPC. Backups, backup schedules, instance
+	// partitions, database roles, the IAM verbs, and several operations
+	// collections are not served. The "instances/{rest...}" mount that routes
+	// this surface has the shape of every path in the document, so only its
+	// answer — a method-not-found for each tail it does not route —
+	// distinguishes the two.
+	"spanner-v1": 82,
 }
 
 // gcpProbePrincipal is the subject of the access token every probe presents.

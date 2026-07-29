@@ -343,9 +343,8 @@ func TestTerraformApplyDestroy(t *testing.T) {
 
 func requireTerraformNetworkHost(t *testing.T) {
 	t.Helper()
-	if err := realexec.DetectNetworkCapabilities().Require(); err != nil {
-		t.Skipf("skipping: Terraform Compute/Network coverage requires host capabilities the simulator cannot provide here: %v", err)
-	}
+	require.NoError(t, realexec.DetectNetworkCapabilities().Require(),
+		"Terraform Compute/Network coverage required a privileged Linux host with iproute2 and nftables; use `make terraform-test`, which selected the real-network container harness on macOS")
 }
 
 func requireIPv4InCIDR(t *testing.T, value, cidr string, msgAndArgs ...any) {

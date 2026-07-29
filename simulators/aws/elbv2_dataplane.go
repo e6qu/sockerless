@@ -42,6 +42,10 @@ func elbv2LoadBalancerFromDataPlaneHost(host string) (ELBv2LoadBalancer, bool) {
 }
 
 func handleELBv2DataPlane(w http.ResponseWriter, r *http.Request, lb ELBv2LoadBalancer) {
+	if !wafAssociatedRequestAllowed(lb.Arn, r) {
+		http.Error(w, "AWS WAF blocked the request", http.StatusForbidden)
+		return
+	}
 	listener, ok := elbv2ListenerForDataPlaneRequest(r, lb)
 	if !ok {
 		http.Error(w, "no matching load balancer listener", http.StatusNotFound)

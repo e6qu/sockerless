@@ -730,6 +730,11 @@ resource "aws_wafv2_web_acl_association" "tf_assoc" {
   web_acl_arn  = aws_wafv2_web_acl.tf_acl.arn
 }
 
+resource "aws_wafv2_web_acl_association" "tf_amplify_assoc" {
+  resource_arn = aws_amplify_app.tf_amplify.arn
+  web_acl_arn  = aws_wafv2_web_acl.tf_acl.arn
+}
+
 resource "aws_sqs_queue" "tf_eventbridge_queue" {
   name = "tf-eventbridge-queue"
 }
@@ -896,16 +901,21 @@ resource "aws_apigatewayv2_stage" "tf_http_stage" {
   name          = "tf"
   deployment_id = aws_apigatewayv2_deployment.tf_http_deployment.id
   auto_deploy   = false
+
+  tags = {
+    consumer = "terraform"
+  }
 }
 
 resource "aws_lambda_function" "tf_lambda" {
-  function_name = "tf-lambda-image"
-  role          = "arn:aws:iam::123456789012:role/tf-lambda"
-  package_type  = "Image"
-  image_uri     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/sockerless-lambda-runtime-handler:test"
-  memory_size   = 128
-  timeout       = 3
-  publish       = true
+  function_name                  = "tf-lambda-image"
+  role                           = "arn:aws:iam::123456789012:role/tf-lambda"
+  package_type                   = "Image"
+  image_uri                      = "123456789012.dkr.ecr.us-east-1.amazonaws.com/sockerless-lambda-runtime-handler:test"
+  memory_size                    = 128
+  timeout                        = 3
+  publish                        = true
+  reserved_concurrent_executions = 5
 
   vpc_config {
     subnet_ids         = [aws_subnet.tf_ec2_subnet.id]
@@ -1539,6 +1549,9 @@ output "acm_certificate_arn" {
 }
 output "wafv2_assoc_resource_arn" {
   value = aws_wafv2_web_acl_association.tf_assoc.resource_arn
+}
+output "wafv2_amplify_assoc_resource_arn" {
+  value = aws_wafv2_web_acl_association.tf_amplify_assoc.resource_arn
 }
 output "wafv2_assoc_webacl_arn" {
   value = aws_wafv2_web_acl_association.tf_assoc.web_acl_arn

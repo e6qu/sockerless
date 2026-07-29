@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -12,6 +13,83 @@ import (
 	"github.com/sockerless/simulator-testutil/githttp"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAmplify_WAFv2_Association_CLI(t *testing.T) {
+	appOut := runCLI(t, awsCLI("amplify", "create-app",
+		"--name", "cli-amplify-waf-"+time.Now().Format("150405.000000"),
+		"--output", "json",
+	))
+	var appResult struct {
+		App struct {
+			AppID  string `json:"appId"`
+			AppARN string `json:"appArn"`
+		} `json:"app"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(appOut), &appResult))
+	require.NotEmpty(t, appResult.App.AppID)
+	t.Cleanup(func() {
+		_ = awsCLI("amplify", "delete-app", "--app-id", appResult.App.AppID).Run()
+	})
+
+	aclName := "cli-amplify-waf-" + time.Now().Format("150405.000000")
+	aclOut := runCLI(t, awsCLI("wafv2", "create-web-acl",
+		"--name", aclName,
+		"--scope", "CLOUDFRONT",
+		"--default-action", `{"Allow":{}}`,
+		"--visibility-config", fmt.Sprintf(
+			`{"SampledRequestsEnabled":true,"CloudWatchMetricsEnabled":true,"MetricName":%q}`,
+			aclName,
+		),
+		"--output", "json",
+	))
+	var aclResult struct {
+		Summary struct {
+			ID        string `json:"Id"`
+			ARN       string `json:"ARN"`
+			LockToken string `json:"LockToken"`
+		} `json:"Summary"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(aclOut), &aclResult))
+	t.Cleanup(func() {
+		_ = awsCLI("wafv2", "disassociate-web-acl", "--resource-arn", appResult.App.AppARN).Run()
+		_ = awsCLI("wafv2", "delete-web-acl",
+			"--name", aclName, "--scope", "CLOUDFRONT",
+			"--id", aclResult.Summary.ID, "--lock-token", aclResult.Summary.LockToken).Run()
+	})
+
+	runCLI(t, awsCLI("wafv2", "associate-web-acl",
+		"--web-acl-arn", aclResult.Summary.ARN,
+		"--resource-arn", appResult.App.AppARN,
+	))
+	getOut := runCLI(t, awsCLI("amplify", "get-app",
+		"--app-id", appResult.App.AppID,
+		"--output", "json",
+	))
+	var associated struct {
+		App struct {
+			WAFConfiguration struct {
+				WebACLARN string `json:"webAclArn"`
+				WAFStatus string `json:"wafStatus"`
+			} `json:"wafConfiguration"`
+		} `json:"app"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(getOut), &associated))
+	require.Equal(t, aclResult.Summary.ARN, associated.App.WAFConfiguration.WebACLARN)
+	require.Equal(t, "ASSOCIATION_SUCCESS", associated.App.WAFConfiguration.WAFStatus)
+
+	runCLI(t, awsCLI("wafv2", "disassociate-web-acl",
+		"--resource-arn", appResult.App.AppARN,
+	))
+	getOut = runCLI(t, awsCLI("amplify", "get-app",
+		"--app-id", appResult.App.AppID,
+		"--output", "json",
+	))
+	var disassociated map[string]any
+	require.NoError(t, json.Unmarshal([]byte(getOut), &disassociated))
+	appBody := disassociated["app"].(map[string]any)
+	_, hasWAFConfiguration := appBody["wafConfiguration"]
+	require.False(t, hasWAFConfiguration)
+}
 
 // amplifyWaitJobStatus polls get-job while the real build or deployment runs.
 func amplifyWaitJobStatus(t *testing.T, appID, branch, jobID, want string) {
@@ -65,6 +143,18 @@ frontend:
     baseDirectory: dist
     files:
       - '**/*'
+test:
+  phases:
+    test:
+      commands:
+        - mkdir -p cypress/screenshots cypress/report
+        - printf cli-screenshot > cypress/screenshots/home.png
+        - printf '{"stats":{"tests":1,"passes":1}}' > cypress/report/mochawesome.json
+  artifacts:
+    baseDirectory: cypress
+    configFilePath: '**/mochawesome.json'
+    files:
+      - '**/*.png'
 `,
 	})
 	out := runCLI(t, awsCLI("amplify", "create-app",
@@ -133,6 +223,40 @@ frontend:
 	jobID := jobResult.JobSummary.JobId
 	amplifyWaitJobStatus(t, appID, "main", jobID, "SUCCEED")
 
+	getJobOut := runCLI(t, awsCLI("amplify", "get-job",
+		"--app-id", appID,
+		"--branch-name", "main",
+		"--job-id", jobID,
+		"--output", "json"))
+	var getJobResult struct {
+		Job struct {
+			Steps []struct {
+				StepName         string `json:"stepName"`
+				ArtifactsURL     string `json:"artifactsUrl"`
+				TestArtifactsURL string `json:"testArtifactsUrl"`
+				TestConfigURL    string `json:"testConfigUrl"`
+			} `json:"steps"`
+		} `json:"job"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(getJobOut), &getJobResult))
+	var buildArtifactURL, testArtifactsURL, testConfigURL string
+	for _, step := range getJobResult.Job.Steps {
+		if step.StepName == "BUILD" {
+			buildArtifactURL = step.ArtifactsURL
+			testArtifactsURL = step.TestArtifactsURL
+			testConfigURL = step.TestConfigURL
+		}
+	}
+	require.NotEmpty(t, buildArtifactURL)
+	require.NotEmpty(t, testArtifactsURL)
+	require.NotEmpty(t, testConfigURL)
+	buildArtifactResponse, err := http.Get(buildArtifactURL)
+	require.NoError(t, err)
+	buildArtifactResponse.Body.Close()
+	require.Equal(t, http.StatusOK, buildArtifactResponse.StatusCode)
+
+	// ListArtifacts returns the concrete end-to-end test outputs and
+	// GetArtifactUrl resolves the selected output through its presigned URL.
 	artifactsOut := runCLI(t, awsCLI("amplify", "list-artifacts",
 		"--app-id", appID,
 		"--branch-name", "main",
@@ -141,25 +265,28 @@ frontend:
 		"--output", "json"))
 	var artifactsResult struct {
 		Artifacts []struct {
-			ArtifactId       string `json:"artifactId"`
+			ArtifactID       string `json:"artifactId"`
 			ArtifactFileName string `json:"artifactFileName"`
 		} `json:"artifacts"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(artifactsOut), &artifactsResult))
 	require.Len(t, artifactsResult.Artifacts, 1)
-	require.NotEmpty(t, artifactsResult.Artifacts[0].ArtifactId)
-	require.NotEmpty(t, artifactsResult.Artifacts[0].ArtifactFileName)
+	require.Equal(t, "screenshots/home.png", artifactsResult.Artifacts[0].ArtifactFileName)
 
-	artifactOut := runCLI(t, awsCLI("amplify", "get-artifact-url",
-		"--artifact-id", artifactsResult.Artifacts[0].ArtifactId,
+	artifactURLOut := runCLI(t, awsCLI("amplify", "get-artifact-url",
+		"--artifact-id", artifactsResult.Artifacts[0].ArtifactID,
 		"--output", "json"))
-	var artifactResult struct {
-		ArtifactId  string `json:"artifactId"`
-		ArtifactUrl string `json:"artifactUrl"`
+	var artifactURLResult struct {
+		ArtifactURL string `json:"artifactUrl"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(artifactOut), &artifactResult))
-	require.Equal(t, artifactsResult.Artifacts[0].ArtifactId, artifactResult.ArtifactId)
-	require.NotEmpty(t, artifactResult.ArtifactUrl)
+	require.NoError(t, json.Unmarshal([]byte(artifactURLOut), &artifactURLResult))
+	artifactResponse, err := http.Get(artifactURLResult.ArtifactURL)
+	require.NoError(t, err)
+	defer artifactResponse.Body.Close()
+	require.Equal(t, http.StatusOK, artifactResponse.StatusCode)
+	artifactBody, err := io.ReadAll(artifactResponse.Body)
+	require.NoError(t, err)
+	require.Equal(t, "cli-screenshot", string(artifactBody))
 
 	logsOut := runCLI(t, awsCLI("amplify", "generate-access-logs",
 		"--app-id", appID,
@@ -172,7 +299,7 @@ frontend:
 	require.NotEmpty(t, logsResult.LogUrl)
 
 	// Stopping the finished job is rejected.
-	_, err := awsCLI("amplify", "stop-job",
+	_, err = awsCLI("amplify", "stop-job",
 		"--app-id", appID,
 		"--branch-name", "main",
 		"--job-id", jobID,
@@ -285,24 +412,37 @@ func TestAmplify_Deployment_Flow(t *testing.T) {
 
 	amplifyWaitJobStatus(t, appID, "main", depResult.JobId, "SUCCEED")
 
-	// The uploaded zip is the job artifact, byte for byte.
+	// The uploaded build bundle is returned by GetJob's DEPLOY step, byte for
+	// byte. ListArtifacts remains the end-to-end test artifact surface.
+	getJobOut := runCLI(t, awsCLI("amplify", "get-job",
+		"--app-id", appID, "--branch-name", "main",
+		"--job-id", depResult.JobId, "--output", "json"))
+	var getJobResult struct {
+		Job struct {
+			Steps []struct {
+				StepName     string `json:"stepName"`
+				ArtifactsURL string `json:"artifactsUrl"`
+			} `json:"steps"`
+		} `json:"job"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(getJobOut), &getJobResult))
+	var deploymentArtifactURL string
+	for _, step := range getJobResult.Job.Steps {
+		if step.StepName == "DEPLOY" {
+			deploymentArtifactURL = step.ArtifactsURL
+		}
+	}
+	require.NotEmpty(t, deploymentArtifactURL)
+
 	artifactsOut := runCLI(t, awsCLI("amplify", "list-artifacts",
 		"--app-id", appID, "--branch-name", "main",
 		"--job-id", depResult.JobId, "--output", "json"))
 	var artifactsResult struct {
-		Artifacts []struct {
-			ArtifactId string `json:"artifactId"`
-		} `json:"artifacts"`
+		Artifacts []json.RawMessage `json:"artifacts"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(artifactsOut), &artifactsResult))
-	require.Len(t, artifactsResult.Artifacts, 1)
-	urlOut := runCLI(t, awsCLI("amplify", "get-artifact-url",
-		"--artifact-id", artifactsResult.Artifacts[0].ArtifactId, "--output", "json"))
-	var urlResult struct {
-		ArtifactUrl string `json:"artifactUrl"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(urlOut), &urlResult))
-	resp, err := http.Get(urlResult.ArtifactUrl)
+	require.Empty(t, artifactsResult.Artifacts)
+	resp, err := http.Get(deploymentArtifactURL)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)

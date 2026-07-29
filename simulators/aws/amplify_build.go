@@ -40,16 +40,19 @@ import (
 // monorepo roots/build paths, build-spec environment variables, cache paths,
 // and the frontend artifact collection rule.
 type amplifyBuildSpec struct {
-	Version          string
-	AppRoot          string
-	BuildPath        string
-	Environment      map[string]string
-	BackendCommands  []string
-	FrontendCommands []string
-	TestCommands     []string
-	BaseDirectory    string
-	Files            []string
-	CachePaths       []string
+	Version            string
+	AppRoot            string
+	BuildPath          string
+	Environment        map[string]string
+	BackendCommands    []string
+	FrontendCommands   []string
+	TestCommands       []string
+	TestBaseDirectory  string
+	TestFiles          []string
+	TestConfigFilePath string
+	BaseDirectory      string
+	Files              []string
+	CachePaths         []string
 }
 
 type amplifyBuildPhaseYAML struct {
@@ -58,6 +61,15 @@ type amplifyBuildPhaseYAML struct {
 
 type amplifyBuildSectionYAML struct {
 	Phases map[string]amplifyBuildPhaseYAML `yaml:"phases"`
+}
+
+type amplifyTestYAML struct {
+	amplifyBuildSectionYAML `yaml:",inline"`
+	Artifacts               struct {
+		BaseDirectory  string   `yaml:"baseDirectory"`
+		Files          []string `yaml:"files"`
+		ConfigFilePath string   `yaml:"configFilePath"`
+	} `yaml:"artifacts"`
 }
 
 type amplifyFrontendYAML struct {
@@ -77,7 +89,7 @@ type amplifyBuildApplicationYAML struct {
 	Env      amplifyBuildEnvYAML     `yaml:"env"`
 	Backend  amplifyBuildSectionYAML `yaml:"backend"`
 	Frontend amplifyFrontendYAML     `yaml:"frontend"`
-	Test     amplifyBuildSectionYAML `yaml:"test"`
+	Test     amplifyTestYAML         `yaml:"test"`
 }
 
 type amplifyBuildEnvYAML struct {
@@ -89,7 +101,7 @@ type amplifyBuildSpecYAML struct {
 	Env          amplifyBuildEnvYAML           `yaml:"env"`
 	Backend      amplifyBuildSectionYAML       `yaml:"backend"`
 	Frontend     amplifyFrontendYAML           `yaml:"frontend"`
-	Test         amplifyBuildSectionYAML       `yaml:"test"`
+	Test         amplifyTestYAML               `yaml:"test"`
 	Applications []amplifyBuildApplicationYAML `yaml:"applications"`
 }
 
@@ -125,16 +137,19 @@ func amplifyParseBuildSpec(text string, monorepoRoot ...string) (amplifyBuildSpe
 		}
 	}
 	spec := amplifyBuildSpec{
-		Version:          fmt.Sprintf("%v", raw.Version),
-		AppRoot:          application.AppRoot,
-		BuildPath:        application.Frontend.BuildPath,
-		Environment:      application.Env.Variables,
-		BackendCommands:  amplifyBuildPhaseCommands(application.Backend.Phases, "preBuild", "build", "postBuild"),
-		FrontendCommands: amplifyBuildPhaseCommands(application.Frontend.Phases, "preBuild", "build", "postBuild"),
-		TestCommands:     amplifyBuildPhaseCommands(application.Test.Phases, "preTest", "test", "postTest"),
-		BaseDirectory:    application.Frontend.Artifacts.BaseDirectory,
-		Files:            application.Frontend.Artifacts.Files,
-		CachePaths:       application.Frontend.Cache.Paths,
+		Version:            fmt.Sprintf("%v", raw.Version),
+		AppRoot:            application.AppRoot,
+		BuildPath:          application.Frontend.BuildPath,
+		Environment:        application.Env.Variables,
+		BackendCommands:    amplifyBuildPhaseCommands(application.Backend.Phases, "preBuild", "build", "postBuild"),
+		FrontendCommands:   amplifyBuildPhaseCommands(application.Frontend.Phases, "preBuild", "build", "postBuild"),
+		TestCommands:       amplifyBuildPhaseCommands(application.Test.Phases, "preTest", "test", "postTest"),
+		TestBaseDirectory:  application.Test.Artifacts.BaseDirectory,
+		TestFiles:          application.Test.Artifacts.Files,
+		TestConfigFilePath: application.Test.Artifacts.ConfigFilePath,
+		BaseDirectory:      application.Frontend.Artifacts.BaseDirectory,
+		Files:              application.Frontend.Artifacts.Files,
+		CachePaths:         application.Frontend.Cache.Paths,
 	}
 	if len(spec.BackendCommands)+len(spec.FrontendCommands)+len(spec.TestCommands) == 0 {
 		return amplifyBuildSpec{}, fmt.Errorf("buildSpec has no backend, frontend, or test commands")
@@ -258,6 +273,27 @@ func amplifyUpdateJobStep(jobID, stepName string, mutate func(*AmplifyJobStep)) 
 	})
 }
 
+func amplifyStartJobStep(jobID, stepName string) {
+	amplifyUpdateJobStep(jobID, stepName, func(step *AmplifyJobStep) {
+		step.Status = AmplifyJobStatusRunning
+		step.StartTime = amplifyEpoch()
+		if stepName == "BUILD" {
+			step.Context = `{"buildImage":"` + amplifyBuildImage() + `"}`
+		}
+	})
+}
+
+func amplifyStartJobSummary(jobID string) bool {
+	started := false
+	amplifyJobs.Update(jobID, func(job *amplifyStoredJob) {
+		if job.Job.Summary.Status == AmplifyJobStatusPending {
+			job.Job.Summary.Status = AmplifyJobStatusRunning
+			started = true
+		}
+	})
+	return started
+}
+
 // amplifyFinishJob lands a real-build job in a terminal state, refusing to
 // clobber a job that already left RUNNING (StopJob marked it CANCELLED).
 // Remaining non-terminal steps land in the same state.
@@ -290,7 +326,7 @@ const amplifyBuildTimeout = 15 * time.Minute
 // clone start → SUCCEED/FAILED honestly from the build container's exit.
 func amplifyScheduleRealBuild(appID, branch, jobID, urlBase, repo, specText string, env map[string]string, commitID string) {
 	go func() {
-		if !amplifyAdvanceJob(jobID, AmplifyJobStatusPending, AmplifyJobStatusRunning) {
+		if !amplifyStartJobSummary(jobID) {
 			return // stopped before it started
 		}
 		status := amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText, env, commitID)
@@ -302,6 +338,7 @@ func amplifyScheduleRealBuild(appID, branch, jobID, urlBase, repo, specText stri
 
 func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, env map[string]string, commitID string) AmplifyJobStatus {
 	provisionLog := &amplifyStepLog{}
+	amplifyStartJobStep(jobID, "PROVISION")
 	finishStep := func(step string, log *amplifyStepLog, status AmplifyJobStatus) {
 		logURL := amplifyStoreStepLog(urlBase, appID, branch, jobID, step, log)
 		now := amplifyEpoch()
@@ -379,6 +416,7 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 	// BUILD: preBuild + build commands in one shell (env exports persist
 	// across phases, the way Amplify's build container runs them).
 	buildLog := &amplifyStepLog{}
+	amplifyStartJobStep(jobID, "BUILD")
 	var script strings.Builder
 	script.WriteString("set -e\n")
 	for _, phase := range [][]string{spec.BackendCommands, spec.FrontendCommands, spec.TestCommands} {
@@ -424,10 +462,18 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 		finishStep("BUILD", buildLog, AmplifyJobStatusFailed)
 		return AmplifyJobStatusFailed
 	}
+	if err := amplifyCollectEndToEndTestArtifacts(
+		urlBase, appID, branch, jobID, projectDir, spec, buildLog,
+	); err != nil {
+		buildLog.Printf("# collect end-to-end test artifacts: %v", err)
+		finishStep("BUILD", buildLog, AmplifyJobStatusFailed)
+		return AmplifyJobStatusFailed
+	}
 	finishStep("BUILD", buildLog, AmplifyJobStatusSucceed)
 
 	// DEPLOY: collect baseDirectory into the job's artifact zip.
 	deployLog := &amplifyStepLog{}
+	amplifyStartJobStep(jobID, "DEPLOY")
 	zipBytes, fileCount, err := amplifyZipArtifacts(filepath.Join(projectDir, spec.BaseDirectory), spec.Files, deployLog)
 	if err != nil {
 		deployLog.Printf("# artifact collection: %v", err)
@@ -437,9 +483,77 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 	key := "artifacts/" + appID + "/" + branch + "/" + jobID + "/artifacts.zip"
 	amplifyPutS3Object(key, "application/zip", zipBytes)
 	amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, amplifyArtifactID(jobID), "artifacts.zip", key)
+	amplifySetJobStepArtifactsURL(jobID, "BUILD", amplifyPresignedS3URLBase(urlBase, key, http.MethodGet))
 	deployLog.Printf("# deployed %d files (%d bytes) from %s", fileCount, len(zipBytes), spec.BaseDirectory)
 	finishStep("DEPLOY", deployLog, AmplifyJobStatusSucceed)
 	return AmplifyJobStatusSucceed
+}
+
+func amplifyCollectEndToEndTestArtifacts(
+	urlBase, appID, branch, jobID, projectDir string,
+	spec amplifyBuildSpec,
+	log *amplifyStepLog,
+) error {
+	if spec.TestBaseDirectory == "" || len(spec.TestFiles) == 0 {
+		return nil
+	}
+	baseDirectory := filepath.Join(projectDir, spec.TestBaseDirectory)
+	testZip, count, err := amplifyZipArtifacts(baseDirectory, spec.TestFiles, log)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+	aggregateKey := "test-artifacts/" + appID + "/" + branch + "/" + jobID + "/test-artifacts.zip"
+	amplifyPutS3Object(aggregateKey, "application/zip", testZip)
+	aggregateURL := amplifyPresignedS3URLBase(urlBase, aggregateKey, http.MethodGet)
+	amplifyRegisterAuxiliaryArtifact(
+		urlBase, appID, branch, jobID, amplifyArtifactID(jobID), "test-artifacts.zip", aggregateKey,
+	)
+
+	var configURL string
+	err = filepath.WalkDir(baseDirectory, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(baseDirectory, filePath)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return err
+		}
+		key := "test-artifacts/" + appID + "/" + branch + "/" + jobID + "/files/" + relative
+		if amplifyArtifactMatch(spec.TestFiles, relative) {
+			amplifyPutS3Object(key, "application/octet-stream", data)
+			amplifyRegisterEndToEndTestArtifact(
+				urlBase, appID, branch, jobID, amplifyArtifactID(jobID), relative, key,
+			)
+		}
+		if configURL == "" &&
+			spec.TestConfigFilePath != "" &&
+			amplifyArtifactMatch([]string{spec.TestConfigFilePath}, relative) {
+			configKey := "test-artifacts/" + appID + "/" + branch + "/" + jobID + "/config/" + relative
+			amplifyPutS3Object(configKey, "application/json", data)
+			configURL = amplifyPresignedS3URLBase(urlBase, configKey, http.MethodGet)
+			amplifyRegisterAuxiliaryArtifact(
+				urlBase, appID, branch, jobID, amplifyArtifactID(jobID), relative, configKey,
+			)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	amplifySetJobStepTestURLs(jobID, "BUILD", aggregateURL, configURL)
+	log.Printf("# collected %d end-to-end test artifacts", count)
+	return nil
 }
 
 // amplifyZipArtifacts zips baseDir's contents filtered by the buildSpec's

@@ -8,12 +8,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/amplify"
 	amplifytypes "github.com/aws/aws-sdk-go-v2/service/amplify/types"
+	"github.com/aws/aws-sdk-go-v2/service/wafv2"
+	wafv2types "github.com/aws/aws-sdk-go-v2/service/wafv2/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,6 +44,95 @@ func amplifyWaitJobStatus(t *testing.T, ctx context.Context, c *amplify.Client, 
 		return job.Summary != nil && job.Summary.Status == want
 	}, 15*time.Second, 100*time.Millisecond, "job %s never reached %s", jobID, want)
 	return job
+}
+
+func TestAmplifyWAFv2Association(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	amplifyAPI := amplifyClient()
+	wafAPI := wafClient()
+
+	app, err := amplifyAPI.CreateApp(ctx, &amplify.CreateAppInput{
+		Name: aws.String("waf-app-" + time.Now().Format("150405.000000")),
+	})
+	require.NoError(t, err)
+	appID := aws.ToString(app.App.AppId)
+	appARN := aws.ToString(app.App.AppArn)
+	t.Cleanup(func() {
+		_, _ = amplifyAPI.DeleteApp(context.Background(), &amplify.DeleteAppInput{AppId: aws.String(appID)})
+	})
+
+	aclName := "amplify-waf-" + time.Now().Format("150405.000000")
+	acl, err := wafAPI.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+		Name:  aws.String(aclName),
+		Scope: wafv2types.ScopeCloudfront,
+		DefaultAction: &wafv2types.DefaultAction{
+			Allow: &wafv2types.AllowAction{},
+		},
+		VisibilityConfig: &wafv2types.VisibilityConfig{
+			SampledRequestsEnabled:   true,
+			CloudWatchMetricsEnabled: true,
+			MetricName:               aws.String(aclName),
+		},
+	})
+	require.NoError(t, err)
+	aclARN := aws.ToString(acl.Summary.ARN)
+	lockToken := aws.ToString(acl.Summary.LockToken)
+	t.Cleanup(func() {
+		_, _ = wafAPI.DisassociateWebACL(context.Background(), &wafv2.DisassociateWebACLInput{
+			ResourceArn: aws.String(appARN),
+		})
+		_, _ = wafAPI.DeleteWebACL(context.Background(), &wafv2.DeleteWebACLInput{
+			Name: acl.Summary.Name, Scope: wafv2types.ScopeCloudfront,
+			Id: acl.Summary.Id, LockToken: aws.String(lockToken),
+		})
+	})
+
+	_, err = wafAPI.AssociateWebACL(ctx, &wafv2.AssociateWebACLInput{
+		WebACLArn: acl.Summary.ARN, ResourceArn: aws.String(appARN),
+	})
+	require.NoError(t, err)
+
+	gotApp, err := amplifyAPI.GetApp(ctx, &amplify.GetAppInput{AppId: aws.String(appID)})
+	require.NoError(t, err)
+	require.NotNil(t, gotApp.App.WafConfiguration)
+	assert.Equal(t, aclARN, aws.ToString(gotApp.App.WafConfiguration.WebAclArn))
+	assert.Equal(t, amplifytypes.WafStatusAssociationSuccess, gotApp.App.WafConfiguration.WafStatus)
+	assert.Empty(t, aws.ToString(gotApp.App.WafConfiguration.StatusReason))
+
+	gotACL, err := wafAPI.GetWebACLForResource(ctx, &wafv2.GetWebACLForResourceInput{
+		ResourceArn: aws.String(appARN),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, gotACL.WebACL)
+	assert.Equal(t, aclARN, aws.ToString(gotACL.WebACL.ARN))
+	resources, err := wafAPI.ListResourcesForWebACL(ctx, &wafv2.ListResourcesForWebACLInput{
+		WebACLArn: aws.String(aclARN),
+	})
+	require.NoError(t, err)
+	assert.Contains(t, resources.ResourceArns, appARN)
+
+	_, err = wafAPI.DeleteWebACL(ctx, &wafv2.DeleteWebACLInput{
+		Name: acl.Summary.Name, Scope: wafv2types.ScopeCloudfront,
+		Id: acl.Summary.Id, LockToken: aws.String(lockToken),
+	})
+	require.Error(t, err, "an Amplify-associated WebACL cannot be deleted")
+
+	_, err = wafAPI.AssociateWebACL(ctx, &wafv2.AssociateWebACLInput{
+		WebACLArn: acl.Summary.ARN,
+		ResourceArn: aws.String(
+			"arn:aws:amplify:us-east-1:123456789012:apps/dmissing",
+		),
+	})
+	require.Error(t, err, "an association cannot target a nonexistent Amplify app")
+
+	_, err = wafAPI.DisassociateWebACL(ctx, &wafv2.DisassociateWebACLInput{
+		ResourceArn: aws.String(appARN),
+	})
+	require.NoError(t, err)
+	gotApp, err = amplifyAPI.GetApp(ctx, &amplify.GetAppInput{AppId: aws.String(appID)})
+	require.NoError(t, err)
+	assert.Nil(t, gotApp.App.WafConfiguration)
 }
 
 func TestAmplifyAppLifecycle(t *testing.T) {
@@ -282,6 +374,18 @@ frontend:
     baseDirectory: dist
     files:
       - '**/*'
+test:
+  phases:
+    test:
+      commands:
+        - mkdir -p cypress/screenshots cypress/report
+        - printf screenshot-bytes > cypress/screenshots/home.png
+        - printf '{"stats":{"tests":1,"passes":1}}' > cypress/report/mochawesome.json
+  artifacts:
+    baseDirectory: cypress
+    configFilePath: '**/mochawesome.json'
+    files:
+      - '**/*.png'
 `
 	app, err := c.CreateApp(ctx, &amplify.CreateAppInput{
 		Name:       aws.String("job-app-" + time.Now().Format("150405.000000")),
@@ -308,6 +412,8 @@ frontend:
 	require.NoError(t, err)
 	jobID := aws.ToString(startOut.JobSummary.JobId)
 	require.NotEmpty(t, jobID)
+	_, err = strconv.ParseUint(jobID, 10, 64)
+	require.NoError(t, err, "Amplify job IDs must be numeric")
 	// The job starts PENDING and settles only after the real repository build.
 	assert.Contains(t, []amplifytypes.JobStatus{
 		amplifytypes.JobStatusPending, amplifytypes.JobStatusRunning, amplifytypes.JobStatusSucceed,
@@ -318,6 +424,13 @@ frontend:
 	for _, step := range job.Steps {
 		assert.Equal(t, amplifytypes.JobStatusSucceed, step.Status)
 	}
+	buildStep := amplifyRequireJobStep(t, job, "BUILD")
+	buildArtifactURL := aws.ToString(buildStep.ArtifactsUrl)
+	testArtifactsURL := aws.ToString(buildStep.TestArtifactsUrl)
+	testConfigURL := aws.ToString(buildStep.TestConfigUrl)
+	require.NotEmpty(t, buildArtifactURL)
+	require.NotEmpty(t, testArtifactsURL)
+	require.NotEmpty(t, testConfigURL)
 
 	listJobs, err := c.ListJobs(ctx, &amplify.ListJobsInput{
 		AppId: aws.String(appID), BranchName: aws.String("main"),
@@ -325,7 +438,8 @@ frontend:
 	require.NoError(t, err)
 	require.Len(t, listJobs.JobSummaries, 1)
 
-	// Artifacts materialize with the finished job.
+	// ListArtifacts is specifically the end-to-end test artifact surface.
+	// The hosted build bundle is exposed separately on GetJob's BUILD step.
 	var artifactID string
 	require.Eventually(t, func() bool {
 		artifacts, err := c.ListArtifacts(ctx, &amplify.ListArtifactsInput{
@@ -346,15 +460,23 @@ frontend:
 	})
 	require.NoError(t, err)
 	assert.Equal(t, artifactID, aws.ToString(artifactURL.ArtifactId))
-	artifactURLString := aws.ToString(artifactURL.ArtifactUrl)
-	require.NotEmpty(t, artifactURLString)
-	artifactResp, err := http.Get(artifactURLString)
+	testArtifactURL := aws.ToString(artifactURL.ArtifactUrl)
+	require.NotEmpty(t, testArtifactURL)
+	artifactResp, err := http.Get(testArtifactURL)
 	require.NoError(t, err)
 	defer artifactResp.Body.Close()
 	assert.Equal(t, http.StatusOK, artifactResp.StatusCode)
 	artifactBody, err := io.ReadAll(artifactResp.Body)
 	require.NoError(t, err)
-	assert.True(t, bytes.HasPrefix(artifactBody, []byte("PK")), "build artifact must be a real zip")
+	assert.Equal(t, "screenshot-bytes", string(artifactBody))
+
+	buildArtifactResp, err := http.Get(buildArtifactURL)
+	require.NoError(t, err)
+	defer buildArtifactResp.Body.Close()
+	assert.Equal(t, http.StatusOK, buildArtifactResp.StatusCode)
+	buildArtifactBody, err := io.ReadAll(buildArtifactResp.Body)
+	require.NoError(t, err)
+	assert.True(t, bytes.HasPrefix(buildArtifactBody, []byte("PK")), "build artifact must be a real zip")
 
 	logs, err := c.GenerateAccessLogs(ctx, &amplify.GenerateAccessLogsInput{
 		AppId:      aws.String(appID),
@@ -372,6 +494,35 @@ frontend:
 	logBody, err := io.ReadAll(logResp.Body)
 	require.NoError(t, err)
 	assert.Contains(t, string(logBody), "cs-method")
+
+	_, err = c.StartJob(ctx, &amplify.StartJobInput{
+		AppId:      aws.String(appID),
+		BranchName: aws.String("main"),
+		JobType:    amplifytypes.JobTypeRetry,
+	})
+	require.Error(t, err)
+
+	retryOut, err := c.StartJob(ctx, &amplify.StartJobInput{
+		AppId:      aws.String(appID),
+		BranchName: aws.String("main"),
+		JobType:    amplifytypes.JobTypeRetry,
+		JobId:      aws.String(jobID),
+	})
+	require.NoError(t, err)
+	retryJobID := aws.ToString(retryOut.JobSummary.JobId)
+	require.NotEqual(t, jobID, retryJobID)
+	_, err = strconv.ParseUint(retryJobID, 10, 64)
+	require.NoError(t, err, "Amplify retry job IDs must be numeric")
+	assert.Equal(t, amplifytypes.JobTypeRetry, retryOut.JobSummary.JobType)
+	assert.Equal(t, aws.ToString(job.Summary.CommitId), aws.ToString(retryOut.JobSummary.CommitId))
+	assert.Equal(t, aws.ToString(job.Summary.CommitMessage), aws.ToString(retryOut.JobSummary.CommitMessage))
+	amplifyWaitJobStatus(t, ctx, c, appID, "main", retryJobID, amplifytypes.JobStatusSucceed)
+
+	listJobs, err = c.ListJobs(ctx, &amplify.ListJobsInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"),
+	})
+	require.NoError(t, err)
+	require.Len(t, listJobs.JobSummaries, 2)
 
 	// Stopping the finished job is rejected (real Amplify only stops jobs
 	// that are in progress).
@@ -408,7 +559,7 @@ frontend:
 	require.NoError(t, err)
 	assert.Equal(t, amplifytypes.JobStatusCancelled, cancelled.Job.Summary.Status)
 
-	for _, id := range []string{jobID, secondJobID} {
+	for _, id := range []string{jobID, retryJobID, secondJobID} {
 		deleteOut, err := c.DeleteJob(ctx, &amplify.DeleteJobInput{
 			AppId:      aws.String(appID),
 			BranchName: aws.String("main"),
@@ -426,6 +577,16 @@ frontend:
 		ArtifactId: aws.String(artifactID),
 	})
 	require.Error(t, err)
+	deletedBuildArtifact, err := http.Get(buildArtifactURL)
+	require.NoError(t, err)
+	deletedBuildArtifact.Body.Close()
+	assert.Equal(t, http.StatusNotFound, deletedBuildArtifact.StatusCode)
+	for _, deletedURL := range []string{testArtifactsURL, testConfigURL} {
+		deletedArtifact, getErr := http.Get(deletedURL)
+		require.NoError(t, getErr)
+		deletedArtifact.Body.Close()
+		assert.Equal(t, http.StatusNotFound, deletedArtifact.StatusCode)
+	}
 
 	listJobs, err = c.ListJobs(ctx, &amplify.ListJobsInput{
 		AppId: aws.String(appID), BranchName: aws.String("main"),
@@ -439,6 +600,17 @@ frontend:
 	require.NoError(t, err)
 	assert.Empty(t, aws.ToString(branch.Branch.ActiveJobId))
 	assert.Equal(t, "0", aws.ToString(branch.Branch.TotalNumberOfJobs))
+}
+
+func amplifyRequireJobStep(t *testing.T, job *amplifytypes.Job, name string) amplifytypes.Step {
+	t.Helper()
+	for _, step := range job.Steps {
+		if aws.ToString(step.StepName) == name {
+			return step
+		}
+	}
+	t.Fatalf("job has no %s step", name)
+	return amplifytypes.Step{}
 }
 
 func TestAmplifyDeploymentFlow(t *testing.T) {
@@ -505,25 +677,18 @@ func TestAmplifyDeploymentFlow(t *testing.T) {
 	assert.Equal(t, depJobID, aws.ToString(startDep.JobSummary.JobId))
 	assert.Equal(t, amplifytypes.JobTypeManual, startDep.JobSummary.JobType)
 
-	amplifyWaitJobStatus(t, ctx, c, appID, "main", depJobID, amplifytypes.JobStatusSucceed)
+	deploymentJob := amplifyWaitJobStatus(t, ctx, c, appID, "main", depJobID, amplifytypes.JobStatusSucceed)
 
-	// The uploaded zip — not a sim placeholder — is the job artifact.
-	var artifactID string
-	require.Eventually(t, func() bool {
-		artifacts, err := c.ListArtifacts(ctx, &amplify.ListArtifactsInput{
-			AppId:      aws.String(appID),
-			BranchName: aws.String("main"),
-			JobId:      aws.String(depJobID),
-		})
-		if err != nil || len(artifacts.Artifacts) != 1 {
-			return false
-		}
-		artifactID = aws.ToString(artifacts.Artifacts[0].ArtifactId)
-		return artifactID != ""
-	}, 15*time.Second, 100*time.Millisecond)
-	artifactURL, err := c.GetArtifactUrl(ctx, &amplify.GetArtifactUrlInput{ArtifactId: aws.String(artifactID)})
+	// The uploaded build bundle is exposed through GetJob's DEPLOY step.
+	// ListArtifacts remains reserved for end-to-end test outputs.
+	deployStep := amplifyRequireJobStep(t, deploymentJob, "DEPLOY")
+	require.NotEmpty(t, aws.ToString(deployStep.ArtifactsUrl))
+	artifacts, err := c.ListArtifacts(ctx, &amplify.ListArtifactsInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"), JobId: aws.String(depJobID),
+	})
 	require.NoError(t, err)
-	resp, err := http.Get(aws.ToString(artifactURL.ArtifactUrl))
+	require.Empty(t, artifacts.Artifacts)
+	resp, err := http.Get(aws.ToString(deployStep.ArtifactsUrl))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -621,22 +786,71 @@ func TestAmplifyDeploymentFileMapUploads(t *testing.T) {
 	require.NoError(t, err)
 	amplifyWaitJobStatus(t, ctx, c, appID, "main", depJobID, amplifytypes.JobStatusSucceed)
 
-	require.Eventually(t, func() bool {
-		artifacts, err := c.ListArtifacts(ctx, &amplify.ListArtifactsInput{
-			AppId:      aws.String(appID),
-			BranchName: aws.String("main"),
-			JobId:      aws.String(depJobID),
-		})
-		if err != nil || len(artifacts.Artifacts) != len(files) {
-			return false
-		}
-		for _, a := range artifacts.Artifacts {
-			if _, ok := files[aws.ToString(a.ArtifactFileName)]; !ok {
-				return false
-			}
-		}
-		return true
-	}, 15*time.Second, 100*time.Millisecond, "uploaded files must become the job artifacts")
+	artifacts, err := c.ListArtifacts(ctx, &amplify.ListArtifactsInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"), JobId: aws.String(depJobID),
+	})
+	require.NoError(t, err)
+	require.Empty(t, artifacts.Artifacts, "manual deployment files are build content, not end-to-end test artifacts")
+	host := "main." + appID + ".amplifyapp.com"
+	for name, want := range files {
+		response, body := amplifyHostGet(t, host, "/"+name, nil)
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		require.Equal(t, want, body)
+	}
+
+	wafAPI := wafClient()
+	aclName := "filemap-block-" + time.Now().Format("150405.000000")
+	acl, err := wafAPI.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+		Name:  aws.String(aclName),
+		Scope: wafv2types.ScopeCloudfront,
+		DefaultAction: &wafv2types.DefaultAction{
+			Block: &wafv2types.BlockAction{},
+		},
+		VisibilityConfig: &wafv2types.VisibilityConfig{
+			SampledRequestsEnabled:   true,
+			CloudWatchMetricsEnabled: true,
+			MetricName:               aws.String(aclName),
+		},
+	})
+	require.NoError(t, err)
+	appARN := aws.ToString(app.App.AppArn)
+	_, err = wafAPI.AssociateWebACL(ctx, &wafv2.AssociateWebACLInput{
+		WebACLArn: acl.Summary.ARN, ResourceArn: aws.String(appARN),
+	})
+	require.NoError(t, err)
+
+	blockedResponse, _ := amplifyHostGet(t, host, "/index.html", nil)
+	require.Equal(t, http.StatusForbidden, blockedResponse.StatusCode)
+	samples, err := wafAPI.GetSampledRequests(ctx, &wafv2.GetSampledRequestsInput{
+		WebAclArn:      acl.Summary.ARN,
+		RuleMetricName: aws.String(aclName),
+		Scope:          wafv2types.ScopeCloudfront,
+		TimeWindow: &wafv2types.TimeWindow{
+			StartTime: aws.Time(time.Now().Add(-time.Minute)),
+			EndTime:   aws.Time(time.Now().Add(time.Minute)),
+		},
+		MaxItems: aws.Int64(10),
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, samples.PopulationSize)
+	require.Len(t, samples.SampledRequests, 1)
+	assert.Equal(t, "BLOCK", aws.ToString(samples.SampledRequests[0].Action))
+	assert.Equal(t, "/index.html", aws.ToString(samples.SampledRequests[0].Request.URI))
+	assert.Equal(t, "GET", aws.ToString(samples.SampledRequests[0].Request.Method))
+	assert.EqualValues(t, http.StatusForbidden, aws.ToInt32(samples.SampledRequests[0].ResponseCodeSent))
+
+	_, err = wafAPI.DisassociateWebACL(ctx, &wafv2.DisassociateWebACLInput{
+		ResourceArn: aws.String(appARN),
+	})
+	require.NoError(t, err)
+	_, err = wafAPI.DeleteWebACL(ctx, &wafv2.DeleteWebACLInput{
+		Name: acl.Summary.Name, Scope: wafv2types.ScopeCloudfront,
+		Id: acl.Summary.Id, LockToken: acl.Summary.LockToken,
+	})
+	require.NoError(t, err)
+	unblockedResponse, unblockedBody := amplifyHostGet(t, host, "/index.html", nil)
+	require.Equal(t, http.StatusOK, unblockedResponse.StatusCode)
+	require.Equal(t, files["index.html"], unblockedBody)
 }
 
 func TestAmplifyListPagination(t *testing.T) {

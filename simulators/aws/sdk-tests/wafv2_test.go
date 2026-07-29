@@ -6,6 +6,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
+	cftypes "github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	elbtypes "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/aws/aws-sdk-go-v2/service/wafv2"
 	wafv2types "github.com/aws/aws-sdk-go-v2/service/wafv2/types"
 	"github.com/stretchr/testify/assert"
@@ -339,7 +343,7 @@ func TestWAFv2UpdatesAndListsAndTags(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// GetSampledRequests — stub returns empty
+	// No request reached this unassociated WebACL, so its real sample is empty.
 	samp, err := c.GetSampledRequests(ctx, &wafv2.GetSampledRequestsInput{
 		WebAclArn:      aws.String(aws.ToString(aclOut.Summary.ARN)),
 		RuleMetricName: aws.String("any"),
@@ -352,6 +356,8 @@ func TestWAFv2UpdatesAndListsAndTags(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, samp)
+	require.Zero(t, samp.PopulationSize)
+	require.Empty(t, samp.SampledRequests)
 }
 
 func TestWAFv2AssociateWebACLWithCloudFront(t *testing.T) {
@@ -382,7 +388,63 @@ func TestWAFv2AssociateWebACLWithCloudFront(t *testing.T) {
 		})
 	}()
 
-	cfARN := "arn:aws:cloudfront::123456789012:distribution/EFAKE000000001"
+	cloudFrontAPI := cfClient()
+	distribution, err := cloudFrontAPI.CreateDistribution(ctx, &cloudfront.CreateDistributionInput{
+		DistributionConfig: &cftypes.DistributionConfig{
+			CallerReference: aws.String("waf-association-" + time.Now().Format("150405.000000")),
+			Comment:         aws.String("AWS WAFv2 association target"),
+			Enabled:         aws.Bool(true),
+			Origins: &cftypes.Origins{Quantity: aws.Int32(1), Items: []cftypes.Origin{{
+				Id: aws.String("origin"), DomainName: aws.String("example.com"),
+				CustomOriginConfig: &cftypes.CustomOriginConfig{
+					HTTPPort: aws.Int32(80), HTTPSPort: aws.Int32(443),
+					OriginProtocolPolicy: cftypes.OriginProtocolPolicyHttpOnly,
+					OriginSslProtocols: &cftypes.OriginSslProtocols{
+						Quantity: aws.Int32(1), Items: []cftypes.SslProtocol{cftypes.SslProtocolTLSv12},
+					},
+				},
+			}}},
+			DefaultCacheBehavior: &cftypes.DefaultCacheBehavior{
+				TargetOriginId: aws.String("origin"), ViewerProtocolPolicy: cftypes.ViewerProtocolPolicyAllowAll,
+				AllowedMethods: &cftypes.AllowedMethods{
+					Quantity: aws.Int32(2), Items: []cftypes.Method{cftypes.MethodGet, cftypes.MethodHead},
+					CachedMethods: &cftypes.CachedMethods{
+						Quantity: aws.Int32(2), Items: []cftypes.Method{cftypes.MethodGet, cftypes.MethodHead},
+					},
+				},
+				ForwardedValues: &cftypes.ForwardedValues{
+					QueryString: aws.Bool(false),
+					Cookies:     &cftypes.CookiePreference{Forward: cftypes.ItemSelectionNone},
+				},
+				MinTTL: aws.Int64(0),
+			},
+			ViewerCertificate: &cftypes.ViewerCertificate{CloudFrontDefaultCertificate: aws.Bool(true)},
+			Restrictions: &cftypes.Restrictions{GeoRestriction: &cftypes.GeoRestriction{
+				RestrictionType: cftypes.GeoRestrictionTypeNone, Quantity: aws.Int32(0),
+			}},
+		},
+	})
+	require.NoError(t, err)
+	cfARN := aws.ToString(distribution.Distribution.ARN)
+	distributionID := aws.ToString(distribution.Distribution.Id)
+	t.Cleanup(func() {
+		current, getErr := cloudFrontAPI.GetDistribution(context.Background(), &cloudfront.GetDistributionInput{
+			Id: aws.String(distributionID),
+		})
+		if getErr != nil {
+			return
+		}
+		config := *current.Distribution.DistributionConfig
+		config.Enabled = aws.Bool(false)
+		updated, updateErr := cloudFrontAPI.UpdateDistribution(context.Background(), &cloudfront.UpdateDistributionInput{
+			Id: aws.String(distributionID), IfMatch: current.ETag, DistributionConfig: &config,
+		})
+		if updateErr == nil {
+			_, _ = cloudFrontAPI.DeleteDistribution(context.Background(), &cloudfront.DeleteDistributionInput{
+				Id: aws.String(distributionID), IfMatch: updated.ETag,
+			})
+		}
+	})
 
 	_, err = c.AssociateWebACL(ctx, &wafv2.AssociateWebACLInput{
 		WebACLArn:   aws.String(aclARN),
@@ -413,6 +475,58 @@ func TestWAFv2AssociateWebACLWithCloudFront(t *testing.T) {
 	// Disassociate then delete works
 	_, err = c.DisassociateWebACL(ctx, &wafv2.DisassociateWebACLInput{
 		ResourceArn: aws.String(cfARN),
+	})
+	require.NoError(t, err)
+}
+
+func TestWAFv2AssociateRegionalWebACLWithApplicationLoadBalancer(t *testing.T) {
+	c := wafClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	name := "sdk-alb-" + time.Now().Format("150405.000000")
+	createOut, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+		Name:  aws.String(name),
+		Scope: wafv2types.ScopeRegional,
+		DefaultAction: &wafv2types.DefaultAction{
+			Allow: &wafv2types.AllowAction{},
+		},
+		VisibilityConfig: &wafv2types.VisibilityConfig{
+			SampledRequestsEnabled:   true,
+			CloudWatchMetricsEnabled: true,
+			MetricName:               aws.String(name + "-metric"),
+		},
+	})
+	require.NoError(t, err)
+	aclARN := aws.ToString(createOut.Summary.ARN)
+
+	_, subnetID := elbv2FidVPCSubnet(t, "10.252.0.0/16", "10.252.1.0/24")
+	elb := elbv2Client()
+	lbARN := elbv2FidLoadBalancer(t, elb, subnetID, "sdk-waf-alb", elbtypes.LoadBalancerTypeEnumApplication)
+
+	_, err = c.AssociateWebACL(ctx, &wafv2.AssociateWebACLInput{
+		WebACLArn:   aws.String(aclARN),
+		ResourceArn: aws.String(lbARN),
+	})
+	require.NoError(t, err)
+	associated, err := c.GetWebACLForResource(ctx, &wafv2.GetWebACLForResourceInput{
+		ResourceArn: aws.String(lbARN),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, associated.WebACL)
+	assert.Equal(t, aclARN, aws.ToString(associated.WebACL.ARN))
+
+	_, err = c.DisassociateWebACL(ctx, &wafv2.DisassociateWebACLInput{ResourceArn: aws.String(lbARN)})
+	require.NoError(t, err)
+	_, err = c.DeleteWebACL(ctx, &wafv2.DeleteWebACLInput{
+		Name:      aws.String(name),
+		Scope:     wafv2types.ScopeRegional,
+		Id:        createOut.Summary.Id,
+		LockToken: createOut.Summary.LockToken,
+	})
+	require.NoError(t, err)
+	_, err = elb.DeleteLoadBalancer(ctx, &elasticloadbalancingv2.DeleteLoadBalancerInput{
+		LoadBalancerArn: aws.String(lbARN),
 	})
 	require.NoError(t, err)
 }

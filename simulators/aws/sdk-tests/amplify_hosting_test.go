@@ -325,15 +325,25 @@ frontend:
 	assert.Contains(t, stepLogs["BUILD"], "prebuild "+marker, "BUILD log must carry the command output")
 	assert.Contains(t, stepLogs["DEPLOY"], "index.html")
 
-	// The build artifact zip is the job's artifact…
+	// The hosted build bundle is returned on GetJob's BUILD step. The
+	// ListArtifacts API is reserved for end-to-end test outputs.
+	buildStep := amplifyRequireJobStep(t, job, "BUILD")
+	buildArtifactURL := aws.ToString(buildStep.ArtifactsUrl)
+	require.NotEmpty(t, buildArtifactURL)
+	buildArtifactResponse, err := http.Get(buildArtifactURL)
+	require.NoError(t, err)
+	buildArtifactBody, err := io.ReadAll(buildArtifactResponse.Body)
+	buildArtifactResponse.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, buildArtifactResponse.StatusCode)
+	require.True(t, bytes.HasPrefix(buildArtifactBody, []byte("PK")))
 	artifacts, err := c.ListArtifacts(ctx, &amplify.ListArtifactsInput{
 		AppId: aws.String(appID), BranchName: aws.String("main"), JobId: aws.String(jobID),
 	})
 	require.NoError(t, err)
-	require.Len(t, artifacts.Artifacts, 1)
-	assert.Equal(t, "artifacts.zip", aws.ToString(artifacts.Artifacts[0].ArtifactFileName))
+	require.Empty(t, artifacts.Artifacts)
 
-	// …and the hosting data plane serves it.
+	// The hosting data plane serves that same bundle.
 	host := "main." + appID + ".amplifyapp.com"
 	resp, body := amplifyHostGet(t, host, "/", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)

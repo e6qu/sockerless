@@ -10,7 +10,7 @@ The simulator exposes one HTTP endpoint (default `:4566`) that fronts all AWS se
 |---|---|---|
 | [AWS SDK for Go v2](https://github.com/aws/aws-sdk-go-v2) (`github.com/aws/aws-sdk-go-v2/service/*`) | v1.30 | Wire-level SDK compatibility — request/response shapes, error envelopes, pagination, optimistic concurrency tokens. Covers 30+ services. |
 | [`aws` CLI](https://docs.aws.amazon.com/cli/latest/reference/) | 2.17+ | Endpoint-override fidelity (`--endpoint-url`). CLI uses the same SDK but exercises a different argument-marshaling path. Some endpoints differ (e.g. Route 53 `/rrset/` with trailing slash). |
-| [Terraform `aws` provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs) | v6.47.0 | Full plan → apply → destroy round-trip across 60+ resource types (`aws_ecs_*`, `aws_lambda_*`, `aws_cloudfront_*`, `aws_route53_*`, `aws_wafv2_*`, `aws_amplify_*`, `aws_acm_*`, `aws_iam_*`, `aws_ecr_*`, `aws_s3_*`). Stresses cross-resource references, Lambda invocation through the Runtime API, and stateful drift detection. |
+| [Terraform `aws` provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs) | v6.50.0 | Full plan → apply → destroy round-trip across 60+ resource types (`aws_ecs_*`, `aws_lambda_*`, `aws_cloudfront_*`, `aws_route53_*`, `aws_wafv2_*`, `aws_amplify_*`, `aws_acm_*`, `aws_iam_*`, `aws_ecr_*`, `aws_s3_*`). Stresses cross-resource references, Lambda invocation through the Runtime API, and stateful drift detection. |
 
 Anything any of these three tools does against the real AWS endpoint, it must do against this simulator. Gaps from that contract are real bugs (see [BUGS.md](../../BUGS.md)).
 
@@ -20,7 +20,7 @@ Anything any of these three tools does against the real AWS endpoint, it must do
 |---|---|---|
 | `sdk-tests/` — 30 packages (`ecs_test.go`, `ecr_test.go`, `cloudfront_test.go`, `route53_test.go`, `wafv2_test.go`, `amplify_test.go`, `acm_test.go`, `iam_slr_oidc_test.go`, …) | Real `aws-sdk-go-v2` clients against the sim. Per-op assertions on response shape + error codes. | 2026-05-15 (PR #159 P159.10) |
 | `cli-tests/` — 30 packages (`ecs_test.go`, `iam_slr_oidc_test.go`, …) | Real `aws` CLI invoked via `os/exec`, parses CLI JSON output. | 2026-05-15 |
-| `terraform-tests/` — `TestStackProductionShape` | Real Terraform `aws` v6.47.0 against the sim. Provisions CloudFront + ACM + WAFv2 + Route 53 ALIAS + Amplify + IAM SLR/OIDC + ECS + ECR + Cloud Map + Lambda resources together, asserts cross-resource outputs and Lambda Runtime API invocation output, then `terraform destroy`. | 2026-05-31 |
+| `terraform-tests/` — `TestStackProductionShape` | Real Terraform `aws` v6.50.0 against the sim. Provisions CloudFront + ACM + WAFv2 + Route 53 ALIAS + Amplify + IAM SLR/OIDC + ECS + ECR + Cloud Map + Lambda resources together, asserts cross-resource outputs and Lambda Runtime API invocation output, then `terraform destroy`. | 2026-07-29 |
 | `make simulators/aws/test` | Leaf-Makefile unit + integration suite per `docs/MAKEFILE_STANDARD.md`. | 2026-05-15 |
 
 The SDK + Terraform tests are the load-bearing validation. CI runs all four on every PR (`.github/workflows/ci.yml`).
@@ -72,6 +72,10 @@ broker a private endpoint variable. The official-client suite proves this by
 having an AWS Step Functions-launched AWS CodeBuild process invoke the vendor
 AWS CLI against Amazon SQS and by having explicitly deployed AWS Lambda code
 invoke the bundled AWS SDK against Amazon SQS.
+It also launches the official HashiCorp Terraform image as an Amazon ECS task
+from AWS Step Functions; Terraform uses only the standard `AWS_ENDPOINT_URL`
+coordinate, applies an Amazon SQS resource to the simulator, and an independent
+AWS SDK client reads the resulting queue and tags.
 
 AWS Lambda follows the real deployment contract: `CreateFunction` supplies a
 ZIP archive or image plus handler, role, and environment configuration.
@@ -214,6 +218,15 @@ started when the execution is aborted. CodeBuild clones private Git sources
 with encrypted imported or AWS Secrets Manager credentials and executes the
 checked-in build specification inside the project's exact configured image;
 stopping a build or build batch cancels that container.
+
+Amazon Amplify release and retry jobs expose the hosted build ZIP through the
+`BUILD` step's `artifactsUrl`; `ListArtifacts` and `GetArtifactUrl` expose only
+the actual end-to-end test files declared by the build specification. Test
+artifact bundles and configuration URLs live on that same `BUILD` step and are
+deleted with the job. AWS WAF associations update the Amplify app's
+`wafConfiguration`, protect the hosting data plane with the WebACL default
+action and IP-set rules, and feed actual matching requests into
+`GetSampledRequests`.
 
 Full per-verb wire shape: see [API_SPEC.md](API_SPEC.md).
 
