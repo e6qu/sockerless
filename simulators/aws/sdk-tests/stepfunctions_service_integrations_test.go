@@ -557,7 +557,10 @@ timeout -s TERM 120 terraform apply -auto-approve -input=false -no-color`,
 				{Name: aws.String("TF_CLI_CONFIG_FILE"), Value: aws.String("/terraformrc")},
 				// Prove provider installation is fully offline: any accidental
 				// HTTPS registry access fails instead of borrowing host egress.
+				// The simulator is the task's declared cloud endpoint, so it
+				// must bypass environment proxies just as localhost does.
 				{Name: aws.String("HTTPS_PROXY"), Value: aws.String("http://127.0.0.1:1")},
+				{Name: aws.String("NO_PROXY"), Value: aws.String("host.docker.internal")},
 				{Name: aws.String("CHECKPOINT_DISABLE"), Value: aws.String("1")},
 				{Name: aws.String("TF_CONFIGURATION"), Value: aws.String(terraformConfiguration)},
 			},
