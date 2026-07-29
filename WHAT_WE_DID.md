@@ -2888,3 +2888,10 @@ data plane, and reflected data-plane updates back to ARM. The official Azure
 SDK round-tripped the complete policy across create and update, while Azure
 CLI round-tripped both Log Analytics defaults. These changes removed the two
 updates from the provider's post-apply plan.
+
+That zero-drift plan completed successfully and exposed one obsolete harness
+assumption afterward: the test still expected Blob container and Table IDs in
+their legacy data-plane URL formats. AzureRM 5's ID-based resources stored the
+canonical Microsoft.Storage ARM paths returned by the APIs they used. The
+external assertions now covered those ARM IDs for the Blob container, Table,
+and File share.

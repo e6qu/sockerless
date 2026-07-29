@@ -90,7 +90,9 @@ Microsoft.OperationalInsights workspaces returned Azure's default public
 network access values, and Microsoft.Storage File-share policies stayed
 consistent between the ARM resource and Azure Files data plane. The official
 Azure SDK round-tripped the share policy and Azure CLI round-tripped the
-workspace defaults.
+workspace defaults. The external stack's post-plan assertions used AzureRM
+5's canonical Microsoft.Storage ARM IDs for Blob containers, Tables, and File
+shares instead of the removed legacy data-plane IDs.
 
 The publication repair preserved current public contracts across the failing
 client surfaces. Amazon SQS redrive used the normal enqueue path and therefore

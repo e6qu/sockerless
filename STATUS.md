@@ -49,6 +49,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 - The complete Terraform tree passed recursive canonical formatting.
 - The hosted Google specification freshness gate passed with the exact five published Discovery documents; authenticated official-SDK transports exercised Bigtable `updateMemoryLayer` and Cloud Resource Manager v3 `fetchResourceSemantics`, and the generated coverage floors measured 164 of 164 and 126 of 126.
 - The official Azure SDK round-tripped a Microsoft.Storage File-share stored access policy through ARM create and update, and Azure CLI observed Microsoft.OperationalInsights' `Enabled` ingestion and query defaults on create and read.
+- The external AzureRM 5 stack completed its zero-drift plan before asserting canonical Microsoft.Storage ARM IDs for its Blob container, Table, and File share.
 - The complete nightly fuzz target matrix passed with a one-second budget per target.
 - The exact real PostgreSQL, Ory Hydra, Shauth, compiled relying-party, and Chromium matrix passed all eight application-and-direction validation runs.
 

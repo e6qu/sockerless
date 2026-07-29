@@ -1013,6 +1013,10 @@ output "azrm_storage_table_id" {
   value = azurerm_storage_table.az_st_table.id
 }
 
+output "azrm_storage_share_id" {
+  value = azurerm_storage_share.az_st_share.id
+}
+
 output "azrm_function_app_id" {
   value = azurerm_linux_function_app.az_fa.id
 }

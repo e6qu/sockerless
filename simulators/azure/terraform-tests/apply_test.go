@@ -261,16 +261,19 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"azurerm storage account id must include canonical ARM path; got %s", azrmST)
 
 	azrmStorageContainer := outputs.must(t, "azrm_storage_container_id")
-	require.Contains(t, azrmStorageContainer, "tfazrmst12345.blob.",
-		"azurerm storage container id must be data-plane blob URL-shaped; got %s", azrmStorageContainer)
-	require.Contains(t, azrmStorageContainer, "/tfazrmcontainer",
-		"azurerm storage container id must include container name; got %s", azrmStorageContainer)
+	require.Contains(t, azrmStorageContainer,
+		"/providers/Microsoft.Storage/storageAccounts/tfazrmst12345/blobServices/default/containers/tfazrmcontainer",
+		"azurerm storage container id must include the canonical ARM path; got %s", azrmStorageContainer)
 
 	azrmStorageTable := outputs.must(t, "azrm_storage_table_id")
-	require.Contains(t, azrmStorageTable, "tfazrmst12345.table.",
-		"azurerm storage table id must be data-plane table URL-shaped; got %s", azrmStorageTable)
-	require.Contains(t, azrmStorageTable, "/Tables('tfazrmstable')",
-		"azurerm storage table id must include table name; got %s", azrmStorageTable)
+	require.Contains(t, azrmStorageTable,
+		"/providers/Microsoft.Storage/storageAccounts/tfazrmst12345/tableServices/default/tables/tfazrmstable",
+		"azurerm storage table id must include the canonical ARM path; got %s", azrmStorageTable)
+
+	azrmStorageShare := outputs.must(t, "azrm_storage_share_id")
+	require.Contains(t, azrmStorageShare,
+		"/providers/Microsoft.Storage/storageAccounts/tfazrmst12345/fileServices/default/shares/tfazrmshare",
+		"azurerm storage share id must include the canonical ARM path; got %s", azrmStorageShare)
 
 	azrmFA := outputs.must(t, "azrm_function_app_id")
 	require.Contains(t, azrmFA, "/providers/Microsoft.Web/sites/tf-azrm-fa",

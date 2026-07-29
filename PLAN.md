@@ -49,7 +49,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 19. Restored canonical HCL formatting across the complete Terraform tree.
 20. Advanced five Google Discovery documents from the exact hosted-runner artifacts, implemented the newly published Bigtable memory-layer update and Cloud Resource Manager resource-semantics methods, and ratcheted their measured coverage floors.
 21. Made Microsoft.OperationalInsights network-access defaults and Microsoft.Storage File-share access policies survive AzureRM 5 apply and refresh through the real ARM contracts.
-22. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+22. Updated the external AzureRM 5 post-plan assertions to its canonical Microsoft.Storage ARM resource IDs.
+23. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
