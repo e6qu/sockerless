@@ -168,6 +168,10 @@ The shared e2e harness loaded its compiled arithmetic fixture through every
 active cloud backend's Docker Image Load API, keeping the backend catalog
 authoritative. The exact e2e suite and its optional second Amazon ECS
 simulator-backend path passed.
+The hosted publication edge then advanced `docker/login-action` to 4.6.0.
+Both immutable multi-architecture publication jobs upgraded, and action
+syntax, the publication contract, and the authenticated freshness audit
+passed.
 Publication also upgraded every newly drifted SQLite and Google Cloud client
 module, moved Firestore and Spanner protobuf imports to their current
 canonical modules, and passed the complete official Google Cloud SDK suite.

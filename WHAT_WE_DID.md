@@ -3044,3 +3044,9 @@ active cloud backend's Docker Image Load API before creating the workload, so
 the backend image catalog remained the source of truth. The exact hosted e2e
 command and the optional path that launched a second Amazon ECS simulator and
 backend both passed the compiled workload's exit-code and log assertions.
+
+The hosted publication edge then exposed `docker/login-action` 4.6.0 after the
+local audit had passed. Both immutable multi-architecture publication jobs
+upgraded to the current action. Actionlint, the repository's container
+publication contract, and the authenticated whole-repository freshness audit
+all passed.

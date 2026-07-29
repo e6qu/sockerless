@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2753 filed - 2753 fixed - 6 open - 16 false positives.**
+**2754 filed - 2754 fixed - 6 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2754~~ | P1 | dependency freshness | `docker/login-action` 4.6.0 was published during hosted validation | Both immutable multi-architecture publication jobs upgraded to `docker/login-action` 4.6.0. Actionlint, the container-publication contract, and the authenticated whole-repository freshness audit passed. |
 | ~~2753~~ | P1 | end-to-end Amazon ECS workload validation | the shared e2e harness built its arithmetic image beside the backend instead of loading it through the Docker API | The shared harness streamed the real image through every active cloud backend's Docker Image Load API before running it, so each backend's image catalog remained authoritative. The exact hosted e2e suite and the optional second Amazon ECS simulator-backend path passed the compiled arithmetic workload. |
 | ~~2752~~ | P1 | dependency freshness | `go-git` 5.19.2 was published during the push validation | The AWS simulator upgraded to `github.com/go-git/go-git/v5` 5.19.2 and its current `go-billy`, expression-evaluation, and decimal transitive graph. The complete AWS simulator module suite passed, and the authenticated freshness audit reported no drift. |
 | ~~2751~~ | P1 | AWS simulator external Terraform validation | five heavyweight provider graphs shared one hosted runner while the HTTPS gateway redundantly rewrote the signed request host | Caddy's native reverse-proxy behavior preserved the original `Host` header used by AWS Signature Version 4, local package execution was serialized while retaining Terraform's resource-level concurrency, and CI assigned the root, Amazon ElastiCache, and three Amazon RDS graphs to separate hosted runners. All five production-shaped HTTPS packages completed apply, real workload or data-plane assertions, and destroy. |
