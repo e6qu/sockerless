@@ -5,11 +5,10 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 
 | Local file | Upstream repo / host | Upstream path | License | Pinned at | Fetched (UTC) |
 |---|---|---|---|---|---|
-| `apigateway-v1.discovery.json.gz` | `apigateway.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260714` | 2026-07-26T18:38:33Z |
 | `bigquery-v2.discovery.json.gz` | `bigquery.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260707` | 2026-07-26T18:38:35Z |
 | `bigtableadmin-v2.discovery.json.gz` | `bigtableadmin.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260725` | 2026-07-29T00:06:48Z |
 | `cloudbuild-v1.discovery.json.gz` | `cloudbuild.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260627` | 2026-07-26T18:38:36Z |
-| `dataflow-v1b3.discovery.json.gz` | `dataflow.googleapis.com` | `$discovery/rest?version=v1b3` | Apache-2.0 | `revision 20260715` | 2026-07-26T18:38:39Z |
+| `dataflow-v1b3.discovery.json.gz` | `dataflow.googleapis.com` | `$discovery/rest?version=v1b3` | Apache-2.0 | `revision 20260719` | 2026-07-30T09:37:09Z |
 | `eventarc-v1.discovery.json.gz` | `eventarc.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260717` | 2026-07-26T18:38:40Z |
 | `firestore-v1.discovery.json.gz` | `firestore.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260706` | 2026-07-26T18:38:40Z |
 | `storage-v1.discovery.json.gz` | `storage.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260719` | 2026-07-26T18:38:41Z |
@@ -34,3 +33,4 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `cloudresourcemanager-v1.discovery.json.gz` | `cloudresourcemanager.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260715` | 2026-07-29T00:07:02Z |
 | `cloudrun-v2.discovery.json.gz` | `run.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260727` | 2026-07-29T09:49:10Z |
 | `cloudrun-v1.discovery.json.gz` | `run.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260727` | 2026-07-29T10:08:40Z |
+| `apigateway-v1.discovery.json.gz` | `apigateway.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260724` | 2026-07-30T09:42:16Z |

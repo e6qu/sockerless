@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2794 filed - 2793 fixed - 10 open - 16 false positives.**
+**2796 filed - 2796 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -25,6 +25,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2796~~ | P2 | Google Cloud API Gateway specification freshness | the local Discovery edge published revision 20260724 after the hosted Dataflow drift was retained | The repository vendor script retained the newest multi-probe API Gateway v1 document and updated its provenance; all 30 methods and paths and all 143 schema field/type entries were unchanged, so simulator behavior and its measured coverage floor remained current. |
+| ~~2795~~ | P2 | Google Cloud Dataflow specification freshness | the hosted Discovery edge published revision 20260719 after local freshness validation passed | The exact CI-preserved Dataflow v1b3 document was vendored byte-for-byte with updated provenance; all 42 methods and paths and all 1,174 schema field/type entries were unchanged, so simulator behavior and its measured coverage floor remained current. |
 | ~~2793~~ | P1 | CI - AWS Command Line Interface simulator shards | the appdata2 shard completed every test and Smithy ratchet but GitHub cancelled the job at its exact 15-minute limit | Measured hosted timing split RDS, Route 53, S3, and the persistence restart case from Scheduler, Secrets Manager, Step Functions, SNS, SQS, SSM, STS, and WAFv2; the shard coverage gate proves every CLI test remains assigned exactly once while both jobs retain meaningful scheduling margin. |
 | ~~2792~~ | P1 | AWS simulator Amazon ECS durable restart | one legacy `RUNNING` task without state-scoped workload containers aborted the complete simulator startup | Amazon ECS now reconciles a persisted `RUNNING` task with zero matching runtime containers to a truthful `STOPPED` state, records the control-plane restart reason and unknown exit code, updates container-instance counts and managed resources, and continues restoring the remaining tasks; runtime discovery and adoption failures still fail startup loudly. |
 | ~~2790~~ | P1 | AWS Terraform container validation | `docker run --rm` hid Podman attachment failures, leaked failed containers, and did not carry runtime Smithy reports back to the host | The macOS wrapper created, attached, and removed its exact privileged test container explicitly, propagated test and cleanup status, removed anonymous volumes, and mounted the host Smithy-report directory at a container-relative coordinate. |

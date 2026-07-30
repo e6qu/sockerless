@@ -51,6 +51,13 @@ v1beta4 revision 20260722 artifacts were retained. Their 75 methods and routes
 were unchanged, while authenticated public-route coverage implemented and
 round-tripped the three newly published schema members.
 
+The hosted Dataflow v1b3 Discovery edge advanced to revision 20260719 after
+local validation. The exact preserved artifact replaced the older pin after a
+structural comparison proved all 42 methods and paths and all 1,174 schema
+field/type entries unchanged. A subsequent local multi-probe fetch observed
+API Gateway v1 revision 20260724; all 30 methods and paths and all 143 schema
+field/type entries were likewise unchanged.
+
 AWS simulator state survived hard process replacement as a coherent cloud
 slice. The SQLite envelope retained exported runtime configuration hidden from
 public JSON, startup rebuilt monotonic counters and derived revisions, real

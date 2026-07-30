@@ -4,6 +4,21 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Dataflow and API Gateway Discovery advanced without surface drift
+
+The replacement hosted matrix observed Dataflow v1b3 revision 20260719 after
+the local freshness audit had passed and preserved the exact response as its
+one-day drift artifact. That artifact replaced revision 20260715 byte-for-byte.
+A structural comparison found the same 42 methods and HTTP paths and the same
+1,174 schema field/type entries; only upstream descriptions and provenance
+changed, so no simulator implementation or coverage floor moved.
+
+The verification fetch then found API Gateway v1 revision 20260724 on all
+three local probes. The repository vendor script retained that document and
+updated its provenance. API Gateway kept the same 30 methods and HTTP paths
+and the same 143 schema field/type entries, so this second same-day
+publication also required no runtime change.
+
 ## 2026-07-30 — The AWS CLI appdata budget gained real margin
 
 The updated persistence pull request passed every appdata2 command-line

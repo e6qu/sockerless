@@ -99,6 +99,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 69. Reconciled legacy persisted Amazon ECS tasks whose workload containers could not be adopted, so one stale `RUNNING` row became truthfully `STOPPED` without preventing the AWS simulator from starting or restoring other workloads.
 70. Split the AWS CLI appdata2 shard at measured service boundaries after every test passed but the hosted job crossed its exact 15-minute finalization limit.
 71. Recorded long-lived Amazon ECS service execution as the next P1 production gap after the ECS Dev Desktop deployment audit proved the simulator still reported service capacity without launching the declared workload.
+72. Retained the exact CI-captured Google Cloud Dataflow v1b3 revision 20260719 document after proving its method, route, and schema-field contracts were unchanged.
+73. Retained the newest multi-probe Google Cloud API Gateway v1 revision 20260724 document after proving its method, route, and schema-field contracts were unchanged.
 
 ## Verified Next Gaps
 
