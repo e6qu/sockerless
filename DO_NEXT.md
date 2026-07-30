@@ -23,6 +23,10 @@ Simulator SDK, CLI, and Terraform matrix jobs restored the immutable
 Firecracker seed cache without trying to save their root-mutated guest
 filesystems. The dedicated Firecracker job remained the cache publisher.
 
+The Microsoft Azure workload-dispatch invariant keeps its two justified
+`os/exec` exceptions as source comments without logging file-and-line-shaped
+messages that GitHub's Go problem matcher turns into failure annotations.
+
 The pre-push dependency audit's coordinated AWS SDK patch wave and Google Cloud
 Spanner client release were applied across every affected Go module with the
 repository-owned upgrade target. Direct pins and their resolved transitive

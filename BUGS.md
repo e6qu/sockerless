@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2777 filed - 2777 fixed - 10 open - 16 false positives.**
+**2778 filed - 2778 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -25,6 +25,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2778~~ | P2 | Microsoft Azure SDK continuous-integration annotations | informational allowlist logging matched GitHub's Go problem matcher and attached two failure annotations to a successful required check | The workload-dispatch invariant keeps its two justified source exceptions as code comments and silently skips them during the scan, so the successful test no longer emits failure-shaped file-and-line diagnostics. |
 | ~~2777~~ | P2 | Firecracker continuous-integration cache ownership | simulator matrix jobs attempted to save guest root files that real workload execution had made root-only, so the post-job tar emitted permission-denied warnings and failed to publish the cache | Simulator SDK, CLI, and Terraform matrix jobs became restore-only consumers of the immutable Firecracker seed cache; the dedicated Firecracker job remained its sole publisher, so test-mutated guest files were never archived. |
 | ~~2776~~ | P2 | shared cloud-backend module hygiene | Go 1.26 reported that the Microsoft Azure and Google Cloud common-backend module graphs required reconciliation, which made the all-files GolangCI hook fail during package loading | Both module graphs were tidied to their selected `go-isatty` 0.0.24 transitive version; focused lint and unit tests passed for each module. |
 | ~~2775~~ | P2 | Google Cloud SQL Admin specification freshness | hosted validation found newer v1 and v1beta4 Discovery revisions with three new public schema members | The exact revision 20260722 documents were retained; Cloud SQL persisted and returned `databaseCenterIntegrationEnabled` and top-level user `serverRoles`, reported the truthful output-only `dmsManaged=false` for non-Database-Migration-Service on-premises sources, and exercised all three members over authenticated public routes. |

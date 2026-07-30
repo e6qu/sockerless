@@ -4,6 +4,17 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Successful Azure validation stopped emitting failure annotations
+
+The Microsoft Azure workload-dispatch invariant logged its two justified
+`os/exec` exceptions with Go test file-and-line prefixes. GitHub's Go problem
+matcher interpreted those informational lines as failure annotations even
+though the test and required check passed.
+
+The exception reasons now live beside their entries as reviewable source
+comments, and the scan skips them without runtime logging. The invariant still
+fails on every unlisted use while a successful run stays annotation-free.
+
 ## 2026-07-30 — Simulator jobs stopped publishing mutated guest caches
 
 Simulator SDK, CLI, and Terraform matrix jobs had restored the shared
