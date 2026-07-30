@@ -148,10 +148,12 @@ func TestELBv2_ListenerSslPolicy(t *testing.T) {
 	})
 	require.NoError(t, err)
 	const policy = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+	certArn := importELBv2Certificate(t, "ssl-policy.example.test")
+	listenerPort := availableELBv2ListenerPort(t)
 	_, err = c.CreateListener(ctx, &elasticloadbalancingv2.CreateListenerInput{
-		LoadBalancerArn: aws.String(lbArn), Protocol: elbv2types.ProtocolEnumHttps, Port: aws.Int32(443),
+		LoadBalancerArn: aws.String(lbArn), Protocol: elbv2types.ProtocolEnumHttps, Port: aws.Int32(listenerPort),
 		SslPolicy:    aws.String(policy),
-		Certificates: []elbv2types.Certificate{{CertificateArn: aws.String("arn:aws:acm:us-east-1:123456789012:certificate/abc")}},
+		Certificates: []elbv2types.Certificate{{CertificateArn: aws.String(certArn)}},
 		DefaultActions: []elbv2types.Action{{
 			Type: elbv2types.ActionTypeEnumForward, TargetGroupArn: tg.TargetGroups[0].TargetGroupArn,
 		}},
@@ -162,7 +164,7 @@ func TestELBv2_ListenerSslPolicy(t *testing.T) {
 	require.NoError(t, err)
 	var https *elbv2types.Listener
 	for i := range desc.Listeners {
-		if aws.ToInt32(desc.Listeners[i].Port) == 443 {
+		if aws.ToInt32(desc.Listeners[i].Port) == listenerPort {
 			https = &desc.Listeners[i]
 		}
 	}

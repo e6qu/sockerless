@@ -69,6 +69,11 @@ terminal details, and terminated live work through standard AWS APIs.
 Associated AWS WAF web ACLs evaluated the complete supported statement graph,
 and Elastic Load Balancing listener creates and modifications failed
 transactionally when their real TCP or TLS binding could not be provisioned.
+The Elastic Load Balancing official-client fixtures imported issued,
+exportable AWS Certificate Manager certificates and selected isolated real
+listener ports, while nested simulator processes received their own Route 53
+DNS coordinate. The focused listener cases and complete AWS SDK compute shard
+passed together.
 
 The pre-push freshness gate advanced gRPC to 1.83.0 in both Cloud Run
 backends, the shared Google Cloud backend, the simulator, and its official SDK

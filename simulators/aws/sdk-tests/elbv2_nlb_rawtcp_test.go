@@ -168,8 +168,9 @@ func TestELBv2_NLBDescribeStableHostname(t *testing.T) {
 	})
 	require.NoError(t, err)
 	tgArn := aws.ToString(tg.TargetGroups[0].TargetGroupArn)
+	listenerPort := availableELBv2ListenerPort(t)
 	_, err = elb.CreateListener(ctx, &elbv2.CreateListenerInput{
-		LoadBalancerArn: aws.String(lbArn), Protocol: elbtypes.ProtocolEnumTcp, Port: aws.Int32(443),
+		LoadBalancerArn: aws.String(lbArn), Protocol: elbtypes.ProtocolEnumTcp, Port: aws.Int32(listenerPort),
 		DefaultActions: []elbtypes.Action{{Type: elbtypes.ActionTypeEnumForward, TargetGroupArn: aws.String(tgArn)}},
 	})
 	require.NoError(t, err)

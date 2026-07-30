@@ -1,17 +1,9 @@
 package aws_sdk_test
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/acm"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
@@ -34,26 +26,8 @@ func TestELBv2_HTTPSListenerCertificateRoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	now := time.Now().UTC()
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(443),
-		Subject:      pkix.Name{CommonName: "listener.example.test"},
-		DNSNames:     []string{"listener.example.test"},
-		NotBefore:    now.Add(-time.Hour),
-		NotAfter:     now.AddDate(1, 0, 0),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
-	require.NoError(t, err)
-	cert, err := acmClient().ImportCertificate(ctx, &acm.ImportCertificateInput{
-		Certificate: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}),
-		PrivateKey:  pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}),
-	})
-	require.NoError(t, err)
-	certArn := aws.ToString(cert.CertificateArn)
+	certArn := importELBv2Certificate(t, "listener.example.test")
+	listenerPort := availableELBv2ListenerPort(t)
 
 	c := elbv2Client()
 	lb, err := c.CreateLoadBalancer(ctx, &elasticloadbalancingv2.CreateLoadBalancerInput{
@@ -74,7 +48,7 @@ func TestELBv2_HTTPSListenerCertificateRoundTrip(t *testing.T) {
 	_, err = c.CreateListener(ctx, &elasticloadbalancingv2.CreateListenerInput{
 		LoadBalancerArn: aws.String(lbArn),
 		Protocol:        elbv2types.ProtocolEnumHttps,
-		Port:            aws.Int32(10443),
+		Port:            aws.Int32(listenerPort),
 		Certificates:    []elbv2types.Certificate{{CertificateArn: aws.String(certArn)}},
 		DefaultActions: []elbv2types.Action{{
 			Type: elbv2types.ActionTypeEnumForward, TargetGroupArn: aws.String(tgArn),
@@ -89,7 +63,7 @@ func TestELBv2_HTTPSListenerCertificateRoundTrip(t *testing.T) {
 
 	var https *elbv2types.Listener
 	for i := range desc.Listeners {
-		if aws.ToInt32(desc.Listeners[i].Port) == 10443 {
+		if aws.ToInt32(desc.Listeners[i].Port) == listenerPort {
 			https = &desc.Listeners[i]
 		}
 	}

@@ -26,9 +26,19 @@ func startProcessModeSim(t *testing.T) string {
 	require.NoError(t, err)
 	port := ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
+	dnsListener, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	dnsPort := dnsListener.LocalAddr().(*net.UDPAddr).Port
+	require.NoError(t, dnsListener.Close())
 
 	cmd := exec.Command(binaryPath)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port), "SIM_RUNTIME=process", "SIM_LOG_LEVEL=warn")
+	cmd.Env = append(
+		os.Environ(),
+		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port),
+		fmt.Sprintf("SIM_DNS_PORT=%d", dnsPort),
+		"SIM_RUNTIME=process",
+		"SIM_LOG_LEVEL=warn",
+	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	require.NoError(t, cmd.Start())

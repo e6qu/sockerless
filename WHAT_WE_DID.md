@@ -4,6 +4,21 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Elastic Load Balancing validation reached the live data plane
+
+Two listener-fidelity tests had requested DNS-validated AWS Certificate Manager
+certificates without completing validation, and several listener tests reused
+host port 443. Those control-plane-only fixtures stopped at the correct
+certificate or bind error once Elastic Load Balancing listener creation became
+transactional and provisioned a real TCP/TLS data plane.
+
+The official SDK fixtures now import real self-signed certificate and key
+material through AWS Certificate Manager, select available listener ports, and
+give each nested simulator process an explicit isolated Route 53 DNS
+coordinate. The four focused HTTPS listener cases, the process-mode and
+Network Load Balancing regressions, and the complete official AWS SDK compute
+shard passed.
+
 ## 2026-07-30 — The Google Cloud client graph advanced to gRPC 1.83
 
 The pre-push publication audit found gRPC 1.83.0 after the earlier validation
