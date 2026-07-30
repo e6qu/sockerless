@@ -4,6 +4,28 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — The AWS CLI appdata budget gained real margin
+
+The updated persistence pull request passed every appdata2 command-line
+interface test and its runtime Smithy ratchet, but GitHub finalized the job as
+cancelled at its exact 15-minute limit. The test process alone consumed 791
+seconds, after setup and a clean simulator build consumed the remaining
+headroom.
+
+Hosted top-level timings measured RDS at 199 seconds, SSM at 133, S3 at 108,
+Route 53 at 67, and the remaining services at 216 seconds. The matrix now keeps
+RDS, Route 53, S3, and the restart-persistence case in appdata2 and moves
+Scheduler, Secrets Manager, Step Functions, SNS, SQS, SSM, STS, and WAFv2 to
+appdata3. The repository coverage gate still requires every AWS CLI test to
+match exactly one shard.
+
+The same production audit exposed a distinct P1 rather than hiding it behind
+successful Terraform control-plane convergence: Amazon ECS services still
+report desired and running capacity without launching their declared
+task-definition containers. BUG-2794 owns durable service scheduling,
+replacement, load-balancer registration and health, and stop/restart behavior
+required for ECS Dev Desktop to become a functional deployed app.
+
 ## 2026-07-30 — Legacy Amazon ECS state stopped blocking simulator upgrades
 
 The first production upgrade to durable workload recovery encountered an

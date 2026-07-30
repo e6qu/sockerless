@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2792 filed - 2792 fixed - 9 open - 16 false positives.**
+**2794 filed - 2793 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2794 | P1 | AWS simulator Amazon ECS services | long-lived services reported desired tasks without launching workload containers | The ECS service slice intentionally remained control-plane-only, so the production ECS Dev Desktop service could apply and report `runningCount` while its control-plane image never ran and its Application Load Balancer had no real workload target. Implement durable service scheduling, rolling replacement, target registration, health, and stop/restart behavior through the existing real Amazon ECS task runtime before ECS Dev Desktop can qualify as functional. |
 | 2791 | P2 | AWS Terraform validation on macOS | the Podman virtual machine's overlay store returned input/output errors while building the real Lambda fixture image | The Terraform container wrapper exposed and cleaned the failed workload correctly, but the local Podman machine's existing overlay graph remained corrupt; repairing it required an operator-owned machine reset or storage migration, while the capable hosted runner remained the mandatory full HashiCorp AWS provider gate. |
 | 2766 | P1 | AWS Amplify Hosting image optimization | `ImageOptimization` manifest targets still returned HTTP 501 | AWS Amplify Hosting compute, static, build, test-artifact, and WAF lifecycles were real, but its published image-optimization primitive still did not fetch, validate, transform, cache, and return images according to `imageSettings` and the public query/header contract. |
 | 2764 | P2 | Google Compute Engine Terraform validation on macOS | the Podman virtual machine did not expose nested KVM | The Google Terraform test no longer skipped missing host tools, its Buildx image loaded into the runtime, and that image contained Firecracker v1.15.1 plus `unsquashfs` 4.5.1. The macOS Podman virtual machine still exposed no `/dev/kvm`, so the full real Compute Engine apply remained a mandatory capable-Linux CI gate rather than a locally executable macOS gate. |
@@ -24,6 +25,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2793~~ | P1 | CI - AWS Command Line Interface simulator shards | the appdata2 shard completed every test and Smithy ratchet but GitHub cancelled the job at its exact 15-minute limit | Measured hosted timing split RDS, Route 53, S3, and the persistence restart case from Scheduler, Secrets Manager, Step Functions, SNS, SQS, SSM, STS, and WAFv2; the shard coverage gate proves every CLI test remains assigned exactly once while both jobs retain meaningful scheduling margin. |
 | ~~2792~~ | P1 | AWS simulator Amazon ECS durable restart | one legacy `RUNNING` task without state-scoped workload containers aborted the complete simulator startup | Amazon ECS now reconciles a persisted `RUNNING` task with zero matching runtime containers to a truthful `STOPPED` state, records the control-plane restart reason and unknown exit code, updates container-instance counts and managed resources, and continues restoring the remaining tasks; runtime discovery and adoption failures still fail startup loudly. |
 | ~~2790~~ | P1 | AWS Terraform container validation | `docker run --rm` hid Podman attachment failures, leaked failed containers, and did not carry runtime Smithy reports back to the host | The macOS wrapper created, attached, and removed its exact privileged test container explicitly, propagated test and cleanup status, removed anonymous volumes, and mounted the host Smithy-report directory at a container-relative coordinate. |
 | ~~2789~~ | P1 | AWS Lambda persistence validation | the durable-callback restart proof depended on a host callback outside AWS instead of observing the real function through cloud APIs | The managed Node.js runtime published its checkpoint token and durable execution ARN to Amazon CloudWatch Logs; the official AWS SDK read those logs, checkpointed the execution, hard-restarted the simulator, completed the callback, and observed the original execution resume successfully. |

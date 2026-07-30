@@ -243,7 +243,14 @@ to Discovery revisions 20260723 and 20260724.
 
 ## Next Recommended Slice
 
-BUG-2766 remained the next locally actionable AWS fidelity slice: implement the
+BUG-2794 became the next production slice: make Amazon ECS services launch and
+durably reconcile their declared task-definition workloads, perform rolling
+replacement, register and deregister real load-balancer targets, reflect
+health, and stop tasks when desired capacity falls. Prove the contract through
+official ECS and Elastic Load Balancing clients and the unmodified ECS Dev
+Desktop module before qualifying the deployed app.
+
+BUG-2766 remained the next independent AWS fidelity slice: implement the
 published AWS Amplify Hosting `ImageOptimization` fetch, source-policy,
 transformation, validation, format-negotiation, and cache contract, then prove
 it through hosted requests and external image decoders. BUG-2764 remained a

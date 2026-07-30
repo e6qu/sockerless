@@ -97,6 +97,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 67. Made the macOS AWS Terraform container wrapper preserve Smithy reports, surface attachment failures, and clean exact failed containers and anonymous volumes.
 68. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 69. Reconciled legacy persisted Amazon ECS tasks whose workload containers could not be adopted, so one stale `RUNNING` row became truthfully `STOPPED` without preventing the AWS simulator from starting or restoring other workloads.
+70. Split the AWS CLI appdata2 shard at measured service boundaries after every test passed but the hosted job crossed its exact 15-minute finalization limit.
+71. Recorded long-lived Amazon ECS service execution as the next P1 production gap after the ECS Dev Desktop deployment audit proved the simulator still reported service capacity without launching the declared workload.
 
 ## Verified Next Gaps
 
