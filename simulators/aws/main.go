@@ -233,6 +233,7 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 		if err := recoverECSTasks(); err != nil {
 			return nil, nil, nil, fmt.Errorf("restore Amazon Elastic Container Service tasks: %w", err)
 		}
+		recoverECSServiceTasks()
 	}
 
 	// EventBridge Scheduler — REST/JSON protocol (path-based, no X-Amz-Target)

@@ -3,10 +3,12 @@ package aws_sdk_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/applicationautoscaling"
 	aastypes "github.com/aws/aws-sdk-go-v2/service/applicationautoscaling/types"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
@@ -39,8 +41,9 @@ func TestECSExpress_CreateAssemblyAndLifecycle(t *testing.T) {
 		ServiceName:           aws.String("web"),
 		InfrastructureRoleArn: aws.String("arn:aws:iam::000000000000:role/express-infra"),
 		PrimaryContainer: &ecstypes.ExpressGatewayContainer{
-			Image:         aws.String("public.ecr.aws/docker/library/busybox:latest"),
+			Image:         aws.String(containerCommandImage),
 			ContainerPort: aws.Int32(8080),
+			Command:       []string{"http", "8080", "express-ok"},
 		},
 		Tags: []ecstypes.Tag{{Key: aws.String("env"), Value: aws.String("test")}},
 	})
@@ -102,6 +105,7 @@ func TestECSExpress_CreateAssemblyAndLifecycle(t *testing.T) {
 	require.Len(t, ds.Services, 1)
 	assert.Equal(t, "ACTIVE", aws.ToString(ds.Services[0].Status))
 	assert.Equal(t, ecstypes.LaunchTypeFargate, ds.Services[0].LaunchType)
+	initialTaskDefinition := aws.ToString(ds.Services[0].TaskDefinition)
 
 	// ---- Describe round-trips tags (include TAGS) ----
 	desc, err := c.DescribeExpressGatewayService(ctx, &ecs.DescribeExpressGatewayServiceInput{
@@ -151,6 +155,16 @@ func TestECSExpress_CreateAssemblyAndLifecycle(t *testing.T) {
 	require.Len(t, st2.ScalableTargets, 1)
 	assert.EqualValues(t, 8, aws.ToInt32(st2.ScalableTargets[0].MaxCapacity))
 	assert.EqualValues(t, 2, aws.ToInt32(st2.ScalableTargets[0].MinCapacity))
+	require.Eventually(t, func() bool {
+		services, describeErr := c.DescribeServices(ctx, &ecs.DescribeServicesInput{
+			Cluster: aws.String(cluster), Services: []string{"web"},
+		})
+		return describeErr == nil && len(services.Services) == 1 &&
+			services.Services[0].DesiredCount == 2 &&
+			services.Services[0].RunningCount == 2 &&
+			aws.ToString(services.Services[0].TaskDefinition) != initialTaskDefinition
+	}, 30*time.Second, 100*time.Millisecond,
+		"Express update did not roll the backing Fargate service to the new managed task definition")
 
 	// ---- Delete: status DRAINING + assembly torn down ----
 	del, err := c.DeleteExpressGatewayService(ctx, &ecs.DeleteExpressGatewayServiceInput{
@@ -224,10 +238,18 @@ func TestECSExpress_Errors(t *testing.T) {
 func TestECSExpress_ALBConsolidation(t *testing.T) {
 	c := ecsClient()
 	cluster := expressCreateCluster(t, c, "express-consolidate")
+	ec2c := ec2Client()
+	vpcID, subnetID := createECSTestVPCSubnet(t, "express-consolidate")
+	securityGroup, err := ec2c.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("express-consolidate"),
+		Description: aws.String("Amazon ECS Express Mode consolidation test"),
+		VpcId:       aws.String(vpcID),
+	})
+	require.NoError(t, err)
 
 	net := &ecstypes.ExpressGatewayServiceNetworkConfiguration{
-		Subnets:        []string{"subnet-aaaa1111", "subnet-bbbb2222"},
-		SecurityGroups: []string{"sg-shared0001"},
+		Subnets:        []string{subnetID},
+		SecurityGroups: []string{aws.ToString(securityGroup.GroupId)},
 	}
 
 	mkEndpointHost := func(name string) string {
@@ -237,7 +259,9 @@ func TestECSExpress_ALBConsolidation(t *testing.T) {
 			InfrastructureRoleArn: aws.String("arn:aws:iam::000000000000:role/express-infra"),
 			NetworkConfiguration:  net,
 			PrimaryContainer: &ecstypes.ExpressGatewayContainer{
-				Image: aws.String("public.ecr.aws/docker/library/busybox:latest"),
+				Image:         aws.String(containerCommandImage),
+				ContainerPort: aws.Int32(8080),
+				Command:       []string{"http", "8080", "express-ok"},
 			},
 		})
 		require.NoError(t, err)

@@ -622,7 +622,11 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		if hostCfg.PortBindings == nil {
 			hostCfg.PortBindings = nat.PortMap{}
 		}
-		hostCfg.PortBindings[port] = []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: strconv.Itoa(hostPort)}}
+		publicPort := ""
+		if hostPort > 0 {
+			publicPort = strconv.Itoa(hostPort)
+		}
+		hostCfg.PortBindings[port] = []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: publicPort}}
 	}
 
 	// Enforce sandbox parity with the real cloud platform. Empty profile
@@ -892,7 +896,11 @@ func EnsureDockerNetwork(name string) (string, error) {
 // the bridge enforces the VPC's implicit local route (intra-VPC routability) and
 // isolation across VPCs, and ECS tasks pinned to their ENI IP (within the CIDR)
 // expose that real, routable address via DescribeTasks. Returns the network ID.
+var vpcNetworkMu sync.Mutex
+
 func EnsureVPCNetwork(name, cidr string) (string, error) {
+	vpcNetworkMu.Lock()
+	defer vpcNetworkMu.Unlock()
 	cli := DockerClient()
 	if cli == nil {
 		return "", fmt.Errorf("docker client not initialized")

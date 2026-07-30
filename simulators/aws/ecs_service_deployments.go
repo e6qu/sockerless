@@ -13,9 +13,9 @@ import (
 // surface (DescribeServiceDeployments / ListServiceDeployments /
 // DescribeServiceRevisions / StopServiceDeployment / ContinueServiceDeployment)
 // plus ListServicesByNamespace. Each CreateService / UpdateService records a
-// service revision (the immutable config snapshot) and a service deployment (the
-// rollout from the previous revision to it). The sim's modeled deployment reaches
-// SUCCESSFUL immediately, mirroring the single-PRIMARY-deployment service model.
+// service revision (the immutable config snapshot) and a service deployment
+// (the rollout from the previous revision to it). Reconciliation marks the
+// deployment successful only after real tasks reach the target revision.
 
 // ECSServiceDeploymentRec is the stored shape of a service deployment.
 type ECSServiceDeploymentRec struct {
@@ -62,12 +62,22 @@ func registerECSServiceDeployments(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.ListServicesByNamespace", handleECSListServicesByNamespace)
 }
 
-// ecsRecordServiceDeployment snapshots a service into a new revision + a
-// completed deployment, called on CreateService and UpdateService. namespace is
+// ecsRecordServiceDeployment snapshots a service into a new revision + an
+// in-progress deployment, called on CreateService and UpdateService. namespace is
 // the Cloud Map namespace the service is associated with (for
 // ListServicesByNamespace), derived by the caller from serviceConnectConfiguration.
 func ecsRecordServiceDeployment(svc ECSService, namespace string) {
 	now := float64(time.Now().Unix())
+	for _, deployment := range ecsServiceDeployments.List() {
+		if deployment.ServiceArn != svc.ServiceArn || deployment.Status != "IN_PROGRESS" {
+			continue
+		}
+		deployment.Status = "STOPPED"
+		deployment.StatusReason = "Superseded by a newer service deployment"
+		deployment.FinishedAt = now
+		deployment.UpdatedAt = now
+		ecsServiceDeployments.Put(deployment.ServiceDeploymentArn, deployment)
+	}
 	revArn := svc.ServiceArn + "/" + generateNumericID()
 	ecsServiceRevisions.Put(revArn, ECSServiceRevisionRec{
 		ServiceRevisionArn: revArn,
@@ -86,11 +96,22 @@ func ecsRecordServiceDeployment(svc ECSService, namespace string) {
 		ClusterArn:               svc.ClusterArn,
 		CreatedAt:                now,
 		StartedAt:                now,
-		FinishedAt:               now,
 		UpdatedAt:                now,
 		TargetServiceRevisionArn: revArn,
-		Status:                   "SUCCESSFUL",
+		Status:                   "IN_PROGRESS",
 	})
+}
+
+func ecsCompleteServiceDeployments(serviceArn string, now float64) {
+	for _, deployment := range ecsServiceDeployments.List() {
+		if deployment.ServiceArn != serviceArn || deployment.Status != "IN_PROGRESS" {
+			continue
+		}
+		deployment.Status = "SUCCESSFUL"
+		deployment.FinishedAt = now
+		deployment.UpdatedAt = now
+		ecsServiceDeployments.Put(deployment.ServiceDeploymentArn, deployment)
+	}
 }
 
 // ecsServiceArnSuffix returns the <cluster>/<service> portion of a service ARN.
@@ -127,19 +148,25 @@ func handleECSDescribeServiceDeployments(w http.ResponseWriter, r *http.Request)
 }
 
 func ecsServiceDeploymentDetail(dep ECSServiceDeploymentRec) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"serviceDeploymentArn": dep.ServiceDeploymentArn,
 		"serviceArn":           dep.ServiceArn,
 		"clusterArn":           dep.ClusterArn,
 		"createdAt":            dep.CreatedAt,
 		"startedAt":            dep.StartedAt,
-		"finishedAt":           dep.FinishedAt,
 		"updatedAt":            dep.UpdatedAt,
 		"status":               dep.Status,
 		"targetServiceRevision": map[string]any{
 			"arn": dep.TargetServiceRevisionArn,
 		},
 	}
+	if dep.FinishedAt != 0 {
+		out["finishedAt"] = dep.FinishedAt
+	}
+	if dep.StatusReason != "" {
+		out["statusReason"] = dep.StatusReason
+	}
+	return out
 }
 
 func handleECSListServiceDeployments(w http.ResponseWriter, r *http.Request) {
@@ -173,16 +200,19 @@ func handleECSListServiceDeployments(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(deps, func(i, j int) bool { return deps[i].ServiceDeploymentArn < deps[j].ServiceDeploymentArn })
 	briefs := make([]map[string]any, 0, len(deps))
 	for _, dep := range deps {
-		briefs = append(briefs, map[string]any{
+		brief := map[string]any{
 			"serviceDeploymentArn":     dep.ServiceDeploymentArn,
 			"serviceArn":               dep.ServiceArn,
 			"clusterArn":               dep.ClusterArn,
 			"startedAt":                dep.StartedAt,
 			"createdAt":                dep.CreatedAt,
-			"finishedAt":               dep.FinishedAt,
 			"targetServiceRevisionArn": dep.TargetServiceRevisionArn,
 			"status":                   dep.Status,
-		})
+		}
+		if dep.FinishedAt != 0 {
+			brief["finishedAt"] = dep.FinishedAt
+		}
+		briefs = append(briefs, brief)
 	}
 	page, next := awsPage(briefs, req.NextToken, req.MaxResults, 100)
 	out := map[string]any{"serviceDeployments": page}

@@ -19,8 +19,10 @@ func TestECS_ServiceFidelitySDK(t *testing.T) {
 	_, err := c.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String("svc-fidelity-cluster")})
 	require.NoError(t, err)
 	td, err := c.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
-		Family:               aws.String("svc-fidelity-td"),
-		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("nginx")}},
+		Family: aws.String("svc-fidelity-td"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name: aws.String("app"), Image: aws.String(containerCommandImage), Command: []string{"hold"},
+		}},
 	})
 	require.NoError(t, err)
 	tdArn := aws.ToString(td.TaskDefinition.TaskDefinitionArn)
@@ -42,6 +44,7 @@ func TestECS_ServiceFidelitySDK(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	cleanupECSService(t, c, "svc-fidelity-cluster", "svc-fidelity")
 	svc := created.Service
 	assert.True(t, svc.EnableECSManagedTags, "enable_ecs_managed_tags must round-trip")
 	assert.Equal(t, int32(120), aws.ToInt32(svc.HealthCheckGracePeriodSeconds))

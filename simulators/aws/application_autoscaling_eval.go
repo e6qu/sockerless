@@ -350,8 +350,8 @@ func parseECSResourceID(resourceID string) (cluster, service string) {
 
 // ecsDesiredCountController implements capacityController for
 // ecs:service:DesiredCount. Reading returns the service's current DesiredCount;
-// applying mutates both the service's DesiredCount and its primary deployment
-// to match (mirroring UpdateService, which keeps them in lockstep).
+// applying mutates the service's DesiredCount and asks the real service
+// scheduler to converge durable tasks.
 type ecsDesiredCountController struct{}
 
 func (ecsDesiredCountController) Read(target AppScalableTarget) (int, bool) {
@@ -377,13 +377,9 @@ func (ecsDesiredCountController) Apply(target AppScalableTarget, newCount int) b
 		return false
 	}
 	svc.DesiredCount = newCount
-	// The modeled service reaches steady state synchronously, so runningCount
-	// tracks the new desiredCount (pendingCount stays zero) — matching
-	// UpdateService, which keeps them in lockstep.
-	svc.RunningCount = newCount
-	svc.PendingCount = 0
 	now := float64(time.Now().Unix())
-	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
+	ecsUpdatePrimaryDeploymentCounts(&svc, now)
 	ecsServices.Put(key, svc)
+	ecsRequestServiceReconcile(key)
 	return true
 }

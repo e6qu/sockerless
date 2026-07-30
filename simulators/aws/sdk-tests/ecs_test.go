@@ -64,10 +64,17 @@ func TestECS_ServiceLifecycle(t *testing.T) {
 	_, err := c.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
 	require.NoError(t, err)
 	t.Cleanup(func() { c.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)}) })
+	_, subnetID := createECSTestVPCSubnet(t, "svc-lifecycle")
 
 	_, err = c.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
-		Family:               aws.String("svc-task"),
-		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("alpine:latest")}},
+		Family:                  aws.String("svc-task"),
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name: aws.String("app"), Image: aws.String(containerCommandImage), Command: []string{"hold"},
+		}},
 	})
 	require.NoError(t, err)
 
@@ -86,25 +93,34 @@ func TestECS_ServiceLifecycle(t *testing.T) {
 	assert.ElementsMatch(t, []string{"FARGATE", "FARGATE_SPOT"}, descCluster.Clusters[0].CapacityProviders,
 		"DescribeClusters must echo the capacity providers set by PutClusterCapacityProviders")
 
-	// CreateService — must reach ACTIVE with runningCount == desiredCount.
+	// CreateService begins placement of two real task-definition workloads.
 	createOut, err := c.CreateService(ctx, &ecs.CreateServiceInput{
 		Cluster:        aws.String(cluster),
 		ServiceName:    aws.String("control-plane"),
 		TaskDefinition: aws.String("svc-task"),
 		DesiredCount:   aws.Int32(2),
 		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{subnetID}},
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, createOut.Service)
 	assert.Equal(t, "ACTIVE", aws.ToString(createOut.Service.Status))
 	assert.EqualValues(t, 2, createOut.Service.DesiredCount)
-	// The modeled service reaches steady state synchronously; RunningCount
-	// tracks DesiredCount. See TestECS_Service_ControlPlaneConvergence for the
-	// full state-machine flow.
-	assert.EqualValues(t, 2, createOut.Service.RunningCount)
 	assert.Contains(t, aws.ToString(createOut.Service.ServiceArn), ":service/"+cluster+"/control-plane")
 	require.NotEmpty(t, createOut.Service.Deployments, "service must have a PRIMARY deployment")
-	assert.Equal(t, "COMPLETED", string(createOut.Service.Deployments[0].RolloutState))
+	require.Eventually(t, func() bool {
+		described, describeErr := c.DescribeServices(ctx, &ecs.DescribeServicesInput{
+			Cluster: aws.String(cluster), Services: []string{"control-plane"},
+		})
+		return describeErr == nil &&
+			len(described.Services) == 1 &&
+			described.Services[0].RunningCount == 2 &&
+			described.Services[0].PendingCount == 0 &&
+			len(described.Services[0].Deployments) == 1 &&
+			described.Services[0].Deployments[0].RolloutState == ecstypes.DeploymentRolloutStateCompleted
+	}, 30*time.Second, 100*time.Millisecond, "service did not reach steady state with two running tasks")
 
 	// DescribeServices + ListServices.
 	descSvc, err := c.DescribeServices(ctx, &ecs.DescribeServicesInput{
@@ -118,14 +134,21 @@ func TestECS_ServiceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listOut.ServiceArns, 1)
 
-	// UpdateService — scale to 3. RunningCount tracks DesiredCount in lockstep
-	// as the modeled control-plane steady state.
+	// UpdateService scales the real workload to three tasks.
 	updOut, err := c.UpdateService(ctx, &ecs.UpdateServiceInput{
 		Cluster: aws.String(cluster), Service: aws.String("control-plane"), DesiredCount: aws.Int32(3),
 	})
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, updOut.Service.DesiredCount)
-	assert.EqualValues(t, 3, updOut.Service.RunningCount)
+	require.Eventually(t, func() bool {
+		described, describeErr := c.DescribeServices(ctx, &ecs.DescribeServicesInput{
+			Cluster: aws.String(cluster), Services: []string{"control-plane"},
+		})
+		return describeErr == nil &&
+			len(described.Services) == 1 &&
+			described.Services[0].RunningCount == 3 &&
+			described.Services[0].PendingCount == 0
+	}, 30*time.Second, 100*time.Millisecond, "service did not scale out to three running tasks")
 
 	// DeleteService — must settle to INACTIVE.
 	delOut, err := c.DeleteService(ctx, &ecs.DeleteServiceInput{
@@ -171,8 +194,10 @@ func TestECS_TagsAndListOps(t *testing.T) {
 
 	// Service with tags.
 	_, err = c.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
-		Family:               aws.String("tag-svc-task"),
-		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("alpine:latest")}},
+		Family: aws.String("tag-svc-task"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name: aws.String("app"), Image: aws.String(containerCommandImage), Command: []string{"hold"},
+		}},
 	})
 	require.NoError(t, err)
 	svcOut, err := c.CreateService(ctx, &ecs.CreateServiceInput{
@@ -181,6 +206,7 @@ func TestECS_TagsAndListOps(t *testing.T) {
 		Tags: []ecstypes.Tag{{Key: aws.String("svc"), Value: aws.String("yes")}},
 	})
 	require.NoError(t, err)
+	cleanupECSService(t, c, cluster, "tagged-svc")
 	svcArn := aws.ToString(svcOut.Service.ServiceArn)
 	lt, err = c.ListTagsForResource(ctx, &ecs.ListTagsForResourceInput{ResourceArn: aws.String(svcArn)})
 	require.NoError(t, err)
@@ -845,6 +871,18 @@ func cleanupECSTask(t *testing.T, client *ecs.Client, clusterName, taskArn strin
 			Reason:  aws.String("test cleanup"),
 		})
 		require.NoError(t, err)
+	})
+}
+
+func cleanupECSService(t *testing.T, client *ecs.Client, clusterName, serviceName string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = client.UpdateService(ctx, &ecs.UpdateServiceInput{
+			Cluster: aws.String(clusterName), Service: aws.String(serviceName), DesiredCount: aws.Int32(0),
+		})
+		_, _ = client.DeleteService(ctx, &ecs.DeleteServiceInput{
+			Cluster: aws.String(clusterName), Service: aws.String(serviceName), Force: aws.Bool(true),
+		})
 	})
 }
 

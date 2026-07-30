@@ -391,7 +391,8 @@ resource "aws_ecs_task_definition" "tf_runner" {
 
   container_definitions = jsonencode([{
     name      = "app"
-    image     = "public.ecr.aws/docker/library/alpine:latest"
+    image     = "sockerless-container-command:test"
+    command   = ["hold"]
     essential = true
   }])
 }

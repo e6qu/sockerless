@@ -267,13 +267,14 @@ func TestECSCLI_ServiceDeployments(t *testing.T) {
 	t.Cleanup(func() { _ = awsCLI("ecs", "delete-cluster", "--cluster", cluster).Run() })
 	runCLI(t, awsCLI("ecs", "register-task-definition",
 		"--family", "cli-sd-task",
-		"--container-definitions", `[{"name":"app","image":"alpine:latest"}]`))
+		"--container-definitions", `[{"name":"app","image":"`+containerCommandImage+`","command":["hold"]}]`))
 
 	namespace := "arn:aws:servicediscovery:us-east-1:000000000000:namespace/ns-cli-sd"
 	runCLI(t, awsCLI("ecs", "create-service",
 		"--cluster", cluster, "--service-name", "cli-sd-svc",
 		"--task-definition", "cli-sd-task", "--desired-count", "1",
 		"--service-connect-configuration", `{"enabled":true,"namespace":"`+namespace+`"}`))
+	cleanupCLIService(t, cluster, "cli-sd-svc")
 
 	listOut := runCLI(t, awsCLI("ecs", "list-service-deployments",
 		"--cluster", cluster, "--service", "cli-sd-svc", "--output", "json"))

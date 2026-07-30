@@ -14,15 +14,9 @@ import (
 // ECS Service family — terraform-provider-aws declares `aws_ecs_service` for
 // long-lived Fargate services (the common case; RunTask alone covers only
 // one-shot tasks) and `aws_ecs_cluster_capacity_providers` for the cluster's
-// capacity-provider config. The sim models the service as a control-plane
-// object: on create/update it reaches ACTIVE with runningCount == desiredCount
-// and a COMPLETED primary deployment as a modeled state machine, so
-// create/update/delete and Describe/List round-trip deterministically. Real
-// container execution stays reserved for RunTask (the path the ECS backend and
-// one-shot tests drive); the service state machine never launches ephemeral
-// Docker containers to satisfy DesiredCount — doing so crash-loops no-command
-// images (they exit immediately, get relaunched every tick) and leaks
-// containers without ever holding a stable runningCount.
+// capacity-provider config. Services reconcile durable tasks through the same
+// runtime as RunTask; their counts and deployment state are derived from those
+// tasks rather than synthesized from desiredCount.
 
 // ECSService is a control-plane model of an ECS service. Config blocks the sim
 // doesn't interpret (network/load-balancer/registry config) are held as raw
@@ -68,8 +62,8 @@ type ECSService struct {
 	Tags                        []ECSTag        `json:"tags,omitempty"`
 }
 
-// ECSDeployment is the service's deployment record. A modeled service has a
-// single PRIMARY deployment that immediately reports COMPLETED.
+// ECSDeployment is the service's deployment record. Its counts and rollout
+// state follow the tasks owned by that deployment.
 type ECSDeployment struct {
 	Id                          string          `json:"id"`
 	Status                      string          `json:"status"`
@@ -78,6 +72,7 @@ type ECSDeployment struct {
 	RunningCount                int             `json:"runningCount"`
 	PendingCount                int             `json:"pendingCount"`
 	RolloutState                string          `json:"rolloutState"`
+	RolloutStateReason          string          `json:"rolloutStateReason,omitempty"`
 	CreatedAt                   float64         `json:"createdAt"`
 	UpdatedAt                   float64         `json:"updatedAt"`
 	ServiceConnectConfiguration json.RawMessage `json:"serviceConnectConfiguration,omitempty"`
@@ -366,6 +361,15 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidParameterException", "taskDefinition is required", http.StatusBadRequest)
 		return
 	}
+	if _, ok := ecsServiceTaskDefinition(req.TaskDefinition); !ok {
+		sim.AWSErrorf(w, "ClientException", http.StatusBadRequest,
+			"Unable to describe task definition: %s", req.TaskDefinition)
+		return
+	}
+	if code, message := validateECSServiceLoadBalancers(req.LoadBalancers, req.TaskDefinition); code != "" {
+		sim.AWSError(w, code, message, http.StatusBadRequest)
+		return
+	}
 	clusterName := ecsClusterNameFromRef(req.Cluster)
 	cluster, ok := ecsClusters.Get(clusterName)
 	if !ok {
@@ -395,7 +399,7 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 		ClusterArn:                    cluster.ClusterArn,
 		TaskDefinition:                req.TaskDefinition,
 		DesiredCount:                  desired,
-		RunningCount:                  desired,
+		RunningCount:                  0,
 		PendingCount:                  0,
 		Status:                        "ACTIVE",
 		LaunchType:                    req.LaunchType,
@@ -424,6 +428,8 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
 	ecsServices.Put(key, svc)
 	ecsRecordServiceDeployment(svc, ecsServiceConnectNamespace(svc.ServiceConnectConfiguration))
+	ecsReconcileService(key)
+	svc, _ = ecsServices.Get(key)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"service": svc})
 }
 
@@ -447,6 +453,10 @@ func ecsServiceConnectNamespace(scc []byte) string {
 // service-connect / volume / vpc-lattice configs surface here (the SDK Service
 // type carries them only inside the deployment record, not at the top level).
 func ecsServiceDeployment(svc ECSService, now float64) ECSDeployment {
+	rolloutState := "IN_PROGRESS"
+	if svc.RunningCount == svc.DesiredCount && svc.PendingCount == 0 {
+		rolloutState = "COMPLETED"
+	}
 	return ECSDeployment{
 		Id:                          "ecs-svc/" + generateUUID(),
 		Status:                      "PRIMARY",
@@ -454,7 +464,7 @@ func ecsServiceDeployment(svc ECSService, now float64) ECSDeployment {
 		DesiredCount:                svc.DesiredCount,
 		RunningCount:                svc.RunningCount,
 		PendingCount:                svc.PendingCount,
-		RolloutState:                "COMPLETED",
+		RolloutState:                rolloutState,
 		CreatedAt:                   now,
 		UpdatedAt:                   now,
 		ServiceConnectConfiguration: svc.ServiceConnectConfiguration,
@@ -482,11 +492,13 @@ func handleECSDescribeServices(w http.ResponseWriter, r *http.Request) {
 	failures := make([]map[string]string, 0)
 	for _, ref := range req.Services {
 		name := ecsServiceNameFromRef(ref)
-		if svc, ok := ecsServices.Get(ecsServiceKey(clusterName, name)); ok {
-			// RunningCount/PendingCount are the modeled control-plane counts set
-			// at create/update (runningCount == desiredCount, pendingCount == 0);
-			// the service reaches steady state synchronously, so DescribeServices
-			// returns the stored snapshot verbatim.
+		key := ecsServiceKey(clusterName, name)
+		if svc, ok := ecsServices.Get(key); ok {
+			if svc.Status == "ACTIVE" {
+				ecsReconcileService(key)
+				ecsRefreshServiceState(key)
+				svc, _ = ecsServices.Get(key)
+			}
 			services = append(services, svc)
 		} else {
 			failures = append(failures, map[string]string{
@@ -638,6 +650,7 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 		ServiceConnectConfiguration   json.RawMessage `json:"serviceConnectConfiguration"`
 		VolumeConfigurations          json.RawMessage `json:"volumeConfigurations"`
 		VpcLatticeConfigurations      json.RawMessage `json:"vpcLatticeConfigurations"`
+		ForceNewDeployment            bool            `json:"forceNewDeployment"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -655,6 +668,27 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 			"Service not found: %s", req.Service)
 		return
 	}
+	targetTaskDefinition := svc.TaskDefinition
+	if req.TaskDefinition != "" {
+		targetTaskDefinition = req.TaskDefinition
+	}
+	targetLoadBalancers := svc.LoadBalancers
+	if req.LoadBalancers != nil {
+		targetLoadBalancers = req.LoadBalancers
+	}
+	if code, message := validateECSServiceLoadBalancers(targetLoadBalancers, targetTaskDefinition); code != "" {
+		sim.AWSError(w, code, message, http.StatusBadRequest)
+		return
+	}
+	deploymentRequired := req.ForceNewDeployment ||
+		(req.TaskDefinition != "" && req.TaskDefinition != svc.TaskDefinition) ||
+		req.NetworkConfiguration != nil ||
+		req.LoadBalancers != nil ||
+		req.PlatformVersion != "" ||
+		req.CapacityProviderStrategy != nil ||
+		req.ServiceConnectConfiguration != nil ||
+		req.VolumeConfigurations != nil ||
+		req.VpcLatticeConfigurations != nil
 	if req.TaskDefinition != "" {
 		svc.TaskDefinition = req.TaskDefinition
 	}
@@ -709,16 +743,38 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 	if req.VpcLatticeConfigurations != nil {
 		svc.VpcLatticeConfigurations = req.VpcLatticeConfigurations
 	}
-	// The modeled service reaches steady state synchronously: runningCount
-	// tracks desiredCount, pendingCount is zero, and the primary deployment is
-	// COMPLETED. No background scheduler launches tasks to converge these.
-	svc.RunningCount = svc.DesiredCount
-	svc.PendingCount = 0
 	now := float64(time.Now().Unix())
-	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
+	if deploymentRequired {
+		svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
+	} else {
+		ecsUpdatePrimaryDeploymentCounts(&svc, now)
+	}
 	ecsServices.Put(key, svc)
-	ecsRecordServiceDeployment(svc, ecsServiceConnectNamespace(svc.ServiceConnectConfiguration))
+	if deploymentRequired {
+		ecsRecordServiceDeployment(svc, ecsServiceConnectNamespace(svc.ServiceConnectConfiguration))
+	}
+	ecsReconcileService(key)
+	svc, _ = ecsServices.Get(key)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"service": svc})
+}
+
+func ecsUpdatePrimaryDeploymentCounts(service *ECSService, now float64) {
+	if len(service.Deployments) == 0 {
+		service.Deployments = []ECSDeployment{ecsServiceDeployment(*service, now)}
+		return
+	}
+	deployment := &service.Deployments[0]
+	deployment.DesiredCount = service.DesiredCount
+	deployment.RunningCount = service.RunningCount
+	deployment.PendingCount = service.PendingCount
+	deployment.UpdatedAt = now
+	if deployment.RunningCount == deployment.DesiredCount && deployment.PendingCount == 0 {
+		deployment.RolloutState = "COMPLETED"
+		deployment.RolloutStateReason = ""
+	} else if deployment.RolloutState != "FAILED" {
+		deployment.RolloutState = "IN_PROGRESS"
+		deployment.RolloutStateReason = ""
+	}
 }
 
 func handleECSDeleteService(w http.ResponseWriter, r *http.Request) {
@@ -733,6 +789,15 @@ func handleECSDeleteService(w http.ResponseWriter, r *http.Request) {
 	}
 	clusterName := ecsClusterNameFromRef(req.Cluster)
 	key := ecsServiceKey(clusterName, ecsServiceNameFromRef(req.Service))
+	_, ok := ecsServices.Get(key)
+	if !ok {
+		sim.AWSErrorf(w, "ServiceNotFoundException", http.StatusBadRequest,
+			"Service not found: %s", req.Service)
+		return
+	}
+	lock := ecsServiceLock(key)
+	lock.Lock()
+	defer lock.Unlock()
 	svc, ok := ecsServices.Get(key)
 	if !ok {
 		sim.AWSErrorf(w, "ServiceNotFoundException", http.StatusBadRequest,
@@ -741,14 +806,15 @@ func handleECSDeleteService(w http.ResponseWriter, r *http.Request) {
 	}
 	// Real ECS drains then marks the service INACTIVE; DescribeServices keeps
 	// returning it as INACTIVE, which is how terraform-provider-aws confirms the
-	// delete converged. Stop the service's running tasks first so the
-	// scheduler doesn't keep resurrecting them against an INACTIVE service.
-	ecsStopServiceTasks(svc)
+	// delete converged. Persist INACTIVE before stopping tasks so their
+	// lifecycle callbacks cannot race the delete and launch a replacement.
 	svc.Status = "INACTIVE"
 	svc.DesiredCount = 0
 	svc.RunningCount = 0
 	svc.PendingCount = 0
 	ecsServices.Put(key, svc)
+	ecsStopServiceTasks(svc)
+	ecsSyncServiceLoadBalancerTargets(svc)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"service": svc})
 }
 

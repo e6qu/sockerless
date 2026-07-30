@@ -41,8 +41,9 @@ func TestECSExpress_UnderlyingResourcesDescribeFaithfully(t *testing.T) {
 		InfrastructureRoleArn: aws.String("arn:aws:iam::000000000000:role/express-infra"),
 		HealthCheckPath:       aws.String("/healthz"),
 		PrimaryContainer: &ecstypes.ExpressGatewayContainer{
-			Image:         aws.String("public.ecr.aws/docker/library/busybox:latest"),
+			Image:         aws.String(containerCommandImage),
 			ContainerPort: aws.Int32(8080),
+			Command:       []string{"http", "8080", "express-ok"},
 		},
 		ScalingTarget: &ecstypes.ExpressGatewayScalingTarget{
 			MinTaskCount:           aws.Int32(2),

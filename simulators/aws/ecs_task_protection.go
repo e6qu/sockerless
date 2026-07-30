@@ -113,6 +113,7 @@ func handleECSUpdateTaskProtection(w http.ResponseWriter, r *http.Request) {
 			ecsTaskProtections.Delete(id)
 		}
 		protected = append(protected, p)
+		ecsRequestServiceReconcileForTask(task)
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"protectedTasks": protected,

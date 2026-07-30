@@ -250,12 +250,20 @@ to Discovery revisions 20260723 and 20260724.
 
 ## Next Recommended Slice
 
-BUG-2794 became the next production slice: make Amazon ECS services launch and
-durably reconcile their declared task-definition workloads, perform rolling
-replacement, register and deregister real load-balancer targets, reflect
-health, and stop tasks when desired capacity falls. Prove the contract through
-official ECS and Elastic Load Balancing clients and the unmodified ECS Dev
-Desktop module before qualifying the deployed app.
+BUG-2798 became the next Amazon Elastic Container Service (ECS) fidelity slice:
+make `serviceRegistries` drive durable AWS Cloud Map instance registration and
+deregistration for each service task, including task replacement and hard
+simulator restart. BUG-2799 followed with AWS-shaped failed-deployment
+behavior: scheduler restart throttling, deployment circuit-breaker failure and
+rollback, and CloudWatch-alarm rollback. Prove both through official AWS SDK
+and AWS CLI clients plus the corresponding HashiCorp AWS provider resources.
+
+The production runtime blocker itself closed. ECS services launched durable
+task-definition workloads, replaced stopped tasks, rolled revisions, scaled
+through direct updates and Application Auto Scaling, served healthy traffic
+through real load-balancer targets, and retained task identity across a hard
+simulator replacement. Official AWS SDK, AWS CLI, and production-shaped
+HashiCorp AWS provider scenarios exercised that data plane.
 
 BUG-2766 remained the next independent AWS fidelity slice: implement the
 published AWS Amplify Hosting `ImageOptimization` fetch, source-policy,
