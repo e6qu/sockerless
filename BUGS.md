@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2791 filed - 2790 fixed - 9 open - 16 false positives.**
+**2792 filed - 2792 fixed - 9 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -24,6 +24,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2792~~ | P1 | AWS simulator Amazon ECS durable restart | one legacy `RUNNING` task without state-scoped workload containers aborted the complete simulator startup | Amazon ECS now reconciles a persisted `RUNNING` task with zero matching runtime containers to a truthful `STOPPED` state, records the control-plane restart reason and unknown exit code, updates container-instance counts and managed resources, and continues restoring the remaining tasks; runtime discovery and adoption failures still fail startup loudly. |
 | ~~2790~~ | P1 | AWS Terraform container validation | `docker run --rm` hid Podman attachment failures, leaked failed containers, and did not carry runtime Smithy reports back to the host | The macOS wrapper created, attached, and removed its exact privileged test container explicitly, propagated test and cleanup status, removed anonymous volumes, and mounted the host Smithy-report directory at a container-relative coordinate. |
 | ~~2789~~ | P1 | AWS Lambda persistence validation | the durable-callback restart proof depended on a host callback outside AWS instead of observing the real function through cloud APIs | The managed Node.js runtime published its checkpoint token and durable execution ARN to Amazon CloudWatch Logs; the official AWS SDK read those logs, checkpointed the execution, hard-restarted the simulator, completed the callback, and observed the original execution resume successfully. |
 | ~~2788~~ | P1 | AWS Glue persistence and response fidelity | database tags leaked through `GetDatabase`, while hiding them risked losing them from SQLite | AWS Glue database tags remained internal durable state, survived hard simulator replacement, and were exposed only through `GetTags`; official SDK and Terraform fixtures created tagged databases, and runtime Smithy validation recorded no response-shape violations. |

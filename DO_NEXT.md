@@ -62,6 +62,13 @@ Amazon ECS or CodeBuild task. Official AWS SDK and AWS CLI restart suites
 passed, and the production-shaped HashiCorp AWS provider completed apply,
 hard restart, zero-change refresh, and destroy.
 
+Legacy Amazon ECS state from releases before state-scoped workload adoption no
+longer prevented that durable simulator from starting. A persisted task that
+claimed `RUNNING` but had zero matching runtime containers became truthfully
+`STOPPED` with the restart cause and unknown exit code; recovery continued
+through the remaining tasks, while Docker or Podman discovery failures still
+failed startup loudly.
+
 The production Compose recipes enabled the existing durable stores for the
 AWS, Google Cloud, and Microsoft Azure simulators on named volumes. The AWS
 Batch console listed real jobs and definitions, polled status, surfaced

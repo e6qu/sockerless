@@ -4,6 +4,24 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Legacy Amazon ECS state stopped blocking simulator upgrades
+
+The first production upgrade to durable workload recovery encountered an
+Amazon ECS task persisted by an older release. Its control-plane row still
+claimed `RUNNING`, but the prior runtime had not left a state-scoped workload
+container that the new process could adopt. Recovery treated that mismatch as
+a fatal simulator error, so one stale task prevented every AWS API from
+starting and the deployment correctly rolled back.
+
+Amazon ECS now reconciles exactly that zero-container case to `STOPPED`, with
+`EssentialContainerExited`, a control-plane restart reason, an unknown exit
+code, adjusted container-instance counts, managed-resource cleanup, and
+network teardown. It continues restoring subsequent tasks. Container-runtime
+discovery failures, missing task definitions, malformed identity labels, and
+adoption failures remain fail-loud startup errors. Focused coverage proves
+multiple legacy tasks reconcile in one pass and a real discovery error leaves
+the task untouched while aborting recovery.
+
 ## 2026-07-30 — Persistence stayed private where AWS response models required it
 
 AWS Glue database tags had been emitted inside `GetDatabase`, a member the

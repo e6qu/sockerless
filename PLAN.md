@@ -96,6 +96,7 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 66. Removed invented AWS Cloud Map custom-health configuration and made durable Lambda callback recovery observable through only Lambda and Amazon CloudWatch Logs APIs.
 67. Made the macOS AWS Terraform container wrapper preserve Smithy reports, surface attachment failures, and clean exact failed containers and anonymous volumes.
 68. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+69. Reconciled legacy persisted Amazon ECS tasks whose workload containers could not be adopted, so one stale `RUNNING` row became truthfully `STOPPED` without preventing the AWS simulator from starting or restoring other workloads.
 
 ## Verified Next Gaps
 
