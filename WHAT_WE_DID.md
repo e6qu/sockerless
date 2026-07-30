@@ -4,7 +4,7 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
-## 2026-07-30 — AWS SDK releases and the exhaustive local suite stayed green
+## 2026-07-30 — AWS SDK releases, local budgets, and ECS isolation stayed green
 
 The same-day AWS SDK wave advanced Lambda from `v1.100.2` to `v1.101.0` in
 the Lambda backend and official-client suite and IAM from `v1.56.2` to
@@ -18,6 +18,13 @@ deadline even though hosted CI already distributed the same exhaustive
 coverage across four bounded shards. The shared Go library recipe now accepts
 module-specific test flags, and the AWS SDK suite declares a 30-minute local
 budget without changing test selection or hosted shard limits.
+
+The complete official SDK run then found that generated ECS test VPCs could
+reuse CIDRs owned by fixed-CIDR coverage. Test teardown also ignored the
+temporary `DeleteVpc` dependency error while `StopTask` asynchronously removed
+its container. ECS helper VPCs now use the reserved 10.225-249 range and retry
+deletion until the workload network is released. The previously failing ECS
+service lifecycle and Terraform-in-ECS cases passed with real containers.
 
 ## 2026-07-30 — Azure deletion errors remained actionable
 

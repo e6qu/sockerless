@@ -15,6 +15,12 @@ package timeout. The shared Go library test recipe accepted module-specific
 flags, the AWS SDK suite declared a 30-minute budget, and hosted CI retained
 its separate four-shard limits.
 
+The wider validation exposed an ECS
+test-isolation defect: generated VPC CIDRs overlapped fixed-CIDR cases and
+cleanup ignored the transient dependency error while stopped containers still
+held a network. ECS helper VPCs now use the reserved 10.225-249 range and retry
+deletion until asynchronous task shutdown releases the network.
+
 Microsoft Azure resource-deletion dialogs retained Azure Resource Manager's
 actionable failure after a rejected request even when a concurrent Fluent UI
 backdrop event arrived. Backdrop dismissal was suppressed only while the error
