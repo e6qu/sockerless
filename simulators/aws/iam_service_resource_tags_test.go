@@ -21,6 +21,7 @@ func resetTagStores() {
 	elbv2TargetGroups = sim.MakeStore[ELBv2TargetGroup](nil, "elbv2_target_groups")
 	ecClusters = sim.MakeStore[ECCluster](nil, "elasticache_clusters")
 	ddbTables = sim.MakeStore[DDBTable](nil, "ddb_tables")
+	ddbTableSettings = sim.MakeStore[DDBTableSettings](nil, "ddb_table_settings")
 	ecrRepositories = sim.MakeStore[ECRRepository](nil, "ecr_repositories")
 	cwLogGroups = sim.MakeStore[CWLogGroup](nil, "cw_log_groups")
 	sfnStateMachines = sim.MakeStore[SFNStateMachine](nil, "sfn_state_machines")
@@ -89,7 +90,8 @@ func TestIAMServiceResourceTags(t *testing.T) {
 			"qt", "fast")
 	})
 
-	ddbTables.Put("orders", DDBTable{TableName: "orders", Tags: []SMTag{{Key: "env", Value: "prod"}}})
+	ddbTables.Put("orders", DDBTable{TableName: "orders"})
+	ddbTableSettings.Put("orders", DDBTableSettings{Tags: []SMTag{{Key: "env", Value: "prod"}}})
 	t.Run("dynamodb_arn", func(t *testing.T) {
 		assertResolved(t, "dynamodb",
 			jsonRequest(`{"ResourceArn":"arn:aws:dynamodb:us-east-1:123456789012:table/orders"}`),

@@ -154,13 +154,15 @@ func iamDynamoDBResourceTags(r *http.Request) (map[string]string, bool) {
 		return nil, false
 	}
 	if req.ResourceArn != "" {
-		if _, t, ok := ddbTableByArn(req.ResourceArn); ok {
-			return smTagsToMap(t.Tags), true
+		if name, _, ok := ddbTableByArn(req.ResourceArn); ok {
+			settings, _ := ddbTableSettings.Get(name)
+			return smTagsToMap(settings.Tags), true
 		}
 	}
 	if req.TableName != "" {
-		if t, ok := ddbTables.Get(req.TableName); ok {
-			return smTagsToMap(t.Tags), true
+		if _, ok := ddbTables.Get(req.TableName); ok {
+			settings, _ := ddbTableSettings.Get(req.TableName)
+			return smTagsToMap(settings.Tags), true
 		}
 	}
 	return nil, false

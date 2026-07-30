@@ -1,6 +1,10 @@
 package gcp_sdk_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,6 +82,65 @@ func TestCloudSQL_InstanceDatabaseUserLifecycle(t *testing.T) {
 	// Delete instance (cascade).
 	_, err = svc.Instances.Delete(project, instanceName).Do()
 	require.NoError(t, err)
+}
+
+func TestCloudSQL_NewPublishedInstanceFieldsRoundTrip(t *testing.T) {
+	const (
+		project  = "published-fields-project"
+		instance = "published-fields"
+	)
+	createBody := []byte(`{
+		"name":"published-fields",
+		"databaseVersion":"MYSQL_8_0",
+		"databaseCenterIntegrationEnabled":true,
+		"onPremisesConfiguration":{"hostPort":"db.example.test:3306"}
+	}`)
+	req, err := http.NewRequest(http.MethodPost,
+		baseURL+"/v1/projects/"+project+"/instances", bytes.NewReader(createBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+
+	resp, err = http.Get(baseURL + "/v1/projects/" + project + "/instances/" + instance)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var got struct {
+		DatabaseCenterIntegrationEnabled *bool          `json:"databaseCenterIntegrationEnabled"`
+		OnPremisesConfiguration          map[string]any `json:"onPremisesConfiguration"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	require.NotNil(t, got.DatabaseCenterIntegrationEnabled)
+	assert.True(t, *got.DatabaseCenterIntegrationEnabled)
+	assert.Equal(t, "db.example.test:3306", got.OnPremisesConfiguration["hostPort"])
+	assert.Equal(t, false, got.OnPremisesConfiguration["dmsManaged"])
+
+	userBody := []byte(`{"name":"operator","host":"%","serverRoles":["cloudsqlsuperuser"]}`)
+	req, err = http.NewRequest(http.MethodPost,
+		baseURL+"/v1/projects/"+project+"/instances/"+instance+"/users", bytes.NewReader(userBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+
+	resp, err = http.Get(baseURL + "/v1/projects/" + project + "/instances/" + instance + "/users/operator?host=%25")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var user struct {
+		ServerRoles []string `json:"serverRoles"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&user))
+	assert.Equal(t, []string{"cloudsqlsuperuser"}, user.ServerRoles)
 }
 
 func TestCloudSQL_BackupRunsReturnOperations(t *testing.T) {

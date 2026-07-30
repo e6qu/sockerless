@@ -484,7 +484,8 @@ func handleDDBRestoreTableToPointInTime(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// PITR must be enabled on the source (terraform/real AWS reject otherwise).
-	if src.PITRStatus != "ENABLED" {
+	settings, _ := ddbTableSettings.Get(srcName)
+	if settings.PITRStatus != "ENABLED" {
 		sim.AWSErrorf(w, "InvalidRestoreTimeException", http.StatusBadRequest,
 			"Point in time recovery is not enabled for table: %s", srcName)
 		return

@@ -20,19 +20,21 @@ import (
 // immediately on insert.
 
 type SQLInstance struct {
-	Name            string           `json:"name"`
-	Project         string           `json:"project,omitempty"`
-	Region          string           `json:"region,omitempty"`
-	DatabaseVersion string           `json:"databaseVersion,omitempty"`
-	State           string           `json:"state,omitempty"`
-	BackendType     string           `json:"backendType,omitempty"`
-	InstanceType    string           `json:"instanceType,omitempty"`
-	ConnectionName  string           `json:"connectionName,omitempty"`
-	GceZone         string           `json:"gceZone,omitempty"`
-	CreateTime      string           `json:"createTime,omitempty"`
-	Settings        map[string]any   `json:"settings,omitempty"`
-	IpAddresses     []map[string]any `json:"ipAddresses,omitempty"`
-	SelfLink        string           `json:"selfLink,omitempty"`
+	Name                             string           `json:"name"`
+	Project                          string           `json:"project,omitempty"`
+	Region                           string           `json:"region,omitempty"`
+	DatabaseVersion                  string           `json:"databaseVersion,omitempty"`
+	State                            string           `json:"state,omitempty"`
+	BackendType                      string           `json:"backendType,omitempty"`
+	InstanceType                     string           `json:"instanceType,omitempty"`
+	ConnectionName                   string           `json:"connectionName,omitempty"`
+	GceZone                          string           `json:"gceZone,omitempty"`
+	CreateTime                       string           `json:"createTime,omitempty"`
+	DatabaseCenterIntegrationEnabled *bool            `json:"databaseCenterIntegrationEnabled,omitempty"`
+	OnPremisesConfiguration          map[string]any   `json:"onPremisesConfiguration,omitempty"`
+	Settings                         map[string]any   `json:"settings,omitempty"`
+	IpAddresses                      []map[string]any `json:"ipAddresses,omitempty"`
+	SelfLink                         string           `json:"selfLink,omitempty"`
 }
 
 type SQLDatabase struct {
@@ -44,11 +46,12 @@ type SQLDatabase struct {
 }
 
 type SQLUser struct {
-	Name     string `json:"name"`
-	Instance string `json:"instance,omitempty"`
-	Project  string `json:"project,omitempty"`
-	Host     string `json:"host,omitempty"`
-	Type     string `json:"type,omitempty"`
+	Name        string   `json:"name"`
+	Instance    string   `json:"instance,omitempty"`
+	Project     string   `json:"project,omitempty"`
+	Host        string   `json:"host,omitempty"`
+	Type        string   `json:"type,omitempty"`
+	ServerRoles []string `json:"serverRoles,omitempty"`
 }
 
 type sqlUserCredential struct {
@@ -460,6 +463,20 @@ func firstSQLUser(project, instance, name, host string) (SQLUser, bool) {
 	return SQLUser{}, false
 }
 
+func sqlOnPremisesConfiguration(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in)+1)
+	for key, value := range in {
+		out[key] = value
+	}
+	// This simulator does not attach an on-premises source to Database
+	// Migration Service, so the published output-only state is false.
+	out["dmsManaged"] = false
+	return out
+}
+
 func handleSQLInsertInstance(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	var req SQLInstance
@@ -472,16 +489,18 @@ func handleSQLInsertInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inst := SQLInstance{
-		Name:            req.Name,
-		Project:         project,
-		Region:          defaultStr(req.Region, "us-central1"),
-		DatabaseVersion: defaultStr(req.DatabaseVersion, "POSTGRES_15"),
-		State:           "RUNNABLE",
-		BackendType:     "SECOND_GEN",
-		InstanceType:    "CLOUD_SQL_INSTANCE",
-		ConnectionName:  fmt.Sprintf("%s:%s:%s", project, defaultStr(req.Region, "us-central1"), req.Name),
-		CreateTime:      nowTimestamp(),
-		Settings:        req.Settings,
+		Name:                             req.Name,
+		Project:                          project,
+		Region:                           defaultStr(req.Region, "us-central1"),
+		DatabaseVersion:                  defaultStr(req.DatabaseVersion, "POSTGRES_15"),
+		State:                            "RUNNABLE",
+		BackendType:                      "SECOND_GEN",
+		InstanceType:                     "CLOUD_SQL_INSTANCE",
+		ConnectionName:                   fmt.Sprintf("%s:%s:%s", project, defaultStr(req.Region, "us-central1"), req.Name),
+		CreateTime:                       nowTimestamp(),
+		DatabaseCenterIntegrationEnabled: req.DatabaseCenterIntegrationEnabled,
+		OnPremisesConfiguration:          sqlOnPremisesConfiguration(req.OnPremisesConfiguration),
+		Settings:                         req.Settings,
 		IpAddresses: []map[string]any{
 			{"type": "PRIMARY", "ipAddress": "10.0.0.1"},
 		},
@@ -533,6 +552,12 @@ func handleSQLPatchInstance(w http.ResponseWriter, r *http.Request) {
 	sqlInstances.Update(key, func(i *SQLInstance) {
 		if req.DatabaseVersion != "" {
 			i.DatabaseVersion = req.DatabaseVersion
+		}
+		if req.DatabaseCenterIntegrationEnabled != nil {
+			i.DatabaseCenterIntegrationEnabled = req.DatabaseCenterIntegrationEnabled
+		}
+		if req.OnPremisesConfiguration != nil {
+			i.OnPremisesConfiguration = sqlOnPremisesConfiguration(req.OnPremisesConfiguration)
 		}
 		// instances.patch merges settings.* sub-fields: keys present in the
 		// patch body replace, keys it omits are preserved (a wholesale
@@ -689,11 +714,12 @@ func handleSQLInsertUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := SQLUser{
-		Name:     req.Name,
-		Instance: instance,
-		Project:  project,
-		Host:     req.Host,
-		Type:     defaultStr(req.Type, "BUILT_IN"),
+		Name:        req.Name,
+		Instance:    instance,
+		Project:     project,
+		Host:        req.Host,
+		Type:        defaultStr(req.Type, "BUILT_IN"),
+		ServerRoles: req.ServerRoles,
 	}
 	sqlUsers.Put(sqlUserKey(project, instance, req.Host, req.Name), u)
 	sqlUserSecrets.Put(sqlUserKey(project, instance, req.Host, req.Name), sqlUserCredential{Password: wire.Password})
@@ -764,6 +790,9 @@ func handleSQLUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Type != "" {
 		current.Type = req.Type
 	}
+	if req.ServerRoles != nil {
+		current.ServerRoles = req.ServerRoles
+	}
 	sqlUsers.Put(sqlUserKey(project, instance, current.Host, current.Name), current)
 	if wire.Password != "" {
 		sqlUserSecrets.Put(sqlUserKey(project, instance, current.Host, current.Name), sqlUserCredential{Password: wire.Password})
@@ -814,6 +843,8 @@ func handleSQLUpdateInstance(w http.ResponseWriter, r *http.Request) {
 		if req.DatabaseVersion != "" {
 			i.DatabaseVersion = req.DatabaseVersion
 		}
+		i.DatabaseCenterIntegrationEnabled = req.DatabaseCenterIntegrationEnabled
+		i.OnPremisesConfiguration = sqlOnPremisesConfiguration(req.OnPremisesConfiguration)
 		// update is a full replace of settings; the previous map is
 		// discarded. settingsVersion still advances.
 		next := sqlNextSettingsVersion(i.Settings)

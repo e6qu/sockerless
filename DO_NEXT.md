@@ -22,13 +22,26 @@ the suites started.
 The pre-push dependency audit's coordinated AWS SDK patch wave and Google Cloud
 Spanner client release were applied across every affected Go module with the
 repository-owned upgrade target. Direct pins and their resolved transitive
-graphs were current again.
+graphs were current again. Go 1.26 module reconciliation also advanced the
+Microsoft Azure and Google Cloud common backends to the selected
+`go-isatty` 0.0.24 transitive release; both focused lint and unit suites passed.
 
 AWS Key Management Service custom key policies persisted in the simulator's
 SQLite key record instead of disappearing during JSON serialization. A
 store-close-and-reopen regression proved durable read-back, and the
 production-shaped HashiCorp AWS provider graph supplied a custom policy so its
 post-create policy waiter exercised the same contract.
+
+AWS DynamoDB auxiliary table state no longer depended on fields excluded from
+JSON serialization. TTL, point-in-time recovery, and tags lived in one durable
+out-of-band settings record, deletion removed that record, IAM resource-tag
+conditions read it, and a SQLite close-and-reopen regression plus the
+production-shaped provider graph exercised all three convergence paths.
+
+The hosted Google Cloud specification gate's exact Cloud SQL Admin v1 and
+v1beta4 revision 20260722 artifacts were retained. Their 75 methods and routes
+were unchanged, while authenticated public-route coverage implemented and
+round-tripped the three newly published schema members.
 
 Google Cloud Spanner executed SQL, DML, batch DML, reads, mutations,
 transactions, partitions, and batch writes through real SQLite transactions

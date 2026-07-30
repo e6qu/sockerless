@@ -1468,6 +1468,22 @@ resource "aws_dynamodb_table" "tf_table" {
     }
     projection_type = "ALL"
   }
+
+  # These settings use separate DynamoDB APIs and provider waiters. They must
+  # persist independently of DescribeTable so apply and refresh converge.
+  ttl {
+    attribute_name = "ExpiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = {
+    env        = "terraform"
+    managed-by = "sockerless"
+  }
 }
 
 # KMS key — encrypts SecretsManager secrets and S3 objects.

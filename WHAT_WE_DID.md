@@ -4,12 +4,46 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — DynamoDB auxiliary table state became durable
+
+DynamoDB TTL, point-in-time recovery, and tags had been attached to table
+response records as fields excluded from JSON. The in-memory store retained
+them, but a persistent simulator serialized every update and immediately lost
+the values, leaving HashiCorp Terraform waiting for TTL to become enabled.
+
+The three settings now share a dedicated SQLite-backed table-settings record,
+remain outside `DescribeTable`, survive a state-store close and reopen, feed
+IAM resource-tag conditions, and are deleted with their owning table. The
+production-shaped AWS provider fixture declares TTL, point-in-time recovery,
+and tags so its apply and refresh permanently exercise every waiter.
+
+## 2026-07-30 — Cloud SQL Admin revision 20260722 was implemented
+
+The pull-request specification gate captured exact newer Cloud SQL Admin v1 and
+v1beta4 Discovery documents. Their 75 public methods and paths were unchanged,
+while the instance, on-premises configuration, and user schemas added
+`databaseCenterIntegrationEnabled`, output-only `dmsManaged`, and top-level
+`serverRoles`.
+
+The simulator now persists the requested Database Center setting and SQL
+Server roles and truthfully reports `dmsManaged=false` for an on-premises
+source that this simulator does not attach to Database Migration Service.
+Authenticated public-route coverage round-tripped all three fields, and the
+exact compressed documents and provenance moved to revision 20260722.
+
 ## 2026-07-30 — Client-module downloads became retry-protected
 
 Google Cloud and Microsoft Azure SDK/CLI jobs pre-fetched their separate
 official-client modules through the existing bounded module-proxy retry helper.
 A transient proxy reset therefore failed or retried during the explicit
 dependency phase instead of bypassing retry inside `go test`.
+
+## 2026-07-30 — Common cloud-backend module graphs were reconciled
+
+Go 1.26 module loading found that the Microsoft Azure and Google Cloud common
+backends still selected `go-isatty` 0.0.24 while their module files recorded
+0.0.22. Both graphs now record the selected transitive release, and their
+focused GolangCI and unit suites passed.
 
 ## 2026-07-30 — Terraform-in-ECS failures became bounded and diagnosable
 
