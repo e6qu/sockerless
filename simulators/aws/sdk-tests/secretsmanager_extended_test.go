@@ -237,8 +237,35 @@ func TestSecretsManager_UpdateSecretVersionStage(t *testing.T) {
 
 func TestSecretsManager_Replication(t *testing.T) {
 	c := smClient()
+	regionalClient := func(region string) *secretsmanager.Client {
+		config := sdkConfig()
+		config.Region = region
+		return secretsmanager.NewFromConfig(config, func(options *secretsmanager.Options) {
+			options.BaseEndpoint = aws.String(baseURL)
+		})
+	}
+	west := regionalClient("us-west-2")
+	europe := regionalClient("eu-west-1")
 	name := smUniqueName("replica")
 	smCreate(t, c, name, "v1")
+	smCreate(t, west, name, "destination-conflict")
+	t.Cleanup(func() {
+		for _, client := range []*secretsmanager.Client{c, west, europe} {
+			_, _ = client.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
+				SecretId:                   aws.String(name),
+				ForceDeleteWithoutRecovery: aws.Bool(true),
+			})
+		}
+	})
+
+	_, err := c.ReplicateSecretToRegions(ctx, &secretsmanager.ReplicateSecretToRegionsInput{
+		SecretId: aws.String(name),
+		AddReplicaRegions: []types.ReplicaRegionType{
+			{Region: aws.String("us-west-2")},
+			{Region: aws.String("eu-west-1")},
+		},
+	})
+	require.Error(t, err, "an existing destination secret requires ForceOverwriteReplicaSecret")
 
 	rep, err := c.ReplicateSecretToRegions(ctx, &secretsmanager.ReplicateSecretToRegionsInput{
 		SecretId: aws.String(name),
@@ -246,6 +273,7 @@ func TestSecretsManager_Replication(t *testing.T) {
 			{Region: aws.String("us-west-2")},
 			{Region: aws.String("eu-west-1")},
 		},
+		ForceOverwriteReplicaSecret: true,
 	})
 	require.NoError(t, err)
 	require.Len(t, rep.ReplicationStatus, 2)
@@ -256,6 +284,30 @@ func TestSecretsManager_Replication(t *testing.T) {
 	}
 	assert.True(t, regions["us-west-2"] && regions["eu-west-1"])
 
+	for region, client := range map[string]*secretsmanager.Client{
+		"us-west-2": west,
+		"eu-west-1": europe,
+	} {
+		replica, replicaErr := client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+			SecretId: aws.String(name),
+		})
+		require.NoError(t, replicaErr)
+		assert.Equal(t, "v1", aws.ToString(replica.SecretString))
+		assert.Contains(t, aws.ToString(replica.ARN), ":secretsmanager:"+region+":")
+	}
+
+	_, err = c.PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{
+		SecretId:     aws.String(name),
+		SecretString: aws.String("v2"),
+	})
+	require.NoError(t, err)
+	replicatedValue, err := europe.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(name),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "v2", aws.ToString(replicatedValue.SecretString),
+		"primary versions propagate to the regional replica")
+
 	removed, err := c.RemoveRegionsFromReplication(ctx, &secretsmanager.RemoveRegionsFromReplicationInput{
 		SecretId:             aws.String(name),
 		RemoveReplicaRegions: []string{"us-west-2"},
@@ -263,12 +315,66 @@ func TestSecretsManager_Replication(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, removed.ReplicationStatus, 1)
 	assert.Equal(t, "eu-west-1", *removed.ReplicationStatus[0].Region)
+	_, err = west.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(name)})
+	require.Error(t, err, "removing a replica Region deletes its regional secret")
 
-	// StopReplicationToReplica clears the relationship and returns the ARN.
-	stop, err := c.StopReplicationToReplica(ctx, &secretsmanager.StopReplicationToReplicaInput{
+	// StopReplicationToReplica runs in the replica Region and promotes that
+	// durable copy to an independent secret.
+	stop, err := europe.StopReplicationToReplica(ctx, &secretsmanager.StopReplicationToReplicaInput{
 		SecretId: aws.String(name),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, stop.ARN)
 	require.Contains(t, *stop.ARN, ":secret:"+name+"-")
+	require.Contains(t, *stop.ARN, ":secretsmanager:eu-west-1:")
+
+	_, err = europe.PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{
+		SecretId:     aws.String(name),
+		SecretString: aws.String("independent"),
+	})
+	require.NoError(t, err)
+	primaryValue, err := c.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(name),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "v2", aws.ToString(primaryValue.SecretString),
+		"a promoted replica no longer receives or sends primary updates")
+}
+
+func TestSecretsManager_CreateWithReplication(t *testing.T) {
+	primary := smClient()
+	config := sdkConfig()
+	config.Region = "us-west-2"
+	replica := secretsmanager.NewFromConfig(config, func(options *secretsmanager.Options) {
+		options.BaseEndpoint = aws.String(baseURL)
+	})
+	name := smUniqueName("create-replica")
+	_, err := primary.CreateSecret(ctx, &secretsmanager.CreateSecretInput{
+		Name:         aws.String(name),
+		SecretString: aws.String("created-with-replica"),
+		AddReplicaRegions: []types.ReplicaRegionType{{
+			Region: aws.String("us-west-2"),
+		}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		for _, client := range []*secretsmanager.Client{primary, replica} {
+			_, _ = client.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
+				SecretId:                   aws.String(name),
+				ForceDeleteWithoutRecovery: aws.Bool(true),
+			})
+		}
+	})
+	described, err := primary.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{
+		SecretId: aws.String(name),
+	})
+	require.NoError(t, err)
+	require.Len(t, described.ReplicationStatus, 1)
+	assert.Equal(t, "us-west-2", aws.ToString(described.ReplicationStatus[0].Region))
+	assert.Equal(t, types.StatusTypeInSync, described.ReplicationStatus[0].Status)
+	value, err := replica.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(name),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "created-with-replica", aws.ToString(value.SecretString))
 }

@@ -30,6 +30,8 @@ import (
 	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	secretsmanagertypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	sfntypes "github.com/aws/aws-sdk-go-v2/service/sfn/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -94,6 +96,11 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	stepFunctionsAPI := sfn.NewFromConfig(cfg, func(o *sfn.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	lambdaAPI := lambda.NewFromConfig(cfg, func(o *lambda.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	sqsAPI := sqs.NewFromConfig(cfg, func(o *sqs.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	secretsAPI := secretsmanager.NewFromConfig(cfg, func(o *secretsmanager.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+	})
+	westConfig := cfg
+	westConfig.Region = "us-west-2"
 	s3API := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
@@ -349,6 +356,23 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 		PartNumber: aws.Int32(1), Body: bytes.NewReader([]byte("multipart survived restart")),
 	})
 	require.NoError(t, err)
+	_, err = secretsAPI.CreateSecret(testCtx, &secretsmanager.CreateSecretInput{
+		Name:         aws.String("persistent-replicated-secret"),
+		SecretString: aws.String("before-restart"),
+	})
+	require.NoError(t, err)
+	_, err = secretsAPI.ReplicateSecretToRegions(testCtx, &secretsmanager.ReplicateSecretToRegionsInput{
+		SecretId: aws.String("persistent-replicated-secret"),
+		AddReplicaRegions: []secretsmanagertypes.ReplicaRegionType{{
+			Region: aws.String("us-west-2"),
+		}},
+	})
+	require.NoError(t, err)
+	_, err = secretsAPI.PutSecretValue(testCtx, &secretsmanager.PutSecretValueInput{
+		SecretId:     aws.String("persistent-replicated-secret"),
+		SecretString: aws.String("survived-restart"),
+	})
+	require.NoError(t, err)
 
 	shutdownSimulator(cmd)
 	cmd = startPersistentSimulator(t, stateDir, tcpPort, udpPort, "process")
@@ -362,6 +386,12 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	stepFunctionsAPI = sfn.NewFromConfig(cfg, func(o *sfn.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	lambdaAPI = lambda.NewFromConfig(cfg, func(o *lambda.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	sqsAPI = sqs.NewFromConfig(cfg, func(o *sqs.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	secretsAPI = secretsmanager.NewFromConfig(cfg, func(o *secretsmanager.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+	})
+	westSecretsAPI := secretsmanager.NewFromConfig(westConfig, func(o *secretsmanager.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+	})
 	s3API = s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
@@ -550,6 +580,18 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	persistedMultipart.Body.Close()
 	require.NoError(t, err)
 	assert.Equal(t, "multipart survived restart", string(persistedMultipartBody))
+	persistedReplica, err := westSecretsAPI.GetSecretValue(testCtx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String("persistent-replicated-secret"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "survived-restart", aws.ToString(persistedReplica.SecretString))
+	assert.Contains(t, aws.ToString(persistedReplica.ARN), ":secretsmanager:us-west-2:")
+	persistedPrimary, err := secretsAPI.DescribeSecret(testCtx, &secretsmanager.DescribeSecretInput{
+		SecretId: aws.String("persistent-replicated-secret"),
+	})
+	require.NoError(t, err)
+	require.Len(t, persistedPrimary.ReplicationStatus, 1)
+	assert.Equal(t, secretsmanagertypes.StatusTypeInSync, persistedPrimary.ReplicationStatus[0].Status)
 }
 
 func TestAmplifyBuildResumesAfterSimulatorRestart_SDK(t *testing.T) {

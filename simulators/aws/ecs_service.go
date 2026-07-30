@@ -55,11 +55,18 @@ type ECSService struct {
 	// These three surface inside the deployment record (not the Service top
 	// level) — the SDK Service type has no such fields. Stored here for
 	// round-trip, emitted via the primary deployment.
-	ServiceConnectConfiguration json.RawMessage `json:"-"`
-	VolumeConfigurations        json.RawMessage `json:"-"`
-	VpcLatticeConfigurations    json.RawMessage `json:"-"`
-	Deployments                 []ECSDeployment `json:"deployments"`
-	Tags                        []ECSTag        `json:"tags,omitempty"`
+	ServiceConnectConfiguration json.RawMessage   `json:"-"`
+	VolumeConfigurations        json.RawMessage   `json:"-"`
+	VpcLatticeConfigurations    json.RawMessage   `json:"-"`
+	Deployments                 []ECSDeployment   `json:"deployments"`
+	Events                      []ECSServiceEvent `json:"events,omitempty"`
+	Tags                        []ECSTag          `json:"tags,omitempty"`
+}
+
+type ECSServiceEvent struct {
+	Id        string  `json:"id"`
+	CreatedAt float64 `json:"createdAt"`
+	Message   string  `json:"message"`
 }
 
 // ECSDeployment is the service's deployment record. Its counts and rollout
@@ -84,6 +91,7 @@ var ecsServices sim.Store[ECSService]
 
 func registerECSServices(r *sim.AWSRouter, srv *sim.Server) {
 	ecsServices = sim.MakeStore[ECSService](srv.DB(), "ecs_services")
+	ecsServiceSchedulerStates = sim.MakeStore[ECSServiceSchedulerState](srv.DB(), "ecs_service_scheduler_states")
 
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateService", handleECSCreateService)
 	r.Register("AmazonEC2ContainerServiceV20141113.DescribeServices", handleECSDescribeServices)
@@ -266,16 +274,9 @@ func ecsServiceKey(cluster, service string) string { return cluster + "/" + serv
 // validateECSServiceRegistries enforces the Amazon ECS service-discovery
 // coordinate rules that depend on the AWS Cloud Map DNS record type.
 func validateECSServiceRegistries(raw json.RawMessage) (string, string) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return "", ""
-	}
-	var registries []struct {
-		RegistryArn   string `json:"registryArn"`
-		ContainerPort *int   `json:"containerPort"`
-		Port          *int   `json:"port"`
-	}
-	if err := json.Unmarshal(raw, &registries); err != nil {
-		return "InvalidParameterException", "serviceRegistries must be an array"
+	registries, err := ecsServiceRegistries(raw)
+	if err != nil {
+		return "InvalidParameterException", err.Error()
 	}
 	for _, registry := range registries {
 		serviceID := registry.RegistryArn[strings.LastIndex(registry.RegistryArn, "/")+1:]
@@ -427,6 +428,7 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 	}
 	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
 	ecsServices.Put(key, svc)
+	ecsBeginServiceDeployment(key, ECSService{}, svc)
 	ecsRecordServiceDeployment(svc, ecsServiceConnectNamespace(svc.ServiceConnectConfiguration))
 	ecsReconcileService(key)
 	svc, _ = ecsServices.Get(key)
@@ -668,6 +670,7 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 			"Service not found: %s", req.Service)
 		return
 	}
+	previousService := svc
 	targetTaskDefinition := svc.TaskDefinition
 	if req.TaskDefinition != "" {
 		targetTaskDefinition = req.TaskDefinition
@@ -732,6 +735,7 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 		svc.LoadBalancers = req.LoadBalancers
 	}
 	if req.ServiceRegistries != nil {
+		ecsDeregisterServiceRegistryTasks(svc)
 		svc.ServiceRegistries = req.ServiceRegistries
 	}
 	if req.ServiceConnectConfiguration != nil {
@@ -751,6 +755,7 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 	}
 	ecsServices.Put(key, svc)
 	if deploymentRequired {
+		ecsBeginServiceDeployment(key, previousService, svc)
 		ecsRecordServiceDeployment(svc, ecsServiceConnectNamespace(svc.ServiceConnectConfiguration))
 	}
 	ecsReconcileService(key)
@@ -815,6 +820,7 @@ func handleECSDeleteService(w http.ResponseWriter, r *http.Request) {
 	ecsServices.Put(key, svc)
 	ecsStopServiceTasks(svc)
 	ecsSyncServiceLoadBalancerTargets(svc)
+	ecsDeregisterServiceRegistryTasks(svc)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"service": svc})
 }
 

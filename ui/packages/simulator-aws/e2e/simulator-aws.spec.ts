@@ -190,7 +190,7 @@ test.describe("Cloudscape visual fidelity", () => {
     const filter = page.getByRole("searchbox", { name: "Find tasks" });
     await expect(filter).toBeVisible();
     await expect(filter.locator("xpath=ancestor::*[1]").locator("svg")).toHaveCount(1);
-    await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible();
+    await expect(page.getByTestId("ecs-tasks-table").getByRole("button", { name: "Refresh" })).toBeVisible();
   });
 });
 
@@ -424,6 +424,26 @@ test.describe("Compute resource creation", () => {
     await expect(dialog.getByTestId("ecs-run-task-image")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
+  test("ECS renders service scheduling and deployment controls alongside tasks", async ({ page }) => {
+    await page.goto("/ui/ecs");
+    await expect(page.getByRole("heading", { name: "Services", exact: true })).toBeVisible();
+    for (const column of ["Service name", "Desired tasks", "Running tasks", "Deployments"]) {
+      await expect(page.getByRole("columnheader", { name: column, exact: true })).toBeVisible();
+    }
+  });
+
+  test("ECS service details expose scaling, deletion, deployments, events, alarms, and service discovery", async ({
+    page,
+  }) => {
+    await page.goto("/ui/ecs/services/default/web");
+    await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+    await expect(page.getByTestId("ecs-service-delete")).toBeDisabled();
+    for (const heading of ["Deployments", "Service events", "Deployment configuration", "Service discovery"]) {
+      await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    }
+    await expect(page.getByTestId("ecs-service-error")).toBeVisible();
   });
 });
 
@@ -1207,7 +1227,12 @@ const SERVICE_PAGES = [
   { path: "/ui/cloudwatch", nav: "CloudWatch", title: "Alarms", columns: ["Conditions", "Namespace"] },
   { path: "/ui/cloudtrail", nav: "AWS CloudTrail", title: "Trails", columns: ["Name", "Home Region"] },
   { path: "/ui/ssm", nav: "Systems Manager", title: "Parameter Store", columns: ["Tier", "Data type"] },
-  { path: "/ui/secretsmanager", nav: "Secrets Manager", title: "Secrets", columns: ["Secret name", "Rotation"] },
+  {
+    path: "/ui/secretsmanager",
+    nav: "Secrets Manager",
+    title: "Secrets",
+    columns: ["Secret name", "Replication", "Rotation"],
+  },
   { path: "/ui/kms", nav: "Key Management Service", title: "Customer managed keys", columns: ["Key ID", "Key usage"] },
   { path: "/ui/acm", nav: "AWS Certificate Manager", title: "Certificates", columns: ["Domain name", "Expires"] },
   { path: "/ui/private-ca", nav: "AWS Private Certificate Authority", title: "Private certificate authorities", columns: ["Common name", "Status"] },

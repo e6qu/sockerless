@@ -47,6 +47,8 @@ func randIntn(n int) int {
 type SMSecret struct {
 	ARN              string            `json:"ARN"`
 	Name             string            `json:"Name"`
+	Region           string            `json:"Region,omitempty"`
+	PrimaryRegion    string            `json:"PrimaryRegion,omitempty"`
 	Description      string            `json:"Description,omitempty"`
 	KmsKeyId         string            `json:"KmsKeyId,omitempty"`
 	CreatedDate      float64           `json:"CreatedDate,omitempty"`
@@ -87,6 +89,11 @@ type SMReplicationStatus struct {
 	Status           string  `json:"Status,omitempty"`
 	StatusMessage    string  `json:"StatusMessage,omitempty"`
 	LastAccessedDate float64 `json:"LastAccessedDate,omitempty"`
+}
+
+type SMReplicaRegionRequest struct {
+	Region   string `json:"Region"`
+	KmsKeyId string `json:"KmsKeyId"`
 }
 
 // SMSecretVersion is one entry in the per-secret version history.
@@ -174,16 +181,17 @@ type SMTag struct {
 
 var smSecrets sim.Store[SMSecret]
 
-func smArn(name string) string {
+func smArnForRegion(name, region string) string {
 	// Real ARN format: arn:aws:secretsmanager:<region>:<account>:secret:<name>-<6-char-suffix>.
 	// The suffix is a per-secret random string; we use a deterministic
 	// 6-char slice so tests can match on prefix.
 	return fmt.Sprintf("arn:aws:secretsmanager:%s:%s:secret:%s-%s",
-		awsRegion(), awsAccountID(), name, generateUUID()[:6])
+		region, awsAccountID(), name, generateUUID()[:6])
 }
 
 func registerSecretsManager(r *sim.AWSRouter, srv *sim.Server) {
 	smSecrets = sim.MakeStore[SMSecret](srv.DB(), "sm_secrets")
+	smRecoverReplicas()
 
 	r.Register("secretsmanager.CreateSecret", handleSMCreateSecret)
 	r.Register("secretsmanager.GetSecretValue", handleSMGetSecretValue)
@@ -210,6 +218,77 @@ func registerSecretsManager(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("secretsmanager.StopReplicationToReplica", handleSMStopReplicationToReplica)
 }
 
+func smReplicaARN(primaryARN, region string) string {
+	parts := strings.Split(primaryARN, ":")
+	if len(parts) > 3 {
+		parts[3] = region
+	}
+	return strings.Join(parts, ":")
+}
+
+func smCloneSecret(secret SMSecret) SMSecret {
+	encoded, err := json.Marshal(secret)
+	if err != nil {
+		return secret
+	}
+	var clone SMSecret
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		return secret
+	}
+	return clone
+}
+
+func smSyncReplica(primary SMSecret, status SMReplicationStatus) {
+	replica := smCloneSecret(primary)
+	replica.Region = status.Region
+	replica.PrimaryRegion = smSecretRegion(primary)
+	replica.ARN = smReplicaARN(primary.ARN, status.Region)
+	replica.KmsKeyId = status.KmsKeyId
+	replica.Replicas = nil
+	replica.LastAccessedDate = 0
+	key := smStoreKey(status.Region, primary.Name)
+	if existing, ok := smSecrets.Get(key); ok && existing.PrimaryRegion == replica.PrimaryRegion {
+		replica.LastAccessedDate = existing.LastAccessedDate
+	}
+	smSecrets.Put(key, replica)
+	if replica.ResourcePolicy != "" {
+		iamPutResourcePolicy(replica.ARN, replica.ResourcePolicy)
+	}
+}
+
+func smRecoverReplicas() {
+	for _, primary := range smSecrets.List() {
+		if primary.PrimaryRegion != "" {
+			continue
+		}
+		changed := false
+		for i := range primary.Replicas {
+			smSyncReplica(primary, primary.Replicas[i])
+			if primary.Replicas[i].Status != "InSync" || primary.Replicas[i].StatusMessage != "" {
+				primary.Replicas[i].Status = "InSync"
+				primary.Replicas[i].StatusMessage = ""
+				changed = true
+			}
+		}
+		if changed {
+			smSecrets.Put(smStoreKey(smSecretRegion(primary), primary.Name), primary)
+		}
+	}
+}
+
+func smUpdate(key string, update func(*SMSecret)) {
+	smSecrets.Update(key, update)
+	secret, ok := smSecrets.Get(key)
+	if !ok || secret.PrimaryRegion != "" {
+		return
+	}
+	for _, replica := range secret.Replicas {
+		if replica.Status == "InSync" {
+			smSyncReplica(secret, replica)
+		}
+	}
+}
+
 // handleSMGetResourcePolicy returns the resource policy attached to a
 // secret. Real Secrets Manager returns the {ARN, Name, ResourcePolicy}
 // triple — ResourcePolicy is the empty string when no policy is set
@@ -224,7 +303,7 @@ func handleSMGetResourcePolicy(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	secret, ok := resolveSMSecret(req.SecretId)
+	secret, ok := resolveSMSecretForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret: %s", req.SecretId)
@@ -247,12 +326,45 @@ func handleSMGetResourcePolicy(w http.ResponseWriter, r *http.Request) {
 
 // resolveSMSecret accepts either a Name or full ARN and returns the
 // stored secret. Mirrors how the other SM handlers do lookup.
+func smRequestRegion(r *http.Request) string {
+	if region := iamRequestedRegion(r); region != "" {
+		return region
+	}
+	return awsRegion()
+}
+
+func smStoreKey(region, name string) string {
+	if region == awsRegion() {
+		return name
+	}
+	return region + "\x00" + name
+}
+
+func smSecretRegion(secret SMSecret) string {
+	if secret.Region != "" {
+		return secret.Region
+	}
+	parts := strings.Split(secret.ARN, ":")
+	if len(parts) > 3 && parts[3] != "" {
+		return parts[3]
+	}
+	return awsRegion()
+}
+
 func resolveSMSecret(idOrArn string) (SMSecret, bool) {
-	if secret, ok := smSecrets.Get(idOrArn); ok {
+	return resolveSMSecretInRegion(awsRegion(), idOrArn)
+}
+
+func resolveSMSecretForRequest(r *http.Request, idOrArn string) (SMSecret, bool) {
+	return resolveSMSecretInRegion(smRequestRegion(r), idOrArn)
+}
+
+func resolveSMSecretInRegion(region, idOrArn string) (SMSecret, bool) {
+	if secret, ok := smSecrets.Get(smStoreKey(region, idOrArn)); ok {
 		return secret, true
 	}
 	for _, s := range smSecrets.List() {
-		if s.ARN == idOrArn {
+		if smSecretRegion(s) == region && s.ARN == idOrArn {
 			return s, true
 		}
 	}
@@ -261,12 +373,14 @@ func resolveSMSecret(idOrArn string) (SMSecret, bool) {
 
 func handleSMCreateSecret(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name         string  `json:"Name"`
-		Description  string  `json:"Description"`
-		KmsKeyId     string  `json:"KmsKeyId"`
-		SecretString string  `json:"SecretString"`
-		SecretBinary []byte  `json:"SecretBinary"`
-		Tags         []SMTag `json:"Tags"`
+		Name                        string                   `json:"Name"`
+		Description                 string                   `json:"Description"`
+		KmsKeyId                    string                   `json:"KmsKeyId"`
+		SecretString                string                   `json:"SecretString"`
+		SecretBinary                []byte                   `json:"SecretBinary"`
+		Tags                        []SMTag                  `json:"Tags"`
+		AddReplicaRegions           []SMReplicaRegionRequest `json:"AddReplicaRegions"`
+		ForceOverwriteReplicaSecret bool                     `json:"ForceOverwriteReplicaSecret"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
@@ -276,16 +390,40 @@ func handleSMCreateSecret(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Name is required", http.StatusBadRequest)
 		return
 	}
-	if _, exists := smSecrets.Get(req.Name); exists {
+	region := smRequestRegion(r)
+	storeKey := smStoreKey(region, req.Name)
+	if _, exists := smSecrets.Get(storeKey); exists {
 		sim.AWSErrorf(w, "ResourceExistsException", http.StatusBadRequest,
 			"The operation failed because the secret %s already exists.", req.Name)
 		return
 	}
+	seenReplicaRegions := map[string]bool{}
+	for _, replica := range req.AddReplicaRegions {
+		if replica.Region == "" || replica.Region == region {
+			sim.AWSError(w, "InvalidParameterException",
+				"A replica Region must be different from the primary Region.",
+				http.StatusBadRequest)
+			return
+		}
+		if seenReplicaRegions[replica.Region] {
+			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+				"Replica Region %s was specified more than once.", replica.Region)
+			return
+		}
+		seenReplicaRegions[replica.Region] = true
+		if _, exists := smSecrets.Get(smStoreKey(replica.Region, req.Name)); exists &&
+			!req.ForceOverwriteReplicaSecret {
+			sim.AWSErrorf(w, "ResourceExistsException", http.StatusBadRequest,
+				"The secret %s already exists in Region %s.", req.Name, replica.Region)
+			return
+		}
+	}
 
 	now := float64(time.Now().Unix())
 	secret := SMSecret{
-		ARN:             smArn(req.Name),
+		ARN:             smArnForRegion(req.Name, region),
 		Name:            req.Name,
+		Region:          region,
 		Description:     req.Description,
 		KmsKeyId:        req.KmsKeyId,
 		CreatedDate:     now,
@@ -294,9 +432,27 @@ func handleSMCreateSecret(w http.ResponseWriter, r *http.Request) {
 		SecretBinary:    req.SecretBinary,
 		Tags:            req.Tags,
 	}
+	for _, replica := range req.AddReplicaRegions {
+		secret.Replicas = append(secret.Replicas, SMReplicationStatus{
+			Region:           replica.Region,
+			KmsKeyId:         replica.KmsKeyId,
+			Status:           "InProgress",
+			LastAccessedDate: now,
+		})
+	}
 	// Seed the first AWSCURRENT version. addNewVersion sets VersionId.
 	secret.addNewVersion(req.SecretString, req.SecretBinary)
-	smSecrets.Put(req.Name, secret)
+	smSecrets.Put(storeKey, secret)
+	for index := range secret.Replicas {
+		replica := secret.Replicas[index]
+		if existing, exists := smSecrets.Get(smStoreKey(replica.Region, secret.Name)); exists {
+			iamDeleteResourcePolicy(existing.ARN)
+		}
+		smSyncReplica(secret, replica)
+		secret.Replicas[index].Status = "InSync"
+		secret.Replicas[index].StatusMessage = ""
+	}
+	smSecrets.Put(storeKey, secret)
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"ARN":       secret.ARN,
@@ -315,14 +471,7 @@ func handleSMGetSecretValue(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	secret, ok := smSecrets.Get(req.SecretId)
-	if !ok {
-		// Real AWS accepts both the secret name and the full ARN as
-		// SecretId. Fall back to scanning the store by ARN so callers
-		// using the ARN form (terraform's secret data source, the SDK's
-		// auto-resolved ARN) round-trip.
-		secret, ok = lookupSecretByArn(req.SecretId)
-	}
+	secret, ok := resolveSMSecretForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
@@ -358,7 +507,7 @@ func handleSMGetSecretValue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Real AWS records LastAccessedDate on read.
-	smSecrets.Update(secret.Name, func(s *SMSecret) {
+	smSecrets.Update(smStoreKey(smSecretRegion(secret), secret.Name), func(s *SMSecret) {
 		s.LastAccessedDate = float64(time.Now().Unix())
 	})
 
@@ -373,10 +522,7 @@ func handleSMDescribeSecret(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	secret, ok := smSecrets.Get(req.SecretId)
-	if !ok {
-		secret, ok = lookupSecretByArn(req.SecretId)
-	}
+	secret, ok := resolveSMSecretForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
@@ -417,6 +563,9 @@ func handleSMDescribeSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(secret.Replicas) > 0 {
 		resp["ReplicationStatus"] = smReplicationStatusToJSON(secret.Replicas)
+	}
+	if secret.PrimaryRegion != "" {
+		resp["PrimaryRegion"] = secret.PrimaryRegion
 	}
 	sim.WriteJSON(w, http.StatusOK, resp)
 }
@@ -471,14 +620,14 @@ func handleSMUpdateSecret(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
 		return
 	}
 	now := float64(time.Now().Unix())
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		if req.Description != "" {
 			s.Description = req.Description
 		}
@@ -512,14 +661,14 @@ func handleSMPutSecretValue(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
 		return
 	}
 	now := float64(time.Now().Unix())
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		if req.SecretString != "" {
 			s.SecretString = req.SecretString
 		}
@@ -548,13 +697,25 @@ func handleSMDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
 		return
 	}
 	secret, _ := smSecrets.Get(name)
+	if secret.PrimaryRegion != "" {
+		sim.AWSError(w, "InvalidRequestException",
+			"You can't delete a replica secret. Stop replication to this Region first.",
+			http.StatusBadRequest)
+		return
+	}
+	if len(secret.Replicas) > 0 {
+		sim.AWSError(w, "InvalidRequestException",
+			"You can't delete a primary secret that is replicated to other Regions.",
+			http.StatusBadRequest)
+		return
+	}
 	now := time.Now()
 	if req.ForceDeleteWithoutRecovery {
 		// Hard delete: the secret is removed immediately and is not
@@ -577,7 +738,7 @@ func handleSMDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		window = 30
 	}
 	deletionDate := now.Add(time.Duration(window) * 24 * time.Hour)
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		s.DeletedDate = float64(now.Unix())
 	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -653,7 +814,13 @@ func smSecretMatchesFilter(s SMSecret, f smFilter) bool {
 			return false
 		})
 	case "primary-region":
-		return true // replica regions not modeled — don't exclude
+		return anyValue(func(v string) bool {
+			primaryRegion := s.PrimaryRegion
+			if primaryRegion == "" {
+				primaryRegion = smSecretRegion(s)
+			}
+			return primaryRegion == v
+		})
 	}
 	return true // unknown filter key → lenient (don't exclude)
 }
@@ -668,7 +835,14 @@ func handleSMListSecrets(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	all := smSecrets.List()
+	region := smRequestRegion(r)
+	allSecrets := smSecrets.List()
+	all := make([]SMSecret, 0, len(allSecrets))
+	for _, secret := range allSecrets {
+		if smSecretRegion(secret) == region {
+			all = append(all, secret)
+		}
+	}
 	if all == nil {
 		all = []SMSecret{}
 	}
@@ -688,7 +862,7 @@ func handleSMListSecrets(w http.ResponseWriter, r *http.Request) {
 	page, next := awsPage(all, req.NextToken, req.MaxResults, 100)
 	out := make([]map[string]any, 0, len(page))
 	for _, s := range page {
-		out = append(out, map[string]any{
+		item := map[string]any{
 			"ARN":              s.ARN,
 			"Name":             s.Name,
 			"Description":      s.Description,
@@ -697,7 +871,11 @@ func handleSMListSecrets(w http.ResponseWriter, r *http.Request) {
 			"LastChangedDate":  s.LastChangedDate,
 			"LastAccessedDate": s.LastAccessedDate,
 			"Tags":             s.Tags,
-		})
+		}
+		if s.PrimaryRegion != "" {
+			item["PrimaryRegion"] = s.PrimaryRegion
+		}
+		out = append(out, item)
 	}
 	resp := map[string]any{"SecretList": out}
 	if next != "" {
@@ -715,13 +893,13 @@ func handleSMTagResource(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
 		return
 	}
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		// Real AWS overwrites by Key when tagging the same key twice.
 		merged := make(map[string]string)
 		for _, t := range s.Tags {
@@ -752,7 +930,7 @@ func handleSMUntagResource(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
@@ -762,7 +940,7 @@ func handleSMUntagResource(w http.ResponseWriter, r *http.Request) {
 	for _, t := range req.TagKeys {
 		keep[t] = true
 	}
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		var filtered []SMTag
 		for _, t := range s.Tags {
 			if !keep[t.Key] {
@@ -775,29 +953,15 @@ func handleSMUntagResource(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// resolveSecretName accepts either a secret name or a full ARN and
-// returns the canonical name used as the store key.
-func resolveSecretName(idOrArn string) (string, bool) {
-	if _, ok := smSecrets.Get(idOrArn); ok {
-		return idOrArn, true
+// resolveSecretKeyForRequest accepts either a secret name or full ARN and
+// returns the region-scoped durable store key selected by the request's SigV4
+// credential scope.
+func resolveSecretKeyForRequest(r *http.Request, idOrArn string) (string, bool) {
+	secret, ok := resolveSMSecretForRequest(r, idOrArn)
+	if !ok {
+		return "", false
 	}
-	for _, s := range smSecrets.List() {
-		if s.ARN == idOrArn {
-			return s.Name, true
-		}
-	}
-	return "", false
-}
-
-// lookupSecretByArn finds a secret by its ARN. Returns the secret and
-// whether it was found.
-func lookupSecretByArn(arn string) (SMSecret, bool) {
-	for _, s := range smSecrets.List() {
-		if s.ARN == arn {
-			return s, true
-		}
-	}
-	return SMSecret{}, false
+	return smStoreKey(smSecretRegion(secret), secret.Name), true
 }
 
 // handleSMListSecretVersionIds returns the per-secret version history
@@ -836,7 +1000,7 @@ func handleSMListSecretVersionIds(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	secret, ok := resolveSMSecret(req.SecretId)
+	secret, ok := resolveSMSecretForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret: %s", req.SecretId)
@@ -918,7 +1082,7 @@ func handleSMPutResourcePolicy(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
@@ -930,7 +1094,7 @@ func handleSMPutResourcePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, _ := smSecrets.Get(name)
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		s.ResourcePolicy = req.ResourcePolicy
 	})
 	iamPutResourcePolicy(secret.ARN, req.ResourcePolicy)
@@ -949,14 +1113,14 @@ func handleSMDeleteResourcePolicy(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
 		return
 	}
 	secret, _ := smSecrets.Get(name)
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		s.ResourcePolicy = ""
 	})
 	iamDeleteResourcePolicy(secret.ARN)
@@ -1011,14 +1175,14 @@ func handleSMRestoreSecret(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
 		return
 	}
 	secret, _ := smSecrets.Get(name)
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		s.DeletedDate = 0
 	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -1043,7 +1207,7 @@ func handleSMRotateSecret(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
@@ -1052,7 +1216,7 @@ func handleSMRotateSecret(w http.ResponseWriter, r *http.Request) {
 	rotateNow := req.RotateImmediately == nil || *req.RotateImmediately
 	now := time.Now()
 	var newVersionID string
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		s.RotationEnabled = true
 		if req.RotationLambdaARN != "" {
 			s.RotationLambdaARN = req.RotationLambdaARN
@@ -1094,13 +1258,13 @@ func handleSMCancelRotateSecret(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
 		return
 	}
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		s.RotationEnabled = false
 		s.NextRotationDate = 0
 	})
@@ -1168,14 +1332,14 @@ func handleSMBatchGetSecretValue(w http.ResponseWriter, r *http.Request) {
 			entry["SecretBinary"] = base64.StdEncoding.EncodeToString(version.SecretBinary)
 		}
 		secretValues = append(secretValues, entry)
-		smSecrets.Update(secret.Name, func(s *SMSecret) {
+		smUpdate(smStoreKey(smSecretRegion(secret), secret.Name), func(s *SMSecret) {
 			s.LastAccessedDate = now
 		})
 	}
 
 	if len(req.SecretIdList) > 0 {
 		for _, id := range req.SecretIdList {
-			secret, ok := resolveSMSecret(id)
+			secret, ok := resolveSMSecretForRequest(r, id)
 			if !ok {
 				apiErrors = append(apiErrors, map[string]any{
 					"SecretId":  id,
@@ -1187,7 +1351,13 @@ func handleSMBatchGetSecretValue(w http.ResponseWriter, r *http.Request) {
 			emit(secret)
 		}
 	} else {
-		all := smSecrets.List()
+		allSecrets := smSecrets.List()
+		all := make([]SMSecret, 0, len(allSecrets))
+		for _, secret := range allSecrets {
+			if smSecretRegion(secret) == smRequestRegion(r) {
+				all = append(all, secret)
+			}
+		}
 		sortBy(all, func(s SMSecret) string { return s.Name })
 		for _, secret := range all {
 			if len(req.Filters) > 0 && !smSecretMatchesFilters(secret, req.Filters) {
@@ -1218,7 +1388,7 @@ func handleSMUpdateSecretVersionStage(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
@@ -1248,7 +1418,7 @@ func handleSMUpdateSecretVersionStage(w http.ResponseWriter, r *http.Request) {
 			"The version %s is not in the secret.", req.RemoveFromVersionId)
 		return
 	}
-	smSecrets.Update(name, func(s *SMSecret) {
+	smUpdate(name, func(s *SMSecret) {
 		for i := range s.Versions {
 			v := &s.Versions[i]
 			if req.RemoveFromVersionId != "" && v.VersionId == req.RemoveFromVersionId {
@@ -1289,26 +1459,51 @@ func handleSMUpdateSecretVersionStage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSMReplicateSecretToRegions adds replica regions to a secret, returning
-// the resulting replication-status list. Each new region is marked InSync.
+// handleSMReplicateSecretToRegions durably records each requested replication,
+// copies the complete secret into the destination Region, and only then marks
+// that replica InSync.
 func handleSMReplicateSecretToRegions(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SecretId          string `json:"SecretId"`
-		AddReplicaRegions []struct {
-			Region   string `json:"Region"`
-			KmsKeyId string `json:"KmsKeyId"`
-		} `json:"AddReplicaRegions"`
-		ForceOverwriteReplicaSecret bool `json:"ForceOverwriteReplicaSecret"`
+		SecretId                    string                   `json:"SecretId"`
+		AddReplicaRegions           []SMReplicaRegionRequest `json:"AddReplicaRegions"`
+		ForceOverwriteReplicaSecret bool                     `json:"ForceOverwriteReplicaSecret"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
 		return
+	}
+	primary, _ := smSecrets.Get(name)
+	if primary.PrimaryRegion != "" {
+		sim.AWSError(w, "InvalidRequestException",
+			"You must call ReplicateSecretToRegions in the primary Region.",
+			http.StatusBadRequest)
+		return
+	}
+	if len(req.AddReplicaRegions) == 0 {
+		sim.AWSError(w, "InvalidParameterException",
+			"AddReplicaRegions must contain at least one Region.", http.StatusBadRequest)
+		return
+	}
+	primaryRegion := smSecretRegion(primary)
+	for _, add := range req.AddReplicaRegions {
+		if add.Region == "" || add.Region == primaryRegion {
+			sim.AWSError(w, "InvalidParameterException",
+				"A replica Region must be different from the primary Region.",
+				http.StatusBadRequest)
+			return
+		}
+		if existing, exists := smSecrets.Get(smStoreKey(add.Region, primary.Name)); exists &&
+			existing.PrimaryRegion != primaryRegion && !req.ForceOverwriteReplicaSecret {
+			sim.AWSErrorf(w, "ResourceExistsException", http.StatusBadRequest,
+				"The secret %s already exists in Region %s.", primary.Name, add.Region)
+			return
+		}
 	}
 	now := float64(time.Now().Unix())
 	smSecrets.Update(name, func(s *SMSecret) {
@@ -1318,7 +1513,8 @@ func handleSMReplicateSecretToRegions(w http.ResponseWriter, r *http.Request) {
 				if s.Replicas[i].Region == add.Region {
 					found = true
 					s.Replicas[i].KmsKeyId = add.KmsKeyId
-					s.Replicas[i].Status = "InSync"
+					s.Replicas[i].Status = "InProgress"
+					s.Replicas[i].StatusMessage = ""
 					s.Replicas[i].LastAccessedDate = now
 				}
 			}
@@ -1326,9 +1522,28 @@ func handleSMReplicateSecretToRegions(w http.ResponseWriter, r *http.Request) {
 				s.Replicas = append(s.Replicas, SMReplicationStatus{
 					Region:           add.Region,
 					KmsKeyId:         add.KmsKeyId,
-					Status:           "InSync",
+					Status:           "InProgress",
 					LastAccessedDate: now,
 				})
+			}
+		}
+	})
+	primary, _ = smSecrets.Get(name)
+	for _, add := range req.AddReplicaRegions {
+		for _, status := range primary.Replicas {
+			if status.Region == add.Region {
+				smSyncReplica(primary, status)
+				break
+			}
+		}
+	}
+	smSecrets.Update(name, func(s *SMSecret) {
+		for i := range s.Replicas {
+			for _, add := range req.AddReplicaRegions {
+				if s.Replicas[i].Region == add.Region {
+					s.Replicas[i].Status = "InSync"
+					s.Replicas[i].StatusMessage = ""
+				}
 			}
 		}
 	})
@@ -1350,7 +1565,7 @@ func handleSMRemoveRegionsFromReplication(w http.ResponseWriter, r *http.Request
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
@@ -1359,6 +1574,13 @@ func handleSMRemoveRegionsFromReplication(w http.ResponseWriter, r *http.Request
 	drop := make(map[string]bool, len(req.RemoveReplicaRegions))
 	for _, region := range req.RemoveReplicaRegions {
 		drop[region] = true
+	}
+	primary, _ := smSecrets.Get(name)
+	if primary.PrimaryRegion != "" {
+		sim.AWSError(w, "InvalidRequestException",
+			"You must call RemoveRegionsFromReplication in the primary Region.",
+			http.StatusBadRequest)
+		return
 	}
 	smSecrets.Update(name, func(s *SMSecret) {
 		var kept []SMReplicationStatus
@@ -1369,6 +1591,14 @@ func handleSMRemoveRegionsFromReplication(w http.ResponseWriter, r *http.Request
 		}
 		s.Replicas = kept
 	})
+	for region := range drop {
+		replicaKey := smStoreKey(region, primary.Name)
+		if replica, exists := smSecrets.Get(replicaKey); exists &&
+			replica.PrimaryRegion == smSecretRegion(primary) {
+			iamDeleteResourcePolicy(replica.ARN)
+			smSecrets.Delete(replicaKey)
+		}
+	}
 	updated, _ := smSecrets.Get(name)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"ARN":               updated.ARN,
@@ -1376,10 +1606,8 @@ func handleSMRemoveRegionsFromReplication(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleSMStopReplicationToReplica is called against a replica secret to
-// promote it to a standalone primary, removing the replication relationship.
-// Run against a primary in the sim, it simply clears the replica list and
-// returns the secret's ARN, matching the single-field response shape.
+// handleSMStopReplicationToReplica promotes the destination-Region copy to an
+// independent primary and removes it from the former primary's status list.
 func handleSMStopReplicationToReplica(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SecretId string `json:"SecretId"`
@@ -1388,16 +1616,36 @@ func handleSMStopReplicationToReplica(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Secrets Manager can't find the specified secret.")
 		return
 	}
 	secret, _ := smSecrets.Get(name)
+	if secret.PrimaryRegion == "" {
+		sim.AWSError(w, "InvalidRequestException",
+			"You must call StopReplicationToReplica in a replica Region.",
+			http.StatusBadRequest)
+		return
+	}
+	formerPrimaryRegion := secret.PrimaryRegion
 	smSecrets.Update(name, func(s *SMSecret) {
+		s.PrimaryRegion = ""
 		s.Replicas = nil
 	})
+	primaryKey := smStoreKey(formerPrimaryRegion, secret.Name)
+	if _, exists := smSecrets.Get(primaryKey); exists {
+		smSecrets.Update(primaryKey, func(primary *SMSecret) {
+			kept := primary.Replicas[:0]
+			for _, replica := range primary.Replicas {
+				if replica.Region != smSecretRegion(secret) {
+					kept = append(kept, replica)
+				}
+			}
+			primary.Replicas = kept
+		})
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"ARN": secret.ARN,
 	})

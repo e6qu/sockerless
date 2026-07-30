@@ -25,6 +25,10 @@ export default defineConfig({
       SERVER_PACKAGE: "simulators/aws",
       SERVER_NAME: "simulator-aws",
       SIM_MODE: "1",
+      // Route 53's production default is the mDNS port, which macOS reserves.
+      // This browser suite does not consume the DNS data plane, so give its
+      // isolated simulator an OS-selected UDP/TCP coordinate.
+      SIM_DNS_PORT: "0",
       ...(BIN ? { SERVER_BIN: BIN } : {}),
     },
     port: PORT,

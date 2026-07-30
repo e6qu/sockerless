@@ -238,6 +238,18 @@ func TestSecretsManagerCLI_Replication(t *testing.T) {
 	parseJSON(t, repOut, &rep)
 	require.Len(t, rep.ReplicationStatus, 2)
 
+	westGet := awsCLI("secretsmanager", "get-secret-value",
+		"--secret-id", name, "--output", "json")
+	westGet.Env = append(westGet.Env, "AWS_DEFAULT_REGION=us-west-2")
+	westOut := runCLI(t, westGet)
+	var westValue struct {
+		ARN          string `json:"ARN"`
+		SecretString string `json:"SecretString"`
+	}
+	parseJSON(t, westOut, &westValue)
+	assert.Contains(t, westValue.ARN, ":secretsmanager:us-west-2:")
+	assert.Equal(t, "v1", westValue.SecretString)
+
 	rmOut := runCLI(t, awsCLI("secretsmanager", "remove-regions-from-replication",
 		"--secret-id", name,
 		"--remove-replica-regions", "us-west-2",
@@ -251,12 +263,15 @@ func TestSecretsManagerCLI_Replication(t *testing.T) {
 	require.Len(t, rm.ReplicationStatus, 1)
 	assert.Equal(t, "eu-west-1", rm.ReplicationStatus[0].Region)
 
-	stopOut := runCLI(t, awsCLI("secretsmanager", "stop-replication-to-replica",
+	stopCmd := awsCLI("secretsmanager", "stop-replication-to-replica",
 		"--secret-id", name,
-		"--output", "json"))
+		"--output", "json")
+	stopCmd.Env = append(stopCmd.Env, "AWS_DEFAULT_REGION=eu-west-1")
+	stopOut := runCLI(t, stopCmd)
 	var stop struct {
 		ARN string `json:"ARN"`
 	}
 	parseJSON(t, stopOut, &stop)
 	assert.Contains(t, stop.ARN, ":secret:"+name+"-")
+	assert.Contains(t, stop.ARN, ":secretsmanager:eu-west-1:")
 }

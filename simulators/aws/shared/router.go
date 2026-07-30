@@ -40,6 +40,14 @@ func (r *AWSRouter) Targets() []string {
 	return targets
 }
 
+// Handler returns the handler registered for an X-Amz-Target value. Internal
+// AWS service integrations use this to enter the same service implementation
+// as an external SDK request without making a loopback HTTP call.
+func (r *AWSRouter) Handler(target string) (http.HandlerFunc, bool) {
+	handler, ok := r.handlers[target]
+	return handler, ok
+}
+
 // ServeHTTP dispatches to the handler matching the X-Amz-Target header.
 func (r *AWSRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	target := req.Header.Get("X-Amz-Target")
@@ -179,6 +187,25 @@ func (r *AWSQueryRouter) VersionedActions() map[string][]string {
 	return out
 }
 
+// Handler returns the handler registered for a (Version, Action) pair using
+// the same versioned-first lookup as ServeHTTP. Internal AWS service
+// integrations use it to enter the real Query service implementation without
+// creating a signed loopback request.
+func (r *AWSQueryRouter) Handler(version, action string) (http.HandlerFunc, bool) {
+	if version != "" {
+		if actions, ok := r.versioned[version]; ok {
+			if handler, ok := actions[action]; ok {
+				return handler, true
+			}
+		}
+	}
+	if actions, ok := r.versioned[""]; ok {
+		handler, ok := actions[action]
+		return handler, ok
+	}
+	return nil, false
+}
+
 // ServeHTTP dispatches by (Version, Action). When Version is set
 // and a versioned handler exists, it wins. Otherwise the legacy
 // bucket (version="") is consulted as a fallback.
@@ -199,19 +226,9 @@ func (r *AWSQueryRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	version := req.FormValue("Version")
-	if version != "" {
-		if vmap, ok := r.versioned[version]; ok {
-			if handler, ok := vmap[action]; ok {
-				handler(w, req)
-				return
-			}
-		}
-	}
-	if vmap, ok := r.versioned[""]; ok {
-		if handler, ok := vmap[action]; ok {
-			handler(w, req)
-			return
-		}
+	if handler, ok := r.Handler(version, action); ok {
+		handler(w, req)
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/xml")

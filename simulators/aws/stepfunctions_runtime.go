@@ -410,14 +410,84 @@ func sfnInvokeTaskResource(resource string, input any, inputJSON string, context
 		resource == "arn:aws:states:::aws-sdk:ecs:runTask" {
 		return sfnInvokeECSRunTask(resource, input, context, cancel, heartbeat)
 	}
-	if strings.HasPrefix(resource, "arn:aws:states:::codebuild:") ||
-		strings.HasPrefix(resource, "arn:aws:states:::aws-sdk:codebuild:") {
+	if strings.HasPrefix(resource, "arn:aws:states:::codebuild:") {
 		return sfnInvokeCodeBuild(resource, input, context, cancel)
+	}
+	if strings.HasPrefix(resource, "arn:aws:states:::aws-sdk:") {
+		return sfnInvokeAWSSDK(resource, input)
 	}
 	return nil, &sfnExecutionError{
 		Name:  "States.TaskFailed",
 		Cause: fmt.Sprintf("Task resource %q is not implemented by an AWS service slice", resource),
 	}
+}
+
+var sfnAWSJSONServiceTargets = map[string]string{
+	"acm":                    "CertificateManager",
+	"acmpca":                 "ACMPrivateCA",
+	"applicationautoscaling": "AnyScaleFrontendService",
+	"budgets":                "AWSBudgetServiceGateway",
+	"cloudtrail":             "CloudTrail_20131101",
+	"cloudwatch":             "GraniteServiceVersion20100801",
+	"cloudwatchlogs":         "Logs_20140328",
+	"codebuild":              "CodeBuild_20161006",
+	"dynamodb":               "DynamoDB_20120810",
+	"ecr":                    "AmazonEC2ContainerRegistry_V20150921",
+	"ecs":                    "AmazonEC2ContainerServiceV20141113",
+	"eventbridge":            "AWSEvents",
+	"firehose":               "Firehose_20150804",
+	"glue":                   "AWSGlue",
+	"kinesis":                "Kinesis_20131202",
+	"kms":                    "TrentService",
+	"organizations":          "AWSOrganizationsV20161128",
+	"secretsmanager":         "secretsmanager",
+	"servicediscovery":       "Route53AutoNaming_v20170314",
+	"sfn":                    "AWSStepFunctions",
+	"sqs":                    "AmazonSQS",
+	"ssm":                    "AmazonSSM",
+	"wafv2":                  "AWSWAF_20190729",
+}
+
+// sfnInvokeAWSSDK dispatches a generic AWS SDK integration through the same
+// registered awsJson handler used by official clients. The Step Functions
+// resource uses the SDK's lower-camel operation name while X-Amz-Target uses
+// the Smithy operation name, whose first letter is uppercase.
+func sfnInvokeAWSSDK(resource string, input any) (any, *sfnExecutionError) {
+	const prefix = "arn:aws:states:::aws-sdk:"
+	integration := strings.TrimPrefix(resource, prefix)
+	parts := strings.Split(integration, ":")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, &sfnExecutionError{
+			Name:  "States.Runtime",
+			Cause: fmt.Sprintf("The resource provided in the task state is not a valid AWS SDK integration ARN: %s", resource),
+		}
+	}
+	service, action := parts[0], parts[1]
+	if _, restJSONService := sfnAWSRESTJSONOperations[service]; restJSONService {
+		return sfnInvokeRESTJSONService(service, action, input)
+	}
+	if _, restXMLService := sfnAWSRESTXMLOperations[service]; restXMLService {
+		return sfnInvokeRESTXMLService(service, action, input)
+	}
+	if _, queryService := sfnAWSQueryServices[service]; queryService {
+		return sfnInvokeQueryService(service, action, input)
+	}
+	targetPrefix, ok := sfnAWSJSONServiceTargets[service]
+	if !ok {
+		return nil, &sfnExecutionError{
+			Name:  "States.TaskFailed",
+			Cause: fmt.Sprintf("The service %q is not implemented by an AWS service slice", service),
+		}
+	}
+	action = strings.ToUpper(action[:1]) + action[1:]
+	handler, ok := sfnAWSRouter.Handler(targetPrefix + "." + action)
+	if !ok {
+		return nil, &sfnExecutionError{
+			Name:  "States.TaskFailed",
+			Cause: fmt.Sprintf("The operation %s:%s is not implemented by the AWS service slice", service, action),
+		}
+	}
+	return sfnInvokeJSONService(handler, input)
 }
 
 func sfnInvokeECSRunTask(resource string, input, context any, cancel <-chan struct{}, heartbeat time.Duration) (any, *sfnExecutionError) {
@@ -543,9 +613,6 @@ func sfnStopECSTasks(tasks []ECSTask, reason string) {
 
 func sfnInvokeCodeBuild(resource string, input, context any, cancel <-chan struct{}) (any, *sfnExecutionError) {
 	action := strings.TrimPrefix(resource, "arn:aws:states:::codebuild:")
-	if strings.HasPrefix(resource, "arn:aws:states:::aws-sdk:codebuild:") {
-		action = strings.TrimPrefix(resource, "arn:aws:states:::aws-sdk:codebuild:")
-	}
 	syncIntegration := strings.HasSuffix(action, ".sync")
 	action = strings.TrimSuffix(action, ".sync")
 

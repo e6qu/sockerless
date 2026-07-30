@@ -88,6 +88,7 @@ func cwEvaluateAlarmsOnce() {
 			})
 			cwRecordAlarmHistory(alarm.AlarmName, "MetricAlarm", "StateUpdate",
 				fmt.Sprintf("Alarm updated from %s to %s", prev, newState), string(historyData))
+			ecsRequestServiceReconcileForAlarm(alarm.AlarmName)
 		}(a)
 	}
 }

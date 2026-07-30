@@ -5,10 +5,15 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 matrix="$repo_root/specs/SIM_TEST_COVERAGE_MATRIX.md"
+parity_matrix="$repo_root/specs/SIM_PARITY_MATRIX.md"
 tables_dir="$repo_root/specs/SIM_SURFACE_TABLES"
 
 if [[ ! -f "$matrix" ]]; then
     echo "[sim-coverage-matrix] missing $matrix" >&2
+    exit 1
+fi
+if [[ ! -f "$parity_matrix" ]]; then
+    echo "[sim-coverage-matrix] missing $parity_matrix" >&2
     exit 1
 fi
 
@@ -59,6 +64,19 @@ while IFS= read -r path; do
 done < <(grep -oE "$path_re" "$matrix" | tr -d '`' | sort -u)
 
 if [[ "$missing_paths" -ne 0 ]]; then
+    exit 1
+fi
+
+missing_aws_parity=0
+while IFS= read -r surface; do
+    if ! grep -Fq "(SIM_SURFACE_TABLES/$surface.md)" "$parity_matrix"; then
+        echo "[sim-coverage-matrix] AWS surface missing from parity inventory: $surface" >&2
+        missing_aws_parity=1
+    fi
+done < <(find "$tables_dir" -maxdepth 1 -type f -name 'aws-*.md' \
+    -exec basename {} .md \; | sort)
+
+if [[ "$missing_aws_parity" -ne 0 ]]; then
     exit 1
 fi
 

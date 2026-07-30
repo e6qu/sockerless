@@ -13,6 +13,22 @@ task-scoped endpoint through its reachable host coordinate. An official AWS CLI
 container consumed the credentials and returned its exact assumed-role ARN
 from `sts:GetCallerIdentity`.
 
+Amazon ECS services now complete the discovery and failed-deployment
+contracts left after the core scheduler landed. Running service tasks register
+their real network address and port in AWS Cloud Map and reconcile those
+instances through replacement, scale-in, deletion, and hard restart. Durable
+launch failures apply bounded backoff and drive configured deployment circuit
+breakers or CloudWatch alarms to failure and rollback. Restart regressions
+retain failure timing and release adopted Fargate network state on deletion.
+
+Amazon DynamoDB enforces its 400 KiB item limit from stored attribute bytes
+rather than JSON encoding size. AWS Secrets Manager owns independent
+Region-scoped primary and replica records with synchronization, removal,
+promotion, and persistence. AWS Step Functions generic AWS SDK integrations
+now dispatch generated Smithy bindings for AWS JSON, AWS Query, REST JSON, and
+REST XML protocols. The AWS console exposes ECS service deployment operations
+and Secrets Manager replica management through those public service APIs.
+
 The Terraform-in-ECS workload image carries an ahead-of-time filesystem mirror
 of the exact AWS provider, so its private-subnet task performs one offline
 initialization and one apply without undeclared internet egress. It publishes
@@ -110,9 +126,9 @@ and isolated listener ports.
 
 The macOS AWS Terraform container wrapper mounted the runtime Smithy report
 back to the host, surfaced Podman attachment failures, and removed the exact
-container plus anonymous volumes. BUG-2791 retained the operator-owned local
-Podman overlay-store corruption that prevented a second full local provider
-run; the hosted HashiCorp AWS provider cell remained the mandatory full gate.
+container plus anonymous volumes. A non-destructive Podman virtual-machine
+restart cleared the volatile overlay fault, after which the complete local
+provider apply, hard restart, refresh, assertions, and destroy passed.
 
 The pre-push freshness gate advanced gRPC to 1.83.0 in both Cloud Run
 backends, the shared Google Cloud backend, the simulator, and its official SDK
@@ -259,20 +275,12 @@ to Discovery revisions 20260723 and 20260724.
 
 ## Next Recommended Slice
 
-BUG-2798 became the next Amazon Elastic Container Service (ECS) fidelity slice:
-make `serviceRegistries` drive durable AWS Cloud Map instance registration and
-deregistration for each service task, including task replacement and hard
-simulator restart. BUG-2799 followed with AWS-shaped failed-deployment
-behavior: scheduler restart throttling, deployment circuit-breaker failure and
-rollback, and CloudWatch-alarm rollback. Prove both through official AWS SDK
-and AWS CLI clients plus the corresponding HashiCorp AWS provider resources.
-
-The production runtime blocker itself closed. ECS services launched durable
-task-definition workloads, replaced stopped tasks, rolled revisions, scaled
-through direct updates and Application Auto Scaling, served healthy traffic
-through real load-balancer targets, and retained task identity across a hard
-simulator replacement. Official AWS SDK, AWS CLI, and production-shaped
-HashiCorp AWS provider scenarios exercised that data plane.
+BUG-2798 and BUG-2799 closed. ECS services now drive durable AWS Cloud Map
+registration from real task transitions and implement persisted launch
+throttling, deployment circuit-breaker rollback, and CloudWatch-alarm rollback.
+Official AWS SDK and AWS CLI scenarios, hard-restart regressions, and the
+production-shaped HashiCorp AWS provider graph exercised the completed data
+plane.
 
 BUG-2766 remained the next independent AWS fidelity slice: implement the
 published AWS Amplify Hosting `ImageOptimization` fetch, source-policy,
@@ -280,9 +288,7 @@ transformation, validation, format-negotiation, and cache contract, then prove
 it through hosted requests and external image decoders. BUG-2764 remained a
 host boundary: the shared Linux test image contained the real Firecracker and
 squashfs tools, while the macOS Podman virtual machine exposed no nested KVM;
-the capable-Linux Terraform CI cell remained mandatory. BUG-2791 separately
-retained the local Podman machine's corrupt overlay graph; resetting or
-migrating that operator-owned machine remained outside repository mutation.
+the capable-Linux Terraform CI cell remained mandatory.
 
 The completed baseline retained real AWS Private Certificate Authority and
 Amazon Data Firehose implementations with official SDK, AWS CLI, Terraform,

@@ -1,6 +1,6 @@
 # Cross-simulator feature parity matrix
 
-Source of truth for which cloud-API calls each simulator implements at the fidelity sockerless requires. Each row is a cloud-API call sockerless makes from one of the 7 backends. Each column is one of the three simulators.
+Source of truth for which cloud-API calls each simulator implements at the fidelity sockerless requires. The backend-dependency tables enumerate every cloud-API call made by one of the seven backends. The cloud-slice inventory links every simulator service to its complete registered-operation table and to its official SDK, vendor CLI, and Terraform-provider evidence.
 
 Legend:
 - ✓ — sim implements the call at sockerless's required fidelity (used by integration tests; passes against the sim).
@@ -8,7 +8,7 @@ Legend:
 - ✗ — sim does not implement the call. Filed as a bug.
 - — — call is not made by any backend pointed at this cloud (not applicable).
 
-**Standing rule:** any new SDK call added to a backend must update this matrix and add the sim handler in the same commit (PLAN.md principle #10). Every ⚠ / ✗ row is a bug that gets a real fix in the same session per the no-defer rule.
+**Standing rules:** any new SDK call added to a backend must update this matrix and add the sim handler in the same commit (PLAN.md principle #10). Every simulator service slice must appear in the cloud-slice inventory; CI compares it with `specs/SIM_SURFACE_TABLES/`. Every ⚠ / ✗ row is a bug that gets a real fix in the same session per the no-defer rule.
 
 ## AWS
 
@@ -53,6 +53,57 @@ Backends: ECS (Fargate), Lambda. Sim: `simulators/aws/`. **33/33 ✓.**
 | ServiceDiscovery | DiscoverInstances | ECS | ✓ | DNS discovery |
 | ServiceDiscovery | ListTagsForResource | ECS | ✓ | |
 | ServiceDiscovery | GetOperation | ECS | ✓ | |
+
+### AWS simulator cloud-slice inventory
+
+The backend table above answers “can a sockerless backend make every cloud call it needs?” This inventory answers the broader question “which AWS public API slices does the simulator expose, and where is every registered operation tracked?” The linked surface tables currently enumerate **42 AWS surfaces and 2,659 registered operations**. Each operation row names its handler and test status. [`SIM_TEST_COVERAGE_MATRIX.md`](SIM_TEST_COVERAGE_MATRIX.md) supplies the official AWS SDK, AWS CLI, and Terraform AWS Provider evidence for every surface.
+
+The inventory is intentionally exhaustive rather than customer-report-driven. It includes AWS Amplify, AWS WAF, AWS Step Functions, Amazon DynamoDB, Amazon Route 53, Amazon Relational Database Service (RDS), AWS Secrets Manager, AWS CodeBuild, Amazon CloudWatch, Amazon EventBridge, AWS CloudTrail, Amazon Simple Notification Service (SNS), Amazon Simple Queue Service (SQS), and every other registered AWS cloud slice.
+
+| AWS cloud slice | Per-operation inventory | External client evidence |
+|---|---|---|
+| AWS Certificate Manager (ACM) | [`aws-acm`](SIM_SURFACE_TABLES/aws-acm.md) | [`aws-acm`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Certificate Manager ACME data plane | [`aws-acm_acme`](SIM_SURFACE_TABLES/aws-acm_acme.md) | [`aws-acm_acme`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Private Certificate Authority | [`aws-acmpca`](SIM_SURFACE_TABLES/aws-acmpca.md) | [`aws-acmpca`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Amplify | [`aws-amplify`](SIM_SURFACE_TABLES/aws-amplify.md) | [`aws-amplify`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon API Gateway REST APIs | [`aws-apigateway`](SIM_SURFACE_TABLES/aws-apigateway.md) | [`aws-apigateway`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon API Gateway V2 APIs | [`aws-apigatewayv2`](SIM_SURFACE_TABLES/aws-apigatewayv2.md) | [`aws-apigatewayv2`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Application Auto Scaling | [`aws-application-autoscaling`](SIM_SURFACE_TABLES/aws-application-autoscaling.md) | [`aws-application-autoscaling`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon EC2 Auto Scaling | [`aws-autoscaling`](SIM_SURFACE_TABLES/aws-autoscaling.md) | [`aws-autoscaling`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Batch | [`aws-batch`](SIM_SURFACE_TABLES/aws-batch.md) | [`aws-batch`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Budgets | [`aws-budgets`](SIM_SURFACE_TABLES/aws-budgets.md) | [`aws-budgets`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Cloud Map | [`aws-cloudmap`](SIM_SURFACE_TABLES/aws-cloudmap.md) | [`aws-cloudmap`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS CloudTrail | [`aws-cloudtrail`](SIM_SURFACE_TABLES/aws-cloudtrail.md) | [`aws-cloudtrail`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon CloudWatch | [`aws-cloudwatch`](SIM_SURFACE_TABLES/aws-cloudwatch.md) | [`aws-cloudwatch`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS CodeBuild | [`aws-codebuild`](SIM_SURFACE_TABLES/aws-codebuild.md) | [`aws-codebuild`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon DynamoDB | [`aws-dynamodb`](SIM_SURFACE_TABLES/aws-dynamodb.md) | [`aws-dynamodb`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Elastic Compute Cloud (EC2) | [`aws-ec2`](SIM_SURFACE_TABLES/aws-ec2.md) | [`aws-ec2`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Elastic Container Registry (ECR) | [`aws-ecr`](SIM_SURFACE_TABLES/aws-ecr.md) | [`aws-ecr`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Elastic Container Service (ECS) | [`aws-ecs`](SIM_SURFACE_TABLES/aws-ecs.md) | [`aws-ecs`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Elastic File System (EFS) | [`aws-efs`](SIM_SURFACE_TABLES/aws-efs.md) | [`aws-efs`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon ElastiCache | [`aws-elasticache`](SIM_SURFACE_TABLES/aws-elasticache.md) | [`aws-elasticache`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Elastic Load Balancing V2 | [`aws-elbv2`](SIM_SURFACE_TABLES/aws-elbv2.md) | [`aws-elbv2`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon EventBridge | [`aws-eventbridge`](SIM_SURFACE_TABLES/aws-eventbridge.md) | [`aws-eventbridge`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Data Firehose | [`aws-firehose`](SIM_SURFACE_TABLES/aws-firehose.md) | [`aws-firehose`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Glue | [`aws-glue`](SIM_SURFACE_TABLES/aws-glue.md) | [`aws-glue`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Identity and Access Management (IAM) | [`aws-iam`](SIM_SURFACE_TABLES/aws-iam.md) | [`aws-iam`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Kinesis Data Streams | [`aws-kinesis`](SIM_SURFACE_TABLES/aws-kinesis.md) | [`aws-kinesis`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Key Management Service (KMS) | [`aws-kms`](SIM_SURFACE_TABLES/aws-kms.md) | [`aws-kms`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Lambda | [`aws-lambda`](SIM_SURFACE_TABLES/aws-lambda.md) | [`aws-lambda`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Organizations | [`aws-organizations`](SIM_SURFACE_TABLES/aws-organizations.md) | [`aws-organizations`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Relational Database Service (RDS) | [`aws-rds`](SIM_SURFACE_TABLES/aws-rds.md) | [`aws-rds`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Route 53 | [`aws-route53`](SIM_SURFACE_TABLES/aws-route53.md) | [`aws-route53`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Simple Storage Service (S3) bucket subresources | [`aws-s3-bucket-subresources`](SIM_SURFACE_TABLES/aws-s3-bucket-subresources.md) | [`aws-s3-bucket-subresources`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon S3 multipart upload | [`aws-s3-multipart`](SIM_SURFACE_TABLES/aws-s3-multipart.md) | [`aws-s3-multipart`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Simple Storage Service (S3) | [`aws-s3`](SIM_SURFACE_TABLES/aws-s3.md) | [`aws-s3`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon EventBridge Scheduler | [`aws-scheduler`](SIM_SURFACE_TABLES/aws-scheduler.md) | [`aws-scheduler`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Secrets Manager | [`aws-secretsmanager`](SIM_SURFACE_TABLES/aws-secretsmanager.md) | [`aws-secretsmanager`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Simple Notification Service (SNS) | [`aws-sns`](SIM_SURFACE_TABLES/aws-sns.md) | [`aws-sns`](SIM_TEST_COVERAGE_MATRIX.md) |
+| Amazon Simple Queue Service (SQS) | [`aws-sqs`](SIM_SURFACE_TABLES/aws-sqs.md) | [`aws-sqs`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Systems Manager Parameter Store | [`aws-ssm_parameters`](SIM_SURFACE_TABLES/aws-ssm_parameters.md) | [`aws-ssm_parameters`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Step Functions | [`aws-stepfunctions`](SIM_SURFACE_TABLES/aws-stepfunctions.md) | [`aws-stepfunctions`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS Security Token Service (STS) | [`aws-sts`](SIM_SURFACE_TABLES/aws-sts.md) | [`aws-sts`](SIM_TEST_COVERAGE_MATRIX.md) |
+| AWS WAF | [`aws-wafv2`](SIM_SURFACE_TABLES/aws-wafv2.md) | [`aws-wafv2`](SIM_TEST_COVERAGE_MATRIX.md) |
 
 ## GCP
 
@@ -127,4 +178,4 @@ Backends: Container Apps (aca), Azure Functions (azure-functions). Sim: `simulat
 
 ## Closure tracking
 
-All 77 current-backend rows (33 AWS + 16 GCP + 28 Azure) ship ✓. Plus 8 forward-looking GCP rows for Phase 126/127 driver work (no current backend caller — validated by SDK tests today; backend caller lands when those phases ship). Standing rule: any new SDK call added to a backend must update this matrix and add a sim handler in the same commit (PLAN.md principle #10). Forward-looking rows are sim-side prep only — they don't violate the rule because no backend uses them yet.
+All 77 current-backend rows (33 AWS + 16 GCP + 28 Azure) ship ✓. The full AWS cloud-slice inventory additionally tracks 42 surfaces and 2,659 registered operations with official-client evidence. Plus 8 forward-looking GCP rows for Phase 126/127 driver work (no current backend caller — validated by SDK tests today; backend caller lands when those phases ship). Standing rule: any new SDK call added to a backend must update this matrix and add the sim handler in the same commit (PLAN.md principle #10). Forward-looking rows are sim-side prep only — they don't violate the rule because no backend uses them yet.

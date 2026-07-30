@@ -105,6 +105,7 @@ func cwSetAlarmState(name, state, reason, reasonData string) bool {
 		a.ManualStateReason = reason
 	}) {
 		cwRecordAlarmHistory(name, "MetricAlarm", "StateUpdate", "Alarm updated from previous state to "+state, reasonData)
+		ecsRequestServiceReconcileForAlarm(name)
 		return true
 	}
 	if cwCompositeAlarms.Update(name, func(a *CWCompositeAlarm) {

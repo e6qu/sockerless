@@ -4,6 +4,50 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — AWS orchestration and regional data fidelity closed
+
+Amazon ECS service discovery now follows actual service-task transitions.
+Each running task registers its elastic-network-interface address, port, and
+ECS attributes as an AWS Cloud Map instance; replacement, scale-in, deletion,
+and hard simulator restart reconcile or deregister that instance. Failed task
+launches persist their count and next-attempt time, apply bounded exponential
+backoff, and drive configured deployment circuit breakers and CloudWatch
+alarms to AWS-shaped failure and rollback. Restart coverage also proves that
+deleting an adopted Fargate service releases its workload and network state.
+Official AWS SDK and CLI scenarios passed discovery, reconciliation, both
+rollback paths, and restart durability.
+
+Amazon DynamoDB now computes item size from its stored representation,
+including attribute names and recursive scalar, set, list, and map values, and
+rejects writes only above the exact 400 KiB boundary. AWS Secrets Manager now
+stores secrets by Region, creates independent replica records, synchronizes
+primary updates, enforces primary/replica deletion rules, removes replicas,
+and promotes a replica when replication stops. Official AWS SDK and CLI
+coverage proved the boundary and replication lifecycle, while a SQLite
+close-and-reopen regression proved regional state remained durable.
+
+AWS Step Functions generic AWS SDK Task states expanded beyond AWS JSON
+services. Repository-generated Smithy bindings now encode AWS Query, REST
+JSON, and REST XML URI labels, query strings, headers, payloads, and modeled
+responses through the same authenticated simulator routes. The generator
+output remains compile- and conformance-tested but is excluded from the
+hand-written duplicate-code heuristic.
+
+The AWS console now lists Amazon ECS services, renders task convergence,
+deployments, events, AWS Cloud Map registries, circuit-breaker and alarm
+configuration, and performs desired-count updates and deletion through public
+ECS APIs. Secrets Manager renders primary and replica Regions and manages
+replication through public service operations. TypeScript validation, all 69
+package tests, the production bundle, and all 243 Chromium tests passed. Its Playwright-owned
+simulator also uses an operating-system-selected Route 53 DNS coordinate
+instead of colliding with macOS's reserved multicast-DNS port.
+
+The prior macOS Podman overlay input/output error proved volatile: restarting
+the virtual machine without deleting images or volumes restored the runtime.
+The complete production-shaped HashiCorp AWS provider graph then passed apply,
+hard simulator replacement, refresh and external assertions, and destroy in
+227 seconds.
+
 ## 2026-07-30 — Amazon ECS task roles became real workload credentials
 
 An ECS task definition could retain `taskRoleArn`, but the launched workload

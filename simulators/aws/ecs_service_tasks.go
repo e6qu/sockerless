@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +25,24 @@ type ecsServiceLoadBalancer struct {
 	TargetGroupArn string `json:"targetGroupArn"`
 	ContainerName  string `json:"containerName"`
 	ContainerPort  int    `json:"containerPort"`
+}
+
+type ecsServiceRegistry struct {
+	RegistryArn   string `json:"registryArn"`
+	ContainerName string `json:"containerName"`
+	ContainerPort *int   `json:"containerPort"`
+	Port          *int   `json:"port"`
+}
+
+func ecsServiceRegistries(raw json.RawMessage) ([]ecsServiceRegistry, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var registries []ecsServiceRegistry
+	if err := json.Unmarshal(raw, &registries); err != nil {
+		return nil, fmt.Errorf("serviceRegistries must be an array: %w", err)
+	}
+	return registries, nil
 }
 
 // ecsServiceTaskGroup is the Group tag Amazon ECS assigns to a task started for
@@ -92,11 +114,19 @@ func ecsRequestServiceReconcileForTask(task ECSTask) {
 	if !strings.HasPrefix(task.Group, prefix) {
 		return
 	}
+	ecsRecordServiceTaskFailure(task)
 	serviceName := strings.TrimPrefix(task.Group, prefix)
-	ecsRequestServiceReconcile(ecsServiceKey(
+	key := ecsServiceKey(
 		ecsClusterNameFromRef(task.ClusterArn),
 		serviceName,
-	))
+	)
+	ecsRequestServiceReconcile(key)
+	if task.LastStatus == ECSTaskStatusRunning && task.StartedAt != nil {
+		delay := time.Until(time.Unix(*task.StartedAt, 0).Add(ecsServiceSteadyStateWindow))
+		if delay > 0 {
+			time.AfterFunc(delay, func() { ecsRequestServiceReconcile(key) })
+		}
+	}
 }
 
 func ecsServiceTaskDefinition(ref string) (ECSTaskDefinition, bool) {
@@ -252,13 +282,19 @@ func ecsReconcileService(key string) {
 	if !ok || service.Status != "ACTIVE" {
 		return
 	}
+	if ecsCheckServiceDeploymentAlarms(key, service) {
+		return
+	}
+	if !ecsServiceRetryReady(key) {
+		return
+	}
 	if !ecsServiceUsesECSScheduler(service) {
 		ecsRefreshServiceState(key)
 		return
 	}
 	definition, ok := ecsServiceTaskDefinition(service.TaskDefinition)
 	if !ok {
-		ecsFailServiceDeployment(key, "Task definition not found: "+service.TaskDefinition)
+		ecsRecordServiceLaunchFailure(key, "Task definition not found: "+service.TaskDefinition)
 		return
 	}
 	targetCount := ecsServiceTaskTargetCount(service)
@@ -301,7 +337,7 @@ func ecsReconcileService(key string) {
 		if launchCount > 0 {
 			input, err := ecsServiceRunInput(service, launchCount)
 			if err != nil {
-				ecsFailServiceDeployment(key, err.Error())
+				ecsRecordServiceLaunchFailure(key, err.Error())
 				return
 			}
 			for input.Count > 0 {
@@ -312,7 +348,7 @@ func ecsReconcileService(key string) {
 				next := input
 				next.Count = count
 				if _, requestErr := runECSTasks(context.Background(), next); requestErr != nil {
-					ecsFailServiceDeployment(key, requestErr.message)
+					ecsRecordServiceLaunchFailure(key, requestErr.message)
 					fmt.Fprintf(os.Stderr, "[sim-ecs] service %s reconciliation failed: %s\n",
 						service.ServiceArn, requestErr.message)
 					return
@@ -332,6 +368,10 @@ func ecsReconcileService(key string) {
 		}
 	}
 
+	if err := ecsSyncServiceRegistryInstances(service); err != nil {
+		ecsRecordServiceLaunchFailure(key, err.Error())
+		return
+	}
 	ecsSyncServiceLoadBalancerTargets(service)
 	currentHealthy := ecsCountHealthyServiceTasks(service, current)
 	if currentHealthy >= targetCount {
@@ -365,6 +405,10 @@ func ecsCountHealthyServiceTasks(service ECSService, tasks []ECSTask) int {
 }
 
 func ecsServiceTaskHealthy(service ECSService, task ECSTask) bool {
+	if task.StartedAt == nil ||
+		time.Since(time.Unix(*task.StartedAt, 0)) < ecsServiceSteadyStateWindow {
+		return false
+	}
 	bindings, err := ecsServiceLoadBalancers(service.LoadBalancers)
 	if err != nil || len(bindings) == 0 {
 		return err == nil
@@ -406,23 +450,15 @@ func ecsStopServiceTaskSlice(tasks []ECSTask, count int, reason string) {
 	}
 }
 
-func ecsFailServiceDeployment(key, reason string) {
-	ecsServices.Update(key, func(service *ECSService) {
-		service.PendingCount = 0
-		if len(service.Deployments) == 0 {
-			return
-		}
-		service.Deployments[0].RolloutState = "FAILED"
-		service.Deployments[0].RolloutStateReason = reason
-		service.Deployments[0].UpdatedAt = float64(time.Now().Unix())
-	})
-}
-
 // ecsRefreshServiceState derives public counts and deployment state from real
 // service tasks, then synchronizes Elastic Load Balancing target registration.
 func ecsRefreshServiceState(key string) {
 	service, ok := ecsServices.Get(key)
 	if !ok {
+		return
+	}
+	if err := ecsSyncServiceRegistryInstances(service); err != nil {
+		ecsRecordServiceLaunchFailure(key, err.Error())
 		return
 	}
 	ecsSyncServiceLoadBalancerTargets(service)
@@ -450,6 +486,9 @@ func ecsRefreshServiceState(key string) {
 	}
 	targetCount := ecsServiceTaskTargetCount(service)
 	now := float64(time.Now().Unix())
+	if currentHealthy > 0 {
+		ecsResetServiceFailureCountAfterHealthyTask(key, service)
+	}
 	ecsServices.Update(key, func(current *ECSService) {
 		current.RunningCount = running
 		current.PendingCount = pending
@@ -470,6 +509,9 @@ func ecsRefreshServiceState(key string) {
 			deployment.RolloutStateReason = ""
 		}
 	})
+	if completed, ok := ecsServices.Get(key); ok && ecsServiceDeploymentCompleted(completed) {
+		ecsMarkServiceDeploymentCompleted(key, completed)
+	}
 }
 
 // ecsStopServiceTasks drains every non-STOPPED task for a service.
@@ -479,6 +521,177 @@ func ecsStopServiceTasks(service ECSService) {
 		stopECSTask(task.TaskID(), "Service deleted", "ServiceSchedulerInitiated")
 	}
 	ecsSyncServiceLoadBalancerTargets(service)
+	_ = ecsSyncServiceRegistryInstances(service)
+}
+
+func ecsServiceRegistryID(arn string) string {
+	if slash := strings.LastIndexByte(arn, '/'); slash >= 0 {
+		return arn[slash+1:]
+	}
+	return arn
+}
+
+func ecsServiceRegistryTaskAttributes(
+	service ECSService,
+	task ECSTask,
+	registry ecsServiceRegistry,
+) (map[string]string, bool) {
+	var privateIPv4 string
+	for _, container := range task.Containers {
+		if registry.ContainerName != "" && container.Name != registry.ContainerName {
+			continue
+		}
+		if len(container.NetworkInterfaces) > 0 {
+			privateIPv4 = container.NetworkInterfaces[0].PrivateIpv4Address
+			break
+		}
+	}
+	if privateIPv4 == "" {
+		for _, container := range task.Containers {
+			if len(container.NetworkInterfaces) > 0 {
+				privateIPv4 = container.NetworkInterfaces[0].PrivateIpv4Address
+				break
+			}
+		}
+	}
+	if privateIPv4 == "" {
+		return nil, false
+	}
+	availabilityZone := awsAvailabilityZone()
+	for _, attachment := range task.Attachments {
+		for _, detail := range attachment.Details {
+			if detail.Name != "subnetId" {
+				continue
+			}
+			if subnet, ok := ec2Subnets.Get(detail.Value); ok && subnet.AvailabilityZone != "" {
+				availabilityZone = subnet.AvailabilityZone
+			}
+		}
+	}
+	family, revision := ecsTaskDefinitionFamilyRevision(task.TaskDefinitionArn)
+	attributes := map[string]string{
+		"AWS_INSTANCE_IPV4":            privateIPv4,
+		"AVAILABILITY_ZONE":            availabilityZone,
+		"REGION":                       awsRegion(),
+		"ECS_SERVICE_NAME":             service.ServiceName,
+		"ECS_CLUSTER_NAME":             ecsClusterNameFromRef(service.ClusterArn),
+		"ECS_TASK_DEFINITION_FAMILY":   family,
+		"ECS_TASK_DEFINITION_REVISION": revision,
+	}
+	port := registry.Port
+	if port == nil {
+		port = registry.ContainerPort
+	}
+	if port != nil {
+		attributes["AWS_INSTANCE_PORT"] = strconv.Itoa(*port)
+	}
+	return attributes, true
+}
+
+func ecsCloudMapJSONCall(handler http.HandlerFunc, input any) error {
+	body, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	response := httptest.NewRecorder()
+	handler(response, request)
+	if response.Code >= http.StatusBadRequest {
+		code, message := awsJSONError(response.Body.Bytes())
+		if code == "" {
+			code = http.StatusText(response.Code)
+		}
+		return fmt.Errorf("AWS Cloud Map %s: %s", code, message)
+	}
+	return nil
+}
+
+func ecsStringMapEqual(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+// ecsSyncServiceRegistryInstances makes each running service task a real AWS
+// Cloud Map instance and removes registrations for tasks that stopped. The
+// public RegisterInstance and DeregisterInstance handlers perform the durable
+// write, revision update, operation creation, and DNS realization.
+func ecsSyncServiceRegistryInstances(service ECSService) error {
+	registries, err := ecsServiceRegistries(service.ServiceRegistries)
+	if err != nil {
+		return err
+	}
+	if len(registries) == 0 {
+		return nil
+	}
+	tasks := ecsServiceTasksForGroup(service.ClusterArn, ecsServiceTaskGroup(service.ServiceName))
+	clusterName := ecsClusterNameFromRef(service.ClusterArn)
+	for _, registry := range registries {
+		serviceID := ecsServiceRegistryID(registry.RegistryArn)
+		desired := map[string]map[string]string{}
+		for _, task := range tasks {
+			if task.LastStatus != ECSTaskStatusRunning {
+				continue
+			}
+			attributes, ok := ecsServiceRegistryTaskAttributes(service, task, registry)
+			if ok {
+				desired[task.TaskID()] = attributes
+			}
+		}
+		for _, instance := range cmServiceInstances(serviceID) {
+			if desired[instance.Id] != nil ||
+				instance.Attributes["ECS_SERVICE_NAME"] != service.ServiceName ||
+				instance.Attributes["ECS_CLUSTER_NAME"] != clusterName {
+				continue
+			}
+			if err := ecsCloudMapJSONCall(handleCMDeregisterInstance, map[string]any{
+				"ServiceId": serviceID, "InstanceId": instance.Id,
+			}); err != nil {
+				return err
+			}
+		}
+		for instanceID, attributes := range desired {
+			existing, exists := cmInstances.Get(cmInstanceKey(serviceID, instanceID))
+			if exists && ecsStringMapEqual(existing.Attributes, attributes) {
+				continue
+			}
+			if err := ecsCloudMapJSONCall(handleCMRegisterInstance, map[string]any{
+				"ServiceId":  serviceID,
+				"InstanceId": instanceID,
+				"Attributes": attributes,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func ecsDeregisterServiceRegistryTasks(service ECSService) {
+	registries, err := ecsServiceRegistries(service.ServiceRegistries)
+	if err != nil {
+		return
+	}
+	clusterName := ecsClusterNameFromRef(service.ClusterArn)
+	for _, registry := range registries {
+		serviceID := ecsServiceRegistryID(registry.RegistryArn)
+		for _, instance := range cmServiceInstances(serviceID) {
+			if instance.Attributes["ECS_SERVICE_NAME"] != service.ServiceName ||
+				instance.Attributes["ECS_CLUSTER_NAME"] != clusterName {
+				continue
+			}
+			_ = ecsCloudMapJSONCall(handleCMDeregisterInstance, map[string]any{
+				"ServiceId": serviceID, "InstanceId": instance.Id,
+			})
+		}
+	}
 }
 
 func ecsServiceLoadBalancers(raw json.RawMessage) ([]ecsServiceLoadBalancer, error) {
