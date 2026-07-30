@@ -380,6 +380,17 @@ func pullImage(ctx context.Context, cli *client.Client, imageName, platform stri
 	}
 }
 
+// PullImage makes the simulator runtime's bounded, stream-aware pull path
+// available to cloud-product translators that must inspect an image before
+// they can construct its container configuration.
+func PullImage(ctx context.Context, imageName, platform string) error {
+	cli := DockerClient()
+	if cli == nil {
+		return fmt.Errorf("container runtime is not initialized")
+	}
+	return pullImage(ctx, cli, imageName, platform)
+}
+
 // isTransientRegistryErr classifies pull failures worth retrying:
 // registry-side throttling and momentary unavailability.
 func isTransientRegistryErr(err error) bool {

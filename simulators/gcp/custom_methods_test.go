@@ -118,10 +118,10 @@ func TestUnservedCustomMethodsAreMethodNotFound(t *testing.T) {
 			body:   `{}`,
 		},
 		{
-			name:   "SpannerExecuteSql",
+			name:   "SpannerAdapter",
 			method: http.MethodPost,
 			host:   "spanner.googleapis.com",
-			path:   "/spanner/v1/projects/test-project/instances/inst/databases/db/sessions/s1:executeSql",
+			path:   "/spanner/v1/projects/test-project/instances/inst/databases/db/sessions:adapter",
 			body:   `{}`,
 		},
 		{

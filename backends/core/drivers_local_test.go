@@ -65,8 +65,13 @@ func TestLocalFilesystemDriver_PutArchive_Staging(t *testing.T) {
 
 	containerID := GenerateID()
 
-	// Use a non-writable path to trigger staging
-	destPath := "/usr/local/nonexistent-staging-test"
+	// A child of a regular file cannot be created on any platform or under any
+	// user, so direct extraction must take the staging path.
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("block mkdir"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	destPath := filepath.Join(blocker, "staging-target")
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)

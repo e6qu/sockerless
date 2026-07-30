@@ -22,6 +22,38 @@ func TestSpannerCLI_InstanceDatabaseList(t *testing.T) {
 	}
 }
 
+func TestSpannerCLI_RESTDataPlane(t *testing.T) {
+	const (
+		instance = "cli-spanner-data"
+		database = "clidatadb"
+	)
+	runCLI(t, gcloudCLI("spanner", "instances", "create", instance,
+		"--config=regional-us-central1",
+		"--description=CLI Spanner data plane",
+		"--nodes=1",
+		"--format=json"))
+	runCLI(t, gcloudCLI("spanner", "databases", "create", database,
+		"--instance="+instance,
+		"--format=json"))
+	runCLI(t, gcloudCLI("spanner", "databases", "ddl", "update", database,
+		"--instance="+instance,
+		"--ddl=CREATE TABLE Users (UserId STRING(36) NOT NULL, Name STRING(100) NOT NULL) PRIMARY KEY (UserId)",
+		"--format=json"))
+
+	runCLI(t, gcloudCLI("spanner", "databases", "execute-sql", database,
+		"--instance="+instance,
+		"--sql=INSERT INTO Users (UserId, Name) VALUES ('cli-1', 'CLI Alice')",
+		"--enable-partitioned-dml",
+		"--format=json"))
+	out := runCLI(t, gcloudCLI("spanner", "databases", "execute-sql", database,
+		"--instance="+instance,
+		"--sql=SELECT UserId, Name FROM Users",
+		"--format=json"))
+	if !strings.Contains(out, "cli-1") || !strings.Contains(out, "CLI Alice") {
+		t.Fatalf("Spanner execute-sql did not return the committed row: %s", out)
+	}
+}
+
 func TestDataflowCLI_ListRegionalJobs(t *testing.T) {
 	httpDoJSON(t, "POST", baseURL+"/v1b3/projects/"+project+"/locations/"+location+"/jobs",
 		`{"name":"cli-dataflow-job","type":"JOB_TYPE_BATCH"}`)

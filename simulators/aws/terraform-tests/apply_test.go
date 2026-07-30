@@ -107,10 +107,9 @@ import (
 //     ListTagsForResource, TagResource, UntagResource
 //
 // What this proves end-to-end:
-//   - WAFv2 association resource_arn == CloudFront distribution ARN
-//     (the association points back at the distribution that triggered
-//     the WAF wiring in the first place — TF resolves the ref, sim
-//     accepts it).
+//   - WAFv2 association resource_arn values equal the CloudFront distribution
+//     ARN and Amplify app ARN. Terraform resolves both references and refreshes
+//     each real cross-service association through WAFv2.
 //   - Route 53 ALIAS target.name == CloudFront distribution
 //     domain_name. This is the production DNS flow: api.foo.example
 //     resolves to the CloudFront edge (real AWS uses an A record with
@@ -141,10 +140,13 @@ func TestStackProductionShape(t *testing.T) {
 	wafResource := outputs.must(t, "wafv2_assoc_resource_arn")
 	r53Alias := outputs.must(t, "route53_alias_target_name")
 	amplifyARN := outputs.must(t, "amplify_app_arn")
+	amplifyWAFResource := outputs.must(t, "wafv2_amplify_assoc_resource_arn")
 	slrARN := outputs.must(t, "iam_slr_arn")
 
 	require.Equal(t, cfARN, wafResource,
 		"WAFv2 association resource_arn must equal CloudFront distribution ARN")
+	require.Equal(t, amplifyARN, amplifyWAFResource,
+		"WAFv2 association resource_arn must equal Amplify app ARN")
 
 	// Route 53 ALIAS target names normalise to a trailing dot in real
 	// AWS storage. The sim stores them the same way; strip the dot

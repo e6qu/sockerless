@@ -45,6 +45,7 @@ func TestAPIGatewayV2_ApiLifecycle(t *testing.T) {
 	get, err := c.GetApi(ctx, &apigatewayv2.GetApiInput{ApiId: aws.String(apiId)})
 	require.NoError(t, err)
 	assert.Equal(t, "hello-api", aws.ToString(get.Name))
+	assert.Equal(t, "$request.header.x-api-key", aws.ToString(get.ApiKeySelectionExpression))
 
 	intg, err := c.CreateIntegration(ctx, &apigatewayv2.CreateIntegrationInput{
 		ApiId:           aws.String(apiId),
@@ -53,6 +54,7 @@ func TestAPIGatewayV2_ApiLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, aws.ToString(intg.IntegrationId))
+	assert.Equal(t, apigwv2types.ConnectionTypeInternet, intg.ConnectionType)
 
 	rt, err := c.CreateRoute(ctx, &apigatewayv2.CreateRouteInput{
 		ApiId:    aws.String(apiId),
@@ -66,9 +68,27 @@ func TestAPIGatewayV2_ApiLifecycle(t *testing.T) {
 		ApiId:      aws.String(apiId),
 		StageName:  aws.String("$default"),
 		AutoDeploy: aws.Bool(true),
+		Tags:       map[string]string{"consumer": "ecs-dev-desktop"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "$default", aws.ToString(stage.StageName))
+	assert.Equal(t, "ecs-dev-desktop", stage.Tags["consumer"])
+
+	updatedIntegration, err := c.UpdateIntegration(ctx, &apigatewayv2.UpdateIntegrationInput{
+		ApiId:             aws.String(apiId),
+		IntegrationId:     intg.IntegrationId,
+		IntegrationMethod: aws.String("POST"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "POST", aws.ToString(updatedIntegration.IntegrationMethod))
+
+	updatedStage, err := c.UpdateStage(ctx, &apigatewayv2.UpdateStageInput{
+		ApiId:       aws.String(apiId),
+		StageName:   aws.String("$default"),
+		Description: aws.String("consumer deployment"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "consumer deployment", aws.ToString(updatedStage.Description))
 
 	list, err := c.GetApis(ctx, &apigatewayv2.GetApisInput{})
 	require.NoError(t, err)

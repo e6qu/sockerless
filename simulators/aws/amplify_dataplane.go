@@ -200,14 +200,14 @@ func amplifyLatestSucceededJob(appID, branch string) (amplifyStoredJob, bool) {
 }
 
 // amplifyUnpackJobArtifacts builds the served file map from a job's
-// artifacts: a single zip artifact (build output / zip deployment) is
+// hosted artifacts: a single zip artifact (build output / zip deployment) is
 // expanded, a multi-file artifact set (fileMap deployment) is served
-// directly. An artifact that isn't a valid zip (e.g. the synthetic
-// placeholder of a control-plane-only job) yields no servable content.
+// directly. End-to-end test outputs and their metadata are separate Amplify
+// artifact roles and are never published as site content.
 func amplifyUnpackJobArtifacts(appID, branch, jobID string) *amplifyHostedContent {
 	var stored []amplifyStoredArtifact
 	for _, a := range amplifyArtifacts.List() {
-		if a.AppId == appID && a.BranchName == branch && a.JobId == jobID {
+		if a.AppId == appID && a.BranchName == branch && a.JobId == jobID && a.HostedContent {
 			stored = append(stored, a)
 		}
 	}
@@ -272,6 +272,10 @@ func handleAmplifyHosting(w http.ResponseWriter, r *http.Request, appID, branch 
 	br, ok := stored.Branches[branch]
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if !wafAssociatedRequestAllowed(stored.App.AppArn, r) {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 		return
 	}
 	if !amplifyBasicAuthOK(stored.App, br, r) {

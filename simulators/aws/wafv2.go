@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -138,18 +141,38 @@ type wafStoredManagedRuleSet struct {
 	LockToken string
 }
 
+type wafSampledRequest struct {
+	WebACLARN        string
+	RuleMetricName   string
+	Action           string
+	Timestamp        time.Time
+	ClientIP         string
+	HTTPVersion      string
+	Headers          []wafSampledHTTPHeader
+	Method           string
+	URI              string
+	ResponseCodeSent int
+}
+
+type wafSampledHTTPHeader struct {
+	Name  string
+	Value string
+}
+
 var (
-	wafWebACLs        sim.Store[wafStoredWebACL]
-	wafIPSets         sim.Store[wafStoredIPSet]
-	wafRuleGroups     sim.Store[wafStoredRuleGroup]
-	wafRegexSets      sim.Store[wafStoredRegex]
-	wafLogging        sim.Store[wafStoredLogging]
-	wafAPIKeys        sim.Store[wafStoredAPIKey]
-	wafManagedRuleSet sim.Store[wafStoredManagedRuleSet]
+	wafWebACLs         sim.Store[wafStoredWebACL]
+	wafIPSets          sim.Store[wafStoredIPSet]
+	wafRuleGroups      sim.Store[wafStoredRuleGroup]
+	wafRegexSets       sim.Store[wafStoredRegex]
+	wafLogging         sim.Store[wafStoredLogging]
+	wafAPIKeys         sim.Store[wafStoredAPIKey]
+	wafManagedRuleSet  sim.Store[wafStoredManagedRuleSet]
+	wafSampledRequests sim.Store[wafSampledRequest]
 	// wafPermissionPolicies: rule-group ARN → IAM-style policy JSON document.
 	wafPermissionPolicies sim.Store[string]
-	// wafAssociations: resourceARN → webACLARN. Tracks CloudFront
-	// distribution → WebACL bindings.
+	// wafAssociations maps a real cloud resource ARN to its WebACL ARN.
+	// CloudFront distributions and Amplify apps share this authoritative
+	// association state, just as both services are protected through WAFv2.
 	wafAssociations sync.Map
 )
 
@@ -221,6 +244,7 @@ func registerWAFv2(r *sim.AWSRouter, srv *sim.Server) {
 	wafAPIKeys = sim.MakeStore[wafStoredAPIKey](srv.DB(), "wafv2_apikeys")
 	wafManagedRuleSet = sim.MakeStore[wafStoredManagedRuleSet](srv.DB(), "wafv2_managed_rule_sets")
 	wafPermissionPolicies = sim.MakeStore[string](srv.DB(), "wafv2_permission_policies")
+	wafSampledRequests = sim.MakeStore[wafSampledRequest](srv.DB(), "wafv2_sampled_requests")
 	wafSeedManagedRuleSets()
 
 	// WebACL
@@ -261,7 +285,7 @@ func registerWAFv2(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSWAF_20190729.GetLoggingConfiguration", handleWAFGetLoggingConfiguration)
 	r.Register("AWSWAF_20190729.DeleteLoggingConfiguration", handleWAFDeleteLoggingConfiguration)
 	r.Register("AWSWAF_20190729.ListLoggingConfigurations", handleWAFListLoggingConfigurations)
-	// Sampled requests (stub)
+	// Sampled requests
 	r.Register("AWSWAF_20190729.GetSampledRequests", handleWAFGetSampledRequests)
 	// API keys
 	r.Register("AWSWAF_20190729.CreateAPIKey", handleWAFCreateAPIKey)
@@ -345,7 +369,7 @@ func handleWAFCreateWebACL(w http.ResponseWriter, r *http.Request) {
 		TokenDomains:         req.TokenDomains,
 		AssociationConfig:    req.AssociationConfig,
 		LabelNamespace:       "awswaf:" + awsAccountID() + ":webacl:" + req.Name + ":",
-		Capacity:             100, // sim doesn't compute real capacity
+		Capacity:             wafCapacityFromRawRules(req.Rules),
 	}
 	wafWebACLs.Put(wafKey(req.Scope, id), wafStoredWebACL{WebACL: acl, Scope: req.Scope, LockToken: lock, Tags: req.Tags})
 	wafWriteJSON(w, map[string]any{
@@ -418,6 +442,7 @@ func handleWAFUpdateWebACL(w http.ResponseWriter, r *http.Request) {
 	stored.WebACL.DefaultAction = req.DefaultAction
 	stored.WebACL.Description = req.Description
 	stored.WebACL.Rules = req.Rules
+	stored.WebACL.Capacity = wafCapacityFromRawRules(req.Rules)
 	stored.WebACL.VisibilityConfig = req.VisibilityConfig
 	stored.WebACL.CustomResponseBodies = req.CustomResponseBodies
 	stored.WebACL.CaptchaConfig = req.CaptchaConfig
@@ -524,6 +549,43 @@ func handleWAFAssociateWebACL(w http.ResponseWriter, r *http.Request) {
 		wafWriteError(w, "WAFInvalidParameterException", "WebACLArn and ResourceArn are required")
 		return
 	}
+	webACL, ok := wafWebACLByARN(req.WebACLArn)
+	if !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "WebACL not found")
+		return
+	}
+	switch {
+	case strings.Contains(req.ResourceArn, ":amplify:") && strings.Contains(req.ResourceArn, ":apps/"):
+		if webACL.Scope != "CLOUDFRONT" {
+			wafWriteError(w, "WAFInvalidParameterException", "AWS Amplify requires a CLOUDFRONT WebACL")
+			return
+		}
+		if !amplifySetWAFConfiguration(req.ResourceArn, req.WebACLArn) {
+			wafWriteError(w, "WAFUnavailableEntityException", "Amplify app not found")
+			return
+		}
+	case strings.Contains(req.ResourceArn, ":cloudfront::") && strings.Contains(req.ResourceArn, ":distribution/"):
+		if webACL.Scope != "CLOUDFRONT" {
+			wafWriteError(w, "WAFInvalidParameterException", "Amazon CloudFront requires a CLOUDFRONT WebACL")
+			return
+		}
+		if _, exists := cfDistributions.Get(cfDistributionIDFromARN(req.ResourceArn)); !exists {
+			wafWriteError(w, "WAFUnavailableEntityException", "CloudFront distribution not found")
+			return
+		}
+	case strings.Contains(req.ResourceArn, ":elasticloadbalancing:") && strings.Contains(req.ResourceArn, ":loadbalancer/app/"):
+		if webACL.Scope != "REGIONAL" {
+			wafWriteError(w, "WAFInvalidParameterException", "Application Load Balancers require a REGIONAL WebACL")
+			return
+		}
+		if _, exists := elbv2LoadBalancers.Get(req.ResourceArn); !exists {
+			wafWriteError(w, "WAFUnavailableEntityException", "Application Load Balancer not found")
+			return
+		}
+	default:
+		wafWriteError(w, "WAFInvalidParameterException", "resource ARN is not an associable resource")
+		return
+	}
 	wafAssociations.Store(req.ResourceArn, req.WebACLArn)
 	wafWriteJSON(w, struct{}{})
 }
@@ -538,7 +600,18 @@ func handleWAFDisassociateWebACL(w http.ResponseWriter, r *http.Request) {
 		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
 		return
 	}
+	if req.ResourceArn == "" {
+		wafWriteError(w, "WAFInvalidParameterException", "ResourceArn is required")
+		return
+	}
+	if _, associated := wafAssociations.Load(req.ResourceArn); !associated {
+		wafWriteError(w, "WAFNonexistentItemException", "resource has no WebACL association")
+		return
+	}
 	wafAssociations.Delete(req.ResourceArn)
+	if strings.Contains(req.ResourceArn, ":amplify:") {
+		amplifyClearWAFConfiguration(req.ResourceArn)
+	}
 	wafWriteJSON(w, struct{}{})
 }
 
@@ -546,6 +619,10 @@ func handleWAFGetWebACLForResource(w http.ResponseWriter, r *http.Request) {
 	var req wafDisassocReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if req.ResourceArn == "" {
+		wafWriteError(w, "WAFInvalidParameterException", "ResourceArn is required")
 		return
 	}
 	arnAny, _ := wafAssociations.Load(req.ResourceArn)
@@ -562,6 +639,15 @@ func handleWAFGetWebACLForResource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	wafWriteJSON(w, struct{}{})
+}
+
+func wafWebACLByARN(arn string) (wafStoredWebACL, bool) {
+	for _, stored := range wafWebACLs.List() {
+		if stored.WebACL.ARN == arn {
+			return stored, true
+		}
+	}
+	return wafStoredWebACL{}, false
 }
 
 type wafListResourcesReq struct {
@@ -1319,14 +1405,219 @@ func handleWAFListLoggingConfigurations(w http.ResponseWriter, r *http.Request) 
 	wafWriteJSON(w, resp)
 }
 
-// ---------- GetSampledRequests (stub) ----------
+// ---------- Request inspection and GetSampledRequests ----------
+
+type wafVisibilityConfig struct {
+	MetricName             string `json:"MetricName"`
+	SampledRequestsEnabled bool   `json:"SampledRequestsEnabled"`
+}
+
+type wafRule struct {
+	Name      string                     `json:"Name"`
+	Priority  int                        `json:"Priority"`
+	Action    map[string]json.RawMessage `json:"Action"`
+	Statement struct {
+		IPSetReferenceStatement *struct {
+			ARN string `json:"ARN"`
+		} `json:"IPSetReferenceStatement"`
+	} `json:"Statement"`
+	VisibilityConfig wafVisibilityConfig `json:"VisibilityConfig"`
+}
+
+func wafAssociatedRequestAllowed(resourceARN string, r *http.Request) bool {
+	webACLARNValue, associated := wafAssociations.Load(resourceARN)
+	if !associated {
+		return true
+	}
+	webACLARN, ok := webACLARNValue.(string)
+	if !ok {
+		return true
+	}
+	stored, ok := wafWebACLByARN(webACLARN)
+	if !ok {
+		return true
+	}
+	clientIP := wafRequestClientIP(r)
+
+	var rules []wafRule
+	_ = json.Unmarshal(stored.WebACL.Rules, &rules)
+	sort.SliceStable(rules, func(i, j int) bool { return rules[i].Priority < rules[j].Priority })
+	for _, rule := range rules {
+		if !wafRuleMatches(rule, clientIP) {
+			continue
+		}
+		action, terminal := wafRuleAction(rule.Action)
+		if rule.VisibilityConfig.SampledRequestsEnabled {
+			wafRecordSample(stored.WebACL.ARN, rule.VisibilityConfig.MetricName, action, clientIP, r, action == "BLOCK")
+		}
+		if terminal {
+			return action != "BLOCK"
+		}
+	}
+
+	var visibility wafVisibilityConfig
+	_ = json.Unmarshal(stored.WebACL.VisibilityConfig, &visibility)
+	action := "ALLOW"
+	var defaultAction map[string]json.RawMessage
+	_ = json.Unmarshal(stored.WebACL.DefaultAction, &defaultAction)
+	if _, blocked := defaultAction["Block"]; blocked {
+		action = "BLOCK"
+	}
+	if visibility.SampledRequestsEnabled {
+		wafRecordSample(stored.WebACL.ARN, visibility.MetricName, action, clientIP, r, action == "BLOCK")
+	}
+	return action != "BLOCK"
+}
+
+func wafRuleMatches(rule wafRule, clientIP string) bool {
+	if rule.Statement.IPSetReferenceStatement == nil {
+		return false
+	}
+	ip, err := netip.ParseAddr(clientIP)
+	if err != nil {
+		return false
+	}
+	arn := rule.Statement.IPSetReferenceStatement.ARN
+	for _, stored := range wafIPSets.List() {
+		if stored.IPSet.ARN != arn {
+			continue
+		}
+		for _, address := range stored.IPSet.Addresses {
+			prefix, err := netip.ParsePrefix(address)
+			if err == nil && prefix.Contains(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func wafRuleAction(action map[string]json.RawMessage) (string, bool) {
+	if _, ok := action["Block"]; ok {
+		return "BLOCK", true
+	}
+	if _, ok := action["Allow"]; ok {
+		return "ALLOW", true
+	}
+	if _, ok := action["Count"]; ok {
+		return "COUNT", false
+	}
+	if _, ok := action["Captcha"]; ok {
+		return "CAPTCHA", true
+	}
+	if _, ok := action["Challenge"]; ok {
+		return "CHALLENGE", true
+	}
+	return "COUNT", false
+}
+
+func wafRequestClientIP(r *http.Request) string {
+	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); forwarded != "" {
+		return forwarded
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func wafRecordSample(webACLARN, metricName, action, clientIP string, r *http.Request, blocked bool) {
+	headers := make([]wafSampledHTTPHeader, 0, len(r.Header))
+	for name, values := range r.Header {
+		for _, value := range values {
+			headers = append(headers, wafSampledHTTPHeader{Name: name, Value: value})
+		}
+	}
+	sort.Slice(headers, func(i, j int) bool {
+		if headers[i].Name == headers[j].Name {
+			return headers[i].Value < headers[j].Value
+		}
+		return headers[i].Name < headers[j].Name
+	})
+	responseCode := 0
+	if blocked {
+		responseCode = http.StatusForbidden
+	}
+	wafSampledRequests.Put(wafRandomID(), wafSampledRequest{
+		WebACLARN: webACLARN, RuleMetricName: metricName, Action: action,
+		Timestamp: time.Now().UTC(), ClientIP: clientIP, HTTPVersion: r.Proto,
+		Headers: headers, Method: r.Method, URI: r.URL.RequestURI(),
+		ResponseCodeSent: responseCode,
+	})
+}
+
+type wafGetSampledRequestsReq struct {
+	WebACLARN      string `json:"WebAclArn"`
+	RuleMetricName string `json:"RuleMetricName"`
+	Scope          string `json:"Scope"`
+	TimeWindow     struct {
+		StartTime float64 `json:"StartTime"`
+		EndTime   float64 `json:"EndTime"`
+	} `json:"TimeWindow"`
+	MaxItems int64 `json:"MaxItems"`
+}
 
 func handleWAFGetSampledRequests(w http.ResponseWriter, r *http.Request) {
-	// Stub: sim doesn't simulate WAF traffic.
+	var req wafGetSampledRequestsReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	stored, ok := wafWebACLByARN(req.WebACLARN)
+	if !ok || stored.Scope != req.Scope {
+		wafWriteError(w, "WAFNonexistentItemException", "WebACL not found")
+		return
+	}
+	if req.RuleMetricName == "" || req.MaxItems < 1 || req.TimeWindow.EndTime <= req.TimeWindow.StartTime {
+		wafWriteError(w, "WAFInvalidParameterException", "RuleMetricName, MaxItems, and a valid TimeWindow are required")
+		return
+	}
+	end := time.Unix(int64(req.TimeWindow.EndTime), 0).UTC()
+	start := time.Unix(int64(req.TimeWindow.StartTime), 0).UTC()
+	if earliest := time.Now().UTC().Add(-3 * time.Hour); start.Before(earliest) {
+		start = earliest
+	}
+	var matches []wafSampledRequest
+	for _, sample := range wafSampledRequests.List() {
+		if sample.WebACLARN == req.WebACLARN &&
+			sample.RuleMetricName == req.RuleMetricName &&
+			!sample.Timestamp.Before(start) && !sample.Timestamp.After(end) {
+			matches = append(matches, sample)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].Timestamp.Before(matches[j].Timestamp) })
+	populationSize := len(matches)
+	if int64(len(matches)) > req.MaxItems {
+		matches = matches[:req.MaxItems]
+	}
+	sampled := make([]map[string]any, 0, len(matches))
+	for _, sample := range matches {
+		headers := make([]map[string]string, 0, len(sample.Headers))
+		for _, header := range sample.Headers {
+			headers = append(headers, map[string]string{"Name": header.Name, "Value": header.Value})
+		}
+		item := map[string]any{
+			"Action": sample.Action,
+			"Request": map[string]any{
+				"ClientIP": sample.ClientIP, "HTTPVersion": sample.HTTPVersion,
+				"Headers": headers, "Method": sample.Method, "URI": sample.URI,
+			},
+			"Timestamp": float64(sample.Timestamp.UnixNano()) / float64(time.Second),
+			"Weight":    1,
+		}
+		if sample.ResponseCodeSent != 0 {
+			item["ResponseCodeSent"] = sample.ResponseCodeSent
+		}
+		sampled = append(sampled, item)
+	}
 	wafWriteJSON(w, map[string]any{
-		"SampledRequests": []any{},
-		"PopulationSize":  0,
-		"TimeWindow":      map[string]int64{"StartTime": time.Now().Add(-time.Hour).Unix(), "EndTime": time.Now().Unix()},
+		"SampledRequests": sampled,
+		"PopulationSize":  populationSize,
+		"TimeWindow": map[string]float64{
+			"StartTime": float64(start.UnixNano()) / float64(time.Second),
+			"EndTime":   float64(end.UnixNano()) / float64(time.Second),
+		},
 	})
 }
 
@@ -1501,6 +1792,14 @@ func wafComputeCapacity(rules []json.RawMessage) int64 {
 		return 1
 	}
 	return total
+}
+
+func wafCapacityFromRawRules(raw json.RawMessage) int64 {
+	var rules []json.RawMessage
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &rules)
+	}
+	return wafComputeCapacity(rules)
 }
 
 // wafStatementCapacity returns the WCU cost of a single statement, recursing

@@ -67,7 +67,18 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 37. Upgraded both immutable multi-architecture publication jobs to the newly released `docker/login-action` 4.6.0 and passed action syntax, publication-contract, and authenticated freshness validation.
 38. Kept native Linux workload endpoints on Docker's host-gateway alias, reserved gateway rewriting for a containerized simulator, and passed the real Step Functions → Amazon ECS → AWS CodeBuild → AWS CLI integration.
 39. Declared HashiCorp AWS provider 6.50.0 across every simulator Terraform graph, passed the complete root graph through HTTPS with runtime Smithy validation, and made the Microsoft Azure failed-delete UI assertion await its retained accessible dialog.
-40. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+40. Made Google Cloud Spanner transactional over official REST and gRPC clients, with strict DDL, composite-key behavior, real SQLite transactions, CLI SQL, and provider apply/zero-plan/destroy coverage.
+41. Ran the official HashiCorp Terraform image inside a Step Functions-launched synchronous Amazon ECS task and applied Amazon SQS through the standard global AWS endpoint.
+42. Completed AWS Amplify build/test artifact and retry projections, connected WAF association to hosted traffic and sampled requests, and made repeated AWS Certificate Manager DNS validation stable.
+43. Converged API Gateway v2 and AWS Lambda state under an unmodified ecs-dev-desktop Terraform graph that applied 178 resources, produced a zero-change plan, and destroyed all 178 with no Smithy violations.
+44. Upgraded Google Cloud Spanner to v1.94.0 and the complete affected AWS SDK graph to v1.43.2/current service releases, then passed both official SDK suites and the authenticated freshness audit.
+45. Removed the Google Terraform capability skip, loaded the Buildx test image into the runtime, and installed Firecracker plus squashfs tooling in the shared Linux test image.
+46. Recorded the remaining real boundaries as BUG-2764 through BUG-2767 instead of hiding them behind skips, HTTP 501 responses, unbound listeners, or partial WAF semantics.
+47. Persisted AWS Key Management Service custom policies across SQLite reads and simulator restarts, with focused durable-store and production-shaped HashiCorp AWS provider coverage.
+48. Refreshed the coordinated AWS SDK patch wave, Google Cloud Spanner client, and resolved transitive graphs across every affected Go module after the pre-push freshness gate detected their publication.
+49. Made filesystem staging validation privilege-independent by forcing the direct destination beneath a regular file instead of assuming `/usr/local` was unwritable.
+50. Packaged the exact AWS provider into the Terraform-in-ECS workload image, removed undeclared private-subnet internet egress, published task output through Amazon CloudWatch Logs, failed immediately on terminal workflow errors, and passed the exact N-Z shard.
+51. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
@@ -76,6 +87,7 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 3. BUG-2646 retained only Google's upstream Cloud Run Discovery publication lag.
 4. BUG-1345 retained only the upstream AzureAD provider's lack of a Microsoft Graph endpoint override.
 5. BUG-2523 and BUG-2441 remained in the external Bleephub repository rather than this workspace.
+6. BUG-2767 retained complete AWS WAF statement evaluation; BUG-2766 retained AWS Amplify Hosting image optimization; BUG-2765 retained occupied-port load-balancer listeners on macOS; BUG-2764 retained the macOS Podman nested-KVM boundary.
 
 ## Simulator Console Parity
 
@@ -271,7 +283,7 @@ this order.
 - **BUG-1345 AzureAD Terraform provider upstream blocker:** add AzureAD Terraform tests only after the provider supports a Microsoft Graph endpoint override.
 - **BUG-2441 current `knip`/Node deprecation warning:** the unused-export gate passed, but the current `knip` 6.23.0 release still emitted Node's `DEP0205 module.register()` warning.
 - **Issue #363 versioned releases + GitHub Container Registry images:** still a release/distribution task.
-- **Simulator service ratchets:** AWS/GCP/Azure have operation-coverage gates that measure served surface (BUG-2651); continue ratcheting uncovered cloud services when Bleephub focus is not the immediate task. The honest floors make the remaining gaps legible — Spanner's REST session data plane, Cloud Billing, and the Azure Blob/File/Queue operations that now declare a `501` gap are the largest.
+- **Simulator service ratchets:** AWS/GCP/Azure have operation-coverage gates that measure served surface (BUG-2651); continue ratcheting uncovered cloud services when Bleephub focus is not the immediate task. Google Cloud Spanner's REST session data plane was completed in this branch; Cloud Billing and the Azure Blob/File/Queue operations that declare a `501` gap remained among the largest measured surfaces.
 
 ## Compressed Foundation Summary
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	sim "github.com/sockerless/simulator"
+	"google.golang.org/grpc/status"
 )
 
 type spannerInstance struct {
@@ -161,8 +162,12 @@ func handleSpannerInstanceChild(w http.ResponseWriter, r *http.Request) {
 		handleSpannerUpdateDatabaseDdl(w, r)
 	case len(parts) == 5 && parts[1] == "databases" && parts[3] == "operations" && r.Method == http.MethodGet:
 		handleSpannerGetOperation(w, r)
+	case len(parts) == 4 && parts[1] == "databases" && parts[3] == "sessions:batchCreate" && r.Method == http.MethodPost:
+		handleSpannerBatchCreateSessionsREST(w, r)
 	case len(parts) == 4 && parts[1] == "databases" && parts[3] == "sessions":
 		handleSpannerSessions(w, r)
+	case len(parts) == 5 && parts[1] == "databases" && parts[3] == "sessions" && strings.Contains(parts[4], ":") && r.Method == http.MethodPost:
+		handleSpannerSessionActionREST(w, r)
 	case len(parts) == 5 && parts[1] == "databases" && parts[3] == "sessions" && r.Method == http.MethodGet:
 		handleSpannerGetSession(w, r)
 	case len(parts) == 5 && parts[1] == "databases" && parts[3] == "sessions" && r.Method == http.MethodDelete:
@@ -170,9 +175,8 @@ func handleSpannerInstanceChild(w http.ResponseWriter, r *http.Request) {
 	default:
 		// The "{rest...}" mount routes the tail itself, so this arm is the
 		// sub-router's own miss: no Cloud Spanner method the simulator serves
-		// has this shape (the session data-plane custom methods — executeSql,
-		// streamingRead, commit, partitionQuery … — are served over gRPC).
-		// Google's frontend answers an unmatched URI the same way.
+		// has this shape. Google's frontend answers an unmatched URI the same
+		// way.
 		gcpMethodNotFound(w)
 	}
 }
@@ -425,6 +429,11 @@ func handleSpannerUpdateDatabaseDdl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := spannerApplyDDLStatements(name, req.Statements); err != nil {
+		op := newSpannerDatabaseDDLOperation(name, req.OperationID, req.Statements, err)
+		sim.WriteJSON(w, http.StatusOK, op)
+		return
+	}
 	ddl, _ := spannerDDLs.Get(name)
 	ddl.Database = name
 	ddl.Statements = append(ddl.Statements, req.Statements...)
@@ -432,11 +441,11 @@ func handleSpannerUpdateDatabaseDdl(w http.ResponseWriter, r *http.Request) {
 		ddl.ProtoDescriptors = req.ProtoDescriptors
 	}
 	spannerDDLs.Put(name, ddl)
-	op := newSpannerDatabaseDDLOperation(name, req.OperationID, req.Statements)
+	op := newSpannerDatabaseDDLOperation(name, req.OperationID, req.Statements, nil)
 	sim.WriteJSON(w, http.StatusOK, op)
 }
 
-func newSpannerDatabaseDDLOperation(database, operationID string, statements []string) Operation {
+func newSpannerDatabaseDDLOperation(database, operationID string, statements []string, operationErr error) Operation {
 	if operationID == "" {
 		operationID = "_" + strings.ReplaceAll(generateUUID(), "-", "_")
 	}
@@ -447,12 +456,17 @@ func newSpannerDatabaseDDLOperation(database, operationID string, statements []s
 		Metadata: map[string]any{
 			"@type":      "type.googleapis.com/google.spanner.admin.database.v1.UpdateDatabaseDdlMetadata",
 			"database":   database,
-			"resource":   database,
 			"statements": statements,
 			"commitTime": now,
 		},
 		Done:     true,
-		Response: map[string]any{"resource": database},
+		Response: map[string]any{"@type": "type.googleapis.com/google.protobuf.Empty"},
+	}
+	if operationErr != nil {
+		st := status.Convert(operationErr)
+		delete(op.Metadata, "commitTime")
+		op.Response = nil
+		op.Error = &OperationError{Code: int(st.Code()), Message: st.Message()}
 	}
 	if crOperations != nil {
 		crOperations.Put(op.Name, op)
@@ -504,6 +518,7 @@ func handleSpannerDeleteSession(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "session %q not found", name)
 		return
 	}
+	spannerRollbackSessionTransactions(name)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

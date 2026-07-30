@@ -1781,8 +1781,13 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		for _, ev := range containerOverride.Environment {
 			cmdEnv[ev.Name] = ev.Value
 		}
-		if sharedNetMode != "" {
-			cmdEnv = rewriteHostDockerInternalEnv(cmdEnv)
+		if netnsTier {
+			simulatorPort, portErr := simHostMetadataPort()
+			if portErr != nil {
+				cleanupECSTaskProcesses(taskID, processes)
+				return nil, fmt.Errorf("resolve simulator endpoint for task VPC: %w", portErr)
+			}
+			cmdEnv = rewriteSimulatorEndpointForRealVPC(cmdEnv, simulatorPort)
 		}
 		var binds []string
 		for _, mp := range cd.MountPoints {

@@ -51,7 +51,7 @@ type KMSKey struct {
 	// stores + returns this as a string (not a parsed object); the sim
 	// follows so GetKeyPolicy round-trips byte-identical to what
 	// CreateKey + PutKeyPolicy received.
-	PolicyJSON string           `json:"-"`
+	PolicyJSON string           `json:"PolicyJSON,omitempty"`
 	Grants     []map[string]any `json:"Grants,omitempty"`
 	Spec       string           `json:"KeySpec,omitempty"`
 	// RotationEnabled tracks automatic key rotation (EnableKeyRotation /

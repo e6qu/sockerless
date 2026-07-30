@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         debian-keyring \
         dnsmasq-base \
         docker.io \
+        e2fsprogs \
         git \
         gnupg \
         iproute2 \
@@ -26,6 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nftables \
         openssh-client \
         procps \
+        squashfs-tools \
+        sudo \
         util-linux \
         unzip \
     && rm -rf /var/lib/apt/lists/*
@@ -84,6 +87,10 @@ RUN curl -fsSL https://aka.ms/InstallAzureCLIDeb -o /tmp/install-azure-cli.sh \
 
 RUN mkdir -p /tmp/sockerless-home \
     && chmod 1777 /tmp/sockerless-home
+
+COPY scripts/install-firecracker.sh /tmp/install-firecracker.sh
+RUN bash /tmp/install-firecracker.sh \
+    && rm /tmp/install-firecracker.sh
 
 COPY simulators/docker-test-entrypoint.sh /usr/local/bin/sockerless-simulator-test-entrypoint
 

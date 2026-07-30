@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/md5"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -94,6 +95,12 @@ type AmplifyJobConfig struct {
 	BuildComputeType string `json:"buildComputeType"`
 }
 
+type AmplifyWAFConfiguration struct {
+	WebACLArn    string `json:"webAclArn,omitempty"`
+	WAFStatus    string `json:"wafStatus,omitempty"`
+	StatusReason string `json:"statusReason,omitempty"`
+}
+
 type AmplifyBackend struct {
 	StackArn string `json:"stackArn,omitempty"`
 }
@@ -125,6 +132,7 @@ type AmplifyApp struct {
 	AutoBranchCreationConfig   json.RawMessage          `json:"autoBranchCreationConfig,omitempty"`
 	CacheConfig                *AmplifyCacheConfig      `json:"cacheConfig,omitempty"`
 	JobConfig                  *AmplifyJobConfig        `json:"jobConfig,omitempty"`
+	WAFConfiguration           *AmplifyWAFConfiguration `json:"wafConfiguration,omitempty"`
 	WebhookCreateTime          float64                  `json:"webhookCreateTime,omitempty"`
 	Tags                       map[string]string        `json:"tags,omitempty"`
 }
@@ -204,11 +212,17 @@ type AmplifyJob struct {
 }
 
 type AmplifyJobStep struct {
-	StepName  string           `json:"stepName"`
-	StartTime float64          `json:"startTime"`
-	EndTime   float64          `json:"endTime,omitempty"`
-	Status    AmplifyJobStatus `json:"status"`
-	LogUrl    string           `json:"logUrl,omitempty"`
+	StepName         string            `json:"stepName"`
+	StartTime        float64           `json:"startTime"`
+	EndTime          float64           `json:"endTime,omitempty"`
+	Status           AmplifyJobStatus  `json:"status"`
+	LogUrl           string            `json:"logUrl,omitempty"`
+	ArtifactsUrl     string            `json:"artifactsUrl,omitempty"`
+	TestArtifactsUrl string            `json:"testArtifactsUrl,omitempty"`
+	TestConfigUrl    string            `json:"testConfigUrl,omitempty"`
+	Screenshots      map[string]string `json:"screenshots,omitempty"`
+	StatusReason     string            `json:"statusReason,omitempty"`
+	Context          string            `json:"context,omitempty"`
 }
 
 type AmplifyArtifact struct {
@@ -233,12 +247,14 @@ type amplifyStoredJob struct {
 }
 
 type amplifyStoredArtifact struct {
-	Artifact   AmplifyArtifact
-	AppId      string
-	BranchName string
-	JobId      string
-	Key        string
-	URL        string
+	Artifact      AmplifyArtifact
+	AppId         string
+	BranchName    string
+	JobId         string
+	Key           string
+	URL           string
+	HostedContent bool
+	EndToEndTest  bool
 }
 
 // amplifyStoredDeployment is a pending zip/file-map deployment created by
@@ -282,13 +298,49 @@ func amplifyRandomID() string {
 }
 
 func amplifyJobID() string {
-	buf := make([]byte, 4)
+	buf := make([]byte, 8)
 	_, _ = rand.Read(buf)
-	return hex.EncodeToString(buf)
+	return strconv.FormatUint(binary.BigEndian.Uint64(buf), 10)
 }
 
 func amplifyAppARN(id string) string {
 	return fmt.Sprintf("arn:aws:amplify:%s:%s:apps/%s", awsRegion(), awsAccountID(), id)
+}
+
+func amplifyAppIDFromARN(arn string) string {
+	const marker = ":apps/"
+	index := strings.LastIndex(arn, marker)
+	if index < 0 {
+		return ""
+	}
+	return arn[index+len(marker):]
+}
+
+func amplifySetWAFConfiguration(appARN, webACLARN string) bool {
+	appID := amplifyAppIDFromARN(appARN)
+	stored, ok := amplifyApps.Get(appID)
+	if !ok || stored.App.AppArn != appARN {
+		return false
+	}
+	stored.App.WAFConfiguration = &AmplifyWAFConfiguration{
+		WebACLArn: webACLARN,
+		WAFStatus: "ASSOCIATION_SUCCESS",
+	}
+	stored.App.UpdateTime = amplifyEpoch()
+	amplifyApps.Put(appID, stored)
+	return true
+}
+
+func amplifyClearWAFConfiguration(appARN string) bool {
+	appID := amplifyAppIDFromARN(appARN)
+	stored, ok := amplifyApps.Get(appID)
+	if !ok || stored.App.AppArn != appARN {
+		return false
+	}
+	stored.App.WAFConfiguration = nil
+	stored.App.UpdateTime = amplifyEpoch()
+	amplifyApps.Put(appID, stored)
+	return true
 }
 func amplifyBranchARN(appID, branch string) string {
 	return fmt.Sprintf("arn:aws:amplify:%s:%s:apps/%s/branches/%s", awsRegion(), awsAccountID(), appID, branch)
@@ -556,6 +608,7 @@ func handleAmplifyDeleteApp(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
 		return
 	}
+	wafAssociations.Delete(stored.App.AppArn)
 	// Cascade-delete every sub-resource keyed to this app: webhooks, jobs (+
 	// artifacts), pending deployments, domain associations, and backend
 	// environments. A later app reusing the ID must start clean.
@@ -1156,14 +1209,6 @@ func handleAmplifyListWebhooks(w http.ResponseWriter, r *http.Request) {
 
 // ---------- Jobs ----------
 
-// Direct deployment timing preserves Amplify's asynchronous PENDING → RUNNING
-// → terminal lifecycle while the bytes being deployed remain real uploaded or
-// externally fetched artifacts.
-const (
-	amplifyJobRunningDelay = 200 * time.Millisecond
-	amplifyJobSucceedDelay = 1300 * time.Millisecond
-)
-
 type amplifyStartJobReq struct {
 	JobType       string  `json:"jobType"` // RELEASE / RETRY / MANUAL / WEB_HOOK
 	JobReason     string  `json:"jobReason,omitempty"`
@@ -1198,8 +1243,28 @@ func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "could not decode: "+err.Error())
 		return
 	}
-	if req.JobType == "" {
-		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "jobType is required")
+	switch req.JobType {
+	case "RELEASE", "WEB_HOOK":
+	case "RETRY":
+		if req.JobId == "" {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "jobId is required when jobType is RETRY")
+			return
+		}
+		previous, exists := amplifyJobs.Get(req.JobId)
+		if !exists || previous.AppId != appID || previous.BranchName != branch {
+			amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "job to retry was not found")
+			return
+		}
+		req.CommitId = previous.Job.Summary.CommitId
+		req.CommitMessage = previous.Job.Summary.CommitMessage
+		req.CommitTime = previous.Job.Summary.CommitTime
+	case "MANUAL":
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+			"manual apps deploy through StartDeployment with uploaded or source URL content")
+		return
+	default:
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+			"jobType must be RELEASE, RETRY, MANUAL, or WEB_HOOK")
 		return
 	}
 	br := stored.Branches[branch]
@@ -1211,9 +1276,6 @@ func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
 	}
 	now := amplifyEpoch()
 	jobID := amplifyJobID()
-	if req.JobId != "" {
-		jobID = req.JobId
-	}
 	summary := AmplifyJobSummary{
 		JobArn:        amplifyJobARN(appID, branch, jobID),
 		JobId:         jobID,
@@ -1259,17 +1321,45 @@ type amplifyUploadedArtifact struct {
 // deployment objects through Amplify's asynchronous job lifecycle.
 func amplifyScheduleDeployment(appID, branch, jobID, urlBase string, uploads []amplifyUploadedArtifact) {
 	go func() {
-		time.Sleep(amplifyJobRunningDelay)
-		amplifyAdvanceJob(jobID, AmplifyJobStatusPending, AmplifyJobStatusRunning)
-		time.Sleep(amplifyJobSucceedDelay)
-		if !amplifyAdvanceJob(jobID, AmplifyJobStatusRunning, AmplifyJobStatusSucceed) {
+		if !amplifyAdvanceJob(jobID, AmplifyJobStatusPending, AmplifyJobStatusRunning) {
 			return
 		}
 		for _, up := range uploads {
 			amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, amplifyArtifactID(jobID), up.FileName, up.Key)
 		}
+		if len(uploads) == 1 {
+			amplifySetJobStepArtifactsURL(jobID, "DEPLOY",
+				amplifyPresignedS3URLBase(urlBase, uploads[0].Key, http.MethodGet))
+		}
+		if !amplifyAdvanceJob(jobID, AmplifyJobStatusRunning, AmplifyJobStatusSucceed) {
+			amplifyDeleteArtifactsForJob(jobID)
+			return
+		}
 		amplifyMarkProductionDeploy(appID, branch, jobID)
 	}()
+}
+
+func amplifySetJobStepArtifactsURL(jobID, stepName, artifactURL string) {
+	amplifyJobs.Update(jobID, func(job *amplifyStoredJob) {
+		for index := range job.Job.Steps {
+			if job.Job.Steps[index].StepName == stepName {
+				job.Job.Steps[index].ArtifactsUrl = artifactURL
+				return
+			}
+		}
+	})
+}
+
+func amplifySetJobStepTestURLs(jobID, stepName, artifactsURL, configURL string) {
+	amplifyJobs.Update(jobID, func(job *amplifyStoredJob) {
+		for index := range job.Job.Steps {
+			if job.Job.Steps[index].StepName == stepName {
+				job.Job.Steps[index].TestArtifactsUrl = artifactsURL
+				job.Job.Steps[index].TestConfigUrl = configURL
+				return
+			}
+		}
+	})
 }
 
 // amplifyAdvanceJob moves a job from one status to the next, refusing to
@@ -1332,6 +1422,36 @@ func amplifyBranchJobCount(appID, branch string) int {
 }
 
 func amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, artifactID, fileName, key string) {
+	amplifyArtifacts.Put(artifactID, amplifyStoredArtifact{
+		Artifact: AmplifyArtifact{
+			ArtifactId:       artifactID,
+			ArtifactFileName: fileName,
+		},
+		AppId:         appID,
+		BranchName:    branch,
+		JobId:         jobID,
+		Key:           key,
+		URL:           amplifyPresignedS3URLBase(urlBase, key, http.MethodGet),
+		HostedContent: true,
+	})
+}
+
+func amplifyRegisterEndToEndTestArtifact(urlBase, appID, branch, jobID, artifactID, fileName, key string) {
+	amplifyArtifacts.Put(artifactID, amplifyStoredArtifact{
+		Artifact: AmplifyArtifact{
+			ArtifactId:       artifactID,
+			ArtifactFileName: fileName,
+		},
+		AppId:        appID,
+		BranchName:   branch,
+		JobId:        jobID,
+		Key:          key,
+		URL:          amplifyPresignedS3URLBase(urlBase, key, http.MethodGet),
+		EndToEndTest: true,
+	})
+}
+
+func amplifyRegisterAuxiliaryArtifact(urlBase, appID, branch, jobID, artifactID, fileName, key string) {
 	amplifyArtifacts.Put(artifactID, amplifyStoredArtifact{
 		Artifact: AmplifyArtifact{
 			ArtifactId:       artifactID,
@@ -1503,9 +1623,9 @@ func handleAmplifyStopJob(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("Job with id %s is already in status %s and cannot be stopped", jobID, status))
 		return
 	}
-	// Inline-settle: real Amplify passes through CANCELLING before
-	// CANCELLED; the sim has no build worker to wind down, so the stop
-	// lands terminal immediately.
+	// StopJob cancels the real build container before the asynchronous worker
+	// can commit a later terminal result. The public response is the terminal
+	// CANCELLED summary once that cancellation has been requested.
 	now := amplifyEpoch()
 	stored.Job.Summary.Status = AmplifyJobStatusCancelled
 	stored.Job.Summary.EndTime = now
@@ -1574,7 +1694,10 @@ func handleAmplifyListArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 	artifacts := []AmplifyArtifact{}
 	for _, stored := range amplifyArtifacts.List() {
-		if stored.AppId == storedJob.AppId && stored.BranchName == storedJob.BranchName && stored.JobId == storedJob.Job.Summary.JobId {
+		if stored.AppId == storedJob.AppId &&
+			stored.BranchName == storedJob.BranchName &&
+			stored.JobId == storedJob.Job.Summary.JobId &&
+			stored.EndToEndTest {
 			artifacts = append(artifacts, stored.Artifact)
 		}
 	}
@@ -1796,7 +1919,9 @@ func handleAmplifyStartDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	summary.JobArn = amplifyJobARN(appID, branch, summary.JobId)
-	job := AmplifyJob{Summary: summary, Steps: amplifyJobSteps(now, AmplifyJobStatusPending)}
+	job := AmplifyJob{Summary: summary, Steps: []AmplifyJobStep{{
+		StepName: "DEPLOY", StartTime: now, Status: AmplifyJobStatusPending,
+	}}}
 	amplifyJobs.Put(summary.JobId, amplifyStoredJob{Job: job, AppId: appID, BranchName: branch})
 	amplifyTrackJobStart(appID, branch, summary.JobId)
 	amplifyScheduleDeployment(appID, branch, summary.JobId, amplifyURLBase(r), uploads)

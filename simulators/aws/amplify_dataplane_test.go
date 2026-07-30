@@ -49,11 +49,12 @@ func amplifySeedDeployment(t *testing.T, appID, branch, jobID string, files map[
 	key := "artifacts/" + appID + "/" + branch + "/" + jobID + "/artifacts.zip"
 	amplifyPutS3Object(key, "application/zip", amplifyZipOf(t, files))
 	amplifyArtifacts.Put(jobID+"-art", amplifyStoredArtifact{
-		Artifact:   AmplifyArtifact{ArtifactId: jobID + "-art", ArtifactFileName: "artifacts.zip"},
-		AppId:      appID,
-		BranchName: branch,
-		JobId:      jobID,
-		Key:        key,
+		Artifact:      AmplifyArtifact{ArtifactId: jobID + "-art", ArtifactFileName: "artifacts.zip"},
+		AppId:         appID,
+		BranchName:    branch,
+		JobId:         jobID,
+		Key:           key,
+		HostedContent: true,
 	})
 	amplifyJobs.Put(jobID, amplifyStoredJob{
 		Job:        AmplifyJob{Summary: AmplifyJobSummary{JobId: jobID, Status: AmplifyJobStatusSucceed, StartTime: amplifyEpoch()}},
@@ -237,19 +238,20 @@ func TestAmplifyHostingNoDeployment404(t *testing.T) {
 	}
 }
 
-func TestAmplifyHostingSyntheticArtifactIsNotContent(t *testing.T) {
+func TestAmplifyHostingInvalidArtifactIsNotContent(t *testing.T) {
 	amplifyResetHostingState()
 	amplifySeedApp("dsynth", "main")
-	// The synthetic control-plane job artifact is not a valid zip — the
+	// An invalid deployment artifact is not a valid zip, so the
 	// hosting plane must treat the branch as having no servable content.
 	key := "artifacts/dsynth/main/djob3/e2e-test-artifacts.zip"
 	amplifyPutS3Object(key, "application/zip", []byte("amplify artifact placeholder\n"))
 	amplifyArtifacts.Put("djob3-art", amplifyStoredArtifact{
-		Artifact:   AmplifyArtifact{ArtifactId: "djob3-art", ArtifactFileName: "e2e-test-artifacts.zip"},
-		AppId:      "dsynth",
-		BranchName: "main",
-		JobId:      "djob3",
-		Key:        key,
+		Artifact:      AmplifyArtifact{ArtifactId: "djob3-art", ArtifactFileName: "e2e-test-artifacts.zip"},
+		AppId:         "dsynth",
+		BranchName:    "main",
+		JobId:         "djob3",
+		Key:           key,
+		HostedContent: true,
 	})
 	amplifyJobs.Put("djob3", amplifyStoredJob{
 		Job:   AmplifyJob{Summary: AmplifyJobSummary{JobId: "djob3", Status: AmplifyJobStatusSucceed, StartTime: 1}},
@@ -269,11 +271,12 @@ func TestAmplifyHostingFileMapDeployment(t *testing.T) {
 		key := "deployments/dmap/main/djob4/files/" + name
 		amplifyPutS3Object(key, "", []byte(content))
 		amplifyArtifacts.Put("djob4-"+name, amplifyStoredArtifact{
-			Artifact:   AmplifyArtifact{ArtifactId: "djob4-" + name, ArtifactFileName: name},
-			AppId:      "dmap",
-			BranchName: "main",
-			JobId:      "djob4",
-			Key:        key,
+			Artifact:      AmplifyArtifact{ArtifactId: "djob4-" + name, ArtifactFileName: name},
+			AppId:         "dmap",
+			BranchName:    "main",
+			JobId:         "djob4",
+			Key:           key,
+			HostedContent: true,
 		})
 	}
 	amplifyJobs.Put("djob4", amplifyStoredJob{

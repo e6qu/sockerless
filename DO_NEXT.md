@@ -4,6 +4,42 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The Terraform-in-ECS workload image carries an ahead-of-time filesystem mirror
+of the exact AWS provider, so its private-subnet task performs one offline
+initialization and one apply without undeclared internet egress. It publishes
+exact task output through Amazon CloudWatch Logs, and terminal Step Functions
+failures report that output immediately. The focused real-container execution
+and exact AWS SDK N-Z shard passed.
+
+Core filesystem-driver staging validation no longer assumed `/usr/local` was
+unwritable. Both tests force the direct path to fail portably by creating the
+requested destination beneath a regular file, independent of runner privilege.
+
+The pre-push dependency audit's coordinated AWS SDK patch wave and Google Cloud
+Spanner client release were applied across every affected Go module with the
+repository-owned upgrade target. Direct pins and their resolved transitive
+graphs were current again.
+
+AWS Key Management Service custom key policies persisted in the simulator's
+SQLite key record instead of disappearing during JSON serialization. A
+store-close-and-reopen regression proved durable read-back, and the
+production-shaped HashiCorp AWS provider graph supplied a custom policy so its
+post-create policy waiter exercised the same contract.
+
+Google Cloud Spanner executed SQL, DML, batch DML, reads, mutations,
+transactions, partitions, and batch writes through real SQLite transactions
+over official REST and gRPC clients. Strict DDL and composite-key behavior
+passed official SDK and gcloud coverage; the HashiCorp Google provider passed
+instance/database/DDL apply, a zero-change plan, and destroy.
+
+AWS Step Functions launched the official HashiCorp Terraform image as a
+synchronous Amazon ECS task, and Terraform applied Amazon SQS through the
+standard global AWS endpoint. AWS Amplify retained build and test artifacts,
+retry lifecycles, WAF association, hosted request enforcement, and sampled
+requests. An unmodified ecs-dev-desktop graph applied 178 resources, converged
+to a zero-change plan, passed external assertions with no Smithy violations,
+and destroyed every resource.
+
 AWS Lambda implemented all 85 operations in the vendored Smithy service model.
 ZIP and image functions executed through the AWS Lambda Runtime API; layers,
 versions, aliases, function URLs, concurrency, capacity providers, response
@@ -128,14 +164,21 @@ to Discovery revisions 20260723 and 20260724.
 
 ## Next Recommended Slice
 
-No locally actionable bug remained in this workspace. AWS Private Certificate
-Authority implemented all 23 vendored operations and supplied real authority,
-key, certificate, revocation-list, permission, policy, and audit-report state
-to AWS Certificate Manager. Amazon Data Firehose implemented all 12 vendored
-operations with durable encrypted buffering and IAM-authorized Amazon S3
-delivery for direct writes, Amazon SNS subscriptions, and Amazon CloudWatch
-metric streams. Both services shipped with official AWS SDK, AWS CLI,
-Terraform, and authenticated browser coverage.
+BUG-2767 was the next locally actionable fidelity slice: expand the AWS WAF
+data-plane evaluator from default/IP-set actions to every public statement,
+text transformation, label, and durable rate window, then prove the exact
+ecs-dev-desktop Application Load Balancer WebACL rules from an external HTTP
+client. BUG-2766 followed with the published AWS Amplify Hosting
+`ImageOptimization` request, transformation, validation, format, and cache
+contract. BUG-2765 required an isolated real listener coordinate or atomic
+create failure when macOS ports were occupied. BUG-2764 remained a host
+boundary: the shared Linux test image contained the real Firecracker and
+squashfs tools, while the macOS Podman virtual machine exposed no nested KVM;
+the capable-Linux Terraform CI cell remained mandatory.
+
+The completed baseline retained real AWS Private Certificate Authority and
+Amazon Data Firehose implementations with official SDK, AWS CLI, Terraform,
+and authenticated browser coverage.
 
 The external review's locally actionable gaps and the follow-up implementation
 audit were closed. AWS Step Functions ran and cancelled real Amazon ECS and

@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -476,4 +477,206 @@ phases:
 	})
 	require.NoError(t, err)
 	assert.Empty(t, received.Messages, "a stopped CodeBuild container must not complete its delayed Amazon SQS write")
+}
+
+// TestSFN_AmazonECSRunsTerraformAgainstSimulator_SDK is the consumer-side
+// proof that an infrastructure-as-code provider running inside an Amazon ECS
+// workload can apply resources back to the cloud that launched it. Terraform
+// uses the AWS provider's standard AWS_ENDPOINT_URL coordinate; the state
+// machine supplies no simulator-aware path, provider block, or custom broker.
+func TestSFN_AmazonECSRunsTerraformAgainstSimulator_SDK(t *testing.T) {
+	statesAPI := sfnClient()
+	ecsAPI := ecsClient()
+	queueAPI := sqsClient()
+	logsAPI := cwLogsClient()
+
+	const (
+		clusterName = "sfn-terraform-apply"
+		familyName  = "sfn-terraform-apply"
+		queueName   = "sfn-terraform-apply"
+		logGroup    = "/ecs/sfn-terraform-apply"
+	)
+	subnetID := createECSTestSubnet(t, "sfn-terraform-apply")
+	_, err := ecsAPI.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(clusterName)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = ecsAPI.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(clusterName)})
+	})
+
+	const terraformConfiguration = `
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.50.0"
+    }
+  }
+}
+
+provider "aws" {
+  region                      = "us-east-1"
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_region_validation      = true
+  skip_requesting_account_id  = true
+}
+
+resource "aws_sqs_queue" "proof" {
+  name = "sfn-terraform-apply"
+
+  tags = {
+    ProvisionedBy = "Terraform inside AWS Step Functions launched Amazon ECS"
+  }
+}
+`
+	containerEndpoint := fmt.Sprintf("http://host.docker.internal:%d", simPort)
+	taskDefinition, err := ecsAPI.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String(familyName),
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		Cpu:                     aws.String("512"),
+		Memory:                  aws.String("1024"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:       aws.String("terraform"),
+			Image:      aws.String(terraformECSImage),
+			EntryPoint: []string{"sh", "-c"},
+			Command: []string{
+				`set -eu
+mkdir -p /workspace
+cd /workspace
+printf '%s' "$TF_CONFIGURATION" > main.tf
+timeout -s TERM 120 terraform init -input=false -no-color
+timeout -s TERM 120 terraform apply -auto-approve -input=false -no-color`,
+			},
+			Environment: []ecstypes.KeyValuePair{
+				{Name: aws.String("AWS_ACCESS_KEY_ID"), Value: aws.String("test")},
+				{Name: aws.String("AWS_SECRET_ACCESS_KEY"), Value: aws.String("test")},
+				{Name: aws.String("AWS_DEFAULT_REGION"), Value: aws.String("us-east-1")},
+				{Name: aws.String("AWS_ENDPOINT_URL"), Value: aws.String(containerEndpoint)},
+				{Name: aws.String("TF_IN_AUTOMATION"), Value: aws.String("true")},
+				{Name: aws.String("TF_CLI_CONFIG_FILE"), Value: aws.String("/terraformrc")},
+				// Prove provider installation is fully offline: any accidental
+				// HTTPS registry access fails instead of borrowing host egress.
+				// The simulator is the task's declared cloud endpoint, so it
+				// must bypass environment proxies just as localhost does.
+				{Name: aws.String("HTTPS_PROXY"), Value: aws.String("http://127.0.0.1:1")},
+				{Name: aws.String("NO_PROXY"), Value: aws.String("host.docker.internal,169.254.170.2")},
+				{Name: aws.String("CHECKPOINT_DISABLE"), Value: aws.String("1")},
+				{Name: aws.String("TF_CONFIGURATION"), Value: aws.String(terraformConfiguration)},
+			},
+			LogConfiguration: &ecstypes.LogConfiguration{
+				LogDriver: ecstypes.LogDriverAwslogs,
+				Options: map[string]string{
+					"awslogs-group":         logGroup,
+					"awslogs-region":        "us-east-1",
+					"awslogs-stream-prefix": "ecs",
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = ecsAPI.DeregisterTaskDefinition(ctx, &ecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: taskDefinition.TaskDefinition.TaskDefinitionArn,
+		})
+		_, _ = logsAPI.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{
+			LogGroupName: aws.String(logGroup),
+		})
+	})
+
+	definition, err := json.Marshal(map[string]any{
+		"StartAt": "ApplyInfrastructure",
+		"States": map[string]any{
+			"ApplyInfrastructure": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::ecs:runTask.sync",
+				"Parameters": map[string]any{
+					"Cluster":        clusterName,
+					"TaskDefinition": aws.ToString(taskDefinition.TaskDefinition.TaskDefinitionArn),
+					"LaunchType":     "FARGATE",
+					"NetworkConfiguration": map[string]any{"AwsvpcConfiguration": map[string]any{
+						"Subnets": []string{subnetID},
+					}},
+				},
+				"End": true,
+			},
+		},
+	})
+	require.NoError(t, err)
+	machine, err := statesAPI.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name:       aws.String("sfn-terraform-apply"),
+		Definition: aws.String(string(definition)),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = statesAPI.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{
+			StateMachineArn: machine.StateMachineArn,
+		})
+	})
+	execution, err := statesAPI.StartExecution(ctx, &sfn.StartExecutionInput{
+		StateMachineArn: machine.StateMachineArn,
+	})
+	require.NoError(t, err)
+	taskOutput := func() string {
+		logs, logsErr := logsAPI.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+			LogGroupName: aws.String(logGroup),
+		})
+		if logsErr != nil {
+			return fmt.Sprintf("failed to read task output: %v", logsErr)
+		}
+		var messages []string
+		for _, event := range logs.Events {
+			messages = append(messages, aws.ToString(event.Message))
+		}
+		return strings.Join(messages, "\n")
+	}
+	deadline := time.Now().Add(5 * time.Minute)
+	for {
+		described, describeErr := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+			ExecutionArn: execution.ExecutionArn,
+		})
+		require.NoError(t, describeErr)
+		switch described.Status {
+		case sfntypes.ExecutionStatusSucceeded:
+			goto executionSucceeded
+		case sfntypes.ExecutionStatusFailed, sfntypes.ExecutionStatusAborted, sfntypes.ExecutionStatusTimedOut:
+			t.Fatalf(
+				"Terraform workflow reached %s: %s: %s\ncontainer output:\n%s",
+				described.Status,
+				aws.ToString(described.Error),
+				aws.ToString(described.Cause),
+				taskOutput(),
+			)
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf(
+				"Terraform workflow remained %s after five minutes\ncontainer output:\n%s",
+				described.Status,
+				taskOutput(),
+			)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+executionSucceeded:
+	taskLogs, err := logsAPI.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName: aws.String(logGroup),
+	})
+	require.NoError(t, err)
+	var taskMessages []string
+	for _, event := range taskLogs.Events {
+		taskMessages = append(taskMessages, aws.ToString(event.Message))
+	}
+	assert.Contains(t, strings.Join(taskMessages, "\n"), "Apply complete! Resources: 1 added")
+
+	queues, err := queueAPI.ListQueues(ctx, &sqs.ListQueuesInput{QueueNamePrefix: aws.String(queueName)})
+	require.NoError(t, err)
+	require.Len(t, queues.QueueUrls, 1)
+	t.Cleanup(func() {
+		_, _ = queueAPI.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(queues.QueueUrls[0])})
+	})
+	attributes, err := queueAPI.ListQueueTags(ctx, &sqs.ListQueueTagsInput{QueueUrl: aws.String(queues.QueueUrls[0])})
+	require.NoError(t, err)
+	assert.Equal(t, "Terraform inside AWS Step Functions launched Amazon ECS", attributes.Tags["ProvisionedBy"])
 }

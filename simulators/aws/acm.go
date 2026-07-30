@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
@@ -779,7 +780,7 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 			opt.ResourceRecord = &ACMResourceRecord{
 				Name:  "_acm-challenge." + base + ".",
 				Type:  "CNAME",
-				Value: "_acm-challenge-" + id[:8] + ".acm-validations.aws.",
+				Value: acmDNSValidationValue(base),
 			}
 		}
 		dvOpts = append(dvOpts, opt)
@@ -853,6 +854,16 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 		acmCreateAndSendValidationEmails(r, id, stored)
 	}
 	acmWriteJSON(w, http.StatusOK, map[string]string{"CertificateArn": cert.CertificateArn})
+}
+
+// ACM reuses the DNS validation CNAME value for repeated certificate requests
+// for the same fully qualified domain name in one account. That lets one
+// long-lived Route 53 record validate replacement certificates and concurrent
+// regional/CloudFront certificates without record churn.
+func acmDNSValidationValue(domain string) string {
+	normalized := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(domain, "*."), "."))
+	sum := sha256.Sum256([]byte(awsAccountID() + ":" + normalized))
+	return "_" + hex.EncodeToString(sum[:16]) + ".acm-validations.aws."
 }
 
 func firstNonEmpty(a, b string) string {

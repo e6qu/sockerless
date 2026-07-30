@@ -142,7 +142,9 @@ func TestAPIGatewayV2_HttpApiLifecycle(t *testing.T) {
 		runCLI(t, awsCLI("apigatewayv2", "delete-api", "--api-id", api.APIID))
 	})
 
-	assert.Contains(t, runCLI(t, awsCLI("apigatewayv2", "get-apis")), api.APIID)
+	apis := runCLI(t, awsCLI("apigatewayv2", "get-apis"))
+	assert.Contains(t, apis, api.APIID)
+	assert.Contains(t, apis, `"$request.header.x-api-key"`)
 
 	integrationOut := runCLI(t, awsCLI("apigatewayv2", "create-integration",
 		"--api-id", api.APIID,
@@ -159,7 +161,12 @@ func TestAPIGatewayV2_HttpApiLifecycle(t *testing.T) {
 	assert.Contains(t, runCLI(t, awsCLI("apigatewayv2", "get-integration",
 		"--api-id", api.APIID,
 		"--integration-id", integration.IntegrationID,
-	)), integration.IntegrationID)
+	)), `"ConnectionType": "INTERNET"`)
+	assert.Contains(t, runCLI(t, awsCLI("apigatewayv2", "update-integration",
+		"--api-id", api.APIID,
+		"--integration-id", integration.IntegrationID,
+		"--integration-method", "POST",
+	)), `"IntegrationMethod": "POST"`)
 
 	routeOut := runCLI(t, awsCLI("apigatewayv2", "create-route",
 		"--api-id", api.APIID,
@@ -201,11 +208,17 @@ func TestAPIGatewayV2_HttpApiLifecycle(t *testing.T) {
 		"--api-id", api.APIID,
 		"--stage-name", "cli",
 		"--deployment-id", deployment.DeploymentID,
+		"--tags", "consumer=ecs-dev-desktop",
 	))
 	assert.Contains(t, runCLI(t, awsCLI("apigatewayv2", "get-stage",
 		"--api-id", api.APIID,
 		"--stage-name", "cli",
-	)), `"StageName": "cli"`)
+	)), `"consumer": "ecs-dev-desktop"`)
+	assert.Contains(t, runCLI(t, awsCLI("apigatewayv2", "update-stage",
+		"--api-id", api.APIID,
+		"--stage-name", "cli",
+		"--description", "consumer deployment",
+	)), `"Description": "consumer deployment"`)
 
 	runCLI(t, awsCLI("apigatewayv2", "delete-stage",
 		"--api-id", api.APIID,

@@ -594,11 +594,6 @@ func handleLambdaGetLayerVersionByArn(w http.ResponseWriter, r *http.Request) {
 // Reserved concurrency
 // ---------------------------------------------------------------------------
 
-var (
-	lambdaConcurrencyMu sync.Mutex
-	lambdaConcurrency   = map[string]int{} // function name -> reserved concurrent executions
-)
-
 func handleLambdaPutFunctionConcurrency(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
 	if _, ok := lambdaFunctions.Get(name); !ok {
@@ -618,9 +613,7 @@ func handleLambdaPutFunctionConcurrency(w http.ResponseWriter, r *http.Request) 
 			"ReservedConcurrentExecutions is required", http.StatusBadRequest)
 		return
 	}
-	lambdaConcurrencyMu.Lock()
-	lambdaConcurrency[name] = *req.ReservedConcurrentExecutions
-	lambdaConcurrencyMu.Unlock()
+	lambdaConcurrency.Put(name, *req.ReservedConcurrentExecutions)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"ReservedConcurrentExecutions": *req.ReservedConcurrentExecutions,
 	})
@@ -633,9 +626,7 @@ func handleLambdaGetFunctionConcurrency(w http.ResponseWriter, r *http.Request) 
 			"Function not found: %s", lambdaArn(name))
 		return
 	}
-	lambdaConcurrencyMu.Lock()
-	reserved, ok := lambdaConcurrency[name]
-	lambdaConcurrencyMu.Unlock()
+	reserved, ok := lambdaConcurrency.Get(name)
 	out := map[string]any{}
 	// Real Lambda omits ReservedConcurrentExecutions entirely when none is set.
 	if ok {
@@ -651,9 +642,7 @@ func handleLambdaDeleteFunctionConcurrency(w http.ResponseWriter, r *http.Reques
 			"Function not found: %s", lambdaArn(name))
 		return
 	}
-	lambdaConcurrencyMu.Lock()
-	delete(lambdaConcurrency, name)
-	lambdaConcurrencyMu.Unlock()
+	lambdaConcurrency.Delete(name)
 	w.WriteHeader(http.StatusNoContent)
 }
 

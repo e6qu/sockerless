@@ -22,7 +22,7 @@ include $(REPO_ROOT_REL)/make/go-app.mk
 # Each sub-tree (sdk-tests, cli-tests, terraform-tests, shared) is a
 # separate Go module; the CI calls these directly.
 
-.PHONY: unit-test shared-test sdk-test cli-test terraform-test terraform-https-test terraform-https-test-docker
+.PHONY: unit-test shared-test sdk-test cli-test terraform-test terraform-test-native terraform-test-docker terraform-https-test terraform-https-test-docker
 
 unit-test: ## go test the simulator module's own package-internal tests (fast; no Docker/real-exec)
 	$(GO_ENV) go test -tags noui -count=1 ./...
@@ -36,7 +36,14 @@ sdk-test: build ## go test the SDK-driven sim tests
 cli-test: build ## go test the CLI-driven sim tests
 	cd cli-tests && $(GO_ENV) go test -v -count=1 -timeout 900s ./...
 
-terraform-test: build ## go test the terraform-driven sim tests
+terraform-test: ## go test the terraform-driven sim tests
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+	  $(MAKE) terraform-test-docker; \
+	else \
+	  $(MAKE) terraform-test-native; \
+	fi
+
+terraform-test-native: build
 	cd terraform-tests && $(GO_ENV) go test -v -count=1 -timeout 300s ./...
 
 terraform-https-test: ## go test terraform via the optional Caddy HTTPS gateway
@@ -73,7 +80,7 @@ docker-run: docker-build ## run the docker image
 		$(IMAGE)
 
 docker-test-build: ## build the test docker image
-	docker build -t $(DOCKER_TEST_IMAGE) -f $(REPO_ROOT)/simulators/Dockerfile.test $(REPO_ROOT)
+	docker build --load -t $(DOCKER_TEST_IMAGE) -f $(REPO_ROOT)/simulators/Dockerfile.test $(REPO_ROOT)
 
 docker-test: docker-test-build ## run all tests inside docker
 	docker run --rm --network host \
@@ -86,6 +93,18 @@ docker-test: docker-test-build ## run all tests inside docker
 		-w /src/simulators/gcp \
 		$(DOCKER_REALNET_TEST_ENV) \
 		$(DOCKER_TEST_IMAGE) make test-all
+
+terraform-test-docker: docker-test-build ## run terraform tests on a capable Linux real-network host
+	docker run --rm --network host \
+		$(DOCKER_REALNET_FLAGS) \
+		--security-opt label=disable \
+		--group-add $(DOCKER_SOCK_GID) \
+		--group-add 0 \
+		-v $(REPO_ROOT):/src \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-w /src/simulators/gcp \
+		$(DOCKER_REALNET_TEST_ENV) \
+		$(DOCKER_TEST_IMAGE) make terraform-test-native
 
 terraform-https-test-docker: docker-test-build ## run terraform HTTPS tests inside docker
 	docker run --rm --network host \
