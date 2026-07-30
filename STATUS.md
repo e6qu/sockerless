@@ -7,6 +7,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | | |
 |---|---|
 | Active branch | `fix/aws-cli-nested-dns-isolation` |
+| Microsoft Azure delete-error dialogs | Azure Resource Manager deletion failures remained visible through concurrent Fluent UI backdrop events. Operators could still dismiss the actionable error explicitly with Cancel or Escape, and the Azure console typecheck, all 131 package tests, and production build passed. |
 | AWS CLI nested-simulator isolation | Secondary process-mode AWS simulators requested their own operating-system-selected Route 53 DNS listener coordinate. Local full-shard runs no longer depended on port 5353 being unused by another simulator, and the focused official AWS CLI test plus the complete compute shard passed. |
 | Amazon ECS task-role credentials | Task definitions with `taskRoleArn` received expiring task-metadata credentials registered with AWS Signature Version 4 enforcement. Real-VPC workloads used the standard ECS relative credential URI, and an official AWS CLI task called `sts:GetCallerIdentity` as the exact assumed-role principal. |
 | Amazon ECS deployment fidelity | Service tasks registered their real elastic-network-interface address and port in AWS Cloud Map and reconciled discovery state on replacement, scale-in, deletion, and restart. Launch failures persisted bounded exponential retry state; deployment circuit breakers and CloudWatch alarms drove AWS-shaped failure and rollback, including across hard simulator replacement. |

@@ -107,6 +107,7 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 77. Added public-API-backed Amazon ECS service and Secrets Manager replication operations to the AWS console, and kept generated Smithy tables out of the hand-written duplicate-code gate.
 78. Recovered the local Podman virtual machine's volatile overlay fault without deleting images or volumes and passed the complete production-shaped HashiCorp AWS provider restart graph.
 79. Isolated every nested AWS CLI simulator on an operating-system-selected Route 53 DNS coordinate and passed the focused process-mode case plus the complete compute shard.
+80. Kept Microsoft Azure Resource Manager deletion failures visible through concurrent Fluent UI backdrop events while preserving explicit Cancel and Escape dismissal.
 
 ## Verified Next Gaps
 
@@ -118,6 +119,7 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 6. BUG-2766 retained AWS Amplify Hosting image optimization and BUG-2764 retained the macOS Podman nested-KVM boundary. The local Podman overlay fault, complete AWS WAF statement evaluation, and transactional Elastic Load Balancing listener binding closed BUG-2791, BUG-2767, and BUG-2765.
 7. ECS-managed AWS Cloud Map instance registration, failed-deployment throttling, circuit-breaker rollback, and CloudWatch-alarm rollback closed BUG-2798 and BUG-2799.
 8. Nested AWS CLI simulators no longer contended for the default Route 53 DNS port; BUG-2809 closed with a dedicated listener coordinate.
+9. Microsoft Azure resource-delete errors no longer disappeared after an immediate failed response; BUG-2810 closed with error-aware backdrop handling.
 
 ## Simulator Console Parity
 

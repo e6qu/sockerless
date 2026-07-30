@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Azure deletion errors remained actionable
+
+Microsoft Azure resource-deletion dialogs could receive a Fluent UI backdrop
+event immediately after Azure Resource Manager rejected the request, which
+closed the surface after briefly rendering the service's real error.
+
+Delete-error dialogs now ignore backdrop dismissal while the actionable error
+is displayed. Explicit Cancel and Escape still close the dialog normally. The
+Azure console typecheck, all 131 package tests, and production build passed,
+including coverage that exercised the error, backdrop, and explicit-cancel
+sequence.
+
 ## 2026-07-30 — Nested AWS CLI simulators gained isolated DNS listeners
 
 The wider post-merge AWS CLI sweep launched a second process-mode simulator

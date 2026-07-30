@@ -4,6 +4,12 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+Microsoft Azure resource-deletion dialogs retained Azure Resource Manager's
+actionable failure after a rejected request even when a concurrent Fluent UI
+backdrop event arrived. Backdrop dismissal was suppressed only while the error
+was displayed; explicit Cancel and Escape remained functional. The Azure
+console typecheck, all 131 package tests, and production build passed.
+
 Secondary process-mode AWS simulators no longer inherited the default Route 53
 DNS listener port. The AWS CLI harness assigned each nested process an
 operating-system-selected UDP/TCP coordinate, so a simulator already using
