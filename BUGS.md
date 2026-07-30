@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2796 filed - 2796 fixed - 10 open - 16 false positives.**
+**2797 filed - 2797 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -25,6 +25,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2797~~ | P1 | GitHub Container Registry release retention | a 20-release cutoff bisected an indivisible historical two-release package version and retained 21 releases | Retention now computes connected release components across generic, AMD64, and ARM64 tags, keeps only complete recognized components, and stops below the cap when the next atomic component would exceed it; realistic fixtures prove a coalesced component is either retained whole or deleted whole. |
 | ~~2796~~ | P2 | Google Cloud API Gateway specification freshness | the local Discovery edge published revision 20260724 after the hosted Dataflow drift was retained | The repository vendor script retained the newest multi-probe API Gateway v1 document and updated its provenance; all 30 methods and paths and all 143 schema field/type entries were unchanged, so simulator behavior and its measured coverage floor remained current. |
 | ~~2795~~ | P2 | Google Cloud Dataflow specification freshness | the hosted Discovery edge published revision 20260719 after local freshness validation passed | The exact CI-preserved Dataflow v1b3 document was vendored byte-for-byte with updated provenance; all 42 methods and paths and all 1,174 schema field/type entries were unchanged, so simulator behavior and its measured coverage floor remained current. |
 | ~~2793~~ | P1 | CI - AWS Command Line Interface simulator shards | the appdata2 shard completed every test and Smithy ratchet but GitHub cancelled the job at its exact 15-minute limit | Measured hosted timing split RDS, Route 53, S3, and the persistence restart case from Scheduler, Secrets Manager, Step Functions, SNS, SQS, SSM, STS, and WAFv2; the shard coverage gate proves every CLI test remains assigned exactly once while both jobs retain meaningful scheduling margin. |

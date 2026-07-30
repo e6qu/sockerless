@@ -60,12 +60,12 @@ jq -n '[
 	}
 ] + [
 	{id: 997, created_at: "2026-08-01T00:00:00Z", metadata: {container: {tags: ["feedfacefeed"]}}},
-	{id: 998, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["000000000021", "latest"]}}},
+	{id: 998, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["latest"]}}},
 	{id: 999, created_at: "2026-08-03T00:00:00Z", metadata: {container: {tags: []}}}
 ]' >"$fixture"
 
 selected="$(jq -r --argjson keep 20 -f "$root/scripts/select-obsolete-container-versions.jq" "$fixture" | sort -n | paste -sd, -)"
-if [[ "$selected" != '0,1,2,10,11,12,997,999' ]]; then
+if [[ "$selected" != '0,1,2,10,11,12,997,998,999' ]]; then
 	echo "retention selector chose unexpected package versions: $selected" >&2
 	exit 1
 fi
@@ -73,16 +73,23 @@ fi
 shared_fixture="$(mktemp)"
 trap 'rm -f "$fixture" "$shared_fixture"' EXIT
 jq -n '[
-	{id: 1, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["feedfacefeed"]}}},
-	{id: 2, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["feedfacefeed-amd64"]}}},
-	{id: 3, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["feedfacefeed-arm64", "deadbeefdead-arm64"]}}},
-	{id: 4, created_at: "2026-08-01T00:00:00Z", metadata: {container: {tags: ["deadbeefdead"]}}},
-	{id: 5, created_at: "2026-08-01T00:00:00Z", metadata: {container: {tags: ["deadbeefdead-amd64"]}}}
+	{id: 10, created_at: "2026-08-03T00:00:00Z", metadata: {container: {tags: ["cafebabecafe"]}}},
+	{id: 11, created_at: "2026-08-03T00:00:00Z", metadata: {container: {tags: ["cafebabecafe-amd64"]}}},
+	{id: 12, created_at: "2026-08-03T00:00:00Z", metadata: {container: {tags: ["cafebabecafe-arm64"]}}},
+	{id: 1, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["feedfacefeed", "deadbeefdead"]}}},
+	{id: 2, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["feedfacefeed-amd64", "deadbeefdead-amd64"]}}},
+	{id: 3, created_at: "2026-08-02T00:00:00Z", metadata: {container: {tags: ["feedfacefeed-arm64", "deadbeefdead-arm64"]}}}
 ]' >"$shared_fixture"
 
-selected="$(jq -r --argjson keep 1 -f "$root/scripts/select-obsolete-container-versions.jq" "$shared_fixture" | sort -n | paste -sd, -)"
-if [[ "$selected" != '4,5' ]]; then
-	echo "retention selector did not preserve a retained tag sharing a package version: $selected" >&2
+selected="$(jq -r --argjson keep 2 -f "$root/scripts/select-obsolete-container-versions.jq" "$shared_fixture" | sort -n | paste -sd, -)"
+if [[ "$selected" != '1,2,3' ]]; then
+	echo "retention selector split a shared release component at its limit: $selected" >&2
+	exit 1
+fi
+
+selected="$(jq -r --argjson keep 3 -f "$root/scripts/select-obsolete-container-versions.jq" "$shared_fixture" | sort -n | paste -sd, -)"
+if [[ -n "$selected" ]]; then
+	echo "retention selector did not preserve a complete shared release component: $selected" >&2
 	exit 1
 fi
 
