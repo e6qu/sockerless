@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2811 filed - 2811 fixed - 8 open - 16 false positives.**
+**2813 filed - 2813 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2813~~ | P2 | Official AWS SDK local validation | the exhaustive local suite inherited Go's ten-minute package timeout | The shared Go library test recipe now accepts module-specific flags and the all-service AWS SDK suite declares a 30-minute package budget; the unchanged complete suite passed in 546.212 seconds while hosted CI retained four independently bounded shards. |
+| ~~2812~~ | P1 | Dependency freshness | AWS Lambda and IAM SDK releases appeared after pre-push validation | Lambda advanced to `v1.101.0` in the Lambda backend and official SDK suite, IAM advanced to `v1.57.0` in the SDK suite, the backend and complete official-client suite passed, and the repository-wide freshness audit was current. |
 | ~~2811~~ | P1 | AWS simulator Amazon ECS load-balanced deployments | target health was sampled once after task start, leaving later-ready services permanently in progress | The Amazon ECS service scheduler now keeps one bounded reconciliation timer per in-progress deployment, re-probes real Elastic Load Balancing target health until convergence, and cancels the timer on completion, failure, or deletion. An official AWS SDK scenario starts the real workload only after the initial health probe and proves the deployment completes without another API request or task transition. |
 | ~~2810~~ | P2 | Microsoft Azure console deletion errors | an immediate failed deletion could race with Fluent UI backdrop dismissal | Azure Resource Manager errors now keep the confirmation dialog open through concurrent backdrop events while explicit Cancel and Escape remain functional; typecheck, all 131 Azure console tests, and the production build passed. |
 | ~~2809~~ | P2 | AWS CLI nested simulator isolation | a secondary process-mode simulator reused the default Route 53 DNS listener port | Nested AWS CLI simulators now request an operating-system-selected Route 53 UDP/TCP coordinate, so another simulator on port 5353 cannot prevent startup; the focused process-mode test and complete compute shard passed. |

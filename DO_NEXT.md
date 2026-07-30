@@ -4,6 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The same-day AWS SDK release wave advanced Lambda to `v1.101.0` in the Lambda
+backend and official SDK suite and IAM to `v1.57.0` in the SDK suite. The
+Lambda backend built and passed its tests, the complete official AWS SDK suite
+passed in 546.212 seconds, and the repository-wide dependency, Terraform
+provider, and GitHub Actions audit was current.
+
+The exhaustive local AWS SDK target no longer inherited Go's ten-minute
+package timeout. The shared Go library test recipe accepted module-specific
+flags, the AWS SDK suite declared a 30-minute budget, and hosted CI retained
+its separate four-shard limits.
+
 Microsoft Azure resource-deletion dialogs retained Azure Resource Manager's
 actionable failure after a rejected request even when a concurrent Fluent UI
 backdrop event arrived. Backdrop dismissal was suppressed only while the error

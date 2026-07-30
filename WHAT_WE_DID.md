@@ -4,6 +4,21 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — AWS SDK releases and the exhaustive local suite stayed green
+
+The same-day AWS SDK wave advanced Lambda from `v1.100.2` to `v1.101.0` in
+the Lambda backend and official-client suite and IAM from `v1.56.2` to
+`v1.57.0` in the SDK suite. The Lambda backend built and passed its package
+tests, the complete official AWS SDK suite passed in 546.212 seconds, and the
+repository-wide dependency, Terraform-provider, and GitHub Actions freshness
+audit passed.
+
+That complete local suite had also outgrown Go's inherited ten-minute package
+deadline even though hosted CI already distributed the same exhaustive
+coverage across four bounded shards. The shared Go library recipe now accepts
+module-specific test flags, and the AWS SDK suite declares a 30-minute local
+budget without changing test selection or hosted shard limits.
+
 ## 2026-07-30 — Azure deletion errors remained actionable
 
 Microsoft Azure resource-deletion dialogs could receive a Fluent UI backdrop

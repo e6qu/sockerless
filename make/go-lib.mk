@@ -3,6 +3,7 @@
 # Required: nothing.
 # Optional:
 #   GO_ENV : env prepended to go invocations (e.g. GOWORK=off)
+#   GO_TEST_FLAGS : flags passed to `go test` (e.g. a suite-specific timeout)
 #   REPO_ROOT_REL : path from this Makefile's dir to the repo root
 #                   (default ../.., same as go-app.mk).
 
@@ -24,7 +25,7 @@ build: ## compile-check (no binary output for libraries)
 build-noui: build ## compile-check alias for top-level no-UI fanout
 
 test: ## run unit tests
-	$(GO_ENV) go test ./...
+	$(GO_ENV) go test $(GO_TEST_FLAGS) ./...
 
 test-integration: ## run integration tests against the local simulator
 	$(GO_ENV) SOCKERLESS_TEST_TARGET=sim go test -v -timeout 15m ./...

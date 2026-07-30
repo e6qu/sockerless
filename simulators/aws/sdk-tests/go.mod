@@ -32,10 +32,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.48.2
 	github.com/aws/aws-sdk-go-v2/service/firehose v1.46.2
 	github.com/aws/aws-sdk-go-v2/service/glue v1.151.0
-	github.com/aws/aws-sdk-go-v2/service/iam v1.56.2
+	github.com/aws/aws-sdk-go-v2/service/iam v1.57.0
 	github.com/aws/aws-sdk-go-v2/service/kinesis v1.46.2
 	github.com/aws/aws-sdk-go-v2/service/kms v1.55.2
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.100.2
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.101.0
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.53.2
 	github.com/aws/aws-sdk-go-v2/service/rds v1.123.2
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.65.4
