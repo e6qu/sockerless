@@ -27,7 +27,7 @@ type GlueDatabase struct {
 	CreateTime                    float64           `json:"CreateTime"`
 	LocationUri                   string            `json:"LocationUri,omitempty"`
 	Description                   string            `json:"Description,omitempty"`
-	Tags                          map[string]string `json:"Tags"`
+	Tags                          map[string]string `json:"-"`
 	CreateTableDefaultPermissions []map[string]any  `json:"CreateTableDefaultPermissions"`
 }
 

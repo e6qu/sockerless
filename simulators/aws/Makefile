@@ -75,6 +75,7 @@ DOCKER_TEST_GROUPS := $(DOCKER_SOCK_GID),0
 DOCKER_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e SOCKERLESS_DOCKER_TEST_UIDGID=$(DOCKER_TEST_USER) -e SOCKERLESS_DOCKER_TEST_GROUPS=$(DOCKER_TEST_GROUPS) -e GOWORK=off -e CGO_ENABLED=0 -e TF_IN_AUTOMATION=1 -e CLOUDSDK_CORE_DISABLE_PROMPTS=1 -e AZURE_CORE_NO_COLOR=true -e AWS_PAGER=
 DOCKER_REALNET_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e GOWORK=off -e CGO_ENABLED=0 -e TF_IN_AUTOMATION=1 -e CLOUDSDK_CORE_DISABLE_PROMPTS=1 -e AZURE_CORE_NO_COLOR=true -e AWS_PAGER=
 DOCKER_REALNET_FLAGS := --privileged --pid host
+DOCKER_SPEC_VALIDATION_FLAGS := $(if $(strip $(SOCKERLESS_SPEC_VALIDATE)),-v "$(dir $(SOCKERLESS_SPEC_VALIDATE)):/sockerless-spec" -e SOCKERLESS_SPEC_VALIDATE="/sockerless-spec/$(notdir $(SOCKERLESS_SPEC_VALIDATE))" -e SOCKERLESS_SPEC_DIR=/src/specs/cloud-api/aws)
 
 docker-build: ## build the docker image
 	@if docker buildx version >/dev/null 2>&1; then \
@@ -109,7 +110,7 @@ docker-test: docker-test-build ## run all tests inside docker
 		$(DOCKER_TEST_IMAGE) make test-all
 
 terraform-https-test-docker: docker-test-build ## run terraform HTTPS tests inside docker
-	docker run --rm --network host \
+	@container_id="$$(docker create --network host \
 		$(DOCKER_REALNET_FLAGS) \
 		--security-opt label=disable \
 		--group-add $(DOCKER_SOCK_GID) \
@@ -118,5 +119,12 @@ terraform-https-test-docker: docker-test-build ## run terraform HTTPS tests insi
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-w /src/simulators/aws \
 		$(DOCKER_REALNET_TEST_ENV) \
+		$(DOCKER_SPEC_VALIDATION_FLAGS) \
 		-e SOCKERLESS_TF_HTTPS_GATEWAY=1 \
-		$(DOCKER_TEST_IMAGE) make terraform-https-test TERRAFORM_TEST_TIMEOUT=$(TERRAFORM_TEST_TIMEOUT) TERRAFORM_TEST_PACKAGES="$(TERRAFORM_TEST_PACKAGES)" TERRAFORM_TEST_PACKAGE_PARALLELISM=$(TERRAFORM_TEST_PACKAGE_PARALLELISM) TERRAFORM_TEST_ARGS="$(TERRAFORM_TEST_ARGS)" TERRAFORM_TEST_JSON=$(TERRAFORM_TEST_JSON)
+		$(DOCKER_TEST_IMAGE) make terraform-https-test TERRAFORM_TEST_TIMEOUT=$(TERRAFORM_TEST_TIMEOUT) TERRAFORM_TEST_PACKAGES="$(TERRAFORM_TEST_PACKAGES)" TERRAFORM_TEST_PACKAGE_PARALLELISM=$(TERRAFORM_TEST_PACKAGE_PARALLELISM) TERRAFORM_TEST_ARGS="$(TERRAFORM_TEST_ARGS)" TERRAFORM_TEST_JSON=$(TERRAFORM_TEST_JSON))" || exit $$?; \
+	status=0; \
+	docker start --attach "$$container_id" || status=$$?; \
+	cleanup_status=0; \
+	docker rm -f -v "$$container_id" >/dev/null || cleanup_status=$$?; \
+	if [ "$$status" -ne 0 ]; then exit "$$status"; fi; \
+	exit "$$cleanup_status"

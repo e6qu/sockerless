@@ -4,30 +4,98 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
-## 2026-07-30 — Hosted persistence validation kept public contracts exact
+## 2026-07-30 — Dataflow and API Gateway Discovery advanced without surface drift
 
-Two listener-fidelity tests had requested DNS-validated AWS Certificate Manager
-certificates without completing validation, CLI fixtures used pending or
-fabricated certificate coordinates, and several listener tests reused host
-port 443. Those fixtures stopped at the correct certificate or bind error once
-listener creation became transactional and provisioned a real TCP/TLS data
-plane.
+The replacement hosted matrix observed Dataflow v1b3 revision 20260719 after
+the local freshness audit had passed and preserved the exact response as its
+one-day drift artifact. That artifact replaced revision 20260715 byte-for-byte.
+A structural comparison found the same 42 methods and HTTP paths and the same
+1,174 schema field/type entries; only upstream descriptions and provenance
+changed, so no simulator implementation or coverage floor moved.
 
-The official SDK and CLI fixtures now import real self-signed certificate and
-key material through AWS Certificate Manager, select isolated live ports, and
-give each nested simulator process an explicit Route 53 DNS coordinate.
+The verification fetch then found API Gateway v1 revision 20260724 on all
+three local probes. The repository vendor script retained that document and
+updated its provenance. API Gateway kept the same 30 methods and HTTP paths
+and the same 143 schema field/type entries, so this second same-day
+publication also required no runtime change.
 
-The same hosted run caught three independent contract defects. An HTTP Cloud
-Map namespace no longer silently adds custom health to a service whose caller
-omitted it. AWS Glue database tags remain durable for tag APIs and IAM without
-appearing in the public `Database` Smithy shape. The durable Lambda restart
-harness listens on all IPv4 host interfaces and gives the workload container
-the exact dynamic port through `host.docker.internal`, so Linux can publish
-checkpoint coordinates before hard simulator replacement.
+## 2026-07-30 — The AWS CLI appdata budget gained real margin
 
-The focused cases, complete SDK services-a-m and compute shards, and complete
-CLI edge-delivery shard passed with runtime Smithy validation reporting no
+The updated persistence pull request passed every appdata2 command-line
+interface test and its runtime Smithy ratchet, but GitHub finalized the job as
+cancelled at its exact 15-minute limit. The test process alone consumed 791
+seconds, after setup and a clean simulator build consumed the remaining
+headroom.
+
+Hosted top-level timings measured RDS at 199 seconds, SSM at 133, S3 at 108,
+Route 53 at 67, and the remaining services at 216 seconds. The matrix now keeps
+RDS, Route 53, S3, and the restart-persistence case in appdata2 and moves
+Scheduler, Secrets Manager, Step Functions, SNS, SQS, SSM, STS, and WAFv2 to
+appdata3. The repository coverage gate still requires every AWS CLI test to
+match exactly one shard.
+
+The same production audit exposed a distinct P1 rather than hiding it behind
+successful Terraform control-plane convergence: Amazon ECS services still
+report desired and running capacity without launching their declared
+task-definition containers. BUG-2794 owns durable service scheduling,
+replacement, load-balancer registration and health, and stop/restart behavior
+required for ECS Dev Desktop to become a functional deployed app.
+
+## 2026-07-30 — Legacy Amazon ECS state stopped blocking simulator upgrades
+
+The first production upgrade to durable workload recovery encountered an
+Amazon ECS task persisted by an older release. Its control-plane row still
+claimed `RUNNING`, but the prior runtime had not left a state-scoped workload
+container that the new process could adopt. Recovery treated that mismatch as
+a fatal simulator error, so one stale task prevented every AWS API from
+starting and the deployment correctly rolled back.
+
+Amazon ECS now reconciles exactly that zero-container case to `STOPPED`, with
+`EssentialContainerExited`, a control-plane restart reason, an unknown exit
+code, adjusted container-instance counts, managed-resource cleanup, and
+network teardown. It continues restoring subsequent tasks. Container-runtime
+discovery failures, missing task definitions, malformed identity labels, and
+adoption failures remain fail-loud startup errors. Focused coverage proves
+multiple legacy tasks reconcile in one pass and a real discovery error leaves
+the task untouched while aborting recovery.
+
+## 2026-07-30 — Persistence stayed private where AWS response models required it
+
+AWS Glue database tags had been emitted inside `GetDatabase`, a member the
+Smithy response model does not define. Simply hiding the field would previously
+have discarded it from SQLite. The persistent envelope retained that
+internal tag state while AWS Glue exposed it only through `GetTags`. Official
+SDK and Terraform fixtures created tagged databases, and the hard-restart
+matrix proved the database and tags survived together.
+
+An HTTP-only AWS Cloud Map service had also gained
+`HealthCheckCustomConfig` when its caller omitted the optional configuration.
+The simulator retained custom health only when the public create request
+supplied it, so updating an unconfigured instance returned
+`CustomHealthNotFound` as AWS specifies.
+
+The durable Lambda restart scenario stopped using a container-to-host callback
+to recover its checkpoint coordinates. The managed Node.js function logged
+them to Amazon CloudWatch Logs, the official AWS SDK read those logs and
+checkpointed the execution, the simulator was hard-replaced against the same
+state directory, and callback completion resumed the original execution. The
+complete SDK services A–M shard passed in 230.8 seconds with no Smithy
 violations.
+
+The AWS CLI Elastic Load Balancing fixtures imported real certificate and key
+material through AWS Certificate Manager and selected isolated listener ports,
+matching the SDK fixtures and the live TLS data plane. Nested simulator
+processes received an isolated Route 53 DNS coordinate. The focused HTTPS and
+Network Load Balancing cases, complete SDK compute shard, and complete CLI
+edge-delivery shard passed.
+
+The macOS Terraform container wrapper created, attached, and removed its exact
+test container explicitly, propagated the real failure status, removed
+anonymous volumes, and mounted runtime Smithy reports back to the host. It
+therefore exposed the local Podman machine's existing overlay input/output
+error instead of leaking a created container or hiding the failure; that
+operator-owned storage corruption remained recorded as BUG-2791 while hosted
+Terraform validation stayed mandatory.
 
 ## 2026-07-30 — The Google Cloud client graph advanced to gRPC 1.83
 

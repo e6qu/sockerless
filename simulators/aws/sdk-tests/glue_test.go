@@ -492,6 +492,19 @@ func TestGlue_JobCRUD_SDK(t *testing.T) {
 func TestGlue_Tags_SDK(t *testing.T) {
 	c := glueClient()
 
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String("glue-sdk-tag-db")},
+		Tags:          map[string]string{"owner": "analytics"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String("glue-sdk-tag-db")})
+	})
+	databaseARN := "arn:aws:glue:us-east-1:123456789012:database/glue-sdk-tag-db"
+	databaseTags, err := c.GetTags(ctx, &glue.GetTagsInput{ResourceArn: aws.String(databaseARN)})
+	require.NoError(t, err)
+	assert.Equal(t, "analytics", databaseTags.Tags["owner"])
+
 	create, err := c.CreateJob(ctx, &glue.CreateJobInput{
 		Name: aws.String("glue-sdk-tag-job"),
 		Role: aws.String("arn:aws:iam::123456789012:role/glue-role"),

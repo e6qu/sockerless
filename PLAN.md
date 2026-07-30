@@ -91,11 +91,16 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 61. Regenerated every committed simulator surface table and assigned the new AWS CLI persistence case to exactly one shard.
 62. Upgraded gRPC to 1.83.0 across every affected Google Cloud backend, simulator, and official-client module, then passed all five modules and the complete official Google Cloud SDK suite.
 63. Split the Cloud Build test registry's real create/start lifecycle and removed its anonymous volume, making Podman failures immediate and successful build-and-push coverage leak-free.
-64. Replaced unissued and fabricated Elastic Load Balancing certificate fixtures with official SDK and CLI imports of real AWS Certificate Manager material, isolated listener ports, and explicit nested-simulator DNS coordinates.
-65. Restored caller-controlled Cloud Map custom-health configuration so an HTTP namespace alone did not silently opt a service into custom health.
-66. Kept durable AWS Glue database tags behind the public wire projection consumed by Smithy validation.
-67. Bound the durable Lambda restart callback receiver to the Docker-reachable host interface while retaining the exact dynamically assigned port.
+64. Replaced unissued Elastic Load Balancing certificate fixtures and shared listener ports with real AWS Certificate Manager imports and isolated data-plane coordinates across official SDK and AWS CLI clients, then passed the complete compute and edge-delivery shards.
+65. Kept AWS Glue database tags durable and available through `GetTags` without leaking them into the Smithy-modeled `GetDatabase` response.
+66. Removed invented AWS Cloud Map custom-health configuration and made durable Lambda callback recovery observable through only Lambda and Amazon CloudWatch Logs APIs.
+67. Made the macOS AWS Terraform container wrapper preserve Smithy reports, surface attachment failures, and clean exact failed containers and anonymous volumes.
 68. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+69. Reconciled legacy persisted Amazon ECS tasks whose workload containers could not be adopted, so one stale `RUNNING` row became truthfully `STOPPED` without preventing the AWS simulator from starting or restoring other workloads.
+70. Split the AWS CLI appdata2 shard at measured service boundaries after every test passed but the hosted job crossed its exact 15-minute finalization limit.
+71. Recorded long-lived Amazon ECS service execution as the next P1 production gap after the ECS Dev Desktop deployment audit proved the simulator still reported service capacity without launching the declared workload.
+72. Retained the exact CI-captured Google Cloud Dataflow v1b3 revision 20260719 document after proving its method, route, and schema-field contracts were unchanged.
+73. Retained the newest multi-probe Google Cloud API Gateway v1 revision 20260724 document after proving its method, route, and schema-field contracts were unchanged.
 
 ## Verified Next Gaps
 
@@ -104,7 +109,7 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 3. BUG-2646 retained only Google's upstream Cloud Run Discovery publication lag.
 4. BUG-1345 retained only the upstream AzureAD provider's lack of a Microsoft Graph endpoint override.
 5. BUG-2523 and BUG-2441 remained in the external Bleephub repository rather than this workspace.
-6. BUG-2766 retained AWS Amplify Hosting image optimization, and BUG-2764 retained the macOS Podman nested-KVM boundary. Complete AWS WAF statement evaluation and transactional Elastic Load Balancing listener binding closed BUG-2767 and BUG-2765.
+6. BUG-2766 retained AWS Amplify Hosting image optimization, BUG-2764 retained the macOS Podman nested-KVM boundary, and BUG-2791 retained the operator-owned corrupt Podman overlay store that blocked a second local AWS Terraform container run. Complete AWS WAF statement evaluation and transactional Elastic Load Balancing listener binding closed BUG-2767 and BUG-2765.
 
 ## Simulator Console Parity
 

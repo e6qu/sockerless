@@ -1590,6 +1590,12 @@ func ecsWatchTaskProcesses(taskID, containerInstanceKey string, processes *ecsTa
 }
 
 func recoverECSTasks() error {
+	return recoverECSTasksWithContainerFinder(sim.FindExistingContainers)
+}
+
+func recoverECSTasksWithContainerFinder(
+	findExistingContainers func(map[string]string) ([]sim.ExistingContainer, error),
+) error {
 	for _, task := range ecsTasks.List() {
 		switch task.LastStatus {
 		case ECSTaskStatusProvisioning, ECSTaskStatusPending:
@@ -1603,7 +1609,7 @@ func recoverECSTasks() error {
 			if !ok {
 				return fmt.Errorf("task %s references missing task definition %s", task.TaskArn, task.TaskDefinitionArn)
 			}
-			if err := ecsAdoptRunningTask(task, definition); err != nil {
+			if err := ecsRecoverRunningTask(task, definition, findExistingContainers); err != nil {
 				return err
 			}
 		}
@@ -1675,18 +1681,66 @@ func ecsResumePendingTask(task ECSTask, definition ECSTaskDefinition) {
 	}
 }
 
-func ecsAdoptRunningTask(task ECSTask, definition ECSTaskDefinition) error {
-	taskID := task.TaskID()
+func ecsRecoverRunningTask(
+	task ECSTask,
+	definition ECSTaskDefinition,
+	findExistingContainers func(map[string]string) ([]sim.ExistingContainer, error),
+) error {
 	if len(definition.ContainerDefinitions) == 0 {
 		return fmt.Errorf("task %s references an Amazon ECS task definition without containers", task.TaskArn)
 	}
-	existing, err := sim.FindExistingContainers(map[string]string{"sockerless-sim-task": taskID})
+	taskID := task.TaskID()
+	existing, err := findExistingContainers(map[string]string{"sockerless-sim-task": taskID})
 	if err != nil {
 		return fmt.Errorf("find Amazon ECS task %s containers: %w", task.TaskArn, err)
 	}
 	if len(existing) == 0 {
-		return fmt.Errorf("running Amazon ECS task %s has no workload containers", task.TaskArn)
+		ecsMarkMissingRunningTaskStopped(task)
+		return nil
 	}
+	return ecsAdoptRunningTask(task, definition, existing)
+}
+
+func ecsMarkMissingRunningTaskStopped(task ECSTask) {
+	taskID := task.TaskID()
+	stoppedAt := time.Now().Unix()
+	transitioned := false
+	ecsTasks.Update(taskID, func(current *ECSTask) {
+		if current.LastStatus != ECSTaskStatusRunning {
+			return
+		}
+		transitioned = true
+		current.LastStatus = ECSTaskStatusStopped
+		current.DesiredStatus = ECSTaskStatusStopped
+		current.Connectivity = ""
+		current.StoppedAt = &stoppedAt
+		current.StopCode = "EssentialContainerExited"
+		current.StoppedReason = "Workload containers not found after control-plane restart"
+		exitCode := -1
+		for index := range current.Containers {
+			current.Containers[index].LastStatus = "STOPPED"
+			current.Containers[index].ExitCode = &exitCode
+		}
+		ecsCleanupTaskManagedEBS(current)
+	})
+	if !transitioned {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[sim-ecs] task %s: workload containers not found after control-plane restart; transitioned task to STOPPED\n", taskID)
+	ecsUpdateContainerInstanceTaskCounts(
+		ecsContainerInstanceKeyFromARN(task.ContainerInstanceArn),
+		0,
+		-1,
+	)
+	go ec2DetachRealECSTaskNIC(context.Background(), taskID)
+}
+
+func ecsAdoptRunningTask(
+	task ECSTask,
+	definition ECSTaskDefinition,
+	existing []sim.ExistingContainer,
+) error {
+	taskID := task.TaskID()
 	processes := &ecsTaskProcesses{
 		MainContainerName: definition.ContainerDefinitions[0].Name,
 		Handles:           make(map[string]*sim.ContainerHandle, len(existing)),
