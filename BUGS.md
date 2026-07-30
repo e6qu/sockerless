@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2783 filed - 2783 fixed - 8 open - 16 false positives.**
+**2785 filed - 2785 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2785~~ | P1 | Google Cloud SDK real-registry validation | `docker run --rm` hid a Podman start failure behind auto-removal waiting and leaked anonymous registry volumes | The official Cloud Build build-and-push test separated real registry container creation from startup, surfaced start errors directly, and removed the exact container plus its anonymous volume; the focused test and complete official Google Cloud SDK suite passed. |
+| ~~2784~~ | P1 | dependency freshness | gRPC 1.83.0 was published during pre-push validation | Every affected Cloud Run backend, shared Google Cloud backend, simulator, and official SDK-test module upgraded to gRPC 1.83.0 and its selected current graph; all five modules, the authenticated freshness audit, and the complete official Google Cloud SDK suite passed. |
 | ~~2783~~ | P1 | AWS Terraform restart validation | the production-shaped harness inherited the process-wide Route 53 DNS port | The official HashiCorp AWS provider harness selected an explicit ephemeral Route 53 coordinate, so another simulator could not prevent startup; apply, hard process replacement with the same data directory, a zero-change refresh plan, and destroy passed. |
 | ~~2782~~ | P1 | AWS Batch console | the console exposed only job queues and compute environments | The Cloudscape page listed and polled real AWS Batch jobs across queues and statuses, described job definitions and container resources, showed terminal detail and failure reasons, and terminated selected live jobs through the standard AWS Batch APIs. |
 | ~~2781~~ | P1 | simulator deployment persistence | the production Compose recipes did not mount simulator state or enable durable stores | The AWS, Google Cloud, and Microsoft Azure simulator services enabled their existing persistent stores at explicit data-directory coordinates backed by named volumes; ordinary container replacement retained cloud and federation state, while deliberate volume removal remained the explicit destructive operation. |

@@ -4,6 +4,23 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — The Google Cloud client graph advanced to gRPC 1.83
+
+The pre-push publication audit found gRPC 1.83.0 after the earlier validation
+had passed. Both Cloud Run backends, the shared Google Cloud backend, the
+Google Cloud simulator, and its official SDK-test module upgraded together
+with their selected current graph. Every affected module and the authenticated
+freshness audit passed.
+
+The complete official Google Cloud SDK run exposed a real-container fixture
+defect rather than a wire regression. Its temporary registry used one
+`docker run --rm` operation, so Podman waited for automatic removal after a
+start failure, hid the provider error behind the test deadline, and retained
+anonymous volumes. The fixture now creates and starts the real registry in
+separate bounded operations and removes both its container and volume. The
+focused Cloud Build build-and-push scenario passed in 8.8 seconds, and the
+complete official Google Cloud SDK suite passed in 36 seconds.
+
 ## 2026-07-30 — Successful Azure validation stopped emitting failure annotations
 
 The Microsoft Azure workload-dispatch invariant logged its two justified

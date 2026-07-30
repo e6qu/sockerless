@@ -89,7 +89,9 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 59. Enabled the existing persistent stores for all three production Compose simulator services on named data volumes.
 60. Completed the AWS Batch Cloudscape operating surface with real jobs, definitions, status polling, details, and termination through standard AWS APIs.
 61. Regenerated every committed simulator surface table and assigned the new AWS CLI persistence case to exactly one shard.
-62. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+62. Upgraded gRPC to 1.83.0 across every affected Google Cloud backend, simulator, and official-client module, then passed all five modules and the complete official Google Cloud SDK suite.
+63. Split the Cloud Build test registry's real create/start lifecycle and removed its anonymous volume, making Podman failures immediate and successful build-and-push coverage leak-free.
+64. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 

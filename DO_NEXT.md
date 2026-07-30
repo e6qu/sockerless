@@ -70,6 +70,13 @@ Associated AWS WAF web ACLs evaluated the complete supported statement graph,
 and Elastic Load Balancing listener creates and modifications failed
 transactionally when their real TCP or TLS binding could not be provisioned.
 
+The pre-push freshness gate advanced gRPC to 1.83.0 in both Cloud Run
+backends, the shared Google Cloud backend, the simulator, and its official SDK
+module. All five affected modules and the complete official Google Cloud SDK
+suite passed. The Cloud Build build-and-push scenario separated real registry
+container creation from startup and removed its anonymous volume, so Podman
+start errors stayed visible and successful runs leaked no fixture storage.
+
 Google Cloud Spanner executed SQL, DML, batch DML, reads, mutations,
 transactions, partitions, and batch writes through real SQLite transactions
 over official REST and gRPC clients. Strict DDL and composite-key behavior
