@@ -4,6 +4,13 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Client-module downloads became retry-protected
+
+Google Cloud and Microsoft Azure SDK/CLI jobs pre-fetched their separate
+official-client modules through the existing bounded module-proxy retry helper.
+A transient proxy reset therefore failed or retried during the explicit
+dependency phase instead of bypassing retry inside `go test`.
+
 ## 2026-07-30 — Terraform-in-ECS failures became bounded and diagnosable
 
 The Step Functions integration kept HashiCorp Terraform 1.15.8 and AWS

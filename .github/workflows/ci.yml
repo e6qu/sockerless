@@ -368,6 +368,7 @@ jobs:
         if: matrix.suite == 'sdk'
         run: |
           bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
+          bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}/sdk-tests
           cd simulators/${{ matrix.cloud }}
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
@@ -383,6 +384,7 @@ jobs:
         if: matrix.suite == 'cli'
         run: |
           bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
+          bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}/cli-tests
           cd simulators/${{ matrix.cloud }}
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
