@@ -27,6 +27,15 @@ The Microsoft Azure workload-dispatch invariant keeps its two justified
 `os/exec` exceptions as source comments without logging file-and-line-shaped
 messages that GitHub's Go problem matcher turns into failure annotations.
 
+The hosted persistence follow-up keeps transactional Elastic Load Balancing
+validation real by importing issued test certificates, restores caller-owned
+Cloud Map custom-health semantics, projects persistence-only AWS Glue database
+tags out of public responses, and binds the durable Lambda callback receiver
+where Linux workload containers can reach it through Docker's host gateway.
+Secondary process-mode simulator fixtures also request an ephemeral Route 53
+DNS port instead of competing with host multicast DNS on UDP 5353, and the NLB
+hostname shape fixture no longer requires privileged host port 443.
+
 The pre-push dependency audit's coordinated AWS SDK patch wave and Google Cloud
 Spanner client release were applied across every affected Go module with the
 repository-owned upgrade target. Direct pins and their resolved transitive

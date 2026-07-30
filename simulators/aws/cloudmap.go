@@ -727,11 +727,6 @@ func handleCMCreateService(w http.ResponseWriter, r *http.Request) {
 		// AWS Cloud Map always uses a failure threshold of one for custom
 		// health checks, regardless of the value supplied by the caller.
 		req.HealthCheckCustomConfig.FailureThreshold = 1
-	} else if ns, ok := cmNamespaces.Get(namespaceId); ok && ns.Type == "HTTP" && req.DnsConfig == nil {
-		// HTTP namespaces use caller-reported instance health. AWS returns the
-		// custom-health configuration even when the client leaves its sole,
-		// fixed-value member out of CreateService.
-		req.HealthCheckCustomConfig = &CMHealthCheckCustomConfig{FailureThreshold: 1}
 	}
 	svc := CMService{
 		Id:                      svcId,

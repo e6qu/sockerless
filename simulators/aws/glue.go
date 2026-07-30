@@ -31,6 +31,31 @@ type GlueDatabase struct {
 	CreateTableDefaultPermissions []map[string]any  `json:"CreateTableDefaultPermissions"`
 }
 
+// glueDatabaseWire omits the persistence-only Tags member. AWS Glue accepts
+// database tags during creation and exposes them through GetTags, but its
+// public Database shape does not contain Tags.
+type glueDatabaseWire struct {
+	Name                          string            `json:"Name"`
+	CatalogId                     string            `json:"CatalogId"`
+	Parameters                    map[string]string `json:"Parameters"`
+	CreateTime                    float64           `json:"CreateTime"`
+	LocationUri                   string            `json:"LocationUri,omitempty"`
+	Description                   string            `json:"Description,omitempty"`
+	CreateTableDefaultPermissions []map[string]any  `json:"CreateTableDefaultPermissions"`
+}
+
+func glueDatabaseResponse(db GlueDatabase) glueDatabaseWire {
+	return glueDatabaseWire{
+		Name:                          db.Name,
+		CatalogId:                     db.CatalogId,
+		Parameters:                    db.Parameters,
+		CreateTime:                    db.CreateTime,
+		LocationUri:                   db.LocationUri,
+		Description:                   db.Description,
+		CreateTableDefaultPermissions: db.CreateTableDefaultPermissions,
+	}
+}
+
 type GlueTable struct {
 	Name              string            `json:"Name"`
 	DatabaseName      string            `json:"DatabaseName"`
@@ -527,7 +552,7 @@ func handleGlueGetDatabase(w http.ResponseWriter, r *http.Request) {
 		glueWriteError(w, "EntityNotFoundException", "Database not found: "+req.Name)
 		return
 	}
-	glueWriteJSON(w, http.StatusOK, map[string]any{"Database": db})
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Database": glueDatabaseResponse(db)})
 }
 
 func handleGlueGetDatabases(w http.ResponseWriter, r *http.Request) {
@@ -540,7 +565,11 @@ func handleGlueGetDatabases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	all := glueDatabases.List()
+	stored := glueDatabases.List()
+	all := make([]glueDatabaseWire, 0, len(stored))
+	for _, database := range stored {
+		all = append(all, glueDatabaseResponse(database))
+	}
 	maxR := 0
 	if req.MaxResults != nil {
 		maxR = *req.MaxResults

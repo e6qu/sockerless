@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2786 filed - 2786 fixed - 8 open - 16 false positives.**
+**2789 filed - 2789 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,7 +23,10 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| ~~2786~~ | P1 | Elastic Load Balancing official-client validation | listener fidelity tests requested unissued certificates and reused host port 443 after listeners began provisioning their real data plane | Elastic Load Balancing SDK fixtures imported issued, exportable AWS Certificate Manager certificates through the official API, selected isolated live listener ports, and gave nested simulator processes explicit Route 53 DNS coordinates; the focused cases and complete AWS SDK compute shard passed. |
+| ~~2789~~ | P1 | AWS Lambda durable-restart validation | a host callback receiver listened only on loopback, which Linux workload containers could not reach through Docker's host-gateway address | The restart harness binds its callback receiver on all IPv4 host interfaces and passes the exact bound port through `host.docker.internal`, so the real durable runtime publishes its execution ARN and checkpoint token before simulator replacement on Linux and Docker Desktop. |
+| ~~2788~~ | P1 | AWS Glue public response fidelity | persistence-only database tags leaked into the public `Database` response shape and failed runtime Smithy validation | Glue retains database tags durably for `GetTags`, IAM evaluation, update, and restart while `GetDatabase` and `GetDatabases` project the exact public shape without `Tags`. |
+| ~~2787~~ | P1 | AWS Cloud Map custom health semantics | every service in an HTTP namespace acquired an implicit custom-health configuration even when the caller omitted it | Cloud Map creates `HealthCheckCustomConfig` only when the caller supplies it; plain HTTP-namespace services again reject `UpdateInstanceCustomHealthStatus` with `CustomHealthNotFound`, while explicitly configured services retain the fixed threshold of one. |
+| ~~2786~~ | P1 | Elastic Load Balancing official-client validation | listener tests requested unissued or fabricated certificates and reused host port 443 after listeners began provisioning their real data plane | SDK and CLI fixtures import issued, exportable AWS Certificate Manager material through their official clients, select isolated live listener ports, and give nested simulator processes explicit Route 53 DNS coordinates; the exact SDK compute and CLI edge-delivery shards passed. |
 | ~~2785~~ | P1 | Google Cloud SDK real-registry validation | `docker run --rm` hid a Podman start failure behind auto-removal waiting and leaked anonymous registry volumes | The official Cloud Build build-and-push test separated real registry container creation from startup, surfaced start errors directly, and removed the exact container plus its anonymous volume; the focused test and complete official Google Cloud SDK suite passed. |
 | ~~2784~~ | P1 | dependency freshness | gRPC 1.83.0 was published during pre-push validation | Every affected Cloud Run backend, shared Google Cloud backend, simulator, and official SDK-test module upgraded to gRPC 1.83.0 and its selected current graph; all five modules, the authenticated freshness audit, and the complete official Google Cloud SDK suite passed. |
 | ~~2783~~ | P1 | AWS Terraform restart validation | the production-shaped harness inherited the process-wide Route 53 DNS port | The official HashiCorp AWS provider harness selected an explicit ephemeral Route 53 coordinate, so another simulator could not prevent startup; apply, hard process replacement with the same data directory, a zero-change refresh plan, and destroy passed. |

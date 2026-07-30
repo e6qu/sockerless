@@ -667,7 +667,7 @@ func TestLambdaDurableCallbackResumesAfterSimulatorRestart_SDK(t *testing.T) {
 		DurableARN      string `json:"durableArn"`
 	}
 	coordinates := make(chan runtimeCoordinates, 1)
-	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	receiver := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var received runtimeCoordinates
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -676,8 +676,14 @@ func TestLambdaDurableCallbackResumesAfterSimulatorRestart_SDK(t *testing.T) {
 		coordinates <- received
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	receiverListener, err := net.Listen("tcp4", "0.0.0.0:0")
+	require.NoError(t, err)
+	receiver.Listener = receiverListener
+	receiver.Start()
 	defer receiver.Close()
-	containerReceiverURL := strings.Replace(receiver.URL, "127.0.0.1", "host.docker.internal", 1)
+	_, receiverPort, err := net.SplitHostPort(receiver.Listener.Addr().String())
+	require.NoError(t, err)
+	containerReceiverURL := "http://host.docker.internal:" + receiverPort
 	source := fmt.Sprintf(`
 exports.handler = async (event) => {
   const callback = event.InitialExecutionState.Operations.find(
@@ -701,7 +707,7 @@ exports.handler = async (event) => {
   console.log("DURABLE_ARN=" + event.DurableExecutionArn);
   return {Status:"PENDING"};
 };`, containerReceiverURL)
-	_, err := lambdaAPI.CreateFunction(testCtx, &lambda.CreateFunctionInput{
+	_, err = lambdaAPI.CreateFunction(testCtx, &lambda.CreateFunctionInput{
 		FunctionName: aws.String(functionName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/persistent-callback-role"),
 		Runtime:      lambdatypes.RuntimeNodejs20x,

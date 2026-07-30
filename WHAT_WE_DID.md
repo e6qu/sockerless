@@ -4,20 +4,30 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
-## 2026-07-30 — Elastic Load Balancing validation reached the live data plane
+## 2026-07-30 — Hosted persistence validation kept public contracts exact
 
 Two listener-fidelity tests had requested DNS-validated AWS Certificate Manager
-certificates without completing validation, and several listener tests reused
-host port 443. Those control-plane-only fixtures stopped at the correct
-certificate or bind error once Elastic Load Balancing listener creation became
-transactional and provisioned a real TCP/TLS data plane.
+certificates without completing validation, CLI fixtures used pending or
+fabricated certificate coordinates, and several listener tests reused host
+port 443. Those fixtures stopped at the correct certificate or bind error once
+listener creation became transactional and provisioned a real TCP/TLS data
+plane.
 
-The official SDK fixtures now import real self-signed certificate and key
-material through AWS Certificate Manager, select available listener ports, and
-give each nested simulator process an explicit isolated Route 53 DNS
-coordinate. The four focused HTTPS listener cases, the process-mode and
-Network Load Balancing regressions, and the complete official AWS SDK compute
-shard passed.
+The official SDK and CLI fixtures now import real self-signed certificate and
+key material through AWS Certificate Manager, select isolated live ports, and
+give each nested simulator process an explicit Route 53 DNS coordinate.
+
+The same hosted run caught three independent contract defects. An HTTP Cloud
+Map namespace no longer silently adds custom health to a service whose caller
+omitted it. AWS Glue database tags remain durable for tag APIs and IAM without
+appearing in the public `Database` Smithy shape. The durable Lambda restart
+harness listens on all IPv4 host interfaces and gives the workload container
+the exact dynamic port through `host.docker.internal`, so Linux can publish
+checkpoint coordinates before hard simulator replacement.
+
+The focused cases, complete SDK services-a-m and compute shards, and complete
+CLI edge-delivery shard passed with runtime Smithy validation reporting no
+violations.
 
 ## 2026-07-30 — The Google Cloud client graph advanced to gRPC 1.83
 
