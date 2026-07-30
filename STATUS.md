@@ -6,7 +6,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/ecs-service-runtime` |
+| Active branch | `feat/aws-orchestration-fidelity` |
+| Amazon ECS task-role credentials | Task definitions with `taskRoleArn` received expiring task-metadata credentials registered with AWS Signature Version 4 enforcement. Real-VPC workloads used the standard ECS relative credential URI, and an official AWS CLI task called `sts:GetCallerIdentity` as the exact assumed-role principal. |
 | Amazon ECS legacy restart compatibility | A persisted `RUNNING` task with no state-scoped workload containers transitions to `STOPPED` with `EssentialContainerExited`, an explicit control-plane restart reason, and unknown exit code instead of aborting the complete AWS simulator startup. Recovery continues across every such task, container-instance counts and managed resources reconcile, and actual runtime discovery failures remain fatal. |
 | Amazon ECS service execution | Amazon Elastic Container Service (ECS) services launched their declared task-definition workloads through the real task runtime, derived counts from durable tasks, replaced stopped tasks, rolled task-definition revisions within deployment bounds, honored task scale-in protection, registered and deregistered real load-balancer targets, waited for target health, and recovered the same service task after hard simulator replacement. Desired-count changes, Application Auto Scaling, deletion, and ECS Express Mode all drove that scheduler. Official AWS SDK and AWS CLI clients plus production-shaped HashiCorp AWS provider apply/restart/zero-plan/destroy scenarios passed. |
 | AWS CLI shard budget | The hosted appdata2 job passed every test and its Smithy ratchet but was finalized as cancelled at the exact 15-minute job limit. Measured top-level time split RDS, Route 53, S3, and restart persistence from Scheduler, Secrets Manager, Step Functions, SNS, SQS, SSM, STS, and WAFv2 into appdata2/appdata3; deterministic coverage still assigns every CLI test exactly once. |
@@ -46,6 +47,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 ## Verified Gates
 
+- Focused Amazon ECS task-role coverage passed an official AWS CLI workload from metadata credential acquisition through an IAM-authorized, Signature Version 4-signed `sts:GetCallerIdentity` response carrying the expected assumed-role ARN; focused metadata and Signature Version 4 unit coverage passed.
 - Focused Amazon ECS recovery coverage passed for multiple legacy `RUNNING` tasks without workload containers and for the fail-loud runtime-discovery path.
 - An unmodified ecs-dev-desktop Terraform consumer applied 178 resources through the standard `AWS_ENDPOINT_URL`, passed its external shared-infrastructure assertions, produced a zero-change plan with runtime Smithy validation reporting no violations, destroyed all 178 resources, and retained a clean external working tree.
 - The complete official AWS SDK suite passed in 487 seconds after the same-day dependency upgrade; all five official HashiCorp AWS provider packages passed apply, refresh, workload/data-plane assertions, and destroy.

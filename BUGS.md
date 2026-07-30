@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2799 filed - 2797 fixed - 11 open - 16 false positives.**
+**2800 filed - 2800 fixed - 11 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -26,6 +26,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2800~~ | P1 | AWS simulator Amazon ECS task roles | task definitions retained `taskRoleArn` without issuing workload credentials | Amazon ECS task metadata now issues renewable temporary credentials bound to the task role and registers each session with AWS Signature Version 4 enforcement. Real-VPC tasks receive the standard `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`; the cross-platform Docker-network tier exposes the task-scoped full endpoint. An official AWS CLI workload used the returned session to call `sts:GetCallerIdentity` and observed its exact assumed-role ARN. |
 | ~~2794~~ | P1 | AWS simulator Amazon ECS services | long-lived services reported desired tasks without launching workload containers | Amazon ECS services launched durable task-definition workloads through the existing real task runtime, replaced stopped tasks, rolled revisions within deployment bounds, honored task protection, registered healthy Elastic Load Balancing targets, scaled and deleted real tasks, reconciled ECS Express Mode, and adopted the same service task after hard simulator replacement. Official AWS SDK, AWS CLI, and production-shaped HashiCorp AWS provider clients proved the runtime externally. |
 | ~~2797~~ | P1 | GitHub Container Registry release retention | a 20-release cutoff bisected an indivisible historical two-release package version and retained 21 releases | Retention computed connected release components across generic, AMD64, and ARM64 tags, kept only complete recognized components, and stopped below the cap when the next atomic component would exceed it; realistic fixtures proved a coalesced component was either retained whole or deleted whole. |
 | ~~2796~~ | P2 | Google Cloud API Gateway specification freshness | the local Discovery edge published revision 20260724 after the hosted Dataflow drift was retained | The repository vendor script retained the newest multi-probe API Gateway v1 document and updated its provenance; all 30 methods and paths and all 143 schema field/type entries were unchanged, so simulator behavior and its measured coverage floor remained current. |

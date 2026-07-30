@@ -4,6 +4,29 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Amazon ECS task roles became real workload credentials
+
+An ECS task definition could retain `taskRoleArn`, but the launched workload
+received only simulated instance-metadata credentials. AWS SDKs therefore
+signed DynamoDB and other data-plane calls with an unregistered access key, and
+IAM enforcement correctly rejected them. That left applications such as ECS
+Dev Desktop alive but permanently unready.
+
+The ECS task-metadata service now resolves the task definition's role, mints an
+expiring temporary session, records its secret and assumed-role principal in
+the Signature Version 4 credential registry, and returns the standard ECS
+credential document. Linux real-VPC tasks receive
+`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` at `169.254.170.2`; the
+cross-platform Docker-network tier receives the same task-scoped endpoint at
+its reachable host coordinate. Metadata endpoint coordinates also retain the
+trailing slash required by Botocore's path construction.
+
+A real official AWS CLI container proved the complete contract. It launched as
+a Fargate task with a real IAM task role, acquired the generated credentials,
+called `sts:GetCallerIdentity` through the simulator, and observed the exact
+`assumed-role/<role>/<task-id>` ARN. Focused metadata and Signature Version 4
+unit tests passed with the container integration.
+
 ## 2026-07-30 — Amazon ECS services became durable workload schedulers
 
 Amazon Elastic Container Service (ECS) services stopped manufacturing

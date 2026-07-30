@@ -4,6 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+Amazon ECS task definitions now turn `taskRoleArn` into usable workload
+credentials. The task-metadata service mints expiring `ASIA` sessions bound to
+the configured IAM role, registers them with the simulator's Signature Version
+4 verifier, and injects the standard ECS relative credential URI in the
+real-VPC network tier. The Docker-network compatibility tier exposes the same
+task-scoped endpoint through its reachable host coordinate. An official AWS CLI
+container consumed the credentials and returned its exact assumed-role ARN
+from `sts:GetCallerIdentity`.
+
 The Terraform-in-ECS workload image carries an ahead-of-time filesystem mirror
 of the exact AWS provider, so its private-subnet task performs one offline
 initialization and one apply without undeclared internet egress. It publishes

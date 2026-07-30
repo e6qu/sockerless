@@ -277,8 +277,9 @@ var allowedNonSpecRoutes = map[string]string{
 
 	// ECS task metadata endpoint v4 — documented AWS surface
 	// (ECS_CONTAINER_METADATA_URI_V4), not in the ECS Smithy model.
-	"GET /v4/{id}":      "ECS task metadata v4 (container)",
-	"GET /v4/{id}/task": "ECS task metadata v4 (task)",
+	"GET /v4/{id}":             "ECS task metadata v4 (container)",
+	"GET /v4/{id}/task":        "ECS task metadata v4 (task)",
+	"GET /v4/{id}/credentials": "ECS task-role credential provider",
 
 	// Docker Registry HTTP API V2 — ECR's real data plane (docker
 	// push/pull). The wire contract is the OCI distribution spec, not
