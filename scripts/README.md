@@ -39,7 +39,7 @@ The four simulator scans run in pre-commit when matching files are touched and u
 | `check-single-open-pr.sh` | Fails if more than one PR is open in the project — all work goes in the single open PR. Best-effort offline, authoritative in CI. | pre-commit + CI (`single-open-pr` job) |
 | `check-no-tool-absent-skips.sh` | Fails if a diff adds a test skip for a missing tool/dependency; required tools must be installed by the harness or fail loud. | pre-commit |
 | `check-embedded-ui-build-order.sh` | Requires the root production build to create every web bundle before compiling Go binaries that embed those bundles. | pre-commit |
-| `check-container-publication.sh` | Locks the main-only immutable short-SHA GHCR publication shape: revision-labelled native ARM64/AMD64 tags, a two-platform manifest, no mutable tags, and release-aware retention that preserves shared package versions carrying a retained tag. | pre-commit + CI `check-deps` |
+| `check-container-publication.sh` | Locks the main-only immutable short-SHA GHCR publication shape: revision-labelled native ARM64/AMD64 tags, a two-platform manifest, no mutable tags, and release-aware retention that treats coalesced package versions as atomic components. | pre-commit + CI `check-deps` |
 | `check-workflow-timeouts.sh` | Requires every ordinary GitHub Actions job to declare a verifiable timeout of at most 15 minutes and validates every matrix timeout value. | pre-commit + `make check-workflow-timeouts` |
 | `test-workflow-timeouts.sh` | Exercises the workflow-timeout parser against passing, over-limit, missing, reusable-workflow, and matrix fixtures. | pre-commit + `make check-workflow-timeouts` |
 | `update-readme-badges.sh` | Recomputes the badge values in the top-level `README.md` from codebase stats. | pre-push |
@@ -69,5 +69,5 @@ The four simulator scans run in pre-commit when matching files are touched and u
 |---|---|---|
 | `manual-test-real-workloads.sh` | Exercises a sockerless backend with real container workloads via `docker run` against `DOCKER_HOST`, batching probes to keep cloud cold-start latency manageable. | manual |
 | `dispatch-gcp-cells.sh` | Operator runbook automation for the GCP runner cells: triggers each cell via `gh` / GitLab REST, polls to a terminal state, prints run URLs + status. | manual (needs `GITHUB_TOKEN` / `GITLAB_TOKEN`) |
-| `prune-ghcr-images.sh` | Deletes unrecognized and obsolete GHCR versions while retaining the newest 20 complete immutable releases (`tag`, `tag-amd64`, `tag-arm64`) and any package version that shares one of those retained tags. | main-only publication workflow |
-| `select-obsolete-container-versions.jq` | Release-aware GHCR retention selector that never deletes a package version carrying a retained tag. | helper |
+| `prune-ghcr-images.sh` | Deletes unrecognized and obsolete GHCR versions while retaining up to the newest 20 complete immutable releases (`tag`, `tag-amd64`, `tag-arm64`) without splitting an indivisible coalesced package-version component. | main-only publication workflow |
+| `select-obsolete-container-versions.jq` | Release-aware GHCR retention selector that keeps complete connected release components atomically and stops below the cap when the next component would exceed it. | helper |
