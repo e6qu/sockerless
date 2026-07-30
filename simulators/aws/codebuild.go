@@ -35,6 +35,8 @@ type CBProject struct {
 	ServiceRole  string         `json:"serviceRole"`
 	Created      float64        `json:"created"`
 	LastModified float64        `json:"lastModified"`
+	BuildTimeout int            `json:"timeoutInMinutes"`
+	QueueTimeout int            `json:"queuedTimeoutInMinutes"`
 	Tags         []CBTag        `json:"tags,omitempty"`
 }
 
@@ -56,6 +58,12 @@ type CBBuild struct {
 	// ReportGroups holds the report-group names the buildspec references; the
 	// build produces a Report per group on completion. Sim-internal, not wire.
 	ReportGroups []string `json:"-"`
+	// BuildPlan and RuntimeEnvironment are the durable execution inputs needed
+	// to resume the narrow pre-container window after a control-plane restart.
+	// Once the real build container exists, recovery adopts that container
+	// instead of executing the commands again.
+	BuildPlan          *cbBuildPlan      `json:"-"`
+	RuntimeEnvironment map[string]string `json:"-"`
 }
 
 type CBPhase struct {
@@ -152,6 +160,10 @@ func registerCodeBuild(r *sim.AWSRouter, srv *sim.Server) {
 	cbReports = sim.MakeStore[CBReport](srv.DB(), "codebuild_reports")
 	cbSourceCreds = sim.MakeStore[CBSourceCredential](srv.DB(), "codebuild_source_credentials")
 	cbSourceCredSecrets = sim.MakeStore[cbSourceCredentialSecret](srv.DB(), "codebuild_source_credential_secrets")
+	cbRebuildBuildSequence()
+	cbBuildCancelMu.Lock()
+	cbBuildCancels = make(map[string]func())
+	cbBuildCancelMu.Unlock()
 
 	r.Register("CodeBuild_20161006.CreateProject", handleCBCreateProject)
 	r.Register("CodeBuild_20161006.BatchGetProjects", handleCBBatchGetProjects)
@@ -194,6 +206,96 @@ var cbBuildSeq atomic.Int64
 
 func cbNextBuildSeq() int64 { return cbBuildSeq.Add(1) }
 
+func cbBuildTimeout(project CBProject) time.Duration {
+	minutes := project.BuildTimeout
+	if minutes <= 0 {
+		minutes = 60
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
+func cbRebuildBuildSequence() {
+	var latest int64
+	for _, build := range cbBuilds.List() {
+		if build.Seq > latest {
+			latest = build.Seq
+		}
+	}
+	cbBuildSeq.Store(latest)
+}
+
+func cbAdoptBuildWorkload(
+	id string,
+	resourceName string,
+	startTime float64,
+	timeout time.Duration,
+	complete func(string, int, string),
+) (bool, error) {
+	existing, err := sim.FindExistingContainers(map[string]string{
+		"sockerless-codebuild-build": id,
+	})
+	if err != nil {
+		return false, fmt.Errorf("find %s %s container: %w", resourceName, id, err)
+	}
+	if len(existing) > 1 {
+		return false, fmt.Errorf("%s %s has %d workload containers", resourceName, id, len(existing))
+	}
+	if len(existing) == 0 {
+		return false, nil
+	}
+	remaining := time.Until(time.Unix(int64(startTime), 0).Add(timeout))
+	if remaining <= 0 {
+		remaining = time.Nanosecond
+	}
+	handle, err := sim.AdoptContainer(existing[0].ID, sim.ContainerConfig{Timeout: remaining}, sim.NoopSink{})
+	if err != nil {
+		return false, fmt.Errorf("adopt %s %s container: %w", resourceName, id, err)
+	}
+	cbRegisterBuildCancel(id, handle.Cancel)
+	go func() {
+		result := handle.Wait()
+		cbUnregisterBuildCancel(id)
+		reason := ""
+		if result.Error != nil {
+			reason = result.Error.Error()
+		} else if result.ExitCode != 0 {
+			reason = fmt.Sprintf("Build command exited with status %d", result.ExitCode)
+		}
+		complete(id, result.ExitCode, reason)
+	}()
+	return true, nil
+}
+
+func cbRecoverBuilds() error {
+	for _, build := range cbBuilds.List() {
+		if build.BuildStatus != "IN_PROGRESS" {
+			continue
+		}
+		project, ok := cbProjects.Get(build.ProjectName)
+		if !ok {
+			return fmt.Errorf("build %s references missing project %s", build.ID, build.ProjectName)
+		}
+		adopted, err := cbAdoptBuildWorkload(
+			build.ID,
+			"build",
+			build.StartTime,
+			cbBuildTimeout(project),
+			cbCompleteBuild,
+		)
+		if err != nil {
+			return err
+		}
+		if adopted {
+			continue
+		}
+		if build.BuildPlan == nil {
+			return fmt.Errorf("build %s has neither a workload container nor a persisted build plan", build.ID)
+		}
+		go cbRunBuild(build.ID, project, *build.BuildPlan, build.RuntimeEnvironment)
+	}
+	return nil
+}
+
 func cbWriteJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 	w.WriteHeader(status)
@@ -212,13 +314,15 @@ func cbWriteError(w http.ResponseWriter, code string, msg string) {
 
 func handleCBCreateProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string         `json:"name"`
-		Description string         `json:"description"`
-		Source      map[string]any `json:"source"`
-		Artifacts   map[string]any `json:"artifacts"`
-		Environment map[string]any `json:"environment"`
-		ServiceRole string         `json:"serviceRole"`
-		Tags        []CBTag        `json:"tags"`
+		Name         string         `json:"name"`
+		Description  string         `json:"description"`
+		Source       map[string]any `json:"source"`
+		Artifacts    map[string]any `json:"artifacts"`
+		Environment  map[string]any `json:"environment"`
+		ServiceRole  string         `json:"serviceRole"`
+		BuildTimeout int            `json:"timeoutInMinutes"`
+		QueueTimeout int            `json:"queuedTimeoutInMinutes"`
+		Tags         []CBTag        `json:"tags"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		cbWriteError(w, "InvalidInputException", "invalid JSON")
@@ -247,6 +351,12 @@ func handleCBCreateProject(w http.ResponseWriter, r *http.Request) {
 	if req.Environment == nil {
 		req.Environment = map[string]any{"type": "LINUX_CONTAINER", "image": "aws/codebuild/standard:7.0", "computeType": "BUILD_GENERAL1_SMALL"}
 	}
+	if req.BuildTimeout == 0 {
+		req.BuildTimeout = 60
+	}
+	if req.QueueTimeout == 0 {
+		req.QueueTimeout = 480
+	}
 	p := CBProject{
 		Name:         req.Name,
 		Arn:          cbARN("project/" + req.Name),
@@ -257,6 +367,8 @@ func handleCBCreateProject(w http.ResponseWriter, r *http.Request) {
 		ServiceRole:  req.ServiceRole,
 		Created:      now,
 		LastModified: now,
+		BuildTimeout: req.BuildTimeout,
+		QueueTimeout: req.QueueTimeout,
 		Tags:         req.Tags,
 	}
 	cbProjects.Put(req.Name, p)
@@ -413,17 +525,20 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 
 	buildID := req.ProjectName + ":" + uuid.New().String()
 	now := cbEpochNow()
+	runtimeEnvironment := cbEnvironment(p.Environment, req.EnvironmentVariablesOverride)
 	build := CBBuild{
-		ID:            buildID,
-		Arn:           cbARN("build/" + buildID),
-		ProjectName:   req.ProjectName,
-		SourceVersion: req.SourceVersion,
-		BuildStatus:   "IN_PROGRESS",
-		Seq:           cbNextBuildSeq(),
-		StartTime:     now,
-		EndTime:       now,
-		Environment:   p.Environment,
-		ReportGroups:  reportGroups,
+		ID:                 buildID,
+		Arn:                cbARN("build/" + buildID),
+		ProjectName:        req.ProjectName,
+		SourceVersion:      req.SourceVersion,
+		BuildStatus:        "IN_PROGRESS",
+		Seq:                cbNextBuildSeq(),
+		StartTime:          now,
+		EndTime:            now,
+		Environment:        p.Environment,
+		ReportGroups:       reportGroups,
+		BuildPlan:          &plan,
+		RuntimeEnvironment: runtimeEnvironment,
 		Phases: []CBPhase{
 			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
 			{PhaseType: "BUILD", PhaseStatus: "IN_PROGRESS", StartTime: now},
@@ -431,7 +546,7 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 		Logs: cbLogsLocation(),
 	}
 	cbBuilds.Put(buildID, build)
-	go cbRunBuild(buildID, p, plan, cbEnvironment(p.Environment, req.EnvironmentVariablesOverride))
+	go cbRunBuild(buildID, p, plan, runtimeEnvironment)
 	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
 }
 
@@ -509,16 +624,19 @@ func handleCBRetryBuild(w http.ResponseWriter, r *http.Request) {
 	// mirroring real CodeBuild which produces a new build resource.
 	buildID := prior.ProjectName + ":" + uuid.New().String()
 	now := cbEpochNow()
+	runtimeEnvironment := cbEnvironment(p.Environment, nil)
 	build := CBBuild{
-		ID:            buildID,
-		Arn:           cbARN("build/" + buildID),
-		ProjectName:   prior.ProjectName,
-		SourceVersion: prior.SourceVersion,
-		BuildStatus:   "IN_PROGRESS",
-		Seq:           cbNextBuildSeq(),
-		StartTime:     now,
-		EndTime:       now,
-		Environment:   p.Environment,
+		ID:                 buildID,
+		Arn:                cbARN("build/" + buildID),
+		ProjectName:        prior.ProjectName,
+		SourceVersion:      prior.SourceVersion,
+		BuildStatus:        "IN_PROGRESS",
+		Seq:                cbNextBuildSeq(),
+		StartTime:          now,
+		EndTime:            now,
+		Environment:        p.Environment,
+		BuildPlan:          &plan,
+		RuntimeEnvironment: runtimeEnvironment,
 		Phases: []CBPhase{
 			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
 			{PhaseType: "BUILD", PhaseStatus: "IN_PROGRESS", StartTime: now},
@@ -526,7 +644,7 @@ func handleCBRetryBuild(w http.ResponseWriter, r *http.Request) {
 		Logs: cbLogsLocation(),
 	}
 	cbBuilds.Put(buildID, build)
-	go cbRunBuild(buildID, p, plan, cbEnvironment(p.Environment, nil))
+	go cbRunBuild(buildID, p, plan, runtimeEnvironment)
 	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
 }
 
@@ -663,7 +781,7 @@ func cbRunCommands(buildID string, project CBProject, plan cbBuildPlan, env map[
 		Binds:        []string{filepath.Clean(workDir) + ":/codebuild/output/src:z"},
 		Env:          env,
 		ExtraHosts:   hostMetadataExtraHosts(),
-		Timeout:      time.Hour,
+		Timeout:      cbBuildTimeout(project),
 		Labels:       map[string]string{"sockerless-codebuild-build": buildID},
 		Sandbox:      sim.SandboxFargate,
 	}, sim.NoopSink{})

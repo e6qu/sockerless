@@ -46,11 +46,17 @@ type SQLDatabase struct {
 }
 
 type SQLUser struct {
-	Name        string   `json:"name"`
-	Instance    string   `json:"instance,omitempty"`
-	Project     string   `json:"project,omitempty"`
-	Host        string   `json:"host,omitempty"`
-	Type        string   `json:"type,omitempty"`
+	Name                 string                `json:"name"`
+	Instance             string                `json:"instance,omitempty"`
+	Project              string                `json:"project,omitempty"`
+	Host                 string                `json:"host,omitempty"`
+	Type                 string                `json:"type,omitempty"`
+	ServerRoles          []string              `json:"serverRoles,omitempty"`
+	SQLServerUserDetails *SQLServerUserDetails `json:"sqlserverUserDetails,omitempty"`
+}
+
+type SQLServerUserDetails struct {
+	Disabled    bool     `json:"disabled,omitempty"`
 	ServerRoles []string `json:"serverRoles,omitempty"`
 }
 
@@ -477,6 +483,30 @@ func sqlOnPremisesConfiguration(in map[string]any) map[string]any {
 	return out
 }
 
+func mergeSQLServerRoles(existing, added []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(added))
+	merged := make([]string, 0, len(existing)+len(added))
+	for _, role := range append(append([]string(nil), existing...), added...) {
+		if _, duplicate := seen[role]; duplicate {
+			continue
+		}
+		seen[role] = struct{}{}
+		merged = append(merged, role)
+	}
+	return merged
+}
+
+func copySQLServerUserDetails(details *SQLServerUserDetails, roles []string) *SQLServerUserDetails {
+	if details == nil && roles == nil {
+		return nil
+	}
+	out := &SQLServerUserDetails{ServerRoles: append([]string(nil), roles...)}
+	if details != nil {
+		out.Disabled = details.Disabled
+	}
+	return out
+}
+
 func handleSQLInsertInstance(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	var req SQLInstance
@@ -713,13 +743,18 @@ func handleSQLInsertUser(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "name is required")
 		return
 	}
+	serverRoles := req.ServerRoles
+	if serverRoles == nil && req.SQLServerUserDetails != nil {
+		serverRoles = req.SQLServerUserDetails.ServerRoles
+	}
 	u := SQLUser{
-		Name:        req.Name,
-		Instance:    instance,
-		Project:     project,
-		Host:        req.Host,
-		Type:        defaultStr(req.Type, "BUILT_IN"),
-		ServerRoles: req.ServerRoles,
+		Name:                 req.Name,
+		Instance:             instance,
+		Project:              project,
+		Host:                 req.Host,
+		Type:                 defaultStr(req.Type, "BUILT_IN"),
+		ServerRoles:          append([]string(nil), serverRoles...),
+		SQLServerUserDetails: copySQLServerUserDetails(req.SQLServerUserDetails, serverRoles),
 	}
 	sqlUsers.Put(sqlUserKey(project, instance, req.Host, req.Name), u)
 	sqlUserSecrets.Put(sqlUserKey(project, instance, req.Host, req.Name), sqlUserCredential{Password: wire.Password})
@@ -790,8 +825,21 @@ func handleSQLUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Type != "" {
 		current.Type = req.Type
 	}
-	if req.ServerRoles != nil {
-		current.ServerRoles = req.ServerRoles
+	serverRoles := req.ServerRoles
+	if serverRoles == nil && req.SQLServerUserDetails != nil {
+		serverRoles = req.SQLServerUserDetails.ServerRoles
+	}
+	if serverRoles != nil {
+		if r.URL.Query().Get("revokeExistingServerRoles") == "true" {
+			current.ServerRoles = append([]string(nil), serverRoles...)
+		} else {
+			current.ServerRoles = mergeSQLServerRoles(current.ServerRoles, serverRoles)
+		}
+	}
+	if req.SQLServerUserDetails != nil {
+		current.SQLServerUserDetails = copySQLServerUserDetails(req.SQLServerUserDetails, current.ServerRoles)
+	} else if current.SQLServerUserDetails != nil {
+		current.SQLServerUserDetails.ServerRoles = append([]string(nil), current.ServerRoles...)
 	}
 	sqlUsers.Put(sqlUserKey(project, instance, current.Host, current.Name), current)
 	if wire.Password != "" {

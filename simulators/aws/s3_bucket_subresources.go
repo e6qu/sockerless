@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -18,6 +17,7 @@ import (
 // stored bytes is a stricter equivalent that catches re-encoding
 // drift).
 type S3BucketConfig struct {
+	Key         string
 	Bucket      string
 	Subresource string
 	Body        []byte
@@ -25,11 +25,8 @@ type S3BucketConfig struct {
 	Headers     map[string]string
 }
 
-var (
-	s3BucketConfigsMu sync.Mutex
-	// keyed by `<bucket>/<subresource>`
-	s3BucketConfigs = map[string]S3BucketConfig{}
-)
+// keyed by `<bucket>/<subresource>`.
+var s3BucketConfigs sim.Store[S3BucketConfig]
 
 const s3LifecycleTransitionDefaultMinimumObjectSize = "all_storage_classes_128K"
 
@@ -186,15 +183,15 @@ func handleS3PutBucketSubresource(w http.ResponseWriter, r *http.Request, sub st
 	}
 	headers := bucketSubresourceResponseHeaders(sub, r)
 	id := r.URL.Query().Get("id")
-	s3BucketConfigsMu.Lock()
-	s3BucketConfigs[s3BucketConfigKeyID(bucket, sub, id)] = S3BucketConfig{
+	key := s3BucketConfigKeyID(bucket, sub, id)
+	s3BucketConfigs.Put(key, S3BucketConfig{
+		Key:         key,
 		Bucket:      bucket,
 		Subresource: sub,
 		Body:        body,
 		ContentType: contentType,
 		Headers:     headers,
-	}
-	s3BucketConfigsMu.Unlock()
+	})
 	// Mirror the bucket policy into the central resource-policy store so the
 	// IAM enforcement gate can resolve it by the bucket ARN.
 	if sub == "policy" {
@@ -214,9 +211,7 @@ func handleS3DeleteBucketSubresource(w http.ResponseWriter, r *http.Request, sub
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3BucketConfigsMu.Lock()
-	delete(s3BucketConfigs, s3BucketConfigKeyID(bucket, sub, r.URL.Query().Get("id")))
-	s3BucketConfigsMu.Unlock()
+	s3BucketConfigs.Delete(s3BucketConfigKeyID(bucket, sub, r.URL.Query().Get("id")))
 	if sub == "policy" {
 		iamDeleteResourcePolicy(s3BucketARN(bucket))
 	}
@@ -231,9 +226,7 @@ func getStoredBucketSubresource(bucket, sub string) ([]byte, string, map[string]
 }
 
 func getStoredBucketSubresourceID(bucket, sub, id string) ([]byte, string, map[string]string, bool) {
-	s3BucketConfigsMu.Lock()
-	defer s3BucketConfigsMu.Unlock()
-	cfg, ok := s3BucketConfigs[s3BucketConfigKeyID(bucket, sub, id)]
+	cfg, ok := s3BucketConfigs.Get(s3BucketConfigKeyID(bucket, sub, id))
 	if !ok {
 		return nil, "", nil, false
 	}
@@ -241,19 +234,14 @@ func getStoredBucketSubresourceID(bucket, sub, id string) ([]byte, string, map[s
 }
 
 func listStoredBucketSubresources(bucket, sub string) [][]byte {
-	prefix := s3BucketConfigKeyID(bucket, sub, "") + "/"
-	s3BucketConfigsMu.Lock()
-	defer s3BucketConfigsMu.Unlock()
-	keys := make([]string, 0)
-	for key := range s3BucketConfigs {
-		if strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	out := make([][]byte, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, append([]byte(nil), s3BucketConfigs[key].Body...))
+	configs := s3BucketConfigs.Filter(func(config S3BucketConfig) bool {
+		return config.Bucket == bucket && config.Subresource == sub &&
+			strings.HasPrefix(config.Key, s3BucketConfigKeyID(bucket, sub, "")+"/")
+	})
+	sort.Slice(configs, func(i, j int) bool { return configs[i].Key < configs[j].Key })
+	out := make([][]byte, 0, len(configs))
+	for _, config := range configs {
+		out = append(out, append([]byte(nil), config.Body...))
 	}
 	return out
 }

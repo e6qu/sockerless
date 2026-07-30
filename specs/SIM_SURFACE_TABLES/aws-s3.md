@@ -13,15 +13,15 @@ Surface registered in `simulators/aws/s3.go` (and related files grouped under th
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `GET /{$}` | ✓ `simulators/aws/s3.go:194::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /{bucket}` | ✓ `simulators/aws/s3.go:195::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /{bucket}` | ✓ `simulators/aws/s3.go:196::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /{bucket}` | ✓ `simulators/aws/s3.go:197::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /{bucket}/{key...}` | ✓ `simulators/aws/s3.go:198::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /{bucket}/{key...}` | ✓ `simulators/aws/s3.go:199::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /{bucket}/{key...}` | ✓ `simulators/aws/s3.go:200::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /{bucket}/{key...}` | ✓ `simulators/aws/s3.go:205::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /{bucket}` | ✓ `simulators/aws/s3.go:206::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /{$}` | ✓ `simulators/aws/s3.go:200::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /{bucket}` | ✓ `simulators/aws/s3.go:201::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /{bucket}` | ✓ `simulators/aws/s3.go:202::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /{bucket}` | ✓ `simulators/aws/s3.go:203::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /{bucket}/{key...}` | ✓ `simulators/aws/s3.go:204::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /{bucket}/{key...}` | ✓ `simulators/aws/s3.go:205::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /{bucket}/{key...}` | ✓ `simulators/aws/s3.go:206::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /{bucket}/{key...}` | ✓ `simulators/aws/s3.go:211::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /{bucket}` | ✓ `simulators/aws/s3.go:212::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

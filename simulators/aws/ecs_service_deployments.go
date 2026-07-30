@@ -40,9 +40,9 @@ type ECSServiceRevisionRec struct {
 	LaunchType         string  `json:"launchType,omitempty"`
 	PlatformVersion    string  `json:"platformVersion,omitempty"`
 	CreatedAt          float64 `json:"createdAt"`
-	// namespace links the revision (and so the service) to a Cloud Map namespace
+	// Namespace links the revision (and so the service) to a Cloud Map namespace
 	// for ListServicesByNamespace; never on the wire.
-	namespace string `json:"-"`
+	Namespace string `json:"-"`
 }
 
 var (
@@ -77,7 +77,7 @@ func ecsRecordServiceDeployment(svc ECSService, namespace string) {
 		LaunchType:         svc.LaunchType,
 		PlatformVersion:    svc.PlatformVersion,
 		CreatedAt:          now,
-		namespace:          namespace,
+		Namespace:          namespace,
 	})
 	depArn := ecsArn("service-deployment", ecsServiceArnSuffix(svc.ServiceArn)+"/"+generateNumericID())
 	ecsServiceDeployments.Put(depArn, ECSServiceDeploymentRec{
@@ -284,7 +284,7 @@ func handleECSListServicesByNamespace(w http.ResponseWriter, r *http.Request) {
 	seen := map[string]bool{}
 	var arns []string
 	for _, rev := range ecsServiceRevisions.List() {
-		if rev.namespace != req.Namespace {
+		if rev.Namespace != req.Namespace {
 			continue
 		}
 		if seen[rev.ServiceArn] {

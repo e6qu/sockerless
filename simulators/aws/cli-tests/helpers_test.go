@@ -124,6 +124,8 @@ var (
 	lambdaHandlerImageName string
 	containerCommandImage  string
 	tmpDir                 string
+	persistenceDir         string
+	simulatorPort          int
 	awsCLIVersion          string
 	provisionedToolDirs    []string
 )
@@ -226,9 +228,14 @@ func TestMain(m *testing.M) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 
+	simulatorPort = port
+	persistenceDir, err = os.MkdirTemp("", "sockerless-aws-cli-state-")
+	if err != nil {
+		log.Fatalf("Failed to create simulator persistence directory: %v", err)
+	}
+
 	// Start simulator
-	simCmd = exec.Command(binaryPath)
-	simCmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port))
+	simCmd = newCLISimulatorCommand()
 	simCmd.Stdout = os.Stdout
 	simCmd.Stderr = os.Stderr
 	if err := simCmd.Start(); err != nil {
@@ -253,7 +260,34 @@ func TestMain(m *testing.M) {
 	for _, dir := range provisionedToolDirs {
 		os.RemoveAll(dir)
 	}
+	os.RemoveAll(persistenceDir)
 	os.Exit(code)
+}
+
+func newCLISimulatorCommand() *exec.Cmd {
+	cmd := exec.Command(binaryPath)
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simulatorPort),
+		"SIM_DNS_PORT=0",
+		"SIM_PERSIST=true",
+		"SIM_DATA_DIR="+persistenceDir,
+	)
+	return cmd
+}
+
+func restartCLISimulator(t *testing.T) {
+	t.Helper()
+	shutdownSimulator(simCmd)
+	simCmd = newCLISimulatorCommand()
+	simCmd.Stdout = os.Stdout
+	simCmd.Stderr = os.Stderr
+	if err := simCmd.Start(); err != nil {
+		t.Fatalf("Failed to restart simulator: %v", err)
+	}
+	if err := waitForHealth(baseURL + "/health"); err != nil {
+		shutdownSimulator(simCmd)
+		t.Fatalf("Restarted simulator did not become healthy: %v", err)
+	}
 }
 
 func shutdownSimulator(cmd *exec.Cmd) {

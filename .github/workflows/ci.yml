@@ -586,7 +586,7 @@ jobs:
             timeout: 1200s
             timeout_minutes: 15
           - suite: appdata2
-            run: '^Test(RDS|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
+            run: '^Test(AWSServiceState|RDS|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
             timeout: 1200s
             timeout_minutes: 15
     steps:

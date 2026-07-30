@@ -13,10 +13,15 @@ import (
 )
 
 type ASLaunchConfiguration struct {
-	Name         string
-	ImageId      string
-	InstanceType string
-	KeyName      string
+	Name                     string
+	ImageId                  string
+	InstanceType             string
+	KeyName                  string
+	AssociatePublicIPAddress bool
+	EbsOptimized             bool
+	InstanceMonitoring       bool
+	SecurityGroups           []string
+	UserData                 string
 }
 
 type AutoScalingGroup struct {
@@ -143,10 +148,15 @@ func handleASCreateLaunchConfiguration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lc := ASLaunchConfiguration{
-		Name:         name,
-		ImageId:      firstNonEmpty(r.FormValue("ImageId"), "ami-simulated"),
-		InstanceType: firstNonEmpty(r.FormValue("InstanceType"), "t3.micro"),
-		KeyName:      r.FormValue("KeyName"),
+		Name:                     name,
+		ImageId:                  firstNonEmpty(r.FormValue("ImageId"), "ami-simulated"),
+		InstanceType:             firstNonEmpty(r.FormValue("InstanceType"), "t3.micro"),
+		KeyName:                  r.FormValue("KeyName"),
+		AssociatePublicIPAddress: strings.EqualFold(r.FormValue("AssociatePublicIpAddress"), "true"),
+		EbsOptimized:             strings.EqualFold(r.FormValue("EbsOptimized"), "true"),
+		InstanceMonitoring:       !strings.EqualFold(r.FormValue("InstanceMonitoring.Enabled"), "false"),
+		SecurityGroups:           autoscalingParamList(r, "SecurityGroups.member"),
+		UserData:                 r.FormValue("UserData"),
 	}
 	asLaunchConfigurations.Put(name, lc)
 	asEmptyResponse(w, "CreateLaunchConfiguration")
@@ -166,8 +176,12 @@ func handleASDescribeLaunchConfigurations(w http.ResponseWriter, r *http.Request
 	}
 	var items strings.Builder
 	for _, lc := range configs {
-		fmt.Fprintf(&items, `<member><LaunchConfigurationName>%s</LaunchConfigurationName><ImageId>%s</ImageId><InstanceType>%s</InstanceType><KeyName>%s</KeyName></member>`,
-			xmlEscape(lc.Name), xmlEscape(lc.ImageId), xmlEscape(lc.InstanceType), xmlEscape(lc.KeyName))
+		var groups strings.Builder
+		for _, group := range lc.SecurityGroups {
+			fmt.Fprintf(&groups, "<member>%s</member>", xmlEscape(group))
+		}
+		fmt.Fprintf(&items, `<member><LaunchConfigurationName>%s</LaunchConfigurationName><LaunchConfigurationARN>arn:aws:autoscaling:%s:%s:launchConfiguration:%s:launchConfigurationName/%s</LaunchConfigurationARN><ImageId>%s</ImageId><InstanceType>%s</InstanceType><KeyName>%s</KeyName><AssociatePublicIpAddress>%t</AssociatePublicIpAddress><EbsOptimized>%t</EbsOptimized><InstanceMonitoring><Enabled>%t</Enabled></InstanceMonitoring><SecurityGroups>%s</SecurityGroups><BlockDeviceMappings></BlockDeviceMappings><UserData>%s</UserData></member>`,
+			xmlEscape(lc.Name), awsRegion(), awsAccountID(), xmlEscape(lc.Name), xmlEscape(lc.Name), xmlEscape(lc.ImageId), xmlEscape(lc.InstanceType), xmlEscape(lc.KeyName), lc.AssociatePublicIPAddress, lc.EbsOptimized, lc.InstanceMonitoring, groups.String(), xmlEscape(lc.UserData))
 	}
 	asResponse(w, "DescribeLaunchConfigurations", fmt.Sprintf("<LaunchConfigurations>%s</LaunchConfigurations>", items.String()))
 }

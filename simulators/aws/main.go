@@ -22,6 +22,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -133,6 +134,11 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 	registerStepFunctions(awsRouter, srv)
 	registerCodeBuild(awsRouter, srv)
 	registerCodeBuildExtended(awsRouter, srv)
+	if options.startBackgroundEvaluators {
+		if err := cbRecoverBuilds(); err != nil {
+			return nil, nil, nil, fmt.Errorf("restore AWS CodeBuild builds: %w", err)
+		}
+	}
 	registerGlue(awsRouter, srv)
 	registerApplicationAutoScaling(awsRouter, srv, options.startBackgroundEvaluators)
 	registerBudgets(awsRouter, srv)
@@ -215,7 +221,7 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 	registerFirehose(awsRouter, srv)
 	registerACMPrivateCA(awsRouter, srv)
 	registerCloudFront(srv)
-	registerRoute53(srv)
+	registerRoute53(srv, options.startBackgroundEvaluators)
 	registerAmplify(srv)
 	registerAPIGateway(srv)
 	registerAPIGatewayV2(srv)
@@ -223,6 +229,11 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 
 	// Batch — REST/JSON protocol (path-based, no X-Amz-Target)
 	registerBatch(srv)
+	if options.startBackgroundEvaluators {
+		if err := recoverECSTasks(); err != nil {
+			return nil, nil, nil, fmt.Errorf("restore Amazon Elastic Container Service tasks: %w", err)
+		}
+	}
 
 	// EventBridge Scheduler — REST/JSON protocol (path-based, no X-Amz-Target)
 	registerScheduler(srv)
@@ -231,6 +242,18 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)
+
+	if options.startBackgroundEvaluators {
+		if err := recoverLambdaInvocations(); err != nil {
+			return nil, nil, nil, fmt.Errorf("restore AWS Lambda invocations: %w", err)
+		}
+		recoverStepFunctionsExecutions()
+		recoverLambdaDurableExecutions()
+		if err := recoverAmplifyComputeInstances(); err != nil {
+			return nil, nil, nil, fmt.Errorf("restore AWS Amplify Hosting compute: %w", err)
+		}
+		recoverAmplifyJobs()
+	}
 
 	return srv, awsRouter, queryRouter, nil
 }

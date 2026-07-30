@@ -3,6 +3,7 @@ package simulator
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -23,7 +24,18 @@ const containerReaperArgument = "--sockerless-container-reaper"
 var (
 	simulatorRunID    string
 	simulatorProvider string
+	simulatorStateID  string
 )
+
+func configureSimulatorIdentity(provider, stateDir string) {
+	simulatorProvider = provider
+	if stateDir == "" {
+		simulatorStateID = ""
+		return
+	}
+	digest := sha256.Sum256([]byte(provider + "\x00" + stateDir))
+	simulatorStateID = hex.EncodeToString(digest[:])
+}
 
 func newSimulatorRunID() (string, error) {
 	var value [16]byte
@@ -39,6 +51,9 @@ func simulatorLabels(extra map[string]string) map[string]string {
 		"sockerless-sim-provider": simulatorProvider,
 		"sockerless-sim-run":      simulatorRunID,
 	}
+	if simulatorStateID != "" {
+		labels["sockerless-sim-state"] = simulatorStateID
+	}
 	for key, value := range extra {
 		labels[key] = value
 	}
@@ -46,6 +61,7 @@ func simulatorLabels(extra map[string]string) map[string]string {
 }
 
 func startContainerReaper(provider string) error {
+	simulatorProvider = provider
 	runID, err := newSimulatorRunID()
 	if err != nil {
 		return fmt.Errorf("allocate simulator run identifier: %w", err)
@@ -54,7 +70,6 @@ func startContainerReaper(provider string) error {
 	if err != nil {
 		return fmt.Errorf("resolve simulator executable: %w", err)
 	}
-	simulatorProvider = provider
 	simulatorRunID = runID
 	command := exec.Command(executable, containerReaperArgument, provider, runID, strconv.Itoa(os.Getpid()))
 	realexec.DetachCommand(command)

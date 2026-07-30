@@ -16,6 +16,75 @@ type refItem struct {
 	Items  []string          `json:"items"`
 }
 
+type hiddenStateItem struct {
+	Name       string            `json:"name"`
+	Secret     string            `json:"-"`
+	Attributes map[string]string `json:"-"`
+	Runtime    chan struct{}     `json:"-" persist:"-"`
+}
+
+func TestSQLiteStorePersistsFieldsHiddenFromWireJSON(t *testing.T) {
+	dir := t.TempDir()
+	db, err := OpenDB(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewSQLiteStore[hiddenStateItem](db, "hidden_state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Put("item", hiddenStateItem{
+		Name:       "visible",
+		Secret:     "survived",
+		Attributes: map[string]string{"state": "durable"},
+		Runtime:    make(chan struct{}),
+	})
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = OpenDB(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err = NewSQLiteStore[hiddenStateItem](db, "hidden_state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := store.Get("item")
+	if !ok {
+		t.Fatal("persisted item was missing")
+	}
+	if got.Name != "visible" || got.Secret != "survived" || got.Attributes["state"] != "durable" {
+		t.Fatalf("hidden fields did not survive SQLite restart: %+v", got)
+	}
+	if got.Runtime != nil {
+		t.Fatal("disposable runtime coordination was persisted")
+	}
+}
+
+func TestSQLiteStoreReadsPreEnvelopeJSONRows(t *testing.T) {
+	dir := t.TempDir()
+	db, err := OpenDB(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := NewSQLiteStore[testItem](db, "legacy_state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO legacy_state (key, value) VALUES (?, ?)`,
+		"legacy", []byte(`{"name":"before-envelope","value":7}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := store.Get("legacy")
+	if !ok || got.Name != "before-envelope" || got.Value != 7 {
+		t.Fatalf("legacy JSON row did not decode: %+v, present=%t", got, ok)
+	}
+}
+
 func makeStores(t *testing.T) map[string]Store[testItem] {
 	t.Helper()
 

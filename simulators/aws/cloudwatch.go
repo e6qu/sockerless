@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -46,8 +45,7 @@ var (
 	cwLogGroups  sim.Store[CWLogGroup]
 	cwLogStreams sim.Store[CWLogStream]
 	cwLogEvents  sim.Store[[]CWLogEvent]
-	cwSeqMu      sync.Mutex
-	cwSeqCounter int64
+	cwSequences  sim.Store[int64]
 )
 
 func cwLogGroupArn(name string) string {
@@ -66,8 +64,8 @@ func registerCloudWatchLogs(r *sim.AWSRouter, srv *sim.Server) {
 	cwLogGroups = sim.MakeStore[CWLogGroup](srv.DB(), "cw_log_groups")
 	cwLogStreams = sim.MakeStore[CWLogStream](srv.DB(), "cw_log_streams")
 	cwLogEvents = sim.MakeStore[[]CWLogEvent](srv.DB(), "cw_log_events")
+	cwSequences = sim.MakeStore[int64](srv.DB(), "cw_sequences")
 	cwQueries = sim.MakeStore[CWQuery](srv.DB(), "cw_insights_queries")
-	cwSeqCounter = 1
 	registerCloudWatchInsights(r)
 	registerCloudWatchLogsOps(r, srv)
 	registerCloudWatchLogsExtra2(r, srv)
@@ -89,6 +87,15 @@ func registerCloudWatchLogs(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("Logs_20140328.TagResource", handleCWTagResource)
 	r.Register("Logs_20140328.AssociateKmsKey", handleCWAssociateKmsKey)
 	r.Register("Logs_20140328.DisassociateKmsKey", handleCWDisassociateKmsKey)
+}
+
+func cwNextSequenceToken() string {
+	var sequence int64
+	cwSequences.Upsert("logs", func(current *int64) {
+		*current++
+		sequence = *current
+	})
+	return fmt.Sprintf("%016d", sequence)
 }
 
 // handleCWAssociateKmsKey sets the KMS key on an existing log group (the path
@@ -252,17 +259,12 @@ func handleCWCreateLogStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cwSeqMu.Lock()
-	cwSeqCounter++
-	seq := cwSeqCounter
-	cwSeqMu.Unlock()
-
 	ls := CWLogStream{
 		LogStreamName:       req.LogStreamName,
 		LogGroupName:        req.LogGroupName,
 		CreationTime:        time.Now().UnixMilli(),
 		Arn:                 cwLogStreamArn(req.LogGroupName, req.LogStreamName),
-		UploadSequenceToken: fmt.Sprintf("%016d", seq),
+		UploadSequenceToken: cwNextSequenceToken(),
 	}
 	cwLogStreams.Put(key, ls)
 	cwLogEvents.Put(key, []CWLogEvent{})
@@ -386,8 +388,10 @@ func handleCWPutLogEvents(w http.ResponseWriter, r *http.Request) {
 	cwEvaluateMetricFilters(req.LogGroupName, req.LogEvents)
 
 	// Update stream timestamps
+	nextSequenceToken := cwNextSequenceToken()
 	cwLogStreams.Update(key, func(s *CWLogStream) {
 		s.LastIngestionTime = now
+		s.UploadSequenceToken = nextSequenceToken
 		if len(newEvents) > 0 {
 			if s.FirstEventTimestamp == 0 {
 				s.FirstEventTimestamp = newEvents[0].Timestamp
@@ -396,13 +400,8 @@ func handleCWPutLogEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
-	cwSeqMu.Lock()
-	cwSeqCounter++
-	seq := cwSeqCounter
-	cwSeqMu.Unlock()
-
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"nextSequenceToken": fmt.Sprintf("%016d", seq),
+		"nextSequenceToken": nextSequenceToken,
 	})
 }
 

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -100,9 +99,8 @@ func lambdaVersionExists(fn, version string) bool {
 	if version == "" || version == "$LATEST" {
 		return true
 	}
-	lambdaVersionsMu.Lock()
-	defer lambdaVersionsMu.Unlock()
-	for _, v := range lambdaVersions[fn] {
+	versions, _ := lambdaVersions.Get(fn)
+	for _, v := range versions {
 		if v.Version == version {
 			return true
 		}
@@ -110,17 +108,11 @@ func lambdaVersionExists(fn, version string) bool {
 	return false
 }
 
-// Stores. In-process maps; lifetime matches the running sim process,
-// same as the function runtime state these subresources annotate.
 var (
-	lambdaVersionsMu   sync.Mutex
-	lambdaVersions     = map[string][]LambdaVersion{}
-	lambdaAliasesMu    sync.Mutex
-	lambdaAliases      = map[string]map[string]LambdaAlias{}
-	lambdaPoliciesMu   sync.Mutex
-	lambdaPolicies     = map[string][]LambdaPolicyStatement{}
-	lambdaURLConfigsMu sync.Mutex
-	lambdaURLConfigs   = map[string]LambdaFunctionUrlConfig{}
+	lambdaVersions   sim.Store[[]LambdaVersion]
+	lambdaAliases    sim.Store[map[string]LambdaAlias]
+	lambdaPolicies   sim.Store[[]LambdaPolicyStatement]
+	lambdaURLConfigs sim.Store[LambdaFunctionUrlConfig]
 )
 
 func latestLambdaVersion(fn LambdaFunction) LambdaVersion {
@@ -222,20 +214,19 @@ func lambdaFunctionFromVersion(version LambdaVersion) LambdaFunction {
 }
 
 func publishLambdaVersion(name, description string, fn LambdaFunction) LambdaVersion {
-	lambdaVersionsMu.Lock()
-	defer lambdaVersionsMu.Unlock()
-	versions := lambdaVersions[name]
-	nextNum := len(versions) + 1
-	version := strconv.Itoa(nextNum)
-	v := lambdaVersionFromFunction(fn)
-	v.FunctionArn = fn.FunctionArn + ":" + version
-	v.Version = version
-	v.State = "Active"
-	v.LastUpdateStatus = "Successful"
-	v.LastModified = time.Now().UTC().Format(time.RFC3339)
-	v.RevisionId = generateUUID()
-	v.Description = description
-	lambdaVersions[name] = append(versions, v)
+	var v LambdaVersion
+	lambdaVersions.Upsert(name, func(versions *[]LambdaVersion) {
+		version := strconv.Itoa(len(*versions) + 1)
+		v = lambdaVersionFromFunction(fn)
+		v.FunctionArn = fn.FunctionArn + ":" + version
+		v.Version = version
+		v.State = "Active"
+		v.LastUpdateStatus = "Successful"
+		v.LastModified = time.Now().UTC().Format(time.RFC3339)
+		v.RevisionId = generateUUID()
+		v.Description = description
+		*versions = append(*versions, v)
+	})
 	return v
 }
 
@@ -276,13 +267,12 @@ func handleLambdaListVersions(w http.ResponseWriter, r *http.Request) {
 			"Function not found: %s", name)
 		return
 	}
-	lambdaVersionsMu.Lock()
-	versions := make([]LambdaVersion, 0, len(lambdaVersions[name])+1)
+	published, _ := lambdaVersions.Get(name)
+	versions := make([]LambdaVersion, 0, len(published)+1)
 	if fn, ok := lambdaFunctions.Get(name); ok {
 		versions = append(versions, latestLambdaVersion(fn))
 	}
-	versions = append(versions, lambdaVersions[name]...)
-	lambdaVersionsMu.Unlock()
+	versions = append(versions, published...)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Versions": versions})
 }
 
@@ -323,17 +313,25 @@ func handleLambdaCreateAlias(w http.ResponseWriter, r *http.Request) {
 		RevisionId:      generateUUID(),
 		RoutingConfig:   req.RoutingConfig,
 	}
-	lambdaAliasesMu.Lock()
-	defer lambdaAliasesMu.Unlock()
-	if lambdaAliases[name] == nil {
-		lambdaAliases[name] = map[string]LambdaAlias{}
+	if alias.RoutingConfig != nil && len(alias.RoutingConfig.AdditionalVersionWeights) == 0 {
+		alias.RoutingConfig = nil
 	}
-	if _, exists := lambdaAliases[name][req.Name]; exists {
+	conflict := false
+	lambdaAliases.Upsert(name, func(aliases *map[string]LambdaAlias) {
+		if *aliases == nil {
+			*aliases = map[string]LambdaAlias{}
+		}
+		if _, exists := (*aliases)[req.Name]; exists {
+			conflict = true
+			return
+		}
+		(*aliases)[req.Name] = alias
+	})
+	if conflict {
 		sim.AWSErrorf(w, "ResourceConflictException", http.StatusConflict,
 			"Alias already exists: %s", req.Name)
 		return
 	}
-	lambdaAliases[name][req.Name] = alias
 	sim.WriteJSON(w, http.StatusCreated, alias)
 }
 
@@ -344,10 +342,9 @@ func handleLambdaListAliases(w http.ResponseWriter, r *http.Request) {
 			"Function not found: %s", name)
 		return
 	}
-	lambdaAliasesMu.Lock()
-	defer lambdaAliasesMu.Unlock()
-	out := make([]LambdaAlias, 0, len(lambdaAliases[name]))
-	for _, a := range lambdaAliases[name] {
+	aliases, _ := lambdaAliases.Get(name)
+	out := make([]LambdaAlias, 0, len(aliases))
+	for _, a := range aliases {
 		out = append(out, a)
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Aliases": out})
@@ -356,9 +353,7 @@ func handleLambdaListAliases(w http.ResponseWriter, r *http.Request) {
 func handleLambdaGetAlias(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
 	aliasName := sim.PathParam(r, "alias")
-	lambdaAliasesMu.Lock()
-	defer lambdaAliasesMu.Unlock()
-	if as, ok := lambdaAliases[name]; ok {
+	if as, ok := lambdaAliases.Get(name); ok {
 		if a, ok := as[aliasName]; ok {
 			sim.WriteJSON(w, http.StatusOK, a)
 			return
@@ -381,9 +376,7 @@ func handleLambdaUpdateAlias(w http.ResponseWriter, r *http.Request) {
 			"Invalid request body", http.StatusBadRequest)
 		return
 	}
-	lambdaAliasesMu.Lock()
-	defer lambdaAliasesMu.Unlock()
-	as, ok := lambdaAliases[name]
+	as, ok := lambdaAliases.Get(name)
 	if !ok || as[aliasName].Name == "" {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Alias %s not found on function %s", aliasName, name)
@@ -402,19 +395,22 @@ func handleLambdaUpdateAlias(w http.ResponseWriter, r *http.Request) {
 		a.Description = req.Description
 	}
 	if req.RoutingConfig != nil {
-		a.RoutingConfig = req.RoutingConfig
+		if len(req.RoutingConfig.AdditionalVersionWeights) == 0 {
+			a.RoutingConfig = nil
+		} else {
+			a.RoutingConfig = req.RoutingConfig
+		}
 	}
 	a.RevisionId = generateUUID()
 	as[aliasName] = a
+	lambdaAliases.Put(name, as)
 	sim.WriteJSON(w, http.StatusOK, a)
 }
 
 func handleLambdaDeleteAlias(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
 	aliasName := sim.PathParam(r, "alias")
-	lambdaAliasesMu.Lock()
-	defer lambdaAliasesMu.Unlock()
-	as, ok := lambdaAliases[name]
+	as, ok := lambdaAliases.Get(name)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound, "Function not found: %s", name)
 		return
@@ -424,6 +420,7 @@ func handleLambdaDeleteAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delete(as, aliasName)
+	lambdaAliases.Put(name, as)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -470,18 +467,23 @@ func handleLambdaAddPermission(w http.ResponseWriter, r *http.Request) {
 		}
 		stmt.Condition = cond
 	}
-	lambdaPoliciesMu.Lock()
-	for _, existing := range lambdaPolicies[name] {
-		if existing.Sid == req.StatementId {
-			lambdaPoliciesMu.Unlock()
-			sim.AWSErrorf(w, "ResourceConflictException", http.StatusConflict,
-				"Statement %s already exists", req.StatementId)
-			return
+	conflict := false
+	var stmts []LambdaPolicyStatement
+	lambdaPolicies.Upsert(name, func(policies *[]LambdaPolicyStatement) {
+		for _, existing := range *policies {
+			if existing.Sid == req.StatementId {
+				conflict = true
+				return
+			}
 		}
+		*policies = append(*policies, stmt)
+		stmts = append([]LambdaPolicyStatement(nil), (*policies)...)
+	})
+	if conflict {
+		sim.AWSErrorf(w, "ResourceConflictException", http.StatusConflict,
+			"Statement %s already exists", req.StatementId)
+		return
 	}
-	lambdaPolicies[name] = append(lambdaPolicies[name], stmt)
-	stmts := append([]LambdaPolicyStatement(nil), lambdaPolicies[name]...)
-	lambdaPoliciesMu.Unlock()
 	lambdaMirrorResourcePolicy(fn.FunctionArn, stmts)
 	stmtJSON, err := json.Marshal(stmt)
 	if err != nil {
@@ -502,9 +504,7 @@ func handleLambdaGetPolicy(w http.ResponseWriter, r *http.Request) {
 			"Function not found: %s", name)
 		return
 	}
-	lambdaPoliciesMu.Lock()
-	stmts := append([]LambdaPolicyStatement(nil), lambdaPolicies[name]...)
-	lambdaPoliciesMu.Unlock()
+	stmts, _ := lambdaPolicies.Get(name)
 	if len(stmts) == 0 {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"No policy on function: %s", name)
@@ -531,9 +531,8 @@ func handleLambdaGetPolicy(w http.ResponseWriter, r *http.Request) {
 func handleLambdaRemovePermission(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
 	sid := sim.PathParam(r, "statement")
-	lambdaPoliciesMu.Lock()
-	stmts := lambdaPolicies[name]
-	out := stmts[:0]
+	stmts, _ := lambdaPolicies.Get(name)
+	out := make([]LambdaPolicyStatement, 0, len(stmts))
 	found := false
 	for _, s := range stmts {
 		if s.Sid == sid {
@@ -543,14 +542,12 @@ func handleLambdaRemovePermission(w http.ResponseWriter, r *http.Request) {
 		out = append(out, s)
 	}
 	if !found {
-		lambdaPoliciesMu.Unlock()
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Statement %s not found on function %s", sid, name)
 		return
 	}
-	lambdaPolicies[name] = out
+	lambdaPolicies.Put(name, out)
 	remaining := append([]LambdaPolicyStatement(nil), out...)
-	lambdaPoliciesMu.Unlock()
 	if fn, ok := lambdaFunctions.Get(name); ok {
 		lambdaMirrorResourcePolicy(fn.FunctionArn, remaining)
 	}
@@ -609,23 +606,18 @@ func handleLambdaCreateFunctionUrlConfig(w http.ResponseWriter, r *http.Request)
 		InvokeMode:       req.InvokeMode,
 		Cors:             req.Cors,
 	}
-	lambdaURLConfigsMu.Lock()
-	if _, exists := lambdaURLConfigs[name]; exists {
-		lambdaURLConfigsMu.Unlock()
+	if _, exists := lambdaURLConfigs.Get(name); exists {
 		sim.AWSErrorf(w, "ResourceConflictException", http.StatusConflict,
 			"FunctionUrlConfig already exists for %s", name)
 		return
 	}
-	lambdaURLConfigs[name] = urlConfig
-	lambdaURLConfigsMu.Unlock()
+	lambdaURLConfigs.Put(name, urlConfig)
 	sim.WriteJSON(w, http.StatusCreated, urlConfig)
 }
 
 func handleLambdaGetFunctionUrlConfig(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
-	lambdaURLConfigsMu.Lock()
-	cfg, ok := lambdaURLConfigs[name]
-	lambdaURLConfigsMu.Unlock()
+	cfg, ok := lambdaURLConfigs.Get(name)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"FunctionUrlConfig not found for %s", name)
@@ -646,9 +638,7 @@ func handleLambdaUpdateFunctionUrlConfig(w http.ResponseWriter, r *http.Request)
 			"Invalid request body", http.StatusBadRequest)
 		return
 	}
-	lambdaURLConfigsMu.Lock()
-	defer lambdaURLConfigsMu.Unlock()
-	cfg, ok := lambdaURLConfigs[name]
+	cfg, ok := lambdaURLConfigs.Get(name)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"FunctionUrlConfig not found for %s", name)
@@ -664,19 +654,17 @@ func handleLambdaUpdateFunctionUrlConfig(w http.ResponseWriter, r *http.Request)
 		cfg.Cors = req.Cors
 	}
 	cfg.LastModifiedTime = time.Now().UTC().Format(time.RFC3339)
-	lambdaURLConfigs[name] = cfg
+	lambdaURLConfigs.Put(name, cfg)
 	sim.WriteJSON(w, http.StatusOK, cfg)
 }
 
 func handleLambdaDeleteFunctionUrlConfig(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
-	lambdaURLConfigsMu.Lock()
-	defer lambdaURLConfigsMu.Unlock()
-	if _, ok := lambdaURLConfigs[name]; !ok {
+	if _, ok := lambdaURLConfigs.Get(name); !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"FunctionUrlConfig not found for %s", name)
 		return
 	}
-	delete(lambdaURLConfigs, name)
+	lambdaURLConfigs.Delete(name)
 	w.WriteHeader(http.StatusNoContent)
 }

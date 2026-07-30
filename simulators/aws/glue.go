@@ -21,12 +21,14 @@ import (
 // Python shell job runs execute the script stored at the job's S3 script location.
 
 type GlueDatabase struct {
-	Name        string            `json:"Name"`
-	Parameters  map[string]string `json:"Parameters,omitempty"`
-	CreateTime  float64           `json:"CreateTime"`
-	LocationUri string            `json:"LocationUri,omitempty"`
-	Description string            `json:"Description,omitempty"`
-	Tags        map[string]string `json:"Tags,omitempty"`
+	Name                          string            `json:"Name"`
+	CatalogId                     string            `json:"CatalogId"`
+	Parameters                    map[string]string `json:"Parameters"`
+	CreateTime                    float64           `json:"CreateTime"`
+	LocationUri                   string            `json:"LocationUri,omitempty"`
+	Description                   string            `json:"Description,omitempty"`
+	Tags                          map[string]string `json:"Tags"`
+	CreateTableDefaultPermissions []map[string]any  `json:"CreateTableDefaultPermissions"`
 }
 
 type GlueTable struct {
@@ -460,11 +462,14 @@ func glueWriteError(w http.ResponseWriter, code string, msg string) {
 
 func handleGlueCreateDatabase(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		CatalogId     string            `json:"CatalogId"`
+		Tags          map[string]string `json:"Tags"`
 		DatabaseInput struct {
-			Name        string            `json:"Name"`
-			Parameters  map[string]string `json:"Parameters"`
-			LocationUri string            `json:"LocationUri"`
-			Description string            `json:"Description"`
+			Name                          string            `json:"Name"`
+			Parameters                    map[string]string `json:"Parameters"`
+			LocationUri                   string            `json:"LocationUri"`
+			Description                   string            `json:"Description"`
+			CreateTableDefaultPermissions []map[string]any  `json:"CreateTableDefaultPermissions"`
 		} `json:"DatabaseInput"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -483,12 +488,27 @@ func handleGlueCreateDatabase(w http.ResponseWriter, r *http.Request) {
 		glueWriteError(w, "AlreadyExistsException", "Database already exists: "+req.DatabaseInput.Name)
 		return
 	}
+	if req.CatalogId == "" {
+		req.CatalogId = awsAccountID()
+	}
+	if req.DatabaseInput.Parameters == nil {
+		req.DatabaseInput.Parameters = map[string]string{}
+	}
+	if req.Tags == nil {
+		req.Tags = map[string]string{}
+	}
+	if req.DatabaseInput.CreateTableDefaultPermissions == nil {
+		req.DatabaseInput.CreateTableDefaultPermissions = []map[string]any{}
+	}
 	db := GlueDatabase{
-		Name:        req.DatabaseInput.Name,
-		Parameters:  req.DatabaseInput.Parameters,
-		LocationUri: req.DatabaseInput.LocationUri,
-		Description: req.DatabaseInput.Description,
-		CreateTime:  glueEpochNow(),
+		Name:                          req.DatabaseInput.Name,
+		CatalogId:                     req.CatalogId,
+		Parameters:                    req.DatabaseInput.Parameters,
+		LocationUri:                   req.DatabaseInput.LocationUri,
+		Description:                   req.DatabaseInput.Description,
+		CreateTime:                    glueEpochNow(),
+		Tags:                          req.Tags,
+		CreateTableDefaultPermissions: req.DatabaseInput.CreateTableDefaultPermissions,
 	}
 	glueDatabases.Put(req.DatabaseInput.Name, db)
 	glueWriteJSON(w, http.StatusOK, map[string]any{})
@@ -555,12 +575,14 @@ func handleGlueDeleteDatabase(w http.ResponseWriter, r *http.Request) {
 
 func handleGlueUpdateDatabase(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		CatalogId     string `json:"CatalogId"`
 		Name          string `json:"Name"`
 		DatabaseInput struct {
-			Name        string            `json:"Name"`
-			Parameters  map[string]string `json:"Parameters"`
-			LocationUri string            `json:"LocationUri"`
-			Description string            `json:"Description"`
+			Name                          string            `json:"Name"`
+			Parameters                    map[string]string `json:"Parameters"`
+			LocationUri                   string            `json:"LocationUri"`
+			Description                   string            `json:"Description"`
+			CreateTableDefaultPermissions []map[string]any  `json:"CreateTableDefaultPermissions"`
 		} `json:"DatabaseInput"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -580,12 +602,23 @@ func handleGlueUpdateDatabase(w http.ResponseWriter, r *http.Request) {
 		glueWriteError(w, "EntityNotFoundException", "Database not found: "+req.Name)
 		return
 	}
+	parameters := req.DatabaseInput.Parameters
+	if parameters == nil {
+		parameters = map[string]string{}
+	}
+	defaultPermissions := req.DatabaseInput.CreateTableDefaultPermissions
+	if defaultPermissions == nil {
+		defaultPermissions = []map[string]any{}
+	}
 	updated := GlueDatabase{
-		Name:        req.DatabaseInput.Name,
-		Parameters:  req.DatabaseInput.Parameters,
-		LocationUri: req.DatabaseInput.LocationUri,
-		Description: req.DatabaseInput.Description,
-		CreateTime:  existing.CreateTime,
+		Name:                          req.DatabaseInput.Name,
+		CatalogId:                     firstNonEmpty(req.CatalogId, existing.CatalogId),
+		Parameters:                    parameters,
+		LocationUri:                   req.DatabaseInput.LocationUri,
+		Description:                   req.DatabaseInput.Description,
+		CreateTime:                    existing.CreateTime,
+		Tags:                          existing.Tags,
+		CreateTableDefaultPermissions: defaultPermissions,
 	}
 	// A rename moves the row; otherwise overwrite in place.
 	if req.DatabaseInput.Name != req.Name {

@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -22,9 +21,8 @@ import (
 // key (alias/aws/ebs) when no customer key is set; ResetEbsDefaultKmsKeyId clears
 // any customer key and reverts to that managed default.
 type ebsEncryptionState struct {
-	mu                   sync.Mutex
-	enabledByDefault     bool
-	customerDefaultKeyID string
+	EnabledByDefault     bool
+	CustomerDefaultKeyID string
 }
 
 // awsManagedEBSKeyARN is the ARN of the AWS-managed KMS key (alias/aws/ebs) used
@@ -34,13 +32,13 @@ func awsManagedEBSKeyARN() string {
 }
 
 func (s *ebsEncryptionState) defaultKeyID() string {
-	if s.customerDefaultKeyID != "" {
-		return s.customerDefaultKeyID
+	if s.CustomerDefaultKeyID != "" {
+		return s.CustomerDefaultKeyID
 	}
 	return awsManagedEBSKeyARN()
 }
 
-var ec2EBSEncryption = &ebsEncryptionState{}
+var ec2EBSEncryption sim.Store[ebsEncryptionState]
 
 // fastSnapshotRestore is one (snapshot, AvailabilityZone) fast-snapshot-restore
 // association. Real EC2 transitions enabling -> optimizing -> enabled; the sim
@@ -70,25 +68,15 @@ type snapshotTierState struct {
 
 // snapshotBlockPublicAccess is the account+Region-level snapshot
 // block-public-access singleton: block-all-sharing | block-new-sharing | unblocked.
-type snapshotBlockPublicAccess struct {
-	mu    sync.Mutex
-	state string
-}
-
-var ec2SnapshotBPA = &snapshotBlockPublicAccess{state: "unblocked"}
+var ec2SnapshotBPA sim.Store[string]
 
 // volumeAttributeState holds the autoEnableIO attribute per volume id. Real EC2
 // defaults autoEnableIO to false on a fresh volume.
 var (
-	ec2FSRMu sync.Mutex
 	// ec2FSR is keyed by "<snapshotId>|<az>".
-	ec2FSR = map[string]*fastSnapshotRestore{}
-
-	ec2SnapTierMu sync.Mutex
-	ec2SnapTier   = map[string]*snapshotTierState{}
-
-	ec2VolAutoEnableIOMu sync.Mutex
-	ec2VolAutoEnableIO   = map[string]bool{}
+	ec2FSR             sim.Store[fastSnapshotRestore]
+	ec2SnapTier        sim.Store[snapshotTierState]
+	ec2VolAutoEnableIO sim.Store[bool]
 )
 
 // ec2RecycledSnapshots holds snapshots in the Recycle Bin (state "recoverable").
@@ -98,6 +86,11 @@ var ec2RecycledSnapshots sim.Store[EC2Snapshot]
 
 func registerEC2EBSSnapshot(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2RecycledSnapshots = sim.MakeStore[EC2Snapshot](srv.DB(), "ec2_recycled_snapshots")
+	ec2EBSEncryption = sim.MakeStore[ebsEncryptionState](srv.DB(), "ec2_ebs_encryption")
+	ec2SnapshotBPA = sim.MakeStore[string](srv.DB(), "ec2_snapshot_block_public_access")
+	ec2FSR = sim.MakeStore[fastSnapshotRestore](srv.DB(), "ec2_fast_snapshot_restores")
+	ec2SnapTier = sim.MakeStore[snapshotTierState](srv.DB(), "ec2_snapshot_tiers")
+	ec2VolAutoEnableIO = sim.MakeStore[bool](srv.DB(), "ec2_volume_auto_enable_io")
 
 	// EBS encryption by default
 	r.Register("EnableEbsEncryptionByDefault", handleEnableEbsEncryptionByDefault)
@@ -134,32 +127,28 @@ func registerEC2EBSSnapshot(r *sim.AWSQueryRouter, srv *sim.Server) {
 // ----------------------------------------------------------------------------
 
 func handleEnableEbsEncryptionByDefault(w http.ResponseWriter, r *http.Request) {
-	ec2EBSEncryption.mu.Lock()
-	ec2EBSEncryption.enabledByDefault = true
-	enabled := ec2EBSEncryption.enabledByDefault
-	ec2EBSEncryption.mu.Unlock()
+	ec2EBSEncryption.Upsert("account", func(state *ebsEncryptionState) {
+		state.EnabledByDefault = true
+	})
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<EnableEbsEncryptionByDefaultResponse %s><requestId>%s</requestId><ebsEncryptionByDefault>%t</ebsEncryptionByDefault></EnableEbsEncryptionByDefaultResponse>`,
-		ec2Xmlns(), generateUUID(), enabled)
+		ec2Xmlns(), generateUUID(), true)
 }
 
 func handleDisableEbsEncryptionByDefault(w http.ResponseWriter, r *http.Request) {
-	ec2EBSEncryption.mu.Lock()
-	ec2EBSEncryption.enabledByDefault = false
-	enabled := ec2EBSEncryption.enabledByDefault
-	ec2EBSEncryption.mu.Unlock()
+	ec2EBSEncryption.Upsert("account", func(state *ebsEncryptionState) {
+		state.EnabledByDefault = false
+	})
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DisableEbsEncryptionByDefaultResponse %s><requestId>%s</requestId><ebsEncryptionByDefault>%t</ebsEncryptionByDefault></DisableEbsEncryptionByDefaultResponse>`,
-		ec2Xmlns(), generateUUID(), enabled)
+		ec2Xmlns(), generateUUID(), false)
 }
 
 func handleGetEbsEncryptionByDefault(w http.ResponseWriter, r *http.Request) {
-	ec2EBSEncryption.mu.Lock()
-	enabled := ec2EBSEncryption.enabledByDefault
-	ec2EBSEncryption.mu.Unlock()
+	state, _ := ec2EBSEncryption.Get("account")
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<GetEbsEncryptionByDefaultResponse %s><requestId>%s</requestId><ebsEncryptionByDefault>%t</ebsEncryptionByDefault><sseType>sse-ebs</sseType></GetEbsEncryptionByDefaultResponse>`,
-		ec2Xmlns(), generateUUID(), enabled)
+		ec2Xmlns(), generateUUID(), state.EnabledByDefault)
 }
 
 func handleModifyEbsDefaultKmsKeyId(w http.ResponseWriter, r *http.Request) {
@@ -168,29 +157,30 @@ func handleModifyEbsDefaultKmsKeyId(w http.ResponseWriter, r *http.Request) {
 		ec2ErrorXML(w, "MissingParameter", "The request must contain the parameter KmsKeyId", http.StatusBadRequest)
 		return
 	}
-	ec2EBSEncryption.mu.Lock()
-	ec2EBSEncryption.customerDefaultKeyID = keyID
-	out := ec2EBSEncryption.defaultKeyID()
-	ec2EBSEncryption.mu.Unlock()
+	ec2EBSEncryption.Upsert("account", func(state *ebsEncryptionState) {
+		state.CustomerDefaultKeyID = keyID
+	})
+	state, _ := ec2EBSEncryption.Get("account")
+	out := state.defaultKeyID()
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ModifyEbsDefaultKmsKeyIdResponse %s><requestId>%s</requestId><kmsKeyId>%s</kmsKeyId></ModifyEbsDefaultKmsKeyIdResponse>`,
 		ec2Xmlns(), generateUUID(), xmlEscape(out))
 }
 
 func handleGetEbsDefaultKmsKeyId(w http.ResponseWriter, r *http.Request) {
-	ec2EBSEncryption.mu.Lock()
-	out := ec2EBSEncryption.defaultKeyID()
-	ec2EBSEncryption.mu.Unlock()
+	state, _ := ec2EBSEncryption.Get("account")
+	out := state.defaultKeyID()
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<GetEbsDefaultKmsKeyIdResponse %s><requestId>%s</requestId><kmsKeyId>%s</kmsKeyId></GetEbsDefaultKmsKeyIdResponse>`,
 		ec2Xmlns(), generateUUID(), xmlEscape(out))
 }
 
 func handleResetEbsDefaultKmsKeyId(w http.ResponseWriter, r *http.Request) {
-	ec2EBSEncryption.mu.Lock()
-	ec2EBSEncryption.customerDefaultKeyID = ""
-	out := ec2EBSEncryption.defaultKeyID()
-	ec2EBSEncryption.mu.Unlock()
+	ec2EBSEncryption.Upsert("account", func(state *ebsEncryptionState) {
+		state.CustomerDefaultKeyID = ""
+	})
+	state, _ := ec2EBSEncryption.Get("account")
+	out := state.defaultKeyID()
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ResetEbsDefaultKmsKeyIdResponse %s><requestId>%s</requestId><kmsKeyId>%s</kmsKeyId></ResetEbsDefaultKmsKeyIdResponse>`,
 		ec2Xmlns(), generateUUID(), xmlEscape(out))
@@ -247,8 +237,7 @@ func handleEnableFastSnapshotRestores(w http.ResponseWriter, r *http.Request) {
 				unsuccessful = append(unsuccessful, errItem{snapID, az, "The snapshot does not exist."})
 				continue
 			}
-			ec2FSRMu.Lock()
-			f := &fastSnapshotRestore{
+			f := fastSnapshotRestore{
 				SnapshotID:            snapID,
 				AvailabilityZone:      az,
 				State:                 "enabling",
@@ -256,9 +245,8 @@ func handleEnableFastSnapshotRestores(w http.ResponseWriter, r *http.Request) {
 				OwnerID:               awsAccountID(),
 				EnablingTime:          now,
 			}
-			ec2FSR[fsrKey(snapID, az)] = f
-			ec2FSRMu.Unlock()
-			successful = append(successful, succ{snapID, az, f})
+			ec2FSR.Put(fsrKey(snapID, az), f)
+			successful = append(successful, succ{snapID, az, &f})
 		}
 	}
 	w.Header().Set("Content-Type", "text/xml")
@@ -289,19 +277,17 @@ func handleDisableFastSnapshotRestores(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	for _, snapID := range snaps {
 		for _, az := range azs {
-			ec2FSRMu.Lock()
-			f, ok := ec2FSR[fsrKey(snapID, az)]
+			key := fsrKey(snapID, az)
+			f, ok := ec2FSR.Get(key)
 			if !ok {
-				ec2FSRMu.Unlock()
 				unsuccessful = append(unsuccessful, errItem{snapID, az, "Fast snapshot restore is not enabled for the specified Availability Zone."})
 				continue
 			}
 			f.State = "disabling"
 			f.StateTransitionReason = "Client.UserInitiated"
 			f.DisablingTime = now
-			snapshot := *f
-			ec2FSRMu.Unlock()
-			successful = append(successful, snapshot)
+			ec2FSR.Put(key, f)
+			successful = append(successful, f)
 		}
 	}
 	w.Header().Set("Content-Type", "text/xml")
@@ -321,13 +307,12 @@ func handleDisableFastSnapshotRestores(w http.ResponseWriter, r *http.Request) {
 
 func handleDescribeFastSnapshotRestores(w http.ResponseWriter, r *http.Request) {
 	filters := ec2Filters(r)
-	ec2FSRMu.Lock()
 	var items []fastSnapshotRestore
-	for _, f := range ec2FSR {
-		ec2SettleFSR(f)
-		items = append(items, *f)
+	for _, f := range ec2FSR.List() {
+		ec2SettleFSR(&f)
+		ec2FSR.Put(fsrKey(f.SnapshotID, f.AvailabilityZone), f)
+		items = append(items, f)
 	}
-	ec2FSRMu.Unlock()
 	var matched []fastSnapshotRestore
 	for _, f := range items {
 		if !fsrMatchesFilters(f, filters) {
@@ -418,9 +403,7 @@ func handleModifySnapshotTier(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	ec2SnapTierMu.Lock()
-	ec2SnapTier[snapID] = &snapshotTierState{StorageTier: "archive", TieringStartTime: now}
-	ec2SnapTierMu.Unlock()
+	ec2SnapTier.Put(snapID, snapshotTierState{StorageTier: "archive", TieringStartTime: now})
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ModifySnapshotTierResponse %s><requestId>%s</requestId><snapshotId>%s</snapshotId><tieringStartTime>%s</tieringStartTime></ModifySnapshotTierResponse>`,
 		ec2Xmlns(), generateUUID(), snapID, now.Format(time.RFC3339))
@@ -443,12 +426,7 @@ func handleRestoreSnapshotTier(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	ec2SnapTierMu.Lock()
-	st := ec2SnapTier[snapID]
-	if st == nil {
-		st = &snapshotTierState{}
-		ec2SnapTier[snapID] = st
-	}
+	st, _ := ec2SnapTier.Get(snapID)
 	st.StorageTier = "standard"
 	st.RestoreStartTime = now
 	if permanent {
@@ -456,7 +434,7 @@ func handleRestoreSnapshotTier(w http.ResponseWriter, r *http.Request) {
 	} else {
 		st.RestoreExpiry = now.AddDate(0, 0, restoreDays)
 	}
-	ec2SnapTierMu.Unlock()
+	ec2SnapTier.Put(snapID, st)
 	w.Header().Set("Content-Type", "text/xml")
 	var b strings.Builder
 	fmt.Fprintf(&b, `<RestoreSnapshotTierResponse %s><requestId>%s</requestId><snapshotId>%s</snapshotId><restoreStartTime>%s</restoreStartTime>`,
@@ -518,27 +496,24 @@ func handleEnableSnapshotBlockPublicAccess(w http.ResponseWriter, r *http.Reques
 		ec2ErrorXML(w, "InvalidParameterValue", fmt.Sprintf("Value (%s) for parameter State is invalid. Valid values are block-all-sharing and block-new-sharing.", state), http.StatusBadRequest)
 		return
 	}
-	ec2SnapshotBPA.mu.Lock()
-	ec2SnapshotBPA.state = state
-	ec2SnapshotBPA.mu.Unlock()
+	ec2SnapshotBPA.Put("account", state)
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<EnableSnapshotBlockPublicAccessResponse %s><requestId>%s</requestId><state>%s</state></EnableSnapshotBlockPublicAccessResponse>`,
 		ec2Xmlns(), generateUUID(), state)
 }
 
 func handleDisableSnapshotBlockPublicAccess(w http.ResponseWriter, r *http.Request) {
-	ec2SnapshotBPA.mu.Lock()
-	ec2SnapshotBPA.state = "unblocked"
-	ec2SnapshotBPA.mu.Unlock()
+	ec2SnapshotBPA.Put("account", "unblocked")
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DisableSnapshotBlockPublicAccessResponse %s><requestId>%s</requestId><state>unblocked</state></DisableSnapshotBlockPublicAccessResponse>`,
 		ec2Xmlns(), generateUUID())
 }
 
 func handleGetSnapshotBlockPublicAccessState(w http.ResponseWriter, r *http.Request) {
-	ec2SnapshotBPA.mu.Lock()
-	state := ec2SnapshotBPA.state
-	ec2SnapshotBPA.mu.Unlock()
+	state, _ := ec2SnapshotBPA.Get("account")
+	if state == "" {
+		state = "unblocked"
+	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<GetSnapshotBlockPublicAccessStateResponse %s><requestId>%s</requestId><state>%s</state><managedBy>account</managedBy></GetSnapshotBlockPublicAccessStateResponse>`,
 		ec2Xmlns(), generateUUID(), state)
@@ -565,9 +540,7 @@ func handleDescribeVolumeAttribute(w http.ResponseWriter, r *http.Request) {
 		ec2Xmlns(), generateUUID(), volID)
 	switch attr {
 	case "autoEnableIO":
-		ec2VolAutoEnableIOMu.Lock()
-		val := ec2VolAutoEnableIO[volID]
-		ec2VolAutoEnableIOMu.Unlock()
+		val, _ := ec2VolAutoEnableIO.Get(volID)
 		fmt.Fprintf(&b, "<autoEnableIO><value>%t</value></autoEnableIO>", val)
 	case "productCodes":
 		b.WriteString("<productCodes/>")
@@ -590,9 +563,7 @@ func handleModifyVolumeAttribute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if v := r.FormValue("AutoEnableIO.Value"); v != "" {
-		ec2VolAutoEnableIOMu.Lock()
-		ec2VolAutoEnableIO[volID] = ec2BoolStr(v)
-		ec2VolAutoEnableIOMu.Unlock()
+		ec2VolAutoEnableIO.Put(volID, ec2BoolStr(v))
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ModifyVolumeAttributeResponse %s><requestId>%s</requestId><return>true</return></ModifyVolumeAttributeResponse>`,

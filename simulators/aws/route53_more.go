@@ -48,11 +48,8 @@ var (
 	r53CidrCollections sim.Store[r53StoredCidrCollection]
 	r53DNSSEC          sim.Store[r53StoredDNSSEC]
 	r53PolicyInstances sim.Store[r53StoredTrafficPolicyInstance]
+	r53VPCAuthz        sim.Store[[]R53VPC]
 	r53MoreMu          sync.Mutex
-	// r53VPCAuthz maps a hosted-zone id → VPCs authorized for cross-account
-	// association. Stored apart from the zone row so the zone shape is
-	// untouched.
-	r53VPCAuthz = sync.Map{}
 )
 
 // registerRoute53More mounts the remaining Route 53 REST slices on the shared
@@ -62,6 +59,7 @@ func registerRoute53More(srv *sim.Server) {
 	r53CidrCollections = sim.MakeStore[r53StoredCidrCollection](srv.DB(), "route53_cidr_collections")
 	r53DNSSEC = sim.MakeStore[r53StoredDNSSEC](srv.DB(), "route53_dnssec")
 	r53PolicyInstances = sim.MakeStore[r53StoredTrafficPolicyInstance](srv.DB(), "route53_policy_instances")
+	r53VPCAuthz = sim.MakeStore[[]R53VPC](srv.DB(), "route53_vpc_authorizations")
 
 	dsResource := cloudTrailRESTResource("AWS::Route53::ReusableDelegationSet", "id")
 	cidrResource := cloudTrailRESTResource("AWS::Route53::CidrCollection", "id", "collectionId")
@@ -1144,12 +1142,8 @@ type R53ListVPCAssociationAuthorizationsResponse struct {
 }
 
 func r53VPCAuthzList(zoneID string) []R53VPC {
-	if v, ok := r53VPCAuthz.Load(zoneID); ok {
-		if list, ok := v.([]R53VPC); ok {
-			return list
-		}
-	}
-	return nil
+	list, _ := r53VPCAuthz.Get(zoneID)
+	return list
 }
 
 func handleR53CreateVPCAssociationAuthorization(w http.ResponseWriter, r *http.Request) {
@@ -1177,7 +1171,7 @@ func handleR53CreateVPCAssociationAuthorization(w http.ResponseWriter, r *http.R
 	if !exists {
 		list = append(list, req.VPC)
 	}
-	r53VPCAuthz.Store(zoneID, list)
+	r53VPCAuthz.Put(zoneID, list)
 	r53WriteXML(w, http.StatusOK, R53CreateVPCAssociationAuthorizationResponse{
 		Xmlns:        r53Namespace,
 		HostedZoneId: zoneID,
@@ -1206,7 +1200,7 @@ func handleR53DeleteVPCAssociationAuthorization(w http.ResponseWriter, r *http.R
 			out = append(out, v)
 		}
 	}
-	r53VPCAuthz.Store(zoneID, out)
+	r53VPCAuthz.Put(zoneID, out)
 	r53WriteXML(w, http.StatusOK, struct {
 		XMLName xml.Name `xml:"DeleteVPCAssociationAuthorizationResponse"`
 		Xmlns   string   `xml:"xmlns,attr,omitempty"`
@@ -1385,8 +1379,7 @@ func handleR53ListTagsForResources(w http.ResponseWriter, r *http.Request) {
 	}
 	sets := make([]R53ResourceTagSet, 0, len(req.ResourceIds))
 	for _, rid := range req.ResourceIds {
-		tagsAny, _ := r53Tags.Load(r53TagKey(rtype, rid))
-		tags, _ := tagsAny.([]R53Tag)
+		tags, _ := r53Tags.Get(r53TagKey(rtype, rid))
 		sets = append(sets, R53ResourceTagSet{ResourceType: rtype, ResourceId: rid, Tags: tags})
 	}
 	r53WriteXML(w, http.StatusOK, R53ListTagsForResourcesResponse{Xmlns: r53Namespace, ResourceTagSets: sets})

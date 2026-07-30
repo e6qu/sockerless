@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -100,19 +99,6 @@ func elbv2StartNLBProxy(listener ELBv2Listener) error {
 	elbv2NLBHosts[listener.LoadBalancerArn] = host
 	elbv2NLBProxies[listenerArn] = &elbv2NLBProxy{proxy: proxy, lbArn: listener.LoadBalancerArn, leaseIP: host.leaseIP}
 	return nil
-}
-
-// elbv2StartNLBProxyBestEffort starts the stream proxy for a listener, swallowing
-// a bind failure (a privileged listener port without root, or a same-port
-// collision off Linux) so CreateListener stays faithful to real AWS, which never
-// fails for a sim-local socket-bind issue. The DNSName remains stable and the
-// control plane intact; only the local raw-TCP data plane for this listener is
-// unavailable on the host. The failure is logged so the absent data plane is
-// visible rather than silent.
-func elbv2StartNLBProxyBestEffort(listener ELBv2Listener) {
-	if err := elbv2StartNLBProxy(listener); err != nil {
-		log.Printf("elbv2: NLB stream data plane unavailable for listener %s: %v", listener.Arn, err)
-	}
 }
 
 // elbv2BindNLBProxy binds a stream listener's proxy on the load balancer's

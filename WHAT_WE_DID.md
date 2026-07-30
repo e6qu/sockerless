@@ -55,6 +55,35 @@ source that this simulator does not attach to Database Migration Service.
 Authenticated public-route coverage round-tripped all three fields, and the
 exact compressed documents and provenance moved to revision 20260722.
 
+## 2026-07-30 — Cloud state survived hard simulator replacement
+
+The AWS simulator's durable store retained runtime configuration that public
+JSON intentionally omitted, monotonic sequence state, derived Amazon ECS
+revisions, listener coordinates, accepted asynchronous Lambda invocations, and
+Step Functions external-task checkpoints. Startup rebound real Network Load
+Balancing and Amazon RDS data-plane listeners and adopted or resumed
+state-directory-owned Amazon ECS, AWS Batch, CodeBuild, Amplify, Lambda,
+scheduler, and autoscaling work. Step Functions reattached to the original
+Amazon ECS or CodeBuild task rather than duplicating it, while Lambda preserved
+AWS's at-least-once asynchronous delivery and destination records.
+
+The official AWS SDK hard-restart matrix passed control-plane, live-workload,
+orchestration, asynchronous delivery, Network Load Balancing, and Amazon RDS
+native-endpoint scenarios. The official AWS CLI retained service resources and
+CloudWatch Logs sequence ordering. The production-shaped HashiCorp AWS provider
+completed apply, hard replacement on the same data directory, a zero-change
+refresh plan, and destroy. The deployment recipes enabled persistent data
+directories backed by named volumes for the AWS, Google Cloud, and Microsoft
+Azure simulators.
+
+The same audit made Elastic Load Balancing listener creation and modification
+transactional when a real TCP or TLS bind failed, completed live AWS WAF
+statement evaluation, and expanded the AWS Batch Cloudscape page to real jobs,
+definitions, terminal detail, polling, and termination through the standard
+AWS APIs. Generated service-surface catalogs, AWS CLI shard coverage, and the
+shared Google Cloud and Microsoft Azure dependency graphs were refreshed with
+the implementation.
+
 ## 2026-07-30 — Client-module downloads became retry-protected
 
 Google Cloud and Microsoft Azure SDK/CLI jobs pre-fetched their separate

@@ -7,7 +7,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -116,19 +115,6 @@ func elbv2StartTLSProxy(listener ELBv2Listener) error {
 	}
 	elbv2TLSProxies[listener.Arn] = p
 	return nil
-}
-
-// elbv2StartTLSProxyBestEffort starts the TLS proxy for a listener, swallowing a
-// bind failure (a privileged listener port without root, or a missing
-// certificate) so CreateListener stays faithful to real AWS, which never fails
-// for a sim-local socket-bind issue. The DNSName remains stable and the control
-// plane intact; only the local TLS data plane for this listener is unavailable
-// on the host. The failure is logged so the absent data plane is visible rather
-// than silent.
-func elbv2StartTLSProxyBestEffort(listener ELBv2Listener) {
-	if err := elbv2StartTLSProxy(listener); err != nil {
-		log.Printf("elbv2: TLS data plane unavailable for listener %s: %v", listener.Arn, err)
-	}
 }
 
 // elbv2TLSProxyHostPort returns the host of the bound TLS listener for a given

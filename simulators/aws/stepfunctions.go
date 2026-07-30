@@ -64,7 +64,15 @@ type SFNExecution struct {
 	EncryptionSnapshot     map[string]any     `json:"encryptionSnapshot,omitempty"`
 	RedriveState           string             `json:"redriveState,omitempty"`
 	RedriveInput           string             `json:"redriveInput,omitempty"`
+	CheckpointEnteredDate  float64            `json:"checkpointEnteredDate,omitempty"`
+	TaskCheckpoint         *SFNTaskCheckpoint `json:"taskCheckpoint,omitempty"`
 	RedriveClientTokens    map[string]float64 `json:"redriveClientTokens,omitempty"`
+}
+
+type SFNTaskCheckpoint struct {
+	StateName   string   `json:"stateName"`
+	Resource    string   `json:"resource"`
+	ResourceIDs []string `json:"resourceIds"`
 }
 
 type SFNTag struct {
@@ -935,6 +943,44 @@ func sfnRunExecution(execARN, definition, input string, cancel <-chan struct{}) 
 	sfnCompleteExecution(execARN, status, output, err)
 }
 
+func recoverStepFunctionsExecutions() {
+	for _, execution := range sfnExecutions.List() {
+		if execution.Status != "RUNNING" {
+			continue
+		}
+		definition := execution.DefinitionSnapshot
+		input := execution.Input
+		if execution.RedriveInput != "" {
+			input = execution.RedriveInput
+		}
+		if execution.RedriveState != "" {
+			var snapshot sfnDefinition
+			if err := json.Unmarshal([]byte(definition), &snapshot); err != nil {
+				sfnCompleteExecution(execution.ExecutionArn, "FAILED", "", &sfnExecutionError{
+					Name:  "States.Runtime",
+					Cause: "persisted state machine definition is invalid: " + err.Error(),
+				})
+				continue
+			}
+			snapshot.StartAt = execution.RedriveState
+			encoded, err := json.Marshal(snapshot)
+			if err != nil {
+				sfnCompleteExecution(execution.ExecutionArn, "FAILED", "", &sfnExecutionError{
+					Name:  "States.Runtime",
+					Cause: "persisted state machine definition could not be restored: " + err.Error(),
+				})
+				continue
+			}
+			definition = string(encoded)
+		}
+		cancel := make(chan struct{})
+		if _, alreadyRunning := sfnCancels.LoadOrStore(execution.ExecutionArn, cancel); alreadyRunning {
+			continue
+		}
+		go sfnRunExecution(execution.ExecutionArn, definition, input, cancel)
+	}
+}
+
 func sfnExecute(definition, input string, cancel <-chan struct{}) (string, string, error) {
 	return sfnExecuteWithVariables(definition, input, cancel, nil)
 }
@@ -1026,6 +1072,7 @@ func sfnRunDefDepthRuntime(def sfnDefinition, input string, cancel <-chan struct
 		sfnAppendHistory(executionARN, state.Type+"StateEntered", sfnStateHistoryDetails(current, data, "input"))
 		context := map[string]any{
 			"Execution": map[string]any{
+				"Id":        executionARN,
 				"Input":     executionInput,
 				"StartTime": executionStart,
 			},
@@ -1067,8 +1114,14 @@ func sfnRunDefDepthRuntime(def sfnDefinition, input string, cancel <-chan struct
 			return "", "FAILED", &sfnExecutionError{Name: "States.QueryEvaluationError", Cause: err.Error()}
 		}
 		if depth == 0 && executionARN != "" {
-			if encodedInput, encodeErr := sfnEncodeJSON(effectiveInput); encodeErr == nil {
+			if encodedInput, encodeErr := sfnEncodeJSON(data); encodeErr == nil {
 				sfnExecutions.Update(executionARN, func(execution *SFNExecution) {
+					if execution.RedriveState != current || execution.RedriveInput != encodedInput || execution.CheckpointEnteredDate == 0 {
+						execution.CheckpointEnteredDate = sfnEpochNow()
+					}
+					if execution.RedriveState != current {
+						execution.TaskCheckpoint = nil
+					}
 					execution.RedriveState = current
 					execution.RedriveInput = encodedInput
 				})
@@ -1138,6 +1191,17 @@ func sfnRunDefDepthRuntime(def sfnDefinition, input string, cancel <-chan struct
 			if waitErr != nil {
 				executionErr = waitErr
 				break
+			}
+			if depth == 0 && executionARN != "" {
+				if execution, exists := sfnExecutions.Get(executionARN); exists &&
+					execution.RedriveState == current && execution.CheckpointEnteredDate > 0 {
+					enteredAt := time.Unix(0, int64(execution.CheckpointEnteredDate*float64(time.Second)))
+					if elapsed := time.Since(enteredAt); elapsed >= wait {
+						wait = 0
+					} else if elapsed > 0 {
+						wait -= elapsed
+					}
+				}
 			}
 			timer := time.NewTimer(wait)
 			select {

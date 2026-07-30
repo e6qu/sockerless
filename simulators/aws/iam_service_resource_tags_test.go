@@ -206,9 +206,8 @@ func TestIAMServiceResourceTags(t *testing.T) {
 	})
 
 	t.Run("s3_object_tags", func(t *testing.T) {
-		s3ObjectTagsMu.Lock()
-		s3ObjectTags = map[string]map[string]string{"bkt/key.txt": {"cls": "warm"}}
-		s3ObjectTagsMu.Unlock()
+		s3ObjectTags = sim.MakeStore[map[string]string](nil, "s3_object_tags")
+		s3ObjectTags.Put("bkt/key.txt", map[string]string{"cls": "warm"})
 		r := httptest.NewRequest("GET", "/bkt/key.txt", nil)
 		r.SetPathValue("bucket", "bkt")
 		r.SetPathValue("key", "key.txt")

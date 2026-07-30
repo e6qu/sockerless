@@ -283,11 +283,13 @@ func amplifyStartJobStep(jobID, stepName string) {
 	})
 }
 
-func amplifyStartJobSummary(jobID string) bool {
+func amplifyStartJobSummary(jobID string, recovering bool) bool {
 	started := false
 	amplifyJobs.Update(jobID, func(job *amplifyStoredJob) {
 		if job.Job.Summary.Status == AmplifyJobStatusPending {
 			job.Job.Summary.Status = AmplifyJobStatusRunning
+			started = true
+		} else if recovering && job.Job.Summary.Status == AmplifyJobStatusRunning {
 			started = true
 		}
 	})
@@ -325,8 +327,12 @@ const amplifyBuildTimeout = 15 * time.Minute
 // clonable repository + buildSpec. Job state machine: PENDING → RUNNING at
 // clone start → SUCCEED/FAILED honestly from the build container's exit.
 func amplifyScheduleRealBuild(appID, branch, jobID, urlBase, repo, specText string, env map[string]string, commitID string) {
+	amplifyScheduleRealBuildMode(appID, branch, jobID, urlBase, repo, specText, env, commitID, false)
+}
+
+func amplifyScheduleRealBuildMode(appID, branch, jobID, urlBase, repo, specText string, env map[string]string, commitID string, recovering bool) {
 	go func() {
-		if !amplifyStartJobSummary(jobID) {
+		if !amplifyStartJobSummary(jobID, recovering) {
 			return // stopped before it started
 		}
 		status := amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText, env, commitID)

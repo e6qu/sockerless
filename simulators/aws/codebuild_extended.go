@@ -45,6 +45,10 @@ type CBBuildBatch struct {
 	Phases                []CBPhase      `json:"phases,omitempty"`
 	// Seq orders ListBuildBatches by start order; sim-internal, not wire.
 	Seq int64 `json:"-"`
+	// BuildPlan and RuntimeEnvironment preserve execution inputs across the
+	// narrow pre-container restart window.
+	BuildPlan          *cbBuildPlan      `json:"-"`
+	RuntimeEnvironment map[string]string `json:"-"`
 }
 
 // CBFleet mirrors the CodeBuild Fleet shape (a compute fleet resource keyed by
@@ -145,6 +149,10 @@ func registerCodeBuildExtended(r *sim.AWSRouter, srv *sim.Server) {
 	cbCommandExecs = sim.MakeStore[CBCommandExecution](srv.DB(), "codebuild_command_executions")
 	cbWebhooks = sim.MakeStore[CBWebhook](srv.DB(), "codebuild_webhooks")
 	cbResourcePols = sim.MakeStore[IAMResourcePolicy](srv.DB(), "codebuild_resource_policies")
+	cbRebuildSequences()
+	if err := cbRecoverBuildBatches(); err != nil {
+		panic(fmt.Sprintf("restore AWS CodeBuild build batches: %v", err))
+	}
 
 	// Builds
 	r.Register("CodeBuild_20161006.BatchDeleteBuilds", handleCBBatchDeleteBuilds)
@@ -200,6 +208,59 @@ func registerCodeBuildExtended(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("CodeBuild_20161006.ListCuratedEnvironmentImages", handleCBListCuratedEnvironmentImages)
 	r.Register("CodeBuild_20161006.ListSharedProjects", handleCBListSharedProjects)
 	r.Register("CodeBuild_20161006.ListSharedReportGroups", handleCBListSharedReportGroups)
+}
+
+func cbRebuildSequences() {
+	cbSeqMu.Lock()
+	defer cbSeqMu.Unlock()
+	cbBatchSeq = 0
+	cbSandboxSeq = 0
+	cbCmdSeq = 0
+	for _, batch := range cbBuildBatches.List() {
+		if batch.Seq > cbBatchSeq {
+			cbBatchSeq = batch.Seq
+		}
+	}
+	for _, sandbox := range cbSandboxes.List() {
+		if sandbox.Seq > cbSandboxSeq {
+			cbSandboxSeq = sandbox.Seq
+		}
+	}
+	for _, execution := range cbCommandExecs.List() {
+		if execution.Seq > cbCmdSeq {
+			cbCmdSeq = execution.Seq
+		}
+	}
+}
+
+func cbRecoverBuildBatches() error {
+	for _, batch := range cbBuildBatches.List() {
+		if batch.BuildBatchStatus != "IN_PROGRESS" {
+			continue
+		}
+		project, ok := cbProjects.Get(batch.ProjectName)
+		if !ok {
+			return fmt.Errorf("build batch %s references missing project %s", batch.ID, batch.ProjectName)
+		}
+		adopted, err := cbAdoptBuildWorkload(
+			batch.ID,
+			"build batch",
+			batch.StartTime,
+			cbBuildTimeout(project),
+			cbCompleteBuildBatch,
+		)
+		if err != nil {
+			return err
+		}
+		if adopted {
+			continue
+		}
+		if batch.BuildPlan == nil {
+			return fmt.Errorf("build batch %s has neither a workload container nor a persisted build plan", batch.ID)
+		}
+		go cbRunBuildBatch(batch.ID, project, *batch.BuildPlan, batch.RuntimeEnvironment)
+	}
+	return nil
 }
 
 func cbNextSeq(p *int64) int64 {
@@ -271,32 +332,39 @@ func handleCBStartBuildBatch(w http.ResponseWriter, r *http.Request) {
 
 	batchID := req.ProjectName + ":" + uuid.New().String()
 	now := cbEpochNow()
+	runtimeEnvironment := cbEnvironment(p.Environment, nil)
 	batch := CBBuildBatch{
-		ID:               batchID,
-		Arn:              cbARN("build-batch/" + batchID),
-		ProjectName:      req.ProjectName,
-		BuildBatchStatus: "IN_PROGRESS",
-		CurrentPhase:     "SUBMITTED",
-		StartTime:        now,
-		EndTime:          now,
-		Source:           p.Source,
-		Environment:      p.Environment,
-		ServiceRole:      p.ServiceRole,
-		Complete:         false,
-		BuildBatchNumber: 1,
-		Seq:              cbNextSeq(&cbBatchSeq),
+		ID:                 batchID,
+		Arn:                cbARN("build-batch/" + batchID),
+		ProjectName:        req.ProjectName,
+		BuildBatchStatus:   "IN_PROGRESS",
+		CurrentPhase:       "SUBMITTED",
+		StartTime:          now,
+		EndTime:            now,
+		Source:             p.Source,
+		Environment:        p.Environment,
+		ServiceRole:        p.ServiceRole,
+		Complete:           false,
+		BuildBatchNumber:   1,
+		Seq:                cbNextSeq(&cbBatchSeq),
+		BuildPlan:          &plan,
+		RuntimeEnvironment: runtimeEnvironment,
 		Phases: []CBPhase{
 			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
 			{PhaseType: "COMBINE_ARTIFACTS", PhaseStatus: "IN_PROGRESS", StartTime: now},
 		},
 	}
 	cbBuildBatches.Put(batchID, batch)
-	go cbRunBuildBatch(batchID, p, plan, cbEnvironment(p.Environment, nil))
+	go cbRunBuildBatch(batchID, p, plan, runtimeEnvironment)
 	cbWriteJSON(w, http.StatusOK, map[string]any{"buildBatch": batch})
 }
 
 func cbRunBuildBatch(batchID string, project CBProject, plan cbBuildPlan, environment map[string]string) {
 	exitCode, reason := cbRunCommands(batchID, project, plan, environment)
+	cbCompleteBuildBatch(batchID, exitCode, reason)
+}
+
+func cbCompleteBuildBatch(batchID string, exitCode int, reason string) {
 	cbMu.Lock()
 	defer cbMu.Unlock()
 	batch, ok := cbBuildBatches.Get(batchID)
@@ -391,26 +459,29 @@ func handleCBRetryBuildBatch(w http.ResponseWriter, r *http.Request) {
 	// mirroring real CodeBuild which produces a new batch resource.
 	batchID := prior.ProjectName + ":" + uuid.New().String()
 	now := cbEpochNow()
+	runtimeEnvironment := cbEnvironment(project.Environment, nil)
 	batch := CBBuildBatch{
-		ID:               batchID,
-		Arn:              cbARN("build-batch/" + batchID),
-		ProjectName:      prior.ProjectName,
-		BuildBatchStatus: "IN_PROGRESS",
-		CurrentPhase:     "SUBMITTED",
-		StartTime:        now,
-		EndTime:          now,
-		Source:           prior.Source,
-		Environment:      prior.Environment,
-		ServiceRole:      prior.ServiceRole,
-		BuildBatchNumber: prior.BuildBatchNumber + 1,
-		Seq:              cbNextSeq(&cbBatchSeq),
+		ID:                 batchID,
+		Arn:                cbARN("build-batch/" + batchID),
+		ProjectName:        prior.ProjectName,
+		BuildBatchStatus:   "IN_PROGRESS",
+		CurrentPhase:       "SUBMITTED",
+		StartTime:          now,
+		EndTime:            now,
+		Source:             prior.Source,
+		Environment:        prior.Environment,
+		ServiceRole:        prior.ServiceRole,
+		BuildBatchNumber:   prior.BuildBatchNumber + 1,
+		Seq:                cbNextSeq(&cbBatchSeq),
+		BuildPlan:          &plan,
+		RuntimeEnvironment: runtimeEnvironment,
 		Phases: []CBPhase{
 			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
 			{PhaseType: "COMBINE_ARTIFACTS", PhaseStatus: "IN_PROGRESS", StartTime: now},
 		},
 	}
 	cbBuildBatches.Put(batchID, batch)
-	go cbRunBuildBatch(batchID, project, plan, cbEnvironment(project.Environment, nil))
+	go cbRunBuildBatch(batchID, project, plan, runtimeEnvironment)
 	cbWriteJSON(w, http.StatusOK, map[string]any{"buildBatch": batch})
 }
 

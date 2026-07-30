@@ -530,7 +530,10 @@ resource "aws_service_discovery_service" "tf_http_svc" {
   name         = "tf-http-svc"
   namespace_id = aws_service_discovery_http_namespace.tf_http_ns.id
 
-  health_check_custom_config {}
+  # AWS Cloud Map deprecated this member but always returns the fixed value 1.
+  health_check_custom_config {
+    failure_threshold = 1
+  }
 }
 
 # The Cloud Map data sources look their resource up through the list APIs:

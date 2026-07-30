@@ -135,6 +135,119 @@ func TestAmplifyWAFv2Association(t *testing.T) {
 	assert.Nil(t, gotApp.App.WafConfiguration)
 }
 
+func TestAmplifyWAFv2RequestEvaluation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	amplifyAPI := amplifyClient()
+	wafAPI := wafClient()
+
+	app, err := amplifyAPI.CreateApp(ctx, &amplify.CreateAppInput{
+		Name: aws.String("waf-runtime-" + time.Now().Format("150405.000000")),
+	})
+	require.NoError(t, err)
+	appID := aws.ToString(app.App.AppId)
+	appARN := aws.ToString(app.App.AppArn)
+	_, err = amplifyAPI.CreateBranch(ctx, &amplify.CreateBranchInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"),
+	})
+	require.NoError(t, err)
+	amplifyDeployZip(t, ctx, amplifyAPI, appID, "main", amplifyZipBytes(t, map[string][]byte{
+		"index.html": []byte("allowed"),
+	}))
+	t.Cleanup(func() {
+		_, _ = amplifyAPI.DeleteApp(context.Background(), &amplify.DeleteAppInput{AppId: aws.String(appID)})
+	})
+
+	visibility := func(metric string) *wafv2types.VisibilityConfig {
+		return &wafv2types.VisibilityConfig{
+			SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: aws.String(metric),
+		}
+	}
+	aclName := "waf-runtime-" + time.Now().Format("150405.000000")
+	acl, err := wafAPI.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+		Name:  aws.String(aclName),
+		Scope: wafv2types.ScopeCloudfront,
+		DefaultAction: &wafv2types.DefaultAction{
+			Allow: &wafv2types.AllowAction{},
+		},
+		Rules: []wafv2types.Rule{
+			{
+				Name: aws.String("blocked-path"), Priority: 1,
+				Action: &wafv2types.RuleAction{Block: &wafv2types.BlockAction{}},
+				Statement: &wafv2types.Statement{ByteMatchStatement: &wafv2types.ByteMatchStatement{
+					FieldToMatch:         &wafv2types.FieldToMatch{UriPath: &wafv2types.UriPath{}},
+					PositionalConstraint: wafv2types.PositionalConstraintStartsWith,
+					SearchString:         []byte("/private"),
+					TextTransformations: []wafv2types.TextTransformation{
+						{Priority: 0, Type: wafv2types.TextTransformationTypeLowercase},
+					},
+				}},
+				VisibilityConfig: visibility("blocked-path"),
+			},
+			{
+				Name: aws.String("request-rate"), Priority: 2,
+				Action: &wafv2types.RuleAction{Block: &wafv2types.BlockAction{}},
+				Statement: &wafv2types.Statement{RateBasedStatement: &wafv2types.RateBasedStatement{
+					AggregateKeyType:    wafv2types.RateBasedStatementAggregateKeyTypeIp,
+					Limit:               aws.Int64(2),
+					EvaluationWindowSec: 60,
+				}},
+				VisibilityConfig: visibility("request-rate"),
+			},
+		},
+		VisibilityConfig: visibility(aclName),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = wafAPI.DisassociateWebACL(context.Background(), &wafv2.DisassociateWebACLInput{
+			ResourceArn: aws.String(appARN),
+		})
+		_, _ = wafAPI.DeleteWebACL(context.Background(), &wafv2.DeleteWebACLInput{
+			Name: acl.Summary.Name, Scope: wafv2types.ScopeCloudfront,
+			Id: acl.Summary.Id, LockToken: acl.Summary.LockToken,
+		})
+	})
+	_, err = wafAPI.AssociateWebACL(ctx, &wafv2.AssociateWebACLInput{
+		WebACLArn: acl.Summary.ARN, ResourceArn: aws.String(appARN),
+	})
+	require.NoError(t, err)
+
+	host := "main." + appID + ".amplifyapp.com"
+	response, body := amplifyHostGet(t, host, "/private/data", nil)
+	require.Equal(t, http.StatusForbidden, response.StatusCode)
+	require.Equal(t, []byte("Forbidden\n"), body)
+
+	for request := 1; request <= 3; request++ {
+		response, body = amplifyHostGet(t, host, "/index.html", nil)
+		if request <= 2 {
+			require.Equal(t, http.StatusOK, response.StatusCode)
+			require.Equal(t, []byte("allowed"), body)
+		} else {
+			require.Equal(t, http.StatusForbidden, response.StatusCode)
+		}
+	}
+
+	keys, err := wafAPI.GetRateBasedStatementManagedKeys(ctx, &wafv2.GetRateBasedStatementManagedKeysInput{
+		Scope: wafv2types.ScopeCloudfront, WebACLName: aws.String(aclName),
+		WebACLId: acl.Summary.Id, RuleName: aws.String("request-rate"),
+	})
+	require.NoError(t, err)
+	require.Contains(t, keys.ManagedKeysIPV4.Addresses, "127.0.0.1")
+
+	samples, err := wafAPI.GetSampledRequests(ctx, &wafv2.GetSampledRequestsInput{
+		WebAclArn: acl.Summary.ARN, RuleMetricName: aws.String("request-rate"),
+		Scope: wafv2types.ScopeCloudfront,
+		TimeWindow: &wafv2types.TimeWindow{
+			StartTime: aws.Time(time.Now().Add(-time.Minute)),
+			EndTime:   aws.Time(time.Now().Add(time.Minute)),
+		},
+		MaxItems: aws.Int64(10),
+	})
+	require.NoError(t, err)
+	require.Len(t, samples.SampledRequests, 1)
+	require.Equal(t, "BLOCK", aws.ToString(samples.SampledRequests[0].Action))
+}
+
 func TestAmplifyAppLifecycle(t *testing.T) {
 	c := amplifyClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

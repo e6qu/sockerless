@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -122,6 +123,7 @@ var ecsExpressServices sim.Store[ECSExpressService]
 
 func registerECSExpress(r *sim.AWSRouter, srv *sim.Server) {
 	ecsExpressServices = sim.MakeStore[ECSExpressService](srv.DB(), "ecs_express_services")
+	expressRebuildLoadBalancerRefs()
 
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateExpressGatewayService", handleECSCreateExpressGatewayService)
 	r.Register("AmazonEC2ContainerServiceV20141113.DescribeExpressGatewayService", handleECSDescribeExpressGatewayService)
@@ -651,7 +653,21 @@ func expressCreateFargateService(clusterName, clusterArn, serviceName, taskDefAr
 // shared ALB, keyed by load-balancer ARN. Guarded by ecsRevisionMu reuse would
 // be wrong (different concern); the sim is single-process and the express ops
 // run on the serial HTTP handler, so a plain map suffices.
-var expressLoadBalancerRefs = map[string]int{}
+var (
+	expressLoadBalancerMu   sync.Mutex
+	expressLoadBalancerRefs map[string]int
+)
+
+func expressRebuildLoadBalancerRefs() {
+	expressLoadBalancerMu.Lock()
+	defer expressLoadBalancerMu.Unlock()
+	expressLoadBalancerRefs = make(map[string]int)
+	for _, service := range ecsExpressServices.List() {
+		if service.Status.StatusCode != "INACTIVE" && service.LoadBalancerArn != "" {
+			expressLoadBalancerRefs[service.LoadBalancerArn]++
+		}
+	}
+}
 
 // expressALBNetKey is the consolidation key: same scheme + subnets + SGs share
 // an ALB.
@@ -663,6 +679,8 @@ func expressALBNetKey(scheme string, subnets, sgs []string) string {
 // network config that has fewer than 25 services; else it creates a new ALB +
 // ACM cert. Returns (lbArn, dnsName, certArn).
 func expressEnsureLoadBalancer(serviceName, scheme string, subnets, sgs []string) (string, string, string) {
+	expressLoadBalancerMu.Lock()
+	defer expressLoadBalancerMu.Unlock()
 	netKey := expressALBNetKey(scheme, subnets, sgs)
 	for _, existing := range ecsExpressServices.List() {
 		if existing.Status.StatusCode == "INACTIVE" || existing.LoadBalancerArn == "" {
@@ -923,6 +941,7 @@ func expressTeardown(svc ECSExpressService) {
 		elbv2TargetGroups.Delete(svc.TargetGroupArn)
 	}
 	if svc.LoadBalancerArn != "" {
+		expressLoadBalancerMu.Lock()
 		expressLoadBalancerRefs[svc.LoadBalancerArn]--
 		if expressLoadBalancerRefs[svc.LoadBalancerArn] <= 0 {
 			delete(expressLoadBalancerRefs, svc.LoadBalancerArn)
@@ -931,6 +950,7 @@ func expressTeardown(svc ECSExpressService) {
 				acmCertificates.Delete(acmARNToID(svc.CertificateArn))
 			}
 		}
+		expressLoadBalancerMu.Unlock()
 	}
 	if svc.SecurityGroupID != "" {
 		ec2SecurityGroups.Delete(svc.SecurityGroupID)

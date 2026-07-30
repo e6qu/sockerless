@@ -51,6 +51,25 @@ v1beta4 revision 20260722 artifacts were retained. Their 75 methods and routes
 were unchanged, while authenticated public-route coverage implemented and
 round-tripped the three newly published schema members.
 
+AWS simulator state survived hard process replacement as a coherent cloud
+slice. The SQLite envelope retained exported runtime configuration hidden from
+public JSON, startup rebuilt monotonic counters and derived revisions, real
+Network Load Balancing and Amazon RDS listeners rebound, and state-scoped
+Amazon ECS, AWS Batch, CodeBuild, Amplify, Lambda, scheduler, and autoscaling
+work was adopted or resumed. Asynchronous Lambda work became durable before
+acceptance, while Step Functions checkpointed and reattached to the original
+Amazon ECS or CodeBuild task. Official AWS SDK and AWS CLI restart suites
+passed, and the production-shaped HashiCorp AWS provider completed apply,
+hard restart, zero-change refresh, and destroy.
+
+The production Compose recipes enabled the existing durable stores for the
+AWS, Google Cloud, and Microsoft Azure simulators on named volumes. The AWS
+Batch console listed real jobs and definitions, polled status, surfaced
+terminal details, and terminated live work through standard AWS APIs.
+Associated AWS WAF web ACLs evaluated the complete supported statement graph,
+and Elastic Load Balancing listener creates and modifications failed
+transactionally when their real TCP or TLS binding could not be provisioned.
+
 Google Cloud Spanner executed SQL, DML, batch DML, reads, mutations,
 transactions, partitions, and batch writes through real SQLite transactions
 over official REST and gRPC clients. Strict DDL and composite-key behavior
@@ -189,15 +208,11 @@ to Discovery revisions 20260723 and 20260724.
 
 ## Next Recommended Slice
 
-BUG-2767 was the next locally actionable fidelity slice: expand the AWS WAF
-data-plane evaluator from default/IP-set actions to every public statement,
-text transformation, label, and durable rate window, then prove the exact
-ecs-dev-desktop Application Load Balancer WebACL rules from an external HTTP
-client. BUG-2766 followed with the published AWS Amplify Hosting
-`ImageOptimization` request, transformation, validation, format, and cache
-contract. BUG-2765 required an isolated real listener coordinate or atomic
-create failure when macOS ports were occupied. BUG-2764 remained a host
-boundary: the shared Linux test image contained the real Firecracker and
+BUG-2766 remained the next locally actionable AWS fidelity slice: implement the
+published AWS Amplify Hosting `ImageOptimization` fetch, source-policy,
+transformation, validation, format-negotiation, and cache contract, then prove
+it through hosted requests and external image decoders. BUG-2764 remained a
+host boundary: the shared Linux test image contained the real Firecracker and
 squashfs tools, while the macOS Podman virtual machine exposed no nested KVM;
 the capable-Linux Terraform CI cell remained mandatory.
 

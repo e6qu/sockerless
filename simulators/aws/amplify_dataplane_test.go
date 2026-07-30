@@ -18,6 +18,7 @@ import (
 func amplifyResetHostingState() {
 	amplifyResetStores()
 	r53Zones = sim.MakeStore[r53StoredZone](nil, "route53_zones")
+	wafAssociations = sim.MakeStore[wafAssociation](nil, "wafv2_associations")
 	amplifyHostingMu.Lock()
 	amplifyHostingCache = map[string]*amplifyHostedContent{}
 	amplifyHostingMu.Unlock()

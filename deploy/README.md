@@ -331,9 +331,11 @@ identity/session state) and the `caddy-data` volume (caddy's local
 certificate authority — a fresh one regenerates on next boot, and every
 `SSL_CERT_FILE`-trusting service picks it up the same way) along with every
 container. Federation resources provisioned against the simulators (IAM
-role, workforce pool, managed identity) live in the simulators' own
-in-memory/SQLite state and disappear with the simulator containers; a
-real-cloud deployment's federation resources are Terraform- or
+  role, workforce pool, managed identity) live in the simulators' named
+  SQLite volumes and survive ordinary container replacement. The explicit
+  `down --volumes` command above deletes those cloud-state volumes as well as
+  the identity and certificate-authority volumes. A real-cloud deployment's
+  federation resources are Terraform- or
 API-provisioned infrastructure outside this compose stack's lifecycle and
 are not touched by `docker compose down`.
 

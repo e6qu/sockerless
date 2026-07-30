@@ -30,9 +30,7 @@ const appScalingEvalInterval = 3 * time.Second
 const appScalingCooldown = 5 * time.Second
 
 var (
-	appScalingEvalOnce   sync.Once
-	appScalingCooldownMu sync.Mutex
-	appScalingLastChange = map[string]time.Time{} // target key -> last applied-at
+	appScalingEvalOnce sync.Once
 )
 
 // startAppScalingEvalLoop launches the periodic target-tracking evaluator. It
@@ -136,10 +134,17 @@ func appScalingComputeCapacity(current int, metricValue, targetValue float64, mi
 // whichever applies to the pending change. A short floor (appScalingCooldown)
 // keeps a single metric datapoint from triggering two changes back-to-back.
 func appScalingCooldownAllows(targetKey string, now time.Time, scaleOut bool, cfg targetTrackingConfig) bool {
-	appScalingCooldownMu.Lock()
-	last, has := appScalingLastChange[targetKey]
-	appScalingCooldownMu.Unlock()
-	if !has {
+	var last time.Time
+	for _, activity := range appScalingActivities.List() {
+		if appScalableTargetKey(activity.ServiceNamespace, activity.ResourceId, activity.ScalableDimension) != targetKey {
+			continue
+		}
+		at := time.Unix(int64(activity.StartTime), 0).UTC()
+		if at.After(last) {
+			last = at
+		}
+	}
+	if last.IsZero() {
 		return true
 	}
 	cooldown := time.Duration(cfg.ScaleOutCooldown) * time.Second
@@ -173,9 +178,6 @@ func appScalingRecordActivity(policy AppScalingPolicy, target AppScalableTarget,
 		StatusMessage:     "Setting desired capacity to " + strconv.Itoa(toCount) + ".",
 	}
 	appScalingActivities.Put(activity.ActivityId, activity)
-	appScalingCooldownMu.Lock()
-	appScalingLastChange[appScalableTargetKey(policy.ServiceNamespace, policy.ResourceId, policy.ScalableDimension)] = now
-	appScalingCooldownMu.Unlock()
 }
 
 // appScalingActivityID produces an ActivityId that sorts newest-last (the

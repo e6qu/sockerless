@@ -53,6 +53,64 @@ func TestWAFv2_WebACL_Lifecycle(t *testing.T) {
 	))
 }
 
+func TestWAFv2_RevenueSurfacesWithoutSettlements_CLI(t *testing.T) {
+	start := time.Now().Add(-time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	end := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	window := fmt.Sprintf(`{"StartTime":"%s","EndTime":"%s"}`, start, end)
+
+	ranked := runCLI(t, awsCLI("wafv2", "get-revenue-statistics",
+		"--statistic-type", "TOP_SOURCES_BY_REVENUE",
+		"--group-by", "NAME",
+		"--time-window", window,
+		"--scope", "CLOUDFRONT",
+		"--currency", "USDC",
+		"--output", "json"))
+	var rankedResult struct {
+		SourceStatistics []json.RawMessage `json:"SourceStatistics"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(ranked), &rankedResult))
+	require.Empty(t, rankedResult.SourceStatistics)
+
+	summary := runCLI(t, awsCLI("wafv2", "get-revenue-statistics-summary",
+		"--time-window", window,
+		"--scope", "CLOUDFRONT",
+		"--currency", "USDC",
+		"--output", "json"))
+	var summaryResult struct {
+		RevenueBreakdown struct {
+			TotalAmount  string `json:"TotalAmount"`
+			TotalSettled int64  `json:"TotalSettled"`
+		} `json:"RevenueBreakdown"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(summary), &summaryResult))
+	require.Equal(t, "0", summaryResult.RevenueBreakdown.TotalAmount)
+	require.Zero(t, summaryResult.RevenueBreakdown.TotalSettled)
+
+	series := runCLI(t, awsCLI("wafv2", "get-revenue-statistics-time-series",
+		"--statistic-type", "DATE_HISTOGRAM",
+		"--interval", "HOURLY",
+		"--time-window", window,
+		"--scope", "CLOUDFRONT",
+		"--currency", "USDC",
+		"--output", "json"))
+	var seriesResult struct {
+		DataPoints []json.RawMessage `json:"DataPoints"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(series), &seriesResult))
+	require.Empty(t, seriesResult.DataPoints)
+
+	settlements := runCLI(t, awsCLI("wafv2", "list-settlement-records",
+		"--time-window", window,
+		"--scope", "CLOUDFRONT",
+		"--currency", "USDC",
+		"--output", "json"))
+	var settlementResult struct {
+		Settlements []json.RawMessage `json:"Settlements"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(settlements), &settlementResult))
+	require.Empty(t, settlementResult.Settlements)
+}
+
 func TestWAFv2_IPSet_Lifecycle(t *testing.T) {
 	name := "cli-ipset-" + time.Now().Format("150405.000000")
 	out := runCLI(t, awsCLI("wafv2", "create-ip-set",
@@ -411,23 +469,17 @@ func TestWAFv2_PermissionPolicyAndStats(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(rbkOut), &rbkResult))
 	require.Equal(t, "IPV4", rbkResult.ManagedKeysIPV4.IPAddressVersion)
 
-	// get-top-path-statistics-by-traffic is a newer WAFv2 op; older aws CLI
-	// builds (e.g. 2.26.x) don't expose the subcommand. Run it only when the
-	// installed CLI knows it (CI runs a newer CLI); the op is fully validated
-	// by the SDK test regardless.
-	if wafCLIHasSubcommand("get-top-path-statistics-by-traffic") {
-		start := time.Now().Add(-time.Hour).UTC().Format("2006-01-02T15:04:05Z")
-		end := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-		statsOut := runCLI(t, awsCLI("wafv2", "get-top-path-statistics-by-traffic",
-			"--scope", "CLOUDFRONT", "--web-acl-arn", aclARN,
-			"--limit", "10", "--number-of-top-traffic-bots-per-path", "5",
-			"--time-window", fmt.Sprintf(`{"StartTime":"%s","EndTime":"%s"}`, start, end),
-			"--output", "json"))
-		var statsResult struct {
-			TotalRequestCount int64 `json:"TotalRequestCount"`
-		}
-		require.NoError(t, json.Unmarshal([]byte(statsOut), &statsResult))
+	start := time.Now().Add(-time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	end := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	statsOut := runCLI(t, awsCLI("wafv2", "get-top-path-statistics-by-traffic",
+		"--scope", "CLOUDFRONT", "--web-acl-arn", aclARN,
+		"--limit", "10", "--number-of-top-traffic-bots-per-path", "5",
+		"--time-window", fmt.Sprintf(`{"StartTime":"%s","EndTime":"%s"}`, start, end),
+		"--output", "json"))
+	var statsResult struct {
+		TotalRequestCount int64 `json:"TotalRequestCount"`
 	}
+	require.NoError(t, json.Unmarshal([]byte(statsOut), &statsResult))
 
 	// delete-firewall-manager-rule-groups advances the web ACL lock token.
 	getACL := runCLI(t, awsCLI("wafv2", "get-web-acl",
@@ -452,10 +504,4 @@ func TestWAFv2_PermissionPolicyAndStats(t *testing.T) {
 // deferred teardown never fails the test.
 func wafCleanupCLI(cmd *exec.Cmd) {
 	_ = cmd.Run()
-}
-
-// wafCLIHasSubcommand reports whether the installed aws CLI exposes the given
-// wafv2 subcommand. Newer WAFv2 ops are absent from older CLI builds.
-func wafCLIHasSubcommand(sub string) bool {
-	return awsCLI("wafv2", sub, "help").Run() == nil
 }

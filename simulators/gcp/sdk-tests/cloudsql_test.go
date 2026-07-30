@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	sqladmin "google.golang.org/api/sqladmin/v1"
 )
@@ -141,6 +142,53 @@ func TestCloudSQL_NewPublishedInstanceFieldsRoundTrip(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&user))
 	assert.Equal(t, []string{"cloudsqlsuperuser"}, user.ServerRoles)
+}
+
+func TestCloudSQL_SQLServerRolesUpdateSemantics(t *testing.T) {
+	svc := sqlAdminService(t)
+	project := "test-project"
+	instanceName := "roles-sqlserver"
+
+	_, err := svc.Instances.Insert(project, &sqladmin.DatabaseInstance{
+		Name:            instanceName,
+		Region:          "us-central1",
+		DatabaseVersion: "SQLSERVER_2022_STANDARD",
+	}).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.Instances.Delete(project, instanceName).Do() })
+
+	_, err = svc.Users.Insert(project, instanceName, &sqladmin.User{
+		Name: "role-user",
+		Host: "%",
+		SqlserverUserDetails: &sqladmin.SqlServerUserDetails{
+			ServerRoles: []string{"securityadmin"},
+		},
+	}).Do()
+	require.NoError(t, err)
+
+	_, err = svc.Users.Update(project, instanceName, &sqladmin.User{
+		SqlserverUserDetails: &sqladmin.SqlServerUserDetails{
+			ServerRoles: []string{"processadmin"},
+		},
+	}).Name("role-user").Host("%").Do()
+	require.NoError(t, err)
+	user, err := svc.Users.Get(project, instanceName, "role-user").Host("%").Do()
+	require.NoError(t, err)
+	require.NotNil(t, user.SqlserverUserDetails)
+	assert.ElementsMatch(t, []string{"securityadmin", "processadmin"}, user.SqlserverUserDetails.ServerRoles)
+
+	_, err = svc.Users.Update(project, instanceName, &sqladmin.User{
+		SqlserverUserDetails: &sqladmin.SqlServerUserDetails{
+			ServerRoles: []string{"bulkadmin"},
+		},
+	}).Name("role-user").Host("%").Do(
+		googleapi.QueryParameter("revokeExistingServerRoles", "true"),
+	)
+	require.NoError(t, err)
+	user, err = svc.Users.Get(project, instanceName, "role-user").Host("%").Do()
+	require.NoError(t, err)
+	require.NotNil(t, user.SqlserverUserDetails)
+	assert.Equal(t, []string{"bulkadmin"}, user.SqlserverUserDetails.ServerRoles)
 }
 
 func TestCloudSQL_BackupRunsReturnOperations(t *testing.T) {

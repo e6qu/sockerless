@@ -445,9 +445,7 @@ func iamS3ResourceTags(r *http.Request) (map[string]string, bool) {
 		return nil, false
 	}
 	if key := sim.PathParam(r, "key"); key != "" {
-		s3ObjectTagsMu.Lock()
-		tags, ok := s3ObjectTags[bucket+"/"+key]
-		s3ObjectTagsMu.Unlock()
+		tags, ok := s3ObjectTags.Get(bucket + "/" + key)
 		if ok && len(tags) > 0 {
 			return tags, true
 		}

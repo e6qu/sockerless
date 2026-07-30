@@ -6,16 +6,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
 
 // This file implements the Lambda event-source-mapping, layer, and
-// reserved-concurrency slices, plus ListFunctionUrlConfigs. All state lives in
-// in-process maps whose lifetime matches the running sim, the same as the
-// function/version/alias state in lambda_subresources.go.
+// reserved-concurrency slices, plus ListFunctionUrlConfigs.
 
 // ---------------------------------------------------------------------------
 // Event source mappings
@@ -44,10 +41,7 @@ type LambdaEventSourceMapping struct {
 	FilterCriteria                 map[string]any `json:"FilterCriteria,omitempty"`
 }
 
-var (
-	lambdaESMMu sync.Mutex
-	lambdaESMs  = map[string]LambdaEventSourceMapping{} // keyed by UUID
-)
+var lambdaESMs sim.Store[LambdaEventSourceMapping] // keyed by UUID
 
 func lambdaESMArn(uuid string) string {
 	return fmt.Sprintf("arn:aws:lambda:%s:%s:event-source-mapping:%s", awsRegion(), awsAccountID(), uuid)
@@ -135,17 +129,13 @@ func handleLambdaCreateEventSourceMapping(w http.ResponseWriter, r *http.Request
 		FunctionResponseTypes:          req.FunctionResponseTypes,
 		FilterCriteria:                 req.FilterCriteria,
 	}
-	lambdaESMMu.Lock()
-	lambdaESMs[uuid] = esm
-	lambdaESMMu.Unlock()
+	lambdaESMs.Put(uuid, esm)
 	sim.WriteJSON(w, http.StatusAccepted, esm)
 }
 
 func handleLambdaGetEventSourceMapping(w http.ResponseWriter, r *http.Request) {
 	uuid := sim.PathParam(r, "uuid")
-	lambdaESMMu.Lock()
-	esm, ok := lambdaESMs[uuid]
-	lambdaESMMu.Unlock()
+	esm, ok := lambdaESMs.Get(uuid)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Event source mapping not found: %s", uuid)
@@ -169,9 +159,8 @@ func handleLambdaListEventSourceMappings(w http.ResponseWriter, r *http.Request)
 		wantFunctionArn = arn
 	}
 
-	lambdaESMMu.Lock()
-	all := make([]LambdaEventSourceMapping, 0, len(lambdaESMs))
-	for _, esm := range lambdaESMs {
+	all := make([]LambdaEventSourceMapping, 0, lambdaESMs.Len())
+	for _, esm := range lambdaESMs.List() {
 		if wantFunctionArn != "" && esm.FunctionArn != wantFunctionArn {
 			continue
 		}
@@ -180,7 +169,6 @@ func handleLambdaListEventSourceMappings(w http.ResponseWriter, r *http.Request)
 		}
 		all = append(all, esm)
 	}
-	lambdaESMMu.Unlock()
 	sortBy(all, func(e LambdaEventSourceMapping) string { return e.UUID })
 
 	marker := r.URL.Query().Get("Marker")
@@ -213,9 +201,7 @@ func handleLambdaUpdateEventSourceMapping(w http.ResponseWriter, r *http.Request
 		sim.AWSError(w, "InvalidParameterValueException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	lambdaESMMu.Lock()
-	defer lambdaESMMu.Unlock()
-	esm, ok := lambdaESMs[uuid]
+	esm, ok := lambdaESMs.Get(uuid)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Event source mapping not found: %s", uuid)
@@ -254,22 +240,19 @@ func handleLambdaUpdateEventSourceMapping(w http.ResponseWriter, r *http.Request
 	}
 	esm.LastModified = lambdaNowEpoch()
 	esm.StateTransitionReason = "USER_INITIATED"
-	lambdaESMs[uuid] = esm
+	lambdaESMs.Put(uuid, esm)
 	sim.WriteJSON(w, http.StatusAccepted, esm)
 }
 
 func handleLambdaDeleteEventSourceMapping(w http.ResponseWriter, r *http.Request) {
 	uuid := sim.PathParam(r, "uuid")
-	lambdaESMMu.Lock()
-	esm, ok := lambdaESMs[uuid]
+	esm, ok := lambdaESMs.Get(uuid)
 	if !ok {
-		lambdaESMMu.Unlock()
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Event source mapping not found: %s", uuid)
 		return
 	}
-	delete(lambdaESMs, uuid)
-	lambdaESMMu.Unlock()
+	lambdaESMs.Delete(uuid)
 	esm.State = "Deleting"
 	esm.StateTransitionReason = "USER_INITIATED"
 	esm.LastModified = lambdaNowEpoch()
@@ -309,10 +292,7 @@ type lambdaLayerContentInput struct {
 	ZipFile         string `json:"ZipFile,omitempty"`
 }
 
-var (
-	lambdaLayersMu sync.Mutex
-	lambdaLayers   = map[string][]LambdaLayerVersion{} // keyed by layer name
-)
+var lambdaLayers sim.Store[[]LambdaLayerVersion] // keyed by layer name
 
 func lambdaLayerArn(name string) string {
 	return fmt.Sprintf("arn:aws:lambda:%s:%s:layer:%s", awsRegion(), awsAccountID(), name)
@@ -415,32 +395,29 @@ func handleLambdaPublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lambdaLayersMu.Lock()
-	existing := lambdaLayers[layerName]
-	version := int64(len(existing) + 1)
-	lv := LambdaLayerVersion{
-		LayerName:               layerName,
-		Version:                 version,
-		Description:             req.Description,
-		CreatedDate:             time.Now().UTC().Format("2006-01-02T15:04:05.000-0700"),
-		CompatibleRuntimes:      req.CompatibleRuntimes,
-		CompatibleArchitectures: req.CompatibleArchitectures,
-		LicenseInfo:             req.LicenseInfo,
-		CodeSha256:              lambdaCodeSha256(code),
-		CodeSize:                int64(len(content)),
-		Content:                 append([]byte(nil), content...),
-	}
-	lambdaLayers[layerName] = append(existing, lv)
-	lambdaLayersMu.Unlock()
+	var lv LambdaLayerVersion
+	lambdaLayers.Upsert(layerName, func(existing *[]LambdaLayerVersion) {
+		lv = LambdaLayerVersion{
+			LayerName:               layerName,
+			Version:                 int64(len(*existing) + 1),
+			Description:             req.Description,
+			CreatedDate:             time.Now().UTC().Format("2006-01-02T15:04:05.000-0700"),
+			CompatibleRuntimes:      req.CompatibleRuntimes,
+			CompatibleArchitectures: req.CompatibleArchitectures,
+			LicenseInfo:             req.LicenseInfo,
+			CodeSha256:              lambdaCodeSha256(code),
+			CodeSize:                int64(len(content)),
+			Content:                 append([]byte(nil), content...),
+		}
+		*existing = append(*existing, lv)
+	})
 
 	sim.WriteJSON(w, http.StatusCreated, lambdaLayerVersionResponse(r, lv))
 }
 
 func handleLambdaListLayerVersions(w http.ResponseWriter, r *http.Request) {
 	layerName := sim.PathParam(r, "layer")
-	lambdaLayersMu.Lock()
-	versions := append([]LambdaLayerVersion(nil), lambdaLayers[layerName]...)
-	lambdaLayersMu.Unlock()
+	versions, _ := lambdaLayers.Get(layerName)
 	// Newest first, matching real Lambda.
 	items := make([]map[string]any, 0, len(versions))
 	for i := len(versions) - 1; i >= 0; i-- {
@@ -475,24 +452,21 @@ func handleLambdaDeleteLayerVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// DeleteLayerVersion is idempotent: a missing version still returns 204.
-	lambdaLayersMu.Lock()
-	versions := lambdaLayers[layerName]
-	out := versions[:0]
-	for _, lv := range versions {
-		if lv.Version == version {
-			continue
+	lambdaLayers.Update(layerName, func(versions *[]LambdaLayerVersion) {
+		out := make([]LambdaLayerVersion, 0, len(*versions))
+		for _, lv := range *versions {
+			if lv.Version != version {
+				out = append(out, lv)
+			}
 		}
-		out = append(out, lv)
-	}
-	lambdaLayers[layerName] = out
-	lambdaLayersMu.Unlock()
+		*versions = out
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func lambdaFindLayerVersion(name string, version int64) (LambdaLayerVersion, bool) {
-	lambdaLayersMu.Lock()
-	defer lambdaLayersMu.Unlock()
-	for _, lv := range lambdaLayers[name] {
+	versions, _ := lambdaLayers.Get(name)
+	for _, lv := range versions {
 		if lv.Version == version {
 			return lv, true
 		}
@@ -530,19 +504,15 @@ func handleLambdaListLayers(w http.ResponseWriter, r *http.Request) {
 		handleLambdaGetLayerVersionByArn(w, r)
 		return
 	}
-	lambdaLayersMu.Lock()
-	names := make([]string, 0, len(lambdaLayers))
-	for name, versions := range lambdaLayers {
+	names := make([]string, 0, lambdaLayers.Len())
+	snapshot := map[string]LambdaLayerVersion{}
+	for _, versions := range lambdaLayers.List() {
 		if len(versions) > 0 {
+			name := versions[0].LayerName
 			names = append(names, name)
+			snapshot[name] = versions[len(versions)-1]
 		}
 	}
-	snapshot := map[string]LambdaLayerVersion{}
-	for _, name := range names {
-		versions := lambdaLayers[name]
-		snapshot[name] = versions[len(versions)-1] // latest
-	}
-	lambdaLayersMu.Unlock()
 
 	sort.Strings(names)
 	layers := make([]map[string]any, 0, len(names))
@@ -657,9 +627,7 @@ func handleLambdaListFunctionUrlConfigs(w http.ResponseWriter, r *http.Request) 
 			"Function not found: %s", lambdaArn(name))
 		return
 	}
-	lambdaURLConfigsMu.Lock()
-	cfg, ok := lambdaURLConfigs[name]
-	lambdaURLConfigsMu.Unlock()
+	cfg, ok := lambdaURLConfigs.Get(name)
 	configs := []LambdaFunctionUrlConfig{}
 	if ok {
 		configs = append(configs, cfg)

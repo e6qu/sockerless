@@ -1183,7 +1183,7 @@ test.describe("Automated accessibility audit", () => {
 const SERVICE_PAGES = [
   { path: "/ui/ec2", nav: "EC2", title: "Instances", columns: ["Instance ID", "Instance state"] },
   { path: "/ui/autoscaling", nav: "EC2 Auto Scaling", title: "Auto Scaling groups", columns: ["Name", "Desired capacity"] },
-  { path: "/ui/batch", nav: "AWS Batch", title: "Job queues", columns: ["Priority", "Compute environments"] },
+  { path: "/ui/batch", nav: "AWS Batch", title: "Jobs", columns: ["Job name", "Status", "Job queue"] },
   { path: "/ui/efs", nav: "Elastic File System", title: "File systems", columns: ["File system ID", "Mount targets"] },
   { path: "/ui/rds", nav: "RDS", title: "DB instances", columns: ["Size", "Endpoint", "Storage"] },
   { path: "/ui/dynamodb", nav: "DynamoDB", title: "Tables", columns: ["Name", "Partition key"] },

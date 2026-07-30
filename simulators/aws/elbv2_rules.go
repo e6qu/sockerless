@@ -145,11 +145,12 @@ func handleELBv2DeleteRule(w http.ResponseWriter, r *http.Request) {
 
 func handleELBv2ModifyListener(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ListenerArn")
-	listener, ok := elbv2Listeners.Get(arn)
+	previous, ok := elbv2Listeners.Get(arn)
 	if !ok {
 		elbv2ErrorXML(w, "ListenerNotFound", "Listener not found", http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
+	listener := previous
 	if p := r.FormValue("Port"); p != "" {
 		listener.Port = atoiDefault(p, listener.Port)
 	}
@@ -171,14 +172,32 @@ func handleELBv2ModifyListener(w http.ResponseWriter, r *http.Request) {
 	if ma := parseELBv2MutualAuth(r); ma != nil {
 		listener.MutualAuth = ma
 	}
-	elbv2Listeners.Put(arn, listener)
 	// A change to the protocol, port, or certificate set on a TLS-terminating
-	// listener must re-bind its TLS data plane so the running listener reflects
-	// the new cert / port / protocol; stop then restart so no stale listener
-	// keeps the old cert or holds the old port.
+	// or stream listener re-binds the local realization transactionally. A
+	// failed bind restores both the prior control-plane value and its prior
+	// listener rather than leaving a resource whose advertised data plane is
+	// absent.
 	if r.FormValue("Port") != "" || r.FormValue("Protocol") != "" || len(parseELBv2Certificates(r)) > 0 {
 		elbv2StopTLSProxy(arn)
-		elbv2StartTLSProxyBestEffort(listener)
+		elbv2StopNLBProxy(arn)
+		elbv2Listeners.Put(arn, listener)
+		if err := elbv2StartListenerDataPlane(listener); err != nil {
+			elbv2Listeners.Put(arn, previous)
+			elbv2StopTLSProxy(arn)
+			elbv2StopNLBProxy(arn)
+			if rollbackErr := elbv2StartListenerDataPlane(previous); rollbackErr != nil {
+				elbv2ErrorXML(w, "InvalidConfigurationRequest",
+					fmt.Sprintf("Could not modify listener data plane: %v; restoring the previous listener also failed: %v", err, rollbackErr),
+					http.StatusBadRequest, sim.RequestID(r.Context()))
+				return
+			}
+			elbv2ErrorXML(w, "InvalidConfigurationRequest",
+				"Could not modify listener data plane: "+err.Error(),
+				http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
+	} else {
+		elbv2Listeners.Put(arn, listener)
 	}
 	elbv2XMLResponse(w, "ModifyListener", "<Listeners>"+elbv2ListenerXML(listener)+"</Listeners>", sim.RequestID(r.Context()))
 }

@@ -108,6 +108,13 @@ func registerCloudTrail(r *sim.AWSRouter, srv *sim.Server) {
 	cloudTrailTrails = sim.MakeStore[CloudTrailTrail](srv.DB(), "cloudtrail_trails")
 	cloudTrailEvents = sim.MakeStore[CloudTrailEvent](srv.DB(), "cloudtrail_events")
 	cloudTrailChannels = sim.MakeStore[CloudTrailChannel](srv.DB(), "cloudtrail_channels")
+	var latestSequence int64
+	for _, event := range cloudTrailEvents.List() {
+		if event.Seq > latestSequence {
+			latestSequence = event.Seq
+		}
+	}
+	atomic.StoreInt64(&cloudTrailSeq, latestSequence)
 
 	for _, op := range []string{
 		"CreateTrail", "DescribeTrails", "GetTrail", "UpdateTrail", "GetTrailStatus",
@@ -178,6 +185,7 @@ func handleCloudTrailCreateTrail(w http.ResponseWriter, r *http.Request) {
 		Name         string
 		S3BucketName string
 		S3KeyPrefix  string
+		TagsList     []EC2Tag
 	}
 	if !readAWSJSON(w, r, &req) {
 		return
@@ -197,6 +205,7 @@ func handleCloudTrailCreateTrail(w http.ResponseWriter, r *http.Request) {
 		ARN:          cloudTrailARN(req.Name),
 		HomeRegion:   awsRegion(),
 		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
+		Tags:         req.TagsList,
 	}
 	cloudTrailTrails.Put(req.Name, trail)
 	writeAWSJSON(w, http.StatusOK, map[string]any{

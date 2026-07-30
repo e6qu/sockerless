@@ -129,6 +129,14 @@ func TestStackProductionShape(t *testing.T) {
 	out, err = runTimed(t, "terraform apply", apply)
 	require.NoError(t, err, "terraform apply failed:\n%s", out)
 
+	// Restart the cloud between apply and refresh. A zero-diff plan proves the
+	// official AWS provider can rediscover the complete stack from persistent
+	// cloud APIs without process-local state.
+	restartTerraformSimulator(t)
+	plan := terraformCmd("plan", "-detailed-exitcode")
+	out, err = runTimed(t, "terraform plan after simulator restart", plan)
+	require.NoError(t, err, "terraform refresh after simulator restart was not a zero-diff plan:\n%s", out)
+
 	// Read outputs and assert cross-resource invariants. Failures here
 	// indicate the simulator returned cross-resource references that
 	// don't match the TF graph — real AWS would never do this.

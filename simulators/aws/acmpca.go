@@ -347,10 +347,6 @@ func handlePrivateCAGetCSR(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if ca.Status != "PENDING_CERTIFICATE" {
-		privateCAError(w, "InvalidStateException", "The certificate authority is not waiting for a certificate.")
-		return
-	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Csr": ca.CSRPEM})
 }
 

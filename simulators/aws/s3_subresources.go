@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -17,7 +16,7 @@ import (
 
 // S3MultipartUpload tracks an in-flight multipart upload between
 // InitiateMultipartUpload and CompleteMultipartUpload. Each Part is
-// kept in-memory and stitched together on Complete.
+// persisted and stitched together on Complete.
 type S3MultipartUpload struct {
 	UploadID    string
 	Bucket      string
@@ -33,11 +32,8 @@ type s3MultipartPart struct {
 }
 
 var (
-	s3MultipartUploadsMu sync.Mutex
-	s3MultipartUploads   = map[string]*S3MultipartUpload{}
-
-	s3ObjectTagsMu sync.Mutex
-	s3ObjectTags   = map[string]map[string]string{} // "bucket/key" → tag map
+	s3MultipartUploads sim.Store[S3MultipartUpload]
+	s3ObjectTags       sim.Store[map[string]string] // "bucket/key" → tag map
 )
 
 // handleS3PostObjectDispatch routes POST /{bucket}/{key...} based on
@@ -209,16 +205,14 @@ func handleS3InitiateMultipart(w http.ResponseWriter, r *http.Request) {
 	}
 	uploadID := generateUUID()
 	contentType := r.Header.Get("Content-Type")
-	s3MultipartUploadsMu.Lock()
-	s3MultipartUploads[uploadID] = &S3MultipartUpload{
+	s3MultipartUploads.Put(uploadID, S3MultipartUpload{
 		UploadID:    uploadID,
 		Bucket:      bucket,
 		Key:         key,
 		ContentType: contentType,
 		Initiated:   time.Now().UTC(),
 		Parts:       map[int]s3MultipartPart{},
-	}
-	s3MultipartUploadsMu.Unlock()
+	})
 	result := struct {
 		XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
 		Xmlns    string   `xml:"xmlns,attr"`
@@ -250,9 +244,7 @@ func handleS3UploadPart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s3MultipartUploadsMu.Lock()
-	mp, ok := s3MultipartUploads[uploadID]
-	s3MultipartUploadsMu.Unlock()
+	mp, ok := s3MultipartUploads.Get(uploadID)
 	if !ok {
 		sim.S3ErrorXML(w, "NoSuchUpload",
 			"The specified multipart upload does not exist",
@@ -275,9 +267,9 @@ func handleS3UploadPart(w http.ResponseWriter, r *http.Request) {
 	hash := md5.Sum(body)
 	etag := fmt.Sprintf(`"%x"`, hash)
 
-	s3MultipartUploadsMu.Lock()
-	mp.Parts[partNum] = s3MultipartPart{Data: body, ETag: etag}
-	s3MultipartUploadsMu.Unlock()
+	s3MultipartUploads.Update(uploadID, func(upload *S3MultipartUpload) {
+		upload.Parts[partNum] = s3MultipartPart{Data: body, ETag: etag}
+	})
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
 }
@@ -287,12 +279,7 @@ func handleS3CompleteMultipart(w http.ResponseWriter, r *http.Request) {
 	bucket := sim.PathParam(r, "bucket")
 	key := sim.PathParam(r, "key")
 
-	s3MultipartUploadsMu.Lock()
-	mp, ok := s3MultipartUploads[uploadID]
-	if ok {
-		delete(s3MultipartUploads, uploadID)
-	}
-	s3MultipartUploadsMu.Unlock()
+	mp, ok := s3MultipartUploads.Get(uploadID)
 	if !ok {
 		sim.S3ErrorXML(w, "NoSuchUpload",
 			"The specified multipart upload does not exist",
@@ -376,6 +363,7 @@ func handleS3CompleteMultipart(w http.ResponseWriter, r *http.Request) {
 		LastModified: time.Now().UTC(),
 	}
 	s3Objects.Put(bucket+"/"+key, obj)
+	s3MultipartUploads.Delete(uploadID)
 
 	// The Location field is the real-AWS canonical
 	// `https://<bucket>.s3.amazonaws.com/<key>` URL that the SDK
@@ -404,10 +392,7 @@ func handleS3CompleteMultipart(w http.ResponseWriter, r *http.Request) {
 
 func handleS3AbortMultipart(w http.ResponseWriter, r *http.Request) {
 	uploadID := r.URL.Query().Get("uploadId")
-	s3MultipartUploadsMu.Lock()
-	_, ok := s3MultipartUploads[uploadID]
-	delete(s3MultipartUploads, uploadID)
-	s3MultipartUploadsMu.Unlock()
+	ok := s3MultipartUploads.Delete(uploadID)
 	if !ok {
 		sim.S3ErrorXML(w, "NoSuchUpload",
 			"The specified multipart upload does not exist",
@@ -440,9 +425,8 @@ func handleS3ListMultipartUploads(w http.ResponseWriter, r *http.Request) {
 		initiated time.Time
 	}
 
-	s3MultipartUploadsMu.Lock()
 	var entries []uploadEntry
-	for _, upload := range s3MultipartUploads {
+	for _, upload := range s3MultipartUploads.List() {
 		if upload.Bucket != bucket {
 			continue
 		}
@@ -463,7 +447,6 @@ func handleS3ListMultipartUploads(w http.ResponseWriter, r *http.Request) {
 			initiated: upload.Initiated,
 		})
 	}
-	s3MultipartUploadsMu.Unlock()
 
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].key == entries[j].key {
@@ -526,9 +509,7 @@ func handleS3ListParts(w http.ResponseWriter, r *http.Request) {
 	partNumberMarker := parsePositiveQueryInt(r.URL.Query().Get("part-number-marker"), 0)
 	maxParts := parsePositiveQueryInt(r.URL.Query().Get("max-parts"), 1000)
 
-	s3MultipartUploadsMu.Lock()
-	mp, ok := s3MultipartUploads[uploadID]
-	s3MultipartUploadsMu.Unlock()
+	mp, ok := s3MultipartUploads.Get(uploadID)
 	if !ok || mp.Bucket != bucket || mp.Key != key {
 		sim.S3ErrorXML(w, "NoSuchUpload",
 			"The specified multipart upload does not exist",
@@ -655,9 +636,7 @@ func handleS3PutObjectTagging(w http.ResponseWriter, r *http.Request) {
 	for _, t := range req.TagSet.Tags {
 		tags[t.Key] = t.Value
 	}
-	s3ObjectTagsMu.Lock()
-	s3ObjectTags[bucket+"/"+key] = tags
-	s3ObjectTagsMu.Unlock()
+	s3ObjectTags.Put(bucket+"/"+key, tags)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -669,9 +648,7 @@ func handleS3GetObjectTagging(w http.ResponseWriter, r *http.Request) {
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3ObjectTagsMu.Lock()
-	tags := s3ObjectTags[bucket+"/"+key]
-	s3ObjectTagsMu.Unlock()
+	tags, _ := s3ObjectTags.Get(bucket + "/" + key)
 
 	type tag struct {
 		Key   string `xml:"Key"`
@@ -695,9 +672,7 @@ func handleS3GetObjectTagging(w http.ResponseWriter, r *http.Request) {
 func handleS3DeleteObjectTagging(w http.ResponseWriter, r *http.Request) {
 	bucket := sim.PathParam(r, "bucket")
 	key := sim.PathParam(r, "key")
-	s3ObjectTagsMu.Lock()
-	delete(s3ObjectTags, bucket+"/"+key)
-	s3ObjectTagsMu.Unlock()
+	s3ObjectTags.Delete(bucket + "/" + key)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -797,7 +772,9 @@ func handleS3MultiObjectDelete(w http.ResponseWriter, r *http.Request) {
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 	}
 	for _, o := range req.Objects {
-		s3Objects.Delete(bucket + "/" + o.Key)
+		storeKey := s3ObjectKey(bucket, o.Key)
+		s3Objects.Delete(storeKey)
+		s3ObjectTags.Delete(storeKey)
 		s3DeleteObjectAnnotations(bucket, o.Key)
 		if !req.Quiet {
 			out.Deleted = append(out.Deleted, deleted{Key: o.Key})
