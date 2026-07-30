@@ -19,6 +19,10 @@ Google Cloud and Microsoft Azure SDK/CLI jobs pre-fetched their separate
 official-client modules through the bounded dependency-download helper before
 the suites started.
 
+Simulator SDK, CLI, and Terraform matrix jobs restored the immutable
+Firecracker seed cache without trying to save their root-mutated guest
+filesystems. The dedicated Firecracker job remained the cache publisher.
+
 The pre-push dependency audit's coordinated AWS SDK patch wave and Google Cloud
 Spanner client release were applied across every affected Go module with the
 repository-owned upgrade target. Direct pins and their resolved transitive

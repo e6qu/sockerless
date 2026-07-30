@@ -4,6 +4,19 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Simulator jobs stopped publishing mutated guest caches
+
+Simulator SDK, CLI, and Terraform matrix jobs had restored the shared
+Firecracker seed and then attempted to save the guest filesystem after real
+workloads made system files root-only. Post-job `tar` therefore emitted
+permission errors while archiving a cache that should never contain test
+mutations.
+
+Those matrix jobs now use the restore-only cache action. The dedicated
+Firecracker job remains the sole publisher of the immutable seed, so simulator
+jobs consume the acceleration without trying to archive their mutated guest
+state.
+
 ## 2026-07-30 — DynamoDB auxiliary table state became durable
 
 DynamoDB TTL, point-in-time recovery, and tags had been attached to table

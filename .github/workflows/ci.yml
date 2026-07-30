@@ -324,7 +324,10 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: actions/cache@v6.1.0
+      # Simulator runs mutate the restored guest rootfs as root. Restore the
+      # immutable seed produced by the dedicated Firecracker job, but never
+      # archive the test-mutated tree from a matrix job.
+      - uses: actions/cache/restore@v6.1.0
         with:
           path: ~/.cache/sockerless/firecracker-ci
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
@@ -426,7 +429,7 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: actions/cache@v6.1.0
+      - uses: actions/cache/restore@v6.1.0
         with:
           path: ~/.cache/sockerless/firecracker-ci
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
@@ -593,7 +596,7 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: actions/cache@v6.1.0
+      - uses: actions/cache/restore@v6.1.0
         with:
           path: ~/.cache/sockerless/firecracker-ci
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
@@ -691,7 +694,7 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: actions/cache@v6.1.0
+      - uses: actions/cache/restore@v6.1.0
         with:
           path: ~/.cache/sockerless/firecracker-ci
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}

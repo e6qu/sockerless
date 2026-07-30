@@ -82,7 +82,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 52. Moved AWS DynamoDB TTL, point-in-time recovery, and tags into a durable out-of-band table-settings store, added SQLite reopen coverage, and exercised all three provider wait paths in the production-shaped Terraform graph.
 53. Retained the exact Cloud SQL Admin v1 and v1beta4 revision 20260722 documents and implemented their newly published instance, on-premises-source, and user members over authenticated public routes.
 54. Reconciled the Microsoft Azure and Google Cloud common-backend module graphs under Go 1.26 and advanced their selected `go-isatty` transitive release to 0.0.24.
-55. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+55. Made simulator matrix jobs restore-only consumers of the Firecracker seed cache so root-mutated guest files were never archived by a post-job cache save.
+56. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
