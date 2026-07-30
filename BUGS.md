@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2814 filed - 2814 fixed - 8 open - 16 false positives.**
+**2815 filed - 2815 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2815~~ | P0 | Simulator SQLite durability | persistent simulators used `synchronous=NORMAL` and returned from graceful HTTP shutdown without closing or checkpointing SQLite | All three cloud simulators now use SQLite `synchronous=FULL`, truncate-checkpoint committed WAL records during orderly shutdown, close the database, and surface checkpoint or close failures. Multi-connection regressions proved the durability pragma, empty post-close WAL, and preserved state after reopen. |
 | ~~2814~~ | P1 | AWS SDK Amazon ECS test isolation | generated ECS test VPC CIDRs overlapped fixed-CIDR coverage, while asynchronous task shutdown could make cleanup silently leave the Docker network behind | ECS test VPCs now use the reserved 10.225-249 range and retry deletion until stopped task containers release the network. The previously colliding service-lifecycle and Terraform-in-ECS cases passed. |
 | ~~2813~~ | P2 | Official AWS SDK local validation | the exhaustive local suite inherited Go's ten-minute package timeout | The shared Go library test recipe now accepts module-specific flags and the all-service AWS SDK suite declares a 30-minute package budget; the unchanged complete suite passed in 546.212 seconds while hosted CI retained four independently bounded shards. |
 | ~~2812~~ | P1 | Dependency freshness | AWS Lambda and IAM SDK releases appeared after pre-push validation | Lambda advanced to `v1.101.0` in the Lambda backend and official SDK suite, IAM advanced to `v1.57.0` in the SDK suite, the backend and complete official-client suite passed, and the repository-wide freshness audit was current. |

@@ -126,6 +126,13 @@ Amazon ECS or CodeBuild task. Official AWS SDK and AWS CLI restart suites
 passed, and the production-shaped HashiCorp AWS provider completed apply,
 hard restart, zero-change refresh, and destroy.
 
+SQLite durability no longer depended on the host preserving the database and
+WAL under `synchronous=NORMAL`. The AWS, Google Cloud, and Microsoft Azure
+simulators opened every persistent connection with `synchronous=FULL`, and an
+orderly server shutdown truncate-checkpointed the WAL, closed the database, and
+returned any checkpoint or close failure. Each complete shared simulator suite
+proved the connection-level pragma and preserved data after close and reopen.
+
 Legacy Amazon ECS state from releases before state-scoped workload adoption no
 longer prevented that durable simulator from starting. A persisted task that
 claimed `RUNNING` but had zero matching runtime containers became truthfully

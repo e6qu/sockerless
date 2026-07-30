@@ -3513,3 +3513,13 @@ queried the confirmation dialog synchronously while React Query was settling
 the error mutation. The assertion now awaited the retained accessible Fluent
 dialog after Azure Resource Manager's real error rendered. All 131 Azure
 console tests and the complete UI build/test fan-out passed.
+
+All three persistent cloud simulators strengthened their SQLite durability
+boundary. Database connections now use `synchronous=FULL` with WAL mode, and
+the shared server shutdown path truncate-checkpoints committed WAL records,
+closes the database, and reports either failure instead of returning while the
+store remains open. Multi-connection regressions in the AWS, Google Cloud, and
+Microsoft Azure shared modules proved the pragma on every connection, required
+an empty or absent WAL after orderly close, and reopened the same data
+successfully. The complete shared suites passed with real container-runtime
+access.

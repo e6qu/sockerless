@@ -3,6 +3,7 @@ package simulator
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -263,9 +264,11 @@ func (s *Server) ListenAndServe() error {
 	}
 
 	if err == http.ErrServerClosed {
-		return <-done
+		err = <-done
 	}
-	return err
+	closeErr := CloseDB(s.db)
+	s.db = nil
+	return errors.Join(err, closeErr)
 }
 
 // RegisterUI registers an embedded SPA at /ui/ and redirects GET / to /ui/.
