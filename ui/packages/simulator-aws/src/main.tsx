@@ -6,6 +6,7 @@ import { AwsApp } from "./console/index.js";
 import { OverviewPage } from "./pages/OverviewPage.js";
 import { ECSTasksPage } from "./pages/ECSTasksPage.js";
 import { ECSTaskDetailPage } from "./pages/ECSTaskDetailPage.js";
+import { ECSServiceDetailPage } from "./pages/ECSServiceDetailPage.js";
 import { LambdaFunctionsPage } from "./pages/LambdaFunctionsPage.js";
 import { LambdaFunctionDetailPage } from "./pages/LambdaFunctionDetailPage.js";
 import { ECRReposPage } from "./pages/ECRReposPage.js";
@@ -70,6 +71,7 @@ createRoot(document.getElementById("root")!).render(
       <AwsApp>
         <Route path="/ui/" element={<OverviewPage />} />
         <Route path="/ui/ecs" element={<ECSTasksPage />} />
+        <Route path="/ui/ecs/services/:cluster/:serviceName" element={<ECSServiceDetailPage />} />
         <Route path="/ui/ecs/:taskArn" element={<ECSTaskDetailPage />} />
         <Route path="/ui/lambda" element={<LambdaFunctionsPage />} />
         <Route path="/ui/lambda/:name" element={<LambdaFunctionDetailPage />} />

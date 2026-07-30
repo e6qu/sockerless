@@ -1,6 +1,7 @@
 package aws_tf_test
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -51,10 +52,10 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		log.Fatalf("Failed to create terraform state dir: %v", err)
 	}
-	defer os.RemoveAll(stateDir)
 	tfState = filepath.Join(stateDir, "terraform.tfstate")
 	simDataDir = filepath.Join(stateDir, "simulator-data")
 	binaryPath = filepath.Join(stateDir, "simulator-aws")
+	gatewayDir := ""
 
 	if configured := os.Getenv("SOCKERLESS_AWS_SIMULATOR_BINARY"); configured != "" {
 		binaryPath = requireExecutable(configured, "AWS Terraform tests")
@@ -94,12 +95,11 @@ func TestMain(m *testing.M) {
 	}
 
 	if os.Getenv("SOCKERLESS_TF_HTTPS_GATEWAY") == "1" {
-		gatewayDir, err := os.MkdirTemp("", "aws-https-gateway-*")
+		gatewayDir, err = os.MkdirTemp("", "aws-https-gateway-*")
 		if err != nil {
 			simCmd.Process.Kill()
 			log.Fatalf("Failed to create HTTPS gateway state dir: %v", err)
 		}
-		defer os.RemoveAll(gatewayDir)
 
 		repoRoot, err := filepath.Abs("../../..")
 		if err != nil {
@@ -152,7 +152,53 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	reapGroup(gatewayCmd)
 	reapGroup(simCmd)
+	if err := cleanupTerraformSimulatorState(simDataDir); err != nil {
+		log.Printf("Failed to remove Terraform simulator workloads: %v", err)
+		code = 1
+	}
+	if gatewayDir != "" {
+		if err := os.RemoveAll(gatewayDir); err != nil {
+			log.Printf("Failed to remove HTTPS gateway state: %v", err)
+			code = 1
+		}
+	}
+	if err := os.RemoveAll(stateDir); err != nil {
+		log.Printf("Failed to remove Terraform state: %v", err)
+		code = 1
+	}
 	os.Exit(code)
+}
+
+func cleanupTerraformSimulatorState(stateDir string) error {
+	stateID := fmt.Sprintf("%x", sha256.Sum256([]byte("aws\x00"+stateDir)))
+	filter := "label=sockerless-sim-state=" + stateID
+	containerIDs, err := dockerObjectIDs("ps", "-aq", "--filter", filter)
+	if err != nil {
+		return fmt.Errorf("list state-owned workload containers: %w", err)
+	}
+	for _, id := range containerIDs {
+		if out, err := exec.Command("docker", "rm", "--force", "--volumes", id).CombinedOutput(); err != nil {
+			return fmt.Errorf("remove state-owned workload container %s: %w: %s", id, err, out)
+		}
+	}
+	networkIDs, err := dockerObjectIDs("network", "ls", "-q", "--filter", filter)
+	if err != nil {
+		return fmt.Errorf("list state-owned workload networks: %w", err)
+	}
+	for _, id := range networkIDs {
+		if out, err := exec.Command("docker", "network", "rm", id).CombinedOutput(); err != nil {
+			return fmt.Errorf("remove state-owned workload network %s: %w: %s", id, err, out)
+		}
+	}
+	return nil
+}
+
+func dockerObjectIDs(args ...string) ([]string, error) {
+	out, err := exec.Command("docker", args...).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, out)
+	}
+	return strings.Fields(string(out)), nil
 }
 
 func startTerraformSimulator() error {

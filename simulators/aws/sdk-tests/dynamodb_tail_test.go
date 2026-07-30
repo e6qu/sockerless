@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -163,6 +164,46 @@ func TestDDBConsumedCapacity(t *testing.T) {
 	require.NotNil(t, put.ConsumedCapacity, "ConsumedCapacity must be returned")
 	assert.Equal(t, tbl, aws.ToString(put.ConsumedCapacity.TableName))
 	assert.Greater(t, aws.ToFloat64(put.ConsumedCapacity.CapacityUnits), 0.0)
+}
+
+func TestDDBStoredByteAccountingAndItemLimit(t *testing.T) {
+	c := ddbClient()
+	tbl := "item-byte-accounting"
+	ddbSimpleTable(t, c, tbl)
+
+	put, err := c.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(tbl),
+		Item: map[string]ddbtypes.AttributeValue{
+			"pk":      sS("binary"),
+			"payload": &ddbtypes.AttributeValueMemberB{Value: bytes.Repeat([]byte{0x7f}, 760)},
+		},
+		ReturnConsumedCapacity: ddbtypes.ReturnConsumedCapacityTotal,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, put.ConsumedCapacity)
+	assert.Equal(t, 1.0, aws.ToFloat64(put.ConsumedCapacity.CapacityUnits),
+		"binary capacity uses decoded bytes rather than base64 wire length")
+
+	const maxItemBytes = 400 * 1024
+	exactPayload := strings.Repeat("x", maxItemBytes-len("pk")-len("exact")-len("payload"))
+	_, err = c.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(tbl),
+		Item: map[string]ddbtypes.AttributeValue{
+			"pk":      sS("exact"),
+			"payload": sS(exactPayload),
+		},
+	})
+	require.NoError(t, err, "an item exactly at the 400 KiB stored-size limit must succeed")
+
+	_, err = c.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(tbl),
+		Item: map[string]ddbtypes.AttributeValue{
+			"pk":      sS("exact"),
+			"payload": sS(exactPayload + "x"),
+		},
+	})
+	require.Error(t, err, "an item one byte over the 400 KiB stored-size limit must fail")
+	assert.Contains(t, err.Error(), "ValidationException")
 }
 
 // TestDDBCreateTableKeySchemaValidation — a key attr missing from

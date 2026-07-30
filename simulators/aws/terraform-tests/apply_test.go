@@ -367,6 +367,8 @@ func TestStackProductionShape(t *testing.T) {
 
 	require.Equal(t, "tf-runner-svc", outputs.must(t, "ecs_service_name"),
 		"aws_ecs_service must converge (ACTIVE, runningCount==desiredCount) via the ECS Service family")
+	require.Equal(t, outputs.must(t, "service_discovery_service_arn"), outputs.must(t, "ecs_service_registry_arn"),
+		"aws_ecs_service must persist its AWS Cloud Map service registry")
 	require.Equal(t, "FARGATE,FARGATE_SPOT", outputs.must(t, "ecs_cluster_capacity_providers"),
 		"PutClusterCapacityProviders must round-trip through DescribeClusters")
 	require.Equal(t, "bridge", outputs.must(t, "ecs_task_definition_bridge_network_mode"),
@@ -381,6 +383,8 @@ func TestStackProductionShape(t *testing.T) {
 		"Secrets Manager ARN must be us-east-1 + account; got %s", smARN)
 	require.Contains(t, smARN, ":secret:tf-test-runner-secret-",
 		"Secrets Manager ARN must include :secret:<name>-<6char-suffix>; got %s", smARN)
+	require.Equal(t, "us-west-2", outputs.must(t, "secretsmanager_secret_replica_region"),
+		"Secrets Manager must round-trip the provider-managed replica Region")
 
 	ssmARN := outputs.must(t, "ssm_parameter_arn")
 	require.Contains(t, ssmARN, ":parameter/tf-test/runner/config",

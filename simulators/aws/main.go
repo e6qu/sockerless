@@ -97,6 +97,10 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 
 	// Register AWS JSON services (X-Amz-Target header routing)
 	awsRouter := sim.NewAWSRouter()
+	// Secrets Manager replication restores replica resource policies while its
+	// durable store is opened, so the shared IAM resource-policy store must
+	// exist before any service slice performs recovery.
+	registerIAMResourcePolicies(srv)
 	registerECS(awsRouter, srv)
 	registerECR(awsRouter, srv)
 	registerCloudWatchLogs(awsRouter, srv)
@@ -147,7 +151,6 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 	queryRouter := sim.NewAWSQueryRouter()
 	registerEC2(queryRouter, srv)
 	registerIAM(queryRouter, srv)
-	registerIAMResourcePolicies(srv)
 	registerSTS(queryRouter, srv)
 	registerSNS(queryRouter, srv)
 	registerRDS(queryRouter, srv)
@@ -161,6 +164,7 @@ func buildSimulatorWithOptions(cfg sim.Config, options simulatorBuildOptions) (*
 	registerCloudWatchAnomalyInsightQuery(queryRouter)
 	registerCloudWatchMiscQuery(queryRouter)
 	registerCloudWatchDashboardsQuery(queryRouter)
+	sfnAWSQueryRouter = queryRouter
 
 	// Host-addressed service data planes are registered outside the
 	// control-plane routers, AFTER armSpecValidator: a later WrapHandler

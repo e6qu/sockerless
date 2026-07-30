@@ -54,6 +54,7 @@ const CRUMBS: Record<string, string> = {
 
 const IAM_USER_PREFIX = "/ui/iam/users/";
 const ORG_ACCOUNT_PREFIX = "/ui/organizations/accounts/";
+const ECS_SERVICE_PREFIX = "/ui/ecs/services/";
 const NOT_SUPPORTED_PREFIX = "/ui/not-supported/";
 
 // Resource detail routes nest under their service the way the real console
@@ -88,6 +89,15 @@ function crumbTrail(pathname: string): { label: string; to?: string }[] {
       { label: "Simulator", to: "/ui/" },
       { label: "AWS Organizations", to: "/ui/organizations" },
       { label: decodeURIComponent(pathname.slice(ORG_ACCOUNT_PREFIX.length)) },
+    ];
+  }
+  if (pathname.startsWith(ECS_SERVICE_PREFIX)) {
+    const [cluster = "", service = ""] = pathname.slice(ECS_SERVICE_PREFIX.length).split("/");
+    return [
+      { label: "Simulator", to: "/ui/" },
+      { label: "Elastic Container Service", to: "/ui/ecs" },
+      { label: decodeURIComponent(cluster) },
+      { label: decodeURIComponent(service) },
     ];
   }
   for (const entry of RESOURCE_DETAIL_PREFIXES) {

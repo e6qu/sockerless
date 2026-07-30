@@ -273,7 +273,7 @@ func iamSecretsManagerResourceTags(r *http.Request) (map[string]string, bool) {
 	if json.Unmarshal(iamReadJSONBody(r), &req) != nil || req.SecretId == "" {
 		return nil, false
 	}
-	name, ok := resolveSecretName(req.SecretId)
+	name, ok := resolveSecretKeyForRequest(r, req.SecretId)
 	if !ok {
 		return nil, false
 	}

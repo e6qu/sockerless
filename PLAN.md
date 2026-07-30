@@ -102,6 +102,10 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 72. Retained the exact CI-captured Google Cloud Dataflow v1b3 revision 20260719 document after proving its method, route, and schema-field contracts were unchanged.
 73. Retained the newest multi-probe Google Cloud API Gateway v1 revision 20260724 document after proving its method, route, and schema-field contracts were unchanged.
 74. Replaced synthetic Amazon Elastic Container Service service counts with a durable real-task scheduler, bounded rolling deployment, task replacement and protection, load-balancer target health, ECS Express Mode reconciliation, and hard-restart adoption, then proved the runtime through official AWS SDK, AWS CLI, and HashiCorp AWS provider clients.
+75. Connected Amazon ECS service tasks to durable AWS Cloud Map registrations and made persisted launch throttling, deployment circuit breakers, and CloudWatch alarms drive failed-deployment rollback.
+76. Enforced Amazon DynamoDB's exact stored-byte item boundary, made AWS Secrets Manager replication genuinely regional and durable, and expanded AWS Step Functions generic AWS SDK integrations across all four supported Smithy protocol families.
+77. Added public-API-backed Amazon ECS service and Secrets Manager replication operations to the AWS console, and kept generated Smithy tables out of the hand-written duplicate-code gate.
+78. Recovered the local Podman virtual machine's volatile overlay fault without deleting images or volumes and passed the complete production-shaped HashiCorp AWS provider restart graph.
 
 ## Verified Next Gaps
 
@@ -110,8 +114,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 3. BUG-2646 retained only Google's upstream Cloud Run Discovery publication lag.
 4. BUG-1345 retained only the upstream AzureAD provider's lack of a Microsoft Graph endpoint override.
 5. BUG-2523 and BUG-2441 remained in the external Bleephub repository rather than this workspace.
-6. BUG-2766 retained AWS Amplify Hosting image optimization, BUG-2764 retained the macOS Podman nested-KVM boundary, and BUG-2791 retained the operator-owned corrupt Podman overlay store that blocked a second local AWS Terraform container run. Complete AWS WAF statement evaluation and transactional Elastic Load Balancing listener binding closed BUG-2767 and BUG-2765.
-7. BUG-2798 retained ECS-managed AWS Cloud Map instance registration, while BUG-2799 retained failed-deployment throttling, circuit-breaker rollback, and CloudWatch-alarm rollback after the core ECS service runtime became real and durable.
+6. BUG-2766 retained AWS Amplify Hosting image optimization and BUG-2764 retained the macOS Podman nested-KVM boundary. The local Podman overlay fault, complete AWS WAF statement evaluation, and transactional Elastic Load Balancing listener binding closed BUG-2791, BUG-2767, and BUG-2765.
+7. ECS-managed AWS Cloud Map instance registration, failed-deployment throttling, circuit-breaker rollback, and CloudWatch-alarm rollback closed BUG-2798 and BUG-2799.
 
 ## Simulator Console Parity
 

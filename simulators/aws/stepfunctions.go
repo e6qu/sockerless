@@ -85,9 +85,12 @@ var (
 	sfnExecutions    sim.Store[SFNExecution]
 	sfnCancels       sync.Map
 	sfnMu            sync.Mutex
+	sfnAWSRouter     *sim.AWSRouter
 )
 
 func registerStepFunctions(r *sim.AWSRouter, srv *sim.Server) {
+	sfnAWSRouter = r
+	sfnAWSServer = srv
 	sfnStateMachines = sim.MakeStore[SFNStateMachine](srv.DB(), "sfn_state_machines")
 	sfnExecutions = sim.MakeStore[SFNExecution](srv.DB(), "sfn_executions")
 	sfnHistories = sim.MakeStore[[]sfnHistoryEvent](srv.DB(), "sfn_execution_histories")

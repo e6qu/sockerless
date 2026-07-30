@@ -15,6 +15,7 @@ package main
 // the service's own payload protocol).
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -906,9 +907,10 @@ func ddbExtractAttrValue(v any) string {
 	return ""
 }
 
-// ddbAttrValueSize approximates the bytes DynamoDB attributes a value, per the
-// documented item-size rules (used for ConsumedCapacity). Bounded by the
-// 32-level write-side nesting limit so the recursion can't overflow.
+// ddbAttrValueSize returns the stored byte size DynamoDB assigns an attribute
+// value. Binary values are measured after base64 decoding, numbers use the
+// documented significant-digit formula, and document values include their
+// per-container and per-element overhead.
 func ddbAttrValueSize(v any) int {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -918,19 +920,10 @@ func ddbAttrValueSize(v any) int {
 		return len(s)
 	}
 	if n, ok := m["N"].(string); ok {
-		digits := 0
-		for _, c := range n {
-			if c >= '0' && c <= '9' {
-				digits++
-			}
-		}
-		if sz := digits/2 + 1; sz < 21 {
-			return sz
-		}
-		return 21
+		return ddbNumberSize(n)
 	}
 	if b, ok := m["B"].(string); ok {
-		return len(b)
+		return ddbBinarySize(b)
 	}
 	if mm, ok := m["M"].(map[string]any); ok {
 		sz := 3
@@ -946,18 +939,63 @@ func ddbAttrValueSize(v any) int {
 		}
 		return sz
 	}
-	for _, st := range []string{"SS", "NS", "BS"} {
-		if set, ok := m[st].([]any); ok {
-			sz := 0
-			for _, e := range set {
-				if s, ok := e.(string); ok {
-					sz += len(s)
-				}
+	if set, ok := m["SS"].([]any); ok {
+		sz := 0
+		for _, e := range set {
+			if s, ok := e.(string); ok {
+				sz += len(s)
 			}
-			return sz
 		}
+		return sz
+	}
+	if set, ok := m["NS"].([]any); ok {
+		sz := 0
+		for _, e := range set {
+			if s, ok := e.(string); ok {
+				sz += ddbNumberSize(s)
+			}
+		}
+		return sz
+	}
+	if set, ok := m["BS"].([]any); ok {
+		sz := 0
+		for _, e := range set {
+			if s, ok := e.(string); ok {
+				sz += ddbBinarySize(s)
+			}
+		}
+		return sz
 	}
 	return 1 // BOOL / NULL
+}
+
+func ddbBinarySize(encoded string) int {
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return 0
+	}
+	return len(decoded)
+}
+
+func ddbNumberSize(number string) int {
+	significand := strings.TrimSpace(number)
+	significand = strings.TrimPrefix(significand, "+")
+	significand = strings.TrimPrefix(significand, "-")
+	if exponent := strings.IndexAny(significand, "eE"); exponent >= 0 {
+		significand = significand[:exponent]
+	}
+	significand = strings.ReplaceAll(significand, ".", "")
+	significand = strings.TrimLeft(significand, "0")
+	significand = strings.TrimRight(significand, "0")
+	digits := len(significand)
+	if digits == 0 {
+		digits = 1
+	}
+	size := (digits+1)/2 + 1
+	if size > 21 {
+		return 21
+	}
+	return size
 }
 
 func ddbItemSizeBytes(item map[string]any) int {
@@ -966,6 +1004,15 @@ func ddbItemSizeBytes(item map[string]any) int {
 		sz += len(name) + ddbAttrValueSize(v)
 	}
 	return sz
+}
+
+const ddbMaxItemSizeBytes = 400 * 1024
+
+func ddbValidateItemSize(item map[string]any) error {
+	if size := ddbItemSizeBytes(item); size > ddbMaxItemSizeBytes {
+		return fmt.Errorf("item size has exceeded the maximum allowed size")
+	}
+	return nil
 }
 
 // ddbReadUnits / ddbWriteUnits convert an item size to consumed capacity units
@@ -1080,6 +1127,10 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	if ddbItemTooDeep(req.Item) {
 		sim.AWSError(w, "ValidationException",
 			"Item nesting exceeds the 32-level maximum", http.StatusBadRequest)
+		return
+	}
+	if err := ddbValidateItemSize(req.Item); err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
 		return
 	}
 	ddbItemsMu.Lock()
@@ -1251,6 +1302,10 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 		default: // PUT (default)
 			item[attr] = upd.Value
 		}
+	}
+	if err := ddbValidateItemSize(item); err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
 	}
 	ddbItems.Put(itemKey, item)
 	ddbItemNames.Put(itemKey, itemKey)
@@ -1903,6 +1958,12 @@ func handleDDBBatchWriteItem(w http.ResponseWriter, r *http.Request) {
 					"Item nesting exceeds the 32-level maximum", http.StatusBadRequest)
 				return
 			}
+			if op.PutRequest != nil {
+				if err := ddbValidateItemSize(op.PutRequest.Item); err != nil {
+					sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
 		}
 	}
 	if total == 0 || total > 25 {
@@ -2042,6 +2103,41 @@ func handleDDBTransactWriteItems(w http.ResponseWriter, r *http.Request) {
 			cancelled = true
 		} else {
 			reasons[i] = map[string]any{"Code": "None"}
+		}
+		if ti.Put != nil {
+			if ddbItemTooDeep(op.Item) {
+				sim.AWSError(w, "ValidationException",
+					"Item nesting exceeds the 32-level maximum", http.StatusBadRequest)
+				return
+			}
+			if err := ddbValidateItemSize(op.Item); err != nil {
+				sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		if ti.Update != nil {
+			updated := ddbCloneItem(current)
+			if updated == nil {
+				updated = map[string]any{}
+				for key, value := range op.Key {
+					updated[key] = value
+				}
+			}
+			if op.UpdateExpression != "" {
+				if err := ddbApplyUpdateExpression(updated, op.UpdateExpression, op.ExpressionAttributeNames, op.ExpressionAttributeValues); err != nil {
+					sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+			if ddbItemTooDeep(updated) {
+				sim.AWSError(w, "ValidationException",
+					"Item nesting exceeds the 32-level maximum", http.StatusBadRequest)
+				return
+			}
+			if err := ddbValidateItemSize(updated); err != nil {
+				sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 	}
 	if cancelled {

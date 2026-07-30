@@ -2,12 +2,129 @@ package aws_cli_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSFN_GenericAWSSDKIntegrations_CLI(t *testing.T) {
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	roleName := "sfn-cli-sdk-" + suffix
+	apiName := "sfn-cli-sdk-" + suffix
+	bucketName := "sfn-cli-sdk-" + suffix
+	runCLI(t, awsCLI("s3api", "create-bucket", "--bucket", bucketName))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("s3api", "delete-bucket", "--bucket", bucketName))
+	})
+	runCLI(t, awsCLI("iam", "create-role",
+		"--role-name", roleName,
+		"--path", "/sfn-cli-sdk/",
+		"--assume-role-policy-document", `{"Version":"2012-10-17","Statement":[]}`,
+	))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("iam", "delete-role", "--role-name", roleName))
+	})
+
+	definition, err := json.Marshal(map[string]any{
+		"StartAt": "CreateRestAPI",
+		"States": map[string]any{
+			"CreateRestAPI": map[string]any{
+				"Type":       "Task",
+				"Resource":   "arn:aws:states:::aws-sdk:apigateway:createRestApi",
+				"Parameters": map[string]any{"Name": apiName},
+				"ResultPath": nil,
+				"Next":       "TagBucket",
+			},
+			"TagBucket": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:s3:putBucketTagging",
+				"Parameters": map[string]any{
+					"Bucket": bucketName,
+					"Tagging": map[string]any{
+						"TagSet": []any{map[string]any{"Key": "client", "Value": "aws-cli"}},
+					},
+				},
+				"ResultPath": nil,
+				"Next":       "ListRoles",
+			},
+			"ListRoles": map[string]any{
+				"Type":       "Task",
+				"Resource":   "arn:aws:states:::aws-sdk:iam:listRoles",
+				"Parameters": map[string]any{"PathPrefix": "/sfn-cli-sdk/"},
+				"End":        true,
+			},
+		},
+	})
+	require.NoError(t, err)
+	out := runCLI(t, awsCLI("stepfunctions", "create-state-machine",
+		"--name", "sfn-cli-sdk-"+suffix,
+		"--definition", string(definition),
+		"--role-arn", "arn:aws:iam::123456789012:role/sfn-role",
+	))
+	var machine struct {
+		StateMachineArn string `json:"stateMachineArn"`
+	}
+	parseJSON(t, out, &machine)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("stepfunctions", "delete-state-machine",
+			"--state-machine-arn", machine.StateMachineArn))
+	})
+
+	out = runCLI(t, awsCLI("stepfunctions", "start-execution",
+		"--state-machine-arn", machine.StateMachineArn))
+	var started struct {
+		ExecutionArn string `json:"executionArn"`
+	}
+	parseJSON(t, out, &started)
+	var execution struct {
+		Status string `json:"status"`
+		Output string `json:"output"`
+		Error  string `json:"error"`
+		Cause  string `json:"cause"`
+	}
+	require.Eventually(t, func() bool {
+		out = runCLI(t, awsCLI("stepfunctions", "describe-execution",
+			"--execution-arn", started.ExecutionArn))
+		parseJSON(t, out, &execution)
+		return execution.Status != "RUNNING"
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Equal(t, "SUCCEEDED", execution.Status, "%s: %s", execution.Error, execution.Cause)
+	assert.Contains(t, execution.Output, roleName)
+
+	out = runCLI(t, awsCLI("apigateway", "get-rest-apis"))
+	var APIs struct {
+		Items []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	parseJSON(t, out, &APIs)
+	var apiID string
+	for _, api := range APIs.Items {
+		if api.Name == apiName {
+			apiID = api.ID
+			break
+		}
+	}
+	require.NotEmpty(t, apiID)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("apigateway", "delete-rest-api", "--rest-api-id", apiID))
+	})
+	out = runCLI(t, awsCLI("s3api", "get-bucket-tagging", "--bucket", bucketName))
+	var tagging struct {
+		TagSet []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"TagSet"`
+	}
+	parseJSON(t, out, &tagging)
+	require.Len(t, tagging.TagSet, 1)
+	assert.Equal(t, "client", tagging.TagSet[0].Key)
+	assert.Equal(t, "aws-cli", tagging.TagSet[0].Value)
+}
 
 func TestSFN_StateMachineCRUD_CLI(t *testing.T) {
 	definition := `{"Comment":"cli test","StartAt":"Pass","States":{"Pass":{"Type":"Pass","End":true}}}`

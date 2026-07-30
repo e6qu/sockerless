@@ -1,12 +1,15 @@
 package aws_sdk_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/servicediscovery"
+	sdtypes "github.com/aws/aws-sdk-go-v2/service/servicediscovery/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -135,6 +138,142 @@ func TestECS_Service_ReconcilesRealTasks(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "INACTIVE", aws.ToString(deleted.Service.Status))
+}
+
+// TestECS_Service_RegistersRunningTasksInCloudMap proves that service
+// discovery is scheduler-owned state: Amazon ECS registered the real elastic
+// network interface address of a running task, replaced that registration when
+// the task was replaced, and deregistered it when the service was deleted.
+func TestECS_Service_RegistersRunningTasksInCloudMap(t *testing.T) {
+	client := ecsClient()
+	cloudMap := cmClient()
+	cluster := "discovery-scheduler-cluster"
+	const serviceName = "discovery-scheduler-service"
+
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = client.DeleteService(ctx, &ecs.DeleteServiceInput{
+			Cluster: aws.String(cluster), Service: aws.String(serviceName), Force: aws.Bool(true),
+		})
+		_, _ = client.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)})
+	})
+
+	subnetID := createECSTestSubnet(t, "ecs-service-discovery")
+	registered, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String("discovery-scheduler-task"),
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:      aws.String("app"),
+			Image:     aws.String(containerCommandImage),
+			Command:   []string{"hold"},
+			Essential: aws.Bool(true),
+		}},
+	})
+	require.NoError(t, err)
+
+	namespaceOut, err := cloudMap.CreatePrivateDnsNamespace(ctx, &servicediscovery.CreatePrivateDnsNamespaceInput{
+		Name: aws.String("ecs-service-discovery.local"),
+		Vpc:  aws.String("vpc-ecs-service-discovery"),
+	})
+	require.NoError(t, err)
+	namespaceOperation, err := cloudMap.GetOperation(ctx, &servicediscovery.GetOperationInput{
+		OperationId: namespaceOut.OperationId,
+	})
+	require.NoError(t, err)
+	namespaceID := namespaceOperation.Operation.Targets["NAMESPACE"]
+	registryOut, err := cloudMap.CreateService(ctx, &servicediscovery.CreateServiceInput{
+		Name:        aws.String("app"),
+		NamespaceId: aws.String(namespaceID),
+		DnsConfig: &sdtypes.DnsConfig{
+			RoutingPolicy: sdtypes.RoutingPolicyMultivalue,
+			DnsRecords: []sdtypes.DnsRecord{{
+				Type: sdtypes.RecordTypeA,
+				TTL:  aws.Int64(10),
+			}},
+		},
+	})
+	require.NoError(t, err)
+	registryID := aws.ToString(registryOut.Service.Id)
+	t.Cleanup(func() {
+		_, _ = cloudMap.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: aws.String(registryID)})
+		_, _ = cloudMap.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{Id: aws.String(namespaceID)})
+	})
+
+	_, err = client.CreateService(ctx, &ecs.CreateServiceInput{
+		Cluster:        aws.String(cluster),
+		ServiceName:    aws.String(serviceName),
+		TaskDefinition: registered.TaskDefinition.TaskDefinitionArn,
+		DesiredCount:   aws.Int32(1),
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+				Subnets: []string{subnetID},
+			},
+		},
+		ServiceRegistries: []ecstypes.ServiceRegistry{{
+			RegistryArn: registryOut.Service.Arn,
+		}},
+	})
+	require.NoError(t, err)
+
+	var firstTaskARN, firstTaskID, firstIP string
+	require.Eventually(t, func() bool {
+		listed, listErr := client.ListTasks(ctx, &ecs.ListTasksInput{
+			Cluster: aws.String(cluster), ServiceName: aws.String(serviceName),
+			DesiredStatus: ecstypes.DesiredStatusRunning,
+		})
+		if listErr != nil || len(listed.TaskArns) != 1 {
+			return false
+		}
+		described, describeErr := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(cluster), Tasks: listed.TaskArns,
+		})
+		if describeErr != nil || len(described.Tasks) != 1 ||
+			len(described.Tasks[0].Containers) != 1 ||
+			len(described.Tasks[0].Containers[0].NetworkInterfaces) != 1 {
+			return false
+		}
+		firstTaskARN = listed.TaskArns[0]
+		firstTaskID = firstTaskARN[strings.LastIndex(firstTaskARN, "/")+1:]
+		firstIP = aws.ToString(described.Tasks[0].Containers[0].NetworkInterfaces[0].PrivateIpv4Address)
+		instance, getErr := cloudMap.GetInstance(ctx, &servicediscovery.GetInstanceInput{
+			ServiceId: aws.String(registryID), InstanceId: aws.String(firstTaskID),
+		})
+		return getErr == nil &&
+			instance.Instance.Attributes["AWS_INSTANCE_IPV4"] == firstIP &&
+			instance.Instance.Attributes["ECS_SERVICE_NAME"] == serviceName &&
+			instance.Instance.Attributes["ECS_CLUSTER_NAME"] == cluster &&
+			instance.Instance.Attributes["ECS_TASK_DEFINITION_FAMILY"] == "discovery-scheduler-task" &&
+			instance.Instance.Attributes["ECS_TASK_DEFINITION_REVISION"] == "1"
+	}, 30*time.Second, 100*time.Millisecond, "running task was not registered with its real ENI address")
+
+	_, err = client.StopTask(ctx, &ecs.StopTaskInput{
+		Cluster: aws.String(cluster), Task: aws.String(firstTaskARN),
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		instances, listErr := cloudMap.ListInstances(ctx, &servicediscovery.ListInstancesInput{
+			ServiceId: aws.String(registryID),
+		})
+		return listErr == nil && len(instances.Instances) == 1 &&
+			aws.ToString(instances.Instances[0].Id) != firstTaskID &&
+			instances.Instances[0].Attributes["AWS_INSTANCE_IPV4"] != firstIP
+	}, 30*time.Second, 100*time.Millisecond, "replacement task did not replace its Cloud Map registration")
+
+	_, err = client.DeleteService(ctx, &ecs.DeleteServiceInput{
+		Cluster: aws.String(cluster), Service: aws.String(serviceName), Force: aws.Bool(true),
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		instances, listErr := cloudMap.ListInstances(ctx, &servicediscovery.ListInstancesInput{
+			ServiceId: aws.String(registryID),
+		})
+		return listErr == nil && len(instances.Instances) == 0
+	}, 10*time.Second, 100*time.Millisecond, "service deletion did not deregister Cloud Map instances")
 }
 
 func containsString(values []string, wanted string) bool {

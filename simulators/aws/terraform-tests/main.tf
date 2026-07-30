@@ -422,6 +422,21 @@ resource "aws_ecs_service" "tf_runner" {
     subnets         = [aws_subnet.tf_ec2_subnet.id]
     security_groups = [aws_security_group.tf_ec2_sg.id]
   }
+
+  service_registries {
+    registry_arn = aws_service_discovery_service.tf_svc.arn
+  }
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  alarms {
+    alarm_names = [aws_cloudwatch_metric_alarm.tf_alarm.alarm_name]
+    enable      = true
+    rollback    = true
+  }
 }
 
 # Application Auto Scaling — autoscale the ECS service that backs the runner.
@@ -1537,6 +1552,10 @@ resource "aws_kms_grant" "tf_kms_grant" {
 resource "aws_secretsmanager_secret" "tf_secret" {
   name                    = "tf-test-runner-secret"
   recovery_window_in_days = 0
+
+  replica {
+    region = "us-west-2"
+  }
 }
 
 resource "aws_secretsmanager_secret_version" "tf_secret_v1" {
@@ -1611,6 +1630,10 @@ output "scheduler_schedule_arn" {
 }
 output "ecs_service_name" {
   value = aws_ecs_service.tf_runner.name
+}
+
+output "ecs_service_registry_arn" {
+  value = one(aws_ecs_service.tf_runner.service_registries).registry_arn
 }
 output "ecs_cluster_capacity_providers" {
   value = join(",", sort(aws_ecs_cluster_capacity_providers.main.capacity_providers))
@@ -1756,6 +1779,10 @@ output "kms_alias_arn" {
 }
 output "secretsmanager_secret_arn" {
   value = aws_secretsmanager_secret.tf_secret.arn
+}
+
+output "secretsmanager_secret_replica_region" {
+  value = one(aws_secretsmanager_secret.tf_secret.replica[*].region)
 }
 output "ssm_parameter_arn" {
   value = aws_ssm_parameter.tf_param.arn

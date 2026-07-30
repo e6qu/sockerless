@@ -1239,6 +1239,9 @@ func pqlExecInsert(t DDBTable, st *partiQLStmt) (*pqlResult, *pqlError) {
 	if ddbItemTooDeep(item) {
 		return nil, pqlErrf("ValidationException", "Item nesting exceeds the 32-level maximum")
 	}
+	if err := ddbValidateItemSize(item); err != nil {
+		return nil, pqlErrf("ValidationException", "%v", err)
+	}
 	key := ddbItemKey(t, item)
 	if _, exists := ddbItems.Get(key); exists {
 		return nil, pqlErrf("DuplicateItemException", "Duplicate primary key exists in table")
@@ -1289,6 +1292,9 @@ func pqlExecUpdate(t DDBTable, st *partiQLStmt) (*pqlResult, *pqlError) {
 		if err := ddbApplyUpdateExpression(item, updExpr, exprNames, exprValues); err != nil {
 			return nil, pqlErrf("ValidationException", "%v", err)
 		}
+	}
+	if err := ddbValidateItemSize(item); err != nil {
+		return nil, pqlErrf("ValidationException", "%v", err)
 	}
 	ddbItems.Put(itemKey, item)
 	ddbItemNames.Put(itemKey, itemKey)
@@ -1662,6 +1668,9 @@ func pqlValidateForTransaction(st *partiQLStmt) *pqlError {
 		if ddbItemTooDeep(item) {
 			return pqlErrf("ValidationException", "Item nesting exceeds the 32-level maximum")
 		}
+		if err := ddbValidateItemSize(item); err != nil {
+			return pqlErrf("ValidationException", "%v", err)
+		}
 		if _, exists := ddbItems.Get(ddbItemKey(t, item)); exists {
 			return pqlErrf("DuplicateItemException", "Duplicate primary key exists in table")
 		}
@@ -1670,8 +1679,21 @@ func pqlValidateForTransaction(st *partiQLStmt) *pqlError {
 		if perr != nil {
 			return perr
 		}
-		if _, exists := ddbItems.Get(ddbItemKey(t, key)); !exists {
+		item, exists := ddbItems.Get(ddbItemKey(t, key))
+		if !exists {
 			return &pqlError{Code: "ConditionalCheckFailedException", Message: "The conditional request failed"}
+		}
+		if st.Kind == pqlUpdate {
+			updated := ddbCloneItem(item)
+			updExpr, exprNames, exprValues := pqlBuildUpdateExpression(st)
+			if updExpr != "" {
+				if err := ddbApplyUpdateExpression(updated, updExpr, exprNames, exprValues); err != nil {
+					return pqlErrf("ValidationException", "%v", err)
+				}
+			}
+			if err := ddbValidateItemSize(updated); err != nil {
+				return pqlErrf("ValidationException", "%v", err)
+			}
 		}
 	case pqlSelect:
 		eqs, ok := pqlKeyEqualities(st.Where)

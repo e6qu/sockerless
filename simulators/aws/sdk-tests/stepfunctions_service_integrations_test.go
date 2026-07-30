@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,15 +9,28 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/apigateway"
+	"github.com/aws/aws-sdk-go-v2/service/batch"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	eventtypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
+	"github.com/aws/aws-sdk-go-v2/service/glue"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	sfntypes "github.com/aws/aws-sdk-go-v2/service/sfn/types"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
@@ -25,6 +39,303 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSFN_GenericAWSSDKIntegrations_SDK(t *testing.T) {
+	statesAPI := sfnClient()
+	dynamoAPI := ddbClient()
+	secretsAPI := smClient()
+	glueAPI := glueClient()
+	apiGatewayAPI := apigwClient()
+	batchAPI := batchClient()
+	lambdaAPI := lambdaClient()
+	iamAPI := iamClient()
+	s3API := s3Client()
+	route53API := route53Client()
+	cloudFrontAPI := cfClient()
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	tableName := "sfn-sdk-" + suffix
+	secretName := "sfn-sdk-" + suffix
+	databaseName := "sfn_sdk_" + suffix
+	restAPIName := "sfn-sdk-" + suffix
+	consumableName := "sfn-sdk-" + suffix
+	roleName := "sfn-sdk-" + suffix
+	bucketName := "sfn-sdk-" + suffix
+	functionName := "sfn-sdk-" + suffix
+
+	_, err := lambdaAPI.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(functionName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		PackageType:  lambdatypes.PackageTypeImage,
+		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(lambdaHandlerImageName)},
+	})
+	require.NoError(t, err)
+
+	_, err = s3API.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucketName)})
+	require.NoError(t, err)
+
+	_, err = iamAPI.CreateRole(ctx, &iam.CreateRoleInput{
+		RoleName:                 aws.String(roleName),
+		Path:                     aws.String("/sfn-sdk/"),
+		AssumeRolePolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[]}`),
+	})
+	require.NoError(t, err)
+
+	_, err = dynamoAPI.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(tableName),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{{
+			AttributeName: aws.String("id"),
+			AttributeType: ddbtypes.ScalarAttributeTypeS,
+		}},
+		KeySchema: []ddbtypes.KeySchemaElement{{
+			AttributeName: aws.String("id"),
+			KeyType:       ddbtypes.KeyTypeHash,
+		}},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = dynamoAPI.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(tableName)})
+		_, _ = secretsAPI.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
+			SecretId:                   aws.String(secretName),
+			ForceDeleteWithoutRecovery: aws.Bool(true),
+		})
+		_, _ = glueAPI.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String(databaseName)})
+		restAPIs, _ := apiGatewayAPI.GetRestApis(ctx, &apigateway.GetRestApisInput{})
+		for _, restAPI := range restAPIs.Items {
+			if aws.ToString(restAPI.Name) == restAPIName {
+				_, _ = apiGatewayAPI.DeleteRestApi(ctx, &apigateway.DeleteRestApiInput{RestApiId: restAPI.Id})
+			}
+		}
+		_, _ = batchAPI.DeleteConsumableResource(ctx, &batch.DeleteConsumableResourceInput{
+			ConsumableResource: aws.String(consumableName),
+		})
+		_, _ = iamAPI.DeleteRole(ctx, &iam.DeleteRoleInput{RoleName: aws.String(roleName)})
+		_, _ = s3API.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
+		_, _ = lambdaAPI.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(functionName)})
+	})
+
+	definition, err := json.Marshal(map[string]any{
+		"StartAt": "WriteItem",
+		"States": map[string]any{
+			"WriteItem": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+				"Parameters": map[string]any{
+					"TableName": tableName,
+					"Item": map[string]any{
+						"id":    map[string]any{"S": "from-workflow"},
+						"value": map[string]any{"S": "persisted"},
+					},
+				},
+				"ResultPath": nil,
+				"Next":       "CreateSecret",
+			},
+			"CreateSecret": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:secretsmanager:createSecret",
+				"Parameters": map[string]any{
+					"Name":         secretName,
+					"SecretString": "persisted",
+				},
+				"ResultPath": nil,
+				"Next":       "CreateDatabase",
+			},
+			"CreateDatabase": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:glue:createDatabase",
+				"Parameters": map[string]any{
+					"DatabaseInput": map[string]any{"Name": databaseName},
+				},
+				"ResultPath": nil,
+				"Next":       "ListBudgets",
+			},
+			"ListBudgets": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:budgets:describeBudgets",
+				"Parameters": map[string]any{
+					"AccountId":  "123456789012",
+					"MaxResults": 10,
+				},
+				"ResultPath": nil,
+				"Next":       "ListBuildProjects",
+			},
+			"ListBuildProjects": map[string]any{
+				"Type":       "Task",
+				"Resource":   "arn:aws:states:::aws-sdk:codebuild:listProjects",
+				"Parameters": map[string]any{},
+				"ResultPath": nil,
+				"Next":       "CreateRestAPI",
+			},
+			"CreateRestAPI": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:apigateway:createRestApi",
+				"Parameters": map[string]any{
+					"Name":        restAPIName,
+					"Description": "created through AWS Step Functions",
+				},
+				"ResultPath": nil,
+				"Next":       "CreateConsumableResource",
+			},
+			"CreateConsumableResource": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:batch:createConsumableResource",
+				"Parameters": map[string]any{
+					"ConsumableResourceName": consumableName,
+					"TotalQuantity":          11,
+					"ResourceType":           "REPLENISHABLE",
+				},
+				"ResultPath": nil,
+				"Next":       "ListFunctions",
+			},
+			"ListFunctions": map[string]any{
+				"Type":       "Task",
+				"Resource":   "arn:aws:states:::aws-sdk:lambda:listFunctions",
+				"Parameters": map[string]any{},
+				"ResultPath": nil,
+				"Next":       "TagBucket",
+			},
+			"TagBucket": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:s3:putBucketTagging",
+				"Parameters": map[string]any{
+					"Bucket": bucketName,
+					"Tagging": map[string]any{
+						"TagSet": []any{map[string]any{"Key": "owner", "Value": "step-functions"}},
+					},
+				},
+				"ResultPath": nil,
+				"Next":       "ListHostedZones",
+			},
+			"ListHostedZones": map[string]any{
+				"Type":       "Task",
+				"Resource":   "arn:aws:states:::aws-sdk:route53:listHostedZones",
+				"Parameters": map[string]any{},
+				"ResultPath": nil,
+				"Next":       "ListDistributions",
+			},
+			"ListDistributions": map[string]any{
+				"Type":       "Task",
+				"Resource":   "arn:aws:states:::aws-sdk:cloudfront:listDistributions",
+				"Parameters": map[string]any{},
+				"ResultPath": nil,
+				"Next":       "ListRoles",
+			},
+			"ListRoles": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:iam:listRoles",
+				"Parameters": map[string]any{
+					"PathPrefix": "/sfn-sdk/",
+				},
+				"ResultPath": "$.IAM",
+				"Next":       "InvokeFunction",
+			},
+			"InvokeFunction": map[string]any{
+				"Type":     "Task",
+				"Resource": "arn:aws:states:::aws-sdk:lambda:invoke",
+				"Parameters": map[string]any{
+					"FunctionName": functionName,
+					"Payload":      base64.StdEncoding.EncodeToString([]byte(`{"source":"aws-sdk-integration"}`)),
+				},
+				"ResultPath": "$.Lambda",
+				"End":        true,
+			},
+		},
+	})
+	require.NoError(t, err)
+	machine, err := statesAPI.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name:       aws.String("sfn-generic-sdk-" + suffix),
+		Definition: aws.String(string(definition)),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = statesAPI.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{
+			StateMachineArn: machine.StateMachineArn,
+		})
+	})
+	execution, err := statesAPI.StartExecution(ctx, &sfn.StartExecutionInput{
+		StateMachineArn: machine.StateMachineArn,
+	})
+	require.NoError(t, err)
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		described, describeErr := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+			ExecutionArn: execution.ExecutionArn,
+		})
+		if !assert.NoError(collect, describeErr) {
+			return
+		}
+		assert.Equal(collect, sfntypes.ExecutionStatusSucceeded, described.Status)
+		assert.Empty(collect, aws.ToString(described.Error))
+		assert.Empty(collect, aws.ToString(described.Cause))
+	}, 10*time.Second, 100*time.Millisecond)
+
+	item, err := dynamoAPI.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "from-workflow"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "persisted", item.Item["value"].(*ddbtypes.AttributeValueMemberS).Value)
+
+	secret, err := secretsAPI.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(secretName),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "persisted", aws.ToString(secret.SecretString))
+
+	database, err := glueAPI.GetDatabase(ctx, &glue.GetDatabaseInput{Name: aws.String(databaseName)})
+	require.NoError(t, err)
+	assert.Equal(t, databaseName, aws.ToString(database.Database.Name))
+
+	restAPIs, err := apiGatewayAPI.GetRestApis(ctx, &apigateway.GetRestApisInput{})
+	require.NoError(t, err)
+	createdRestAPI := false
+	for _, restAPI := range restAPIs.Items {
+		if aws.ToString(restAPI.Name) == restAPIName {
+			createdRestAPI = true
+			assert.Equal(t, "created through AWS Step Functions", aws.ToString(restAPI.Description))
+		}
+	}
+	assert.True(t, createdRestAPI)
+
+	consumable, err := batchAPI.DescribeConsumableResource(ctx, &batch.DescribeConsumableResourceInput{
+		ConsumableResource: aws.String(consumableName),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, consumableName, aws.ToString(consumable.ConsumableResourceName))
+	assert.EqualValues(t, 11, aws.ToInt64(consumable.TotalQuantity))
+
+	_, err = lambdaAPI.ListFunctions(ctx, &lambda.ListFunctionsInput{})
+	require.NoError(t, err)
+	tags, err := s3API.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: aws.String(bucketName)})
+	require.NoError(t, err)
+	require.Equal(t, []s3types.Tag{{Key: aws.String("owner"), Value: aws.String("step-functions")}}, tags.TagSet)
+	_, err = route53API.ListHostedZones(ctx, &route53.ListHostedZonesInput{})
+	require.NoError(t, err)
+	_, err = cloudFrontAPI.ListDistributions(ctx, &cloudfront.ListDistributionsInput{})
+	require.NoError(t, err)
+
+	completed, err := statesAPI.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+		ExecutionArn: execution.ExecutionArn,
+	})
+	require.NoError(t, err)
+	var workflowOutput struct {
+		IAM struct {
+			Roles []struct {
+				RoleName string
+			}
+		}
+		Lambda struct {
+			Payload string
+		}
+	}
+	require.NoError(t, json.Unmarshal([]byte(aws.ToString(completed.Output)), &workflowOutput))
+	require.Len(t, workflowOutput.IAM.Roles, 1)
+	assert.Equal(t, roleName, workflowOutput.IAM.Roles[0].RoleName)
+	decodedPayload, err := base64.StdEncoding.DecodeString(workflowOutput.Lambda.Payload)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"source":"aws-sdk-integration"}`, string(decodedPayload))
+}
 
 // TestSFN_EventingAndObservabilityIntegrations_SDK proves the workflow runtime
 // executes the real service integrations rather than merely accepting their

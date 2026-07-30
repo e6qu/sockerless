@@ -24,6 +24,7 @@ import {
   stopECSTask,
   type ECSTask,
 } from "../api.js";
+import { ECSServicesPage } from "./ECSServicesPage.js";
 
 function shortName(arn: string): string {
   const slash = arn.lastIndexOf("/");
@@ -305,42 +306,45 @@ export function ECSTasksPage() {
   const [stopping, setStopping] = useState<{ tasks: ECSTask[]; clearSelection: () => void } | null>(null);
   return (
     <>
-      <AwsResourceTable<ECSTask>
-        title="Tasks"
-        description="Tasks running in this account and Region."
-        columns={columns}
-        queryKey={["ecs-tasks"]}
-        queryFn={fetchECSTasks}
-        filterPlaceholder="Find tasks"
-        emptyTitle="No tasks"
-        emptyDescription="No tasks are running in this account and Region."
-        rowKey={(row) => row.taskArn}
-        tableTestId="ecs-tasks-table"
-        actions={({ selected, clearSelection, refetch, isFetching }) => (
-          <>
-            <AwsButton
-              data-testid="ecs-view-task"
-              disabled={selected.length !== 1}
-              onClick={() => navigate(`/ui/ecs/${encodeURIComponent(selected[0].taskArn)}`)}
-            >
-              View details
-            </AwsButton>
-            <AwsButton
-              data-testid="ecs-stop-task"
-              disabled={selected.length === 0 || !selected.every(isStoppable)}
-              onClick={() => setStopping({ tasks: selected, clearSelection })}
-            >
-              Stop
-            </AwsButton>
-            <AwsButton onClick={refetch} disabled={isFetching}>
-              {isFetching ? "Refreshing…" : "Refresh"}
-            </AwsButton>
-            <AwsButton variant="primary" data-testid="ecs-run-task" onClick={() => setRunning(true)}>
-              Run new task
-            </AwsButton>
-          </>
-        )}
-      />
+      <SpaceBetween size="l">
+        <AwsResourceTable<ECSTask>
+          title="Tasks"
+          description="Tasks running in this account and Region."
+          columns={columns}
+          queryKey={["ecs-tasks"]}
+          queryFn={fetchECSTasks}
+          filterPlaceholder="Find tasks"
+          emptyTitle="No tasks"
+          emptyDescription="No tasks are running in this account and Region."
+          rowKey={(row) => row.taskArn}
+          tableTestId="ecs-tasks-table"
+          actions={({ selected, clearSelection, refetch, isFetching }) => (
+            <>
+              <AwsButton
+                data-testid="ecs-view-task"
+                disabled={selected.length !== 1}
+                onClick={() => navigate(`/ui/ecs/${encodeURIComponent(selected[0].taskArn)}`)}
+              >
+                View details
+              </AwsButton>
+              <AwsButton
+                data-testid="ecs-stop-task"
+                disabled={selected.length === 0 || !selected.every(isStoppable)}
+                onClick={() => setStopping({ tasks: selected, clearSelection })}
+              >
+                Stop
+              </AwsButton>
+              <AwsButton onClick={refetch} disabled={isFetching}>
+                {isFetching ? "Refreshing…" : "Refresh"}
+              </AwsButton>
+              <AwsButton variant="primary" data-testid="ecs-run-task" onClick={() => setRunning(true)}>
+                Run new task
+              </AwsButton>
+            </>
+          )}
+        />
+        <ECSServicesPage />
+      </SpaceBetween>
       {running && <RunTaskModal onClose={() => setRunning(false)} />}
       {stopping && (
         <StopTasksModal tasks={stopping.tasks} clearSelection={stopping.clearSelection} onClose={() => setStopping(null)} />

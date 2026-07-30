@@ -113,6 +113,118 @@ export const fetchECSTasks = async (): Promise<ECSTask[]> => {
   return tasks;
 };
 
+export interface ECSServiceDeployment {
+  id: string;
+  status: string;
+  taskDefinition: string;
+  desiredCount: number;
+  runningCount: number;
+  pendingCount: number;
+  rolloutState: string;
+  rolloutStateReason: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface ECSServiceEvent {
+  id: string;
+  createdAt?: number;
+  message: string;
+}
+
+export interface ECSService {
+  serviceArn: string;
+  serviceName: string;
+  clusterArn: string;
+  taskDefinition: string;
+  desiredCount: number;
+  runningCount: number;
+  pendingCount: number;
+  status: string;
+  launchType: string;
+  platformVersion: string;
+  deployments: ECSServiceDeployment[];
+  events: ECSServiceEvent[];
+  serviceRegistries: { registryArn?: string; containerName?: string; containerPort?: number; port?: number }[];
+  deploymentConfiguration?: {
+    maximumPercent?: number;
+    minimumHealthyPercent?: number;
+    deploymentCircuitBreaker?: {
+      enable?: boolean;
+      rollback?: boolean;
+      resetOnHealthyTask?: boolean;
+      thresholdConfiguration?: { type?: string; value?: number };
+    };
+    alarms?: { alarmNames?: string[]; enable?: boolean; rollback?: boolean };
+  };
+}
+
+interface ECSServiceWire extends Omit<ECSService, "deployments" | "events" | "serviceRegistries"> {
+  deployments?: ECSServiceDeployment[];
+  events?: ECSServiceEvent[];
+  serviceRegistries?: ECSService["serviceRegistries"];
+}
+
+function ecsServiceFromWire(service: ECSServiceWire): ECSService {
+  return {
+    ...service,
+    deployments: service.deployments ?? [],
+    events: service.events ?? [],
+    serviceRegistries: service.serviceRegistries ?? [],
+  };
+}
+
+export const fetchECSServices = async (): Promise<ECSService[]> => {
+  const clusters = await fetchECSClusters();
+  const services: ECSService[] = [];
+  for (const cluster of clusters) {
+    const listed = await awsJson<{ serviceArns?: string[] }>(
+      "ecs",
+      "AmazonEC2ContainerServiceV20141113.ListServices",
+      { cluster },
+    );
+    if ((listed.serviceArns ?? []).length === 0) continue;
+    const described = await awsJson<{ services?: ECSServiceWire[] }>(
+      "ecs",
+      "AmazonEC2ContainerServiceV20141113.DescribeServices",
+      { cluster, services: listed.serviceArns },
+    );
+    services.push(...(described.services ?? []).map(ecsServiceFromWire));
+  }
+  return services;
+};
+
+export const fetchECSService = async (cluster: string, serviceName: string): Promise<ECSService> => {
+  const described = await awsJson<{ services?: ECSServiceWire[]; failures?: { reason?: string }[] }>(
+    "ecs",
+    "AmazonEC2ContainerServiceV20141113.DescribeServices",
+    { cluster, services: [serviceName] },
+  );
+  const service = described.services?.[0];
+  if (!service) throw new Error(described.failures?.[0]?.reason ?? `Amazon ECS service ${serviceName} was not found`);
+  return ecsServiceFromWire(service);
+};
+
+export const updateECSServiceDesiredCount = async (
+  cluster: string,
+  serviceName: string,
+  desiredCount: number,
+): Promise<void> => {
+  await awsJson("ecs", "AmazonEC2ContainerServiceV20141113.UpdateService", {
+    cluster,
+    service: serviceName,
+    desiredCount,
+  });
+};
+
+export const deleteECSService = async (cluster: string, serviceName: string): Promise<void> => {
+  await awsJson("ecs", "AmazonEC2ContainerServiceV20141113.DeleteService", {
+    cluster,
+    service: serviceName,
+    force: true,
+  });
+};
+
 // Real ECS never deletes a task record on request — a task is stopped, and
 // the service reaps the STOPPED record on its own schedule — so the console's
 // task action is StopTask, matching what the real console's "Stop" offers.
@@ -4607,6 +4719,14 @@ export interface Secret {
   rotationEnabled: boolean;
   createdDate: number;
   lastChangedDate: number;
+  primaryRegion: string;
+  replicationStatus: {
+    region: string;
+    kmsKeyId: string;
+    status: string;
+    statusMessage: string;
+    lastAccessedDate: number;
+  }[];
 }
 
 export const fetchSecrets = async (): Promise<Secret[]> => {
@@ -4618,15 +4738,36 @@ export const fetchSecrets = async (): Promise<Secret[]> => {
       RotationEnabled?: boolean;
       CreatedDate?: number;
       LastChangedDate?: number;
+      PrimaryRegion?: string;
     }[];
   }>("secretsmanager", "secretsmanager.ListSecrets", {});
-  return (listed.SecretList ?? []).map((secret) => ({
-    arn: secret.ARN ?? "",
-    name: secret.Name ?? "",
-    description: secret.Description ?? "",
-    rotationEnabled: secret.RotationEnabled ?? false,
-    createdDate: secret.CreatedDate ?? 0,
-    lastChangedDate: secret.LastChangedDate ?? 0,
+  return Promise.all((listed.SecretList ?? []).map(async (secret) => {
+    const described = await awsJson<{
+      PrimaryRegion?: string;
+      ReplicationStatus?: {
+        Region?: string;
+        KmsKeyId?: string;
+        Status?: string;
+        StatusMessage?: string;
+        LastAccessedDate?: number;
+      }[];
+    }>("secretsmanager", "secretsmanager.DescribeSecret", { SecretId: secret.ARN ?? secret.Name ?? "" });
+    return {
+      arn: secret.ARN ?? "",
+      name: secret.Name ?? "",
+      description: secret.Description ?? "",
+      rotationEnabled: secret.RotationEnabled ?? false,
+      createdDate: secret.CreatedDate ?? 0,
+      lastChangedDate: secret.LastChangedDate ?? 0,
+      primaryRegion: described.PrimaryRegion ?? secret.PrimaryRegion ?? "",
+      replicationStatus: (described.ReplicationStatus ?? []).map((replica) => ({
+        region: replica.Region ?? "",
+        kmsKeyId: replica.KmsKeyId ?? "",
+        status: replica.Status ?? "",
+        statusMessage: replica.StatusMessage ?? "",
+        lastAccessedDate: replica.LastAccessedDate ?? 0,
+      })),
+    };
   }));
 };
 
@@ -4641,6 +4782,20 @@ export const createSecret = async (name: string, secretString: string, descripti
 // delete dialog describes and defaults to.
 export const deleteSecret = async (secretId: string): Promise<void> => {
   await awsJson("secretsmanager", "secretsmanager.DeleteSecret", { SecretId: secretId });
+};
+
+export const replicateSecret = async (secretId: string, region: string): Promise<void> => {
+  await awsJson("secretsmanager", "secretsmanager.ReplicateSecretToRegions", {
+    SecretId: secretId,
+    AddReplicaRegions: [{ Region: region }],
+  });
+};
+
+export const removeSecretReplica = async (secretId: string, region: string): Promise<void> => {
+  await awsJson("secretsmanager", "secretsmanager.RemoveRegionsFromReplication", {
+    SecretId: secretId,
+    RemoveReplicaRegions: [region],
+  });
 };
 
 // ---------------------------------------------------------------------------
