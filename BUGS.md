@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2810 filed - 2810 fixed - 8 open - 16 false positives.**
+**2811 filed - 2811 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2811~~ | P1 | AWS simulator Amazon ECS load-balanced deployments | target health was sampled once after task start, leaving later-ready services permanently in progress | The Amazon ECS service scheduler now keeps one bounded reconciliation timer per in-progress deployment, re-probes real Elastic Load Balancing target health until convergence, and cancels the timer on completion, failure, or deletion. An official AWS SDK scenario starts the real workload only after the initial health probe and proves the deployment completes without another API request or task transition. |
 | ~~2810~~ | P2 | Microsoft Azure console deletion errors | an immediate failed deletion could race with Fluent UI backdrop dismissal | Azure Resource Manager errors now keep the confirmation dialog open through concurrent backdrop events while explicit Cancel and Escape remain functional; typecheck, all 131 Azure console tests, and the production build passed. |
 | ~~2809~~ | P2 | AWS CLI nested simulator isolation | a secondary process-mode simulator reused the default Route 53 DNS listener port | Nested AWS CLI simulators now request an operating-system-selected Route 53 UDP/TCP coordinate, so another simulator on port 5353 cannot prevent startup; the focused process-mode test and complete compute shard passed. |
 | ~~2808~~ | P2 | AWS console Amazon ECS services | the first service-console browser pass exposed mismatched columns and hidden failure-state sections | The ECS service list now exposes separate service name, desired task, running task, and deployment columns. The detail route retains its deployment, event, configuration, and discovery structure when the read fails, uses stable action/error hooks, and confirms destructive deletion; the shared table assertion scopes Refresh to the task table. |

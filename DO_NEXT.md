@@ -32,6 +32,9 @@ instances through replacement, scale-in, deletion, and hard restart. Durable
 launch failures apply bounded backoff and drive configured deployment circuit
 breakers or CloudWatch alarms to failure and rollback. Restart regressions
 retain failure timing and release adopted Fargate network state on deletion.
+Load-balanced deployments retain one bounded reconciliation timer while in
+progress, so real target health that changes after the first steady-state probe
+completes the rollout without another API request or task transition.
 
 Amazon DynamoDB enforces its 400 KiB item limit from stored attribute bytes
 rather than JSON encoding size. AWS Secrets Manager owns independent

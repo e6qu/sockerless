@@ -818,6 +818,7 @@ func handleECSDeleteService(w http.ResponseWriter, r *http.Request) {
 	svc.RunningCount = 0
 	svc.PendingCount = 0
 	ecsServices.Put(key, svc)
+	ecsCancelServiceStabilization(key)
 	ecsStopServiceTasks(svc)
 	ecsSyncServiceLoadBalancerTargets(svc)
 	ecsDeregisterServiceRegistryTasks(svc)

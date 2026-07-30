@@ -29,6 +29,14 @@ The focused process-mode AWS CLI case and the complete compute shard passed.
 
 ## 2026-07-30 — AWS orchestration and regional data fidelity closed
 
+Load-balanced Amazon ECS deployments now continue reconciling while their
+primary deployment is in progress. The scheduler retains one bounded timer per
+service, re-probes real Elastic Load Balancing target health, and cancels the
+timer at completion, failure, or deletion. An official AWS SDK regression
+starts its real HTTP workload only after the initial steady-state probe and
+proves the deployment reaches `COMPLETED` without another API request or task
+transition.
+
 Amazon ECS service discovery now follows actual service-task transitions.
 Each running task registers its elastic-network-interface address, port, and
 ECS attributes as an AWS Cloud Map instance; replacement, scale-in, deletion,

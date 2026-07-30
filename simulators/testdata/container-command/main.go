@@ -21,14 +21,22 @@ func main() {
 			time.Sleep(time.Hour)
 		}
 	case "http":
-		if len(os.Args) != 4 {
-			fmt.Fprintln(os.Stderr, "usage: container-command http PORT RESPONSE")
+		if len(os.Args) < 4 || len(os.Args) > 5 {
+			fmt.Fprintln(os.Stderr, "usage: container-command http PORT RESPONSE [START_DELAY_SECONDS]")
 			os.Exit(2)
 		}
 		port, err := strconv.Atoi(os.Args[2])
 		if err != nil || port < 1 || port > 65535 {
 			fmt.Fprintf(os.Stderr, "invalid HTTP port %q\n", os.Args[2])
 			os.Exit(2)
+		}
+		if len(os.Args) == 5 {
+			seconds, err := strconv.Atoi(os.Args[4])
+			if err != nil || seconds < 0 {
+				fmt.Fprintf(os.Stderr, "invalid HTTP start delay %q\n", os.Args[4])
+				os.Exit(2)
+			}
+			time.Sleep(time.Duration(seconds) * time.Second)
 		}
 		handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, os.Args[3])

@@ -19,7 +19,10 @@ import (
 // runECSTasks path as RunTask, so service tasks receive the same task-definition
 // validation, networking, volumes, container runtime, logs, and durable state.
 
-var ecsServiceReconcileLocks sync.Map // map[service store key]*sync.Mutex
+var (
+	ecsServiceReconcileLocks  sync.Map // map[service store key]*sync.Mutex
+	ecsServiceStabilityTimers sync.Map // map[service store key]*time.Timer
+)
 
 type ecsServiceLoadBalancer struct {
 	TargetGroupArn string `json:"targetGroupArn"`
@@ -91,6 +94,37 @@ func ecsServiceLock(key string) *sync.Mutex {
 		panic("Amazon ECS service lock contained a non-mutex value")
 	}
 	return mutex
+}
+
+// ecsContinueServiceStabilization keeps one readiness reconciliation pending
+// while the primary deployment is still converging. Elastic Load Balancing
+// target health can change without an Amazon ECS task transition, so task
+// events alone cannot complete a service deployment.
+func ecsContinueServiceStabilization(key string) {
+	service, ok := ecsServices.Get(key)
+	if !ok || service.Status != "ACTIVE" || !ecsServiceUsesECSScheduler(service) ||
+		len(service.Deployments) == 0 ||
+		service.Deployments[0].RolloutState != "IN_PROGRESS" {
+		ecsCancelServiceStabilization(key)
+		return
+	}
+	timer := time.AfterFunc(ecsServiceSteadyStateWindow, func() {
+		ecsServiceStabilityTimers.Delete(key)
+		ecsRequestServiceReconcile(key)
+	})
+	if _, loaded := ecsServiceStabilityTimers.LoadOrStore(key, timer); loaded {
+		timer.Stop()
+	}
+}
+
+func ecsCancelServiceStabilization(key string) {
+	value, ok := ecsServiceStabilityTimers.LoadAndDelete(key)
+	if !ok {
+		return
+	}
+	if timer, timerOK := value.(*time.Timer); timerOK {
+		timer.Stop()
+	}
 }
 
 // recoverECSServiceTasks reconciles durable services after persisted tasks have
@@ -276,7 +310,10 @@ func ecsServiceRunInput(service ECSService, count int) (ecsRunTaskInput, error) 
 func ecsReconcileService(key string) {
 	lock := ecsServiceLock(key)
 	lock.Lock()
-	defer lock.Unlock()
+	defer func() {
+		lock.Unlock()
+		ecsContinueServiceStabilization(key)
+	}()
 
 	service, ok := ecsServices.Get(key)
 	if !ok || service.Status != "ACTIVE" {
