@@ -208,6 +208,57 @@ func registerHostMetadata(srv *sim.Server) {
 		}
 		_ = json.NewEncoder(w).Encode(containerMetadata)
 	})
+	srv.HandleFunc("GET /v4/{id}/credentials", func(w http.ResponseWriter, r *http.Request) {
+		id := sim.PathParam(r, "id")
+		taskRoleArn := ecsTaskRoleArn(id)
+		if taskRoleArn == "" {
+			http.Error(w, "Amazon ECS task role not found", http.StatusNotFound)
+			return
+		}
+		roleName := iamRoleNameFromArn(taskRoleArn)
+		role, ok := iamRoles.Get(roleName)
+		if !ok {
+			http.Error(w, "Amazon ECS task role not found", http.StatusNotFound)
+			return
+		}
+
+		accessKeyID, secretAccessKey, token := stsMintTempCred()
+		expiration := time.Now().UTC().Add(time.Hour)
+		principalArn := fmt.Sprintf(
+			"arn:aws:sts::%s:assumed-role/%s/%s",
+			awsAccountID(), role.RoleName, id,
+		)
+		iamTempCreds.Put(accessKeyID, IAMTempCred{
+			AccessKeyID:     accessKeyID,
+			SecretAccessKey: secretAccessKey,
+			SessionToken:    token,
+			RoleName:        role.RoleName,
+			PrincipalArn:    principalArn,
+			Expiration:      expiration.Format(time.RFC3339),
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"RoleArn":         taskRoleArn,
+			"AccessKeyId":     accessKeyID,
+			"SecretAccessKey": secretAccessKey,
+			"Token":           token,
+			"Expiration":      expiration.Format(time.RFC3339),
+		})
+	})
+}
+
+func ecsTaskRoleArn(taskID string) string {
+	task, ok := ecsTasks.Get(taskID)
+	if !ok {
+		return ""
+	}
+	definition, ok := ecsTaskDefinitionForARN(task.TaskDefinitionArn)
+	if !ok {
+		return ""
+	}
+	return definition.TaskRoleArn
 }
 
 func imdsInstanceForRequest(r *http.Request) (EC2Instance, bool) {
@@ -397,25 +448,31 @@ func hostMetadataEnv(taskID string) (map[string]string, error) {
 		return nil, err
 	}
 	env := map[string]string{
-		"AWS_EC2_METADATA_SERVICE_ENDPOINT":      "http://" + addr,
+		"AWS_EC2_METADATA_SERVICE_ENDPOINT":      "http://" + addr + "/",
 		"AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE": "IPv4",
 	}
 	if taskID != "" {
 		env["ECS_CONTAINER_METADATA_URI_V4"] = "http://" + addr + "/v4/" + taskID
 		env["ECS_CONTAINER_METADATA_URI"] = "http://" + addr + "/v4/" + taskID
+		if ecsTaskRoleArn(taskID) != "" {
+			env["AWS_CONTAINER_CREDENTIALS_FULL_URI"] = "http://" + addr + "/v4/" + taskID + "/credentials"
+		}
 	}
 	return env, nil
 }
 
 func hostMetadataLinkLocalEnv(taskID string) map[string]string {
 	env := map[string]string{
-		"AWS_EC2_METADATA_SERVICE_ENDPOINT":      "http://" + realexec.MetadataIPv4,
+		"AWS_EC2_METADATA_SERVICE_ENDPOINT":      "http://" + realexec.MetadataIPv4 + "/",
 		"AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE": "IPv4",
 	}
 	if taskID != "" {
 		base := "http://" + realexec.ECSTaskMetadataIPv4 + "/v4/" + taskID
 		env["ECS_CONTAINER_METADATA_URI_V4"] = base
 		env["ECS_CONTAINER_METADATA_URI"] = base
+		if ecsTaskRoleArn(taskID) != "" {
+			env["AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"] = "/v4/" + taskID + "/credentials"
+		}
 	}
 	return env
 }
