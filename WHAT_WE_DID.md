@@ -4,7 +4,60 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — AWS SDK releases, local budgets, and ECS isolation stayed green
+
+The same-day AWS SDK wave advanced Lambda from `v1.100.2` to `v1.101.0` in
+the Lambda backend and official-client suite and IAM from `v1.56.2` to
+`v1.57.0` in the SDK suite. The Lambda backend built and passed its package
+tests, the complete official AWS SDK suite passed in 546.212 seconds, and the
+repository-wide dependency, Terraform-provider, and GitHub Actions freshness
+audit passed.
+
+That complete local suite had also outgrown Go's inherited ten-minute package
+deadline even though hosted CI already distributed the same exhaustive
+coverage across four bounded shards. The shared Go library recipe now accepts
+module-specific test flags, and the AWS SDK suite declares a 30-minute local
+budget without changing test selection or hosted shard limits.
+
+The complete official SDK run then found that generated ECS test VPCs could
+reuse CIDRs owned by fixed-CIDR coverage. Test teardown also ignored the
+temporary `DeleteVpc` dependency error while `StopTask` asynchronously removed
+its container. ECS helper VPCs now use the reserved 10.225-249 range and retry
+deletion until the workload network is released. The previously failing ECS
+service lifecycle and Terraform-in-ECS cases passed with real containers.
+
+## 2026-07-30 — Azure deletion errors remained actionable
+
+Microsoft Azure resource-deletion dialogs could receive a Fluent UI backdrop
+event immediately after Azure Resource Manager rejected the request, which
+closed the surface after briefly rendering the service's real error.
+
+Delete-error dialogs now ignore backdrop dismissal while the actionable error
+is displayed. Explicit Cancel and Escape still close the dialog normally. The
+Azure console typecheck, all 131 package tests, and production build passed,
+including coverage that exercised the error, backdrop, and explicit-cancel
+sequence.
+
+## 2026-07-30 — Nested AWS CLI simulators gained isolated DNS listeners
+
+The wider post-merge AWS CLI sweep launched a second process-mode simulator
+while another simulator already owned the default Route 53 DNS port. The child
+correctly failed its UDP bind, but the harness surfaced only a health timeout.
+
+Nested process-mode simulators now request an operating-system-selected Route
+53 UDP/TCP coordinate, just as the primary AWS CLI simulator does. This keeps
+the real DNS data plane enabled without assuming a shared host port is free.
+The focused process-mode AWS CLI case and the complete compute shard passed.
+
 ## 2026-07-30 — AWS orchestration and regional data fidelity closed
+
+Load-balanced Amazon ECS deployments now continue reconciling while their
+primary deployment is in progress. The scheduler retains one bounded timer per
+service, re-probes real Elastic Load Balancing target health, and cancels the
+timer at completion, failure, or deletion. An official AWS SDK regression
+starts its real HTTP workload only after the initial steady-state probe and
+proves the deployment reaches `COMPLETED` without another API request or task
+transition.
 
 Amazon ECS service discovery now follows actual service-task transitions.
 Each running task registers its elastic-network-interface address, port, and

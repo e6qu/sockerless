@@ -816,14 +816,14 @@ func createECSTestSubnet(t *testing.T, name string) string {
 func createECSTestVPCSubnet(t *testing.T, name string) (string, string) {
 	t.Helper()
 	ec2c := ec2Client()
-	// Each VPC gets its own /16 so no two tests in a run ever ask the container
-	// runtime for the same network CIDR: a VPC's Docker network outlives its
-	// test whenever teardown races a container that is still shutting down, and
-	// a repeated CIDR then makes the next test's task fail to launch. The range
-	// starts above 10.0.x (used by fixed-CIDR tests) and stops below 10.120.x
-	// (where the CLI suite probes for free CIDRs).
+	// Keep ECS helper VPCs in 10.225.0.0/16 through 10.249.0.0/16. Fixed-CIDR
+	// SDK tests occupy ranges through 10.224.0.0/16 and resume at
+	// 10.250.0.0/16, so the old 10.20-119 range could collide with tests such
+	// as the 10.40.0.0/16 transit-gateway coverage. Cleanup below makes reuse
+	// after wrapping safe even though StopTask releases containers
+	// asynchronously.
 	n := ecsTestSubnetCounter.Add(1)
-	second := 20 + int(n%100)
+	second := 225 + int(n%25)
 	third := int((n / 100) % 200)
 	vpcCIDR := fmt.Sprintf("10.%d.0.0/16", second)
 	subnetCIDR := fmt.Sprintf("10.%d.%d.0/24", second, third)
@@ -857,7 +857,13 @@ func createECSTestVPCSubnet(t *testing.T, name string) (string, string) {
 
 	t.Cleanup(func() {
 		_, _ = ec2c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subnetID)})
-		_, _ = ec2c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
+		var deleteErr error
+		require.Eventually(t, func() bool {
+			_, deleteErr = ec2c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
+			return deleteErr == nil
+		}, 15*time.Second, 250*time.Millisecond,
+			"delete ECS test VPC %s after its asynchronously stopped containers release the network",
+			vpcID)
 	})
 	return vpcID, subnetID
 }

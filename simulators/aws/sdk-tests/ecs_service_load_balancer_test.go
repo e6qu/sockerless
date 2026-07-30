@@ -45,9 +45,12 @@ func TestECS_ServiceRegistersHealthyLoadBalancerTargets(t *testing.T) {
 		Cpu:                     aws.String("256"),
 		Memory:                  aws.String("512"),
 		ContainerDefinitions: []ecstypes.ContainerDefinition{{
-			Name:      aws.String(container),
-			Image:     aws.String(containerCommandImage),
-			Command:   []string{"http", fmt.Sprint(port), "ecs-service-ok"},
+			Name:  aws.String(container),
+			Image: aws.String(containerCommandImage),
+			// The server starts after the first steady-state probe. Amazon ECS
+			// must keep reconciling target health without another API request or
+			// task transition.
+			Command:   []string{"http", fmt.Sprint(port), "ecs-service-ok", "3"},
 			Essential: aws.Bool(true),
 			PortMappings: []ecstypes.PortMapping{{
 				ContainerPort: aws.Int32(port),
@@ -135,6 +138,16 @@ func TestECS_ServiceRegistersHealthyLoadBalancerTargets(t *testing.T) {
 		return firstTarget != ""
 	}, 30*time.Second, 100*time.Millisecond, "service target never became healthy")
 	require.True(t, targetBecameHealthy, "service target diagnostic: %s", targetDiagnostic)
+	require.Eventually(t, func() bool {
+		services, describeErr := ecsC.DescribeServices(ctx, &ecs.DescribeServicesInput{
+			Cluster: aws.String(cluster), Services: []string{serviceName},
+		})
+		return describeErr == nil &&
+			len(services.Services) == 1 &&
+			len(services.Services[0].Deployments) > 0 &&
+			services.Services[0].Deployments[0].RolloutState == ecstypes.DeploymentRolloutStateCompleted
+	}, 30*time.Second, 100*time.Millisecond,
+		"service deployment did not complete after its target became healthy")
 
 	assertServiceResponse := func() {
 		request, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/customer", nil)

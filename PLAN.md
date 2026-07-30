@@ -106,6 +106,10 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 76. Enforced Amazon DynamoDB's exact stored-byte item boundary, made AWS Secrets Manager replication genuinely regional and durable, and expanded AWS Step Functions generic AWS SDK integrations across all four supported Smithy protocol families.
 77. Added public-API-backed Amazon ECS service and Secrets Manager replication operations to the AWS console, and kept generated Smithy tables out of the hand-written duplicate-code gate.
 78. Recovered the local Podman virtual machine's volatile overlay fault without deleting images or volumes and passed the complete production-shaped HashiCorp AWS provider restart graph.
+79. Isolated every nested AWS CLI simulator on an operating-system-selected Route 53 DNS coordinate and passed the focused process-mode case plus the complete compute shard.
+80. Kept Microsoft Azure Resource Manager deletion failures visible through concurrent Fluent UI backdrop events while preserving explicit Cancel and Escape dismissal.
+81. Upgraded the same-day AWS Lambda and IAM SDK release wave across the Lambda backend and official-client suite and passed the complete freshness audit.
+82. Gave the exhaustive local AWS SDK suite its own 30-minute package budget while preserving the independently bounded four-shard hosted execution.
 
 ## Verified Next Gaps
 
@@ -116,6 +120,10 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 5. BUG-2523 and BUG-2441 remained in the external Bleephub repository rather than this workspace.
 6. BUG-2766 retained AWS Amplify Hosting image optimization and BUG-2764 retained the macOS Podman nested-KVM boundary. The local Podman overlay fault, complete AWS WAF statement evaluation, and transactional Elastic Load Balancing listener binding closed BUG-2791, BUG-2767, and BUG-2765.
 7. ECS-managed AWS Cloud Map instance registration, failed-deployment throttling, circuit-breaker rollback, and CloudWatch-alarm rollback closed BUG-2798 and BUG-2799.
+8. Nested AWS CLI simulators no longer contended for the default Route 53 DNS port; BUG-2809 closed with a dedicated listener coordinate.
+9. Microsoft Azure resource-delete errors no longer disappeared after an immediate failed response; BUG-2810 closed with error-aware backdrop handling.
+10. The AWS SDK Lambda and IAM release wave no longer left the branch stale; BUG-2812 closed with upgraded modules and complete official-client validation.
+11. The exhaustive local AWS SDK target no longer died at Go's inherited ten-minute package timeout; BUG-2813 closed with a suite-specific budget.
 
 ## Simulator Console Parity
 

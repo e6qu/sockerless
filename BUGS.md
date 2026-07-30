@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2808 filed - 2808 fixed - 8 open - 16 false positives.**
+**2814 filed - 2814 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,12 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2814~~ | P1 | AWS SDK Amazon ECS test isolation | generated ECS test VPC CIDRs overlapped fixed-CIDR coverage, while asynchronous task shutdown could make cleanup silently leave the Docker network behind | ECS test VPCs now use the reserved 10.225-249 range and retry deletion until stopped task containers release the network. The previously colliding service-lifecycle and Terraform-in-ECS cases passed. |
+| ~~2813~~ | P2 | Official AWS SDK local validation | the exhaustive local suite inherited Go's ten-minute package timeout | The shared Go library test recipe now accepts module-specific flags and the all-service AWS SDK suite declares a 30-minute package budget; the unchanged complete suite passed in 546.212 seconds while hosted CI retained four independently bounded shards. |
+| ~~2812~~ | P1 | Dependency freshness | AWS Lambda and IAM SDK releases appeared after pre-push validation | Lambda advanced to `v1.101.0` in the Lambda backend and official SDK suite, IAM advanced to `v1.57.0` in the SDK suite, the backend and complete official-client suite passed, and the repository-wide freshness audit was current. |
+| ~~2811~~ | P1 | AWS simulator Amazon ECS load-balanced deployments | target health was sampled once after task start, leaving later-ready services permanently in progress | The Amazon ECS service scheduler now keeps one bounded reconciliation timer per in-progress deployment, re-probes real Elastic Load Balancing target health until convergence, and cancels the timer on completion, failure, or deletion. An official AWS SDK scenario starts the real workload only after the initial health probe and proves the deployment completes without another API request or task transition. |
+| ~~2810~~ | P2 | Microsoft Azure console deletion errors | an immediate failed deletion could race with Fluent UI backdrop dismissal | Azure Resource Manager errors now keep the confirmation dialog open through concurrent backdrop events while explicit Cancel and Escape remain functional; typecheck, all 131 Azure console tests, and the production build passed. |
+| ~~2809~~ | P2 | AWS CLI nested simulator isolation | a secondary process-mode simulator reused the default Route 53 DNS listener port | Nested AWS CLI simulators now request an operating-system-selected Route 53 UDP/TCP coordinate, so another simulator on port 5353 cannot prevent startup; the focused process-mode test and complete compute shard passed. |
 | ~~2808~~ | P2 | AWS console Amazon ECS services | the first service-console browser pass exposed mismatched columns and hidden failure-state sections | The ECS service list now exposes separate service name, desired task, running task, and deployment columns. The detail route retains its deployment, event, configuration, and discovery structure when the read fails, uses stable action/error hooks, and confirms destructive deletion; the shared table assertion scopes Refresh to the task table. |
 | ~~2807~~ | P2 | AWS simulator browser harness | the browser-owned simulator bound Route 53 to macOS's reserved mDNS port | The AWS console Playwright configuration now gives its isolated simulator an operating-system-selected Route 53 UDP/TCP coordinate. It no longer conflicts with macOS multicast DNS, while Route 53 data-plane suites continue to supply and test explicit listener coordinates. |
 | ~~2806~~ | P2 | Simulator duplicate-code gate | generated Smithy protocol tables were treated as hand-written copy/paste | The simulator duplicate-code gate now excludes generated `*_gen.go` sources while continuing to compile them and validate every generated binding through conformance and official-client coverage, leaving hand-written simulator duplication fully enforced. |

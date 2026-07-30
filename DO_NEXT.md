@@ -4,6 +4,35 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The same-day AWS SDK release wave advanced Lambda to `v1.101.0` in the Lambda
+backend and official SDK suite and IAM to `v1.57.0` in the SDK suite. The
+Lambda backend built and passed its tests, the complete official AWS SDK suite
+passed in 546.212 seconds, and the repository-wide dependency, Terraform
+provider, and GitHub Actions audit was current.
+
+The exhaustive local AWS SDK target no longer inherited Go's ten-minute
+package timeout. The shared Go library test recipe accepted module-specific
+flags, the AWS SDK suite declared a 30-minute budget, and hosted CI retained
+its separate four-shard limits.
+
+The wider validation exposed an ECS
+test-isolation defect: generated VPC CIDRs overlapped fixed-CIDR cases and
+cleanup ignored the transient dependency error while stopped containers still
+held a network. ECS helper VPCs now use the reserved 10.225-249 range and retry
+deletion until asynchronous task shutdown releases the network.
+
+Microsoft Azure resource-deletion dialogs retained Azure Resource Manager's
+actionable failure after a rejected request even when a concurrent Fluent UI
+backdrop event arrived. Backdrop dismissal was suppressed only while the error
+was displayed; explicit Cancel and Escape remained functional. The Azure
+console typecheck, all 131 package tests, and production build passed.
+
+Secondary process-mode AWS simulators no longer inherited the default Route 53
+DNS listener port. The AWS CLI harness assigned each nested process an
+operating-system-selected UDP/TCP coordinate, so a simulator already using
+port 5353 could not prevent the child from starting. The focused process-mode
+case and the complete compute shard passed.
+
 Amazon ECS task definitions now turn `taskRoleArn` into usable workload
 credentials. The task-metadata service mints expiring `ASIA` sessions bound to
 the configured IAM role, registers them with the simulator's Signature Version
@@ -20,6 +49,9 @@ instances through replacement, scale-in, deletion, and hard restart. Durable
 launch failures apply bounded backoff and drive configured deployment circuit
 breakers or CloudWatch alarms to failure and rollback. Restart regressions
 retain failure timing and release adopted Fargate network state on deletion.
+Load-balanced deployments retain one bounded reconciliation timer while in
+progress, so real target health that changes after the first steady-state probe
+completes the rollout without another API request or task transition.
 
 Amazon DynamoDB enforces its 400 KiB item limit from stored attribute bytes
 rather than JSON encoding size. AWS Secrets Manager owns independent

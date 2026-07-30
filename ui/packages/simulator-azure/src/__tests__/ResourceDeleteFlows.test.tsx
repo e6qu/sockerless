@@ -156,6 +156,16 @@ describe("ACRRegistriesPage delete", () => {
     const alert = await within(dialog).findByRole("alert");
     expect(alert.textContent).toContain("active replications");
     expect(await screen.findByRole("dialog")).toBeTruthy();
+
+    // A backdrop click that races with the immediate error response must not
+    // discard Azure Resource Manager's actionable failure. Explicit Cancel
+    // remains available and closes the surface normally.
+    const backdrop = document.getElementById("acr-delete-backdrop");
+    expect(backdrop).not.toBeNull();
+    fireEvent.click(backdrop!);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    fireEvent.click(within(dialog).getByTestId("acr-delete-cancel"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });
 
