@@ -27,15 +27,6 @@ The Microsoft Azure workload-dispatch invariant keeps its two justified
 `os/exec` exceptions as source comments without logging file-and-line-shaped
 messages that GitHub's Go problem matcher turns into failure annotations.
 
-The hosted persistence follow-up keeps transactional Elastic Load Balancing
-validation real by importing issued test certificates, restores caller-owned
-Cloud Map custom-health semantics, projects persistence-only AWS Glue database
-tags out of public responses, and binds the durable Lambda callback receiver
-where Linux workload containers can reach it through Docker's host gateway.
-Secondary process-mode simulator fixtures also request an ephemeral Route 53
-DNS port instead of competing with host multicast DNS on UDP 5353, and the NLB
-hostname shape fixture no longer requires privileged host port 443.
-
 The pre-push dependency audit's coordinated AWS SDK patch wave and Google Cloud
 Spanner client release were applied across every affected Go module with the
 repository-owned upgrade target. Direct pins and their resolved transitive
@@ -83,6 +74,22 @@ exportable AWS Certificate Manager certificates and selected isolated real
 listener ports, while nested simulator processes received their own Route 53
 DNS coordinate. The focused listener cases and complete AWS SDK compute shard
 passed together.
+
+AWS Glue database tags remained durable internal state and were projected only
+through `GetTags`, so `GetDatabase` matched its Smithy model without losing
+tags across hard process replacement. An unconfigured AWS Cloud Map HTTP
+service no longer gained an invented custom-health configuration. The durable
+Lambda callback restart proof read its runtime checkpoint from Amazon
+CloudWatch Logs through the official AWS SDK rather than a host callback. The
+complete AWS SDK services A–M shard passed with zero Smithy violations, and the
+complete AWS CLI edge-delivery shard passed with real imported certificates
+and isolated listener ports.
+
+The macOS AWS Terraform container wrapper mounted the runtime Smithy report
+back to the host, surfaced Podman attachment failures, and removed the exact
+container plus anonymous volumes. BUG-2791 retained the operator-owned local
+Podman overlay-store corruption that prevented a second full local provider
+run; the hosted HashiCorp AWS provider cell remained the mandatory full gate.
 
 The pre-push freshness gate advanced gRPC to 1.83.0 in both Cloud Run
 backends, the shared Google Cloud backend, the simulator, and its official SDK
@@ -235,7 +242,9 @@ transformation, validation, format-negotiation, and cache contract, then prove
 it through hosted requests and external image decoders. BUG-2764 remained a
 host boundary: the shared Linux test image contained the real Firecracker and
 squashfs tools, while the macOS Podman virtual machine exposed no nested KVM;
-the capable-Linux Terraform CI cell remained mandatory.
+the capable-Linux Terraform CI cell remained mandatory. BUG-2791 separately
+retained the local Podman machine's corrupt overlay graph; resetting or
+migrating that operator-owned machine remained outside repository mutation.
 
 The completed baseline retained real AWS Private Certificate Authority and
 Amazon Data Firehose implementations with official SDK, AWS CLI, Terraform,

@@ -1893,6 +1893,9 @@ output "codebuild_project_arn" {
 resource "aws_glue_catalog_database" "tf_glue_db" {
   name       = "tf-glue-database"
   catalog_id = data.aws_caller_identity.current.account_id
+  tags = {
+    owner = "terraform"
+  }
 }
 
 resource "aws_glue_catalog_table" "tf_glue_table" {

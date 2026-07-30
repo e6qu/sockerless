@@ -3,12 +3,10 @@ package aws_sdk_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strconv"
@@ -19,8 +17,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/amplify"
 	amplifytypes "github.com/aws/aws-sdk-go-v2/service/amplify/types"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/glue"
+	gluetypes "github.com/aws/aws-sdk-go-v2/service/glue/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -89,6 +90,7 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	route53API := route53.NewFromConfig(cfg, func(o *route53.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	iamAPI := iam.NewFromConfig(cfg, func(o *iam.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	dynamoDBAPI := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	glueAPI := glue.NewFromConfig(cfg, func(o *glue.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	stepFunctionsAPI := sfn.NewFromConfig(cfg, func(o *sfn.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	lambdaAPI := lambda.NewFromConfig(cfg, func(o *lambda.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	sqsAPI := sqs.NewFromConfig(cfg, func(o *sqs.Options) { o.BaseEndpoint = aws.String(endpoint) })
@@ -186,6 +188,11 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 			"id":    &ddbtypes.AttributeValueMemberS{Value: "item-1"},
 			"value": &ddbtypes.AttributeValueMemberS{Value: "survived"},
 		},
+	})
+	require.NoError(t, err)
+	_, err = glueAPI.CreateDatabase(testCtx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String("persistent-glue-database")},
+		Tags:          map[string]string{"persistence": "verified"},
 	})
 	require.NoError(t, err)
 
@@ -351,6 +358,7 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	route53API = route53.NewFromConfig(cfg, func(o *route53.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	iamAPI = iam.NewFromConfig(cfg, func(o *iam.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	dynamoDBAPI = dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	glueAPI = glue.NewFromConfig(cfg, func(o *glue.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	stepFunctionsAPI = sfn.NewFromConfig(cfg, func(o *sfn.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	lambdaAPI = lambda.NewFromConfig(cfg, func(o *lambda.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	sqsAPI = sqs.NewFromConfig(cfg, func(o *sqs.Options) { o.BaseEndpoint = aws.String(endpoint) })
@@ -419,6 +427,16 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	value, ok := persistedItem.Item["value"].(*ddbtypes.AttributeValueMemberS)
 	require.True(t, ok)
 	assert.Equal(t, "survived", value.Value)
+	persistedGlueDatabase, err := glueAPI.GetDatabase(testCtx, &glue.GetDatabaseInput{
+		Name: aws.String("persistent-glue-database"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "persistent-glue-database", aws.ToString(persistedGlueDatabase.Database.Name))
+	persistedGlueTags, err := glueAPI.GetTags(testCtx, &glue.GetTagsInput{
+		ResourceArn: aws.String("arn:aws:glue:us-east-1:123456789012:database/persistent-glue-database"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "verified", persistedGlueTags.Tags["persistence"])
 
 	persistedMachine, err := stepFunctionsAPI.DescribeStateMachine(testCtx, &sfn.DescribeStateMachineInput{
 		StateMachineArn: stateMachine.StateMachineArn,
@@ -658,33 +676,12 @@ func TestLambdaDurableCallbackResumesAfterSimulatorRestart_SDK(t *testing.T) {
 
 	cfg := persistentSDKConfig()
 	lambdaAPI := lambda.NewFromConfig(cfg, func(o *lambda.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	logsAPI := cloudwatchlogs.NewFromConfig(cfg, func(o *cloudwatchlogs.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	testCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	const functionName = "persistent-callback-lambda"
-	type runtimeCoordinates struct {
-		CheckpointToken string `json:"checkpointToken"`
-		DurableARN      string `json:"durableArn"`
-	}
-	coordinates := make(chan runtimeCoordinates, 1)
-	receiver := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var received runtimeCoordinates
-		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		coordinates <- received
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	receiverListener, err := net.Listen("tcp4", "0.0.0.0:0")
-	require.NoError(t, err)
-	receiver.Listener = receiverListener
-	receiver.Start()
-	defer receiver.Close()
-	_, receiverPort, err := net.SplitHostPort(receiver.Listener.Addr().String())
-	require.NoError(t, err)
-	containerReceiverURL := "http://host.docker.internal:" + receiverPort
-	source := fmt.Sprintf(`
+	source := `
 exports.handler = async (event) => {
   const callback = event.InitialExecutionState.Operations.find(
     (operation) => operation.Type === "CALLBACK"
@@ -695,19 +692,11 @@ exports.handler = async (event) => {
       callback:JSON.parse(callback.CallbackDetails.Result)
     })};
   }
-  await fetch(%q, {
-    method:"POST",
-    headers:{"content-type":"application/json"},
-    body:JSON.stringify({
-      checkpointToken:event.CheckpointToken,
-      durableArn:event.DurableExecutionArn
-    })
-  });
   console.log("CHECKPOINT_TOKEN=" + event.CheckpointToken);
   console.log("DURABLE_ARN=" + event.DurableExecutionArn);
   return {Status:"PENDING"};
-};`, containerReceiverURL)
-	_, err = lambdaAPI.CreateFunction(testCtx, &lambda.CreateFunctionInput{
+};`
+	_, err := lambdaAPI.CreateFunction(testCtx, &lambda.CreateFunctionInput{
 		FunctionName: aws.String(functionName),
 		Role:         aws.String("arn:aws:iam::123456789012:role/persistent-callback-role"),
 		Runtime:      lambdatypes.RuntimeNodejs20x,
@@ -728,17 +717,38 @@ exports.handler = async (event) => {
 	durableARN := aws.ToString(invocation.DurableExecutionArn)
 	require.NotEmpty(t, durableARN)
 
-	var received runtimeCoordinates
-	select {
-	case received = <-coordinates:
-	case <-time.After(30 * time.Second):
-		t.Fatal("the durable runtime did not publish its checkpoint coordinates")
-	}
-	require.Equal(t, durableARN, received.DurableARN)
-	require.NotEmpty(t, received.CheckpointToken)
+	var checkpointToken, loggedDurableARN string
+	require.Eventually(t, func() bool {
+		streams, streamErr := logsAPI.DescribeLogStreams(testCtx, &cloudwatchlogs.DescribeLogStreamsInput{
+			LogGroupName: aws.String("/aws/lambda/" + functionName),
+		})
+		if streamErr != nil {
+			return false
+		}
+		for _, stream := range streams.LogStreams {
+			events, eventErr := logsAPI.GetLogEvents(testCtx, &cloudwatchlogs.GetLogEventsInput{
+				LogGroupName:  aws.String("/aws/lambda/" + functionName),
+				LogStreamName: stream.LogStreamName,
+			})
+			if eventErr != nil {
+				continue
+			}
+			for _, event := range events.Events {
+				message := aws.ToString(event.Message)
+				if strings.Contains(message, "CHECKPOINT_TOKEN=") {
+					checkpointToken = strings.TrimSpace(strings.SplitN(message, "CHECKPOINT_TOKEN=", 2)[1])
+				}
+				if strings.Contains(message, "DURABLE_ARN=") {
+					loggedDurableARN = strings.TrimSpace(strings.SplitN(message, "DURABLE_ARN=", 2)[1])
+				}
+			}
+		}
+		return checkpointToken != "" && loggedDurableARN != ""
+	}, 30*time.Second, 100*time.Millisecond, "the durable runtime did not publish its checkpoint coordinates to Amazon CloudWatch Logs")
+	require.Equal(t, durableARN, loggedDurableARN)
 
 	checkpoint, err := lambdaAPI.CheckpointDurableExecution(testCtx, &lambda.CheckpointDurableExecutionInput{
-		DurableExecutionArn: aws.String(durableARN), CheckpointToken: aws.String(received.CheckpointToken),
+		DurableExecutionArn: aws.String(durableARN), CheckpointToken: aws.String(checkpointToken),
 		Updates: []lambdatypes.OperationUpdate{{
 			Id: aws.String("approval"), Name: aws.String("approval"),
 			Type: lambdatypes.OperationTypeCallback, Action: lambdatypes.OperationActionStart,
