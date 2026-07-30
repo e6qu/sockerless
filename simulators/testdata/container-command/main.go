@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -11,13 +12,30 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: container-command hold|log|print|resolve|sleep|stdin-echo")
+		fmt.Fprintln(os.Stderr, "usage: container-command hold|http|log|print|resolve|sleep|stdin-echo")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
 	case "hold":
 		for {
 			time.Sleep(time.Hour)
+		}
+	case "http":
+		if len(os.Args) != 4 {
+			fmt.Fprintln(os.Stderr, "usage: container-command http PORT RESPONSE")
+			os.Exit(2)
+		}
+		port, err := strconv.Atoi(os.Args[2])
+		if err != nil || port < 1 || port > 65535 {
+			fmt.Fprintf(os.Stderr, "invalid HTTP port %q\n", os.Args[2])
+			os.Exit(2)
+		}
+		handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, os.Args[3])
+		})
+		if err := http.ListenAndServe(fmt.Sprintf(":%d", port), handler); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
 	case "log":
 		if len(os.Args) < 3 {

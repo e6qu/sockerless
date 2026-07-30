@@ -1363,6 +1363,10 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 	// instance's networking. Rejecting both mismatches keeps a caller from
 	// silently getting networking it did not ask for.
 	networkMode := ecsEffectiveNetworkMode(td)
+	if strings.EqualFold(in.LaunchType, "FARGATE") && networkMode != ecsNetworkModeAwsvpc {
+		return nil, &ecsRequestError{"ClientException",
+			"Fargate tasks require the awsvpc network mode.", http.StatusBadRequest}
+	}
 	hasAwsvpcConfig := in.NetworkConfiguration != nil &&
 		in.NetworkConfiguration.AwsvpcConfiguration != nil &&
 		len(in.NetworkConfiguration.AwsvpcConfiguration.Subnets) > 0
@@ -1486,14 +1490,13 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 		}
 		tasks = append(tasks, task)
 
-		// Simulate async transition: PROVISIONING → PENDING → RUNNING.
+		// Perform the asynchronous PROVISIONING → PENDING → RUNNING lifecycle.
 		// RUNNING is not reported until the task's containers are actually
 		// started and their Docker handles are stored. This matches real ECS
 		// semantics and eliminates a class of races where callers (e.g.
 		// ExecuteCommand, task metadata) see RUNNING before the container exists.
 		go func(id string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, launchType, containerInstanceKey string) {
 			// PROVISIONING → PENDING
-			time.Sleep(100 * time.Millisecond)
 			ecsTasks.Update(id, func(t *ECSTask) {
 				t.LastStatus = ECSTaskStatusPending
 				for j := range t.Containers {
@@ -1528,6 +1531,9 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 					ecsCleanupTaskManagedEBS(t)
 				})
 				ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, -1, 0)
+				if task, ok := ecsTasks.Get(id); ok {
+					ecsRequestServiceReconcileForTask(task)
+				}
 				return
 			}
 
@@ -1550,6 +1556,9 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 			if processes != nil {
 				ecsProcessHandles.Store(id, processes)
 				ecsWatchTaskProcesses(id, containerInstanceKey, processes)
+			}
+			if task, ok := ecsTasks.Get(id); ok {
+				ecsRequestServiceReconcileForTask(task)
 			}
 		}(taskID, td, taskTags, in.Overrides, taskVolumeHosts, in.LaunchType, in.ContainerInstanceKey)
 	}
@@ -1583,6 +1592,9 @@ func ecsWatchTaskProcesses(taskID, containerInstanceKey string, processes *ecsTa
 			})
 			if transitioned {
 				ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, 0, -1)
+				if task, ok := ecsTasks.Get(taskID); ok {
+					ecsRequestServiceReconcileForTask(task)
+				}
 			}
 			cleanupECSTaskProcesses(taskID, processes)
 		}(taskID, name, handle)
@@ -1660,6 +1672,9 @@ func ecsResumePendingTask(task ECSTask, definition ECSTaskDefinition) {
 			ecsCleanupTaskManagedEBS(current)
 		})
 		ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, -1, 0)
+		if current, ok := ecsTasks.Get(taskID); ok {
+			ecsRequestServiceReconcileForTask(current)
+		}
 		return
 	}
 	startedAt := time.Now().Unix()
@@ -1678,6 +1693,9 @@ func ecsResumePendingTask(task ECSTask, definition ECSTaskDefinition) {
 	if processes != nil {
 		ecsProcessHandles.Store(taskID, processes)
 		ecsWatchTaskProcesses(taskID, containerInstanceKey, processes)
+	}
+	if current, ok := ecsTasks.Get(taskID); ok {
+		ecsRequestServiceReconcileForTask(current)
 	}
 }
 
@@ -1733,6 +1751,7 @@ func ecsMarkMissingRunningTaskStopped(task ECSTask) {
 		-1,
 	)
 	go ec2DetachRealECSTaskNIC(context.Background(), taskID)
+	ecsRequestServiceReconcileForTask(task)
 }
 
 func ecsAdoptRunningTask(
@@ -2032,6 +2051,20 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			OpenStdin: wantTTY || cd.Interactive,
 			Binds:     binds,
 			Sandbox:   ecsTaskSandbox(launchType, cd.Privileged),
+		}
+		// Docker Desktop does not route a Linux VM's user-defined bridge
+		// addresses back to the host process. Publish the task definition's
+		// declared listener ports on random loopback ports in that transport
+		// tier so host-resident Elastic Load Balancing can reach the same real
+		// container listener. The public Amazon ECS/ENI coordinate remains the
+		// task IP; the mapping is rediscovered from Docker on restart.
+		if networkMode == ecsNetworkModeAwsvpc && !netnsTier {
+			cfg.PublishPorts = make(map[int]int)
+			for _, mapping := range cd.PortMappings {
+				if mapping.ContainerPort > 0 {
+					cfg.PublishPorts[mapping.ContainerPort] = 0
+				}
+			}
 		}
 		cfg.MemoryBytes, cfg.NanoCPU = ecsContainerResourceLimits(td, cd)
 		switch {
@@ -2442,6 +2475,7 @@ func stopECSTask(taskID, reason, code string) bool {
 	// Tear down the task's VPC veth (netns tier) after cloud-visible state is
 	// updated; Docker/netns cleanup can take seconds on CI.
 	go ec2DetachRealECSTaskNIC(context.Background(), taskID)
+	ecsRequestServiceReconcileForTask(existing)
 	return true
 }
 

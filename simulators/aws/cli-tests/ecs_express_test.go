@@ -21,7 +21,7 @@ func TestECS_CLI_ExpressModeLifecycle(t *testing.T) {
 		"--cluster", cluster,
 		"--service-name", "cli-web",
 		"--infrastructure-role-arn", "arn:aws:iam::000000000000:role/express-infra",
-		"--primary-container", `{"image":"public.ecr.aws/docker/library/busybox:latest","containerPort":8080}`,
+		"--primary-container", `{"image":"`+containerCommandImage+`","containerPort":8080,"command":["http","8080","express-ok"]}`,
 		"--tags", "key=env,value=test",
 		"--output", "json"))
 	var created struct {

@@ -40,8 +40,10 @@ func TestAppScaling_TargetTrackingScalesECSService(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = ecsC.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
-		Family:               aws.String("as-track-task"),
-		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("public.ecr.aws/docker/library/busybox:latest")}},
+		Family: aws.String("as-track-task"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name: aws.String("app"), Image: aws.String(containerCommandImage), Command: []string{"hold"},
+		}},
 	})
 	require.NoError(t, err)
 
@@ -52,6 +54,7 @@ func TestAppScaling_TargetTrackingScalesECSService(t *testing.T) {
 		DesiredCount:   aws.Int32(1),
 	})
 	require.NoError(t, err)
+	cleanupECSService(t, ecsC, cluster, svcName)
 
 	_, err = asC.RegisterScalableTarget(ctx, &applicationautoscaling.RegisterScalableTargetInput{
 		ServiceNamespace:  ns,

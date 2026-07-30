@@ -226,6 +226,15 @@ func handleECSCreateExpressGatewayService(w http.ResponseWriter, r *http.Request
 	if netCfg == nil {
 		netCfg = &expressNetworkConfiguration{}
 	}
+	if len(netCfg.Subnets) == 0 {
+		defaultSubnet := defaultVPCSubnetID()
+		if defaultSubnet == "" {
+			sim.AWSError(w, "InvalidParameterException",
+				"No default VPC subnet is available for the Express service.", http.StatusBadRequest)
+			return
+		}
+		netCfg.Subnets = []string{defaultSubnet}
+	}
 	accessType := "PUBLIC"
 
 	// Security group: create one when the caller didn't supply any.
@@ -377,6 +386,13 @@ func handleECSUpdateExpressGatewayService(w http.ResponseWriter, r *http.Request
 			"Express service %s is not active", req.ServiceArn)
 		return
 	}
+	if req.TaskDefinitionArn != "" {
+		if _, ok := ecsServiceTaskDefinition(req.TaskDefinitionArn); !ok {
+			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+				"Unable to describe task definition: %s", req.TaskDefinitionArn)
+			return
+		}
+	}
 
 	// New revision derived from the current one with the mutable fields applied.
 	cur := svc.ActiveConfigurations[len(svc.ActiveConfigurations)-1]
@@ -410,6 +426,21 @@ func handleECSUpdateExpressGatewayService(w http.ResponseWriter, r *http.Request
 	}
 	if req.TaskDefinitionArn != "" {
 		next.TaskDefinitionArn = req.TaskDefinitionArn
+	} else if req.Cpu != "" || req.Memory != "" || req.ExecutionRoleArn != "" ||
+		req.TaskRoleArn != "" || req.PrimaryContainer != nil {
+		port := int32(80)
+		if next.PrimaryContainer != nil && next.PrimaryContainer.ContainerPort != nil {
+			port = *next.PrimaryContainer.ContainerPort
+		}
+		next.TaskDefinitionArn = expressRegisterManagedTaskDef(
+			svc.ServiceName,
+			next.Cpu,
+			next.Memory,
+			next.ExecutionRoleArn,
+			next.TaskRoleArn,
+			next.PrimaryContainer,
+			port,
+		)
 	}
 
 	revision := len(svc.ActiveConfigurations) + 1
@@ -419,7 +450,48 @@ func handleECSUpdateExpressGatewayService(w http.ResponseWriter, r *http.Request
 	if ecsKey := svc.EcsServiceKey; ecsKey != "" {
 		ecsServices.Update(ecsKey, func(es *ECSService) {
 			es.TaskDefinition = next.TaskDefinitionArn
+			if next.ScalingTarget != nil {
+				if next.ScalingTarget.MinTaskCount != nil &&
+					es.DesiredCount < int(*next.ScalingTarget.MinTaskCount) {
+					es.DesiredCount = int(*next.ScalingTarget.MinTaskCount)
+				}
+				if next.ScalingTarget.MaxTaskCount != nil &&
+					es.DesiredCount > int(*next.ScalingTarget.MaxTaskCount) {
+					es.DesiredCount = int(*next.ScalingTarget.MaxTaskCount)
+				}
+			}
+			if next.NetworkConfiguration != nil {
+				networkJSON, _ := json.Marshal(map[string]any{
+					"awsvpcConfiguration": map[string]any{
+						"subnets":        next.NetworkConfiguration.Subnets,
+						"securityGroups": next.NetworkConfiguration.SecurityGroups,
+						"assignPublicIp": "ENABLED",
+					},
+				})
+				es.NetworkConfiguration = networkJSON
+			}
+			if next.PrimaryContainer != nil && next.PrimaryContainer.ContainerPort != nil {
+				port := int(*next.PrimaryContainer.ContainerPort)
+				loadBalancers, _ := json.Marshal([]map[string]any{{
+					"targetGroupArn": svc.TargetGroupArn,
+					"containerName":  "Main",
+					"containerPort":  port,
+				}})
+				es.LoadBalancers = loadBalancers
+			}
 			es.Deployments = []ECSDeployment{ecsServiceDeployment(*es, now)}
+		})
+		if backing, ok := ecsServices.Get(ecsKey); ok {
+			ecsRecordServiceDeployment(backing, "")
+		}
+		ecsRequestServiceReconcile(ecsKey)
+	}
+	if svc.TargetGroupArn != "" {
+		elbv2TargetGroups.Update(svc.TargetGroupArn, func(targetGroup *ELBv2TargetGroup) {
+			targetGroup.HealthCheckPath = next.HealthCheckPath
+			if next.PrimaryContainer != nil && next.PrimaryContainer.ContainerPort != nil {
+				targetGroup.Port = int(*next.PrimaryContainer.ContainerPort)
+			}
 		})
 	}
 
@@ -628,6 +700,7 @@ func expressCreateFargateService(clusterName, clusterArn, serviceName, taskDefAr
 	lbJSON, _ := json.Marshal([]map[string]any{{
 		"targetGroupArn": tgArn,
 		"containerName":  "Main",
+		"containerPort":  elbv2TargetGroupPort(tgArn),
 	}})
 	svc := ECSService{
 		ServiceArn:           ecsArn("service", clusterName+"/"+serviceName),
@@ -635,7 +708,7 @@ func expressCreateFargateService(clusterName, clusterArn, serviceName, taskDefAr
 		ClusterArn:           clusterArn,
 		TaskDefinition:       taskDefArn,
 		DesiredCount:         desired,
-		RunningCount:         desired,
+		RunningCount:         0,
 		Status:               "ACTIVE",
 		LaunchType:           "FARGATE",
 		SchedulingStrategy:   "REPLICA",
@@ -646,7 +719,13 @@ func expressCreateFargateService(clusterName, clusterArn, serviceName, taskDefAr
 	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
 	key := ecsServiceKey(clusterName, serviceName)
 	ecsServices.Put(key, svc)
+	ecsRequestServiceReconcile(key)
 	return key
+}
+
+func elbv2TargetGroupPort(targetGroupArn string) int {
+	targetGroup, _ := elbv2TargetGroups.Get(targetGroupArn)
+	return targetGroup.Port
 }
 
 // expressLoadBalancerRefs counts how many Express services consolidate behind a
@@ -934,6 +1013,19 @@ func expressMetricToPredefined(metric string) string {
 // ALB (and its cert) is reference counted across consolidated services; it is
 // only removed when the last Express service on it is deleted.
 func expressTeardown(svc ECSExpressService) {
+	if svc.EcsServiceKey != "" {
+		lock := ecsServiceLock(svc.EcsServiceKey)
+		lock.Lock()
+		if service, ok := ecsServices.Get(svc.EcsServiceKey); ok {
+			service.Status = "INACTIVE"
+			service.DesiredCount = 0
+			service.RunningCount = 0
+			service.PendingCount = 0
+			ecsServices.Put(svc.EcsServiceKey, service)
+			ecsStopServiceTasks(service)
+		}
+		lock.Unlock()
+	}
 	if svc.ListenerArn != "" {
 		elbv2Listeners.Delete(svc.ListenerArn)
 	}

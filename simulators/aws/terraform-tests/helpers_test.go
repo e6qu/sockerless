@@ -70,6 +70,8 @@ func TestMain(m *testing.M) {
 
 	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
 	buildGoScratchImage("sockerless-lambda-runtime-handler:test", lambdaHandlerDir, "lambda-runtime-handler", nativeDockerPlatform())
+	containerCommandDir, _ := filepath.Abs("../../testdata/container-command")
+	buildGoScratchImage("sockerless-container-command:test", containerCommandDir, "container-command", nativeDockerPlatform())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

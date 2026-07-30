@@ -4,6 +4,38 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Amazon ECS services became durable workload schedulers
+
+Amazon Elastic Container Service (ECS) services stopped manufacturing
+`runningCount` from desired capacity. The service scheduler launched the
+declared task definition through the same real container runtime as `RunTask`,
+derived service and deployment counts from durable task state, replaced
+stopped tasks, honored scale-in protection, and rolled task-definition
+revisions within the deployment's minimum-healthy and maximum-capacity bounds.
+Desired-count updates and Application Auto Scaling converged that same
+scheduler, while deletion made the service inactive before draining tasks so a
+terminal callback could not launch a replacement.
+
+Services with an Application or Network Load Balancer registered each real
+task address, waited for target health before completing a rollout,
+deregistered targets on stop, and preserved traffic through task replacement.
+Docker Desktop exposed only the declared task ports as randomly assigned
+loopback bindings; the public ECS and Elastic Load Balancing records retained
+the real task elastic-network-interface address and the data plane rediscovered
+the host transport from durable task labels after process replacement. ECS
+Express Mode used the account's real default virtual private cloud subnets and
+drove its managed task definition, desired capacity, load balancer, and target
+group through the same scheduler.
+
+Official AWS SDK tests proved placement, stop replacement, rolling updates,
+scale-to-three and scale-to-zero, target health, real HTTP forwarding, and
+hard-restart adoption without duplicate task identity. The AWS CLI proved
+service replacement and ECS Express Mode, and production-shaped HashiCorp AWS
+provider graphs completed apply, hard simulator restart, zero-change refresh,
+and destroy with real service workloads. The wider audit recorded the
+remaining service-discovery and failed-deployment semantics as BUG-2798 and
+BUG-2799 rather than treating retained configuration as implemented behavior.
+
 ## 2026-07-30 — Dataflow and API Gateway Discovery advanced without surface drift
 
 The replacement hosted matrix observed Dataflow v1b3 revision 20260719 after
@@ -1515,15 +1547,12 @@ reaches the enforcing simulator without an identity provider, moved its
 reads-real-data assertions to the authenticated relying-party path.
 
 Separately, the AWS ECS Terraform harness left subprocesses running past its
-deadline (BUG-2569, P1): the ECS *service* model launched real Docker containers
-to satisfy `DesiredCount`, and no-command images (`alpine`/`busybox`) crash-
-looped forever so the service never reached steady state and containers leaked.
-The service is now a control-plane state machine that reaches
-`runningCount==desiredCount` with a COMPLETED deployment synchronously (real
-workloads run through `RunTask`, which nothing changed), and the `internal/tfsim`
-harness gained the process-group + deadline-watchdog reaper the main harness
-already had. `TestStackProductionShape` converges and terminates with zero
-leaked containers or processes.
+deadline (BUG-2569, P1). The `internal/tfsim` harness gained the process-group
+and deadline-watchdog reaper the main harness already had, and both service
+fixtures and production-shaped provider graphs used explicit long-running
+workload commands plus deterministic cleanup. `TestStackProductionShape`
+converges and terminates with zero leaked containers or processes while the
+service scheduler runs its declared tasks.
 
 ## 2026-07-23 — Completed the Microsoft Azure portal on both fidelity axes
 

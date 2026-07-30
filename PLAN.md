@@ -101,6 +101,7 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 71. Recorded long-lived Amazon ECS service execution as the next P1 production gap after the ECS Dev Desktop deployment audit proved the simulator still reported service capacity without launching the declared workload.
 72. Retained the exact CI-captured Google Cloud Dataflow v1b3 revision 20260719 document after proving its method, route, and schema-field contracts were unchanged.
 73. Retained the newest multi-probe Google Cloud API Gateway v1 revision 20260724 document after proving its method, route, and schema-field contracts were unchanged.
+74. Replaced synthetic Amazon Elastic Container Service service counts with a durable real-task scheduler, bounded rolling deployment, task replacement and protection, load-balancer target health, ECS Express Mode reconciliation, and hard-restart adoption, then proved the runtime through official AWS SDK, AWS CLI, and HashiCorp AWS provider clients.
 
 ## Verified Next Gaps
 
@@ -110,6 +111,7 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 4. BUG-1345 retained only the upstream AzureAD provider's lack of a Microsoft Graph endpoint override.
 5. BUG-2523 and BUG-2441 remained in the external Bleephub repository rather than this workspace.
 6. BUG-2766 retained AWS Amplify Hosting image optimization, BUG-2764 retained the macOS Podman nested-KVM boundary, and BUG-2791 retained the operator-owned corrupt Podman overlay store that blocked a second local AWS Terraform container run. Complete AWS WAF statement evaluation and transactional Elastic Load Balancing listener binding closed BUG-2767 and BUG-2765.
+7. BUG-2798 retained ECS-managed AWS Cloud Map instance registration, while BUG-2799 retained failed-deployment throttling, circuit-breaker rollback, and CloudWatch-alarm rollback after the core ECS service runtime became real and durable.
 
 ## Simulator Console Parity
 

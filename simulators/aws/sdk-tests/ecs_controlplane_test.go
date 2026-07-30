@@ -133,8 +133,10 @@ func TestECS_TaskSetLifecycle(t *testing.T) {
 	t.Cleanup(func() { _, _ = c.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)}) })
 
 	_, err = c.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
-		Family:               aws.String("ts-task"),
-		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("alpine:latest")}},
+		Family: aws.String("ts-task"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name: aws.String("app"), Image: aws.String(containerCommandImage), Command: []string{"hold"},
+		}},
 	})
 	require.NoError(t, err)
 
@@ -538,8 +540,10 @@ func TestECS_ServiceDeployments(t *testing.T) {
 	t.Cleanup(func() { _, _ = c.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)}) })
 
 	_, err = c.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
-		Family:               aws.String("sd-task"),
-		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("alpine:latest")}},
+		Family: aws.String("sd-task"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name: aws.String("app"), Image: aws.String(containerCommandImage), Command: []string{"hold"},
+		}},
 	})
 	require.NoError(t, err)
 
@@ -555,6 +559,7 @@ func TestECS_ServiceDeployments(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	cleanupECSService(t, c, cluster, "sd-svc")
 
 	listOut, err := c.ListServiceDeployments(ctx, &ecs.ListServiceDeploymentsInput{
 		Cluster: aws.String(cluster), Service: aws.String("sd-svc"),

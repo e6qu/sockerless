@@ -12,7 +12,7 @@ func TestECSServiceClusterFidelityCLI(t *testing.T) {
 
 	q("ecs", "create-cluster", "--cluster-name", "cli-svc-cluster", "--query", "cluster.clusterName", "--output", "text")
 	tdArn := q("ecs", "register-task-definition", "--family", "cli-svc-td",
-		"--container-definitions", `[{"name":"app","image":"nginx"}]`,
+		"--container-definitions", `[{"name":"app","image":"`+containerCommandImage+`","command":["hold"]}]`,
 		"--query", "taskDefinition.taskDefinitionArn", "--output", "text")
 
 	q("ecs", "create-service", "--cluster", "cli-svc-cluster", "--service-name", "cli-svc",
@@ -21,6 +21,7 @@ func TestECSServiceClusterFidelityCLI(t *testing.T) {
 		"--placement-constraints", "type=memberOf,expression=attribute:ecs.instance-type == t3.micro",
 		"--placement-strategy", "type=spread,field=attribute:ecs.availability-zone",
 		"--query", "service.serviceName", "--output", "text")
+	cleanupCLIService(t, "cli-svc-cluster", "cli-svc")
 
 	out := q("ecs", "describe-services", "--cluster", "cli-svc-cluster", "--services", "cli-svc",
 		"--query", "services[0].[enableECSManagedTags,healthCheckGracePeriodSeconds,placementConstraints[0].expression,placementStrategy[0].type]", "--output", "text")

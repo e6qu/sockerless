@@ -21,7 +21,8 @@ func TestECS_DeploymentConfigurationRoundTrip(t *testing.T) {
 	td, err := c.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
 		Family: aws.String("deploycfg-task"),
 		ContainerDefinitions: []ecstypes.ContainerDefinition{{
-			Name: aws.String("app"), Image: aws.String("public.ecr.aws/docker/library/busybox:latest"), Memory: aws.Int32(128),
+			Name: aws.String("app"), Image: aws.String(containerCommandImage),
+			Command: []string{"hold"}, Memory: aws.Int32(128),
 		}},
 	})
 	require.NoError(t, err)
@@ -38,6 +39,7 @@ func TestECS_DeploymentConfigurationRoundTrip(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	cleanupECSService(t, c, cluster, "deploycfg-svc")
 
 	desc, err := c.DescribeServices(ctx, &ecs.DescribeServicesInput{
 		Cluster:  aws.String(cluster),

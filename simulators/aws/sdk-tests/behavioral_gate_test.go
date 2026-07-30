@@ -189,8 +189,10 @@ func TestBehavioralGate_AppAutoScaling_AdjustsECSDesiredCount(t *testing.T) {
 	_, err := ecsC.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
 	require.NoError(t, err)
 	_, err = ecsC.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
-		Family:               aws.String("bg-as-task"),
-		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("public.ecr.aws/docker/library/busybox:latest")}},
+		Family: aws.String("bg-as-task"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name: aws.String("app"), Image: aws.String(containerCommandImage), Command: []string{"hold"},
+		}},
 	})
 	require.NoError(t, err)
 	_, err = ecsC.CreateService(ctx, &ecs.CreateServiceInput{
@@ -200,6 +202,7 @@ func TestBehavioralGate_AppAutoScaling_AdjustsECSDesiredCount(t *testing.T) {
 		DesiredCount:   aws.Int32(1),
 	})
 	require.NoError(t, err)
+	cleanupECSService(t, ecsC, cluster, svcName)
 
 	_, err = asC.RegisterScalableTarget(ctx, &applicationautoscaling.RegisterScalableTargetInput{
 		ServiceNamespace:  ns,
@@ -330,6 +333,7 @@ func TestBehavioralGate_ECSService_ConvergesRunningCount(t *testing.T) {
 		DesiredCount:   aws.Int32(2),
 	})
 	require.NoError(t, err)
+	cleanupECSService(t, ecsC, cluster, svcName)
 
 	require.Eventually(t, func() bool {
 		out, err := ecsC.DescribeServices(ctx, &ecs.DescribeServicesInput{

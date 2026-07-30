@@ -12,11 +12,15 @@ import (
 
 func TestECS_CLI_ServiceFamily(t *testing.T) {
 	cluster := "cli-ecs-svc-cluster"
+	subnetID := createCLIECSTestSubnet(t, 141)
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", cluster))
 	t.Cleanup(func() { _ = awsCLI("ecs", "delete-cluster", "--cluster", cluster).Run() })
 	runCLI(t, awsCLI("ecs", "register-task-definition",
 		"--family", "cli-svc-task",
-		"--container-definitions", `[{"name":"app","image":"alpine:latest","essential":true}]`))
+		"--network-mode", "awsvpc",
+		"--requires-compatibilities", "FARGATE",
+		"--cpu", "256", "--memory", "512",
+		"--container-definitions", `[{"name":"app","image":"`+containerCommandImage+`","command":["hold"],"essential":true}]`))
 
 	// PutClusterCapacityProviders → DescribeClusters echoes them.
 	runCLI(t, awsCLI("ecs", "put-cluster-capacity-providers",
@@ -37,7 +41,9 @@ func TestECS_CLI_ServiceFamily(t *testing.T) {
 	createOut := runCLI(t, awsCLI("ecs", "create-service",
 		"--cluster", cluster, "--service-name", "cli-svc",
 		"--task-definition", "cli-svc-task", "--desired-count", "2",
-		"--launch-type", "FARGATE", "--output", "json"))
+		"--launch-type", "FARGATE",
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetID+`]}`,
+		"--output", "json"))
 	var created struct {
 		Service struct {
 			Status       string `json:"status"`
@@ -61,6 +67,28 @@ func TestECS_CLI_ServiceFamily(t *testing.T) {
 	require.Len(t, desc.Services, 1)
 	assert.Equal(t, "ACTIVE", desc.Services[0].Status)
 
+	var running struct {
+		TaskArns []string `json:"taskArns"`
+	}
+	require.Eventually(t, func() bool {
+		out := runCLI(t, awsCLI("ecs", "list-tasks",
+			"--cluster", cluster, "--service-name", "cli-svc",
+			"--desired-status", "RUNNING", "--output", "json"))
+		parseJSON(t, out, &running)
+		return len(running.TaskArns) == 2
+	}, 30*time.Second, 100*time.Millisecond, "service did not launch two real tasks")
+	stoppedArn := running.TaskArns[0]
+	runCLI(t, awsCLI("ecs", "stop-task", "--cluster", cluster, "--task", stoppedArn))
+	require.Eventually(t, func() bool {
+		out := runCLI(t, awsCLI("ecs", "list-tasks",
+			"--cluster", cluster, "--service-name", "cli-svc",
+			"--desired-status", "RUNNING", "--output", "json"))
+		parseJSON(t, out, &running)
+		return len(running.TaskArns) == 2 &&
+			running.TaskArns[0] != stoppedArn &&
+			running.TaskArns[1] != stoppedArn
+	}, 30*time.Second, 100*time.Millisecond, "service did not replace the stopped task")
+
 	delOut := runCLI(t, awsCLI("ecs", "delete-service",
 		"--cluster", cluster, "--service", "cli-svc", "--force", "--output", "json"))
 	var del struct {
@@ -70,6 +98,14 @@ func TestECS_CLI_ServiceFamily(t *testing.T) {
 	}
 	parseJSON(t, delOut, &del)
 	assert.Equal(t, "INACTIVE", del.Service.Status)
+}
+
+func cleanupCLIService(t *testing.T, cluster, service string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_ = awsCLI("ecs", "update-service", "--cluster", cluster, "--service", service, "--desired-count", "0").Run()
+		_ = awsCLI("ecs", "delete-service", "--cluster", cluster, "--service", service, "--force").Run()
+	})
 }
 
 func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
