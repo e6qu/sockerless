@@ -205,6 +205,21 @@ func registerELBv2(r *sim.AWSQueryRouter, srv *sim.Server) {
 
 	registerELBv2Rules(r, srv)
 	registerELBv2TrustStores(r, srv)
+	if err := elbv2RecoverDataPlanes(); err != nil {
+		panic(fmt.Sprintf("restore Elastic Load Balancing data planes: %v", err))
+	}
+}
+
+func elbv2RecoverDataPlanes() error {
+	for _, listener := range elbv2Listeners.List() {
+		if err := elbv2StartNLBProxy(listener); err != nil {
+			return fmt.Errorf("restore stream listener %s: %w", listener.Arn, err)
+		}
+		if err := elbv2StartTLSProxy(listener); err != nil {
+			return fmt.Errorf("restore TLS listener %s: %w", listener.Arn, err)
+		}
+	}
+	return nil
 }
 
 func elbv2XMLResponse(w http.ResponseWriter, op string, body string, requestID string) {
@@ -660,6 +675,15 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 		Attributes:      defaultELBv2ListenerAttributes(lb.Type),
 	}
 	elbv2Listeners.Put(arn, listener)
+	if err := elbv2StartListenerDataPlane(listener); err != nil {
+		elbv2Listeners.Delete(arn)
+		elbv2StopNLBProxy(arn)
+		elbv2StopTLSProxy(arn)
+		elbv2ErrorXML(w, "InvalidConfigurationRequest",
+			"Could not provision the load balancer listener data plane: "+err.Error(),
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
 	for _, action := range listener.DefaultActions {
 		if action.TargetGroupArn != "" {
 			elbv2TargetGroups.Update(action.TargetGroupArn, func(tg *ELBv2TargetGroup) {
@@ -667,19 +691,18 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	// NLB stream listeners forward a raw byte stream; bind a real TCP proxy so
-	// the data plane is faithful (e.g. SSH through an NLB). HTTPS / TLS
-	// listeners terminate the listener certificate(s) and forward the decrypted
-	// stream — also a real bound listener (a TLS listener) so the data plane is
-	// faithful (e.g. HTTPS to a target through an ALB). Real CreateListener
-	// always succeeds — the proxy is the sim's local realization of the data
-	// plane, and binding the listener port on the dev host can legitimately fail
-	// (a privileged port without root, or a same-port collision off Linux). In
-	// that case the control plane (and the stable DNSName) stay faithful; only
-	// the local data plane for this listener is unavailable on this host.
-	elbv2StartNLBProxyBestEffort(listener)
-	elbv2StartTLSProxyBestEffort(listener)
 	elbv2XMLResponse(w, "CreateListener", "<Listeners>"+elbv2ListenerXML(listener)+"</Listeners>", sim.RequestID(r.Context()))
+}
+
+func elbv2StartListenerDataPlane(listener ELBv2Listener) error {
+	if err := elbv2StartNLBProxy(listener); err != nil {
+		return err
+	}
+	if err := elbv2StartTLSProxy(listener); err != nil {
+		elbv2StopNLBProxy(listener.Arn)
+		return err
+	}
+	return nil
 }
 
 func handleELBv2DescribeListeners(w http.ResponseWriter, r *http.Request) {

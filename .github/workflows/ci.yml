@@ -324,7 +324,10 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: actions/cache@v6.1.0
+      # Simulator runs mutate the restored guest rootfs as root. Restore the
+      # immutable seed produced by the dedicated Firecracker job, but never
+      # archive the test-mutated tree from a matrix job.
+      - uses: actions/cache/restore@v6.1.0
         with:
           path: ~/.cache/sockerless/firecracker-ci
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
@@ -368,6 +371,7 @@ jobs:
         if: matrix.suite == 'sdk'
         run: |
           bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
+          bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}/sdk-tests
           cd simulators/${{ matrix.cloud }}
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
@@ -383,6 +387,7 @@ jobs:
         if: matrix.suite == 'cli'
         run: |
           bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
+          bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}/cli-tests
           cd simulators/${{ matrix.cloud }}
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
@@ -424,7 +429,7 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: actions/cache@v6.1.0
+      - uses: actions/cache/restore@v6.1.0
         with:
           path: ~/.cache/sockerless/firecracker-ci
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
@@ -581,7 +586,7 @@ jobs:
             timeout: 1200s
             timeout_minutes: 15
           - suite: appdata2
-            run: '^Test(RDS|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
+            run: '^Test(AWSServiceState|RDS|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
             timeout: 1200s
             timeout_minutes: 15
     steps:
@@ -591,7 +596,7 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: actions/cache@v6.1.0
+      - uses: actions/cache/restore@v6.1.0
         with:
           path: ~/.cache/sockerless/firecracker-ci
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
@@ -689,7 +694,7 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: actions/cache@v6.1.0
+      - uses: actions/cache/restore@v6.1.0
         with:
           path: ~/.cache/sockerless/firecracker-ci
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}

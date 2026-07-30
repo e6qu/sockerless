@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -73,6 +72,7 @@ var budgetsStore sim.Store[budgetsStoreEntry]
 
 func registerBudgets(r *sim.AWSRouter, srv *sim.Server) {
 	budgetsStore = sim.MakeStore[budgetsStoreEntry](srv.DB(), "budgets")
+	budgetsTags = sim.MakeStore[map[string]string](srv.DB(), "budget_tags")
 
 	r.Register("AWSBudgetServiceGateway.CreateBudget", handleBudgetsCreateBudget)
 	r.Register("AWSBudgetServiceGateway.DescribeBudget", handleBudgetsDescribeBudget)
@@ -242,7 +242,11 @@ func budgetsNotificationKey(n budgetsNotification) string {
 func handleBudgetsCreateBudget(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		budgetsRequestEnvelope
-		Budget                       *budgetsBudget
+		Budget       *budgetsBudget
+		ResourceTags []struct {
+			Key   string
+			Value string
+		}
 		NotificationsWithSubscribers []struct {
 			Notification *budgetsNotification
 			Subscribers  []budgetsSubscriber
@@ -284,6 +288,7 @@ func handleBudgetsCreateBudget(w http.ResponseWriter, r *http.Request) {
 			entry.Subscribers[budgetsNotificationKey(*nws.Notification)], nws.Subscribers...)
 	}
 	budgetsStore.Put(req.Budget.BudgetName, entry)
+	budgetTagsSet(req.Budget.BudgetName, req.ResourceTags)
 	writeAWSJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -732,44 +737,39 @@ func budgetsNameFromARN(arn string) string {
 }
 
 // budgetsTags is the tag store keyed by budget name.
-var budgetsTags = map[string]map[string]string{}
-var budgetsTagsMu sync.Mutex
+var budgetsTags sim.Store[map[string]string]
 
 func budgetTagsSet(name string, tags []struct {
 	Key   string
 	Value string
 }) {
-	budgetsTagsMu.Lock()
-	defer budgetsTagsMu.Unlock()
-	if budgetsTags[name] == nil {
-		budgetsTags[name] = map[string]string{}
+	current, _ := budgetsTags.Get(name)
+	if current == nil {
+		current = map[string]string{}
 	}
 	for _, t := range tags {
-		budgetsTags[name][t.Key] = t.Value
+		current[t.Key] = t.Value
 	}
+	budgetsTags.Put(name, current)
 }
 
 func budgetTagsUnset(name string, keys []string) {
-	budgetsTagsMu.Lock()
-	defer budgetsTagsMu.Unlock()
-	if budgetsTags[name] == nil {
+	current, ok := budgetsTags.Get(name)
+	if !ok {
 		return
 	}
 	for _, k := range keys {
-		delete(budgetsTags[name], k)
+		delete(current, k)
 	}
+	budgetsTags.Put(name, current)
 }
 
 func budgetTagsDelete(name string) {
-	budgetsTagsMu.Lock()
-	defer budgetsTagsMu.Unlock()
-	delete(budgetsTags, name)
+	budgetsTags.Delete(name)
 }
 
 func budgetsTagsToWire(name string) []map[string]any {
-	budgetsTagsMu.Lock()
-	defer budgetsTagsMu.Unlock()
-	tags := budgetsTags[name]
+	tags, _ := budgetsTags.Get(name)
 	out := make([]map[string]any, 0, len(tags))
 	for k, v := range tags {
 		out = append(out, map[string]any{"Key": k, "Value": v})

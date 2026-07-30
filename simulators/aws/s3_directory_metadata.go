@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -51,14 +50,9 @@ type s3MetadataTableConfig struct {
 }
 
 var (
-	s3MetadataConfigsMu sync.Mutex
-	s3MetadataConfigs   = map[string]s3MetadataConfig{} // bucket → config
-
-	s3MetadataTableConfigsMu sync.Mutex
-	s3MetadataTableConfigs   = map[string]s3MetadataTableConfig{} // bucket → config
-
-	s3AbacMu     sync.Mutex
-	s3AbacStatus = map[string]string{} // bucket → "Enabled"/"Disabled"
+	s3MetadataConfigs      sim.Store[s3MetadataConfig]
+	s3MetadataTableConfigs sim.Store[s3MetadataTableConfig]
+	s3AbacStatus           sim.Store[string]
 )
 
 // ── S3 Metadata configuration (V2, ?metadataConfiguration) ──────────────
@@ -86,15 +80,12 @@ func handleS3CreateBucketMetadataConfiguration(w http.ResponseWriter, r *http.Re
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3MetadataConfigsMu.Lock()
-	if _, exists := s3MetadataConfigs[bucket]; exists {
-		s3MetadataConfigsMu.Unlock()
+	if _, exists := s3MetadataConfigs.Get(bucket); exists {
 		sim.S3ErrorXML(w, "MetadataTableAlreadyExistsError",
 			"A metadata configuration already exists for this bucket. Delete it before creating a new one.",
 			bucket, sim.RequestID(r.Context()), http.StatusConflict)
 		return
 	}
-	s3MetadataConfigsMu.Unlock()
 
 	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
@@ -115,9 +106,7 @@ func handleS3CreateBucketMetadataConfiguration(w http.ResponseWriter, r *http.Re
 		JournalRecordExpirationDays: doc.JournalTableConfiguration.RecordExpiration.Days,
 		InventoryState:              doc.InventoryTableConfiguration.ConfigurationState,
 	}
-	s3MetadataConfigsMu.Lock()
-	s3MetadataConfigs[bucket] = cfg
-	s3MetadataConfigsMu.Unlock()
+	s3MetadataConfigs.Put(bucket, cfg)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -129,9 +118,7 @@ func handleS3GetBucketMetadataConfiguration(w http.ResponseWriter, r *http.Reque
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3MetadataConfigsMu.Lock()
-	cfg, ok := s3MetadataConfigs[bucket]
-	s3MetadataConfigsMu.Unlock()
+	cfg, ok := s3MetadataConfigs.Get(bucket)
 	if !ok {
 		sim.S3ErrorXML(w, "MetadataTableConfigNotFoundError",
 			"The metadata configuration does not exist for this bucket.",
@@ -200,9 +187,7 @@ func handleS3DeleteBucketMetadataConfiguration(w http.ResponseWriter, r *http.Re
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3MetadataConfigsMu.Lock()
-	delete(s3MetadataConfigs, bucket)
-	s3MetadataConfigsMu.Unlock()
+	s3MetadataConfigs.Delete(bucket)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -222,9 +207,7 @@ func handleS3UpdateBucketMetadataInventoryTable(w http.ResponseWriter, r *http.R
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3MetadataConfigsMu.Lock()
-	cfg, ok := s3MetadataConfigs[bucket]
-	s3MetadataConfigsMu.Unlock()
+	cfg, ok := s3MetadataConfigs.Get(bucket)
 	if !ok {
 		sim.S3ErrorXML(w, "MetadataTableConfigNotFoundError",
 			"The metadata configuration does not exist for this bucket.",
@@ -242,9 +225,7 @@ func handleS3UpdateBucketMetadataInventoryTable(w http.ResponseWriter, r *http.R
 		}
 	}
 	cfg.InventoryState = doc.ConfigurationState
-	s3MetadataConfigsMu.Lock()
-	s3MetadataConfigs[bucket] = cfg
-	s3MetadataConfigsMu.Unlock()
+	s3MetadataConfigs.Put(bucket, cfg)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -264,9 +245,7 @@ func handleS3UpdateBucketMetadataAnnotationTable(w http.ResponseWriter, r *http.
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3MetadataConfigsMu.Lock()
-	cfg, ok := s3MetadataConfigs[bucket]
-	s3MetadataConfigsMu.Unlock()
+	cfg, ok := s3MetadataConfigs.Get(bucket)
 	if !ok {
 		sim.S3ErrorXML(w, "MetadataTableConfigNotFoundError",
 			"The metadata configuration does not exist for this bucket.",
@@ -290,9 +269,7 @@ func handleS3UpdateBucketMetadataAnnotationTable(w http.ResponseWriter, r *http.
 	}
 	cfg.AnnotationState = doc.ConfigurationState
 	cfg.AnnotationRole = doc.Role
-	s3MetadataConfigsMu.Lock()
-	s3MetadataConfigs[bucket] = cfg
-	s3MetadataConfigsMu.Unlock()
+	s3MetadataConfigs.Put(bucket, cfg)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -311,9 +288,7 @@ func handleS3UpdateBucketMetadataJournalTable(w http.ResponseWriter, r *http.Req
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3MetadataConfigsMu.Lock()
-	cfg, ok := s3MetadataConfigs[bucket]
-	s3MetadataConfigsMu.Unlock()
+	cfg, ok := s3MetadataConfigs.Get(bucket)
 	if !ok {
 		sim.S3ErrorXML(w, "MetadataTableConfigNotFoundError",
 			"The metadata configuration does not exist for this bucket.",
@@ -331,9 +306,7 @@ func handleS3UpdateBucketMetadataJournalTable(w http.ResponseWriter, r *http.Req
 		}
 	}
 	cfg.JournalRecordExpirationDays = doc.RecordExpiration.Days
-	s3MetadataConfigsMu.Lock()
-	s3MetadataConfigs[bucket] = cfg
-	s3MetadataConfigsMu.Unlock()
+	s3MetadataConfigs.Put(bucket, cfg)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -354,15 +327,12 @@ func handleS3CreateBucketMetadataTableConfiguration(w http.ResponseWriter, r *ht
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3MetadataTableConfigsMu.Lock()
-	if _, exists := s3MetadataTableConfigs[bucket]; exists {
-		s3MetadataTableConfigsMu.Unlock()
+	if _, exists := s3MetadataTableConfigs.Get(bucket); exists {
 		sim.S3ErrorXML(w, "MetadataTableAlreadyExistsError",
 			"A metadata table configuration already exists for this bucket. Delete it before creating a new one.",
 			bucket, sim.RequestID(r.Context()), http.StatusConflict)
 		return
 	}
-	s3MetadataTableConfigsMu.Unlock()
 
 	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
@@ -379,12 +349,10 @@ func handleS3CreateBucketMetadataTableConfiguration(w http.ResponseWriter, r *ht
 			return
 		}
 	}
-	s3MetadataTableConfigsMu.Lock()
-	s3MetadataTableConfigs[bucket] = s3MetadataTableConfig{
+	s3MetadataTableConfigs.Put(bucket, s3MetadataTableConfig{
 		TableBucketArn: doc.S3TablesDestination.TableBucketArn,
 		TableName:      doc.S3TablesDestination.TableName,
-	}
-	s3MetadataTableConfigsMu.Unlock()
+	})
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -395,9 +363,7 @@ func handleS3GetBucketMetadataTableConfiguration(w http.ResponseWriter, r *http.
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3MetadataTableConfigsMu.Lock()
-	cfg, ok := s3MetadataTableConfigs[bucket]
-	s3MetadataTableConfigsMu.Unlock()
+	cfg, ok := s3MetadataTableConfigs.Get(bucket)
 	if !ok {
 		sim.S3ErrorXML(w, "MetadataTableConfigNotFoundError",
 			"The metadata table configuration does not exist for this bucket.",
@@ -431,9 +397,7 @@ func handleS3DeleteBucketMetadataTableConfiguration(w http.ResponseWriter, r *ht
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3MetadataTableConfigsMu.Lock()
-	delete(s3MetadataTableConfigs, bucket)
-	s3MetadataTableConfigsMu.Unlock()
+	s3MetadataTableConfigs.Delete(bucket)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -466,9 +430,7 @@ func handleS3PutBucketAbac(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s3AbacMu.Lock()
-	s3AbacStatus[bucket] = doc.Status
-	s3AbacMu.Unlock()
+	s3AbacStatus.Put(bucket, doc.Status)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -479,9 +441,7 @@ func handleS3GetBucketAbac(w http.ResponseWriter, r *http.Request) {
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
 	}
-	s3AbacMu.Lock()
-	status := s3AbacStatus[bucket]
-	s3AbacMu.Unlock()
+	status, _ := s3AbacStatus.Get(bucket)
 	if status == "" {
 		// Real S3 reports ABAC as Disabled until it is explicitly enabled.
 		status = "Disabled"

@@ -399,7 +399,7 @@ var serviceCoverageFloor = map[string]int{
 	"AmazonRDSv19":                         164,
 	"AutoScaling_2011_01_01":               66,
 	"AWSGlue":                              264,
-	"AWSWAF_20190729":                      55,
+	"AWSWAF_20190729":                      59,
 	"CloudTrail_20131101":                  60,
 	"CodeBuild_20161006":                   59,
 	"Logs_20140328":                        118, // CloudWatch Logs

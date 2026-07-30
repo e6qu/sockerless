@@ -28,22 +28,17 @@ func startRoute53DNSServer() {
 		addr := ":" + envOr("SIM_DNS_PORT", "5353")
 		udpConn, err := net.ListenPacket("udp", addr)
 		if err != nil {
-			// Fall back to a kernel-assigned free port so the
-			// simulator still boots when the configured port is busy.
-			udpConn, err = net.ListenPacket("udp", ":0")
-			if err != nil {
-				log.Printf("route53 dns: failed to listen udp: %v", err)
-				return
-			}
+			panic("route53 dns: bind configured UDP endpoint " + addr + ": " + err.Error())
 		}
 		r53DNSAddr = udpConn.LocalAddr().String()
-		log.Printf("route53 dns: serving on udp %s", r53DNSAddr)
-
-		go serveRoute53DNSUDP(udpConn)
-
-		if tcpLn, err := net.Listen("tcp", udpConn.LocalAddr().String()); err == nil {
-			go serveRoute53DNSTCP(tcpLn)
+		tcpLn, err := net.Listen("tcp", r53DNSAddr)
+		if err != nil {
+			_ = udpConn.Close()
+			panic("route53 dns: bind configured TCP endpoint " + r53DNSAddr + ": " + err.Error())
 		}
+		log.Printf("route53 dns: serving on UDP and TCP %s", r53DNSAddr)
+		go serveRoute53DNSUDP(udpConn)
+		go serveRoute53DNSTCP(tcpLn)
 	})
 }
 

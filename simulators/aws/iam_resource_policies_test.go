@@ -22,6 +22,7 @@ import (
 func buildResourcePolicySim(t *testing.T) *sim.Server {
 	t.Helper()
 	t.Setenv("SIM_RUNTIME", "process")
+	t.Setenv("SIM_DNS_PORT", "0")
 	srv, _, _, err := buildSimulator(sim.Config{
 		Provider: "aws", ListenAddr: ":0", LogLevel: "error",
 	})

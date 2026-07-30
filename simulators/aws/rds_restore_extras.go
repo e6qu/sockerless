@@ -29,6 +29,10 @@ func registerRDSRestoreExtras(r *sim.AWSQueryRouter, srv *sim.Server) {
 	rdsTenantDatabases = sim.MakeStore[RDSTenantDatabase](srv.DB(), "rds_tenant_databases")
 	rdsShardGroups = sim.MakeStore[RDSShardGroup](srv.DB(), "rds_shard_groups")
 	rdsExportTasks = sim.MakeStore[RDSExportTask](srv.DB(), "rds_export_tasks")
+	rdsActivityStreamStatus = sim.MakeStore[string](srv.DB(), "rds_activity_stream_status")
+	rdsClusterBacktracks = sim.MakeStore[[]rdsBacktrack](srv.DB(), "rds_cluster_backtracks")
+	rdsHTTPEndpointEnabled = sim.MakeStore[bool](srv.DB(), "rds_http_endpoint_enabled")
+	rdsClusterSnapshotAttrs = sim.MakeStore[[]string](srv.DB(), "rds_cluster_snapshot_attributes")
 
 	// Restore family.
 	r.RegisterVersioned(rdsAPIVersion, "RestoreDBClusterFromSnapshot", handleRDSRestoreClusterFromSnapshot)
@@ -1103,7 +1107,7 @@ func handleRDSRebootShardGroup(w http.ResponseWriter, r *http.Request) {
 // rdsActivityStreamStatus holds the current activity-stream status for a
 // cluster ARN: started | stopped. With no real Kinesis stream, the
 // status simply toggles. Empty status == stopped/not-started.
-var rdsActivityStreamStatus = map[string]string{}
+var rdsActivityStreamStatus sim.Store[string]
 
 func handleRDSStartActivityStream(w http.ResponseWriter, r *http.Request) {
 	resourceArn := r.FormValue("ResourceArn")
@@ -1117,7 +1121,7 @@ func handleRDSStartActivityStream(w http.ResponseWriter, r *http.Request) {
 		mode = "async"
 	}
 	kmsKeyID := r.FormValue("KmsKeyId")
-	rdsActivityStreamStatus[resourceArn] = "starting"
+	rdsActivityStreamStatus.Put(resourceArn, "starting")
 	streamName := "aws-rds-das-" + strings.ToLower(strings.ReplaceAll(generateUUID(), "-", ""))[:17]
 	var b strings.Builder
 	fmt.Fprintf(&b, "<KmsKeyId>%s</KmsKeyId>", xmlEscape(kmsKeyID))
@@ -1135,7 +1139,7 @@ func handleRDSStopActivityStream(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
-	rdsActivityStreamStatus[resourceArn] = "stopped"
+	rdsActivityStreamStatus.Put(resourceArn, "stopped")
 	var b strings.Builder
 	b.WriteString("<KmsKeyId></KmsKeyId>")
 	b.WriteString("<KinesisStreamName></KinesisStreamName>")
@@ -1146,7 +1150,7 @@ func handleRDSStopActivityStream(w http.ResponseWriter, r *http.Request) {
 func handleRDSModifyActivityStream(w http.ResponseWriter, r *http.Request) {
 	resourceArn := r.FormValue("ResourceArn")
 	mode := r.FormValue("AuditPolicyState")
-	status := rdsActivityStreamStatus[resourceArn]
+	status, _ := rdsActivityStreamStatus.Get(resourceArn)
 	if status == "" {
 		status = "stopped"
 	}
@@ -1168,7 +1172,7 @@ func handleRDSModifyActivityStream(w http.ResponseWriter, r *http.Request) {
 // rdsClusterBacktracks holds recorded backtracks keyed by cluster
 // identifier. Backtrack rewinds an Aurora MySQL cluster to a prior
 // timestamp; the sim records the request as a completed backtrack row.
-var rdsClusterBacktracks = map[string][]rdsBacktrack{}
+var rdsClusterBacktracks sim.Store[[]rdsBacktrack]
 
 type rdsBacktrack struct {
 	BacktrackIdentifier string
@@ -1222,7 +1226,9 @@ func handleRDSBacktrackCluster(w http.ResponseWriter, r *http.Request) {
 		CreationTime:        now,
 		Status:              "COMPLETED",
 	}
-	rdsClusterBacktracks[clusterID] = append(rdsClusterBacktracks[clusterID], bt)
+	rdsClusterBacktracks.Upsert(clusterID, func(backtracks *[]rdsBacktrack) {
+		*backtracks = append(*backtracks, bt)
+	})
 	rdsXMLResponse(w, "BacktrackDBCluster", renderRDSBacktrackInner(bt), sim.RequestID(r.Context()))
 }
 
@@ -1241,7 +1247,8 @@ func handleRDSDescribeClusterBacktracks(w http.ResponseWriter, r *http.Request) 
 	}
 	var b strings.Builder
 	b.WriteString("<DBClusterBacktracks>")
-	for _, bt := range rdsClusterBacktracks[clusterID] {
+	backtracks, _ := rdsClusterBacktracks.Get(clusterID)
+	for _, bt := range backtracks {
 		b.WriteString(renderRDSBacktrack(bt))
 	}
 	b.WriteString("</DBClusterBacktracks>")
@@ -1509,7 +1516,7 @@ func handleRDSEnableHTTPEndpoint(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
-	rdsHTTPEndpointEnabled[resourceArn] = true
+	rdsHTTPEndpointEnabled.Put(resourceArn, true)
 	body := fmt.Sprintf("<ResourceArn>%s</ResourceArn><HttpEndpointEnabled>true</HttpEndpointEnabled>", xmlEscape(resourceArn))
 	rdsXMLResponse(w, "EnableHttpEndpoint", body, sim.RequestID(r.Context()))
 }
@@ -1521,14 +1528,14 @@ func handleRDSDisableHTTPEndpoint(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
-	rdsHTTPEndpointEnabled[resourceArn] = false
+	rdsHTTPEndpointEnabled.Put(resourceArn, false)
 	body := fmt.Sprintf("<ResourceArn>%s</ResourceArn><HttpEndpointEnabled>false</HttpEndpointEnabled>", xmlEscape(resourceArn))
 	rdsXMLResponse(w, "DisableHttpEndpoint", body, sim.RequestID(r.Context()))
 }
 
 // rdsHTTPEndpointEnabled tracks the RDS Data API (Aurora Serverless v1
 // HTTP endpoint) enablement per resource ARN.
-var rdsHTTPEndpointEnabled = map[string]bool{}
+var rdsHTTPEndpointEnabled sim.Store[bool]
 
 // ---------------------------------------------------------------------------
 // Cluster-snapshot attributes and ModifyDBSnapshot
@@ -1536,7 +1543,7 @@ var rdsHTTPEndpointEnabled = map[string]bool{}
 
 // rdsClusterSnapshotAttrs holds the "restore" attribute values granted
 // per cluster-snapshot identifier.
-var rdsClusterSnapshotAttrs = map[string][]string{}
+var rdsClusterSnapshotAttrs sim.Store[[]string]
 
 func renderRDSClusterSnapshotAttributesResult(snapID string) string {
 	var b strings.Builder
@@ -1544,7 +1551,8 @@ func renderRDSClusterSnapshotAttributesResult(snapID string) string {
 	fmt.Fprintf(&b, "<DBClusterSnapshotIdentifier>%s</DBClusterSnapshotIdentifier>", xmlEscape(snapID))
 	b.WriteString("<DBClusterSnapshotAttributes>")
 	b.WriteString("<DBClusterSnapshotAttribute><AttributeName>restore</AttributeName><AttributeValues>")
-	for _, v := range rdsClusterSnapshotAttrs[snapID] {
+	attrs, _ := rdsClusterSnapshotAttrs.Get(snapID)
+	for _, v := range attrs {
 		fmt.Fprintf(&b, "<AttributeValue>%s</AttributeValue>", xmlEscape(v))
 	}
 	b.WriteString("</AttributeValues></DBClusterSnapshotAttribute>")
@@ -1568,7 +1576,7 @@ func handleRDSModifyClusterSnapshotAttribute(w http.ResponseWriter, r *http.Requ
 			http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
-	cur := rdsClusterSnapshotAttrs[snapID]
+	cur, _ := rdsClusterSnapshotAttrs.Get(snapID)
 	for n := 1; n <= 50; n++ {
 		v := r.FormValue(fmt.Sprintf("ValuesToAdd.AttributeValue.%d", n))
 		if v == "" {
@@ -1585,7 +1593,7 @@ func handleRDSModifyClusterSnapshotAttribute(w http.ResponseWriter, r *http.Requ
 		}
 		cur = rdsRemove(cur, v)
 	}
-	rdsClusterSnapshotAttrs[snapID] = cur
+	rdsClusterSnapshotAttrs.Put(snapID, cur)
 	rdsXMLResponse(w, "ModifyDBClusterSnapshotAttribute",
 		renderRDSClusterSnapshotAttributesResult(snapID), sim.RequestID(r.Context()))
 }

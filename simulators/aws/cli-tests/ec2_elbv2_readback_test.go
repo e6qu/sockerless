@@ -69,14 +69,14 @@ func TestELBv2CLI_ListenerSslPolicy(t *testing.T) {
 	subB := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-subnet", "--vpc-id", vpc, "--cidr-block", "10.46.2.0/24", "--availability-zone", "us-east-1b", "--query", "Subnet.SubnetId", "--output", "text")))
 	lb := strings.TrimSpace(runCLI(t, awsCLI("elbv2", "create-load-balancer", "--name", "cli-sslp-lb", "--type", "application", "--subnets", subA, subB, "--query", "LoadBalancers[0].LoadBalancerArn", "--output", "text")))
 	tg := strings.TrimSpace(runCLI(t, awsCLI("elbv2", "create-target-group", "--name", "cli-sslp-tg", "--protocol", "HTTP", "--port", "80", "--vpc-id", vpc, "--query", "TargetGroups[0].TargetGroupArn", "--output", "text")))
-	cert := strings.TrimSpace(runCLI(t, awsCLI("acm", "request-certificate", "--domain-name", "cli-ssl.example.test", "--validation-method", "DNS", "--query", "CertificateArn", "--output", "text")))
+	cert := importELBTestCertificate(t, "cli-ssl.example.test")
 	const policy = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-	runCLI(t, awsCLI("elbv2", "create-listener", "--load-balancer-arn", lb, "--protocol", "HTTPS", "--port", "443",
+	runCLI(t, awsCLI("elbv2", "create-listener", "--load-balancer-arn", lb, "--protocol", "HTTPS", "--port", "18443",
 		"--ssl-policy", policy, "--certificates", "CertificateArn="+cert,
 		"--default-actions", "Type=forward,TargetGroupArn="+tg))
 
 	got := strings.TrimSpace(runCLI(t, awsCLI("elbv2", "describe-listeners", "--load-balancer-arn", lb,
-		"--query", "Listeners[?Port==`443`].SslPolicy | [0]", "--output", "text")))
+		"--query", "Listeners[?Port==`18443`].SslPolicy | [0]", "--output", "text")))
 	if got != policy {
 		t.Fatalf("listener SslPolicy = %q, want %q", got, policy)
 	}

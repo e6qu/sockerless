@@ -284,6 +284,10 @@ type ECSTask struct {
 	NetworkConfiguration *ECSTaskNetworkConfig `json:"networkConfiguration,omitempty"`
 	StartedBy            string                `json:"startedBy,omitempty"`
 	ContainerInstanceArn string                `json:"containerInstanceArn,omitempty"`
+	// VolumeHosts records the resolved host or named-volume source for every
+	// task-definition volume while the task is active. It is internal execution
+	// state used only to resume a pre-container restart window.
+	VolumeHosts map[string]string `json:"-"`
 }
 
 type ECSTaskNetworkConfig struct {
@@ -416,7 +420,7 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	ecsClusters = sim.MakeStore[ECSCluster](srv.DB(), "ecs_clusters")
 	ecsTaskDefinitions = sim.MakeStore[ECSTaskDefinition](srv.DB(), "ecs_task_definitions")
 	ecsTasks = sim.MakeStore[ECSTask](srv.DB(), "ecs_tasks")
-	ecsRevisions = make(map[string]int)
+	ecsRebuildRevisionIndex()
 
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateCluster", handleECSCreateCluster)
 	r.Register("AmazonEC2ContainerServiceV20141113.DescribeClusters", handleECSDescribeClusters)
@@ -508,6 +512,17 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+func ecsRebuildRevisionIndex() {
+	ecsRevisionMu.Lock()
+	defer ecsRevisionMu.Unlock()
+	ecsRevisions = make(map[string]int)
+	for _, definition := range ecsTaskDefinitions.List() {
+		if definition.Family != "" && definition.Revision > ecsRevisions[definition.Family] {
+			ecsRevisions[definition.Family] = definition.Revision
+		}
+	}
 }
 
 func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
@@ -1436,6 +1451,7 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 			EnableExecuteCommand: in.EnableExecuteCommand,
 			StartedBy:            in.StartedBy,
 			ContainerInstanceArn: in.ContainerInstanceArn,
+			VolumeHosts:          taskVolumeHosts,
 		}
 		if networkMode == ecsNetworkModeAwsvpc {
 			task.Attachments = append(task.Attachments, ECSAttachment{
@@ -1533,41 +1549,166 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 			ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, -1, 1)
 			if processes != nil {
 				ecsProcessHandles.Store(id, processes)
-
-				for name, handle := range processes.Handles {
-					go func(taskID, containerName string, handle *sim.ContainerHandle) {
-						result := handle.Wait()
-						ecsProcessHandles.Delete(taskID)
-						stoppedAt := time.Now().Unix()
-						transitioned := false
-						ecsTasks.Update(taskID, func(t *ECSTask) {
-							if t.LastStatus == ECSTaskStatusStopped {
-								return // already stopped (e.g. by StopTask)
-							}
-							transitioned = true
-							t.LastStatus = ECSTaskStatusStopped
-							t.DesiredStatus = ECSTaskStatusStopped
-							t.StoppedAt = &stoppedAt
-							t.StopCode = "EssentialContainerExited"
-							t.StoppedReason = "Essential container in task exited"
-							exitCode := result.ExitCode
-							for j := range t.Containers {
-								t.Containers[j].LastStatus = "STOPPED"
-								t.Containers[j].ExitCode = &exitCode
-							}
-							ecsCleanupTaskManagedEBS(t)
-						})
-						if transitioned {
-							ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, 0, -1)
-						}
-						cleanupECSTaskProcesses(taskID, processes)
-					}(id, name, handle)
-				}
+				ecsWatchTaskProcesses(id, containerInstanceKey, processes)
 			}
 		}(taskID, td, taskTags, in.Overrides, taskVolumeHosts, in.LaunchType, in.ContainerInstanceKey)
 	}
 
 	return tasks, nil
+}
+
+func ecsWatchTaskProcesses(taskID, containerInstanceKey string, processes *ecsTaskProcesses) {
+	for name, handle := range processes.Handles {
+		go func(taskID, containerName string, handle *sim.ContainerHandle) {
+			result := handle.Wait()
+			ecsProcessHandles.Delete(taskID)
+			stoppedAt := time.Now().Unix()
+			transitioned := false
+			ecsTasks.Update(taskID, func(t *ECSTask) {
+				if t.LastStatus == ECSTaskStatusStopped {
+					return
+				}
+				transitioned = true
+				t.LastStatus = ECSTaskStatusStopped
+				t.DesiredStatus = ECSTaskStatusStopped
+				t.StoppedAt = &stoppedAt
+				t.StopCode = "EssentialContainerExited"
+				t.StoppedReason = "Essential container in task exited"
+				exitCode := result.ExitCode
+				for j := range t.Containers {
+					t.Containers[j].LastStatus = "STOPPED"
+					t.Containers[j].ExitCode = &exitCode
+				}
+				ecsCleanupTaskManagedEBS(t)
+			})
+			if transitioned {
+				ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, 0, -1)
+			}
+			cleanupECSTaskProcesses(taskID, processes)
+		}(taskID, name, handle)
+	}
+}
+
+func recoverECSTasks() error {
+	for _, task := range ecsTasks.List() {
+		switch task.LastStatus {
+		case ECSTaskStatusProvisioning, ECSTaskStatusPending:
+			definition, ok := ecsTaskDefinitionForARN(task.TaskDefinitionArn)
+			if !ok {
+				return fmt.Errorf("task %s references missing task definition %s", task.TaskArn, task.TaskDefinitionArn)
+			}
+			go ecsResumePendingTask(task, definition)
+		case ECSTaskStatusRunning:
+			definition, ok := ecsTaskDefinitionForARN(task.TaskDefinitionArn)
+			if !ok {
+				return fmt.Errorf("task %s references missing task definition %s", task.TaskArn, task.TaskDefinitionArn)
+			}
+			if err := ecsAdoptRunningTask(task, definition); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func ecsTaskDefinitionForARN(arn string) (ECSTaskDefinition, bool) {
+	key := arn
+	if separator := strings.LastIndexByte(key, '/'); separator >= 0 {
+		key = key[separator+1:]
+	}
+	return ecsTaskDefinitions.Get(key)
+}
+
+func ecsResumePendingTask(task ECSTask, definition ECSTaskDefinition) {
+	taskID := task.TaskID()
+	ecsTasks.Update(taskID, func(current *ECSTask) {
+		current.LastStatus = ECSTaskStatusPending
+		for index := range current.Containers {
+			current.Containers[index].LastStatus = "PENDING"
+		}
+	})
+	sink := ecsTaskCloudWatchSink(definition, taskID)
+	processes, err := startECSTaskContainers(
+		taskID,
+		definition,
+		task.Tags,
+		task.Overrides,
+		task.VolumeHosts,
+		sink,
+		task.LaunchType,
+	)
+	containerInstanceKey := ecsContainerInstanceKeyFromARN(task.ContainerInstanceArn)
+	if err != nil {
+		stoppedAt := time.Now().Unix()
+		ecsTasks.Update(taskID, func(current *ECSTask) {
+			current.LastStatus = ECSTaskStatusStopped
+			current.DesiredStatus = ECSTaskStatusStopped
+			current.StoppedAt = &stoppedAt
+			current.StopCode = "EssentialContainerExited"
+			current.StoppedReason = fmt.Sprintf("Container start failed after control-plane restart: %v", err)
+			exitCode := -1
+			for index := range current.Containers {
+				current.Containers[index].LastStatus = "STOPPED"
+				current.Containers[index].ExitCode = &exitCode
+			}
+			ecsCleanupTaskManagedEBS(current)
+		})
+		ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, -1, 0)
+		return
+	}
+	startedAt := time.Now().Unix()
+	ecsTasks.Update(taskID, func(current *ECSTask) {
+		current.LastStatus = ECSTaskStatusRunning
+		current.Connectivity = "CONNECTED"
+		current.StartedAt = &startedAt
+		for index := range current.Containers {
+			current.Containers[index].LastStatus = "RUNNING"
+		}
+		for index := range current.Attachments {
+			current.Attachments[index].Status = "ATTACHED"
+		}
+	})
+	ecsUpdateContainerInstanceTaskCounts(containerInstanceKey, -1, 1)
+	if processes != nil {
+		ecsProcessHandles.Store(taskID, processes)
+		ecsWatchTaskProcesses(taskID, containerInstanceKey, processes)
+	}
+}
+
+func ecsAdoptRunningTask(task ECSTask, definition ECSTaskDefinition) error {
+	taskID := task.TaskID()
+	if len(definition.ContainerDefinitions) == 0 {
+		return fmt.Errorf("task %s references an Amazon ECS task definition without containers", task.TaskArn)
+	}
+	existing, err := sim.FindExistingContainers(map[string]string{"sockerless-sim-task": taskID})
+	if err != nil {
+		return fmt.Errorf("find Amazon ECS task %s containers: %w", task.TaskArn, err)
+	}
+	if len(existing) == 0 {
+		return fmt.Errorf("running Amazon ECS task %s has no workload containers", task.TaskArn)
+	}
+	processes := &ecsTaskProcesses{
+		MainContainerName: definition.ContainerDefinitions[0].Name,
+		Handles:           make(map[string]*sim.ContainerHandle, len(existing)),
+	}
+	sink := ecsTaskCloudWatchSink(definition, taskID)
+	for _, container := range existing {
+		name := container.Labels["sockerless-sim-task-container"]
+		if container.Labels["sockerless-sim-task-pause"] == "true" {
+			name = "__pause__"
+		}
+		if name == "" {
+			return fmt.Errorf("task %s Amazon ECS container %s has no container identity label", task.TaskArn, container.ID)
+		}
+		handle, err := sim.AdoptContainer(container.ID, sim.ContainerConfig{}, sink)
+		if err != nil {
+			return fmt.Errorf("adopt Amazon ECS task %s container %s: %w", task.TaskArn, name, err)
+		}
+		processes.Handles[name] = handle
+	}
+	ecsProcessHandles.Store(taskID, processes)
+	ecsWatchTaskProcesses(taskID, ecsContainerInstanceKeyFromARN(task.ContainerInstanceArn), processes)
+	return nil
 }
 
 func ecsTaskCPU(td ECSTaskDefinition, overrides *ECSTaskOverride) string {

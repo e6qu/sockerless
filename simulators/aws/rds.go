@@ -359,6 +359,9 @@ func registerRDS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	registerRDSProxiesRoles(r, srv)
 	registerRDSRestoreExtras(r, srv)
 	registerRDSComplete(r, srv)
+	if err := rdsRecoverDataPlanes(); err != nil {
+		panic(fmt.Sprintf("restore Amazon Relational Database Service data planes: %v", err))
+	}
 }
 
 func rdsInstanceARN(id string) string {

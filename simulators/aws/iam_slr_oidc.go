@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -52,12 +51,13 @@ type IAMOIDCProvider struct {
 var (
 	iamSLRs          sim.Store[IAMServiceLinkedRole]
 	iamOIDCProviders sim.Store[IAMOIDCProvider]
-	iamSLRDeletions  sync.Map // taskID → status (always SUCCEEDED in sim)
+	iamSLRDeletions  sim.Store[string]
 )
 
 func registerIAMSLRandOIDC(r *sim.AWSQueryRouter, srv *sim.Server) {
 	iamSLRs = sim.MakeStore[IAMServiceLinkedRole](srv.DB(), "iam_slrs")
 	iamOIDCProviders = sim.MakeStore[IAMOIDCProvider](srv.DB(), "iam_oidc_providers")
+	iamSLRDeletions = sim.MakeStore[string](srv.DB(), "iam_service_linked_role_deletions")
 
 	// Service-linked roles
 	r.Register("CreateServiceLinkedRole", handleIAMCreateServiceLinkedRole)
@@ -169,6 +169,7 @@ func handleIAMCreateServiceLinkedRole(w http.ResponseWriter, r *http.Request) {
 		Path:                     role.Path,
 		AssumeRolePolicyDocument: role.AssumeRolePolicyDocument,
 		CreateDate:               role.CreateDate,
+		Description:              role.Description,
 	})
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateServiceLinkedRoleResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
@@ -198,7 +199,7 @@ func handleIAMDeleteServiceLinkedRole(w http.ResponseWriter, r *http.Request) {
 	iamSLRs.Delete(name)
 	iamRoles.Delete(name) // remove the shadow record
 	taskID := iamRandomID("task_", 16)
-	iamSLRDeletions.Store(taskID, "SUCCEEDED")
+	iamSLRDeletions.Put(taskID, "SUCCEEDED")
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DeleteServiceLinkedRoleResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
   <DeleteServiceLinkedRoleResult><DeletionTaskId>%s</DeletionTaskId></DeleteServiceLinkedRoleResult>
@@ -208,10 +209,10 @@ func handleIAMDeleteServiceLinkedRole(w http.ResponseWriter, r *http.Request) {
 
 func handleIAMGetSLRDeletionStatus(w http.ResponseWriter, r *http.Request) {
 	taskID := r.FormValue("DeletionTaskId")
-	statusAny, _ := iamSLRDeletions.Load(taskID)
-	status, _ := statusAny.(string)
-	if status == "" {
-		status = "SUCCEEDED" // Sim eager-completes any unknown deletion-task ID.
+	status, ok := iamSLRDeletions.Get(taskID)
+	if !ok {
+		iamErrorXML(w, "NoSuchEntity", "Deletion task "+taskID+" was not found.", http.StatusNotFound)
+		return
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<GetServiceLinkedRoleDeletionStatusResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">

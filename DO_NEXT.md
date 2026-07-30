@@ -15,16 +15,81 @@ Core filesystem-driver staging validation no longer assumed `/usr/local` was
 unwritable. Both tests force the direct path to fail portably by creating the
 requested destination beneath a regular file, independent of runner privilege.
 
+Google Cloud and Microsoft Azure SDK/CLI jobs pre-fetched their separate
+official-client modules through the bounded dependency-download helper before
+the suites started.
+
+Simulator SDK, CLI, and Terraform matrix jobs restored the immutable
+Firecracker seed cache without trying to save their root-mutated guest
+filesystems. The dedicated Firecracker job remained the cache publisher.
+
+The Microsoft Azure workload-dispatch invariant keeps its two justified
+`os/exec` exceptions as source comments without logging file-and-line-shaped
+messages that GitHub's Go problem matcher turns into failure annotations.
+
+The hosted persistence follow-up keeps transactional Elastic Load Balancing
+validation real by importing issued test certificates, restores caller-owned
+Cloud Map custom-health semantics, projects persistence-only AWS Glue database
+tags out of public responses, and binds the durable Lambda callback receiver
+where Linux workload containers can reach it through Docker's host gateway.
+Secondary process-mode simulator fixtures also request an ephemeral Route 53
+DNS port instead of competing with host multicast DNS on UDP 5353, and the NLB
+hostname shape fixture no longer requires privileged host port 443.
+
 The pre-push dependency audit's coordinated AWS SDK patch wave and Google Cloud
 Spanner client release were applied across every affected Go module with the
 repository-owned upgrade target. Direct pins and their resolved transitive
-graphs were current again.
+graphs were current again. Go 1.26 module reconciliation also advanced the
+Microsoft Azure and Google Cloud common backends to the selected
+`go-isatty` 0.0.24 transitive release; both focused lint and unit suites passed.
 
 AWS Key Management Service custom key policies persisted in the simulator's
 SQLite key record instead of disappearing during JSON serialization. A
 store-close-and-reopen regression proved durable read-back, and the
 production-shaped HashiCorp AWS provider graph supplied a custom policy so its
 post-create policy waiter exercised the same contract.
+
+AWS DynamoDB auxiliary table state no longer depended on fields excluded from
+JSON serialization. TTL, point-in-time recovery, and tags lived in one durable
+out-of-band settings record, deletion removed that record, IAM resource-tag
+conditions read it, and a SQLite close-and-reopen regression plus the
+production-shaped provider graph exercised all three convergence paths.
+
+The hosted Google Cloud specification gate's exact Cloud SQL Admin v1 and
+v1beta4 revision 20260722 artifacts were retained. Their 75 methods and routes
+were unchanged, while authenticated public-route coverage implemented and
+round-tripped the three newly published schema members.
+
+AWS simulator state survived hard process replacement as a coherent cloud
+slice. The SQLite envelope retained exported runtime configuration hidden from
+public JSON, startup rebuilt monotonic counters and derived revisions, real
+Network Load Balancing and Amazon RDS listeners rebound, and state-scoped
+Amazon ECS, AWS Batch, CodeBuild, Amplify, Lambda, scheduler, and autoscaling
+work was adopted or resumed. Asynchronous Lambda work became durable before
+acceptance, while Step Functions checkpointed and reattached to the original
+Amazon ECS or CodeBuild task. Official AWS SDK and AWS CLI restart suites
+passed, and the production-shaped HashiCorp AWS provider completed apply,
+hard restart, zero-change refresh, and destroy.
+
+The production Compose recipes enabled the existing durable stores for the
+AWS, Google Cloud, and Microsoft Azure simulators on named volumes. The AWS
+Batch console listed real jobs and definitions, polled status, surfaced
+terminal details, and terminated live work through standard AWS APIs.
+Associated AWS WAF web ACLs evaluated the complete supported statement graph,
+and Elastic Load Balancing listener creates and modifications failed
+transactionally when their real TCP or TLS binding could not be provisioned.
+The Elastic Load Balancing official-client fixtures imported issued,
+exportable AWS Certificate Manager certificates and selected isolated real
+listener ports, while nested simulator processes received their own Route 53
+DNS coordinate. The focused listener cases and complete AWS SDK compute shard
+passed together.
+
+The pre-push freshness gate advanced gRPC to 1.83.0 in both Cloud Run
+backends, the shared Google Cloud backend, the simulator, and its official SDK
+module. All five affected modules and the complete official Google Cloud SDK
+suite passed. The Cloud Build build-and-push scenario separated real registry
+container creation from startup and removed its anonymous volume, so Podman
+start errors stayed visible and successful runs leaked no fixture storage.
 
 Google Cloud Spanner executed SQL, DML, batch DML, reads, mutations,
 transactions, partitions, and batch writes through real SQLite transactions
@@ -164,15 +229,11 @@ to Discovery revisions 20260723 and 20260724.
 
 ## Next Recommended Slice
 
-BUG-2767 was the next locally actionable fidelity slice: expand the AWS WAF
-data-plane evaluator from default/IP-set actions to every public statement,
-text transformation, label, and durable rate window, then prove the exact
-ecs-dev-desktop Application Load Balancer WebACL rules from an external HTTP
-client. BUG-2766 followed with the published AWS Amplify Hosting
-`ImageOptimization` request, transformation, validation, format, and cache
-contract. BUG-2765 required an isolated real listener coordinate or atomic
-create failure when macOS ports were occupied. BUG-2764 remained a host
-boundary: the shared Linux test image contained the real Firecracker and
+BUG-2766 remained the next locally actionable AWS fidelity slice: implement the
+published AWS Amplify Hosting `ImageOptimization` fetch, source-policy,
+transformation, validation, format-negotiation, and cache contract, then prove
+it through hosted requests and external image decoders. BUG-2764 remained a
+host boundary: the shared Linux test image contained the real Firecracker and
 squashfs tools, while the macOS Podman virtual machine exposed no nested KVM;
 the capable-Linux Terraform CI cell remained mandatory.
 

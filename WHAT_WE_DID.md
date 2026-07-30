@@ -4,6 +4,142 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Hosted persistence validation kept public contracts exact
+
+Two listener-fidelity tests had requested DNS-validated AWS Certificate Manager
+certificates without completing validation, CLI fixtures used pending or
+fabricated certificate coordinates, and several listener tests reused host
+port 443. Those fixtures stopped at the correct certificate or bind error once
+listener creation became transactional and provisioned a real TCP/TLS data
+plane.
+
+The official SDK and CLI fixtures now import real self-signed certificate and
+key material through AWS Certificate Manager, select isolated live ports, and
+give each nested simulator process an explicit Route 53 DNS coordinate.
+
+The same hosted run caught three independent contract defects. An HTTP Cloud
+Map namespace no longer silently adds custom health to a service whose caller
+omitted it. AWS Glue database tags remain durable for tag APIs and IAM without
+appearing in the public `Database` Smithy shape. The durable Lambda restart
+harness listens on all IPv4 host interfaces and gives the workload container
+the exact dynamic port through `host.docker.internal`, so Linux can publish
+checkpoint coordinates before hard simulator replacement.
+
+The focused cases, complete SDK services-a-m and compute shards, and complete
+CLI edge-delivery shard passed with runtime Smithy validation reporting no
+violations.
+
+## 2026-07-30 — The Google Cloud client graph advanced to gRPC 1.83
+
+The pre-push publication audit found gRPC 1.83.0 after the earlier validation
+had passed. Both Cloud Run backends, the shared Google Cloud backend, the
+Google Cloud simulator, and its official SDK-test module upgraded together
+with their selected current graph. Every affected module and the authenticated
+freshness audit passed.
+
+The complete official Google Cloud SDK run exposed a real-container fixture
+defect rather than a wire regression. Its temporary registry used one
+`docker run --rm` operation, so Podman waited for automatic removal after a
+start failure, hid the provider error behind the test deadline, and retained
+anonymous volumes. The fixture now creates and starts the real registry in
+separate bounded operations and removes both its container and volume. The
+focused Cloud Build build-and-push scenario passed in 8.8 seconds, and the
+complete official Google Cloud SDK suite passed in 36 seconds.
+
+## 2026-07-30 — Successful Azure validation stopped emitting failure annotations
+
+The Microsoft Azure workload-dispatch invariant logged its two justified
+`os/exec` exceptions with Go test file-and-line prefixes. GitHub's Go problem
+matcher interpreted those informational lines as failure annotations even
+though the test and required check passed.
+
+The exception reasons now live beside their entries as reviewable source
+comments, and the scan skips them without runtime logging. The invariant still
+fails on every unlisted use while a successful run stays annotation-free.
+
+## 2026-07-30 — Simulator jobs stopped publishing mutated guest caches
+
+Simulator SDK, CLI, and Terraform matrix jobs had restored the shared
+Firecracker seed and then attempted to save the guest filesystem after real
+workloads made system files root-only. Post-job `tar` therefore emitted
+permission errors while archiving a cache that should never contain test
+mutations.
+
+Those matrix jobs now use the restore-only cache action. The dedicated
+Firecracker job remains the sole publisher of the immutable seed, so simulator
+jobs consume the acceleration without trying to archive their mutated guest
+state.
+
+## 2026-07-30 — DynamoDB auxiliary table state became durable
+
+DynamoDB TTL, point-in-time recovery, and tags had been attached to table
+response records as fields excluded from JSON. The in-memory store retained
+them, but a persistent simulator serialized every update and immediately lost
+the values, leaving HashiCorp Terraform waiting for TTL to become enabled.
+
+The three settings now share a dedicated SQLite-backed table-settings record,
+remain outside `DescribeTable`, survive a state-store close and reopen, feed
+IAM resource-tag conditions, and are deleted with their owning table. The
+production-shaped AWS provider fixture declares TTL, point-in-time recovery,
+and tags so its apply and refresh permanently exercise every waiter.
+
+## 2026-07-30 — Cloud SQL Admin revision 20260722 was implemented
+
+The pull-request specification gate captured exact newer Cloud SQL Admin v1 and
+v1beta4 Discovery documents. Their 75 public methods and paths were unchanged,
+while the instance, on-premises configuration, and user schemas added
+`databaseCenterIntegrationEnabled`, output-only `dmsManaged`, and top-level
+`serverRoles`.
+
+The simulator now persists the requested Database Center setting and SQL
+Server roles and truthfully reports `dmsManaged=false` for an on-premises
+source that this simulator does not attach to Database Migration Service.
+Authenticated public-route coverage round-tripped all three fields, and the
+exact compressed documents and provenance moved to revision 20260722.
+
+## 2026-07-30 — Cloud state survived hard simulator replacement
+
+The AWS simulator's durable store retained runtime configuration that public
+JSON intentionally omitted, monotonic sequence state, derived Amazon ECS
+revisions, listener coordinates, accepted asynchronous Lambda invocations, and
+Step Functions external-task checkpoints. Startup rebound real Network Load
+Balancing and Amazon RDS data-plane listeners and adopted or resumed
+state-directory-owned Amazon ECS, AWS Batch, CodeBuild, Amplify, Lambda,
+scheduler, and autoscaling work. Step Functions reattached to the original
+Amazon ECS or CodeBuild task rather than duplicating it, while Lambda preserved
+AWS's at-least-once asynchronous delivery and destination records.
+
+The official AWS SDK hard-restart matrix passed control-plane, live-workload,
+orchestration, asynchronous delivery, Network Load Balancing, and Amazon RDS
+native-endpoint scenarios. The official AWS CLI retained service resources and
+CloudWatch Logs sequence ordering. The production-shaped HashiCorp AWS provider
+completed apply, hard replacement on the same data directory, a zero-change
+refresh plan, and destroy. The deployment recipes enabled persistent data
+directories backed by named volumes for the AWS, Google Cloud, and Microsoft
+Azure simulators.
+
+The same audit made Elastic Load Balancing listener creation and modification
+transactional when a real TCP or TLS bind failed, completed live AWS WAF
+statement evaluation, and expanded the AWS Batch Cloudscape page to real jobs,
+definitions, terminal detail, polling, and termination through the standard
+AWS APIs. Generated service-surface catalogs, AWS CLI shard coverage, and the
+shared Google Cloud and Microsoft Azure dependency graphs were refreshed with
+the implementation.
+
+## 2026-07-30 — Client-module downloads became retry-protected
+
+Google Cloud and Microsoft Azure SDK/CLI jobs pre-fetched their separate
+official-client modules through the existing bounded module-proxy retry helper.
+A transient proxy reset therefore failed or retried during the explicit
+dependency phase instead of bypassing retry inside `go test`.
+
+## 2026-07-30 — Common cloud-backend module graphs were reconciled
+
+Go 1.26 module loading found that the Microsoft Azure and Google Cloud common
+backends still selected `go-isatty` 0.0.24 while their module files recorded
+0.0.22. Both graphs now record the selected transitive release, and their
+focused GolangCI and unit suites passed.
+
 ## 2026-07-30 — Terraform-in-ECS failures became bounded and diagnosable
 
 The Step Functions integration kept HashiCorp Terraform 1.15.8 and AWS

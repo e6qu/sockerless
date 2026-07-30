@@ -530,7 +530,10 @@ resource "aws_service_discovery_service" "tf_http_svc" {
   name         = "tf-http-svc"
   namespace_id = aws_service_discovery_http_namespace.tf_http_ns.id
 
-  health_check_custom_config {}
+  # AWS Cloud Map deprecated this member but always returns the fixed value 1.
+  health_check_custom_config {
+    failure_threshold = 1
+  }
 }
 
 # The Cloud Map data sources look their resource up through the list APIs:
@@ -1467,6 +1470,22 @@ resource "aws_dynamodb_table" "tf_table" {
       key_type       = "HASH"
     }
     projection_type = "ALL"
+  }
+
+  # These settings use separate DynamoDB APIs and provider waiters. They must
+  # persist independently of DescribeTable so apply and refresh converge.
+  ttl {
+    attribute_name = "ExpiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = {
+    env        = "terraform"
+    managed-by = "sockerless"
   }
 }
 

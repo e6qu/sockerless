@@ -2163,6 +2163,135 @@ export const fetchBatchComputeEnvironments = async (): Promise<BatchComputeEnvir
   }));
 };
 
+export interface BatchJob {
+  jobId: string;
+  jobArn: string;
+  jobName: string;
+  jobQueue: string;
+  jobDefinition: string;
+  status: string;
+  statusReason: string;
+  createdAt: number;
+  startedAt: number;
+  stoppedAt: number;
+  exitCode?: number;
+}
+
+const BATCH_JOB_STATUSES = [
+  "SUBMITTED",
+  "PENDING",
+  "RUNNABLE",
+  "STARTING",
+  "RUNNING",
+  "SUCCEEDED",
+  "FAILED",
+] as const;
+
+export const fetchBatchJobs = async (): Promise<BatchJob[]> => {
+  const queues = await fetchBatchJobQueues();
+  const jobIds = new Set<string>();
+  for (const queue of queues) {
+    for (const jobStatus of BATCH_JOB_STATUSES) {
+      let nextToken: string | undefined;
+      do {
+        const listed = await restJson<{
+          jobSummaryList?: { jobId?: string }[];
+          nextToken?: string;
+        }>("batch", "POST", "/v1/listjobs", {
+          jobQueue: queue.jobQueueName,
+          jobStatus,
+          ...(nextToken ? { nextToken } : {}),
+        });
+        for (const job of listed.jobSummaryList ?? []) {
+          if (job.jobId) jobIds.add(job.jobId);
+        }
+        nextToken = listed.nextToken;
+      } while (nextToken);
+    }
+  }
+  const ids = [...jobIds];
+  if (ids.length === 0) return [];
+  const jobs: BatchJob[] = [];
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const described = await restJson<{
+      jobs?: {
+        jobId?: string;
+        jobArn?: string;
+        jobName?: string;
+        jobQueue?: string;
+        jobDefinition?: string;
+        status?: string;
+        statusReason?: string;
+        createdAt?: number;
+        startedAt?: number;
+        stoppedAt?: number;
+        container?: { exitCode?: number };
+      }[];
+    }>("batch", "POST", "/v1/describejobs", { jobs: ids.slice(offset, offset + 100) });
+    jobs.push(...(described.jobs ?? []).map((job) => ({
+      jobId: job.jobId ?? "",
+      jobArn: job.jobArn ?? "",
+      jobName: job.jobName ?? "",
+      jobQueue: job.jobQueue ?? "",
+      jobDefinition: job.jobDefinition ?? "",
+      status: job.status ?? "",
+      statusReason: job.statusReason ?? "",
+      createdAt: job.createdAt ?? 0,
+      startedAt: job.startedAt ?? 0,
+      stoppedAt: job.stoppedAt ?? 0,
+      exitCode: job.container?.exitCode,
+    })));
+  }
+  return jobs;
+};
+
+export const terminateBatchJob = async (jobId: string, reason: string): Promise<void> => {
+  await restJson("batch", "POST", "/v1/terminatejob", { jobId, reason });
+};
+
+export interface BatchJobDefinition {
+  jobDefinitionName: string;
+  jobDefinitionArn: string;
+  revision: number;
+  status: string;
+  type: string;
+  image: string;
+  vcpus: number;
+  memory: number;
+}
+
+export const fetchBatchJobDefinitions = async (): Promise<BatchJobDefinition[]> => {
+  const definitions: BatchJobDefinition[] = [];
+  let nextToken: string | undefined;
+  do {
+    const described = await restJson<{
+      jobDefinitions?: {
+        jobDefinitionName?: string;
+        jobDefinitionArn?: string;
+        revision?: number;
+        status?: string;
+        type?: string;
+        containerProperties?: { image?: string; vcpus?: number; memory?: number };
+      }[];
+      nextToken?: string;
+    }>("batch", "POST", "/v1/describejobdefinitions", {
+      ...(nextToken ? { nextToken } : {}),
+    });
+    definitions.push(...(described.jobDefinitions ?? []).map((definition) => ({
+      jobDefinitionName: definition.jobDefinitionName ?? "",
+      jobDefinitionArn: definition.jobDefinitionArn ?? "",
+      revision: definition.revision ?? 0,
+      status: definition.status ?? "",
+      type: definition.type ?? "",
+      image: definition.containerProperties?.image ?? "",
+      vcpus: definition.containerProperties?.vcpus ?? 0,
+      memory: definition.containerProperties?.memory ?? 0,
+    })));
+    nextToken = described.nextToken;
+  } while (nextToken);
+  return definitions;
+};
+
 // ---------------------------------------------------------------------------
 // Amazon Elastic File System (EFS) — the REST-JSON protocol.
 // ---------------------------------------------------------------------------

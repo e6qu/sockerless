@@ -2,9 +2,33 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
+
+	sim "github.com/sockerless/simulator"
 )
+
+type LambdaAsyncInvocation struct {
+	ID            string
+	Function      LambdaFunction
+	Payload       []byte
+	Qualifier     string
+	RequestID     string
+	StartedAt     time.Time
+	NextAttemptAt time.Time
+	InvokeCount   int
+	Failures      int
+	MaxRetries    int
+	MaxAgeSeconds int
+	Response      []byte
+	Unhandled     bool
+	Condition     string
+	Configured    bool
+	Destination   *lambdaDestinationConfig
+}
+
+var lambdaAsyncInvocations sim.Store[LambdaAsyncInvocation]
 
 func lambdaAsyncQualifier(identifier, queryQualifier string) string {
 	if queryQualifier != "" {
@@ -20,89 +44,157 @@ func lambdaAsyncQualifier(identifier, queryQualifier string) string {
 }
 
 func lambdaEventInvokeConfig(functionName, qualifier string) (LambdaEventInvokeConfig, bool) {
-	lambdaEICMu.Lock()
-	defer lambdaEICMu.Unlock()
-	config, ok := lambdaEICs[lambdaEICKey(functionName, qualifier)]
-	return config, ok
+	return lambdaEICs.Get(lambdaEICKey(functionName, qualifier))
 }
 
 func lambdaInvokeAsynchronously(function LambdaFunction, payload []byte, qualifier string) {
-	requestID := generateUUID()
-	started := time.Now().UTC()
 	config, configured := lambdaEventInvokeConfig(function.FunctionName, qualifier)
 	maxRetries := 2
 	maxAge := 6 * 60 * 60
-	if configured && config.MaximumRetryAttempts != nil {
-		maxRetries = *config.MaximumRetryAttempts
+	var destination *lambdaDestinationConfig
+	if configured {
+		if config.MaximumRetryAttempts != nil {
+			maxRetries = *config.MaximumRetryAttempts
+		}
+		if config.MaximumEventAgeInSeconds != nil {
+			maxAge = *config.MaximumEventAgeInSeconds
+		}
+		destination = config.DestinationConfig
 	}
-	if configured && config.MaximumEventAgeInSeconds != nil {
-		maxAge = *config.MaximumEventAgeInSeconds
+	requestID := generateUUID()
+	invocation := LambdaAsyncInvocation{
+		ID:            requestID,
+		Function:      function,
+		Payload:       append([]byte(nil), payload...),
+		Qualifier:     qualifier,
+		RequestID:     requestID,
+		StartedAt:     time.Now().UTC(),
+		MaxRetries:    maxRetries,
+		MaxAgeSeconds: maxAge,
+		Configured:    configured,
+		Destination:   destination,
+		Condition:     "Success",
 	}
+	lambdaAsyncInvocations.Put(invocation.ID, invocation)
+	go lambdaRunAsyncInvocation(invocation.ID)
+}
 
-	var response []byte
-	var unhandled bool
-	invokeCount := 0
-	condition := "Success"
-	for attempt := 0; ; attempt++ {
-		if time.Since(started) > time.Duration(maxAge)*time.Second {
-			unhandled = true
-			condition = "EventAgeExceeded"
-			break
+func recoverLambdaInvocations() error {
+	if !sim.HasPersistentWorkloadIdentity() {
+		return nil
+	}
+	existing, err := sim.FindExistingContainers(map[string]string{"sockerless-sim-lambda": ""})
+	if err != nil {
+		return fmt.Errorf("find interrupted AWS Lambda runtime containers: %w", err)
+	}
+	for _, workload := range existing {
+		if err := sim.RemoveExistingContainer(workload.ID); err != nil {
+			return fmt.Errorf("remove interrupted AWS Lambda runtime container %s: %w", workload.ID, err)
 		}
-		invokeCount++
-		response, unhandled, _ = invokeLambdaViaRuntimeAPI(function, payload)
+	}
+	for _, invocation := range lambdaAsyncInvocations.List() {
+		go lambdaRunAsyncInvocation(invocation.ID)
+	}
+	return nil
+}
+
+func lambdaRunAsyncInvocation(id string) {
+	for {
+		invocation, ok := lambdaAsyncInvocations.Get(id)
+		if !ok {
+			return
+		}
+		if delay := time.Until(invocation.NextAttemptAt); !invocation.NextAttemptAt.IsZero() && delay > 0 {
+			timer := time.NewTimer(delay)
+			<-timer.C
+		}
+		invocation, ok = lambdaAsyncInvocations.Get(id)
+		if !ok {
+			return
+		}
+		if time.Since(invocation.StartedAt) > time.Duration(invocation.MaxAgeSeconds)*time.Second {
+			invocation.Unhandled = true
+			invocation.Condition = "EventAgeExceeded"
+			lambdaAsyncInvocations.Put(id, invocation)
+			lambdaCompleteAsyncInvocation(id)
+			return
+		}
+
+		invocation.InvokeCount++
+		invocation.NextAttemptAt = time.Time{}
+		lambdaAsyncInvocations.Put(id, invocation)
+		response, unhandled, _ := invokeLambdaViaRuntimeAPI(invocation.Function, invocation.Payload)
+		invocation, ok = lambdaAsyncInvocations.Get(id)
+		if !ok {
+			return
+		}
+		invocation.Response = append([]byte(nil), response...)
+		invocation.Unhandled = unhandled
 		if !unhandled {
-			break
+			invocation.Condition = "Success"
+			lambdaAsyncInvocations.Put(id, invocation)
+			lambdaCompleteAsyncInvocation(id)
+			return
 		}
-		if attempt >= maxRetries {
-			condition = "RetriesExhausted"
-			break
+		if invocation.Failures >= invocation.MaxRetries {
+			invocation.Condition = "RetriesExhausted"
+			lambdaAsyncInvocations.Put(id, invocation)
+			lambdaCompleteAsyncInvocation(id)
+			return
 		}
-		// AWS Lambda retries function errors twice, one minute and then two
-		// minutes after the preceding attempt.
 		delay := time.Minute
-		if attempt > 0 {
+		if invocation.Failures > 0 {
 			delay = 2 * time.Minute
 		}
-		time.Sleep(delay)
+		invocation.Failures++
+		invocation.NextAttemptAt = time.Now().UTC().Add(delay)
+		lambdaAsyncInvocations.Put(id, invocation)
 	}
+}
 
-	if !configured || config.DestinationConfig == nil {
+func lambdaCompleteAsyncInvocation(id string) {
+	invocation, ok := lambdaAsyncInvocations.Get(id)
+	if !ok {
+		return
+	}
+	if !invocation.Configured || invocation.Destination == nil {
+		lambdaAsyncInvocations.Delete(id)
 		return
 	}
 	var destination *lambdaDestination
-	if unhandled {
-		destination = config.DestinationConfig.OnFailure
+	if invocation.Unhandled {
+		destination = invocation.Destination.OnFailure
 	} else {
-		destination = config.DestinationConfig.OnSuccess
+		destination = invocation.Destination.OnSuccess
 	}
 	if destination == nil || destination.Destination == "" {
+		lambdaAsyncInvocations.Delete(id)
 		return
 	}
 
 	var requestPayload any
-	if json.Unmarshal(payload, &requestPayload) != nil {
-		requestPayload = string(payload)
+	if json.Unmarshal(invocation.Payload, &requestPayload) != nil {
+		requestPayload = string(invocation.Payload)
 	}
 	var responsePayload any
-	if json.Unmarshal(response, &responsePayload) != nil {
-		responsePayload = string(response)
+	if json.Unmarshal(invocation.Response, &responsePayload) != nil {
+		responsePayload = string(invocation.Response)
 	}
 	responseContext := map[string]any{
 		"statusCode":      200,
-		"executedVersion": function.Version,
+		"executedVersion": invocation.Function.Version,
 	}
-	if unhandled {
+	if invocation.Unhandled {
 		responseContext["functionError"] = "Unhandled"
 	}
 	record := map[string]any{
 		"version":   "1.0",
 		"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
 		"requestContext": map[string]any{
-			"requestId":              requestID,
-			"functionArn":            function.FunctionArn,
-			"condition":              condition,
-			"approximateInvokeCount": invokeCount,
+			"requestId":              invocation.RequestID,
+			"functionArn":            invocation.Function.FunctionArn,
+			"condition":              invocation.Condition,
+			"approximateInvokeCount": invocation.InvokeCount,
 		},
 		"requestPayload":  requestPayload,
 		"responseContext": responseContext,
@@ -113,6 +205,7 @@ func lambdaInvokeAsynchronously(function LambdaFunction, payload []byte, qualifi
 		return
 	}
 	lambdaDeliverAsyncDestination(destination.Destination, body)
+	lambdaAsyncInvocations.Delete(id)
 }
 
 func lambdaDeliverAsyncDestination(destinationARN string, body []byte) {

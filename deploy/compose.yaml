@@ -160,6 +160,8 @@ services:
     environment:
       SIM_LISTEN_ADDR: :4566
       SIM_RUNTIME: process
+      SIM_PERSIST: "true"
+      SIM_DATA_DIR: /var/lib/sockerless/aws
       SIM_UI_OIDC_ISSUER: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}
       SIM_UI_OIDC_CLIENT_ID: sockerless-aws
       SIM_UI_OIDC_CLIENT_SECRET: ${AWS_OIDC_CLIENT_SECRET:?set AWS_OIDC_CLIENT_SECRET in deploy/.env}
@@ -184,6 +186,7 @@ services:
         condition: service_started
     volumes:
       - caddy-data:/caddy-data:ro
+      - simulator-aws-data:/var/lib/sockerless/aws
     networks:
       default: {}
 
@@ -192,6 +195,8 @@ services:
     environment:
       SIM_LISTEN_ADDR: :4567
       SIM_RUNTIME: process
+      SIM_PERSIST: "true"
+      SIM_DATA_DIR: /var/lib/sockerless/gcp
       SIM_UI_OIDC_ISSUER: ${SHAUTH_PUBLIC_URL:?set SHAUTH_PUBLIC_URL in deploy/.env}
       SIM_UI_OIDC_CLIENT_ID: sockerless-gcp
       SIM_UI_OIDC_CLIENT_SECRET: ${GCP_OIDC_CLIENT_SECRET:?set GCP_OIDC_CLIENT_SECRET in deploy/.env}
@@ -211,6 +216,7 @@ services:
         condition: service_started
     volumes:
       - caddy-data:/caddy-data:ro
+      - simulator-gcp-data:/var/lib/sockerless/gcp
     networks:
       default: {}
 
@@ -225,6 +231,8 @@ services:
     environment:
       SIM_LISTEN_ADDR: :4568
       SIM_RUNTIME: process
+      SIM_PERSIST: "true"
+      SIM_DATA_DIR: /var/lib/sockerless/azure
       APPLICATION_RELEASE_REVISION: ${APPLICATION_RELEASE_REVISION:?set APPLICATION_RELEASE_REVISION in deploy/.env}
       # See simulator-aws's SSL_CERT_FILE comment: verifying a federated
       # identity credential's client_assertion means fetching Shauth's real
@@ -232,6 +240,7 @@ services:
       SSL_CERT_FILE: /caddy-data/caddy/pki/authorities/local/root.crt
     volumes:
       - caddy-data:/caddy-data:ro
+      - simulator-azure-data:/var/lib/sockerless/azure
     networks:
       default: {}
 
@@ -321,3 +330,6 @@ networks:
 volumes:
   postgres-data:
   caddy-data:
+  simulator-aws-data:
+  simulator-gcp-data:
+  simulator-azure-data:

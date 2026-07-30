@@ -107,6 +107,7 @@ type R53GetHostedZoneResponse struct {
 	Xmlns         string           `xml:"xmlns,attr,omitempty"`
 	HostedZone    R53HostedZone    `xml:"HostedZone"`
 	DelegationSet R53DelegationSet `xml:"DelegationSet"`
+	VPCs          []R53VPC         `xml:"VPCs>VPC,omitempty"`
 }
 
 // ---------- ResourceRecordSet ----------
@@ -233,6 +234,7 @@ type r53StoredChange struct {
 var (
 	r53Zones   sim.Store[r53StoredZone]
 	r53Changes sim.Store[r53StoredChange]
+	r53Tags    sim.Store[[]R53Tag]
 	r53Mu      sync.Mutex // serialises ChangeResourceRecordSets
 )
 
@@ -298,9 +300,10 @@ func r53WriteError(w http.ResponseWriter, status int, code, msg string) {
 
 // ---------- Registration ----------
 
-func registerRoute53(srv *sim.Server) {
+func registerRoute53(srv *sim.Server, startDataPlane bool) {
 	r53Zones = sim.MakeStore[r53StoredZone](srv.DB(), "route53_zones")
 	r53Changes = sim.MakeStore[r53StoredChange](srv.DB(), "route53_changes")
+	r53Tags = sim.MakeStore[[]R53Tag](srv.DB(), "route53_tags")
 
 	mux := srv
 	hostedZoneResource := cloudTrailRESTResource("AWS::Route53::HostedZone", "id", "resourceId")
@@ -323,7 +326,9 @@ func registerRoute53(srv *sim.Server) {
 	registerRoute53Extra(mux)
 	registerRoute53More(mux)
 
-	startRoute53DNSServer()
+	if startDataPlane {
+		startRoute53DNSServer()
+	}
 }
 
 // ---------- Tag types ----------
@@ -360,17 +365,12 @@ type R53ChangeTagsResponse struct {
 	Xmlns   string   `xml:"xmlns,attr,omitempty"`
 }
 
-// r53Tags maps "<resourceType>/<resourceId>" → tags. Stored separately
-// from the zone struct so the existing zone shape doesn't change.
-var r53Tags = sync.Map{}
-
 func r53TagKey(rtype, rid string) string { return rtype + "/" + rid }
 
 func handleR53ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	rtype := r.PathValue("resourceType")
 	rid := r.PathValue("resourceId")
-	tagsAny, _ := r53Tags.Load(r53TagKey(rtype, rid))
-	tags, _ := tagsAny.([]R53Tag)
+	tags, _ := r53Tags.Get(r53TagKey(rtype, rid))
 	r53WriteXML(w, http.StatusOK, R53ListTagsResponse{
 		Xmlns: r53Namespace,
 		ResourceTagSet: R53ResourceTagSet{
@@ -388,8 +388,7 @@ func handleR53ChangeTagsForResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r53TagKey(rtype, rid)
-	tagsAny, _ := r53Tags.Load(key)
-	tags, _ := tagsAny.([]R53Tag)
+	tags, _ := r53Tags.Get(key)
 	tagMap := map[string]string{}
 	for _, t := range tags {
 		tagMap[t.Key] = t.Value
@@ -404,7 +403,7 @@ func handleR53ChangeTagsForResource(w http.ResponseWriter, r *http.Request) {
 	for k, v := range tagMap {
 		merged = append(merged, R53Tag{Key: k, Value: v})
 	}
-	r53Tags.Store(key, merged)
+	r53Tags.Put(key, merged)
 	r53WriteXML(w, http.StatusOK, R53ChangeTagsResponse{Xmlns: r53Namespace})
 }
 
@@ -424,6 +423,10 @@ func handleR53CreateHostedZone(w http.ResponseWriter, r *http.Request) {
 		r53WriteError(w, http.StatusBadRequest, "InvalidInput", "CallerReference is required")
 		return
 	}
+	if req.VPC != nil && (req.VPC.VPCId == "" || req.VPC.VPCRegion == "") {
+		r53WriteError(w, http.StatusBadRequest, "InvalidVPCId", "VPCId and VPCRegion are required")
+		return
+	}
 	// CallerReference is the idempotency key — a reused value (a safe retry of a
 	// zone that already exists) returns HostedZoneAlreadyExists, not a duplicate.
 	for _, sz := range r53Zones.List() {
@@ -435,6 +438,12 @@ func handleR53CreateHostedZone(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r53NormalizeName(req.Name)
 	id := r53RandomID()
+	if req.VPC != nil {
+		if req.HostedZoneConfig == nil {
+			req.HostedZoneConfig = &R53HostedZoneConfig{}
+		}
+		req.HostedZoneConfig.PrivateZone = true
+	}
 	zone := R53HostedZone{
 		Xmlns:                  r53Namespace,
 		Id:                     "/hostedzone/" + id,
@@ -467,6 +476,9 @@ func handleR53CreateHostedZone(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	r53Zones.Put(id, r53StoredZone{Zone: zone, Records: defaultRecords})
+	if req.VPC != nil {
+		r53ZoneVPCs.Put(id, []R53VPC{*req.VPC})
+	}
 	change := newR53Change("INSYNC", "Hosted zone created")
 	r53Changes.Put(strings.TrimPrefix(change.Id, "/change/"), r53StoredChange{Info: change})
 	w.Header().Set("Location", "https://route53.amazonaws.com/"+r53APIVersion+"/hostedzone/"+id)
@@ -500,6 +512,7 @@ func handleR53GetHostedZone(w http.ResponseWriter, r *http.Request) {
 		Xmlns:         r53Namespace,
 		HostedZone:    stored.Zone,
 		DelegationSet: R53DelegationSet{NameServers: []string{"ns-1.awsdns-00.com", "ns-2.awsdns-01.net", "ns-3.awsdns-02.org", "ns-4.awsdns-03.co.uk"}},
+		VPCs:          r53ZoneVPCList(id),
 	})
 }
 
@@ -523,6 +536,10 @@ func handleR53DeleteHostedZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r53Zones.Delete(id)
+	r53Tags.Delete(r53TagKey("hostedzone", id))
+	r53ZoneVPCs.Delete(id)
+	r53VPCAuthz.Delete(id)
+	r53DNSSEC.Delete(id)
 	change := newR53Change("INSYNC", "Hosted zone deleted")
 	r53Changes.Put(strings.TrimPrefix(change.Id, "/change/"), r53StoredChange{Info: change})
 	r53WriteXML(w, http.StatusOK, R53DeleteHostedZoneResponse{Xmlns: r53Namespace, ChangeInfo: change})

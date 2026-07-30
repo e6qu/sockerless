@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -115,8 +116,20 @@ func NewServer(cfg Config) (*Server, error) {
 	if runtime == "" {
 		runtime = "docker"
 	}
+	dataDir := cfg.DataDir
+	if cfg.Persist && dataDir == "" {
+		dataDir = fmt.Sprintf("/tmp/sockerless-sim-%s", cfg.Provider)
+	}
+	if cfg.Persist {
+		absoluteDataDir, err := filepath.Abs(dataDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve persistence directory %s: %w", dataDir, err)
+		}
+		dataDir = absoluteDataDir
+		cfg.DataDir = absoluteDataDir
+	}
 	if runtime != "process" {
-		InitDocker(cfg.Provider)
+		InitDocker(cfg.Provider, cfg.Persist, dataDir)
 		logger.Info().Str("runtime", RuntimeInfo()).Msg("container runtime initialized")
 	}
 
@@ -133,10 +146,6 @@ func NewServer(cfg Config) (*Server, error) {
 	// the error and let the caller decide (typically log.Fatal in
 	// main).
 	if cfg.Persist {
-		dataDir := cfg.DataDir
-		if dataDir == "" {
-			dataDir = fmt.Sprintf("/tmp/sockerless-sim-%s", cfg.Provider)
-		}
 		db, err := OpenDB(dataDir)
 		if err != nil {
 			return nil, fmt.Errorf("open persistence at %s: %w", dataDir, err)
@@ -227,7 +236,9 @@ func (s *Server) ListenAndServe() error {
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		s.logger.Info().Str("signal", sig.String()).Msg("shutting down")
-		CleanupContainers()
+		if !s.config.Persist {
+			CleanupContainers()
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

@@ -22,14 +22,12 @@ func startLambdaEventSourcePollers() {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for range ticker.C {
-			lambdaESMMu.Lock()
-			mappings := make([]LambdaEventSourceMapping, 0, len(lambdaESMs))
-			for _, mapping := range lambdaESMs {
+			mappings := make([]LambdaEventSourceMapping, 0, lambdaESMs.Len())
+			for _, mapping := range lambdaESMs.List() {
 				if mapping.State == "Enabled" && strings.HasPrefix(mapping.EventSourceArn, "arn:aws:sqs:") {
 					mappings = append(mappings, mapping)
 				}
 			}
-			lambdaESMMu.Unlock()
 			for _, mapping := range mappings {
 				if lambdaBeginESMRun(mapping.UUID) {
 					go lambdaPollSQSMapping(mapping)
@@ -193,12 +191,8 @@ func sqsDeleteReceiptHandles(queueName string, receipts []string) {
 }
 
 func lambdaSetESMProcessingResult(uuid, result string) {
-	lambdaESMMu.Lock()
-	mapping, ok := lambdaESMs[uuid]
-	if ok {
+	lambdaESMs.Update(uuid, func(mapping *LambdaEventSourceMapping) {
 		mapping.LastProcessingResult = result
 		mapping.LastModified = lambdaNowEpoch()
-		lambdaESMs[uuid] = mapping
-	}
-	lambdaESMMu.Unlock()
+	})
 }

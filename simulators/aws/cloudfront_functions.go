@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/xml"
 	"net/http"
 
@@ -80,6 +81,15 @@ type cfStoredFunction struct {
 	Code    []byte
 	ETag    string
 	Tags    []CFTag
+}
+
+func cfDecodeFunctionCode(encoded []byte) ([]byte, error) {
+	decoded := make([]byte, base64.StdEncoding.DecodedLen(len(encoded)))
+	n, err := base64.StdEncoding.Decode(decoded, encoded)
+	if err != nil {
+		return nil, err
+	}
+	return decoded[:n], nil
 }
 
 // ---------- Invalidation types ----------
@@ -197,7 +207,12 @@ func handleCFCreateFunction(w http.ResponseWriter, r *http.Request) {
 			LastModifiedTime: now,
 		},
 	}
-	cfFunctions.Put(req.Name, cfStoredFunction{Summary: summary, Code: req.FunctionCode, ETag: etag})
+	code, err := cfDecodeFunctionCode(req.FunctionCode)
+	if err != nil {
+		cfWriteError(w, http.StatusBadRequest, "InvalidArgument", "FunctionCode must be valid base64.")
+		return
+	}
+	cfFunctions.Put(req.Name, cfStoredFunction{Summary: summary, Code: code, ETag: etag})
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Location", "https://cloudfront.amazonaws.com/"+cfAPIVersion+"/function/"+req.Name)
 	cfWriteXML(w, http.StatusCreated, summary)
@@ -254,7 +269,12 @@ func handleCFUpdateFunction(w http.ResponseWriter, r *http.Request) {
 	newETag := cfETag()
 	stored.Summary.FunctionConfig = req.FunctionConfig
 	stored.Summary.FunctionMetadata.LastModifiedTime = cfNowISO()
-	stored.Code = req.FunctionCode
+	code, err := cfDecodeFunctionCode(req.FunctionCode)
+	if err != nil {
+		cfWriteError(w, http.StatusBadRequest, "InvalidArgument", "FunctionCode must be valid base64.")
+		return
+	}
+	stored.Code = code
 	stored.ETag = newETag
 	cfFunctions.Put(name, stored)
 	w.Header().Set("ETag", newETag)

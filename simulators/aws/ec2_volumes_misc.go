@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -26,11 +25,12 @@ import (
 // so the IPv6 addresses/prefixes assigned to an ENI live in this id-keyed side
 // store, the same pattern ec2_ebs_snapshot.go uses for a volume's autoEnableIO
 // attribute.
-var (
-	ec2EniIpv6Mu  sync.Mutex
-	ec2EniIpv6    = map[string][]string{}
-	ec2EniIpv6Pfx = map[string][]string{}
-)
+type ec2ENIIPv6State struct {
+	Addresses []string
+	Prefixes  []string
+}
+
+var ec2ENIIPv6States sim.Store[ec2ENIIPv6State]
 
 // Replace-root-volume, Mac-modification, and recycled-volume records are kept in
 // dedicated persisted stores so a Describe* / List* reads them back.
@@ -74,6 +74,8 @@ func registerEC2VolumesMisc(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2ReplaceRootVolumeTasks = sim.MakeStore[EC2ReplaceRootVolumeTask](srv.DB(), "ec2_replace_root_volume_tasks")
 	ec2MacModificationTasks = sim.MakeStore[EC2MacModificationTask](srv.DB(), "ec2_mac_modification_tasks")
 	ec2RecycledVolumes = sim.MakeStore[EC2Volume](srv.DB(), "ec2_recycled_volumes")
+	ec2ENIIPv6States = sim.MakeStore[ec2ENIIPv6State](srv.DB(), "ec2_eni_ipv6_states")
+	ec2DefaultCredit = sim.MakeStore[string](srv.DB(), "ec2_default_credit_specifications")
 
 	for action, h := range map[string]http.HandlerFunc{
 		// Volume / snapshot operations.
@@ -1232,28 +1234,28 @@ func handleAssignIpv6Addresses(w http.ResponseWriter, r *http.Request) {
 	prefixes := ec2ParamList(r, "Ipv6Prefix")
 	prefixCount := ec2AtoiOr(r.FormValue("Ipv6PrefixCount"), 0)
 
-	ec2EniIpv6Mu.Lock()
 	var assigned []string
-	for _, a := range requested {
-		ec2EniIpv6[eniID] = append(ec2EniIpv6[eniID], a)
-		assigned = append(assigned, a)
-	}
-	for i := 0; i < count; i++ {
-		a := fmt.Sprintf("2600:1f18:%x::%x", shortNum(eniID), len(ec2EniIpv6[eniID])+1)
-		ec2EniIpv6[eniID] = append(ec2EniIpv6[eniID], a)
-		assigned = append(assigned, a)
-	}
 	var assignedPfx []string
-	for _, p := range prefixes {
-		ec2EniIpv6Pfx[eniID] = append(ec2EniIpv6Pfx[eniID], p)
-		assignedPfx = append(assignedPfx, p)
-	}
-	for i := 0; i < prefixCount; i++ {
-		p := fmt.Sprintf("2600:1f18:%x:%x::/80", shortNum(eniID), len(ec2EniIpv6Pfx[eniID])+1)
-		ec2EniIpv6Pfx[eniID] = append(ec2EniIpv6Pfx[eniID], p)
-		assignedPfx = append(assignedPfx, p)
-	}
-	ec2EniIpv6Mu.Unlock()
+	ec2ENIIPv6States.Upsert(eniID, func(state *ec2ENIIPv6State) {
+		for _, a := range requested {
+			state.Addresses = append(state.Addresses, a)
+			assigned = append(assigned, a)
+		}
+		for i := 0; i < count; i++ {
+			a := fmt.Sprintf("2600:1f18:%x::%x", shortNum(eniID), len(state.Addresses)+1)
+			state.Addresses = append(state.Addresses, a)
+			assigned = append(assigned, a)
+		}
+		for _, p := range prefixes {
+			state.Prefixes = append(state.Prefixes, p)
+			assignedPfx = append(assignedPfx, p)
+		}
+		for i := 0; i < prefixCount; i++ {
+			p := fmt.Sprintf("2600:1f18:%x:%x::/80", shortNum(eniID), len(state.Prefixes)+1)
+			state.Prefixes = append(state.Prefixes, p)
+			assignedPfx = append(assignedPfx, p)
+		}
+	})
 
 	w.Header().Set("Content-Type", "text/xml")
 	var b strings.Builder
@@ -1278,10 +1280,10 @@ func handleUnassignIpv6Addresses(w http.ResponseWriter, r *http.Request) {
 	}
 	toRemove := ec2ParamList(r, "Ipv6Addresses")
 	pfxRemove := ec2ParamList(r, "Ipv6Prefix")
-	ec2EniIpv6Mu.Lock()
-	ec2EniIpv6[eniID] = removeStrings(ec2EniIpv6[eniID], toRemove)
-	ec2EniIpv6Pfx[eniID] = removeStrings(ec2EniIpv6Pfx[eniID], pfxRemove)
-	ec2EniIpv6Mu.Unlock()
+	ec2ENIIPv6States.Update(eniID, func(state *ec2ENIIPv6State) {
+		state.Addresses = removeStrings(state.Addresses, toRemove)
+		state.Prefixes = removeStrings(state.Prefixes, pfxRemove)
+	})
 	w.Header().Set("Content-Type", "text/xml")
 	var b strings.Builder
 	fmt.Fprintf(&b, `<UnassignIpv6AddressesResponse %s><requestId>%s</requestId><networkInterfaceId>%s</networkInterfaceId><unassignedIpv6Addresses>`,
@@ -1350,10 +1352,7 @@ func handleModifyAvailabilityZoneGroup(w http.ResponseWriter, r *http.Request) {
 
 // ec2DefaultCredit is the account-level default credit specification per
 // burstable instance family (t2/t3/t3a/t4g).
-var (
-	ec2DefaultCreditMu sync.Mutex
-	ec2DefaultCredit   = map[string]string{}
-)
+var ec2DefaultCredit sim.Store[string]
 
 func handleGetDefaultCreditSpecification(w http.ResponseWriter, r *http.Request) {
 	family := r.FormValue("InstanceFamily")
@@ -1361,9 +1360,7 @@ func handleGetDefaultCreditSpecification(w http.ResponseWriter, r *http.Request)
 		ec2ErrorXML(w, "MissingParameter", "The request must contain the parameter InstanceFamily", http.StatusBadRequest)
 		return
 	}
-	ec2DefaultCreditMu.Lock()
-	cpuCredits := ec2DefaultCredit[family]
-	ec2DefaultCreditMu.Unlock()
+	cpuCredits, _ := ec2DefaultCredit.Get(family)
 	if cpuCredits == "" {
 		// AWS default: standard for t2, unlimited for t3/t3a/t4g.
 		if family == "t2" {
@@ -1384,9 +1381,7 @@ func handleModifyDefaultCreditSpecification(w http.ResponseWriter, r *http.Reque
 		ec2ErrorXML(w, "MissingParameter", "InstanceFamily and CpuCredits are required", http.StatusBadRequest)
 		return
 	}
-	ec2DefaultCreditMu.Lock()
-	ec2DefaultCredit[family] = cpuCredits
-	ec2DefaultCreditMu.Unlock()
+	ec2DefaultCredit.Put(family, cpuCredits)
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ModifyDefaultCreditSpecificationResponse %s><requestId>%s</requestId><instanceFamilyCreditSpecification><instanceFamily>%s</instanceFamily><cpuCredits>%s</cpuCredits></instanceFamilyCreditSpecification></ModifyDefaultCreditSpecificationResponse>`,
 		ec2Xmlns(), generateUUID(), family, cpuCredits)

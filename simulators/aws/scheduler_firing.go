@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // EventBridge Scheduler firing engine. The CRUD surface in scheduler.go stores
@@ -21,13 +23,12 @@ import (
 // exactly as real EventBridge Scheduler invokes the downstream service.
 
 type schedulerFireRec struct {
-	next  time.Time
-	fired bool // one-time at() already fired
+	Next  time.Time
+	Fired bool // one-time at() already fired
 }
 
 var (
-	schedulerFireMu   sync.Mutex
-	schedulerFireRecs = map[string]*schedulerFireRec{}
+	schedulerFireRecs sim.Store[schedulerFireRec]
 	schedulerLoopOnce sync.Once
 )
 
@@ -57,50 +58,43 @@ func schedulerTick(now time.Time) {
 		schedulerAfterFire(key, s, now)
 		if s.ActionAfterCompletion == "DELETE" && !schedulerRecurring(s.ScheduleExpression) {
 			store.Delete(key)
-			schedulerFireMu.Lock()
-			delete(schedulerFireRecs, key)
-			schedulerFireMu.Unlock()
+			schedulerFireStore().Delete(key)
 		}
 	}
 }
 
 func schedulerDue(key string, s Schedule, now time.Time) bool {
-	schedulerFireMu.Lock()
-	defer schedulerFireMu.Unlock()
-	rec := schedulerFireRecs[key]
-	if rec == nil {
+	store := schedulerFireStore()
+	rec, exists := store.Get(key)
+	if !exists {
 		next, ok := schedulerFirstFire(s, now)
 		if !ok {
 			return false
 		}
-		rec = &schedulerFireRec{next: next}
-		schedulerFireRecs[key] = rec
+		rec = schedulerFireRec{Next: next}
+		store.Put(key, rec)
 	}
-	if rec.fired {
+	if rec.Fired {
 		return false
 	}
-	return !now.Before(rec.next)
+	return !now.Before(rec.Next)
 }
 
 func schedulerAfterFire(key string, s Schedule, now time.Time) {
-	schedulerFireMu.Lock()
-	defer schedulerFireMu.Unlock()
-	rec := schedulerFireRecs[key]
-	if rec == nil {
-		return
-	}
-	switch {
-	case schedulerRecurring(s.ScheduleExpression):
-		if interval, ok := schedulerRateInterval(s.ScheduleExpression); ok {
-			rec.next = now.Add(interval)
-		} else if next, ok := schedulerCronNext(s.ScheduleExpression, now); ok {
-			rec.next = next
-		} else {
-			rec.fired = true
+	schedulerFireStore().Update(key, func(rec *schedulerFireRec) {
+		switch {
+		case schedulerRecurring(s.ScheduleExpression):
+			if interval, ok := schedulerRateInterval(s.ScheduleExpression); ok {
+				rec.Next = now.Add(interval)
+			} else if next, ok := schedulerCronNext(s.ScheduleExpression, now); ok {
+				rec.Next = next
+			} else {
+				rec.Fired = true
+			}
+		default:
+			rec.Fired = true // one-time at()
 		}
-	default:
-		rec.fired = true // one-time at()
-	}
+	})
 }
 
 func schedulerRecurring(expr string) bool {

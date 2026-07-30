@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"sync"
+	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -16,12 +16,16 @@ import (
 // CLI, and Terraform exercise: function event-invoke configs, provisioned
 // concurrency configs, code-signing configs (account-level + per-function
 // attachment), runtime-management config, account settings, function recursion
-// config, and layer-version permissions. All state lives in in-process maps
-// whose lifetime matches the running sim, the same as the function / version /
-// alias / layer state in the sibling lambda_*.go files.
+// config, and layer-version permissions.
 
 func registerLambdaExtras2(srv *sim.Server) {
 	mux := srv
+	lambdaEICs = sim.MakeStore[LambdaEventInvokeConfig](srv.DB(), "lambda_event_invoke_configs")
+	lambdaPCs = sim.MakeStore[LambdaProvisionedConcurrency](srv.DB(), "lambda_provisioned_concurrency")
+	lambdaFnCSC = sim.MakeStore[lambdaFunctionCodeSigningConfig](srv.DB(), "lambda_function_code_signing_configs")
+	lambdaRTMs = sim.MakeStore[lambdaRuntimeMgmt](srv.DB(), "lambda_runtime_management")
+	lambdaRecursion = sim.MakeStore[string](srv.DB(), "lambda_recursion_configs")
+	lambdaLayerPolicies = sim.MakeStore[lambdaLayerPolicy](srv.DB(), "lambda_layer_policies")
 	lambdaResource := cloudTrailRESTResource("AWS::Lambda::Function", "name", "arn")
 
 	// Function event-invoke config (async invoke retry/age/destinations).
@@ -97,11 +101,8 @@ type LambdaEventInvokeConfig struct {
 	DestinationConfig        *lambdaDestinationConfig `json:"DestinationConfig,omitempty"`
 }
 
-var (
-	lambdaEICMu sync.Mutex
-	// keyed by "<functionName>:<qualifier>" ($LATEST when no qualifier).
-	lambdaEICs = map[string]LambdaEventInvokeConfig{}
-)
+// keyed by "<functionName>:<qualifier>" ($LATEST when no qualifier).
+var lambdaEICs sim.Store[LambdaEventInvokeConfig]
 
 func lambdaEICKey(name, qualifier string) string {
 	if qualifier == "" {
@@ -144,9 +145,7 @@ func handleLambdaPutFunctionEventInvokeConfig(w http.ResponseWriter, r *http.Req
 		MaximumEventAgeInSeconds: req.MaximumEventAgeInSeconds,
 		DestinationConfig:        req.DestinationConfig,
 	}
-	lambdaEICMu.Lock()
-	lambdaEICs[lambdaEICKey(name, qualifier)] = cfg
-	lambdaEICMu.Unlock()
+	lambdaEICs.Put(lambdaEICKey(name, qualifier), cfg)
 	sim.WriteJSON(w, http.StatusOK, cfg)
 }
 
@@ -168,10 +167,8 @@ func handleLambdaUpdateFunctionEventInvokeConfig(w http.ResponseWriter, r *http.
 		return
 	}
 	key := lambdaEICKey(name, qualifier)
-	lambdaEICMu.Lock()
-	cfg, ok := lambdaEICs[key]
+	cfg, ok := lambdaEICs.Get(key)
 	if !ok {
-		lambdaEICMu.Unlock()
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"The function %s does not have an EventInvokeConfig.", lambdaEICArn(name, qualifier))
 		return
@@ -187,8 +184,7 @@ func handleLambdaUpdateFunctionEventInvokeConfig(w http.ResponseWriter, r *http.
 		cfg.DestinationConfig = req.DestinationConfig
 	}
 	cfg.LastModified = lambdaNowEpoch()
-	lambdaEICs[key] = cfg
-	lambdaEICMu.Unlock()
+	lambdaEICs.Put(key, cfg)
 	sim.WriteJSON(w, http.StatusOK, cfg)
 }
 
@@ -200,9 +196,7 @@ func handleLambdaGetFunctionEventInvokeConfig(w http.ResponseWriter, r *http.Req
 		return
 	}
 	qualifier := r.URL.Query().Get("Qualifier")
-	lambdaEICMu.Lock()
-	cfg, ok := lambdaEICs[lambdaEICKey(name, qualifier)]
-	lambdaEICMu.Unlock()
+	cfg, ok := lambdaEICs.Get(lambdaEICKey(name, qualifier))
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"The function %s does not have an EventInvokeConfig.", lambdaEICArn(name, qualifier))
@@ -219,9 +213,7 @@ func handleLambdaDeleteFunctionEventInvokeConfig(w http.ResponseWriter, r *http.
 		return
 	}
 	qualifier := r.URL.Query().Get("Qualifier")
-	lambdaEICMu.Lock()
-	delete(lambdaEICs, lambdaEICKey(name, qualifier))
-	lambdaEICMu.Unlock()
+	lambdaEICs.Delete(lambdaEICKey(name, qualifier))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -232,15 +224,10 @@ func handleLambdaListFunctionEventInvokeConfigs(w http.ResponseWriter, r *http.R
 			"The function %s could not be found.", lambdaArn(name))
 		return
 	}
-	prefix := name + ":"
-	lambdaEICMu.Lock()
-	configs := make([]LambdaEventInvokeConfig, 0)
-	for k, cfg := range lambdaEICs {
-		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
-			configs = append(configs, cfg)
-		}
-	}
-	lambdaEICMu.Unlock()
+	functionARN := lambdaArn(name)
+	configs := lambdaEICs.Filter(func(cfg LambdaEventInvokeConfig) bool {
+		return cfg.FunctionArn == functionARN || strings.HasPrefix(cfg.FunctionArn, functionARN+":")
+	})
 	sort.Slice(configs, func(i, j int) bool { return configs[i].FunctionArn < configs[j].FunctionArn })
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"FunctionEventInvokeConfigs": configs,
@@ -255,17 +242,14 @@ func handleLambdaListFunctionEventInvokeConfigs(w http.ResponseWriter, r *http.R
 // concurrency config. Real Lambda reports READY once allocation completes; the
 // sim allocates synchronously so requested == available == allocated.
 type LambdaProvisionedConcurrency struct {
-	functionName string
-	qualifier    string
-	Requested    int
-	LastModified string
+	FunctionName string `json:"FunctionName"`
+	Qualifier    string `json:"Qualifier"`
+	Requested    int    `json:"Requested"`
+	LastModified string `json:"LastModified"`
 }
 
-var (
-	lambdaPCMu sync.Mutex
-	// keyed by "<functionName>:<qualifier>".
-	lambdaPCs = map[string]LambdaProvisionedConcurrency{}
-)
+// keyed by "<functionName>:<qualifier>".
+var lambdaPCs sim.Store[LambdaProvisionedConcurrency]
 
 func lambdaProvisionedConcurrencyBody(pc LambdaProvisionedConcurrency, includeArn bool) map[string]any {
 	out := map[string]any{
@@ -276,7 +260,7 @@ func lambdaProvisionedConcurrencyBody(pc LambdaProvisionedConcurrency, includeAr
 		"LastModified": pc.LastModified,
 	}
 	if includeArn {
-		out["FunctionArn"] = lambdaEICArn(pc.functionName, pc.qualifier)
+		out["FunctionArn"] = lambdaEICArn(pc.FunctionName, pc.Qualifier)
 	}
 	return out
 }
@@ -310,14 +294,12 @@ func handleLambdaPutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.
 		return
 	}
 	pc := LambdaProvisionedConcurrency{
-		functionName: name,
-		qualifier:    qualifier,
+		FunctionName: name,
+		Qualifier:    qualifier,
 		Requested:    *req.ProvisionedConcurrentExecutions,
 		LastModified: time.Now().UTC().Format(time.RFC3339),
 	}
-	lambdaPCMu.Lock()
-	lambdaPCs[name+":"+qualifier] = pc
-	lambdaPCMu.Unlock()
+	lambdaPCs.Put(name+":"+qualifier, pc)
 	// PutProvisionedConcurrencyConfig returns 202 (the config is being set up).
 	sim.WriteJSON(w, http.StatusAccepted, lambdaProvisionedConcurrencyBody(pc, false))
 }
@@ -335,9 +317,7 @@ func handleLambdaGetProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.
 		return
 	}
 	qualifier := r.URL.Query().Get("Qualifier")
-	lambdaPCMu.Lock()
-	pc, ok := lambdaPCs[name+":"+qualifier]
-	lambdaPCMu.Unlock()
+	pc, ok := lambdaPCs.Get(name + ":" + qualifier)
 	if !ok {
 		sim.AWSErrorf(w, "ProvisionedConcurrencyConfigNotFoundException", http.StatusNotFound,
 			"No Provisioned Concurrency Config found for this function")
@@ -347,15 +327,12 @@ func handleLambdaGetProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.
 }
 
 func lambdaListProvisionedConcurrencyConfigs(w http.ResponseWriter, name string) {
-	prefix := name + ":"
-	lambdaPCMu.Lock()
 	configs := make([]map[string]any, 0)
-	for k, pc := range lambdaPCs {
-		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
+	for _, pc := range lambdaPCs.List() {
+		if pc.FunctionName == name {
 			configs = append(configs, lambdaProvisionedConcurrencyBody(pc, true))
 		}
 	}
-	lambdaPCMu.Unlock()
 	sort.Slice(configs, func(i, j int) bool {
 		return fmt.Sprint(configs[i]["FunctionArn"]) < fmt.Sprint(configs[j]["FunctionArn"])
 	})
@@ -372,9 +349,7 @@ func handleLambdaDeleteProvisionedConcurrencyConfig(w http.ResponseWriter, r *ht
 		return
 	}
 	qualifier := r.URL.Query().Get("Qualifier")
-	lambdaPCMu.Lock()
-	delete(lambdaPCs, name+":"+qualifier)
-	lambdaPCMu.Unlock()
+	lambdaPCs.Delete(name + ":" + qualifier)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -515,11 +490,13 @@ func handleLambdaListCodeSigningConfigs(w http.ResponseWriter, r *http.Request) 
 // Per-function code-signing config attachment
 // ---------------------------------------------------------------------------
 
-var (
-	lambdaFnCSCMu sync.Mutex
-	// function name -> CodeSigningConfigArn.
-	lambdaFnCSC = map[string]string{}
-)
+type lambdaFunctionCodeSigningConfig struct {
+	FunctionName         string
+	CodeSigningConfigARN string
+}
+
+// function name -> code-signing configuration attachment.
+var lambdaFnCSC sim.Store[lambdaFunctionCodeSigningConfig]
 
 func handleLambdaPutFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
@@ -544,9 +521,9 @@ func handleLambdaPutFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Req
 			"The code signing configuration %s cannot be found.", req.CodeSigningConfigArn)
 		return
 	}
-	lambdaFnCSCMu.Lock()
-	lambdaFnCSC[name] = req.CodeSigningConfigArn
-	lambdaFnCSCMu.Unlock()
+	lambdaFnCSC.Put(name, lambdaFunctionCodeSigningConfig{
+		FunctionName: name, CodeSigningConfigARN: req.CodeSigningConfigArn,
+	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"CodeSigningConfigArn": req.CodeSigningConfigArn,
 		"FunctionName":         name,
@@ -560,11 +537,9 @@ func handleLambdaGetFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Req
 			"The function %s could not be found.", lambdaArn(name))
 		return
 	}
-	lambdaFnCSCMu.Lock()
-	arn := lambdaFnCSC[name]
-	lambdaFnCSCMu.Unlock()
+	attachment, _ := lambdaFnCSC.Get(name)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"CodeSigningConfigArn": arn,
+		"CodeSigningConfigArn": attachment.CodeSigningConfigARN,
 		"FunctionName":         name,
 	})
 }
@@ -576,9 +551,7 @@ func handleLambdaDeleteFunctionCodeSigningConfig(w http.ResponseWriter, r *http.
 			"The function %s could not be found.", lambdaArn(name))
 		return
 	}
-	lambdaFnCSCMu.Lock()
-	delete(lambdaFnCSC, name)
-	lambdaFnCSCMu.Unlock()
+	lambdaFnCSC.Delete(name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -587,15 +560,14 @@ func handleLambdaDeleteFunctionCodeSigningConfig(w http.ResponseWriter, r *http.
 // ---------------------------------------------------------------------------
 
 type lambdaRuntimeMgmt struct {
+	FunctionName      string
+	Qualifier         string
 	UpdateRuntimeOn   string
 	RuntimeVersionArn string
 }
 
-var (
-	lambdaRTMMu sync.Mutex
-	// keyed by "<functionName>:<qualifier>".
-	lambdaRTMs = map[string]lambdaRuntimeMgmt{}
-)
+// keyed by "<functionName>:<qualifier>".
+var lambdaRTMs sim.Store[lambdaRuntimeMgmt]
 
 func handleLambdaGetRuntimeManagementConfig(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
@@ -605,9 +577,7 @@ func handleLambdaGetRuntimeManagementConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	qualifier := r.URL.Query().Get("Qualifier")
-	lambdaRTMMu.Lock()
-	rtm, ok := lambdaRTMs[name+":"+qualifier]
-	lambdaRTMMu.Unlock()
+	rtm, ok := lambdaRTMs.Get(name + ":" + qualifier)
 	out := map[string]any{
 		"FunctionArn": lambdaEICArn(name, qualifier),
 	}
@@ -649,12 +619,12 @@ func handleLambdaPutRuntimeManagementConfig(w http.ResponseWriter, r *http.Reque
 			"RuntimeVersionArn is required when UpdateRuntimeOn is Manual", http.StatusBadRequest)
 		return
 	}
-	lambdaRTMMu.Lock()
-	lambdaRTMs[name+":"+qualifier] = lambdaRuntimeMgmt{
+	lambdaRTMs.Put(name+":"+qualifier, lambdaRuntimeMgmt{
+		FunctionName:      name,
+		Qualifier:         qualifier,
 		UpdateRuntimeOn:   req.UpdateRuntimeOn,
 		RuntimeVersionArn: req.RuntimeVersionArn,
-	}
-	lambdaRTMMu.Unlock()
+	})
 	out := map[string]any{
 		"UpdateRuntimeOn": req.UpdateRuntimeOn,
 		"FunctionArn":     lambdaEICArn(name, qualifier),
@@ -696,11 +666,8 @@ func handleLambdaGetAccountSettings(w http.ResponseWriter, _ *http.Request) {
 // Function recursion config
 // ---------------------------------------------------------------------------
 
-var (
-	lambdaRecursionMu sync.Mutex
-	// function name -> RecursiveLoop (Allow|Terminate).
-	lambdaRecursion = map[string]string{}
-)
+// function name -> RecursiveLoop (Allow|Terminate).
+var lambdaRecursion sim.Store[string]
 
 func handleLambdaGetFunctionRecursionConfig(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
@@ -709,9 +676,7 @@ func handleLambdaGetFunctionRecursionConfig(w http.ResponseWriter, r *http.Reque
 			"The function %s could not be found.", lambdaArn(name))
 		return
 	}
-	lambdaRecursionMu.Lock()
-	loop, ok := lambdaRecursion[name]
-	lambdaRecursionMu.Unlock()
+	loop, ok := lambdaRecursion.Get(name)
 	if !ok {
 		// New functions default to Terminate.
 		loop = "Terminate"
@@ -738,9 +703,7 @@ func handleLambdaPutFunctionRecursionConfig(w http.ResponseWriter, r *http.Reque
 			"RecursiveLoop must be one of Allow or Terminate", http.StatusBadRequest)
 		return
 	}
-	lambdaRecursionMu.Lock()
-	lambdaRecursion[name] = req.RecursiveLoop
-	lambdaRecursionMu.Unlock()
+	lambdaRecursion.Put(name, req.RecursiveLoop)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"RecursiveLoop": req.RecursiveLoop})
 }
 
@@ -756,13 +719,13 @@ type lambdaLayerPermission struct {
 	Statement    string // serialized JSON policy statement
 }
 
-var (
-	lambdaLayerPolicyMu sync.Mutex
-	// keyed by "<layerName>:<version>"; an ordered list of statements.
-	lambdaLayerPolicies = map[string][]lambdaLayerPermission{}
-	// revision id per "<layerName>:<version>".
-	lambdaLayerPolicyRev = map[string]string{}
-)
+type lambdaLayerPolicy struct {
+	Statements []lambdaLayerPermission
+	RevisionID string
+}
+
+// keyed by "<layerName>:<version>".
+var lambdaLayerPolicies sim.Store[lambdaLayerPolicy]
 
 func lambdaLayerPolicyKey(layer string, version int64) string {
 	return fmt.Sprintf("%s:%d", layer, version)
@@ -836,15 +799,6 @@ func handleLambdaAddLayerVersionPermission(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	key := lambdaLayerPolicyKey(layer, version)
-	lambdaLayerPolicyMu.Lock()
-	for _, s := range lambdaLayerPolicies[key] {
-		if s.StatementId == req.StatementId {
-			lambdaLayerPolicyMu.Unlock()
-			sim.AWSErrorf(w, "ResourceConflictException", http.StatusConflict,
-				"The statement id (%s) provided already exists.", req.StatementId)
-			return
-		}
-	}
 	perm := lambdaLayerPermission{
 		StatementId:  req.StatementId,
 		Action:       req.Action,
@@ -852,10 +806,24 @@ func handleLambdaAddLayerVersionPermission(w http.ResponseWriter, r *http.Reques
 		Organization: req.OrganizationId,
 	}
 	perm.Statement = lambdaLayerStatementJSON(layer, version, perm)
-	lambdaLayerPolicies[key] = append(lambdaLayerPolicies[key], perm)
-	rev := lambdaNewRevisionID()
-	lambdaLayerPolicyRev[key] = rev
-	lambdaLayerPolicyMu.Unlock()
+	conflict := false
+	rev := ""
+	lambdaLayerPolicies.Upsert(key, func(policy *lambdaLayerPolicy) {
+		for _, statement := range policy.Statements {
+			if statement.StatementId == req.StatementId {
+				conflict = true
+				return
+			}
+		}
+		policy.Statements = append(policy.Statements, perm)
+		policy.RevisionID = lambdaNewRevisionID()
+		rev = policy.RevisionID
+	})
+	if conflict {
+		sim.AWSErrorf(w, "ResourceConflictException", http.StatusConflict,
+			"The statement id (%s) provided already exists.", req.StatementId)
+		return
+	}
 	sim.WriteJSON(w, http.StatusCreated, map[string]any{
 		"Statement":  perm.Statement,
 		"RevisionId": rev,
@@ -869,18 +837,15 @@ func handleLambdaGetLayerVersionPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := lambdaLayerPolicyKey(layer, version)
-	lambdaLayerPolicyMu.Lock()
-	stmts, ok := lambdaLayerPolicies[key]
-	rev := lambdaLayerPolicyRev[key]
-	lambdaLayerPolicyMu.Unlock()
-	if !ok || len(stmts) == 0 {
+	policy, ok := lambdaLayerPolicies.Get(key)
+	if !ok || len(policy.Statements) == 0 {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"No policy is associated with the given resource.")
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Policy":     lambdaLayerPolicyDocument(layer, version, stmts),
-		"RevisionId": rev,
+		"Policy":     lambdaLayerPolicyDocument(layer, version, policy.Statements),
+		"RevisionId": policy.RevisionID,
 	})
 }
 
@@ -892,24 +857,22 @@ func handleLambdaRemoveLayerVersionPermission(w http.ResponseWriter, r *http.Req
 	}
 	statementID := sim.PathParam(r, "statement")
 	key := lambdaLayerPolicyKey(layer, version)
-	lambdaLayerPolicyMu.Lock()
-	stmts := lambdaLayerPolicies[key]
+	policy, _ := lambdaLayerPolicies.Get(key)
 	idx := -1
-	for i, s := range stmts {
+	for i, s := range policy.Statements {
 		if s.StatementId == statementID {
 			idx = i
 			break
 		}
 	}
 	if idx < 0 {
-		lambdaLayerPolicyMu.Unlock()
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"No statement (%s) is associated with the given resource.", statementID)
 		return
 	}
-	lambdaLayerPolicies[key] = append(stmts[:idx], stmts[idx+1:]...)
-	lambdaLayerPolicyRev[key] = lambdaNewRevisionID()
-	lambdaLayerPolicyMu.Unlock()
+	policy.Statements = append(policy.Statements[:idx], policy.Statements[idx+1:]...)
+	policy.RevisionID = lambdaNewRevisionID()
+	lambdaLayerPolicies.Put(key, policy)
 	w.WriteHeader(http.StatusNoContent)
 }
 

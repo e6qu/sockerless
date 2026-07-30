@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/acm"
-	acmtypes "github.com/aws/aws-sdk-go-v2/service/acm/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
@@ -28,12 +26,8 @@ func TestELBv2_HTTPSListenerCertificateRoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	cert, err := acmClient().RequestCertificate(ctx, &acm.RequestCertificateInput{
-		DomainName:       aws.String("listener.example.test"),
-		ValidationMethod: acmtypes.ValidationMethodDns,
-	})
-	require.NoError(t, err)
-	certArn := aws.ToString(cert.CertificateArn)
+	certArn := importELBv2Certificate(t, "listener.example.test")
+	listenerPort := availableELBv2ListenerPort(t)
 
 	c := elbv2Client()
 	lb, err := c.CreateLoadBalancer(ctx, &elasticloadbalancingv2.CreateLoadBalancerInput{
@@ -54,7 +48,7 @@ func TestELBv2_HTTPSListenerCertificateRoundTrip(t *testing.T) {
 	_, err = c.CreateListener(ctx, &elasticloadbalancingv2.CreateListenerInput{
 		LoadBalancerArn: aws.String(lbArn),
 		Protocol:        elbv2types.ProtocolEnumHttps,
-		Port:            aws.Int32(443),
+		Port:            aws.Int32(listenerPort),
 		Certificates:    []elbv2types.Certificate{{CertificateArn: aws.String(certArn)}},
 		DefaultActions: []elbv2types.Action{{
 			Type: elbv2types.ActionTypeEnumForward, TargetGroupArn: aws.String(tgArn),
@@ -69,7 +63,7 @@ func TestELBv2_HTTPSListenerCertificateRoundTrip(t *testing.T) {
 
 	var https *elbv2types.Listener
 	for i := range desc.Listeners {
-		if aws.ToInt32(desc.Listeners[i].Port) == 443 {
+		if aws.ToInt32(desc.Listeners[i].Port) == listenerPort {
 			https = &desc.Listeners[i]
 		}
 	}

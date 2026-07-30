@@ -22,10 +22,8 @@ func TestELBv2ListenerRuleFidelityCLI(t *testing.T) {
 		"--vpc-id", vpcID, "--target-type", "ip", "--query", "TargetGroups[0].TargetGroupArn", "--output", "text")
 	lbArn := q("elbv2", "create-load-balancer", "--name", "cli-lr-alb", "--type", "application",
 		"--subnets", subnetID, "--query", "LoadBalancers[0].LoadBalancerArn", "--output", "text")
-	defCert := q("acm", "request-certificate", "--domain-name", "cli-default.example.test",
-		"--validation-method", "DNS", "--query", "CertificateArn", "--output", "text")
-	sniCert := q("acm", "request-certificate", "--domain-name", "cli-sni.example.test",
-		"--validation-method", "DNS", "--query", "CertificateArn", "--output", "text")
+	defCert := importELBTestCertificate(t, "cli-default.example.test")
+	sniCert := importELBTestCertificate(t, "cli-sni.example.test")
 
 	defActions, _ := json.Marshal([]map[string]any{
 		{"Type": "authenticate-oidc", "Order": 1, "AuthenticateOidcConfig": map[string]any{
@@ -40,7 +38,7 @@ func TestELBv2ListenerRuleFidelityCLI(t *testing.T) {
 		{"Type": "forward", "Order": 2, "TargetGroupArn": tg1},
 	})
 	listenerArn := q("elbv2", "create-listener", "--load-balancer-arn", lbArn, "--protocol", "HTTPS",
-		"--port", "443", "--certificates", "CertificateArn="+defCert, "--ssl-policy", "ELBSecurityPolicy-2016-08",
+		"--port", "16443", "--certificates", "CertificateArn="+defCert, "--ssl-policy", "ELBSecurityPolicy-2016-08",
 		"--default-actions", string(defActions), "--query", "Listeners[0].ListenerArn", "--output", "text")
 
 	// authenticate-oidc round-trips; ClientSecret is never echoed.

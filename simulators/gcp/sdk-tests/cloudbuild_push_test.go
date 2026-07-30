@@ -125,20 +125,26 @@ func startThrowawayRegistry(t *testing.T, port string) {
 	name := "gcp-cb-sdktest-reg-" + port
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		_, _ = dockerCLIWithTimeout(60*time.Second, "rm", "-f", name)
+		_, _ = dockerCLIWithTimeout(60*time.Second, "rm", "-f", "-v", name)
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * time.Second)
 		}
-		out, err := dockerCLIWithTimeout(60*time.Second, "run", "-d", "--rm", "--name", name,
+		out, err := dockerCLIWithTimeout(60*time.Second, "create", "--name", name,
 			"-p", port+":5000", regImage)
-		if err == nil {
-			lastErr = nil
-			break
+		if err != nil {
+			lastErr = fmt.Errorf("create registry container: %v: %s", err, out)
+			continue
 		}
-		lastErr = fmt.Errorf("%v: %s", err, out)
+		out, err = dockerCLIWithTimeout(60*time.Second, "start", name)
+		if err != nil {
+			lastErr = fmt.Errorf("start registry container: %v: %s", err, out)
+			continue
+		}
+		lastErr = nil
+		break
 	}
 	require.NoError(t, lastErr, "start throwaway registry")
-	t.Cleanup(func() { _, _ = dockerCLIWithTimeout(60*time.Second, "rm", "-f", name) })
+	t.Cleanup(func() { _, _ = dockerCLIWithTimeout(60*time.Second, "rm", "-f", "-v", name) })
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, derr := http.Get(fmt.Sprintf("http://127.0.0.1:%s/v2/", port))

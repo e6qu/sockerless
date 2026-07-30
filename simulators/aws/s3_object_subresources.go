@@ -347,9 +347,7 @@ func handleS3UploadPartCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s3MultipartUploadsMu.Lock()
-	mp, ok := s3MultipartUploads[uploadID]
-	s3MultipartUploadsMu.Unlock()
+	_, ok = s3MultipartUploads.Get(uploadID)
 	if !ok {
 		sim.S3ErrorXML(w, "NoSuchUpload", "The specified multipart upload does not exist",
 			sim.PathParam(r, "bucket"), sim.RequestID(r.Context()), http.StatusNotFound)
@@ -374,9 +372,9 @@ func handleS3UploadPartCopy(w http.ResponseWriter, r *http.Request) {
 	etag := fmt.Sprintf(`"%x"`, hash)
 	now := time.Now().UTC()
 
-	s3MultipartUploadsMu.Lock()
-	mp.Parts[partNum] = s3MultipartPart{Data: part, ETag: etag}
-	s3MultipartUploadsMu.Unlock()
+	s3MultipartUploads.Update(uploadID, func(upload *S3MultipartUpload) {
+		upload.Parts[partNum] = s3MultipartPart{Data: part, ETag: etag}
+	})
 
 	// httpPayload member CopyPartResult serializes as <CopyPartResult>.
 	out := struct {

@@ -65,6 +65,80 @@ var (
 	rdsTLSErr     error
 )
 
+func rdsRecoverDataPlanes() error {
+	for _, instance := range rdsInstances.List() {
+		if instance.DBInstanceStatus != "available" || len(instance.MasterUserSecret) == 0 {
+			continue
+		}
+		_, masterPassword, ok := kmsDecryptBytes(instance.MasterUserSecret)
+		if !ok {
+			return fmt.Errorf("decrypt master-user credential for DB instance %s", instance.DBInstanceIdentifier)
+		}
+		if err := rdsInstallDataPlane(&instance, string(masterPassword)); err != nil {
+			return fmt.Errorf("restore DB instance %s: %w", instance.DBInstanceIdentifier, err)
+		}
+		if err := rdsAdoptDataPlaneBackend(instance); err != nil {
+			return fmt.Errorf("restore DB instance %s backend: %w", instance.DBInstanceIdentifier, err)
+		}
+		rdsInstances.Put(instance.DBInstanceIdentifier, instance)
+	}
+	return nil
+}
+
+func rdsAdoptDataPlaneBackend(instance RDSInstance) error {
+	runtimeValue, ok := rdsDataPlanes.Load(instance.DBInstanceIdentifier)
+	if !ok {
+		return fmt.Errorf("endpoint listener was not installed")
+	}
+	runtime, ok := runtimeValue.(*rdsDataPlaneRuntime)
+	if !ok {
+		return fmt.Errorf("endpoint runtime has unexpected type %T", runtimeValue)
+	}
+	existing, err := sim.FindExistingContainers(map[string]string{
+		"sockerless-rds-instance": instance.DBInstanceIdentifier,
+	})
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		return nil
+	}
+	if len(existing) != 1 {
+		return fmt.Errorf("found %d database engine containers", len(existing))
+	}
+	containerPort, ok := rdsEngineContainerPort(instance.Engine)
+	if !ok {
+		return nil
+	}
+	backendPort := existing[0].PublishedPorts[containerPort]
+	if backendPort == 0 {
+		return fmt.Errorf("container %s has no published database port %d", existing[0].ID, containerPort)
+	}
+	if !existing[0].Running {
+		if err := sim.StartExistingContainer(existing[0].ID); err != nil {
+			return fmt.Errorf("resume database engine container %s: %w", existing[0].ID, err)
+		}
+	}
+	handle, err := sim.AdoptContainer(existing[0].ID, sim.ContainerConfig{}, sim.NoopSink{})
+	if err != nil {
+		return err
+	}
+	runtime.update(instance, net.JoinHostPort("127.0.0.1", strconv.Itoa(backendPort)), handle)
+	runtime.start.Do(func() {})
+	return nil
+}
+
+func rdsEngineContainerPort(engine string) (int, bool) {
+	switch {
+	case strings.HasPrefix(strings.ToLower(engine), "postgres"):
+		return 5432, true
+	case strings.EqualFold(engine, "mysql"), strings.EqualFold(engine, "mariadb"):
+		return 3306, true
+	default:
+		return 0, false
+	}
+}
+
 func rdsInstallDataPlane(instance *RDSInstance, masterPassword string) error {
 	engine := strings.ToLower(instance.Engine)
 	if !strings.HasPrefix(engine, "postgres") && engine != "mysql" && engine != "mariadb" {
@@ -89,7 +163,7 @@ func rdsInstallDataPlane(instance *RDSInstance, masterPassword string) error {
 		instance.BackendMasterUserSecret = append([]byte(nil), instance.MasterUserSecret...)
 	}
 
-	listener, err := rdsListenOnLoopback(instance.DBInstanceIdentifier, instance.Port)
+	listener, err := rdsListenForInstance(*instance)
 	if err != nil {
 		return fmt.Errorf("allocate RDS endpoint: %w", err)
 	}
@@ -104,6 +178,13 @@ func rdsInstallDataPlane(instance *RDSInstance, masterPassword string) error {
 	rdsDataPlanes.Store(instance.DBInstanceIdentifier, runtime)
 	go runtime.serve()
 	return nil
+}
+
+func rdsListenForInstance(instance RDSInstance) (net.Listener, error) {
+	if endpointIP := net.ParseIP(instance.Endpoint); endpointIP != nil && endpointIP.IsLoopback() && instance.Port > 0 {
+		return net.Listen("tcp", net.JoinHostPort(instance.Endpoint, strconv.Itoa(instance.Port)))
+	}
+	return rdsListenOnLoopback(instance.DBInstanceIdentifier, instance.Port)
 }
 
 func rdsListenOnLoopback(identifier string, port int) (net.Listener, error) {

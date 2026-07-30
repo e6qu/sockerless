@@ -23,6 +23,54 @@ func wafClient() *wafv2.Client {
 	})
 }
 
+func TestWAFv2RevenueSurfacesForAccountWithoutSettlements(t *testing.T) {
+	c := wafClient()
+	testCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	window := &wafv2types.TimeWindow{
+		StartTime: aws.Time(time.Now().Add(-time.Hour)),
+		EndTime:   aws.Time(time.Now()),
+	}
+
+	ranked, err := c.GetRevenueStatistics(testCtx, &wafv2.GetRevenueStatisticsInput{
+		Currency:      wafv2types.CurrencyUsdc,
+		Scope:         wafv2types.ScopeCloudfront,
+		StatisticType: wafv2types.RankingStatisticTypeTopSourcesByRevenue,
+		GroupBy:       wafv2types.GroupByTypeName,
+		TimeWindow:    window,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, ranked.SourceStatistics)
+
+	summary, err := c.GetRevenueStatisticsSummary(testCtx, &wafv2.GetRevenueStatisticsSummaryInput{
+		Currency:   wafv2types.CurrencyUsdc,
+		Scope:      wafv2types.ScopeCloudfront,
+		TimeWindow: window,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, summary.RevenueBreakdown)
+	assert.Equal(t, "0", aws.ToString(summary.RevenueBreakdown.TotalAmount))
+	assert.Zero(t, summary.RevenueBreakdown.TotalSettled)
+
+	series, err := c.GetRevenueStatisticsTimeSeries(testCtx, &wafv2.GetRevenueStatisticsTimeSeriesInput{
+		Currency:      wafv2types.CurrencyUsdc,
+		Scope:         wafv2types.ScopeCloudfront,
+		StatisticType: wafv2types.TimeSeriesStatisticTypeDateHistogram,
+		Interval:      wafv2types.IntervalTypeHourly,
+		TimeWindow:    window,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, series.DataPoints)
+
+	settlements, err := c.ListSettlementRecords(testCtx, &wafv2.ListSettlementRecordsInput{
+		Currency:   wafv2types.CurrencyUsdc,
+		Scope:      wafv2types.ScopeCloudfront,
+		TimeWindow: window,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, settlements.Settlements)
+}
+
 func TestWAFv2WebACLLifecycle(t *testing.T) {
 	c := wafClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

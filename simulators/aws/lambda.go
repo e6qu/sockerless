@@ -305,9 +305,8 @@ func lambdaResolveInvocationTarget(identifier, queryQualifier string) (LambdaFun
 		function.Version = "$LATEST"
 		return function, "$LATEST", true
 	}
-	lambdaAliasesMu.Lock()
-	alias, isAlias := lambdaAliases[name][qualifier]
-	lambdaAliasesMu.Unlock()
+	aliases, _ := lambdaAliases.Get(name)
+	alias, isAlias := aliases[qualifier]
 	if isAlias {
 		selectedVersion := alias.FunctionVersion
 		if alias.RoutingConfig != nil && len(alias.RoutingConfig.AdditionalVersionWeights) > 0 {
@@ -326,9 +325,8 @@ func lambdaResolveInvocationTarget(identifier, queryQualifier string) (LambdaFun
 		}
 		qualifier = selectedVersion
 	}
-	lambdaVersionsMu.Lock()
-	defer lambdaVersionsMu.Unlock()
-	for _, version := range lambdaVersions[name] {
+	versions, _ := lambdaVersions.Get(name)
+	for _, version := range versions {
 		if version.Version == qualifier {
 			return lambdaFunctionFromVersion(version), version.Version, true
 		}
@@ -352,6 +350,13 @@ func registerLambda(srv *sim.Server, startBackgroundPollers bool) {
 	cloudTrailDeclareDataEvents("lambda.amazonaws.com", "Invoke")
 	lambdaFunctions = sim.MakeStore[LambdaFunction](srv.DB(), "lambda_functions")
 	lambdaConcurrency = sim.MakeStore[int](srv.DB(), "lambda_concurrency")
+	lambdaAsyncInvocations = sim.MakeStore[LambdaAsyncInvocation](srv.DB(), "lambda_async_invocations")
+	lambdaVersions = sim.MakeStore[[]LambdaVersion](srv.DB(), "lambda_versions")
+	lambdaAliases = sim.MakeStore[map[string]LambdaAlias](srv.DB(), "lambda_aliases")
+	lambdaPolicies = sim.MakeStore[[]LambdaPolicyStatement](srv.DB(), "lambda_policies")
+	lambdaURLConfigs = sim.MakeStore[LambdaFunctionUrlConfig](srv.DB(), "lambda_url_configs")
+	lambdaESMs = sim.MakeStore[LambdaEventSourceMapping](srv.DB(), "lambda_event_source_mappings")
+	lambdaLayers = sim.MakeStore[[]LambdaLayerVersion](srv.DB(), "lambda_layers")
 	lambdaESMLogger = srv.Logger()
 	if startBackgroundPollers {
 		startLambdaEventSourcePollers()
@@ -797,10 +802,9 @@ func handleLambdaDeleteFunction(w http.ResponseWriter, r *http.Request) {
 				"Function not found: %s", lambdaArn(name))
 			return
 		}
-		lambdaAliasesMu.Lock()
-		for _, alias := range lambdaAliases[name] {
+		aliases, _ := lambdaAliases.Get(name)
+		for _, alias := range aliases {
 			if alias.FunctionVersion == qualifier {
-				lambdaAliasesMu.Unlock()
 				sim.AWSError(w, "ResourceConflictException",
 					"Lambda version "+qualifier+" is referenced by an alias",
 					http.StatusConflict)
@@ -808,7 +812,6 @@ func handleLambdaDeleteFunction(w http.ResponseWriter, r *http.Request) {
 			}
 			if alias.RoutingConfig != nil {
 				if _, referenced := alias.RoutingConfig.AdditionalVersionWeights[qualifier]; referenced {
-					lambdaAliasesMu.Unlock()
 					sim.AWSError(w, "ResourceConflictException",
 						"Lambda version "+qualifier+" is referenced by an alias",
 						http.StatusConflict)
@@ -816,20 +819,18 @@ func handleLambdaDeleteFunction(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		lambdaAliasesMu.Unlock()
 		deleted := false
-		lambdaVersionsMu.Lock()
-		versions := lambdaVersions[name]
-		filtered := versions[:0]
-		for _, version := range versions {
-			if version.Version == qualifier {
-				deleted = true
-				continue
+		lambdaVersions.Update(name, func(versions *[]LambdaVersion) {
+			filtered := make([]LambdaVersion, 0, len(*versions))
+			for _, version := range *versions {
+				if version.Version == qualifier {
+					deleted = true
+					continue
+				}
+				filtered = append(filtered, version)
 			}
-			filtered = append(filtered, version)
-		}
-		lambdaVersions[name] = filtered
-		lambdaVersionsMu.Unlock()
+			*versions = filtered
+		})
 		if !deleted {
 			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 				"Function version not found: %s:%s", lambdaArn(name), qualifier)
@@ -844,53 +845,36 @@ func handleLambdaDeleteFunction(w http.ResponseWriter, r *http.Request) {
 			"Function not found: %s", lambdaArn(name))
 		return
 	}
-	lambdaVersionsMu.Lock()
-	delete(lambdaVersions, name)
-	lambdaVersionsMu.Unlock()
-	lambdaAliasesMu.Lock()
-	delete(lambdaAliases, name)
-	lambdaAliasesMu.Unlock()
-	lambdaPoliciesMu.Lock()
-	delete(lambdaPolicies, name)
-	lambdaPoliciesMu.Unlock()
-	lambdaURLConfigsMu.Lock()
-	delete(lambdaURLConfigs, name)
-	lambdaURLConfigsMu.Unlock()
+	lambdaVersions.Delete(name)
+	lambdaAliases.Delete(name)
+	lambdaPolicies.Delete(name)
+	lambdaURLConfigs.Delete(name)
 	lambdaConcurrency.Delete(name)
-	lambdaFnCSCMu.Lock()
-	delete(lambdaFnCSC, name)
-	lambdaFnCSCMu.Unlock()
-	lambdaRecursionMu.Lock()
-	delete(lambdaRecursion, name)
-	lambdaRecursionMu.Unlock()
-	lambdaEICMu.Lock()
-	for key := range lambdaEICs {
-		if strings.HasPrefix(key, name+":") {
-			delete(lambdaEICs, key)
+	lambdaFnCSC.Delete(name)
+	lambdaRecursion.Delete(name)
+	functionARN := lambdaArn(name)
+	for _, config := range lambdaEICs.List() {
+		if config.FunctionArn == functionARN || strings.HasPrefix(config.FunctionArn, functionARN+":") {
+			qualifier := strings.TrimPrefix(config.FunctionArn, functionARN)
+			qualifier = strings.TrimPrefix(qualifier, ":")
+			lambdaEICs.Delete(lambdaEICKey(name, qualifier))
 		}
 	}
-	lambdaEICMu.Unlock()
-	lambdaPCMu.Lock()
-	for key := range lambdaPCs {
-		if strings.HasPrefix(key, name+":") {
-			delete(lambdaPCs, key)
+	for _, config := range lambdaPCs.List() {
+		if config.FunctionName == name {
+			lambdaPCs.Delete(name + ":" + config.Qualifier)
 		}
 	}
-	lambdaPCMu.Unlock()
-	lambdaRTMMu.Lock()
-	for key := range lambdaRTMs {
-		if strings.HasPrefix(key, name+":") {
-			delete(lambdaRTMs, key)
+	for _, config := range lambdaRTMs.List() {
+		if config.FunctionName == name {
+			lambdaRTMs.Delete(name + ":" + config.Qualifier)
 		}
 	}
-	lambdaRTMMu.Unlock()
-	lambdaScalingMu.Lock()
-	for key := range lambdaScalingCfgs {
-		if strings.HasPrefix(key, name+":") {
-			delete(lambdaScalingCfgs, key)
+	for _, config := range lambdaScalingCfgs.List() {
+		if config.FunctionName == name {
+			lambdaScalingCfgs.Delete(lambdaEICKey(name, config.Qualifier))
 		}
 	}
-	lambdaScalingMu.Unlock()
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1131,7 +1115,7 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 			// Async invocation runs the function for real in the background,
 			// producing the same Runtime API callbacks and logs as a
 			// synchronous invocation.
-			go lambdaInvokeAsynchronously(fn, payload, lambdaAsyncQualifier(name, queryQualifier))
+			lambdaInvokeAsynchronously(fn, payload, lambdaAsyncQualifier(name, queryQualifier))
 		}
 		w.WriteHeader(http.StatusAccepted)
 	default:
@@ -1180,9 +1164,7 @@ func handleLambdaListFunctions(w http.ResponseWriter, r *http.Request) {
 	for _, fn := range stored {
 		all = append(all, lambdaConfiguration(fn))
 		if allVersions {
-			lambdaVersionsMu.Lock()
-			published := append([]LambdaVersion(nil), lambdaVersions[fn.FunctionName]...)
-			lambdaVersionsMu.Unlock()
+			published, _ := lambdaVersions.Get(fn.FunctionName)
 			for _, v := range published {
 				all = append(all, lambdaConfigurationFromVersion(v))
 			}

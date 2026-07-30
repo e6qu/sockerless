@@ -154,6 +154,12 @@ func registerS3(srv *sim.Server) {
 	s3Buckets_ = sim.MakeStore[S3Bucket](srv.DB(), "s3_buckets")
 	s3Objects = sim.MakeStore[S3Object](srv.DB(), "s3_objects")
 	s3ObjectAnnotations = sim.MakeStore[s3Annotation](srv.DB(), "s3_object_annotations")
+	s3BucketConfigs = sim.MakeStore[S3BucketConfig](srv.DB(), "s3_bucket_configs")
+	s3MultipartUploads = sim.MakeStore[S3MultipartUpload](srv.DB(), "s3_multipart_uploads")
+	s3ObjectTags = sim.MakeStore[map[string]string](srv.DB(), "s3_object_tags")
+	s3MetadataConfigs = sim.MakeStore[s3MetadataConfig](srv.DB(), "s3_metadata_configs")
+	s3MetadataTableConfigs = sim.MakeStore[s3MetadataTableConfig](srv.DB(), "s3_metadata_table_configs")
+	s3AbacStatus = sim.MakeStore[string](srv.DB(), "s3_abac_status")
 
 	mux := srv
 
@@ -558,7 +564,43 @@ func handleS3CreateBucket(w http.ResponseWriter, r *http.Request) {
 		Name:         bucket,
 		CreationDate: time.Now().UTC().Format(time.RFC3339),
 	}
+	var createConfig struct {
+		Tags []struct {
+			Key   string `xml:"Key"`
+			Value string `xml:"Value"`
+		} `xml:"Tags>Tag"`
+	}
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		sim.S3ErrorXML(w, "IncompleteBody", "The request body could not be read",
+			bucket, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
+	if len(bytes.TrimSpace(bodyBytes)) > 0 {
+		if err := xml.Unmarshal(bodyBytes, &createConfig); err != nil {
+			sim.S3ErrorXML(w, "MalformedXML", "The XML you provided was not well-formed",
+				bucket, sim.RequestID(r.Context()), http.StatusBadRequest)
+			return
+		}
+	}
 	s3Buckets_.Put(bucket, b)
+	if len(createConfig.Tags) > 0 {
+		var body strings.Builder
+		body.WriteString(`<Tagging xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><TagSet>`)
+		sort.Slice(createConfig.Tags, func(i, j int) bool {
+			return createConfig.Tags[i].Key < createConfig.Tags[j].Key
+		})
+		for _, tag := range createConfig.Tags {
+			fmt.Fprintf(&body, "<Tag><Key>%s</Key><Value>%s</Value></Tag>",
+				xmlEscape(tag.Key), xmlEscape(tag.Value))
+		}
+		body.WriteString(`</TagSet></Tagging>`)
+		configKey := s3BucketConfigKeyID(bucket, "tagging", "")
+		s3BucketConfigs.Put(configKey, S3BucketConfig{
+			Key: configKey, Bucket: bucket, Subresource: "tagging",
+			Body: []byte(body.String()), ContentType: "application/xml",
+		})
+	}
 
 	w.Header().Set("Location", "/"+bucket)
 	w.WriteHeader(http.StatusOK)
@@ -595,6 +637,28 @@ func handleS3DeleteBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s3Buckets_.Delete(bucket)
+	for _, config := range s3BucketConfigs.Filter(func(config S3BucketConfig) bool {
+		return config.Bucket == bucket
+	}) {
+		s3BucketConfigs.Delete(config.Key)
+	}
+	for _, upload := range s3MultipartUploads.Filter(func(upload S3MultipartUpload) bool {
+		return upload.Bucket == bucket
+	}) {
+		s3MultipartUploads.Delete(upload.UploadID)
+	}
+	s3MetadataConfigs.Delete(bucket)
+	s3MetadataTableConfigs.Delete(bucket)
+	s3AbacStatus.Delete(bucket)
+	for _, annotation := range s3ObjectAnnotations.Filter(func(annotation s3Annotation) bool {
+		return strings.HasPrefix(annotation.Owner, bucket+"/")
+	}) {
+		s3ObjectAnnotations.Delete(s3AnnotationKey(
+			bucket,
+			strings.TrimPrefix(annotation.Owner, bucket+"/"),
+			annotation.Name,
+		))
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1039,6 +1103,7 @@ func handleS3DeleteObject(w http.ResponseWriter, r *http.Request) {
 	storeKey := s3ObjectKey(bucket, key)
 	existing, existed := s3Objects.Get(storeKey)
 	s3Objects.Delete(storeKey)
+	s3ObjectTags.Delete(storeKey)
 	s3DeleteObjectAnnotations(bucket, key)
 
 	if existed {

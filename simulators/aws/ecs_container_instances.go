@@ -38,8 +38,8 @@ type ECSContainerInstance struct {
 	Attachments          json.RawMessage `json:"attachments,omitempty"`
 	Tags                 []ECSTag        `json:"tags,omitempty"`
 	HealthStatus         json.RawMessage `json:"healthStatus,omitempty"`
-	// clusterName is the store-key prefix; never on the wire.
-	clusterName string `json:"-"`
+	// ClusterName is the store-key prefix; never on the wire.
+	ClusterName string `json:"-"`
 }
 
 // ECSAttribute is a name/value attribute attached to a container instance.
@@ -48,9 +48,9 @@ type ECSAttribute struct {
 	Value      string `json:"value,omitempty"`
 	TargetType string `json:"targetType,omitempty"`
 	TargetId   string `json:"targetId,omitempty"`
-	// cluster scopes a stored attribute to its cluster for ListAttributes; it
+	// Cluster scopes a stored attribute to its cluster for ListAttributes; it
 	// is never on the wire (the Attribute shape has no cluster field).
-	cluster string `json:"-"`
+	Cluster string `json:"-"`
 }
 
 var ecsContainerInstances sim.Store[ECSContainerInstance]
@@ -112,7 +112,7 @@ func handleECSRegisterContainerInstance(w http.ResponseWriter, r *http.Request) 
 		Attributes:           req.Attributes,
 		RegisteredAt:         float64(time.Now().Unix()),
 		Tags:                 req.Tags,
-		clusterName:          clusterName,
+		ClusterName:          clusterName,
 	}
 	ecsContainerInstances.Put(ecsContainerInstanceKey(clusterName, id), ci)
 	ecsClusters.Update(clusterName, func(c *ECSCluster) { c.RegisteredContainerInstancesCount++ })
@@ -169,7 +169,7 @@ func handleECSListContainerInstances(w http.ResponseWriter, r *http.Request) {
 	clusterName := ecsClusterNameFromRef(req.Cluster)
 	var arns []string
 	for _, ci := range ecsContainerInstances.List() {
-		if ci.clusterName != clusterName {
+		if ci.ClusterName != clusterName {
 			continue
 		}
 		if req.Status != "" && ci.Status != req.Status {

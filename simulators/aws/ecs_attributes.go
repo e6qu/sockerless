@@ -50,7 +50,7 @@ func handleECSPutAttributes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		stored := a
-		stored.cluster = clusterName
+		stored.Cluster = clusterName
 		ecsAttributes.Put(ecsAttributeKey(clusterName, a.TargetId, a.Name), stored)
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"attributes": req.Attributes})
@@ -98,7 +98,7 @@ func handleECSListAttributes(w http.ResponseWriter, r *http.Request) {
 	clusterName := ecsClusterNameFromRef(req.Cluster)
 	var attrs []ECSAttribute
 	for _, a := range ecsAttributes.List() {
-		if a.cluster != clusterName {
+		if a.Cluster != clusterName {
 			continue
 		}
 		if req.AttributeName != "" && a.Name != req.AttributeName {

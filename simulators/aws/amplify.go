@@ -241,9 +241,24 @@ type amplifyStoredWebhook struct {
 }
 
 type amplifyStoredJob struct {
-	Job        AmplifyJob
-	AppId      string
-	BranchName string
+	Job            AmplifyJob
+	AppId          string
+	BranchName     string
+	BuildPlan      *amplifyPersistedBuildPlan
+	DeploymentPlan *amplifyPersistedDeploymentPlan
+}
+
+type amplifyPersistedBuildPlan struct {
+	URLBase  string
+	Repo     string
+	SpecText string
+	Env      map[string]string
+	CommitID string
+}
+
+type amplifyPersistedDeploymentPlan struct {
+	URLBase string
+	Uploads []amplifyUploadedArtifact
 }
 
 type amplifyStoredArtifact struct {
@@ -1287,10 +1302,20 @@ func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
 		JobType:       req.JobType,
 	}
 	job := AmplifyJob{Summary: summary, Steps: amplifyJobSteps(now, AmplifyJobStatusPending)}
-	amplifyJobs.Put(jobID, amplifyStoredJob{Job: job, AppId: appID, BranchName: branch})
+	urlBase := amplifyURLBase(r)
+	buildPlan := &amplifyPersistedBuildPlan{
+		URLBase:  urlBase,
+		Repo:     repo,
+		SpecText: spec,
+		Env:      amplifyBuildEnv(stored.App, br, jobID),
+		CommitID: req.CommitId,
+	}
+	amplifyJobs.Put(jobID, amplifyStoredJob{
+		Job: job, AppId: appID, BranchName: branch, BuildPlan: buildPlan,
+	})
 	amplifyTrackJobStart(appID, branch, jobID)
-	amplifyScheduleRealBuild(appID, branch, jobID, amplifyURLBase(r), repo, spec,
-		amplifyBuildEnv(stored.App, br, jobID), req.CommitId)
+	amplifyScheduleRealBuild(appID, branch, jobID, urlBase, repo, spec,
+		buildPlan.Env, req.CommitId)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": summary})
 }
 
@@ -1310,6 +1335,30 @@ func amplifyTrackJobStart(appID, branch, jobID string) {
 	amplifyApps.Put(appID, stored)
 }
 
+func recoverAmplifyJobs() {
+	for _, stored := range amplifyJobs.List() {
+		status := stored.Job.Summary.Status
+		if status != AmplifyJobStatusPending && status != AmplifyJobStatusRunning {
+			continue
+		}
+		jobID := stored.Job.Summary.JobId
+		switch {
+		case stored.BuildPlan != nil:
+			plan := stored.BuildPlan
+			amplifyScheduleRealBuildMode(
+				stored.AppId, stored.BranchName, jobID,
+				plan.URLBase, plan.Repo, plan.SpecText, plan.Env, plan.CommitID, true,
+			)
+		case stored.DeploymentPlan != nil:
+			plan := stored.DeploymentPlan
+			amplifyScheduleDeploymentMode(
+				stored.AppId, stored.BranchName, jobID,
+				plan.URLBase, plan.Uploads, true,
+			)
+		}
+	}
+}
+
 // amplifyUploadedArtifact is one client-uploaded deployment object the
 // finished job exposes as its build artifact.
 type amplifyUploadedArtifact struct {
@@ -1320,8 +1369,21 @@ type amplifyUploadedArtifact struct {
 // amplifyScheduleDeployment publishes already-uploaded or externally fetched
 // deployment objects through Amplify's asynchronous job lifecycle.
 func amplifyScheduleDeployment(appID, branch, jobID, urlBase string, uploads []amplifyUploadedArtifact) {
+	amplifyScheduleDeploymentMode(appID, branch, jobID, urlBase, uploads, false)
+}
+
+func amplifyScheduleDeploymentMode(appID, branch, jobID, urlBase string, uploads []amplifyUploadedArtifact, recovering bool) {
 	go func() {
-		if !amplifyAdvanceJob(jobID, AmplifyJobStatusPending, AmplifyJobStatusRunning) {
+		if recovering {
+			stored, ok := amplifyJobs.Get(jobID)
+			if !ok || (stored.Job.Summary.Status != AmplifyJobStatusPending && stored.Job.Summary.Status != AmplifyJobStatusRunning) {
+				return
+			}
+			if stored.Job.Summary.Status == AmplifyJobStatusPending &&
+				!amplifyAdvanceJob(jobID, AmplifyJobStatusPending, AmplifyJobStatusRunning) {
+				return
+			}
+		} else if !amplifyAdvanceJob(jobID, AmplifyJobStatusPending, AmplifyJobStatusRunning) {
 			return
 		}
 		for _, up := range uploads {
@@ -1922,9 +1984,16 @@ func handleAmplifyStartDeployment(w http.ResponseWriter, r *http.Request) {
 	job := AmplifyJob{Summary: summary, Steps: []AmplifyJobStep{{
 		StepName: "DEPLOY", StartTime: now, Status: AmplifyJobStatusPending,
 	}}}
-	amplifyJobs.Put(summary.JobId, amplifyStoredJob{Job: job, AppId: appID, BranchName: branch})
+	urlBase := amplifyURLBase(r)
+	amplifyJobs.Put(summary.JobId, amplifyStoredJob{
+		Job: job, AppId: appID, BranchName: branch,
+		DeploymentPlan: &amplifyPersistedDeploymentPlan{
+			URLBase: urlBase,
+			Uploads: append([]amplifyUploadedArtifact(nil), uploads...),
+		},
+	})
 	amplifyTrackJobStart(appID, branch, summary.JobId)
-	amplifyScheduleDeployment(appID, branch, summary.JobId, amplifyURLBase(r), uploads)
+	amplifyScheduleDeployment(appID, branch, summary.JobId, urlBase, uploads)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": summary})
 }
 

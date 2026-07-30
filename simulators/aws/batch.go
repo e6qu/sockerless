@@ -64,18 +64,19 @@ type BatchSchedulingPolicy struct {
 }
 
 type BatchJob struct {
-	JobID         string            `json:"jobId"`
-	JobArn        string            `json:"jobArn,omitempty"`
-	JobName       string            `json:"jobName"`
-	JobQueue      string            `json:"jobQueue"`
-	Status        string            `json:"status"`
-	StatusReason  string            `json:"statusReason,omitempty"`
-	JobDefinition string            `json:"jobDefinition"`
-	CreatedAt     int64             `json:"createdAt"`
-	StartedAt     int64             `json:"startedAt"`
-	StoppedAt     int64             `json:"stoppedAt"`
-	Container     map[string]any    `json:"container,omitempty"`
-	Tags          map[string]string `json:"tags,omitempty"`
+	JobID           string               `json:"jobId"`
+	JobArn          string               `json:"jobArn,omitempty"`
+	JobName         string               `json:"jobName"`
+	JobQueue        string               `json:"jobQueue"`
+	Status          string               `json:"status"`
+	StatusReason    string               `json:"statusReason,omitempty"`
+	JobDefinition   string               `json:"jobDefinition"`
+	CreatedAt       int64                `json:"createdAt"`
+	StartedAt       int64                `json:"startedAt"`
+	StoppedAt       int64                `json:"stoppedAt"`
+	Container       map[string]any       `json:"container,omitempty"`
+	Tags            map[string]string    `json:"tags,omitempty"`
+	ExecutionConfig *sim.ContainerConfig `json:"-"`
 }
 
 // BatchConsumableResource models a Batch consumable resource (an ARN plus a
@@ -228,6 +229,59 @@ func registerBatch(srv *sim.Server) {
 	srv.HandleFunc("GET /v1/tags/{resourceArn}", cloudTrailRecordedREST("ListTagsForResource", "batch.amazonaws.com", batchResource, handleBatchListTagsForResource))
 	srv.HandleFunc("POST /v1/tags/{resourceArn}", cloudTrailRecordedREST("TagResource", "batch.amazonaws.com", batchResource, handleBatchTagResource))
 	srv.HandleFunc("DELETE /v1/tags/{resourceArn}", cloudTrailRecordedREST("UntagResource", "batch.amazonaws.com", batchResource, handleBatchUntagResource))
+	if err := recoverBatchJobs(); err != nil {
+		panic(fmt.Sprintf("restore AWS Batch jobs: %v", err))
+	}
+}
+
+func recoverBatchJobs() error {
+	for _, job := range batchJobs.List() {
+		if batchTerminal(job.Status) {
+			continue
+		}
+		existing, err := sim.FindExistingContainers(map[string]string{"aws-batch-job-id": job.JobID})
+		if err != nil {
+			return fmt.Errorf("find job %s container: %w", job.JobID, err)
+		}
+		if len(existing) > 1 {
+			return fmt.Errorf("job %s has %d workload containers", job.JobID, len(existing))
+		}
+		if len(existing) == 1 {
+			cfg := sim.ContainerConfig{}
+			if job.ExecutionConfig != nil {
+				cfg = *job.ExecutionConfig
+				if cfg.Timeout > 0 {
+					cfg.Timeout -= time.Since(time.UnixMilli(job.StartedAt))
+					if cfg.Timeout <= 0 {
+						cfg.Timeout = time.Nanosecond
+					}
+				}
+			}
+			handle, err := sim.AdoptContainer(existing[0].ID, cfg, sim.NoopSink{})
+			if err != nil {
+				return fmt.Errorf("adopt job %s container: %w", job.JobID, err)
+			}
+			batchJobs.Update(job.JobID, func(current *BatchJob) {
+				current.Status = "RUNNING"
+				if current.StartedAt == 0 {
+					current.StartedAt = batchEpochMs()
+				}
+			})
+			batchJobHandles.Store(job.JobID, handle)
+			go batchWaitForJob(job.JobID, handle)
+			continue
+		}
+		if job.ExecutionConfig == nil {
+			return fmt.Errorf("job %s has neither a workload container nor a persisted execution configuration", job.JobID)
+		}
+		handle, err := sim.StartContainerSync(*job.ExecutionConfig, sim.NoopSink{})
+		if err != nil {
+			return fmt.Errorf("resume job %s before container start: %w", job.JobID, err)
+		}
+		batchJobHandles.Store(job.JobID, handle)
+		go batchRunJobLifecycle(job.JobID, handle)
+	}
+	return nil
 }
 
 func batchARN(resource string) string {
@@ -703,16 +757,17 @@ func handleBatchSubmitJob(w http.ResponseWriter, r *http.Request) {
 	cfg.Name = "sockerless-batch-" + jobID
 	cfg.Labels = map[string]string{"aws-batch-job-id": jobID}
 	job := BatchJob{
-		JobID:         jobID,
-		JobArn:        batchARN("job/" + jobID),
-		JobName:       req.JobName,
-		JobQueue:      req.JobQueue,
-		Status:        "SUBMITTED",
-		JobDefinition: jd.JobDefinitionArn,
-		CreatedAt:     now,
-		StartedAt:     now,
-		Container:     containerMeta,
-		Tags:          req.Tags,
+		JobID:           jobID,
+		JobArn:          batchARN("job/" + jobID),
+		JobName:         req.JobName,
+		JobQueue:        req.JobQueue,
+		Status:          "SUBMITTED",
+		JobDefinition:   jd.JobDefinitionArn,
+		CreatedAt:       now,
+		StartedAt:       now,
+		Container:       containerMeta,
+		Tags:            req.Tags,
+		ExecutionConfig: &cfg,
 	}
 	batchJobs.Put(jobID, job)
 
@@ -832,7 +887,9 @@ func handleBatchListJobs(w http.ResponseWriter, r *http.Request) {
 	all := batchJobs.List()
 	var result []map[string]any
 	for _, job := range all {
-		if req.JobQueue != "" && job.JobQueue != req.JobQueue {
+		if req.JobQueue != "" &&
+			job.JobQueue != req.JobQueue &&
+			batchNameFromARN(job.JobQueue) != batchNameFromARN(req.JobQueue) {
 			continue
 		}
 		if req.JobStatus != "" && job.Status != req.JobStatus {

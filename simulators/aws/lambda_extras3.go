@@ -33,6 +33,9 @@ func registerLambdaExtras3(srv *sim.Server) {
 	mux := srv
 	lambdaResource := cloudTrailRESTResource("AWS::Lambda::Function", "name", "arn")
 	lambdaCapacityProviders = sim.MakeStore[LambdaCapacityProvider](srv.DB(), "lambda_capacity_providers")
+	lambdaScalingCfgs = sim.MakeStore[lambdaStoredScalingConfig](srv.DB(), "lambda_function_scaling_configs")
+	lambdaDurableStore = sim.MakeStore[lambdaDurableExecution](srv.DB(), "lambda_durable_executions")
+	lambdaDurableCallbackStore = sim.MakeStore[lambdaDurableCallbackState](srv.DB(), "lambda_durable_callbacks")
 
 	// ListLayers shares GET /2018-10-31/layers with GetLayerVersionByArn; the
 	// shared handler (lambda_extras.go) composes the op name per-request via
@@ -192,11 +195,14 @@ type lambdaFunctionScalingConfig struct {
 	MaxExecutionEnvironments *int32 `json:"MaxExecutionEnvironments,omitempty"`
 }
 
-var (
-	lambdaScalingMu sync.Mutex
-	// keyed by "<functionName>:<qualifier>" ($LATEST when no qualifier).
-	lambdaScalingCfgs = map[string]lambdaFunctionScalingConfig{}
-)
+type lambdaStoredScalingConfig struct {
+	FunctionName string
+	Qualifier    string
+	Config       lambdaFunctionScalingConfig
+}
+
+// keyed by "<functionName>:<qualifier>" ($LATEST when no qualifier).
+var lambdaScalingCfgs sim.Store[lambdaStoredScalingConfig]
 
 func handleLambdaGetFunctionScalingConfig(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
@@ -206,14 +212,12 @@ func handleLambdaGetFunctionScalingConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 	qualifier := r.URL.Query().Get("Qualifier")
-	lambdaScalingMu.Lock()
-	cfg, ok := lambdaScalingCfgs[lambdaEICKey(name, qualifier)]
-	lambdaScalingMu.Unlock()
+	stored, ok := lambdaScalingCfgs.Get(lambdaEICKey(name, qualifier))
 	out := map[string]any{"FunctionArn": lambdaEICArn(name, qualifier)}
 	if ok {
 		// Applied == Requested once the allocation settles (synchronous here).
-		out["RequestedFunctionScalingConfig"] = cfg
-		out["AppliedFunctionScalingConfig"] = cfg
+		out["RequestedFunctionScalingConfig"] = stored.Config
+		out["AppliedFunctionScalingConfig"] = stored.Config
 	}
 	sim.WriteJSON(w, http.StatusOK, out)
 }
@@ -237,9 +241,9 @@ func handleLambdaPutFunctionScalingConfig(w http.ResponseWriter, r *http.Request
 		sim.AWSError(w, "InvalidParameterValueException", "FunctionScalingConfig is required", http.StatusBadRequest)
 		return
 	}
-	lambdaScalingMu.Lock()
-	lambdaScalingCfgs[lambdaEICKey(name, qualifier)] = *req.FunctionScalingConfig
-	lambdaScalingMu.Unlock()
+	lambdaScalingCfgs.Put(lambdaEICKey(name, qualifier), lambdaStoredScalingConfig{
+		FunctionName: name, Qualifier: qualifier, Config: *req.FunctionScalingConfig,
+	})
 	// PutFunctionScalingConfig returns 202; the config is being applied.
 	sim.WriteJSON(w, http.StatusAccepted, map[string]any{"FunctionState": "Active"})
 }
@@ -255,14 +259,12 @@ func handleLambdaListFunctionsByCodeSigningConfig(w http.ResponseWriter, r *http
 			"The code signing configuration cannot be found.")
 		return
 	}
-	lambdaFnCSCMu.Lock()
 	names := make([]string, 0)
-	for fn, cscArn := range lambdaFnCSC {
-		if cscArn == arn {
-			names = append(names, lambdaArn(fn))
+	for _, attachment := range lambdaFnCSC.List() {
+		if attachment.CodeSigningConfigARN == arn {
+			names = append(names, lambdaArn(attachment.FunctionName))
 		}
 	}
-	lambdaFnCSCMu.Unlock()
 	sort.Strings(names)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"FunctionArns": names})
 }
@@ -448,9 +450,8 @@ func handleLambdaDeleteCapacityProvider(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	lambdaVersionsMu.Lock()
 	inUse := false
-	for _, versions := range lambdaVersions {
+	for _, versions := range lambdaVersions.List() {
 		for _, version := range versions {
 			if lambdaCapacityProviderARN(version.CapacityProviderConfig) == cp.CapacityProviderArn {
 				inUse = true
@@ -458,7 +459,6 @@ func handleLambdaDeleteCapacityProvider(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	lambdaVersionsMu.Unlock()
 	if inUse {
 		sim.AWSError(w, "ResourceConflictException",
 			"Capacity provider is currently used by a Lambda function version", http.StatusConflict)
@@ -491,8 +491,7 @@ func handleLambdaListFunctionVersionsByCapacityProvider(w http.ResponseWriter, r
 			})
 		}
 	}
-	lambdaVersionsMu.Lock()
-	for _, versions := range lambdaVersions {
+	for _, versions := range lambdaVersions.List() {
 		for _, version := range versions {
 			if lambdaCapacityProviderARN(version.CapacityProviderConfig) == cp.CapacityProviderArn {
 				functionVersions = append(functionVersions, map[string]any{
@@ -502,7 +501,6 @@ func handleLambdaListFunctionVersionsByCapacityProvider(w http.ResponseWriter, r
 			}
 		}
 	}
-	lambdaVersionsMu.Unlock()
 	sort.Slice(functionVersions, func(i, j int) bool {
 		return fmt.Sprint(functionVersions[i]["FunctionArn"]) < fmt.Sprint(functionVersions[j]["FunctionArn"])
 	})
@@ -556,7 +554,7 @@ func handleLambdaInvokeAsync(w http.ResponseWriter, r *http.Request) {
 	// InvokeAsync buffers the invocation and runs it for real in the
 	// background (which produces real logs), the same async path Invoke
 	// with InvocationType=Event takes.
-	go lambdaInvokeAsynchronously(fn, payload, lambdaAsyncQualifier(name, r.URL.Query().Get("Qualifier")))
+	lambdaInvokeAsynchronously(fn, payload, lambdaAsyncQualifier(name, r.URL.Query().Get("Qualifier")))
 	// The deprecated InvokeAsync response binds Status to the HTTP code (202)
 	// and carries no body.
 	w.WriteHeader(http.StatusAccepted)
@@ -697,12 +695,24 @@ type lambdaDurableExecution struct {
 	ClientTokens    map[string]string
 	PayloadSHA256   string
 	UpdatedIDs      []string
-	ChangeCh        chan struct{}
-	CoordinatorRun  bool
+	ChangeCh        chan struct{} `json:"-" persist:"-"`
+	CoordinatorRun  bool          `json:"-" persist:"-"`
+}
+
+type lambdaDurableCallbackState struct {
+	CallbackID       string
+	ExecutionARN     string
+	OperationID      string
+	StartedAt        time.Time
+	HeartbeatAt      time.Time
+	Timeout          time.Duration
+	HeartbeatTimeout time.Duration
 }
 
 var (
-	lambdaDurableMu sync.Mutex
+	lambdaDurableMu            sync.Mutex
+	lambdaDurableStore         sim.Store[lambdaDurableExecution]
+	lambdaDurableCallbackStore sim.Store[lambdaDurableCallbackState]
 	// keyed by DurableExecutionArn.
 	lambdaDurableExecs = map[string]*lambdaDurableExecution{}
 	// CallbackId -> DurableExecutionArn, registered by a checkpoint that
@@ -780,10 +790,12 @@ func lambdaBeginDurableExecution(
 		}},
 	}
 	lambdaDurableExecs[arn] = execution
+	lambdaDurableStore.Put(arn, *execution)
 	return arn, false, ""
 }
 
 func lambdaSignalDurableExecution(execution *lambdaDurableExecution) {
+	lambdaDurableStore.Put(execution.Arn, *execution)
 	select {
 	case execution.ChangeCh <- struct{}{}:
 	default:
@@ -822,8 +834,22 @@ func lambdaFinishDurableExecution(
 	default:
 		return
 	}
+	lambdaDeleteDurableCallbacks(execution.Arn)
 	execution.Events = append(execution.Events, event)
 	lambdaSignalDurableExecution(execution)
+}
+
+func lambdaDeleteDurableCallbacks(executionARN string) {
+	for callbackID, arn := range lambdaDurableCallbacks {
+		if arn == executionARN {
+			delete(lambdaDurableCallbacks, callbackID)
+		}
+	}
+	for _, callback := range lambdaDurableCallbackStore.Filter(func(callback lambdaDurableCallbackState) bool {
+		return callback.ExecutionARN == executionARN
+	}) {
+		lambdaDurableCallbackStore.Delete(callback.CallbackID)
+	}
 }
 
 // lambdaProcessDurableInvocationResponse consumes the private response
@@ -894,6 +920,7 @@ func lambdaDurableInvocationPayload(arn string) ([]byte, bool) {
 	operations := append([]lambdaDurableOperation(nil), execution.Operations...)
 	updated := append([]string(nil), execution.UpdatedIDs...)
 	execution.UpdatedIDs = nil
+	lambdaDurableStore.Put(execution.Arn, *execution)
 	payload, err := json.Marshal(map[string]any{
 		"DurableExecutionArn": arn,
 		"CheckpointToken":     execution.CheckpointToken,
@@ -934,13 +961,21 @@ func lambdaStartDurableCoordinator(arn string, function LambdaFunction) {
 	}
 	execution.CoordinatorRun = true
 	timeoutSeconds := lambdaDurableExecutionTimeout(execution.DurableConfig)
+	timeoutRemaining := time.Duration(timeoutSeconds) * time.Second
+	if timeoutSeconds > 0 {
+		started := time.Unix(0, int64(execution.StartTS*float64(time.Second)))
+		timeoutRemaining -= time.Since(started)
+		if timeoutRemaining < 0 {
+			timeoutRemaining = 0
+		}
+	}
 	changeCh := execution.ChangeCh
 	lambdaDurableMu.Unlock()
 
 	go func() {
 		var executionTimer <-chan time.Time
 		if timeoutSeconds > 0 {
-			timer := time.NewTimer(time.Duration(timeoutSeconds) * time.Second)
+			timer := time.NewTimer(timeoutRemaining)
 			defer timer.Stop()
 			executionTimer = timer.C
 		}
@@ -973,6 +1008,7 @@ func lambdaStartDurableCoordinator(arn string, function LambdaFunction) {
 						EventTimestamp: now,
 						TimedOutDet:    map[string]any{"Error": current.ErrorObj},
 					})
+					lambdaDeleteDurableCallbacks(current.Arn)
 					lambdaSignalDurableExecution(current)
 				}
 				lambdaDurableMu.Unlock()
@@ -1003,6 +1039,67 @@ func lambdaDurableExecutionTimeout(config map[string]any) int {
 		return timeout
 	}
 	return 0
+}
+
+func recoverLambdaDurableExecutions() {
+	lambdaDurableMu.Lock()
+	lambdaDurableExecs = map[string]*lambdaDurableExecution{}
+	lambdaDurableCallbacks = map[string]string{}
+	running := make([]*lambdaDurableExecution, 0)
+	for _, persisted := range lambdaDurableStore.List() {
+		execution := persisted
+		execution.ChangeCh = make(chan struct{}, 1)
+		execution.CoordinatorRun = false
+		lambdaDurableExecs[execution.Arn] = &execution
+		if execution.Status == "RUNNING" {
+			running = append(running, &execution)
+		}
+	}
+	callbacks := lambdaDurableCallbackStore.List()
+	for _, callback := range callbacks {
+		if execution := lambdaDurableExecs[callback.ExecutionARN]; execution != nil &&
+			execution.Status == "RUNNING" {
+			lambdaDurableCallbacks[callback.CallbackID] = callback.ExecutionARN
+		} else {
+			lambdaDurableCallbackStore.Delete(callback.CallbackID)
+		}
+	}
+	lambdaDurableMu.Unlock()
+
+	now := time.Now()
+	for _, execution := range running {
+		for _, operation := range execution.Operations {
+			if operation.Status != "STARTED" {
+				continue
+			}
+			if operation.Type == "WAIT" {
+				scheduledEnd, ok := operation.WaitDetails["ScheduledEndTimestamp"].(float64)
+				if !ok {
+					continue
+				}
+				deadline := time.Unix(0, int64(scheduledEnd*float64(time.Second)))
+				remaining := time.Until(deadline)
+				if deadline.Before(now) {
+					remaining = 0
+				}
+				go lambdaCompleteDurableWait(execution.Arn, operation.Id, remaining)
+			}
+		}
+		fnName, version, ok := lambdaParseDurableArn(execution.Arn)
+		if !ok {
+			continue
+		}
+		function, _, ok := lambdaResolveInvocationTarget(fnName, version)
+		if ok {
+			lambdaStartDurableCoordinator(execution.Arn, function)
+		}
+	}
+	for _, callback := range callbacks {
+		if _, ok := lambdaDurableCallbacks[callback.CallbackID]; ok &&
+			(callback.Timeout > 0 || callback.HeartbeatTimeout > 0) {
+			go lambdaMonitorDurableCallback(callback.CallbackID)
+		}
+	}
 }
 
 // lambdaParseDurableArn validates the DurableExecutionArn shape and extracts
@@ -1236,6 +1333,11 @@ func handleLambdaCheckpointDurableExecution(w http.ResponseWriter, r *http.Reque
 				op.callbackTimeout = time.Duration(timeoutSeconds) * time.Second
 				op.heartbeatTimeout = time.Duration(heartbeatSeconds) * time.Second
 				lambdaDurableCallbacks[callbackID] = arn
+				lambdaDurableCallbackStore.Put(callbackID, lambdaDurableCallbackState{
+					CallbackID: callbackID, ExecutionARN: arn, OperationID: op.Id,
+					StartedAt: op.callbackStartedAt, HeartbeatAt: op.callbackHeartbeatAt,
+					Timeout: op.callbackTimeout, HeartbeatTimeout: op.heartbeatTimeout,
+				})
 				if op.callbackTimeout > 0 || op.heartbeatTimeout > 0 {
 					callbackMonitors = append(callbackMonitors, callbackID)
 				}
@@ -1330,6 +1432,7 @@ func handleLambdaCheckpointDurableExecution(w http.ResponseWriter, r *http.Reque
 		de.ClientTokens[req.ClientToken] = token
 	}
 	ops := append([]lambdaDurableOperation(nil), de.Operations...)
+	lambdaDurableStore.Put(de.Arn, *de)
 	lambdaDurableMu.Unlock()
 	for _, pendingWait := range waits {
 		go lambdaCompleteDurableWait(arn, pendingWait.operationID, pendingWait.delay)
@@ -1375,15 +1478,20 @@ func lambdaMonitorDurableCallback(callbackID string) {
 			lambdaDurableMu.Unlock()
 			return
 		}
+		state, stored := lambdaDurableCallbackStore.Get(callbackID)
+		if !stored {
+			lambdaDurableMu.Unlock()
+			return
+		}
 		now := time.Now()
 		nextDeadline := time.Time{}
 		timeoutKind := ""
-		if operation.callbackTimeout > 0 {
-			nextDeadline = operation.callbackStartedAt.Add(operation.callbackTimeout)
+		if state.Timeout > 0 {
+			nextDeadline = state.StartedAt.Add(state.Timeout)
 			timeoutKind = "CallbackTimeout"
 		}
-		if operation.heartbeatTimeout > 0 {
-			heartbeatDeadline := operation.callbackHeartbeatAt.Add(operation.heartbeatTimeout)
+		if state.HeartbeatTimeout > 0 {
+			heartbeatDeadline := state.HeartbeatAt.Add(state.HeartbeatTimeout)
 			if nextDeadline.IsZero() || heartbeatDeadline.Before(nextDeadline) {
 				nextDeadline = heartbeatDeadline
 				timeoutKind = "CallbackHeartbeatTimeout"
@@ -1398,6 +1506,7 @@ func lambdaMonitorDurableCallback(callbackID string) {
 			}
 			execution.UpdatedIDs = append(execution.UpdatedIDs, operation.Id)
 			delete(lambdaDurableCallbacks, callbackID)
+			lambdaDurableCallbackStore.Delete(callbackID)
 			lambdaSignalDurableExecution(execution)
 			lambdaDurableMu.Unlock()
 			return
@@ -1653,6 +1762,7 @@ func handleLambdaStopDurableExecution(w http.ResponseWriter, r *http.Request) {
 		if req.Error != nil {
 			de.ErrorObj = req.Error
 		}
+		lambdaDeleteDurableCallbacks(de.Arn)
 		lambdaSignalDurableExecution(de)
 	}
 	lambdaDurableMu.Unlock()
@@ -1690,6 +1800,11 @@ func lambdaAdvanceCallback(callbackID, status, result string, errorObject map[st
 				return false
 			}
 			operation.callbackHeartbeatAt = time.Now()
+			state, exists := lambdaDurableCallbackStore.Get(callbackID)
+			if exists {
+				state.HeartbeatAt = operation.callbackHeartbeatAt
+				lambdaDurableCallbackStore.Put(callbackID, state)
+			}
 			return true
 		}
 		if operation.Status != "STARTED" {
@@ -1704,6 +1819,7 @@ func lambdaAdvanceCallback(callbackID, status, result string, errorObject map[st
 		}
 		de.UpdatedIDs = append(de.UpdatedIDs, operation.Id)
 		delete(lambdaDurableCallbacks, callbackID)
+		lambdaDurableCallbackStore.Delete(callbackID)
 		lambdaSignalDurableExecution(de)
 		return true
 	}

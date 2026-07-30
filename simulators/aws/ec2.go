@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -349,12 +348,11 @@ var (
 	// idempotency; the aws-sdk-go-v2 auto-fills and re-sends ClientToken on
 	// every retry).
 	ec2RunTokens sim.Store[EC2RunInstancesToken]
-	// ec2SubnetIPCursor tracks the next host octet to hand out per
-	// subnet for AllocateSubnetIP. Real EC2 maintains a per-subnet
-	// allocation pool; we approximate with a monotonic counter that
-	// starts at .4 (real AWS reserves .0/.1/.2/.3 + last for broadcast).
-	ec2SubnetIPCursor   = make(map[string]uint32)
-	ec2SubnetIPCursorMu sync.Mutex
+	// ec2SubnetIPCursor durably tracks the next host offset to hand out per
+	// subnet for AllocateSubnetIP. Amazon EC2 maintains this allocation state
+	// across control-plane restarts; persisting the cursor prevents a restarted
+	// simulator from assigning an address that is already in use.
+	ec2SubnetIPCursor sim.Store[uint32]
 )
 
 // AllocateSubnetIP picks the next available host address from a
@@ -372,22 +370,28 @@ func AllocateSubnetIP(subnetID string) (string, error) {
 	if perr != nil {
 		return "", fmt.Errorf("subnet %q has invalid CidrBlock %q: %v", subnetID, subnet.CidrBlock, perr)
 	}
-	ec2SubnetIPCursorMu.Lock()
-	defer ec2SubnetIPCursorMu.Unlock()
-	cursor, ok := ec2SubnetIPCursor[subnetID]
-	if !ok {
-		// AWS reserves the first 4 host addresses in every subnet
-		// (.0 network, .1 router, .2 DNS, .3 future use) and the
-		// final .255 for broadcast. Start handing out at .4.
-		cursor = 4
-	}
 	ones, bits := cidr.Mask.Size()
 	hostBits := bits - ones
 	if hostBits < 3 {
 		return "", fmt.Errorf("subnet %q CIDR %q too small for AWS host reservations", subnetID, subnet.CidrBlock)
 	}
 	maxHosts := uint32(1) << uint32(hostBits)
-	if cursor >= maxHosts-1 {
+	var cursor uint32
+	var exhausted bool
+	ec2SubnetIPCursor.Upsert(subnetID, func(next *uint32) {
+		if *next < 4 {
+			// AWS reserves the first four host addresses in every subnet
+			// (.0 network, .1 router, .2 DNS, .3 future use).
+			*next = 4
+		}
+		if *next >= maxHosts-1 {
+			exhausted = true
+			return
+		}
+		cursor = *next
+		*next++
+	})
+	if exhausted {
 		return "", fmt.Errorf("subnet %q exhausted: no host addresses left in %q", subnetID, subnet.CidrBlock)
 	}
 	base := cidr.IP.To4()
@@ -402,7 +406,6 @@ func AllocateSubnetIP(subnetID string) (string, error) {
 	ip[1] = byte(hostInt >> 16)
 	ip[2] = byte(hostInt >> 8)
 	ip[3] = byte(hostInt)
-	ec2SubnetIPCursor[subnetID] = cursor + 1
 	return ip.String(), nil
 }
 
@@ -474,6 +477,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2VolumeMods = sim.MakeStore[EC2VolumeModification](srv.DB(), "ec2_volume_modifications")
 	ec2Snapshots = sim.MakeStore[EC2Snapshot](srv.DB(), "ec2_snapshots")
 	ec2RunTokens = sim.MakeStore[EC2RunInstancesToken](srv.DB(), "ec2_run_instances_tokens")
+	ec2SubnetIPCursor = sim.MakeStore[uint32](srv.DB(), "ec2_subnet_ip_cursors")
 
 	// VPC
 	r.Register("DescribeAccountAttributes", handleDescribeAccountAttributes)
@@ -854,11 +858,9 @@ func handleDeleteVpc(w http.ResponseWriter, r *http.Request) {
 	for _, rt := range ec2RouteTables.Filter(func(rt EC2RouteTable) bool { return rt.VpcId == id }) {
 		ec2RouteTables.Delete(rt.RouteTableId)
 	}
-	ec2SubnetIPCursorMu.Lock()
 	for _, s := range ec2Subnets.Filter(func(s EC2Subnet) bool { return s.VpcId == id }) {
-		delete(ec2SubnetIPCursor, s.SubnetId)
+		ec2SubnetIPCursor.Delete(s.SubnetId)
 	}
-	ec2SubnetIPCursorMu.Unlock()
 	ec2Vpcs.Delete(id)
 
 	w.Header().Set("Content-Type", "text/xml")

@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -30,6 +32,7 @@ var (
 	caCertFile  string
 	tfState     string
 	tfEndpoint  string
+	simDataDir  string
 )
 
 func TestMain(m *testing.M) {
@@ -50,6 +53,7 @@ func TestMain(m *testing.M) {
 	}
 	defer os.RemoveAll(stateDir)
 	tfState = filepath.Join(stateDir, "terraform.tfstate")
+	simDataDir = filepath.Join(stateDir, "simulator-data")
 	binaryPath = filepath.Join(stateDir, "simulator-aws")
 
 	if configured := os.Getenv("SOCKERLESS_AWS_SIMULATOR_BINARY"); configured != "" {
@@ -74,15 +78,7 @@ func TestMain(m *testing.M) {
 	simPort = ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 
-	simCmd = exec.Command(binaryPath)
-	simCmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort))
-	simCmd.Stdout = os.Stdout
-	simCmd.Stderr = os.Stderr
-	// Own process group so the whole simulator subtree is reaped with one
-	// kill(-pgid) — including on Ctrl-C / the go-test hard-timeout SIGQUIT,
-	// which aborts the binary without running the post-m.Run() cleanup below.
-	simCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := simCmd.Start(); err != nil {
+	if err := startTerraformSimulator(); err != nil {
 		log.Fatalf("Failed to start simulator: %v", err)
 	}
 	reapSubprocessesOnSignal()
@@ -155,6 +151,32 @@ func TestMain(m *testing.M) {
 	reapGroup(gatewayCmd)
 	reapGroup(simCmd)
 	os.Exit(code)
+}
+
+func startTerraformSimulator() error {
+	simCmd = exec.Command(binaryPath)
+	simCmd.Env = append(os.Environ(),
+		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort),
+		"SIM_DNS_PORT=0",
+		"SIM_PERSIST=true",
+		"SIM_DATA_DIR="+simDataDir,
+	)
+	simCmd.Stdout = os.Stdout
+	simCmd.Stderr = os.Stderr
+	// Own process group so the whole simulator subtree is reaped with one
+	// kill(-pgid) — including on Ctrl-C / the go-test hard-timeout SIGQUIT,
+	// which aborts the binary without running the post-m.Run() cleanup below.
+	simCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := simCmd.Start(); err != nil {
+		return err
+	}
+	return waitForHealth(fmt.Sprintf("http://127.0.0.1:%d/health", simPort))
+}
+
+func restartTerraformSimulator(t *testing.T) {
+	t.Helper()
+	reapGroup(simCmd)
+	require.NoError(t, startTerraformSimulator())
 }
 
 // reapGroup gives a Setpgid'd subprocess group time to shut down cleanly before

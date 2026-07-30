@@ -36,17 +36,15 @@ var (
 	r53HealthChecks    sim.Store[r53StoredHealthCheck]
 	r53TrafficPolicies sim.Store[r53StoredTrafficPolicy]
 	r53QueryConfigs    sim.Store[r53StoredQueryLoggingConfig]
+	r53ZoneVPCs        sim.Store[[]R53VPC]
 	r53ExtraMu         sync.Mutex
-	// r53ZoneVPCs maps a hosted-zone id → the VPCs associated with it
-	// (for private zones). Stored apart from the zone row so the existing
-	// zone shape is untouched.
-	r53ZoneVPCs = sync.Map{}
 )
 
 func registerRoute53Extra(mux *sim.Server) {
 	r53HealthChecks = sim.MakeStore[r53StoredHealthCheck](mux.DB(), "route53_health_checks")
 	r53TrafficPolicies = sim.MakeStore[r53StoredTrafficPolicy](mux.DB(), "route53_traffic_policies")
 	r53QueryConfigs = sim.MakeStore[r53StoredQueryLoggingConfig](mux.DB(), "route53_query_logging")
+	r53ZoneVPCs = sim.MakeStore[[]R53VPC](mux.DB(), "route53_zone_vpcs")
 
 	hcResource := cloudTrailRESTResource("AWS::Route53::HealthCheck", "id")
 	tpResource := cloudTrailRESTResource("AWS::Route53::TrafficPolicy", "id")
@@ -657,12 +655,8 @@ type R53ListHostedZonesByVPCResponse struct {
 // ---------- VPC association handlers ----------
 
 func r53ZoneVPCList(zoneID string) []R53VPC {
-	if v, ok := r53ZoneVPCs.Load(zoneID); ok {
-		if list, ok := v.([]R53VPC); ok {
-			return list
-		}
-	}
-	return nil
+	list, _ := r53ZoneVPCs.Get(zoneID)
+	return list
 }
 
 func handleR53AssociateVPC(w http.ResponseWriter, r *http.Request) {
@@ -690,7 +684,7 @@ func handleR53AssociateVPC(w http.ResponseWriter, r *http.Request) {
 	if !exists {
 		list = append(list, req.VPC)
 	}
-	r53ZoneVPCs.Store(id, list)
+	r53ZoneVPCs.Put(id, list)
 	change := newR53Change("INSYNC", req.Comment)
 	r53Changes.Put(strings.TrimPrefix(change.Id, "/change/"), r53StoredChange{Info: change})
 	r53WriteXML(w, http.StatusOK, R53AssociateVPCResponse{Xmlns: r53Namespace, ChangeInfo: change})
@@ -717,7 +711,7 @@ func handleR53DisassociateVPC(w http.ResponseWriter, r *http.Request) {
 			out = append(out, v)
 		}
 	}
-	r53ZoneVPCs.Store(id, out)
+	r53ZoneVPCs.Put(id, out)
 	change := newR53Change("INSYNC", req.Comment)
 	r53Changes.Put(strings.TrimPrefix(change.Id, "/change/"), r53StoredChange{Info: change})
 	r53WriteXML(w, http.StatusOK, R53DisassociateVPCResponse{Xmlns: r53Namespace, ChangeInfo: change})

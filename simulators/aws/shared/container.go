@@ -119,7 +119,8 @@ var (
 
 // InitDocker initializes the shared Docker client and verifies connectivity.
 // Must be called at simulator startup. Fatally exits if Docker is not available.
-func InitDocker(provider string) *client.Client {
+func InitDocker(provider string, preserveWorkloads bool, stateDir string) *client.Client {
+	configureSimulatorIdentity(provider, stateDir)
 	dockerClientOnce.Do(func() {
 		dockerClient, dockerClientErr = client.NewClientWithOpts(
 			client.FromEnv,
@@ -138,9 +139,11 @@ func InitDocker(provider string) *client.Client {
 		fmt.Fprintf(os.Stderr, "Simulators require Docker or Podman for workload execution. Install Docker/Podman, or set SIM_RUNTIME=process only for explicit API-only runs that do not execute workloads.\n")
 		os.Exit(1)
 	}
-	if err := startContainerReaper(provider); err != nil {
-		fmt.Fprintf(os.Stderr, "FATAL: %v\n", err)
-		os.Exit(1)
+	if !preserveWorkloads {
+		if err := startContainerReaper(provider); err != nil {
+			fmt.Fprintf(os.Stderr, "FATAL: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	return dockerClient
 }
@@ -271,6 +274,134 @@ func StartContainerSync(cfg ContainerConfig, sink LogSink) (*ContainerHandle, er
 		cli:         cli,
 	}
 	return handle, nil
+}
+
+// ExistingContainer describes a workload container that outlived a persistent
+// simulator control-plane process. Service slices use the same cloud-resource
+// labels they supplied at creation to reclaim ownership after restart.
+type ExistingContainer struct {
+	ID             string
+	Running        bool
+	PublishedPorts map[int]int
+	Labels         map[string]string
+}
+
+// FindExistingContainers returns every container carrying all requested labels,
+// including exited containers whose terminal result has not yet been reconciled
+// into the durable cloud resource.
+func FindExistingContainers(labels map[string]string) ([]ExistingContainer, error) {
+	if dockerClient == nil {
+		return nil, fmt.Errorf("docker client not initialized")
+	}
+	labelFilters := filters.NewArgs()
+	if simulatorStateID != "" {
+		labelFilters.Add("label", "sockerless-sim-state="+simulatorStateID)
+	}
+	for key, value := range labels {
+		if value == "" {
+			labelFilters.Add("label", key)
+		} else {
+			labelFilters.Add("label", key+"="+value)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summaries, err := dockerClient.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: labelFilters,
+	})
+	if err != nil {
+		return nil, err
+	}
+	found := make([]ExistingContainer, 0, len(summaries))
+	for _, summary := range summaries {
+		inspection, err := dockerClient.ContainerInspect(ctx, summary.ID)
+		if err != nil {
+			return nil, err
+		}
+		entry := ExistingContainer{
+			ID:             summary.ID,
+			Running:        inspection.State != nil && inspection.State.Running,
+			PublishedPorts: map[int]int{},
+			Labels:         map[string]string{},
+		}
+		if inspection.Config != nil {
+			for key, value := range inspection.Config.Labels {
+				entry.Labels[key] = value
+			}
+		}
+		if inspection.NetworkSettings != nil {
+			for containerPort, bindings := range inspection.NetworkSettings.Ports {
+				if len(bindings) == 0 {
+					continue
+				}
+				publicPort, err := strconv.Atoi(bindings[0].HostPort)
+				if err == nil {
+					entry.PublishedPorts[containerPort.Int()] = publicPort
+				}
+			}
+		}
+		found = append(found, entry)
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].ID < found[j].ID })
+	return found, nil
+}
+
+// HasPersistentWorkloadIdentity reports whether workload ownership is scoped
+// to a durable simulator state directory.
+func HasPersistentWorkloadIdentity() bool {
+	return simulatorStateID != ""
+}
+
+// RemoveExistingContainer stops and removes a workload whose owning
+// control-plane process can no longer drive it.
+func RemoveExistingContainer(containerID string) error {
+	if dockerClient == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	timeout := 5
+	_ = dockerClient.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+	return dockerClient.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+}
+
+// StartExistingContainer resumes an exited persistent workload container
+// without replacing it, preserving its filesystem, mounts, identity, and port
+// bindings.
+func StartExistingContainer(containerID string) error {
+	if dockerClient == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return dockerClient.ContainerStart(ctx, containerID, container.StartOptions{})
+}
+
+// AdoptContainer attaches lifecycle observation to a container created by an
+// earlier persistent simulator process. It never restarts the workload; callers
+// decide whether an exited cloud workload should remain terminal or resume.
+func AdoptContainer(containerID string, cfg ContainerConfig, sink LogSink) (*ContainerHandle, error) {
+	if dockerClient == nil {
+		return nil, fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	resultCh := make(chan ProcessResult, 1)
+	managedContainers.Store(containerID, true)
+	go func() {
+		result := waitAndCaptureLogs(ctx, dockerClient, containerID, cfg, sink)
+		managedContainers.Delete(containerID)
+		removeCtx, removeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer removeCancel()
+		_ = dockerClient.ContainerRemove(removeCtx, containerID, container.RemoveOptions{Force: true})
+		resultCh <- result
+	}()
+	return &ContainerHandle{
+		ContainerID: containerID,
+		cancel:      cancel,
+		done:        resultCh,
+		cli:         dockerClient,
+	}, nil
 }
 
 // StopContainer stops a running container by ID.

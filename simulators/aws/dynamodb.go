@@ -64,14 +64,17 @@ type DDBTable struct {
 	TableClassSummary         *DDBTableClassSummary     `json:"TableClassSummary,omitempty"`
 	WarmThroughput            *DDBWarmThroughput        `json:"WarmThroughput,omitempty"`
 	SSEDescription            *DDBSSEDescription        `json:"SSEDescription,omitempty"`
+}
 
-	// PITR + TTL state — Update* persists here so Describe* reads back
-	// the actual state (real AWS round-trips these; terraform polls
-	// Describe after Update for convergence).
-	PITRStatus       string  `json:"-"` // ENABLED / DISABLED
-	TTLStatus        string  `json:"-"` // ENABLED / DISABLED
-	TTLAttributeName string  `json:"-"`
-	Tags             []SMTag `json:"-"`
+// DDBTableSettings holds table state that DynamoDB exposes through APIs other
+// than DescribeTable. Keeping it in a separate durable record prevents
+// simulator-only fields from appearing in the service response while allowing
+// TTL, point-in-time recovery, and tags to survive SQLite serialization.
+type DDBTableSettings struct {
+	PITRStatus       string  `json:"pitrStatus,omitempty"` // ENABLED / DISABLED
+	TTLStatus        string  `json:"ttlStatus,omitempty"`  // ENABLED / DISABLED
+	TTLAttributeName string  `json:"ttlAttributeName,omitempty"`
+	Tags             []SMTag `json:"tags,omitempty"`
 }
 
 // DDBSSEDescription mirrors the SDK SSEDescription returned by DescribeTable for
@@ -170,6 +173,11 @@ type DDBBillingModeSummary struct {
 
 var (
 	ddbTables sim.Store[DDBTable]
+	// ddbTableSettings holds control-plane state returned outside
+	// DescribeTable. Mutations use ddbTableSettingsMu so simultaneous tag,
+	// TTL, and PITR updates cannot overwrite one another.
+	ddbTableSettings   sim.Store[DDBTableSettings]
+	ddbTableSettingsMu sync.Mutex
 	// ddbItems holds per-table item maps. Keyed by `<table>/<itemKey>`,
 	// where itemKey is a deterministic encoding of the primary-key
 	// attribute values (HASH#<value> or HASH#<v>|RANGE#<v>).
@@ -236,6 +244,7 @@ func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 		"BatchGetItem", "BatchWriteItem", "TransactWriteItems", "TransactGetItems",
 		"ExecuteStatement", "ExecuteTransaction", "BatchExecuteStatement")
 	ddbTables = sim.MakeStore[DDBTable](srv.DB(), "ddb_tables")
+	ddbTableSettings = sim.MakeStore[DDBTableSettings](srv.DB(), "ddb_table_settings")
 	ddbItems = sim.MakeStore[map[string]any](srv.DB(), "ddb_items")
 	ddbItemNames = sim.MakeStore[string](srv.DB(), "ddb_item_names")
 
@@ -280,8 +289,8 @@ func handleDDBDescribeLimits(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleDDBUpdateContinuousBackups enables/disables PITR. Persists to
-// DDBTable.PITRStatus so DescribeContinuousBackups reads back the
+// handleDDBUpdateContinuousBackups enables/disables PITR. Persists to the
+// table's out-of-band settings so DescribeContinuousBackups reads back the
 // updated state. Real DynamoDB returns the new ContinuousBackupsDescription;
 // terraform-provider-aws polls DescribeContinuousBackups after this to
 // confirm convergence.
@@ -296,7 +305,7 @@ func handleDDBUpdateContinuousBackups(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	t, ok := ddbTables.Get(req.TableName)
+	_, ok := ddbTables.Get(req.TableName)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
@@ -306,8 +315,11 @@ func handleDDBUpdateContinuousBackups(w http.ResponseWriter, r *http.Request) {
 	if req.PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled {
 		status = "ENABLED"
 	}
-	t.PITRStatus = status
-	ddbTables.Put(req.TableName, t)
+	ddbTableSettingsMu.Lock()
+	settings, _ := ddbTableSettings.Get(req.TableName)
+	settings.PITRStatus = status
+	ddbTableSettings.Put(req.TableName, settings)
+	ddbTableSettingsMu.Unlock()
 	writeDDBJSON(w, http.StatusOK, map[string]any{
 		"ContinuousBackupsDescription": map[string]any{
 			"ContinuousBackupsStatus": "ENABLED",
@@ -319,8 +331,8 @@ func handleDDBUpdateContinuousBackups(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDDBUpdateTimeToLive enables/disables TTL on a table attribute.
-// Persists to DDBTable.TTLStatus + AttributeName so DescribeTimeToLive
-// reads back the updated state.
+// Persists to the table's out-of-band settings so DescribeTimeToLive reads
+// back the updated state.
 func handleDDBUpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName               string `json:"TableName"`
@@ -333,7 +345,7 @@ func handleDDBUpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	t, ok := ddbTables.Get(req.TableName)
+	_, ok := ddbTables.Get(req.TableName)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
@@ -343,9 +355,12 @@ func handleDDBUpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
 	if req.TimeToLiveSpecification.Enabled {
 		status = "ENABLED"
 	}
-	t.TTLStatus = status
-	t.TTLAttributeName = req.TimeToLiveSpecification.AttributeName
-	ddbTables.Put(req.TableName, t)
+	ddbTableSettingsMu.Lock()
+	settings, _ := ddbTableSettings.Get(req.TableName)
+	settings.TTLStatus = status
+	settings.TTLAttributeName = req.TimeToLiveSpecification.AttributeName
+	ddbTableSettings.Put(req.TableName, settings)
+	ddbTableSettingsMu.Unlock()
 	writeDDBJSON(w, http.StatusOK, map[string]any{
 		"TimeToLiveSpecification": map[string]any{
 			"Enabled":       req.TimeToLiveSpecification.Enabled,
@@ -371,7 +386,7 @@ func handleDDBTagResource(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "ResourceArn is required", http.StatusBadRequest)
 		return
 	}
-	name, t, ok := ddbTableByArn(req.ResourceArn)
+	name, _, ok := ddbTableByArn(req.ResourceArn)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: %s", req.ResourceArn)
@@ -381,15 +396,18 @@ func handleDDBTagResource(w http.ResponseWriter, r *http.Request) {
 	for _, tag := range req.Tags {
 		override[tag.Key] = tag.Value
 	}
-	merged := make([]SMTag, 0, len(t.Tags)+len(req.Tags))
-	for _, tag := range t.Tags {
+	ddbTableSettingsMu.Lock()
+	settings, _ := ddbTableSettings.Get(name)
+	merged := make([]SMTag, 0, len(settings.Tags)+len(req.Tags))
+	for _, tag := range settings.Tags {
 		if _, replaced := override[tag.Key]; !replaced {
 			merged = append(merged, tag)
 		}
 	}
 	merged = append(merged, req.Tags...)
-	t.Tags = merged
-	ddbTables.Put(name, t)
+	settings.Tags = merged
+	ddbTableSettings.Put(name, settings)
+	ddbTableSettingsMu.Unlock()
 	writeDDBJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -408,7 +426,7 @@ func handleDDBUntagResource(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "ResourceArn is required", http.StatusBadRequest)
 		return
 	}
-	name, t, ok := ddbTableByArn(req.ResourceArn)
+	name, _, ok := ddbTableByArn(req.ResourceArn)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: %s", req.ResourceArn)
@@ -418,19 +436,22 @@ func handleDDBUntagResource(w http.ResponseWriter, r *http.Request) {
 	for _, k := range req.TagKeys {
 		remove[k] = true
 	}
-	filtered := make([]SMTag, 0, len(t.Tags))
-	for _, tag := range t.Tags {
+	ddbTableSettingsMu.Lock()
+	settings, _ := ddbTableSettings.Get(name)
+	filtered := make([]SMTag, 0, len(settings.Tags))
+	for _, tag := range settings.Tags {
 		if !remove[tag.Key] {
 			filtered = append(filtered, tag)
 		}
 	}
-	t.Tags = filtered
-	ddbTables.Put(name, t)
+	settings.Tags = filtered
+	ddbTableSettings.Put(name, settings)
+	ddbTableSettingsMu.Unlock()
 	writeDDBJSON(w, http.StatusOK, map[string]any{})
 }
 
 // handleDDBDescribeContinuousBackups returns the PITR status for a
-// table from the persisted DDBTable.PITRStatus. New tables default to
+// table from its persisted out-of-band settings. New tables default to
 // DISABLED. terraform-provider-aws polls this after UpdateContinuousBackups
 // for convergence.
 func handleDDBDescribeContinuousBackups(w http.ResponseWriter, r *http.Request) {
@@ -441,13 +462,14 @@ func handleDDBDescribeContinuousBackups(w http.ResponseWriter, r *http.Request) 
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	t, ok := ddbTables.Get(req.TableName)
+	_, ok := ddbTables.Get(req.TableName)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
-	pitr := t.PITRStatus
+	settings, _ := ddbTableSettings.Get(req.TableName)
+	pitr := settings.PITRStatus
 	if pitr == "" {
 		pitr = "DISABLED"
 	}
@@ -461,8 +483,8 @@ func handleDDBDescribeContinuousBackups(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// handleDDBDescribeTimeToLive returns TTL config for a table from the
-// persisted DDBTable.TTLStatus + AttributeName. terraform-provider-aws
+// handleDDBDescribeTimeToLive returns TTL config from the table's persisted
+// out-of-band settings. terraform-provider-aws
 // polls this after UpdateTimeToLive until status matches.
 func handleDDBDescribeTimeToLive(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -472,28 +494,28 @@ func handleDDBDescribeTimeToLive(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	t, ok := ddbTables.Get(req.TableName)
+	_, ok := ddbTables.Get(req.TableName)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
-	status := t.TTLStatus
+	settings, _ := ddbTableSettings.Get(req.TableName)
+	status := settings.TTLStatus
 	if status == "" {
 		status = "DISABLED"
 	}
 	desc := map[string]any{"TimeToLiveStatus": status}
-	if t.TTLAttributeName != "" {
-		desc["AttributeName"] = t.TTLAttributeName
+	if settings.TTLAttributeName != "" {
+		desc["AttributeName"] = settings.TTLAttributeName
 	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{
 		"TimeToLiveDescription": desc,
 	})
 }
 
-// handleDDBListTagsOfResource returns tag list for a table ARN from
-// the persisted DDBTable.Tags. Real DynamoDB tracks tags out-of-band but
-// the sim keeps them on the table row for the same lookup latency.
+// handleDDBListTagsOfResource returns the persisted out-of-band tag list for a
+// table ARN, matching how real DynamoDB keeps tags outside DescribeTable.
 func handleDDBListTagsOfResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string `json:"ResourceArn"`
@@ -506,14 +528,15 @@ func handleDDBListTagsOfResource(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "ResourceArn is required", http.StatusBadRequest)
 		return
 	}
-	_, t, ok := ddbTableByArn(req.ResourceArn)
+	name, _, ok := ddbTableByArn(req.ResourceArn)
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: %s", req.ResourceArn)
 		return
 	}
-	tags := make([]map[string]any, 0, len(t.Tags))
-	for _, tag := range t.Tags {
+	settings, _ := ddbTableSettings.Get(name)
+	tags := make([]map[string]any, 0, len(settings.Tags))
+	for _, tag := range settings.Tags {
 		tags = append(tags, map[string]any{"Key": tag.Key, "Value": tag.Value})
 	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{
@@ -643,11 +666,11 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 			KMSMasterKeyArn: req.SSESpecification.KMSMasterKeyId,
 		}
 	}
+	ddbTables.Put(req.TableName, table)
 	// Tags set at create time round-trip through ListTagsOfResource — real
 	// DynamoDB accepts Tags on CreateTable; dropping them makes every plan
 	// re-add them.
-	table.Tags = req.Tags
-	ddbTables.Put(req.TableName, table)
+	ddbTableSettings.Put(req.TableName, DDBTableSettings{Tags: req.Tags})
 	writeDDBJSON(w, http.StatusOK, map[string]any{"TableDescription": table})
 }
 
@@ -789,6 +812,7 @@ func handleDDBDeleteTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ddbTables.Delete(req.TableName)
+	ddbTableSettings.Delete(req.TableName)
 	// Real DeleteTable deletes the table AND all of its items — purge the
 	// item stores so the rows don't survive into a same-named recreate.
 	// Keys are "<table>/<hash>[|<rng>]"; the trailing "/" prevents a prefix

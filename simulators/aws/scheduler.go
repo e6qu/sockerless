@@ -55,6 +55,8 @@ var (
 	// schedule-group ARN), independent of the resource record so tag CRUD does
 	// not have to mutate the Schedule/ScheduleGroup rows.
 	scheduleTags sim.Store[[]SchedulerTag]
+	// schedulerFireRecs persists the next delivery time and completion state
+	// for each schedule so one-time schedules do not fire again after restart.
 	// schedulesMu guards reassignment of the package-level schedules store
 	// (registration) against the once-per-second firing-loop goroutine that
 	// reads it — they live in different goroutines when several sims are built
@@ -70,11 +72,18 @@ func schedulerStore() sim.Store[Schedule] {
 	return schedules
 }
 
+func schedulerFireStore() sim.Store[schedulerFireRec] {
+	schedulesMu.RLock()
+	defer schedulesMu.RUnlock()
+	return schedulerFireRecs
+}
+
 func registerScheduler(srv *sim.Server) {
 	schedulesMu.Lock()
 	schedules = sim.MakeStore[Schedule](srv.DB(), "scheduler_schedules")
 	scheduleGroups = sim.MakeStore[ScheduleGroup](srv.DB(), "scheduler_schedule_groups")
 	scheduleTags = sim.MakeStore[[]SchedulerTag](srv.DB(), "scheduler_tags")
+	schedulerFireRecs = sim.MakeStore[schedulerFireRec](srv.DB(), "scheduler_fire_records")
 	schedulesMu.Unlock()
 
 	srv.HandleFunc("POST /schedules/{Name}", schedulerRecorded("CreateSchedule", handleSchedulerCreateSchedule))
@@ -353,6 +362,7 @@ func handleSchedulerUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	existing.FlexibleTimeWindow = req.FlexibleTimeWindow
 	existing.LastModificationDate = float64(time.Now().Unix())
 	schedules.Put(key, existing)
+	schedulerFireStore().Delete(key)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"ScheduleArn": existing.Arn})
 }
 
@@ -366,6 +376,7 @@ func handleSchedulerDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	schedules.Delete(key)
+	schedulerFireStore().Delete(key)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

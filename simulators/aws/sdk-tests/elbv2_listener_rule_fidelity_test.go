@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/acm"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbtypes "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
@@ -43,16 +42,6 @@ func elbv2FidLoadBalancer(t *testing.T, elb *elbv2.Client, subnetID, name string
 	return aws.ToString(lb.LoadBalancers[0].LoadBalancerArn)
 }
 
-func elbv2FidCert(t *testing.T, domain string) string {
-	t.Helper()
-	c := acm.NewFromConfig(sdkConfig(), func(o *acm.Options) { o.BaseEndpoint = aws.String(baseURL) })
-	out, err := c.RequestCertificate(ctx, &acm.RequestCertificateInput{
-		DomainName: aws.String(domain), ValidationMethod: "DNS",
-	})
-	require.NoError(t, err)
-	return aws.ToString(out.CertificateArn)
-}
-
 // TestELBv2_ListenerAuthAndForwardSDK covers the authenticate-oidc default
 // action (the Pomerium/IAP proxy ALB shape), the weighted ForwardConfig on a
 // rule, and SetRulePriorities — none of which round-tripped before.
@@ -62,11 +51,12 @@ func TestELBv2_ListenerAuthAndForwardSDK(t *testing.T) {
 	tg1 := elbv2FidTargetGroup(t, elb, vpcID, "fid-auth-tg1")
 	tg2 := elbv2FidTargetGroup(t, elb, vpcID, "fid-auth-tg2")
 	lbArn := elbv2FidLoadBalancer(t, elb, subnetID, "fid-auth-alb", elbtypes.LoadBalancerTypeEnumApplication)
-	certArn := elbv2FidCert(t, "auth.example.test")
+	certArn := importELBv2Certificate(t, "auth.example.test")
+	listenerPort := availableELBv2ListenerPort(t)
 
 	// HTTPS listener whose default action authenticates via OIDC, then forwards.
 	ln, err := elb.CreateListener(ctx, &elbv2.CreateListenerInput{
-		LoadBalancerArn: aws.String(lbArn), Protocol: elbtypes.ProtocolEnumHttps, Port: aws.Int32(443),
+		LoadBalancerArn: aws.String(lbArn), Protocol: elbtypes.ProtocolEnumHttps, Port: aws.Int32(listenerPort),
 		Certificates: []elbtypes.Certificate{{CertificateArn: aws.String(certArn)}},
 		SslPolicy:    aws.String("ELBSecurityPolicy-TLS13-1-2-2021-06"),
 		DefaultActions: []elbtypes.Action{
@@ -157,12 +147,13 @@ func TestELBv2_ListenerCertsAndMutualAuthSDK(t *testing.T) {
 	vpcID, subnetID := elbv2FidVPCSubnet(t, "10.161.0.0/16", "10.161.1.0/24")
 	tg := elbv2FidTargetGroup(t, elb, vpcID, "fid-cert-tg")
 	lbArn := elbv2FidLoadBalancer(t, elb, subnetID, "fid-cert-alb", elbtypes.LoadBalancerTypeEnumApplication)
-	defCert := elbv2FidCert(t, "default.example.test")
-	sniCert := elbv2FidCert(t, "sni.example.test")
+	defCert := importELBv2Certificate(t, "default.example.test")
+	sniCert := importELBv2Certificate(t, "sni.example.test")
+	listenerPort := availableELBv2ListenerPort(t)
 
 	ignoreExpiry := true
 	ln, err := elb.CreateListener(ctx, &elbv2.CreateListenerInput{
-		LoadBalancerArn: aws.String(lbArn), Protocol: elbtypes.ProtocolEnumHttps, Port: aws.Int32(443),
+		LoadBalancerArn: aws.String(lbArn), Protocol: elbtypes.ProtocolEnumHttps, Port: aws.Int32(listenerPort),
 		Certificates: []elbtypes.Certificate{{CertificateArn: aws.String(defCert)}},
 		SslPolicy:    aws.String("ELBSecurityPolicy-2016-08"),
 		MutualAuthentication: &elbtypes.MutualAuthenticationAttributes{

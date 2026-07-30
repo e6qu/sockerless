@@ -84,7 +84,7 @@ func registerECSDaemons(r *sim.AWSRouter, srv *sim.Server) {
 	ecsDaemonDeployments = sim.MakeStore[ECSDaemonDeployment](srv.DB(), "ecs_daemon_deployments")
 	ecsDaemonRevisions = sim.MakeStore[ECSDaemonRevision](srv.DB(), "ecs_daemon_revisions")
 	ecsDaemonTaskDefinitions = sim.MakeStore[ECSDaemonTaskDefinition](srv.DB(), "ecs_daemon_task_definitions")
-	ecsDaemonTDRevisions = make(map[string]int)
+	ecsDaemonTDRebuildRevisionIndex()
 
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateDaemon", handleECSCreateDaemon)
 	r.Register("AmazonEC2ContainerServiceV20141113.DeleteDaemon", handleECSDeleteDaemon)
@@ -98,6 +98,17 @@ func registerECSDaemons(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.DeleteDaemonTaskDefinition", handleECSDeleteDaemonTaskDefinition)
 	r.Register("AmazonEC2ContainerServiceV20141113.DescribeDaemonTaskDefinition", handleECSDescribeDaemonTaskDefinition)
 	r.Register("AmazonEC2ContainerServiceV20141113.ListDaemonTaskDefinitions", handleECSListDaemonTaskDefinitions)
+}
+
+func ecsDaemonTDRebuildRevisionIndex() {
+	ecsDaemonTDRevisionMu.Lock()
+	defer ecsDaemonTDRevisionMu.Unlock()
+	ecsDaemonTDRevisions = make(map[string]int)
+	for _, definition := range ecsDaemonTaskDefinitions.List() {
+		if definition.Family != "" && definition.Revision > ecsDaemonTDRevisions[definition.Family] {
+			ecsDaemonTDRevisions[definition.Family] = definition.Revision
+		}
+	}
 }
 
 func handleECSCreateDaemon(w http.ResponseWriter, r *http.Request) {

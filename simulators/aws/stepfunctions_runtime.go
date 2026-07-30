@@ -412,7 +412,7 @@ func sfnInvokeTaskResource(resource string, input any, inputJSON string, context
 	}
 	if strings.HasPrefix(resource, "arn:aws:states:::codebuild:") ||
 		strings.HasPrefix(resource, "arn:aws:states:::aws-sdk:codebuild:") {
-		return sfnInvokeCodeBuild(resource, input, cancel)
+		return sfnInvokeCodeBuild(resource, input, context, cancel)
 	}
 	return nil, &sfnExecutionError{
 		Name:  "States.TaskFailed",
@@ -421,19 +421,41 @@ func sfnInvokeTaskResource(resource string, input any, inputJSON string, context
 }
 
 func sfnInvokeECSRunTask(resource string, input, context any, cancel <-chan struct{}, heartbeat time.Duration) (any, *sfnExecutionError) {
-	result, taskErr := sfnInvokeJSONService(handleECSRunTask, input)
-	if taskErr != nil {
-		return nil, taskErr
+	var (
+		tasks    []ECSTask
+		failures []any
+	)
+	if checkpoint, ok := sfnLoadTaskCheckpoint(context, resource); ok && strings.HasSuffix(resource, ".sync") {
+		for _, taskID := range checkpoint.ResourceIDs {
+			task, exists := ecsTasks.Get(taskID)
+			if !exists {
+				return nil, &sfnExecutionError{Name: "States.TaskFailed", Cause: "checkpointed Amazon ECS task no longer exists: " + taskID}
+			}
+			tasks = append(tasks, task)
+		}
+	} else {
+		result, taskErr := sfnInvokeJSONService(handleECSRunTask, input)
+		if taskErr != nil {
+			return nil, taskErr
+		}
+		response, ok := result.(map[string]any)
+		if !ok {
+			return nil, &sfnExecutionError{Name: "States.Runtime", Cause: "Amazon ECS returned an invalid RunTask response"}
+		}
+		var decodeErr *sfnExecutionError
+		tasks, decodeErr = sfnDecodeECSTasks(response["tasks"])
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		failures, _ = response["failures"].([]any)
+		if strings.HasSuffix(resource, ".sync") {
+			taskIDs := make([]string, 0, len(tasks))
+			for _, task := range tasks {
+				taskIDs = append(taskIDs, task.TaskID())
+			}
+			sfnStoreTaskCheckpoint(context, resource, taskIDs)
+		}
 	}
-	response, ok := result.(map[string]any)
-	if !ok {
-		return nil, &sfnExecutionError{Name: "States.Runtime", Cause: "Amazon ECS returned an invalid RunTask response"}
-	}
-	tasks, decodeErr := sfnDecodeECSTasks(response["tasks"])
-	if decodeErr != nil {
-		return nil, decodeErr
-	}
-	failures, _ := response["failures"].([]any)
 	optimized := !strings.Contains(resource, ":::aws-sdk:")
 	if optimized && len(failures) > 0 {
 		return nil, &sfnExecutionError{
@@ -519,7 +541,7 @@ func sfnStopECSTasks(tasks []ECSTask, reason string) {
 	}
 }
 
-func sfnInvokeCodeBuild(resource string, input any, cancel <-chan struct{}) (any, *sfnExecutionError) {
+func sfnInvokeCodeBuild(resource string, input, context any, cancel <-chan struct{}) (any, *sfnExecutionError) {
 	action := strings.TrimPrefix(resource, "arn:aws:states:::codebuild:")
 	if strings.HasPrefix(resource, "arn:aws:states:::aws-sdk:codebuild:") {
 		action = strings.TrimPrefix(resource, "arn:aws:states:::aws-sdk:codebuild:")
@@ -548,6 +570,18 @@ func sfnInvokeCodeBuild(resource string, input any, cancel <-chan struct{}) (any
 	default:
 		return nil, &sfnExecutionError{Name: "States.TaskFailed", Cause: "unsupported AWS CodeBuild integration action: " + action}
 	}
+	var checkpointID string
+	if checkpoint, ok := sfnLoadTaskCheckpoint(context, resource); ok && syncIntegration && len(checkpoint.ResourceIDs) == 1 {
+		checkpointID = checkpoint.ResourceIDs[0]
+	}
+	if checkpointID != "" {
+		switch action {
+		case "startBuild":
+			return sfnWaitForCodeBuildBuild(checkpointID, cancel)
+		case "startBuildBatch", "retryBuildBatch":
+			return sfnWaitForCodeBuildBatch(checkpointID, cancel)
+		}
+	}
 	result, taskErr := sfnInvokeJSONService(handler, input)
 	if taskErr != nil || !syncIntegration {
 		return result, taskErr
@@ -562,16 +596,62 @@ func sfnInvokeCodeBuild(resource string, input any, cancel <-chan struct{}) (any
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
+		sfnStoreTaskCheckpoint(context, resource, []string{build.ID})
 		return sfnWaitForCodeBuildBuild(build.ID, cancel)
 	case "startBuildBatch", "retryBuildBatch":
 		batch, decodeErr := sfnDecodeCodeBuildBatch(response["buildBatch"])
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
+		sfnStoreTaskCheckpoint(context, resource, []string{batch.ID})
 		return sfnWaitForCodeBuildBatch(batch.ID, cancel)
 	default:
 		return result, nil
 	}
+}
+
+func sfnTaskCheckpointCoordinates(context any) (string, string, bool) {
+	contextMap, ok := context.(map[string]any)
+	if !ok {
+		return "", "", false
+	}
+	execution, ok := contextMap["Execution"].(map[string]any)
+	if !ok {
+		return "", "", false
+	}
+	state, ok := contextMap["State"].(map[string]any)
+	if !ok {
+		return "", "", false
+	}
+	executionARN, _ := execution["Id"].(string)
+	stateName, _ := state["Name"].(string)
+	return executionARN, stateName, executionARN != "" && stateName != ""
+}
+
+func sfnLoadTaskCheckpoint(context any, resource string) (SFNTaskCheckpoint, bool) {
+	executionARN, stateName, ok := sfnTaskCheckpointCoordinates(context)
+	if !ok {
+		return SFNTaskCheckpoint{}, false
+	}
+	execution, exists := sfnExecutions.Get(executionARN)
+	if !exists || execution.TaskCheckpoint == nil ||
+		execution.TaskCheckpoint.StateName != stateName ||
+		execution.TaskCheckpoint.Resource != resource {
+		return SFNTaskCheckpoint{}, false
+	}
+	return *execution.TaskCheckpoint, true
+}
+
+func sfnStoreTaskCheckpoint(context any, resource string, resourceIDs []string) {
+	executionARN, stateName, ok := sfnTaskCheckpointCoordinates(context)
+	if !ok {
+		return
+	}
+	sfnExecutions.Update(executionARN, func(execution *SFNExecution) {
+		execution.TaskCheckpoint = &SFNTaskCheckpoint{
+			StateName: stateName, Resource: resource, ResourceIDs: append([]string(nil), resourceIDs...),
+		}
+	})
 }
 
 func sfnDecodeCodeBuildBuild(value any) (CBBuild, *sfnExecutionError) {

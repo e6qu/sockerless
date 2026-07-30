@@ -73,12 +73,29 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 43. Converged API Gateway v2 and AWS Lambda state under an unmodified ecs-dev-desktop Terraform graph that applied 178 resources, produced a zero-change plan, and destroyed all 178 with no Smithy violations.
 44. Upgraded Google Cloud Spanner to v1.94.0 and the complete affected AWS SDK graph to v1.43.2/current service releases, then passed both official SDK suites and the authenticated freshness audit.
 45. Removed the Google Terraform capability skip, loaded the Buildx test image into the runtime, and installed Firecracker plus squashfs tooling in the shared Linux test image.
-46. Recorded the remaining real boundaries as BUG-2764 through BUG-2767 instead of hiding them behind skips, HTTP 501 responses, unbound listeners, or partial WAF semantics.
+46. Recorded the remaining real boundaries as BUG-2764 through BUG-2767 instead of hiding them behind skips, HTTP 501 responses, unbound listeners, or partial WAF semantics; complete AWS WAF evaluation and transactional load-balancer binding subsequently closed BUG-2767 and BUG-2765.
 47. Persisted AWS Key Management Service custom policies across SQLite reads and simulator restarts, with focused durable-store and production-shaped HashiCorp AWS provider coverage.
 48. Refreshed the coordinated AWS SDK patch wave, Google Cloud Spanner client, and resolved transitive graphs across every affected Go module after the pre-push freshness gate detected their publication.
 49. Made filesystem staging validation privilege-independent by forcing the direct destination beneath a regular file instead of assuming `/usr/local` was unwritable.
 50. Packaged the exact AWS provider into the Terraform-in-ECS workload image, removed undeclared private-subnet internet egress, published task output through Amazon CloudWatch Logs, failed immediately on terminal workflow errors, and passed the exact N-Z shard.
-51. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
+51. Retry-prefetched the separate Google Cloud and Microsoft Azure SDK/CLI client modules before their suites so transient proxy resets were handled before `go test`.
+52. Moved AWS DynamoDB TTL, point-in-time recovery, and tags into a durable out-of-band table-settings store, added SQLite reopen coverage, and exercised all three provider wait paths in the production-shaped Terraform graph.
+53. Retained the exact Cloud SQL Admin v1 and v1beta4 revision 20260722 documents and implemented their newly published instance, on-premises-source, and user members over authenticated public routes.
+54. Reconciled the Microsoft Azure and Google Cloud common-backend module graphs under Go 1.26 and advanced their selected `go-isatty` transitive release to 0.0.24.
+55. Made simulator matrix jobs restore-only consumers of the Firecracker seed cache so root-mutated guest files were never archived by a post-job cache save.
+56. Kept justified Microsoft Azure workload-dispatch exceptions in source comments without emitting Go-test log lines that GitHub misclassified as failure annotations.
+57. Persisted hidden runtime configuration, counters, revisions, listener coordinates, accepted asynchronous work, and cross-service checkpoints, then adopted or resumed state-scoped live AWS workloads across hard simulator replacement.
+58. Proved durable AWS state externally through official AWS SDK and AWS CLI restart matrices and a HashiCorp AWS provider apply, hard restart, zero-change refresh, and destroy.
+59. Enabled the existing persistent stores for all three production Compose simulator services on named data volumes.
+60. Completed the AWS Batch Cloudscape operating surface with real jobs, definitions, status polling, details, and termination through standard AWS APIs.
+61. Regenerated every committed simulator surface table and assigned the new AWS CLI persistence case to exactly one shard.
+62. Upgraded gRPC to 1.83.0 across every affected Google Cloud backend, simulator, and official-client module, then passed all five modules and the complete official Google Cloud SDK suite.
+63. Split the Cloud Build test registry's real create/start lifecycle and removed its anonymous volume, making Podman failures immediate and successful build-and-push coverage leak-free.
+64. Replaced unissued and fabricated Elastic Load Balancing certificate fixtures with official SDK and CLI imports of real AWS Certificate Manager material, isolated listener ports, and explicit nested-simulator DNS coordinates.
+65. Restored caller-controlled Cloud Map custom-health configuration so an HTTP namespace alone did not silently opt a service into custom health.
+66. Kept durable AWS Glue database tags behind the public wire projection consumed by Smithy validation.
+67. Bound the durable Lambda restart callback receiver to the Docker-reachable host interface while retaining the exact dynamically assigned port.
+68. Kept continuity concise and current; detailed historical work remained in pull requests and `git log`.
 
 ## Verified Next Gaps
 
@@ -87,7 +104,7 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 3. BUG-2646 retained only Google's upstream Cloud Run Discovery publication lag.
 4. BUG-1345 retained only the upstream AzureAD provider's lack of a Microsoft Graph endpoint override.
 5. BUG-2523 and BUG-2441 remained in the external Bleephub repository rather than this workspace.
-6. BUG-2767 retained complete AWS WAF statement evaluation; BUG-2766 retained AWS Amplify Hosting image optimization; BUG-2765 retained occupied-port load-balancer listeners on macOS; BUG-2764 retained the macOS Podman nested-KVM boundary.
+6. BUG-2766 retained AWS Amplify Hosting image optimization, and BUG-2764 retained the macOS Podman nested-KVM boundary. Complete AWS WAF statement evaluation and transactional Elastic Load Balancing listener binding closed BUG-2767 and BUG-2765.
 
 ## Simulator Console Parity
 

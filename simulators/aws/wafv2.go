@@ -9,9 +9,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -152,11 +152,17 @@ type wafSampledRequest struct {
 	Method           string
 	URI              string
 	ResponseCodeSent int
+	Labels           []string
 }
 
 type wafSampledHTTPHeader struct {
 	Name  string
 	Value string
+}
+
+type wafAssociation struct {
+	ResourceARN string
+	WebACLARN   string
 }
 
 var (
@@ -168,12 +174,13 @@ var (
 	wafAPIKeys         sim.Store[wafStoredAPIKey]
 	wafManagedRuleSet  sim.Store[wafStoredManagedRuleSet]
 	wafSampledRequests sim.Store[wafSampledRequest]
+	wafRateWindows     sim.Store[wafRateWindow]
 	// wafPermissionPolicies: rule-group ARN → IAM-style policy JSON document.
 	wafPermissionPolicies sim.Store[string]
 	// wafAssociations maps a real cloud resource ARN to its WebACL ARN.
 	// CloudFront distributions and Amplify apps share this authoritative
 	// association state, just as both services are protected through WAFv2.
-	wafAssociations sync.Map
+	wafAssociations sim.Store[wafAssociation]
 )
 
 // ---------- Helpers ----------
@@ -245,6 +252,8 @@ func registerWAFv2(r *sim.AWSRouter, srv *sim.Server) {
 	wafManagedRuleSet = sim.MakeStore[wafStoredManagedRuleSet](srv.DB(), "wafv2_managed_rule_sets")
 	wafPermissionPolicies = sim.MakeStore[string](srv.DB(), "wafv2_permission_policies")
 	wafSampledRequests = sim.MakeStore[wafSampledRequest](srv.DB(), "wafv2_sampled_requests")
+	wafAssociations = sim.MakeStore[wafAssociation](srv.DB(), "wafv2_associations")
+	wafRateWindows = sim.MakeStore[wafRateWindow](srv.DB(), "wafv2_rate_windows")
 	wafSeedManagedRuleSets()
 
 	// WebACL
@@ -287,6 +296,10 @@ func registerWAFv2(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSWAF_20190729.ListLoggingConfigurations", handleWAFListLoggingConfigurations)
 	// Sampled requests
 	r.Register("AWSWAF_20190729.GetSampledRequests", handleWAFGetSampledRequests)
+	r.Register("AWSWAF_20190729.GetRevenueStatistics", handleWAFGetRevenueStatistics)
+	r.Register("AWSWAF_20190729.GetRevenueStatisticsSummary", handleWAFGetRevenueStatisticsSummary)
+	r.Register("AWSWAF_20190729.GetRevenueStatisticsTimeSeries", handleWAFGetRevenueStatisticsTimeSeries)
+	r.Register("AWSWAF_20190729.ListSettlementRecords", handleWAFListSettlementRecords)
 	// API keys
 	r.Register("AWSWAF_20190729.CreateAPIKey", handleWAFCreateAPIKey)
 	r.Register("AWSWAF_20190729.DeleteAPIKey", handleWAFDeleteAPIKey)
@@ -451,6 +464,7 @@ func handleWAFUpdateWebACL(w http.ResponseWriter, r *http.Request) {
 	stored.WebACL.AssociationConfig = req.AssociationConfig
 	stored.LockToken = wafLockToken()
 	wafWebACLs.Put(key, stored)
+	wafDeleteRateWindows(stored.WebACL.ARN)
 	wafWriteJSON(w, map[string]string{"NextLockToken": stored.LockToken})
 }
 
@@ -478,20 +492,27 @@ func handleWAFDeleteWebACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Refuse delete when associated. Mirrors real AWS.
-	wafAssociations.Range(func(k, v any) bool {
-		arn, isStr := v.(string)
-		if isStr && arn == stored.WebACL.ARN {
+	for _, association := range wafAssociations.List() {
+		if association.WebACLARN == stored.WebACL.ARN {
 			wafWriteError(w, "WAFAssociatedItemException", "WebACL is still associated with one or more resources")
 			ok = false
-			return false
+			break
 		}
-		return true
-	})
+	}
 	if !ok {
 		return
 	}
 	wafWebACLs.Delete(key)
+	wafDeleteRateWindows(stored.WebACL.ARN)
 	wafWriteJSON(w, struct{}{})
+}
+
+func wafDeleteRateWindows(webACLARN string) {
+	for _, window := range wafRateWindows.Filter(func(window wafRateWindow) bool {
+		return window.WebACLARN == webACLARN
+	}) {
+		wafRateWindows.Delete(window.Key)
+	}
 }
 
 type wafListReq struct {
@@ -586,7 +607,10 @@ func handleWAFAssociateWebACL(w http.ResponseWriter, r *http.Request) {
 		wafWriteError(w, "WAFInvalidParameterException", "resource ARN is not an associable resource")
 		return
 	}
-	wafAssociations.Store(req.ResourceArn, req.WebACLArn)
+	wafAssociations.Put(req.ResourceArn, wafAssociation{
+		ResourceARN: req.ResourceArn,
+		WebACLARN:   req.WebACLArn,
+	})
 	wafWriteJSON(w, struct{}{})
 }
 
@@ -604,7 +628,7 @@ func handleWAFDisassociateWebACL(w http.ResponseWriter, r *http.Request) {
 		wafWriteError(w, "WAFInvalidParameterException", "ResourceArn is required")
 		return
 	}
-	if _, associated := wafAssociations.Load(req.ResourceArn); !associated {
+	if _, associated := wafAssociations.Get(req.ResourceArn); !associated {
 		wafWriteError(w, "WAFNonexistentItemException", "resource has no WebACL association")
 		return
 	}
@@ -625,8 +649,8 @@ func handleWAFGetWebACLForResource(w http.ResponseWriter, r *http.Request) {
 		wafWriteError(w, "WAFInvalidParameterException", "ResourceArn is required")
 		return
 	}
-	arnAny, _ := wafAssociations.Load(req.ResourceArn)
-	arn, _ := arnAny.(string)
+	association, _ := wafAssociations.Get(req.ResourceArn)
+	arn := association.WebACLARN
 	if arn == "" {
 		wafWriteJSON(w, struct{}{})
 		return
@@ -662,18 +686,11 @@ func handleWAFListResourcesForWebACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	arns := []string{}
-	wafAssociations.Range(func(k, v any) bool {
-		arn, ok := v.(string)
-		if !ok || arn != req.WebACLArn {
-			return true
+	for _, association := range wafAssociations.List() {
+		if association.WebACLARN == req.WebACLArn {
+			arns = append(arns, association.ResourceARN)
 		}
-		resource, ok := k.(string)
-		if !ok {
-			return true
-		}
-		arns = append(arns, resource)
-		return true
-	})
+	}
 	wafWriteJSON(w, map[string]any{"ResourceArns": arns})
 }
 
@@ -1413,42 +1430,48 @@ type wafVisibilityConfig struct {
 }
 
 type wafRule struct {
-	Name      string                     `json:"Name"`
-	Priority  int                        `json:"Priority"`
-	Action    map[string]json.RawMessage `json:"Action"`
-	Statement struct {
-		IPSetReferenceStatement *struct {
-			ARN string `json:"ARN"`
-		} `json:"IPSetReferenceStatement"`
-	} `json:"Statement"`
+	Name           string                     `json:"Name"`
+	Priority       int                        `json:"Priority"`
+	Action         map[string]json.RawMessage `json:"Action"`
+	OverrideAction map[string]json.RawMessage `json:"OverrideAction"`
+	Statement      json.RawMessage            `json:"Statement"`
+	RuleLabels     []struct {
+		Name string `json:"Name"`
+	} `json:"RuleLabels"`
 	VisibilityConfig wafVisibilityConfig `json:"VisibilityConfig"`
 }
 
 func wafAssociatedRequestAllowed(resourceARN string, r *http.Request) bool {
-	webACLARNValue, associated := wafAssociations.Load(resourceARN)
+	association, associated := wafAssociations.Get(resourceARN)
 	if !associated {
 		return true
 	}
-	webACLARN, ok := webACLARNValue.(string)
-	if !ok {
-		return true
-	}
+	webACLARN := association.WebACLARN
 	stored, ok := wafWebACLByARN(webACLARN)
 	if !ok {
 		return true
 	}
-	clientIP := wafRequestClientIP(r)
+	evaluation := wafNewEvaluation(r, stored.WebACL.ARN)
 
 	var rules []wafRule
 	_ = json.Unmarshal(stored.WebACL.Rules, &rules)
-	sort.SliceStable(rules, func(i, j int) bool { return rules[i].Priority < rules[j].Priority })
+	sortWAFRules(rules)
 	for _, rule := range rules {
-		if !wafRuleMatches(rule, clientIP) {
+		evaluation.ruleName = rule.Name
+		result := wafEvaluateStatement(rule.Statement, evaluation, 0)
+		if !result.matched {
 			continue
 		}
+		wafApplyRuleLabels(rule, stored.WebACL.LabelNamespace, evaluation)
 		action, terminal := wafRuleAction(rule.Action)
+		if result.action != "" {
+			action, terminal = result.action, result.terminal
+			if _, count := rule.OverrideAction["Count"]; count {
+				action, terminal = "COUNT", false
+			}
+		}
 		if rule.VisibilityConfig.SampledRequestsEnabled {
-			wafRecordSample(stored.WebACL.ARN, rule.VisibilityConfig.MetricName, action, clientIP, r, action == "BLOCK")
+			wafRecordSample(stored.WebACL.ARN, rule.VisibilityConfig.MetricName, action, evaluation.clientIP, r, action == "BLOCK", wafEvaluationLabels(evaluation))
 		}
 		if terminal {
 			return action != "BLOCK"
@@ -1464,32 +1487,18 @@ func wafAssociatedRequestAllowed(resourceARN string, r *http.Request) bool {
 		action = "BLOCK"
 	}
 	if visibility.SampledRequestsEnabled {
-		wafRecordSample(stored.WebACL.ARN, visibility.MetricName, action, clientIP, r, action == "BLOCK")
+		wafRecordSample(stored.WebACL.ARN, visibility.MetricName, action, evaluation.clientIP, r, action == "BLOCK", wafEvaluationLabels(evaluation))
 	}
 	return action != "BLOCK"
 }
 
-func wafRuleMatches(rule wafRule, clientIP string) bool {
-	if rule.Statement.IPSetReferenceStatement == nil {
-		return false
+func wafEvaluationLabels(evaluation *wafEvaluation) []string {
+	labels := make([]string, 0, len(evaluation.labels))
+	for label := range evaluation.labels {
+		labels = append(labels, label)
 	}
-	ip, err := netip.ParseAddr(clientIP)
-	if err != nil {
-		return false
-	}
-	arn := rule.Statement.IPSetReferenceStatement.ARN
-	for _, stored := range wafIPSets.List() {
-		if stored.IPSet.ARN != arn {
-			continue
-		}
-		for _, address := range stored.IPSet.Addresses {
-			prefix, err := netip.ParsePrefix(address)
-			if err == nil && prefix.Contains(ip) {
-				return true
-			}
-		}
-	}
-	return false
+	sort.Strings(labels)
+	return labels
 }
 
 func wafRuleAction(action map[string]json.RawMessage) (string, bool) {
@@ -1512,9 +1521,6 @@ func wafRuleAction(action map[string]json.RawMessage) (string, bool) {
 }
 
 func wafRequestClientIP(r *http.Request) string {
-	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); forwarded != "" {
-		return forwarded
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		return host
@@ -1522,7 +1528,7 @@ func wafRequestClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-func wafRecordSample(webACLARN, metricName, action, clientIP string, r *http.Request, blocked bool) {
+func wafRecordSample(webACLARN, metricName, action, clientIP string, r *http.Request, blocked bool, labels []string) {
 	headers := make([]wafSampledHTTPHeader, 0, len(r.Header))
 	for name, values := range r.Header {
 		for _, value := range values {
@@ -1543,7 +1549,7 @@ func wafRecordSample(webACLARN, metricName, action, clientIP string, r *http.Req
 		WebACLARN: webACLARN, RuleMetricName: metricName, Action: action,
 		Timestamp: time.Now().UTC(), ClientIP: clientIP, HTTPVersion: r.Proto,
 		Headers: headers, Method: r.Method, URI: r.URL.RequestURI(),
-		ResponseCodeSent: responseCode,
+		ResponseCodeSent: responseCode, Labels: labels,
 	})
 }
 
@@ -1609,6 +1615,13 @@ func handleWAFGetSampledRequests(w http.ResponseWriter, r *http.Request) {
 		if sample.ResponseCodeSent != 0 {
 			item["ResponseCodeSent"] = sample.ResponseCodeSent
 		}
+		if len(sample.Labels) > 0 {
+			labels := make([]map[string]string, 0, len(sample.Labels))
+			for _, label := range sample.Labels {
+				labels = append(labels, map[string]string{"Name": label})
+			}
+			item["Labels"] = labels
+		}
 		sampled = append(sampled, item)
 	}
 	wafWriteJSON(w, map[string]any{
@@ -1619,6 +1632,119 @@ func handleWAFGetSampledRequests(w http.ResponseWriter, r *http.Request) {
 			"EndTime":   float64(end.UnixNano()) / float64(time.Second),
 		},
 	})
+}
+
+type wafRevenueTimeWindow struct {
+	StartTime float64 `json:"StartTime"`
+	EndTime   float64 `json:"EndTime"`
+}
+
+type wafRevenueRequest struct {
+	StatisticType string               `json:"StatisticType"`
+	TimeWindow    wafRevenueTimeWindow `json:"TimeWindow"`
+	Scope         string               `json:"Scope"`
+	Currency      string               `json:"Currency"`
+	GroupBy       string               `json:"GroupBy,omitempty"`
+	Interval      string               `json:"Interval,omitempty"`
+	Limit         int                  `json:"Limit,omitempty"`
+}
+
+func wafValidateRevenueRequest(w http.ResponseWriter, request wafRevenueRequest) bool {
+	if request.Scope != "CLOUDFRONT" {
+		wafWriteError(w, "WAFInvalidOperationException", "AI bot monetization is available only for CLOUDFRONT scope")
+		return false
+	}
+	if request.Currency != "USDC" {
+		wafWriteError(w, "WAFInvalidParameterException", "Currency must be USDC")
+		return false
+	}
+	start := time.Unix(0, int64(request.TimeWindow.StartTime*float64(time.Second)))
+	end := time.Unix(0, int64(request.TimeWindow.EndTime*float64(time.Second)))
+	if !end.After(start) || end.Sub(start) > 90*24*time.Hour {
+		wafWriteError(w, "WAFInvalidParameterException", "TimeWindow must be positive and no longer than 90 days")
+		return false
+	}
+	return true
+}
+
+func handleWAFGetRevenueStatistics(w http.ResponseWriter, r *http.Request) {
+	var request wafRevenueRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if !wafValidateRevenueRequest(w, request) {
+		return
+	}
+	switch request.StatisticType {
+	case "TOP_SOURCES_BY_REVENUE":
+		if request.GroupBy == "" {
+			wafWriteError(w, "WAFInvalidParameterException", "GroupBy is required for TOP_SOURCES_BY_REVENUE")
+			return
+		}
+		wafWriteJSON(w, map[string]any{"SourceStatistics": []any{}})
+	case "TOP_PATHS_BY_REVENUE":
+		wafWriteJSON(w, map[string]any{"RevenuePathStatistics": []any{}})
+	default:
+		wafWriteError(w, "WAFInvalidParameterException", "StatisticType must be TOP_SOURCES_BY_REVENUE or TOP_PATHS_BY_REVENUE")
+	}
+}
+
+func handleWAFGetRevenueStatisticsSummary(w http.ResponseWriter, r *http.Request) {
+	var request wafRevenueRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if !wafValidateRevenueRequest(w, request) {
+		return
+	}
+	wafWriteJSON(w, map[string]any{
+		"RevenueBreakdown": map[string]any{
+			"TotalAmount":         "0",
+			"VerifiedAmount":      "0",
+			"UnverifiedAmount":    "0",
+			"Currency":            request.Currency,
+			"TotalSettled":        0,
+			"TotalMonetizeServed": 0,
+		},
+	})
+}
+
+func handleWAFGetRevenueStatisticsTimeSeries(w http.ResponseWriter, r *http.Request) {
+	var request wafRevenueRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if !wafValidateRevenueRequest(w, request) {
+		return
+	}
+	switch request.StatisticType {
+	case "DATE_HISTOGRAM", "PAYMENT_TRAFFIC":
+	default:
+		wafWriteError(w, "WAFInvalidParameterException", "StatisticType must be DATE_HISTOGRAM or PAYMENT_TRAFFIC")
+		return
+	}
+	switch request.Interval {
+	case "MINUTELY", "FIVE_MINUTELY", "HOURLY", "DAILY":
+	default:
+		wafWriteError(w, "WAFInvalidParameterException", "Interval must be MINUTELY, FIVE_MINUTELY, HOURLY, or DAILY")
+		return
+	}
+	wafWriteJSON(w, map[string]any{"DataPoints": []any{}})
+}
+
+func handleWAFListSettlementRecords(w http.ResponseWriter, r *http.Request) {
+	var request wafRevenueRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if !wafValidateRevenueRequest(w, request) {
+		return
+	}
+	wafWriteJSON(w, map[string]any{"Settlements": []any{}})
 }
 
 // ---------- API keys ----------
@@ -2575,15 +2701,36 @@ func handleWAFGetRateBasedStatementManagedKeys(w http.ResponseWriter, r *http.Re
 		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
 		return
 	}
-	if _, ok := wafWebACLs.Get(wafKey(req.Scope, req.WebACLId)); !ok {
+	stored, ok := wafWebACLs.Get(wafKey(req.Scope, req.WebACLId))
+	if !ok || stored.WebACL.Name != req.WebACLName {
 		wafWriteError(w, "WAFNonexistentItemException", "WebACL not found")
 		return
 	}
-	// No live traffic has been rate-limited in the sim, so both key sets are
-	// empty — the real-shaped response a freshly created rate-based rule returns.
+	ipv4 := make([]string, 0)
+	ipv6 := make([]string, 0)
+	for _, window := range wafRateWindows.Filter(func(window wafRateWindow) bool {
+		return window.WebACLARN == stored.WebACL.ARN &&
+			window.RuleName == req.RuleName && window.Limited
+	}) {
+		for _, address := range window.Addresses {
+			ip, err := netip.ParseAddr(address)
+			if err != nil {
+				continue
+			}
+			if ip.Is4() {
+				ipv4 = append(ipv4, ip.String())
+			} else {
+				ipv6 = append(ipv6, ip.String())
+			}
+		}
+	}
+	slices.Sort(ipv4)
+	ipv4 = slices.Compact(ipv4)
+	slices.Sort(ipv6)
+	ipv6 = slices.Compact(ipv6)
 	wafWriteJSON(w, map[string]any{
-		"ManagedKeysIPV4": map[string]any{"IPAddressVersion": "IPV4", "Addresses": []string{}},
-		"ManagedKeysIPV6": map[string]any{"IPAddressVersion": "IPV6", "Addresses": []string{}},
+		"ManagedKeysIPV4": map[string]any{"IPAddressVersion": "IPV4", "Addresses": ipv4},
+		"ManagedKeysIPV6": map[string]any{"IPAddressVersion": "IPV6", "Addresses": ipv6},
 	})
 }
 

@@ -30,10 +30,11 @@ import (
 // that listens on PORT=3000 (the spec's compute port convention).
 //
 // The sim runs one long-lived compute container per branch active
-// deployment, started LAZILY on the first request that routes to a Compute
+// deployment, started lazily on the first request that routes to a Compute
 // target (deploys that are never browsed start no container). A new
 // deployment replaces the container on its next request; branch/app deletes
-// stop it; CleanupContainers covers simulator shutdown.
+// stop it. Persistent simulator restarts reclaim the same running compute
+// container, published port, and extracted deployment bundle.
 
 // ---------- deploy-manifest.json ----------
 
@@ -130,6 +131,62 @@ var (
 	amplifyComputeInstances = map[string]*amplifyComputeInstance{} // appID/branch
 )
 
+func recoverAmplifyComputeInstances() error {
+	if !sim.HasPersistentWorkloadIdentity() {
+		return nil
+	}
+	existing, err := sim.FindExistingContainers(map[string]string{"sockerless-amplify-compute": ""})
+	if err != nil {
+		return fmt.Errorf("find AWS Amplify Hosting compute containers: %w", err)
+	}
+	amplifyComputeMu.Lock()
+	defer amplifyComputeMu.Unlock()
+	for _, workload := range existing {
+		key := workload.Labels["sockerless-amplify-compute"]
+		if key == "" {
+			return fmt.Errorf("AWS Amplify Hosting compute container %s has no deployment identity", workload.ID)
+		}
+		if _, duplicate := amplifyComputeInstances[key]; duplicate {
+			return fmt.Errorf("AWS Amplify Hosting deployment %s has multiple compute containers", key)
+		}
+		jobID := workload.Labels["sockerless-amplify-job-id"]
+		if jobID == "" {
+			parts := strings.SplitN(key, "/", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("AWS Amplify Hosting compute identity %q is invalid", key)
+			}
+			job, ok := amplifyLatestSucceededJob(parts[0], parts[1])
+			if !ok {
+				return fmt.Errorf("AWS Amplify Hosting compute container %s has no active deployment", workload.ID)
+			}
+			jobID = job.Job.Summary.JobId
+		}
+		hostPort := workload.PublishedPorts[amplifyComputePort]
+		if hostPort == 0 {
+			return fmt.Errorf("AWS Amplify Hosting compute container %s has no published port %d", workload.ID, amplifyComputePort)
+		}
+		if !workload.Running {
+			if err := sim.StartExistingContainer(workload.ID); err != nil {
+				return fmt.Errorf("restart AWS Amplify Hosting compute container %s: %w", workload.ID, err)
+			}
+		}
+		handle, err := sim.AdoptContainer(workload.ID, sim.ContainerConfig{}, sim.NoopSink{})
+		if err != nil {
+			return fmt.Errorf("adopt AWS Amplify Hosting compute container %s: %w", workload.ID, err)
+		}
+		if err := amplifyWaitForPort(hostPort, 60*time.Second); err != nil {
+			handle.Cancel()
+			return fmt.Errorf("AWS Amplify Hosting compute container %s did not resume: %w", workload.ID, err)
+		}
+		amplifyComputeInstances[key] = &amplifyComputeInstance{
+			jobID: jobID, hostPort: hostPort,
+			bundleDir: workload.Labels["sockerless-amplify-bundle-dir"],
+			handle:    handle,
+		}
+	}
+	return nil
+}
+
 // amplifyStopCompute stops and forgets a branch's compute container. Called
 // on branch/app delete; simulator shutdown is covered by CleanupContainers.
 func amplifyStopCompute(appID, branch string) {
@@ -209,9 +266,13 @@ func amplifyEnsureCompute(app AmplifyApp, br AmplifyBranch, content *amplifyHost
 		// The deployed bundle is immutable to compute. The shared SELinux
 		// relabel lets the confined workload read the real host directory on
 		// enforcing hosts and is accepted as a no-op by Docker elsewhere.
-		Binds:        []string{bundleDir + ":/bundle:ro,z"},
-		Env:          env,
-		Labels:       map[string]string{"sockerless-amplify-compute": key},
+		Binds: []string{bundleDir + ":/bundle:ro,z"},
+		Env:   env,
+		Labels: map[string]string{
+			"sockerless-amplify-compute":    key,
+			"sockerless-amplify-job-id":     content.JobID,
+			"sockerless-amplify-bundle-dir": bundleDir,
+		},
 		PublishPorts: map[int]int{amplifyComputePort: hostPort},
 		Sandbox:      sim.SandboxFargate,
 	}, sim.NoopSink{})

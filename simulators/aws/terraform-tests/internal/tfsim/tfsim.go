@@ -75,7 +75,11 @@ func Start(t *testing.T, configDir string) *Env {
 	}
 
 	cmd := exec.Command(binaryPath)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port))
+	cmd.Env = append(
+		os.Environ(),
+		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port),
+		"SIM_DNS_PORT=0",
+	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	// Own process group so the whole simulator subtree can be reaped with one

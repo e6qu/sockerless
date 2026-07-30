@@ -32,6 +32,7 @@ type FirehoseS3Destination struct {
 	BufferingHints    FirehoseBufferingHints `json:"BufferingHints"`
 	CompressionFormat string                 `json:"CompressionFormat"`
 	FileExtension     string                 `json:"FileExtension,omitempty"`
+	S3BackupMode      string                 `json:"S3BackupMode"`
 }
 
 type FirehoseEncryption struct {
@@ -130,6 +131,7 @@ type firehoseS3Create struct {
 		Enabled bool `json:"Enabled"`
 	} `json:"DynamicPartitioningConfiguration"`
 	FileExtension string `json:"FileExtension"`
+	S3BackupMode  string `json:"S3BackupMode"`
 }
 
 type firehoseTag struct {
@@ -256,6 +258,7 @@ func firehoseNormalizeS3(input firehoseS3Create) (FirehoseS3Destination, error) 
 		BufferingHints:    hints,
 		CompressionFormat: compression,
 		FileExtension:     input.FileExtension,
+		S3BackupMode:      firstNonEmpty(input.S3BackupMode, "Disabled"),
 	}, nil
 }
 
@@ -359,6 +362,7 @@ func firehoseDescription(stream FirehoseDeliveryStream) map[string]any {
 		"RoleARN": stream.S3.RoleARN, "BucketARN": stream.S3.BucketARN,
 		"BufferingHints":          stream.S3.BufferingHints,
 		"CompressionFormat":       stream.S3.CompressionFormat,
+		"S3BackupMode":            stream.S3.S3BackupMode,
 		"EncryptionConfiguration": map[string]any{"NoEncryptionConfig": "NoEncryption"},
 	}
 	if stream.S3.Prefix != "" {

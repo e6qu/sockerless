@@ -13,9 +13,15 @@ import (
 // Firecracker/Linux-networking real-execution substrate described in
 // specs/SIMULATOR_REAL_EXECUTION.md and feedback_sim_host_model.md.
 func TestNoOsExecOfWorkloads(t *testing.T) {
-	allowList := map[string]string{
-		"metadata.go":  "queries Podman machine routing to discover the real host callback address; workloads still dispatch through Docker/Podman containers",
-		"acr_tasks.go": "shells out to `docker build` for the ACR Tasks quick-build step (sim build tooling, not a workload) — mirrors the gcp cloudbuild.go allowlist; the built image still dispatches through Docker via StartContainerSync",
+	allowList := map[string]struct{}{
+		// Queries Podman machine routing to discover the real host callback
+		// address; workloads still dispatch through Docker/Podman containers.
+		"metadata.go": {},
+		// Shells out to `docker build` for the ACR Tasks quick-build step (sim
+		// build tooling, not a workload), mirroring the GCP cloudbuild.go
+		// exception. The built image still dispatches through Docker via
+		// StartContainerSync.
+		"acr_tasks.go": {},
 	}
 
 	simDir, _ := filepath.Abs("..")
@@ -31,8 +37,7 @@ func TestNoOsExecOfWorkloads(t *testing.T) {
 		if strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
-		if reason, ok := allowList[e.Name()]; ok {
-			t.Logf("allowlisted %s: %s", e.Name(), reason)
+		if _, ok := allowList[e.Name()]; ok {
 			continue
 		}
 		path := filepath.Join(simDir, e.Name())
