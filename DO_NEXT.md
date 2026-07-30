@@ -4,6 +4,12 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+Secondary process-mode AWS simulators no longer inherited the default Route 53
+DNS listener port. The AWS CLI harness assigned each nested process an
+operating-system-selected UDP/TCP coordinate, so a simulator already using
+port 5353 could not prevent the child from starting. The focused process-mode
+case and the complete compute shard passed.
+
 Amazon ECS task definitions now turn `taskRoleArn` into usable workload
 credentials. The task-metadata service mints expiring `ASIA` sessions bound to
 the configured IAM role, registers them with the simulator's Signature Version

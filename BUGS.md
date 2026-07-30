@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2808 filed - 2808 fixed - 8 open - 16 false positives.**
+**2809 filed - 2809 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2809~~ | P2 | AWS CLI nested simulator isolation | a secondary process-mode simulator reused the default Route 53 DNS listener port | Nested AWS CLI simulators now request an operating-system-selected Route 53 UDP/TCP coordinate, so another simulator on port 5353 cannot prevent startup; the focused process-mode test and complete compute shard passed. |
 | ~~2808~~ | P2 | AWS console Amazon ECS services | the first service-console browser pass exposed mismatched columns and hidden failure-state sections | The ECS service list now exposes separate service name, desired task, running task, and deployment columns. The detail route retains its deployment, event, configuration, and discovery structure when the read fails, uses stable action/error hooks, and confirms destructive deletion; the shared table assertion scopes Refresh to the task table. |
 | ~~2807~~ | P2 | AWS simulator browser harness | the browser-owned simulator bound Route 53 to macOS's reserved mDNS port | The AWS console Playwright configuration now gives its isolated simulator an operating-system-selected Route 53 UDP/TCP coordinate. It no longer conflicts with macOS multicast DNS, while Route 53 data-plane suites continue to supply and test explicit listener coordinates. |
 | ~~2806~~ | P2 | Simulator duplicate-code gate | generated Smithy protocol tables were treated as hand-written copy/paste | The simulator duplicate-code gate now excludes generated `*_gen.go` sources while continuing to compile them and validate every generated binding through conformance and official-client coverage, leaving hand-written simulator duplication fully enforced. |

@@ -4,6 +4,17 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-30 — Nested AWS CLI simulators gained isolated DNS listeners
+
+The wider post-merge AWS CLI sweep launched a second process-mode simulator
+while another simulator already owned the default Route 53 DNS port. The child
+correctly failed its UDP bind, but the harness surfaced only a health timeout.
+
+Nested process-mode simulators now request an operating-system-selected Route
+53 UDP/TCP coordinate, just as the primary AWS CLI simulator does. This keeps
+the real DNS data plane enabled without assuming a shared host port is free.
+The focused process-mode AWS CLI case and the complete compute shard passed.
+
 ## 2026-07-30 — AWS orchestration and regional data fidelity closed
 
 Amazon ECS service discovery now follows actual service-task transitions.
