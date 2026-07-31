@@ -4,6 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+A hosted services shard panicked after its real-workload assertions: a task-
+container-start goroutine launched by `runECSTasks` read the Elastic Load
+Balancing store after orderly shutdown had closed SQLite. Task startup now
+runs under the server's background-worker lifecycle, so shutdown drains every
+in-flight start before the database closes — the BUG-2827 class extended to
+ECS task startup. The complete AWS simulator module and focused official AWS
+SDK suites passed.
+
 The following hosted iteration surfaced one more specification edge and three
 more budget defects. A hosted edge served Dataflow v1b3 revision 20260729
 before operator-visible edges; the exact CI-captured document was vendored

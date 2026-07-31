@@ -352,6 +352,11 @@ var (
 	// in-flight startup can still attach networking or publish RUNNING after
 	// the task was stopped.
 	ecsTaskLifecycleLocks sync.Map // map[taskID]*sync.Mutex
+	// ecsBackgroundServer owns the task-container-start goroutines launched by
+	// runECSTasks. Orderly shutdown drains them before SQLite is closed, so an
+	// in-flight container start cannot read a durable store after the database
+	// is closed (the BUG-2827 class, extended to ECS task startup).
+	ecsBackgroundServer *sim.Server
 )
 
 type ecsTaskProcesses struct {
@@ -446,6 +451,7 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	ecsClusters = sim.MakeStore[ECSCluster](srv.DB(), "ecs_clusters")
 	ecsTaskDefinitions = sim.MakeStore[ECSTaskDefinition](srv.DB(), "ecs_task_definitions")
 	ecsTasks = sim.MakeStore[ECSTask](srv.DB(), "ecs_tasks")
+	ecsBackgroundServer = srv
 	ecsRebuildRevisionIndex()
 
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateCluster", handleECSCreateCluster)
@@ -1521,7 +1527,10 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 		// started and their Docker handles are stored. This matches real ECS
 		// semantics and eliminates a class of races where callers (e.g.
 		// ExecuteCommand, task metadata) see RUNNING before the container exists.
-		go func(id string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, launchType, containerInstanceKey string) {
+		// The goroutine reads durable stores (task, ELB, CloudWatch) while it
+		// provisions real containers, so it runs under the server lifecycle and
+		// is drained before SQLite closes (the BUG-2827 class).
+		start := func(id string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, launchType, containerInstanceKey string) {
 			lifecycleLock := ecsTaskLifecycleLock(id)
 			lifecycleLock.Lock()
 			defer lifecycleLock.Unlock()
@@ -1594,10 +1603,30 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 			if task, ok := ecsTasks.Get(id); ok {
 				ecsRequestServiceReconcileForTask(task)
 			}
-		}(taskID, td, taskTags, in.Overrides, taskVolumeHosts, in.LaunchType, in.ContainerInstanceKey)
+		}
+		ecsScheduleTaskStart(start, taskID, td, taskTags, in.Overrides, taskVolumeHosts, in.LaunchType, in.ContainerInstanceKey)
 	}
 
 	return tasks, nil
+}
+
+// ecsScheduleTaskStart runs one task's PROVISIONING→RUNNING lifecycle under the
+// server's background-worker lifecycle when the ECS service has registered one,
+// so orderly shutdown drains it before SQLite is closed. The unit-test paths
+// that exercise runECSTasks without a registered server fall back to a plain
+// goroutine, matching the prior behaviour.
+func ecsScheduleTaskStart(
+	start func(string, ECSTaskDefinition, []ECSTag, *ECSTaskOverride, map[string]string, string, string),
+	id string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride,
+	taskVolumeHosts map[string]string, launchType, containerInstanceKey string,
+) {
+	if ecsBackgroundServer == nil {
+		go start(id, td, taskTags, overrides, taskVolumeHosts, launchType, containerInstanceKey)
+		return
+	}
+	ecsBackgroundServer.StartBackground(func(context.Context) {
+		start(id, td, taskTags, overrides, taskVolumeHosts, launchType, containerInstanceKey)
+	})
 }
 
 func ecsWatchTaskProcesses(taskID, containerInstanceKey string, processes *ecsTaskProcesses) {
