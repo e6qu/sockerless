@@ -42,11 +42,16 @@ func TestCodeBuild_BuildBatches_SDK(t *testing.T) {
 	require.NotEmpty(t, batchID)
 	assert.Equal(t, proj, aws.ToString(start.BuildBatch.ProjectName))
 
-	require.Eventually(t, func() bool {
+	var lastBatchStatus cbtypes.StatusType
+	batchSucceeded := assert.Eventually(t, func() bool {
 		bg, err := c.BatchGetBuildBatches(ctx, &codebuild.BatchGetBuildBatchesInput{Ids: []string{batchID}})
 		require.NoError(t, err)
+		if len(bg.BuildBatches) == 1 {
+			lastBatchStatus = bg.BuildBatches[0].BuildBatchStatus
+		}
 		return len(bg.BuildBatches) == 1 && bg.BuildBatches[0].BuildBatchStatus == cbtypes.StatusTypeSucceeded
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 60*time.Second, 100*time.Millisecond)
+	require.True(t, batchSucceeded, "build batch did not reach SUCCEEDED; last status: %s", lastBatchStatus)
 
 	lb, err := c.ListBuildBatches(ctx, &codebuild.ListBuildBatchesInput{})
 	require.NoError(t, err)

@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -253,15 +254,18 @@ func TestBatch_JobSubmitDescribe_SDK(t *testing.T) {
 	require.NotEmpty(t, aws.ToString(submit.JobId))
 
 	var job batchtypes.JobDetail
-	require.Eventually(t, func() bool {
+	var jobDiagnostic string
+	succeeded := assert.Eventually(t, func() bool {
 		describe, err := c.DescribeJobs(ctx, &batch.DescribeJobsInput{
 			Jobs: []string{aws.ToString(submit.JobId)},
 		})
 		require.NoError(t, err)
 		require.Len(t, describe.Jobs, 1)
 		job = describe.Jobs[0]
+		jobDiagnostic = fmt.Sprintf("status=%s reason=%s", job.Status, aws.ToString(job.StatusReason))
 		return job.Status == batchtypes.JobStatusSucceeded
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 60*time.Second, 100*time.Millisecond)
+	require.True(t, succeeded, "Batch job did not reach SUCCEEDED: %s", jobDiagnostic)
 	assert.Equal(t, aws.ToString(submit.JobId), aws.ToString(job.JobId))
 	assert.Equal(t, "batch-sdk-job", aws.ToString(job.JobName))
 	assert.Equal(t, batchtypes.JobStatusSucceeded, job.Status)

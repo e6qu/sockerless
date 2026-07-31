@@ -8,7 +8,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `bigquery-v2.discovery.json.gz` | `bigquery.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260707` | 2026-07-26T18:38:35Z |
 | `bigtableadmin-v2.discovery.json.gz` | `bigtableadmin.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260725` | 2026-07-29T00:06:48Z |
 | `cloudbuild-v1.discovery.json.gz` | `cloudbuild.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260627` | 2026-07-26T18:38:36Z |
-| `dataflow-v1b3.discovery.json.gz` | `dataflow.googleapis.com` | `$discovery/rest?version=v1b3` | Apache-2.0 | `revision 20260719` | 2026-07-30T09:37:09Z |
 | `firestore-v1.discovery.json.gz` | `firestore.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260706` | 2026-07-26T18:38:40Z |
 | `storage-v1.discovery.json.gz` | `storage.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260719` | 2026-07-26T18:38:41Z |
 | `logging-v2.discovery.json.gz` | `logging.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260724` | 2026-07-29T08:44:40Z |
@@ -34,3 +33,4 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `eventarc-v1.discovery.json.gz` | `eventarc.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260723` | 2026-07-31T07:21:41Z |
 | `artifactregistry-v1.discovery.json.gz` | `artifactregistry.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260727` | 2026-07-31T10:36:36Z |
 | `vpcaccess-v1.discovery.json.gz` | `vpcaccess.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260726` | 2026-07-31T12:31:56Z |
+| `dataflow-v1b3.discovery.json.gz` | `dataflow.googleapis.com` | `$discovery/rest?version=v1b3` | Apache-2.0 | `revision 20260729` | 2026-07-31T13:20:00Z |

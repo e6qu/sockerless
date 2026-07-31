@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2836 filed - 2836 fixed - 8 open - 16 false positives.**
+**2839 filed - 2839 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2839~~ | P1 | Hosted AWS Batch and CodeBuild workload validation | ten-second assertions did not cover real container start and status propagation on a loaded hosted runner | Both assertions allow sixty seconds and report the last job or batch status with its reason. The focused official AWS SDK cases passed. |
+| ~~2838~~ | P1 | Core continuous-integration ARM64 budget | the shared simulator modules ran under a two-minute `go test` deadline while a single SQLite soak subtest takes 73 seconds on the ARM64 runner | The shared-module packages now use the same five-minute deadline as every sibling suite in the job, retaining a bounded per-package budget. |
+| ~~2837~~ | P2 | Google Cloud Dataflow specification freshness | a hosted edge served Dataflow v1b3 revision 20260729 while operator-visible edges still served revision 20260719 | The exact CI-captured revision 20260729 document was vendored byte-for-byte with updated provenance; its content was identical to the previous pin except the revision marker, and the complete multi-probe freshness audit passed. |
 | ~~2836~~ | P2 | Google Cloud Serverless VPC Access specification freshness | hosted multi-probe validation observed revision 20260726 while revision 20260719 was vendored | The repository vendor script's three-probe fetch retained VPC Access v1 revision 20260726; its content was identical to the CI-captured drift artifact except the revision marker, and the complete multi-probe freshness audit passed. |
 | ~~2835~~ | P2 | Simulator surface-table generation | the seeder's filename glob order followed `LC_COLLATE`, so macOS (`en_US.UTF-8`) and hosted runners (`C.UTF-8`) emitted identical rows in different orders and the build gate reported stale tables | `scripts/seed-surface-tables.sh` pins `LC_ALL=C`, making the generated row order identical on every platform; ShellCheck plus bash and zsh syntax validation passed. |
 | ~~2834~~ | P1 | AWS simulator unit-test isolation | `TestECSStopServiceTasks_DrainsNonStopped` initialized only four stores, so the drain's asynchronous service reconciliation dereferenced a nil store interface and panicked the test binary in filtered runs | The test now initializes the scheduler-state, deployment-record, and alarm stores its asynchronous reconcile transitively reads. The filtered selection and the complete AWS simulator module suite passed. |

@@ -179,7 +179,7 @@ jobs:
           run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 5m ./...); }
           run_noflags() { echo "=== $1 ===" && (cd "$1" && go test -v -timeout 5m ./...); }
           run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 5m ./...); }
-          run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 2m ./...); }
+          run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 5m ./...); }
           run_noflags api
           run backends/core
           run_race agent

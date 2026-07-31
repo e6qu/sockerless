@@ -4,6 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The following hosted iteration surfaced one more specification edge and two
+more budget defects. A hosted edge served Dataflow v1b3 revision 20260729
+before operator-visible edges; the exact CI-captured document was vendored
+byte-for-byte, identical to the previous pin except its revision marker. The
+ARM64 core job's two-minute shared-module deadline could not hold a 73-second
+SQLite soak plus the remaining suite, so those packages now share the
+five-minute sibling deadline. Ten-second AWS Batch and CodeBuild workload
+assertions became sixty-second assertions with last-status diagnostics.
+
 The widened Express rollout window paid off immediately: its new diagnostic
 showed two replacement tasks RUNNING beside one old task for two minutes —
 the health gate never passed. The Express-managed security group had no
