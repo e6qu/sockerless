@@ -1,6 +1,6 @@
 # Sim surface — aws-elbv2
 
-Surface registered in `simulators/aws/elbv2.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/elbv2_rules.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,6 +13,30 @@ Surface registered in `simulators/aws/elbv2.go` (and related files grouped under
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
+| `Action CreateRule` | ✓ `simulators/aws/elbv2_rules.go:42::handleELBv2CreateRule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeRules` | ✓ `simulators/aws/elbv2_rules.go:43::handleELBv2DescribeRules` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyRule` | ✓ `simulators/aws/elbv2_rules.go:44::handleELBv2ModifyRule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteRule` | ✓ `simulators/aws/elbv2_rules.go:45::handleELBv2DeleteRule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action SetRulePriorities` | ✓ `simulators/aws/elbv2_rules.go:46::handleELBv2SetRulePriorities` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyListener` | ✓ `simulators/aws/elbv2_rules.go:47::handleELBv2ModifyListener` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AddListenerCertificates` | ✓ `simulators/aws/elbv2_rules.go:48::handleELBv2AddListenerCertificates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RemoveListenerCertificates` | ✓ `simulators/aws/elbv2_rules.go:49::handleELBv2RemoveListenerCertificates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeListenerCertificates` | ✓ `simulators/aws/elbv2_rules.go:50::handleELBv2DescribeListenerCertificates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateTrustStore` | ✓ `simulators/aws/elbv2_truststore.go:57::handleELBv2CreateTrustStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeTrustStores` | ✓ `simulators/aws/elbv2_truststore.go:58::handleELBv2DescribeTrustStores` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyTrustStore` | ✓ `simulators/aws/elbv2_truststore.go:59::handleELBv2ModifyTrustStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteTrustStore` | ✓ `simulators/aws/elbv2_truststore.go:60::handleELBv2DeleteTrustStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetTrustStoreCaCertificatesBundle` | ✓ `simulators/aws/elbv2_truststore.go:61::handleELBv2GetTrustStoreCaCertificatesBundle` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeTrustStoreAssociations` | ✓ `simulators/aws/elbv2_truststore.go:62::handleELBv2DescribeTrustStoreAssociations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteSharedTrustStoreAssociation` | ✓ `simulators/aws/elbv2_truststore.go:63::handleELBv2DeleteSharedTrustStoreAssociation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AddTrustStoreRevocations` | ✓ `simulators/aws/elbv2_truststore.go:64::handleELBv2AddTrustStoreRevocations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RemoveTrustStoreRevocations` | ✓ `simulators/aws/elbv2_truststore.go:65::handleELBv2RemoveTrustStoreRevocations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeTrustStoreRevocations` | ✓ `simulators/aws/elbv2_truststore.go:66::handleELBv2DescribeTrustStoreRevocations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetTrustStoreRevocationContent` | ✓ `simulators/aws/elbv2_truststore.go:67::handleELBv2GetTrustStoreRevocationContent` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeSSLPolicies` | ✓ `simulators/aws/elbv2_truststore.go:69::handleELBv2DescribeSSLPolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetResourcePolicy` | ✓ `simulators/aws/elbv2_truststore.go:70::handleELBv2GetResourcePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyCapacityReservation` | ✓ `simulators/aws/elbv2_truststore.go:71::handleELBv2ModifyCapacityReservation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyIpPools` | ✓ `simulators/aws/elbv2_truststore.go:72::handleELBv2ModifyIpPools` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CreateLoadBalancer` | ✓ `simulators/aws/elbv2.go:175::handleELBv2CreateLoadBalancer` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeLoadBalancers` | ✓ `simulators/aws/elbv2.go:176::handleELBv2DescribeLoadBalancers` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DeleteLoadBalancer` | ✓ `simulators/aws/elbv2.go:177::handleELBv2DeleteLoadBalancer` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -40,30 +64,6 @@ Surface registered in `simulators/aws/elbv2.go` (and related files grouped under
 | `Action RemoveTags` | ✓ `simulators/aws/elbv2.go:202::handleELBv2RemoveTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeTags` | ✓ `simulators/aws/elbv2.go:203::handleELBv2DescribeTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeAccountLimits` | ✓ `simulators/aws/elbv2.go:204::handleELBv2DescribeAccountLimits` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateRule` | ✓ `simulators/aws/elbv2_rules.go:42::handleELBv2CreateRule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeRules` | ✓ `simulators/aws/elbv2_rules.go:43::handleELBv2DescribeRules` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyRule` | ✓ `simulators/aws/elbv2_rules.go:44::handleELBv2ModifyRule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteRule` | ✓ `simulators/aws/elbv2_rules.go:45::handleELBv2DeleteRule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action SetRulePriorities` | ✓ `simulators/aws/elbv2_rules.go:46::handleELBv2SetRulePriorities` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyListener` | ✓ `simulators/aws/elbv2_rules.go:47::handleELBv2ModifyListener` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AddListenerCertificates` | ✓ `simulators/aws/elbv2_rules.go:48::handleELBv2AddListenerCertificates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action RemoveListenerCertificates` | ✓ `simulators/aws/elbv2_rules.go:49::handleELBv2RemoveListenerCertificates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeListenerCertificates` | ✓ `simulators/aws/elbv2_rules.go:50::handleELBv2DescribeListenerCertificates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateTrustStore` | ✓ `simulators/aws/elbv2_truststore.go:57::handleELBv2CreateTrustStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeTrustStores` | ✓ `simulators/aws/elbv2_truststore.go:58::handleELBv2DescribeTrustStores` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyTrustStore` | ✓ `simulators/aws/elbv2_truststore.go:59::handleELBv2ModifyTrustStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteTrustStore` | ✓ `simulators/aws/elbv2_truststore.go:60::handleELBv2DeleteTrustStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action GetTrustStoreCaCertificatesBundle` | ✓ `simulators/aws/elbv2_truststore.go:61::handleELBv2GetTrustStoreCaCertificatesBundle` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeTrustStoreAssociations` | ✓ `simulators/aws/elbv2_truststore.go:62::handleELBv2DescribeTrustStoreAssociations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteSharedTrustStoreAssociation` | ✓ `simulators/aws/elbv2_truststore.go:63::handleELBv2DeleteSharedTrustStoreAssociation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AddTrustStoreRevocations` | ✓ `simulators/aws/elbv2_truststore.go:64::handleELBv2AddTrustStoreRevocations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action RemoveTrustStoreRevocations` | ✓ `simulators/aws/elbv2_truststore.go:65::handleELBv2RemoveTrustStoreRevocations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeTrustStoreRevocations` | ✓ `simulators/aws/elbv2_truststore.go:66::handleELBv2DescribeTrustStoreRevocations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action GetTrustStoreRevocationContent` | ✓ `simulators/aws/elbv2_truststore.go:67::handleELBv2GetTrustStoreRevocationContent` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeSSLPolicies` | ✓ `simulators/aws/elbv2_truststore.go:69::handleELBv2DescribeSSLPolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action GetResourcePolicy` | ✓ `simulators/aws/elbv2_truststore.go:70::handleELBv2GetResourcePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyCapacityReservation` | ✓ `simulators/aws/elbv2_truststore.go:71::handleELBv2ModifyCapacityReservation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyIpPools` | ✓ `simulators/aws/elbv2_truststore.go:72::handleELBv2ModifyIpPools` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

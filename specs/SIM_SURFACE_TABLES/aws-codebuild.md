@@ -1,6 +1,6 @@
 # Sim surface — aws-codebuild
 
-Surface registered in `simulators/aws/codebuild.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/codebuild_extended.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,28 +13,6 @@ Surface registered in `simulators/aws/codebuild.go` (and related files grouped u
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action CodeBuild_20161006.CreateProject` | ✓ `simulators/aws/codebuild.go:168::handleCBCreateProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.BatchGetProjects` | ✓ `simulators/aws/codebuild.go:169::handleCBBatchGetProjects` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.ListProjects` | ✓ `simulators/aws/codebuild.go:170::handleCBListProjects` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.UpdateProject` | ✓ `simulators/aws/codebuild.go:171::handleCBUpdateProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.DeleteProject` | ✓ `simulators/aws/codebuild.go:172::handleCBDeleteProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.StartBuild` | ✓ `simulators/aws/codebuild.go:173::handleCBStartBuild` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.StopBuild` | ✓ `simulators/aws/codebuild.go:174::handleCBStopBuild` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.RetryBuild` | ✓ `simulators/aws/codebuild.go:175::handleCBRetryBuild` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.BatchGetBuilds` | ✓ `simulators/aws/codebuild.go:176::handleCBBatchGetBuilds` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.ListBuildsForProject` | ✓ `simulators/aws/codebuild.go:177::handleCBListBuildsForProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.ListBuilds` | ✓ `simulators/aws/codebuild.go:178::handleCBListBuilds` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.CreateReportGroup` | ✓ `simulators/aws/codebuild.go:180::handleCBCreateReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.UpdateReportGroup` | ✓ `simulators/aws/codebuild.go:181::handleCBUpdateReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.DeleteReportGroup` | ✓ `simulators/aws/codebuild.go:182::handleCBDeleteReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.ListReportGroups` | ✓ `simulators/aws/codebuild.go:183::handleCBListReportGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.BatchGetReportGroups` | ✓ `simulators/aws/codebuild.go:184::handleCBBatchGetReportGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.ListReports` | ✓ `simulators/aws/codebuild.go:185::handleCBListReports` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.ListReportsForReportGroup` | ✓ `simulators/aws/codebuild.go:186::handleCBListReportsForReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.BatchGetReports` | ✓ `simulators/aws/codebuild.go:187::handleCBBatchGetReports` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.ImportSourceCredentials` | ✓ `simulators/aws/codebuild.go:189::handleCBImportSourceCredentials` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.ListSourceCredentials` | ✓ `simulators/aws/codebuild.go:190::handleCBListSourceCredentials` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CodeBuild_20161006.DeleteSourceCredentials` | ✓ `simulators/aws/codebuild.go:191::handleCBDeleteSourceCredentials` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CodeBuild_20161006.BatchDeleteBuilds` | ✓ `simulators/aws/codebuild_extended.go:158::handleCBBatchDeleteBuilds` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CodeBuild_20161006.StartBuildBatch` | ✓ `simulators/aws/codebuild_extended.go:161::handleCBStartBuildBatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CodeBuild_20161006.StopBuildBatch` | ✓ `simulators/aws/codebuild_extended.go:162::handleCBStopBuildBatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -72,6 +50,28 @@ Surface registered in `simulators/aws/codebuild.go` (and related files grouped u
 | `Action CodeBuild_20161006.ListCuratedEnvironmentImages` | ✓ `simulators/aws/codebuild_extended.go:208::handleCBListCuratedEnvironmentImages` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CodeBuild_20161006.ListSharedProjects` | ✓ `simulators/aws/codebuild_extended.go:209::handleCBListSharedProjects` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CodeBuild_20161006.ListSharedReportGroups` | ✓ `simulators/aws/codebuild_extended.go:210::handleCBListSharedReportGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.CreateProject` | ✓ `simulators/aws/codebuild.go:168::handleCBCreateProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetProjects` | ✓ `simulators/aws/codebuild.go:169::handleCBBatchGetProjects` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListProjects` | ✓ `simulators/aws/codebuild.go:170::handleCBListProjects` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.UpdateProject` | ✓ `simulators/aws/codebuild.go:171::handleCBUpdateProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteProject` | ✓ `simulators/aws/codebuild.go:172::handleCBDeleteProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StartBuild` | ✓ `simulators/aws/codebuild.go:173::handleCBStartBuild` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.StopBuild` | ✓ `simulators/aws/codebuild.go:174::handleCBStopBuild` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.RetryBuild` | ✓ `simulators/aws/codebuild.go:175::handleCBRetryBuild` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetBuilds` | ✓ `simulators/aws/codebuild.go:176::handleCBBatchGetBuilds` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListBuildsForProject` | ✓ `simulators/aws/codebuild.go:177::handleCBListBuildsForProject` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListBuilds` | ✓ `simulators/aws/codebuild.go:178::handleCBListBuilds` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.CreateReportGroup` | ✓ `simulators/aws/codebuild.go:180::handleCBCreateReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.UpdateReportGroup` | ✓ `simulators/aws/codebuild.go:181::handleCBUpdateReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteReportGroup` | ✓ `simulators/aws/codebuild.go:182::handleCBDeleteReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListReportGroups` | ✓ `simulators/aws/codebuild.go:183::handleCBListReportGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetReportGroups` | ✓ `simulators/aws/codebuild.go:184::handleCBBatchGetReportGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListReports` | ✓ `simulators/aws/codebuild.go:185::handleCBListReports` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListReportsForReportGroup` | ✓ `simulators/aws/codebuild.go:186::handleCBListReportsForReportGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.BatchGetReports` | ✓ `simulators/aws/codebuild.go:187::handleCBBatchGetReports` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ImportSourceCredentials` | ✓ `simulators/aws/codebuild.go:189::handleCBImportSourceCredentials` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.ListSourceCredentials` | ✓ `simulators/aws/codebuild.go:190::handleCBListSourceCredentials` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CodeBuild_20161006.DeleteSourceCredentials` | ✓ `simulators/aws/codebuild.go:191::handleCBDeleteSourceCredentials` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

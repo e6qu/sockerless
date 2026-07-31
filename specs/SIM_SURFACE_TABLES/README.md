@@ -8,8 +8,8 @@ Re-run `bash scripts/seed-surface-tables.sh` after adding new `HandleFunc` regis
 
 ## Index
 
-- [`aws-acm`](aws-acm.md)
 - [`aws-acm_acme`](aws-acm_acme.md)
+- [`aws-acm`](aws-acm.md)
 - [`aws-acmpca`](aws-acmpca.md)
 - [`aws-amplify`](aws-amplify.md)
 - [`aws-apigateway`](aws-apigateway.md)
@@ -84,8 +84,8 @@ Re-run `bash scripts/seed-surface-tables.sh` after adding new `HandleFunc` regis
 - [`gcp-cloudkms`](gcp-cloudkms.md)
 - [`gcp-cloudresourcemanager`](gcp-cloudresourcemanager.md)
 - [`gcp-cloudrun`](gcp-cloudrun.md)
-- [`gcp-compute`](gcp-compute.md)
 - [`gcp-compute_loadbalancing`](gcp-compute_loadbalancing.md)
+- [`gcp-compute`](gcp-compute.md)
 - [`gcp-dataflow`](gcp-dataflow.md)
 - [`gcp-dns`](gcp-dns.md)
 - [`gcp-eventarc`](gcp-eventarc.md)

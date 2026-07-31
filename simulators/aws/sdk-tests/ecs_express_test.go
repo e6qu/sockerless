@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -155,16 +156,50 @@ func TestECSExpress_CreateAssemblyAndLifecycle(t *testing.T) {
 	require.Len(t, st2.ScalableTargets, 1)
 	assert.EqualValues(t, 8, aws.ToInt32(st2.ScalableTargets[0].MaxCapacity))
 	assert.EqualValues(t, 2, aws.ToInt32(st2.ScalableTargets[0].MinCapacity))
-	require.Eventually(t, func() bool {
+	// The rollout launches two replacement tasks, waits out their steady-state
+	// and target-health gating, and tears down the previous task while the
+	// scheduler's own bounded placement-retry chain (1+2+4+8+16+32s) may be
+	// recovering from a transient launch failure. Real Amazon ECS expresses
+	// this rollout in minutes, so the window covers the full retry budget and
+	// the diagnostic retains the last observed service state.
+	var rolloutDiagnostic string
+	rolled := assert.Eventually(t, func() bool {
 		services, describeErr := c.DescribeServices(ctx, &ecs.DescribeServicesInput{
 			Cluster: aws.String(cluster), Services: []string{"web"},
 		})
-		return describeErr == nil && len(services.Services) == 1 &&
-			services.Services[0].DesiredCount == 2 &&
-			services.Services[0].RunningCount == 2 &&
-			aws.ToString(services.Services[0].TaskDefinition) != initialTaskDefinition
-	}, 30*time.Second, 100*time.Millisecond,
-		"Express update did not roll the backing Fargate service to the new managed task definition")
+		if describeErr != nil {
+			rolloutDiagnostic = "DescribeServices error: " + describeErr.Error()
+			return false
+		}
+		if len(services.Services) != 1 {
+			rolloutDiagnostic = fmt.Sprintf("DescribeServices returned %d services", len(services.Services))
+			return false
+		}
+		service := services.Services[0]
+		deploymentState, deploymentReason := "", ""
+		if len(service.Deployments) > 0 {
+			deploymentState = string(service.Deployments[0].RolloutState)
+			deploymentReason = aws.ToString(service.Deployments[0].RolloutStateReason)
+		}
+		events := ""
+		for i, event := range service.Events {
+			if i >= 3 {
+				break
+			}
+			events += " [" + aws.ToString(event.Message) + "]"
+		}
+		rolloutDiagnostic = fmt.Sprintf(
+			"desired=%d running=%d pending=%d taskDefinition=%s initialTaskDefinition=%s deployment=%s %q events=%s",
+			service.DesiredCount, service.RunningCount, service.PendingCount,
+			aws.ToString(service.TaskDefinition), initialTaskDefinition,
+			deploymentState, deploymentReason, events)
+		return service.DesiredCount == 2 &&
+			service.RunningCount == 2 &&
+			aws.ToString(service.TaskDefinition) != initialTaskDefinition
+	}, 2*time.Minute, time.Second)
+	require.True(t, rolled,
+		"Express update did not roll the backing Fargate service to the new managed task definition: %s",
+		rolloutDiagnostic)
 
 	// ---- Delete: status DRAINING + assembly torn down ----
 	del, err := c.DeleteExpressGatewayService(ctx, &ecs.DeleteExpressGatewayServiceInput{

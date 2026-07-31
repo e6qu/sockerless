@@ -1,6 +1,6 @@
 # Sim surface — aws-apigatewayv2
 
-Surface registered in `simulators/aws/apigatewayv2.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/apigatewayv2_complete.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,50 +13,6 @@ Surface registered in `simulators/aws/apigatewayv2.go` (and related files groupe
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v2/apis` | ✓ `simulators/aws/apigatewayv2.go:182::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis` | ✓ `simulators/aws/apigatewayv2.go:183::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}` | ✓ `simulators/aws/apigatewayv2.go:184::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/apis/{apiId}` | ✓ `simulators/aws/apigatewayv2.go:185::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/routes` | ✓ `simulators/aws/apigatewayv2.go:186::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/routes` | ✓ `simulators/aws/apigatewayv2.go:187::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/routes/{routeId}` | ✓ `simulators/aws/apigatewayv2.go:188::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /v2/apis/{apiId}/routes/{routeId}` | ✓ `simulators/aws/apigatewayv2.go:189::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/apis/{apiId}/routes/{routeId}` | ✓ `simulators/aws/apigatewayv2.go:190::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/integrations` | ✓ `simulators/aws/apigatewayv2.go:191::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/integrations` | ✓ `simulators/aws/apigatewayv2.go:192::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/integrations/{integrationId}` | ✓ `simulators/aws/apigatewayv2.go:193::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /v2/apis/{apiId}/integrations/{integrationId}` | ✓ `simulators/aws/apigatewayv2.go:194::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/apis/{apiId}/integrations/{integrationId}` | ✓ `simulators/aws/apigatewayv2.go:195::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/stages` | ✓ `simulators/aws/apigatewayv2.go:196::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/stages` | ✓ `simulators/aws/apigatewayv2.go:197::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/stages/{stageName}` | ✓ `simulators/aws/apigatewayv2.go:198::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /v2/apis/{apiId}/stages/{stageName}` | ✓ `simulators/aws/apigatewayv2.go:199::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/apis/{apiId}/stages/{stageName}` | ✓ `simulators/aws/apigatewayv2.go:200::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/deployments` | ✓ `simulators/aws/apigatewayv2.go:201::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/deployments` | ✓ `simulators/aws/apigatewayv2.go:202::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigatewayv2.go:203::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/apis/{apiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigatewayv2.go:204::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/authorizers` | ✓ `simulators/aws/apigatewayv2.go:207::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/authorizers` | ✓ `simulators/aws/apigatewayv2.go:208::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigatewayv2.go:209::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /v2/apis/{apiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigatewayv2.go:210::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/apis/{apiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigatewayv2.go:211::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/models` | ✓ `simulators/aws/apigatewayv2.go:214::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/models` | ✓ `simulators/aws/apigatewayv2.go:215::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/models/{modelId}` | ✓ `simulators/aws/apigatewayv2.go:216::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/apis/{apiId}/models/{modelId}` | ✓ `simulators/aws/apigatewayv2.go:217::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/domainnames` | ✓ `simulators/aws/apigatewayv2.go:221::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/domainnames` | ✓ `simulators/aws/apigatewayv2.go:222::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/domainnames/{domainName}` | ✓ `simulators/aws/apigatewayv2.go:223::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/domainnames/{domainName}` | ✓ `simulators/aws/apigatewayv2.go:224::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/domainnames/{domainName}/apimappings` | ✓ `simulators/aws/apigatewayv2.go:225::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/domainnames/{domainName}/apimappings` | ✓ `simulators/aws/apigatewayv2.go:226::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/domainnames/{domainName}/apimappings/{apiMappingId}` | ✓ `simulators/aws/apigatewayv2.go:227::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/domainnames/{domainName}/apimappings/{apiMappingId}` | ✓ `simulators/aws/apigatewayv2.go:228::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /v2/vpclinks` | ✓ `simulators/aws/apigatewayv2.go:232::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/vpclinks` | ✓ `simulators/aws/apigatewayv2.go:233::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v2/vpclinks/{vpcLinkId}` | ✓ `simulators/aws/apigatewayv2.go:234::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v2/vpclinks/{vpcLinkId}` | ✓ `simulators/aws/apigatewayv2.go:235::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /v2/portals` | ✓ `simulators/aws/apigatewayv2_complete.go:123::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /v2/portals` | ✓ `simulators/aws/apigatewayv2_complete.go:124::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /v2/portals/{portalId}` | ✓ `simulators/aws/apigatewayv2_complete.go:125::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -110,6 +66,50 @@ Surface registered in `simulators/aws/apigatewayv2.go` (and related files groupe
 | `DELETE /v2/apis/{apiId}/cors` | ✓ `simulators/aws/apigatewayv2_extras.go:154::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `DELETE /v2/apis/{apiId}/routes/{routeId}/requestparameters/{requestParameterKey}` | ✓ `simulators/aws/apigatewayv2_extras.go:155::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `DELETE /v2/apis/{apiId}/stages/{stageName}/routesettings/{routeKey}` | ✓ `simulators/aws/apigatewayv2_extras.go:156::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis` | ✓ `simulators/aws/apigatewayv2.go:182::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis` | ✓ `simulators/aws/apigatewayv2.go:183::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}` | ✓ `simulators/aws/apigatewayv2.go:184::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}` | ✓ `simulators/aws/apigatewayv2.go:185::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/routes` | ✓ `simulators/aws/apigatewayv2.go:186::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/routes` | ✓ `simulators/aws/apigatewayv2.go:187::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/routes/{routeId}` | ✓ `simulators/aws/apigatewayv2.go:188::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v2/apis/{apiId}/routes/{routeId}` | ✓ `simulators/aws/apigatewayv2.go:189::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/routes/{routeId}` | ✓ `simulators/aws/apigatewayv2.go:190::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/integrations` | ✓ `simulators/aws/apigatewayv2.go:191::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/integrations` | ✓ `simulators/aws/apigatewayv2.go:192::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/integrations/{integrationId}` | ✓ `simulators/aws/apigatewayv2.go:193::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v2/apis/{apiId}/integrations/{integrationId}` | ✓ `simulators/aws/apigatewayv2.go:194::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/integrations/{integrationId}` | ✓ `simulators/aws/apigatewayv2.go:195::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/stages` | ✓ `simulators/aws/apigatewayv2.go:196::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/stages` | ✓ `simulators/aws/apigatewayv2.go:197::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/stages/{stageName}` | ✓ `simulators/aws/apigatewayv2.go:198::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v2/apis/{apiId}/stages/{stageName}` | ✓ `simulators/aws/apigatewayv2.go:199::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/stages/{stageName}` | ✓ `simulators/aws/apigatewayv2.go:200::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/deployments` | ✓ `simulators/aws/apigatewayv2.go:201::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/deployments` | ✓ `simulators/aws/apigatewayv2.go:202::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigatewayv2.go:203::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigatewayv2.go:204::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/authorizers` | ✓ `simulators/aws/apigatewayv2.go:207::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/authorizers` | ✓ `simulators/aws/apigatewayv2.go:208::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigatewayv2.go:209::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v2/apis/{apiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigatewayv2.go:210::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigatewayv2.go:211::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/models` | ✓ `simulators/aws/apigatewayv2.go:214::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/models` | ✓ `simulators/aws/apigatewayv2.go:215::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/models/{modelId}` | ✓ `simulators/aws/apigatewayv2.go:216::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/models/{modelId}` | ✓ `simulators/aws/apigatewayv2.go:217::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/domainnames` | ✓ `simulators/aws/apigatewayv2.go:221::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/domainnames` | ✓ `simulators/aws/apigatewayv2.go:222::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/domainnames/{domainName}` | ✓ `simulators/aws/apigatewayv2.go:223::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/domainnames/{domainName}` | ✓ `simulators/aws/apigatewayv2.go:224::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/domainnames/{domainName}/apimappings` | ✓ `simulators/aws/apigatewayv2.go:225::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/domainnames/{domainName}/apimappings` | ✓ `simulators/aws/apigatewayv2.go:226::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/domainnames/{domainName}/apimappings/{apiMappingId}` | ✓ `simulators/aws/apigatewayv2.go:227::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/domainnames/{domainName}/apimappings/{apiMappingId}` | ✓ `simulators/aws/apigatewayv2.go:228::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/vpclinks` | ✓ `simulators/aws/apigatewayv2.go:232::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/vpclinks` | ✓ `simulators/aws/apigatewayv2.go:233::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/vpclinks/{vpcLinkId}` | ✓ `simulators/aws/apigatewayv2.go:234::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/vpclinks/{vpcLinkId}` | ✓ `simulators/aws/apigatewayv2.go:235::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

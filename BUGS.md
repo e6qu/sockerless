@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2830 filed - 2830 fixed - 8 open - 16 false positives.**
+**2832 filed - 2832 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2832~~ | P1 | AWS simulator ECS Express hosted rollout validation | a 30-second assertion window could not cover a hosted rollout of two replacement tasks through serialized transitions, health gating, and the scheduler's bounded placement-retry chain | The rollout window now covers the full bounded retry budget, and the failure output retains desired/running/pending counts, both task definitions, deployment rollout state, and the latest service events so a recurrence reports its real cause. The focused official AWS SDK Express suite passed. |
+| ~~2831~~ | P2 | Google Cloud Artifact Registry specification freshness | hosted multi-probe validation observed revision 20260727 while revision 20260724 was vendored | The repository vendor script's three-probe fetch retained Artifact Registry v1 revision 20260727; its methods, paths, and schema fields were identical to the CI-captured drift artifact except the revision marker, and the complete multi-probe freshness audit passed. |
 | ~~2830~~ | P1 | Shauth relying-party AWS simulator isolation | the harness inherited Route 53's fixed port 5353, so an occupied host DNS port prevented the AWS relying party from becoming healthy | The harness-owned AWS process now requests an operating-system-selected Route 53 UDP/TCP coordinate. The complete real PostgreSQL/Ory Hydra/Shauth/Chromium relying-party matrix passed. |
 | ~~2829~~ | P1 | Shauth relying-party browser CI orchestration | the harness made one `docker compose up` attempt and failed before testing when Docker Hub timed out pulling PostgreSQL after 15 seconds | The harness retries convergence of the same real Compose stack four times with bounded backoff and explicit exhaustion. Shell portability checks and the complete relying-party matrix passed after a real Docker Hub pull. |
 | ~~2824~~ | P1 | Pull-request consolidation | PRs 868 and 869 were simultaneously open, so the mandatory single-open-PR guard failed | The one-commit badge-refresh PR 869 was squash-merged through GitHub into PR 868's branch using the repository's only enabled merge method. Its complete change was retained, PR 869 closed as merged, and PR 868 remained the sole open pull request. |

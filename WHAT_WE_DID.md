@@ -4,6 +4,27 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-31 — Specification drift and an honest rollout budget
+
+The consolidated branch's replacement hosted run failed two checks. Google
+Artifact Registry v1 had published Discovery revision 20260727 after the
+revision 20260724 pin was vendored. The repository vendor script's three-probe
+fetch retained the newer document; its methods, paths, and schema fields were
+identical to the CI-captured drift artifact except the revision marker, and
+the complete multi-probe freshness audit passed.
+
+The hosted Amazon ECS compute shard also exhausted the Express rollout
+assertion's thirty-second window. That rollout launches two replacement
+tasks through serialized start and stop transitions, waits out steady-state
+and target-health gating, tears down the previous task, and may be recovering
+from a transient placement failure through the scheduler's bounded one to
+thirty-two second retry chain — work real Amazon ECS expresses in minutes.
+The window now covers the full retry budget, and a failure prints the last
+observed desired, running, and pending counts, both task definitions, the
+deployment rollout state and reason, and the latest service events, so a
+recurrence reports its real cause instead of a bare timeout. The focused
+official AWS SDK Express suite passed.
+
 ## 2026-07-31 — Hosted CI regressions became measured protocol fixes
 
 The persistent AWS SDK harness had selected a Route 53 port by checking UDP

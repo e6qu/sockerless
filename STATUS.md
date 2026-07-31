@@ -6,6 +6,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
+| Google Cloud Artifact Registry specification freshness | The multi-probe vendor fetch retained Artifact Registry v1 Discovery revision 20260727 after the hosted gate observed it; methods, paths, and schema fields were unchanged from the revision 20260724 pin, and the complete freshness audit passed. |
+| Amazon ECS Express hosted rollout validation | The rollout assertion window covers the scheduler's full bounded placement-retry chain, matching real Amazon ECS rollout timing, and failure output retains desired/running/pending counts, both task definitions, deployment state, and the latest service events. The focused official AWS SDK Express suite passed. |
 | Active branch | `fix/simulator-sqlite-durability` |
 | Amazon EC2 virtual private cloud completeness | Amazon EC2 implemented all 772 operations in the vendored service model. Regional account VPC encryption modes and exclusions reconciled existing and new VPCs, endpoint payer responsibility remained durable, and PrivateLink acceptance controlled a real provider connection. The AWS console exposed account encryption controls, and official AWS SDK, AWS CLI, Terraform, and hard-restart tests passed. |
 | AWS Glue completeness | AWS Glue implemented all 297 operations in the vendored service model. Business glossaries, terms, forms, asset types, assets, attachments, associations, and idempotency state were durable; entity metadata and records came from native Data Catalog/Amazon S3 or DynamoDB connection state; data-quality batch reads used real evaluation runs. `ListGlossaryTerms` emitted only its modeled `Items` and optional `NextToken` members, and entity coverage located its own DynamoDB table without assuming an otherwise empty account. The AWS console exposed business glossaries and asset types, and official AWS SDK, AWS CLI, runtime Smithy response-shape, hard-restart, package, and browser validation passed. |
@@ -58,6 +60,9 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Open bugs | [BUGS.md](BUGS.md) retained 8 defects. AWS Amplify Hosting image optimization remained the next independent AWS fidelity slice; macOS Podman's missing nested KVM for the real Google Compute Engine Terraform graph and external-provider limitations remained explicit. |
 
 ## Verified Gates
+
+- The complete Google Cloud specification freshness audit passed all probes with Artifact Registry v1 pinned at revision 20260727; methods, paths, and schema fields were unchanged from the previous pin.
+- The focused official AWS SDK ECS Express suite passed with the rollout assertion covering the scheduler's full bounded retry budget and retaining the complete last-observed service state in its failure diagnostic.
 
 - The exact AWS Glue SDK and CLI business-glossary lifecycles passed with runtime Smithy response validation armed; a signed raw `ListGlossaryTerms` request proved its response omitted the undeclared `GlossaryId` member.
 - The focused AWS Glue entity lifecycle passed while allowing other valid DynamoDB tables in its shared simulator account and still requiring its own created entity.

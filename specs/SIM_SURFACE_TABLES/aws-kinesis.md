@@ -1,6 +1,6 @@
 # Sim surface — aws-kinesis
 
-Surface registered in `simulators/aws/kinesis.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/kinesis_streaming.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,6 +13,7 @@ Surface registered in `simulators/aws/kinesis.go` (and related files grouped und
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
+| `Action Kinesis_20131202.SubscribeToShard` | ✓ `simulators/aws/kinesis_streaming.go:21::handleKinesisSubscribeToShard` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action Kinesis_20131202.CreateStream` | ✓ `simulators/aws/kinesis.go:99::handleKinesisCreateStream` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action Kinesis_20131202.DeleteStream` | ✓ `simulators/aws/kinesis.go:100::handleKinesisDeleteStream` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action Kinesis_20131202.DescribeStream` | ✓ `simulators/aws/kinesis.go:101::handleKinesisDescribeStream` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -51,7 +52,6 @@ Surface registered in `simulators/aws/kinesis.go` (and related files grouped und
 | `Action Kinesis_20131202.UpdateAccountSettings` | ✓ `simulators/aws/kinesis.go:134::handleKinesisUpdateAccountSettings` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action Kinesis_20131202.UpdateMaxRecordSize` | ✓ `simulators/aws/kinesis.go:135::handleKinesisUpdateMaxRecordSize` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action Kinesis_20131202.UpdateStreamWarmThroughput` | ✓ `simulators/aws/kinesis.go:136::handleKinesisUpdateStreamWarmThroughput` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action Kinesis_20131202.SubscribeToShard` | ✓ `simulators/aws/kinesis_streaming.go:21::handleKinesisSubscribeToShard` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

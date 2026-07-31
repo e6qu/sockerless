@@ -1,6 +1,6 @@
 # Sim surface — aws-amplify
 
-Surface registered in `simulators/aws/amplify.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/amplify_domains.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,6 +13,15 @@ Surface registered in `simulators/aws/amplify.go` (and related files grouped und
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
+| `POST /apps/{appId}/domains` | ✓ `simulators/aws/amplify_domains.go:125::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /apps/{appId}/domains` | ✓ `simulators/aws/amplify_domains.go:126::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:127::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:128::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:129::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /apps/{appId}/backendenvironments` | ✓ `simulators/aws/amplify_domains.go:131::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /apps/{appId}/backendenvironments` | ✓ `simulators/aws/amplify_domains.go:132::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /apps/{appId}/backendenvironments/{environmentName}` | ✓ `simulators/aws/amplify_domains.go:133::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /apps/{appId}/backendenvironments/{environmentName}` | ✓ `simulators/aws/amplify_domains.go:134::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /apps` | ✓ `simulators/aws/amplify.go:468::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /apps` | ✓ `simulators/aws/amplify.go:469::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /apps/{appId}` | ✓ `simulators/aws/amplify.go:470::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -41,15 +50,6 @@ Surface registered in `simulators/aws/amplify.go` (and related files grouped und
 | `GET /tags/{arn...}` | ✓ `simulators/aws/amplify.go:500::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /tags/{arn...}` | ✓ `simulators/aws/amplify.go:501::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `DELETE /tags/{arn...}` | ✓ `simulators/aws/amplify.go:502::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /apps/{appId}/domains` | ✓ `simulators/aws/amplify_domains.go:125::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /apps/{appId}/domains` | ✓ `simulators/aws/amplify_domains.go:126::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:127::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:128::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:129::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /apps/{appId}/backendenvironments` | ✓ `simulators/aws/amplify_domains.go:131::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /apps/{appId}/backendenvironments` | ✓ `simulators/aws/amplify_domains.go:132::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /apps/{appId}/backendenvironments/{environmentName}` | ✓ `simulators/aws/amplify_domains.go:133::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /apps/{appId}/backendenvironments/{environmentName}` | ✓ `simulators/aws/amplify_domains.go:134::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

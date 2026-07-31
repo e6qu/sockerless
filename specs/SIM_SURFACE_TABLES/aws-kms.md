@@ -1,6 +1,6 @@
 # Sim surface — aws-kms
 
-Surface registered in `simulators/aws/kms.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/kms_crypto.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,6 +13,30 @@ Surface registered in `simulators/aws/kms.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
+| `Action TrentService.Sign` | ✓ `simulators/aws/kms_crypto.go:45::handleKMSSign` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.Verify` | ✓ `simulators/aws/kms_crypto.go:46::handleKMSVerify` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.GetPublicKey` | ✓ `simulators/aws/kms_crypto.go:47::handleKMSGetPublicKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.GenerateMac` | ✓ `simulators/aws/kms_crypto.go:48::handleKMSGenerateMac` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.VerifyMac` | ✓ `simulators/aws/kms_crypto.go:49::handleKMSVerifyMac` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.GenerateDataKeyPair` | ✓ `simulators/aws/kms_crypto.go:50::handleKMSGenerateDataKeyPair` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.GenerateDataKeyPairWithoutPlaintext` | ✓ `simulators/aws/kms_crypto.go:51::handleKMSGenerateDataKeyPairWithoutPlaintext` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.DeriveSharedSecret` | ✓ `simulators/aws/kms_crypto.go:52::handleKMSDeriveSharedSecret` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.CreateCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:31::handleKMSCreateCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.DescribeCustomKeyStores` | ✓ `simulators/aws/kms_custom_key_stores.go:32::handleKMSDescribeCustomKeyStores` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.ConnectCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:33::handleKMSConnectCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.DisconnectCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:34::handleKMSDisconnectCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.UpdateCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:35::handleKMSUpdateCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.DeleteCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:36::handleKMSDeleteCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.CreateGrant` | ✓ `simulators/aws/kms_grants.go:35::handleKMSCreateGrant` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.ListGrants` | ✓ `simulators/aws/kms_grants.go:36::handleKMSListGrants` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.RevokeGrant` | ✓ `simulators/aws/kms_grants.go:37::handleKMSRevokeGrant` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.GenerateDataKeyWithoutPlaintext` | ✓ `simulators/aws/kms_grants.go:38::handleKMSGenerateDataKeyWithoutPlaintext` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.ReEncrypt` | ✓ `simulators/aws/kms_grants.go:39::handleKMSReEncrypt` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.RetireGrant` | ✓ `simulators/aws/kms_multiregion.go:17::handleKMSRetireGrant` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.ListRetirableGrants` | ✓ `simulators/aws/kms_multiregion.go:18::handleKMSListRetirableGrants` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.ReplicateKey` | ✓ `simulators/aws/kms_multiregion.go:19::handleKMSReplicateKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.UpdatePrimaryRegion` | ✓ `simulators/aws/kms_multiregion.go:20::handleKMSUpdatePrimaryRegion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.GetKeyLastUsage` | ✓ `simulators/aws/kms_multiregion.go:21::handleKMSGetKeyLastUsage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action TrentService.CreateKey` | ✓ `simulators/aws/kms.go:132::handleKMSCreateKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action TrentService.DescribeKey` | ✓ `simulators/aws/kms.go:133::handleKMSDescribeKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action TrentService.ListKeys` | ✓ `simulators/aws/kms.go:134::handleKMSListKeys` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -43,30 +67,6 @@ Surface registered in `simulators/aws/kms.go` (and related files grouped under t
 | `Action TrentService.GetParametersForImport` | ✓ `simulators/aws/kms.go:160::handleKMSGetParametersForImport` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action TrentService.ImportKeyMaterial` | ✓ `simulators/aws/kms.go:161::handleKMSImportKeyMaterial` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action TrentService.DeleteImportedKeyMaterial` | ✓ `simulators/aws/kms.go:162::handleKMSDeleteImportedKeyMaterial` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.Sign` | ✓ `simulators/aws/kms_crypto.go:45::handleKMSSign` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.Verify` | ✓ `simulators/aws/kms_crypto.go:46::handleKMSVerify` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.GetPublicKey` | ✓ `simulators/aws/kms_crypto.go:47::handleKMSGetPublicKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.GenerateMac` | ✓ `simulators/aws/kms_crypto.go:48::handleKMSGenerateMac` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.VerifyMac` | ✓ `simulators/aws/kms_crypto.go:49::handleKMSVerifyMac` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.GenerateDataKeyPair` | ✓ `simulators/aws/kms_crypto.go:50::handleKMSGenerateDataKeyPair` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.GenerateDataKeyPairWithoutPlaintext` | ✓ `simulators/aws/kms_crypto.go:51::handleKMSGenerateDataKeyPairWithoutPlaintext` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.DeriveSharedSecret` | ✓ `simulators/aws/kms_crypto.go:52::handleKMSDeriveSharedSecret` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.CreateCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:31::handleKMSCreateCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.DescribeCustomKeyStores` | ✓ `simulators/aws/kms_custom_key_stores.go:32::handleKMSDescribeCustomKeyStores` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.ConnectCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:33::handleKMSConnectCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.DisconnectCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:34::handleKMSDisconnectCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.UpdateCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:35::handleKMSUpdateCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.DeleteCustomKeyStore` | ✓ `simulators/aws/kms_custom_key_stores.go:36::handleKMSDeleteCustomKeyStore` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.CreateGrant` | ✓ `simulators/aws/kms_grants.go:35::handleKMSCreateGrant` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.ListGrants` | ✓ `simulators/aws/kms_grants.go:36::handleKMSListGrants` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.RevokeGrant` | ✓ `simulators/aws/kms_grants.go:37::handleKMSRevokeGrant` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.GenerateDataKeyWithoutPlaintext` | ✓ `simulators/aws/kms_grants.go:38::handleKMSGenerateDataKeyWithoutPlaintext` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.ReEncrypt` | ✓ `simulators/aws/kms_grants.go:39::handleKMSReEncrypt` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.RetireGrant` | ✓ `simulators/aws/kms_multiregion.go:17::handleKMSRetireGrant` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.ListRetirableGrants` | ✓ `simulators/aws/kms_multiregion.go:18::handleKMSListRetirableGrants` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.ReplicateKey` | ✓ `simulators/aws/kms_multiregion.go:19::handleKMSReplicateKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.UpdatePrimaryRegion` | ✓ `simulators/aws/kms_multiregion.go:20::handleKMSUpdatePrimaryRegion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.GetKeyLastUsage` | ✓ `simulators/aws/kms_multiregion.go:21::handleKMSGetKeyLastUsage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

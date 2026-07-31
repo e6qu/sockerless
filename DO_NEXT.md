@@ -4,6 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The replacement hosted run drifted Google Artifact Registry v1 to Discovery
+revision 20260727 and timed out the ECS Express rollout assertion at thirty
+seconds. The repository vendor script retained the exact multi-probe revision
+20260727 document — identical to the CI-captured artifact except its revision
+marker — and the complete freshness audit passed. The Express rollout window
+now covers the scheduler's full bounded placement-retry chain, matching real
+Amazon ECS rollout timing, and its failure output retains the last observed
+desired/running/pending counts, both task definitions, deployment state, and
+latest service events. The focused official AWS SDK Express suite passed.
+
 Amazon EC2 implemented all 772 operations in the vendored service model.
 Regional account VPC encryption controls persisted their mode and exclusions,
 reconciled existing and newly created VPCs, and surfaced through the Cloudscape

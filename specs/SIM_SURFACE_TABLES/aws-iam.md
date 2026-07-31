@@ -1,6 +1,6 @@
 # Sim surface — aws-iam
 
-Surface registered in `simulators/aws/iam.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/iam_groups.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,32 +13,6 @@ Surface registered in `simulators/aws/iam.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action CreateRole` | ✓ `simulators/aws/iam.go:78::handleIAMCreateRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action GetRole` | ✓ `simulators/aws/iam.go:79::handleIAMGetRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteRole` | ✓ `simulators/aws/iam.go:80::handleIAMDeleteRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action UpdateRole` | ✓ `simulators/aws/iam.go:81::handleIAMUpdateRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TagRole` | ✓ `simulators/aws/iam.go:82::handleIAMTagRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action UntagRole` | ✓ `simulators/aws/iam.go:83::handleIAMUntagRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action UpdateAssumeRolePolicy` | ✓ `simulators/aws/iam.go:84::handleIAMUpdateAssumeRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action PutRolePolicy` | ✓ `simulators/aws/iam.go:85::handleIAMPutRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action GetRolePolicy` | ✓ `simulators/aws/iam.go:86::handleIAMGetRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteRolePolicy` | ✓ `simulators/aws/iam.go:87::handleIAMDeleteRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AttachRolePolicy` | ✓ `simulators/aws/iam.go:88::handleIAMAttachRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DetachRolePolicy` | ✓ `simulators/aws/iam.go:89::handleIAMDetachRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ListAttachedRolePolicies` | ✓ `simulators/aws/iam.go:90::handleIAMListAttachedRolePolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ListRolePolicies` | ✓ `simulators/aws/iam.go:91::handleIAMListRolePolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ListInstanceProfilesForRole` | ✓ `simulators/aws/iam.go:92::handleIAMListInstanceProfilesForRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreatePolicy` | ✓ `simulators/aws/iam.go:96::handleIAMCreatePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action GetPolicy` | ✓ `simulators/aws/iam.go:97::handleIAMGetPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeletePolicy` | ✓ `simulators/aws/iam.go:98::handleIAMDeletePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ListPolicies` | ✓ `simulators/aws/iam.go:99::handleIAMListPolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action GetPolicyVersion` | ✓ `simulators/aws/iam.go:100::handleIAMGetPolicyVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateInstanceProfile` | ✓ `simulators/aws/iam.go:105::handleIAMCreateInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action GetInstanceProfile` | ✓ `simulators/aws/iam.go:106::handleIAMGetInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteInstanceProfile` | ✓ `simulators/aws/iam.go:107::handleIAMDeleteInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ListInstanceProfiles` | ✓ `simulators/aws/iam.go:108::handleIAMListInstanceProfiles` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AddRoleToInstanceProfile` | ✓ `simulators/aws/iam.go:109::handleIAMAddRoleToInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action RemoveRoleFromInstanceProfile` | ✓ `simulators/aws/iam.go:110::handleIAMRemoveRoleFromInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action PutUserPermissionsBoundary` | ✓ `simulators/aws/iam_groups.go:64::handleIAMPutUserBoundary` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DeleteUserPermissionsBoundary` | ✓ `simulators/aws/iam_groups.go:65::handleIAMDeleteUserBoundary` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CreateGroup` | ✓ `simulators/aws/iam_groups.go:67::handleIAMCreateGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -87,6 +61,32 @@ Surface registered in `simulators/aws/iam.go` (and related files grouped under t
 | `Action AttachUserPolicy` | ✓ `simulators/aws/iam_users.go:73::handleIAMAttachUserPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DetachUserPolicy` | ✓ `simulators/aws/iam_users.go:74::handleIAMDetachUserPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action ListAttachedUserPolicies` | ✓ `simulators/aws/iam_users.go:75::handleIAMListAttachedUserPolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateRole` | ✓ `simulators/aws/iam.go:78::handleIAMCreateRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetRole` | ✓ `simulators/aws/iam.go:79::handleIAMGetRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteRole` | ✓ `simulators/aws/iam.go:80::handleIAMDeleteRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action UpdateRole` | ✓ `simulators/aws/iam.go:81::handleIAMUpdateRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TagRole` | ✓ `simulators/aws/iam.go:82::handleIAMTagRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action UntagRole` | ✓ `simulators/aws/iam.go:83::handleIAMUntagRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action UpdateAssumeRolePolicy` | ✓ `simulators/aws/iam.go:84::handleIAMUpdateAssumeRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action PutRolePolicy` | ✓ `simulators/aws/iam.go:85::handleIAMPutRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetRolePolicy` | ✓ `simulators/aws/iam.go:86::handleIAMGetRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteRolePolicy` | ✓ `simulators/aws/iam.go:87::handleIAMDeleteRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AttachRolePolicy` | ✓ `simulators/aws/iam.go:88::handleIAMAttachRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DetachRolePolicy` | ✓ `simulators/aws/iam.go:89::handleIAMDetachRolePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListAttachedRolePolicies` | ✓ `simulators/aws/iam.go:90::handleIAMListAttachedRolePolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListRolePolicies` | ✓ `simulators/aws/iam.go:91::handleIAMListRolePolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListInstanceProfilesForRole` | ✓ `simulators/aws/iam.go:92::handleIAMListInstanceProfilesForRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreatePolicy` | ✓ `simulators/aws/iam.go:96::handleIAMCreatePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetPolicy` | ✓ `simulators/aws/iam.go:97::handleIAMGetPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeletePolicy` | ✓ `simulators/aws/iam.go:98::handleIAMDeletePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListPolicies` | ✓ `simulators/aws/iam.go:99::handleIAMListPolicies` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetPolicyVersion` | ✓ `simulators/aws/iam.go:100::handleIAMGetPolicyVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateInstanceProfile` | ✓ `simulators/aws/iam.go:105::handleIAMCreateInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetInstanceProfile` | ✓ `simulators/aws/iam.go:106::handleIAMGetInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteInstanceProfile` | ✓ `simulators/aws/iam.go:107::handleIAMDeleteInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListInstanceProfiles` | ✓ `simulators/aws/iam.go:108::handleIAMListInstanceProfiles` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AddRoleToInstanceProfile` | ✓ `simulators/aws/iam.go:109::handleIAMAddRoleToInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RemoveRoleFromInstanceProfile` | ✓ `simulators/aws/iam.go:110::handleIAMRemoveRoleFromInstanceProfile` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

@@ -1,6 +1,6 @@
 # Sim surface — aws-apigateway
 
-Surface registered in `simulators/aws/apigateway.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/apigateway_complete.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,59 +13,6 @@ Surface registered in `simulators/aws/apigateway.go` (and related files grouped 
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /restapis` | ✓ `simulators/aws/apigateway.go:222::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis` | ✓ `simulators/aws/apigateway.go:223::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}` | ✓ `simulators/aws/apigateway.go:224::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}` | ✓ `simulators/aws/apigateway.go:225::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /restapis/{restApiId}/resources/{parentId}` | ✓ `simulators/aws/apigateway.go:226::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/resources` | ✓ `simulators/aws/apigateway.go:227::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/resources/{resourceId}` | ✓ `simulators/aws/apigateway.go:228::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/resources/{resourceId}` | ✓ `simulators/aws/apigateway.go:229::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}` | ✓ `simulators/aws/apigateway.go:230::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}` | ✓ `simulators/aws/apigateway.go:231::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}` | ✓ `simulators/aws/apigateway.go:232::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration` | ✓ `simulators/aws/apigateway.go:233::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration` | ✓ `simulators/aws/apigateway.go:234::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration` | ✓ `simulators/aws/apigateway.go:235::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /restapis/{restApiId}/deployments` | ✓ `simulators/aws/apigateway.go:236::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/deployments` | ✓ `simulators/aws/apigateway.go:237::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigateway.go:238::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigateway.go:239::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /restapis/{restApiId}/stages` | ✓ `simulators/aws/apigateway.go:240::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/stages` | ✓ `simulators/aws/apigateway.go:241::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/stages/{stageName}` | ✓ `simulators/aws/apigateway.go:242::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/stages/{stageName}` | ✓ `simulators/aws/apigateway.go:243::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:250::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:251::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:252::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:253::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:254::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:255::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /apikeys` | ✓ `simulators/aws/apigateway.go:259::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /apikeys` | ✓ `simulators/aws/apigateway.go:260::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /apikeys/{apiKey}` | ✓ `simulators/aws/apigateway.go:261::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /apikeys/{apiKey}` | ✓ `simulators/aws/apigateway.go:262::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /apikeys/{apiKey}` | ✓ `simulators/aws/apigateway.go:263::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /usageplans` | ✓ `simulators/aws/apigateway.go:267::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /usageplans` | ✓ `simulators/aws/apigateway.go:268::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /usageplans/{usagePlanId}` | ✓ `simulators/aws/apigateway.go:269::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /usageplans/{usagePlanId}` | ✓ `simulators/aws/apigateway.go:270::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /usageplans/{usagePlanId}` | ✓ `simulators/aws/apigateway.go:271::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /usageplans/{usagePlanId}/keys` | ✓ `simulators/aws/apigateway.go:272::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /usageplans/{usagePlanId}/keys` | ✓ `simulators/aws/apigateway.go:273::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /usageplans/{usagePlanId}/keys/{keyId}` | ✓ `simulators/aws/apigateway.go:274::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /usageplans/{usagePlanId}/keys/{keyId}` | ✓ `simulators/aws/apigateway.go:275::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /restapis/{restApiId}/models` | ✓ `simulators/aws/apigateway.go:278::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/models` | ✓ `simulators/aws/apigateway.go:279::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/models/{modelName}` | ✓ `simulators/aws/apigateway.go:280::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/models/{modelName}` | ✓ `simulators/aws/apigateway.go:281::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /restapis/{restApiId}/requestvalidators` | ✓ `simulators/aws/apigateway.go:282::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/requestvalidators` | ✓ `simulators/aws/apigateway.go:283::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/requestvalidators/{requestValidatorId}` | ✓ `simulators/aws/apigateway.go:284::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /restapis/{restApiId}/authorizers` | ✓ `simulators/aws/apigateway.go:285::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/authorizers` | ✓ `simulators/aws/apigateway.go:286::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /restapis/{restApiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigateway.go:287::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /restapis/{restApiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigateway.go:288::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `PATCH /restapis/{restApiId}` | ✓ `simulators/aws/apigateway_complete.go:103::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `PATCH /restapis/{restApiId}/resources/{resourceId}` | ✓ `simulators/aws/apigateway_complete.go:104::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `PATCH /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}` | ✓ `simulators/aws/apigateway_complete.go:105::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -125,6 +72,59 @@ Surface registered in `simulators/aws/apigateway.go` (and related files grouped 
 | `GET /sdktypes/{id}` | ✓ `simulators/aws/apigateway_extras.go:242::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /usageplans/{usagePlanId}/usage` | ✓ `simulators/aws/apigateway_extras.go:245::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /tags/{resourceArn}` | ✓ `simulators/aws/apigateway_extras.go:246::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /restapis` | ✓ `simulators/aws/apigateway.go:222::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis` | ✓ `simulators/aws/apigateway.go:223::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}` | ✓ `simulators/aws/apigateway.go:224::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}` | ✓ `simulators/aws/apigateway.go:225::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /restapis/{restApiId}/resources/{parentId}` | ✓ `simulators/aws/apigateway.go:226::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/resources` | ✓ `simulators/aws/apigateway.go:227::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/resources/{resourceId}` | ✓ `simulators/aws/apigateway.go:228::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/resources/{resourceId}` | ✓ `simulators/aws/apigateway.go:229::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}` | ✓ `simulators/aws/apigateway.go:230::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}` | ✓ `simulators/aws/apigateway.go:231::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}` | ✓ `simulators/aws/apigateway.go:232::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration` | ✓ `simulators/aws/apigateway.go:233::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration` | ✓ `simulators/aws/apigateway.go:234::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration` | ✓ `simulators/aws/apigateway.go:235::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /restapis/{restApiId}/deployments` | ✓ `simulators/aws/apigateway.go:236::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/deployments` | ✓ `simulators/aws/apigateway.go:237::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigateway.go:238::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigateway.go:239::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /restapis/{restApiId}/stages` | ✓ `simulators/aws/apigateway.go:240::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/stages` | ✓ `simulators/aws/apigateway.go:241::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/stages/{stageName}` | ✓ `simulators/aws/apigateway.go:242::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/stages/{stageName}` | ✓ `simulators/aws/apigateway.go:243::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:250::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:251::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:252::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:253::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:254::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration/responses/{statusCode}` | ✓ `simulators/aws/apigateway.go:255::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /apikeys` | ✓ `simulators/aws/apigateway.go:259::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /apikeys` | ✓ `simulators/aws/apigateway.go:260::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /apikeys/{apiKey}` | ✓ `simulators/aws/apigateway.go:261::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /apikeys/{apiKey}` | ✓ `simulators/aws/apigateway.go:262::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /apikeys/{apiKey}` | ✓ `simulators/aws/apigateway.go:263::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /usageplans` | ✓ `simulators/aws/apigateway.go:267::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /usageplans` | ✓ `simulators/aws/apigateway.go:268::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /usageplans/{usagePlanId}` | ✓ `simulators/aws/apigateway.go:269::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /usageplans/{usagePlanId}` | ✓ `simulators/aws/apigateway.go:270::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /usageplans/{usagePlanId}` | ✓ `simulators/aws/apigateway.go:271::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /usageplans/{usagePlanId}/keys` | ✓ `simulators/aws/apigateway.go:272::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /usageplans/{usagePlanId}/keys` | ✓ `simulators/aws/apigateway.go:273::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /usageplans/{usagePlanId}/keys/{keyId}` | ✓ `simulators/aws/apigateway.go:274::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /usageplans/{usagePlanId}/keys/{keyId}` | ✓ `simulators/aws/apigateway.go:275::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /restapis/{restApiId}/models` | ✓ `simulators/aws/apigateway.go:278::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/models` | ✓ `simulators/aws/apigateway.go:279::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/models/{modelName}` | ✓ `simulators/aws/apigateway.go:280::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/models/{modelName}` | ✓ `simulators/aws/apigateway.go:281::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /restapis/{restApiId}/requestvalidators` | ✓ `simulators/aws/apigateway.go:282::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/requestvalidators` | ✓ `simulators/aws/apigateway.go:283::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/requestvalidators/{requestValidatorId}` | ✓ `simulators/aws/apigateway.go:284::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /restapis/{restApiId}/authorizers` | ✓ `simulators/aws/apigateway.go:285::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/authorizers` | ✓ `simulators/aws/apigateway.go:286::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /restapis/{restApiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigateway.go:287::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /restapis/{restApiId}/authorizers/{authorizerId}` | ✓ `simulators/aws/apigateway.go:288::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 
