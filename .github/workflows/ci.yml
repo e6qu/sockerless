@@ -20,23 +20,29 @@ jobs:
   lint-go:
     name: lint (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - shard: core-local
             modules: cmd/sockerless cmd/sockerless-admin agent backends/docker
+            timeout_minutes: 5
           - shard: cloud-backends-aws
             modules: backends/aws-common backends/ecs backends/lambda
+            timeout_minutes: 5
           - shard: cloud-backends-gcp
             modules: backends/cloudrun backends/cloudrun-functions
+            timeout_minutes: 5
           - shard: cloud-backends-azure
             modules: backends/aca backends/azure-functions
+            timeout_minutes: 5
           - shard: simulators
             modules: simulators/aws simulators/gcp simulators/azure simulators/realexec
+            timeout_minutes: 10
           - shard: dispatchers
             modules: github-runner-dispatcher-aws github-runner-dispatcher-gcp github-runner-dispatcher-azure
+            timeout_minutes: 5
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
@@ -56,7 +62,7 @@ jobs:
             echo "=== $module ==="
             make "$module/lint"
           done
-        timeout-minutes: 5
+        timeout-minutes: ${{ matrix.timeout_minutes }}
 
   check-deps:
     name: check-deps (deps + actions + scripts)

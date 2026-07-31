@@ -3521,6 +3521,13 @@ fixture with a real HTTP listener and client probe. The complete AWS simulator
 module, shared runtime suite, focused multi-container case, and exact hosted
 `TestE` shard passed.
 
+That hosted rerun then cancelled the required combined simulator lint job at
+the exact five-minute job ceiling while golangci-lint was still active. The
+required `lint (simulators)` context and its complete module set were preserved.
+Only that matrix entry received a ten-minute job and step budget; every lighter
+lint shard retained five minutes. The repository's workflow-timeout gate,
+timeout-parser fixtures, and actionlint all passed.
+
 The final hosted rerun exposed two reproducibility assumptions. The root AWS
 Terraform graph had not declared a HashiCorp AWS provider version while its
 sibling packages still declared 6.47.0. Every graph now declared 6.50.0, and

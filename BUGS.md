@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2816 filed - 2816 fixed - 8 open - 16 false positives.**
+**2817 filed - 2817 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2817~~ | P1 | Hosted simulator lint budget | the required `lint (simulators)` job was cancelled at its exact five-minute job limit while golangci-lint was still running | The required status context remained unchanged, lighter lint shards retained five-minute limits, and only the simulator shard received a verifiable ten-minute job and step budget. Workflow timeout fixtures and actionlint passed. |
 | ~~2816~~ | P0 | AWS simulator Amazon ECS network and task lifecycle | subnet allocation never reclaimed stopped-task addresses, while asynchronous startup and dependency-ordered container teardown could outlive a terminal task transition | Subnet allocation now derives occupancy from live elastic network interfaces, NAT gateway addresses, and non-stopped ECS tasks, searches the usable range circularly, and reuses released addresses. Task startup and stop transitions are serialized, workload containers are removed in network-dependency order, and real compiled or BusyBox fixtures replaced shell commands aimed at scratch images. The exact hosted compute shard passed. |
 | ~~2815~~ | P0 | Simulator SQLite durability | persistent simulators used `synchronous=NORMAL` and returned from graceful HTTP shutdown without closing or checkpointing SQLite | All three cloud simulators now use SQLite `synchronous=FULL`, truncate-checkpoint committed WAL records during orderly shutdown, close the database, and surface checkpoint or close failures. Multi-connection regressions proved the durability pragma, empty post-close WAL, and preserved state after reopen. |
 | ~~2814~~ | P1 | AWS SDK Amazon ECS test isolation | generated ECS test VPC CIDRs overlapped fixed-CIDR coverage, while asynchronous task shutdown could make cleanup silently leave the Docker network behind | ECS test VPCs now use the reserved 10.225-249 range and retry deletion until stopped task containers release the network. The previously colliding service-lifecycle and Terraform-in-ECS cases passed. |

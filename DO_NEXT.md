@@ -33,6 +33,13 @@ been aimed at scratch images. The complete AWS simulator module, shared
 container runtime suite, multi-container localhost scenario, and exact
 `TestE` shard passed.
 
+The same hosted rerun completed the repaired compute shard but cancelled the
+required combined simulator lint job at its exact five-minute job limit.
+Lighter lint shards retained five-minute limits; the simulator matrix entry now
+supplies a verifiable ten-minute limit to both its job and lint step without
+renaming the required status context. The workflow timeout gate, its fixtures,
+and actionlint passed.
+
 Microsoft Azure resource-deletion dialogs retained Azure Resource Manager's
 actionable failure after a rejected request even when a concurrent Fluent UI
 backdrop event arrived. Backdrop dismissal was suppressed only while the error
