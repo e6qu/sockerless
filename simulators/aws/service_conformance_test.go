@@ -391,14 +391,14 @@ func serviceImplementedCount(m *smithyService, r conformanceRouters) int {
 // the query router's unversioned bucket is never counted for it (see
 // legacyQueryRegistrars).
 var serviceCoverageFloor = map[string]int{
-	"AmazonEC2":                            769, // ec2Query
+	"AmazonEC2":                            772, // ec2Query
 	"AWSSecurityTokenServiceV20110615":     11,  // STS (awsQuery, unversioned)
 	"AWSIdentityManagementV20100508":       176, // IAM (awsQuery, unversioned)
 	"AmazonEC2ContainerRegistry_V20150921": 58,  // ECR
 	"AmazonElastiCacheV9":                  75,
 	"AmazonRDSv19":                         164,
 	"AutoScaling_2011_01_01":               66,
-	"AWSGlue":                              264,
+	"AWSGlue":                              297,
 	"AWSWAF_20190729":                      59,
 	"CloudTrail_20131101":                  60,
 	"CodeBuild_20161006":                   59,
@@ -448,8 +448,31 @@ func TestServiceConformance_Coverage(t *testing.T) {
 	models := loadSmithyModels(t)
 	routers := conformanceRegistrations(t)
 
+	reported := map[string]bool{}
 	for shape := range serviceConformanceCatalog {
 		m := serviceModel(t, models, shape)
+		registered, missing := serviceCoverage(m, routers)
+		t.Logf("%s: %d/%d operations implemented; missing (%d): %v",
+			shape, len(registered), len(m.Ops), len(missing), missing)
+		reported[shape] = true
+	}
+	for shape := range serviceCoverageFloor {
+		if reported[shape] {
+			continue
+		}
+		m := serviceModel(t, models, shape)
+		if _, ok := restConformanceSources[shape]; ok {
+			var missing []string
+			for op := range m.Ops {
+				if !restRegisteredOps[restConformanceSources[shape]][op] {
+					missing = append(missing, op)
+				}
+			}
+			sort.Strings(missing)
+			t.Logf("%s: %d/%d operations implemented; missing (%d): %v",
+				shape, len(m.Ops)-len(missing), len(m.Ops), len(missing), missing)
+			continue
+		}
 		registered, missing := serviceCoverage(m, routers)
 		t.Logf("%s: %d/%d operations implemented; missing (%d): %v",
 			shape, len(registered), len(m.Ops), len(missing), missing)

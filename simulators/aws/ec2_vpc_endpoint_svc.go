@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -130,15 +131,26 @@ type EC2VpcEncryptionControl struct {
 	Tags                   []EC2Tag
 }
 
+// EC2AccountVpcEncryptionControl is the Region-scoped account policy that
+// drives VPC Encryption Controls for every VPC in the account.
+type EC2AccountVpcEncryptionControl struct {
+	State               string
+	Mode                string
+	Exclusions          map[string]string
+	ManagedBy           string
+	LastUpdateTimestamp string
+}
+
 // State stores for the families above.
 var (
-	ec2VpcEndpointServices    sim.Store[EC2VpcEndpointServiceConfiguration]
-	ec2VpcCidrAssocs          sim.Store[EC2VpcCidrAssoc]
-	ec2SubnetCidrReservations sim.Store[EC2SubnetCidrReservation]
-	ec2SecondaryNetworks      sim.Store[EC2SecondaryNetwork]
-	ec2SecondarySubnets       sim.Store[EC2SecondarySubnet]
-	ec2SgVpcAssociations      sim.Store[EC2SecurityGroupVpcAssociation]
-	ec2VpcEncryptionControls  sim.Store[EC2VpcEncryptionControl]
+	ec2VpcEndpointServices          sim.Store[EC2VpcEndpointServiceConfiguration]
+	ec2VpcCidrAssocs                sim.Store[EC2VpcCidrAssoc]
+	ec2SubnetCidrReservations       sim.Store[EC2SubnetCidrReservation]
+	ec2SecondaryNetworks            sim.Store[EC2SecondaryNetwork]
+	ec2SecondarySubnets             sim.Store[EC2SecondarySubnet]
+	ec2SgVpcAssociations            sim.Store[EC2SecurityGroupVpcAssociation]
+	ec2VpcEncryptionControls        sim.Store[EC2VpcEncryptionControl]
+	ec2AccountVpcEncryptionControls sim.Store[EC2AccountVpcEncryptionControl]
 )
 
 // registerEC2VpcEndpointSvc registers this EC2 sub-service's ec2Query actions.
@@ -150,6 +162,7 @@ func registerEC2VpcEndpointSvc(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2SecondarySubnets = sim.MakeStore[EC2SecondarySubnet](srv.DB(), "ec2_secondary_subnets")
 	ec2SgVpcAssociations = sim.MakeStore[EC2SecurityGroupVpcAssociation](srv.DB(), "ec2_sg_vpc_associations")
 	ec2VpcEncryptionControls = sim.MakeStore[EC2VpcEncryptionControl](srv.DB(), "ec2_vpc_encryption_controls")
+	ec2AccountVpcEncryptionControls = sim.MakeStore[EC2AccountVpcEncryptionControl](srv.DB(), "ec2_account_vpc_encryption_controls")
 
 	// VPC endpoint services
 	r.Register("CreateVpcEndpointServiceConfiguration", handleCreateVpcEndpointServiceConfiguration)
@@ -161,6 +174,7 @@ func registerEC2VpcEndpointSvc(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("ModifyVpcEndpointServicePayerResponsibility", handleModifyVpcEndpointServicePayerResponsibility)
 	r.Register("StartVpcEndpointServicePrivateDnsVerification", handleStartVpcEndpointServicePrivateDnsVerification)
 	r.Register("DescribeVpcEndpointServices", handleDescribeVpcEndpointServices)
+	r.Register("ModifyVpcEndpointPayerResponsibility", handleModifyVpcEndpointPayerResponsibility)
 
 	// VPC/Subnet CIDR
 	r.Register("AssociateVpcCidrBlock", handleAssociateVpcCidrBlock)
@@ -189,6 +203,8 @@ func registerEC2VpcEndpointSvc(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DeleteVpcEncryptionControl", handleDeleteVpcEncryptionControl)
 	r.Register("ModifyVpcEncryptionControl", handleModifyVpcEncryptionControl)
 	r.Register("DescribeVpcEncryptionControls", handleDescribeVpcEncryptionControls)
+	r.Register("DescribeAccountVpcEncryptionControl", handleDescribeAccountVpcEncryptionControl)
+	r.Register("ModifyAccountVpcEncryptionControl", handleModifyAccountVpcEncryptionControl)
 }
 
 // ============================ VPC endpoint services ========================
@@ -396,6 +412,78 @@ func handleModifyVpcEndpointServicePayerResponsibility(w http.ResponseWriter, r 
   <requestId>%s</requestId>
   <return>true</return>
 </ModifyVpcEndpointServicePayerResponsibilityResponse>`, ec2Xmlns(), generateUUID())
+}
+
+func handleModifyVpcEndpointPayerResponsibility(w http.ResponseWriter, r *http.Request) {
+	endpointID := r.FormValue("VpcEndpointId")
+	if endpointID == "" {
+		ec2ErrorXML(w, "MissingParameter", "The request must contain the parameter VpcEndpointId", http.StatusBadRequest)
+		return
+	}
+	scope := r.FormValue("Scope")
+	if scope == "" {
+		ec2ErrorXML(w, "MissingParameter", "The request must contain the parameter Scope", http.StatusBadRequest)
+		return
+	}
+	if scope != "vpc-endpoint-charges" {
+		ec2ErrorXML(w, "InvalidParameterValue", fmt.Sprintf("Value %q at 'scope' failed to satisfy constraint", scope), http.StatusBadRequest)
+		return
+	}
+	payer := r.FormValue("PayerResponsibility")
+	if payer == "" {
+		ec2ErrorXML(w, "MissingParameter", "The request must contain the parameter PayerResponsibility", http.StatusBadRequest)
+		return
+	}
+	if payer != "vpc-endpoint-account" && payer != "vpc-endpoint-service-account" {
+		ec2ErrorXML(w, "InvalidParameterValue", fmt.Sprintf("Value %q at 'payerResponsibility' failed to satisfy constraint", payer), http.StatusBadRequest)
+		return
+	}
+	ep, ok := ec2VpcEndpoints.Get(endpointID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidVpcEndpointId.NotFound", fmt.Sprintf("The Vpc Endpoint Id %q does not exist", endpointID), http.StatusBadRequest)
+		return
+	}
+
+	serviceID := r.FormValue("ServiceId")
+	var matchedConnectionID string
+	var matchedConnection EC2VpcEndpointConnection
+	for _, connection := range ec2VpcEndpointConns.List() {
+		if connection.VpcEndpointId != endpointID {
+			continue
+		}
+		if serviceID != "" && connection.ServiceId != serviceID {
+			continue
+		}
+		matchedConnectionID = connection.VpcEndpointConnectionId
+		matchedConnection = connection
+		break
+	}
+	if serviceID != "" && matchedConnectionID == "" {
+		ec2ErrorXML(w, "InvalidVpcEndpointId.NotFound", fmt.Sprintf("The VPC endpoint %q is not connected to service %q", endpointID, serviceID), http.StatusBadRequest)
+		return
+	}
+	if r.FormValue("DryRun") == "true" {
+		ec2ErrorXML(w, "DryRunOperation", "Request would have succeeded, but DryRun flag is set.", http.StatusPreconditionFailed)
+		return
+	}
+
+	entries := []EC2PayerResponsibilityEntry{{
+		Scope:                   scope,
+		PayerResponsibilityType: payer,
+	}}
+	ep.PayerResponsibilities = entries
+	ec2VpcEndpoints.Put(endpointID, ep)
+	if matchedConnectionID != "" {
+		matchedConnection.PayerResponsibilities = append([]EC2PayerResponsibilityEntry(nil), entries...)
+		ec2VpcEndpointConns.Put(matchedConnectionID, matchedConnection)
+	}
+
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<ModifyVpcEndpointPayerResponsibilityResponse %s>
+  <requestId>%s</requestId>
+  <vpcEndpointId>%s</vpcEndpointId>
+  %s
+</ModifyVpcEndpointPayerResponsibilityResponse>`, ec2Xmlns(), generateUUID(), endpointID, vpcePayerResponsibilitiesXML(entries))
 }
 
 func handleStartVpcEndpointServicePrivateDnsVerification(w http.ResponseWriter, r *http.Request) {
@@ -950,6 +1038,222 @@ var ec2EncryptionExclusionResources = []struct{ field, xmlName string }{
 	{"ElasticFileSystemExclusion", "elasticFileSystem"},
 }
 
+var ec2AccountEncryptionExclusionResources = []struct{ field, xmlName string }{
+	{"InternetGateway", "internetGateway"},
+	{"EgressOnlyInternetGateway", "egressOnlyInternetGateway"},
+	{"NatGateway", "natGateway"},
+	{"VirtualPrivateGateway", "virtualPrivateGateway"},
+	{"VpcPeering", "vpcPeering"},
+	{"Lambda", "lambda"},
+	{"VpcLattice", "vpcLattice"},
+	{"ElasticFileSystem", "elasticFileSystem"},
+}
+
+func defaultAccountVpcEncryptionControl() EC2AccountVpcEncryptionControl {
+	exclusions := make(map[string]string, len(ec2AccountEncryptionExclusionResources))
+	for _, resource := range ec2AccountEncryptionExclusionResources {
+		exclusions[resource.xmlName] = "disabled"
+	}
+	return EC2AccountVpcEncryptionControl{
+		State:      "default-state",
+		Mode:       "unmanaged",
+		Exclusions: exclusions,
+		ManagedBy:  "account",
+	}
+}
+
+func currentAccountVpcEncryptionControl() EC2AccountVpcEncryptionControl {
+	control, ok := ec2AccountVpcEncryptionControls.Get(awsRegion())
+	if !ok {
+		return defaultAccountVpcEncryptionControl()
+	}
+	if control.Exclusions == nil {
+		control.Exclusions = defaultAccountVpcEncryptionControl().Exclusions
+	}
+	if control.ManagedBy == "" {
+		control.ManagedBy = "account"
+	}
+	return control
+}
+
+func handleDescribeAccountVpcEncryptionControl(w http.ResponseWriter, r *http.Request) {
+	if r.FormValue("DryRun") == "true" {
+		ec2ErrorXML(w, "DryRunOperation", "Request would have succeeded, but DryRun flag is set.", http.StatusPreconditionFailed)
+		return
+	}
+	control := currentAccountVpcEncryptionControl()
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeAccountVpcEncryptionControlResponse %s>
+  <requestId>%s</requestId>
+  <accountVpcEncryptionControl>%s</accountVpcEncryptionControl>
+</DescribeAccountVpcEncryptionControlResponse>`, ec2Xmlns(), generateUUID(), accountVpcEncryptionControlXML(control))
+}
+
+func handleModifyAccountVpcEncryptionControl(w http.ResponseWriter, r *http.Request) {
+	control := currentAccountVpcEncryptionControl()
+	exclusions := make(map[string]string, len(control.Exclusions))
+	for resource, state := range control.Exclusions {
+		exclusions[resource] = state
+	}
+	mode := r.FormValue("Mode")
+	if mode != "" && mode != "unmanaged" && mode != "attempt-monitor" && mode != "attempt-enforce" {
+		ec2ErrorXML(w, "InvalidParameterValue", fmt.Sprintf("Value %q at 'mode' failed to satisfy constraint", mode), http.StatusBadRequest)
+		return
+	}
+
+	changed := mode != ""
+	for _, resource := range ec2AccountEncryptionExclusionResources {
+		value := r.FormValue(resource.field)
+		if value == "" {
+			continue
+		}
+		changed = true
+		switch value {
+		case "enable":
+			exclusions[resource.xmlName] = "enabled"
+		case "disable":
+			exclusions[resource.xmlName] = "disabled"
+		default:
+			ec2ErrorXML(w, "InvalidParameterValue", fmt.Sprintf("Value %q at %q failed to satisfy constraint", value, resource.field), http.StatusBadRequest)
+			return
+		}
+	}
+	if !changed {
+		ec2ErrorXML(w, "InvalidParameterCombination", "At least one account VPC encryption control setting must be specified", http.StatusBadRequest)
+		return
+	}
+	if r.FormValue("DryRun") == "true" {
+		ec2ErrorXML(w, "DryRunOperation", "Request would have succeeded, but DryRun flag is set.", http.StatusPreconditionFailed)
+		return
+	}
+
+	if mode != "" {
+		control.Mode = mode
+	}
+	control.Exclusions = exclusions
+	control.State = "transitions-successful"
+	control.ManagedBy = "account"
+	control.LastUpdateTimestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	ec2AccountVpcEncryptionControls.Put(awsRegion(), control)
+	reconcileAccountVpcEncryptionControl(control)
+
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<ModifyAccountVpcEncryptionControlResponse %s>
+  <requestId>%s</requestId>
+  <accountVpcEncryptionControl>%s</accountVpcEncryptionControl>
+</ModifyAccountVpcEncryptionControlResponse>`, ec2Xmlns(), generateUUID(), accountVpcEncryptionControlXML(control))
+}
+
+func vpcEncryptionConfigurationFromCreateRequest(r *http.Request) (string, map[string]string, bool, error) {
+	const prefix = "VpcEncryptionControl."
+	mode := r.FormValue(prefix + "Mode")
+	present := mode != ""
+	exclusions := make(map[string]string, len(ec2EncryptionExclusionResources))
+	for _, resource := range ec2EncryptionExclusionResources {
+		exclusions[resource.xmlName] = "disabled"
+		value := r.FormValue(prefix + resource.field)
+		if value == "" {
+			continue
+		}
+		present = true
+		switch value {
+		case "enable":
+			exclusions[resource.xmlName] = "enabled"
+		case "disable":
+			exclusions[resource.xmlName] = "disabled"
+		default:
+			return "", nil, false, ec2ParameterConstraintError{value: value, field: prefix + resource.field}
+		}
+	}
+	if !present {
+		return "", nil, false, nil
+	}
+	if mode != "monitor" && mode != "enforce" {
+		return "", nil, false, ec2ParameterConstraintError{value: mode, field: prefix + "Mode"}
+	}
+	return mode, exclusions, true, nil
+}
+
+type ec2ParameterConstraintError struct {
+	value string
+	field string
+}
+
+func (e ec2ParameterConstraintError) Error() string {
+	return fmt.Sprintf("Value %q at %q failed to satisfy constraint", e.value, e.field)
+}
+
+func vpcEncryptionControlForVPC(vpcID string) (EC2VpcEncryptionControl, bool) {
+	for _, control := range ec2VpcEncryptionControls.List() {
+		if control.VpcId == vpcID {
+			return control, true
+		}
+	}
+	return EC2VpcEncryptionControl{}, false
+}
+
+func reconcileAccountVpcEncryptionControl(account EC2AccountVpcEncryptionControl) {
+	mode := ""
+	switch account.Mode {
+	case "attempt-monitor":
+		mode = "monitor"
+	case "attempt-enforce":
+		mode = "enforce"
+	}
+	if mode == "" {
+		return
+	}
+	for _, vpc := range ec2Vpcs.List() {
+		applyAccountVpcEncryptionControl(vpc.VpcId, mode, account.Exclusions)
+	}
+}
+
+func applyAccountVpcEncryptionControl(vpcID, mode string, exclusions map[string]string) {
+	var existingID string
+	var control EC2VpcEncryptionControl
+	for _, candidate := range ec2VpcEncryptionControls.List() {
+		if candidate.VpcId == vpcID {
+			existingID = candidate.VpcEncryptionControlId
+			control = candidate
+			break
+		}
+	}
+	if existingID == "" {
+		existingID = ec2ID("vpce")
+		control = EC2VpcEncryptionControl{
+			VpcEncryptionControlId: existingID,
+			VpcId:                  vpcID,
+		}
+	}
+	control.Mode = mode
+	control.State = "available"
+	control.Exclusions = make(map[string]string, len(exclusions))
+	for name, state := range exclusions {
+		control.Exclusions[name] = state
+	}
+	ec2VpcEncryptionControls.Put(existingID, control)
+}
+
+func accountVpcEncryptionControlXML(control EC2AccountVpcEncryptionControl) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<state>%s</state>", control.State)
+	fmt.Fprintf(&b, "<mode>%s</mode>", control.Mode)
+	b.WriteString("<exclusions>")
+	for _, resource := range ec2AccountEncryptionExclusionResources {
+		state := control.Exclusions[resource.xmlName]
+		if state == "" {
+			state = "disabled"
+		}
+		fmt.Fprintf(&b, "<%s>%s</%s>", resource.xmlName, state, resource.xmlName)
+	}
+	b.WriteString("</exclusions>")
+	fmt.Fprintf(&b, "<managedBy>%s</managedBy>", control.ManagedBy)
+	if control.LastUpdateTimestamp != "" {
+		fmt.Fprintf(&b, "<lastUpdateTimestamp>%s</lastUpdateTimestamp>", control.LastUpdateTimestamp)
+	}
+	return b.String()
+}
+
 func handleCreateVpcEncryptionControl(w http.ResponseWriter, r *http.Request) {
 	vpcId := r.FormValue("VpcId")
 	if _, ok := ec2Vpcs.Get(vpcId); !ok {
@@ -1031,7 +1335,7 @@ func handleModifyVpcEncryptionControl(w http.ResponseWriter, r *http.Request) {
 
 func handleDescribeVpcEncryptionControls(w http.ResponseWriter, r *http.Request) {
 	ids := ec2ParamList(r, "VpcEncryptionControlId")
-	vpcIds := ec2ParamList(r, "VpcIds")
+	vpcIds := ec2ParamList(r, "VpcId")
 	var items strings.Builder
 	for _, ctrl := range ec2VpcEncryptionControls.List() {
 		if len(ids) > 0 && !ec2StrInValues(ctrl.VpcEncryptionControlId, ids) {
@@ -1055,15 +1359,17 @@ func vpcEncryptionControlXML(ctrl EC2VpcEncryptionControl) string {
 	fmt.Fprintf(&b, "<vpcEncryptionControlId>%s</vpcEncryptionControlId>", ctrl.VpcEncryptionControlId)
 	fmt.Fprintf(&b, "<mode>%s</mode>", ctrl.Mode)
 	fmt.Fprintf(&b, "<state>%s</state>", ctrl.State)
-	b.WriteString("<resourceExclusions>")
-	for _, res := range ec2EncryptionExclusionResources {
-		state := ctrl.Exclusions[res.xmlName]
-		if state == "" {
-			state = "disabled"
+	if ctrl.Mode == "enforce" {
+		b.WriteString("<resourceExclusions>")
+		for _, res := range ec2EncryptionExclusionResources {
+			state := ctrl.Exclusions[res.xmlName]
+			if state == "" {
+				state = "disabled"
+			}
+			fmt.Fprintf(&b, "<%s><state>%s</state></%s>", res.xmlName, state, res.xmlName)
 		}
-		fmt.Fprintf(&b, "<%s><state>%s</state></%s>", res.xmlName, state, res.xmlName)
+		b.WriteString("</resourceExclusions>")
 	}
-	b.WriteString("</resourceExclusions>")
 	b.WriteString(writeTagSetXML(ctrl.Tags))
 	return b.String()
 }

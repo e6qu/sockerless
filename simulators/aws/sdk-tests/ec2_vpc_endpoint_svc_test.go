@@ -350,3 +350,122 @@ func TestEC2_VpcEncryptionControlRoundTrip(t *testing.T) {
 	require.NotNil(t, del.VpcEncryptionControl)
 	assert.Equal(t, ctrlID, aws.ToString(del.VpcEncryptionControl.VpcEncryptionControlId))
 }
+
+// TestEC2_AccountVpcEncryptionAndEndpointPayerRoundTrip drives the account-level
+// Amazon VPC encryption policy and the per-endpoint AWS PrivateLink payer
+// lifecycle through the official Amazon EC2 SDK.
+func TestEC2_AccountVpcEncryptionAndEndpointPayerRoundTrip(t *testing.T) {
+	c := ec2Client()
+
+	explicit, err := c.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.54.0.0/16"),
+		VpcEncryptionControl: &types.VpcEncryptionControlConfiguration{
+			Mode:                     types.VpcEncryptionControlModeEnforce,
+			InternetGatewayExclusion: types.VpcEncryptionControlExclusionStateInputEnable,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, explicit.Vpc.EncryptionControl)
+	assert.Equal(t, types.VpcEncryptionControlModeEnforce, explicit.Vpc.EncryptionControl.Mode)
+	require.NotNil(t, explicit.Vpc.EncryptionControl.ResourceExclusions)
+	require.NotNil(t, explicit.Vpc.EncryptionControl.ResourceExclusions.InternetGateway)
+	assert.Equal(t, types.VpcEncryptionControlExclusionStateEnabled,
+		explicit.Vpc.EncryptionControl.ResourceExclusions.InternetGateway.State)
+
+	initial, err := c.DescribeAccountVpcEncryptionControl(ctx, &ec2.DescribeAccountVpcEncryptionControlInput{})
+	require.NoError(t, err)
+	require.NotNil(t, initial.AccountVpcEncryptionControl)
+	assert.Equal(t, types.AccountVpcEncryptionControlStateDefaultState, initial.AccountVpcEncryptionControl.State)
+	assert.Equal(t, types.AccountVpcEncryptionControlModeUnmanaged, initial.AccountVpcEncryptionControl.Mode)
+	assert.Equal(t, types.ManagedByAccount, initial.AccountVpcEncryptionControl.ManagedBy)
+
+	modified, err := c.ModifyAccountVpcEncryptionControl(ctx, &ec2.ModifyAccountVpcEncryptionControlInput{
+		Mode:       types.AccountVpcEncryptionControlModeAttemptMonitor,
+		NatGateway: types.VpcEncryptionControlExclusionStateInputEnable,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, modified.AccountVpcEncryptionControl)
+	assert.Equal(t, types.AccountVpcEncryptionControlStateTransitionsSuccessful, modified.AccountVpcEncryptionControl.State)
+	assert.Equal(t, types.AccountVpcEncryptionControlModeAttemptMonitor, modified.AccountVpcEncryptionControl.Mode)
+	require.NotNil(t, modified.AccountVpcEncryptionControl.Exclusions)
+	assert.Equal(t, types.VpcEncryptionControlExclusionStateEnabled, modified.AccountVpcEncryptionControl.Exclusions.NatGateway)
+	require.NotNil(t, modified.AccountVpcEncryptionControl.LastUpdateTimestamp)
+
+	vpc, err := c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.55.0.0/16")})
+	require.NoError(t, err)
+	vpcID := aws.ToString(vpc.Vpc.VpcId)
+	controls, err := c.DescribeVpcEncryptionControls(ctx, &ec2.DescribeVpcEncryptionControlsInput{
+		VpcIds: []string{vpcID},
+	})
+	require.NoError(t, err)
+	require.Len(t, controls.VpcEncryptionControls, 1)
+	assert.Equal(t, types.VpcEncryptionControlModeMonitor, controls.VpcEncryptionControls[0].Mode)
+	assert.Nil(t, controls.VpcEncryptionControls[0].ResourceExclusions)
+
+	service, err := c.CreateVpcEndpointServiceConfiguration(ctx, &ec2.CreateVpcEndpointServiceConfigurationInput{
+		AcceptanceRequired:      aws.Bool(true),
+		NetworkLoadBalancerArns: []string{"arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/net/payer/abc"},
+	})
+	require.NoError(t, err)
+	serviceID := aws.ToString(service.ServiceConfiguration.ServiceId)
+	endpoint, err := c.CreateVpcEndpoint(ctx, &ec2.CreateVpcEndpointInput{
+		VpcId:           aws.String(vpcID),
+		ServiceName:     service.ServiceConfiguration.ServiceName,
+		VpcEndpointType: types.VpcEndpointTypeInterface,
+	})
+	require.NoError(t, err)
+	endpointID := aws.ToString(endpoint.VpcEndpoint.VpcEndpointId)
+	assert.Equal(t, types.StatePendingAcceptance, endpoint.VpcEndpoint.State)
+	require.Len(t, endpoint.VpcEndpoint.PayerResponsibilities, 1)
+	assert.Equal(t, types.PayerResponsibilityTypeVpcEndpointAccount, endpoint.VpcEndpoint.PayerResponsibilities[0].PayerResponsibilityType)
+
+	payer, err := c.ModifyVpcEndpointPayerResponsibility(ctx, &ec2.ModifyVpcEndpointPayerResponsibilityInput{
+		ServiceId:           aws.String(serviceID),
+		VpcEndpointId:       aws.String(endpointID),
+		Scope:               types.PayerResponsibilityScopeVpcEndpointCharges,
+		PayerResponsibility: types.PayerResponsibilityTypeVpcEndpointServiceAccount,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, endpointID, aws.ToString(payer.VpcEndpointId))
+	require.Len(t, payer.PayerResponsibilities, 1)
+	assert.Equal(t, types.PayerResponsibilityTypeVpcEndpointServiceAccount, payer.PayerResponsibilities[0].PayerResponsibilityType)
+
+	describedEndpoint, err := c.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{
+		VpcEndpointIds: []string{endpointID},
+	})
+	require.NoError(t, err)
+	require.Len(t, describedEndpoint.VpcEndpoints, 1)
+	require.Len(t, describedEndpoint.VpcEndpoints[0].PayerResponsibilities, 1)
+	assert.Equal(t, types.PayerResponsibilityTypeVpcEndpointServiceAccount,
+		describedEndpoint.VpcEndpoints[0].PayerResponsibilities[0].PayerResponsibilityType)
+
+	connections, err := c.DescribeVpcEndpointConnections(ctx, &ec2.DescribeVpcEndpointConnectionsInput{
+		Filters: []types.Filter{{Name: aws.String("service-id"), Values: []string{serviceID}}},
+	})
+	require.NoError(t, err)
+	require.Len(t, connections.VpcEndpointConnections, 1)
+	assert.Equal(t, types.StatePendingAcceptance, connections.VpcEndpointConnections[0].VpcEndpointState)
+	require.Len(t, connections.VpcEndpointConnections[0].PayerResponsibilities, 1)
+	assert.Equal(t, types.PayerResponsibilityTypeVpcEndpointServiceAccount,
+		connections.VpcEndpointConnections[0].PayerResponsibilities[0].PayerResponsibilityType)
+
+	accepted, err := c.AcceptVpcEndpointConnections(ctx, &ec2.AcceptVpcEndpointConnectionsInput{
+		ServiceId:      aws.String(serviceID),
+		VpcEndpointIds: []string{endpointID},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, accepted.Unsuccessful)
+
+	acceptedEndpoint, err := c.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{
+		VpcEndpointIds: []string{endpointID},
+	})
+	require.NoError(t, err)
+	require.Len(t, acceptedEndpoint.VpcEndpoints, 1)
+	assert.Equal(t, types.StateAvailable, acceptedEndpoint.VpcEndpoints[0].State)
+	acceptedConnections, err := c.DescribeVpcEndpointConnections(ctx, &ec2.DescribeVpcEndpointConnectionsInput{
+		Filters: []types.Filter{{Name: aws.String("service-id"), Values: []string{serviceID}}},
+	})
+	require.NoError(t, err)
+	require.Len(t, acceptedConnections.VpcEndpointConnections, 1)
+	assert.Equal(t, types.StateAvailable, acceptedConnections.VpcEndpointConnections[0].VpcEndpointState)
+}

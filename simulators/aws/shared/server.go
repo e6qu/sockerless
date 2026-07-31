@@ -3,6 +3,7 @@ package simulator
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -35,6 +37,10 @@ type Server struct {
 	db      *sql.DB         // nil when persistence disabled
 	tracker *ProcessTracker // nil when persistence disabled
 	uiAuth  *uiauth.Auth
+
+	backgroundCtx    context.Context
+	backgroundCancel context.CancelFunc
+	backgroundWG     sync.WaitGroup
 
 	// routePatterns records every mux pattern registered through
 	// Handle/HandleFunc, in registration order. The spec-conformance
@@ -133,26 +139,32 @@ func NewServer(cfg Config) (*Server, error) {
 		logger.Info().Str("runtime", RuntimeInfo()).Msg("container runtime initialized")
 	}
 
-	srv := &Server{
-		config:  cfg,
-		logger:  logger,
-		mux:     mux,
-		handler: handler,
-		uiAuth:  uiAuth,
-	}
-
 	// Open SQLite database if persistence enabled. No fallback —
 	// operator asked for durable state; if we can't deliver, surface
 	// the error and let the caller decide (typically log.Fatal in
 	// main).
+	var db *sql.DB
+	var tracker *ProcessTracker
 	if cfg.Persist {
-		db, err := OpenDB(dataDir)
+		db, err = OpenDB(dataDir)
 		if err != nil {
 			return nil, fmt.Errorf("open persistence at %s: %w", dataDir, err)
 		}
-		srv.db = db
-		srv.tracker = NewProcessTracker(dataDir)
+		tracker = NewProcessTracker(dataDir)
 		logger.Info().Str("path", dataDir+"/simulator.db").Msg("SQLite persistence enabled")
+	}
+
+	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
+	srv := &Server{
+		config:           cfg,
+		logger:           logger,
+		mux:              mux,
+		handler:          handler,
+		db:               db,
+		tracker:          tracker,
+		uiAuth:           uiAuth,
+		backgroundCtx:    backgroundCtx,
+		backgroundCancel: backgroundCancel,
 	}
 
 	return srv, nil
@@ -214,6 +226,23 @@ func (s *Server) Logger() zerolog.Logger {
 	return s.logger
 }
 
+// StartBackground runs service work under the server lifecycle. The worker
+// must return when ctx is cancelled. ListenAndServe cancels and drains every
+// registered worker before checkpointing and closing SQLite, so no service can
+// query durable state after orderly shutdown has closed the database.
+func (s *Server) StartBackground(worker func(context.Context)) {
+	s.backgroundWG.Add(1)
+	go func() {
+		defer s.backgroundWG.Done()
+		worker(s.backgroundCtx)
+	}()
+}
+
+func (s *Server) stopBackground() {
+	s.backgroundCancel()
+	s.backgroundWG.Wait()
+}
+
 // ListenAndServe starts the server and blocks until shutdown.
 // It listens for SIGTERM and SIGINT for graceful shutdown.
 func (s *Server) ListenAndServe() error {
@@ -236,6 +265,7 @@ func (s *Server) ListenAndServe() error {
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		s.logger.Info().Str("signal", sig.String()).Msg("shutting down")
+		s.backgroundCancel()
 		if !s.config.Persist {
 			CleanupContainers()
 		}
@@ -263,9 +293,12 @@ func (s *Server) ListenAndServe() error {
 	}
 
 	if err == http.ErrServerClosed {
-		return <-done
+		err = <-done
 	}
-	return err
+	s.stopBackground()
+	closeErr := CloseDB(s.db)
+	s.db = nil
+	return errors.Join(err, closeErr)
 }
 
 // RegisterUI registers an embedded SPA at /ui/ and redirects GET / to /ui/.

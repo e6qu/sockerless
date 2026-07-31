@@ -85,7 +85,7 @@ func registerCloudWatchMetrics(srv *sim.Server, startBackgroundEvaluator bool) {
 	registerCloudWatchDashboardsCBOR(srv)
 
 	if startBackgroundEvaluator {
-		startCWAlarmEvaluator()
+		startCWAlarmEvaluator(srv)
 	}
 }
 

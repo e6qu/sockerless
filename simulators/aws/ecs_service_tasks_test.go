@@ -13,11 +13,17 @@ import (
 // and leaves already-STOPPED tasks untouched. Tasks that belong to a different
 // group must not be drained.
 func TestECSStopServiceTasks_DrainsNonStopped(t *testing.T) {
-	// Isolate from any other package-level state.
+	// Isolate from any other package-level state. The drain's task-stop events
+	// schedule an asynchronous service reconciliation that reads the scheduler,
+	// deployment-record, and alarm stores, so they must be real stores even
+	// though the drain itself never touches them.
 	ecsClusters = sim.MakeStore[ECSCluster](nil, "ecs_clusters")
 	ecsTaskDefinitions = sim.MakeStore[ECSTaskDefinition](nil, "ecs_task_definitions")
 	ecsTasks = sim.MakeStore[ECSTask](nil, "ecs_tasks")
 	ecsServices = sim.MakeStore[ECSService](nil, "ecs_services")
+	ecsServiceSchedulerStates = sim.MakeStore[ECSServiceSchedulerState](nil, "ecs_service_scheduler_states")
+	ecsServiceDeployments = sim.MakeStore[ECSServiceDeploymentRec](nil, "ecs_service_deployments")
+	cwAlarms = sim.MakeStore[CWAlarm](nil, "cw_alarms")
 	ecsRevisions = map[string]int{}
 
 	cluster := ECSCluster{

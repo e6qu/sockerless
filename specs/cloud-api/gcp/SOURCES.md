@@ -8,8 +8,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `bigquery-v2.discovery.json.gz` | `bigquery.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260707` | 2026-07-26T18:38:35Z |
 | `bigtableadmin-v2.discovery.json.gz` | `bigtableadmin.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260725` | 2026-07-29T00:06:48Z |
 | `cloudbuild-v1.discovery.json.gz` | `cloudbuild.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260627` | 2026-07-26T18:38:36Z |
-| `dataflow-v1b3.discovery.json.gz` | `dataflow.googleapis.com` | `$discovery/rest?version=v1b3` | Apache-2.0 | `revision 20260719` | 2026-07-30T09:37:09Z |
-| `eventarc-v1.discovery.json.gz` | `eventarc.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260717` | 2026-07-26T18:38:40Z |
 | `firestore-v1.discovery.json.gz` | `firestore.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260706` | 2026-07-26T18:38:40Z |
 | `storage-v1.discovery.json.gz` | `storage.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260719` | 2026-07-26T18:38:41Z |
 | `logging-v2.discovery.json.gz` | `logging.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260724` | 2026-07-29T08:44:40Z |
@@ -17,7 +15,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `secretmanager-v1.discovery.json.gz` | `secretmanager.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260716` | 2026-07-26T18:39:10Z |
 | `spanner-v1.discovery.json.gz` | `spanner.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260724` | 2026-07-26T18:39:10Z |
 | `sqladmin-v1.discovery.json.gz` | `sqladmin.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260722` | 2026-07-30T01:18:23Z |
-| `vpcaccess-v1.discovery.json.gz` | `vpcaccess.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260719` | 2026-07-26T18:39:15Z |
 | `iamcredentials-v1.discovery.json.gz` | `iamcredentials.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260723` | 2026-07-29T08:44:40Z |
 | `cloudbilling-v1.discovery.json.gz` | `cloudbilling.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260717` | 2026-07-26T18:39:16Z |
 | `cloudkms-v1.discovery.json.gz` | `cloudkms.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260721` | 2026-07-26T18:53:06Z |
@@ -28,9 +25,12 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `serviceusage-v1.discovery.json.gz` | `serviceusage.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260721` | 2026-07-28T11:54:57Z |
 | `iam-v1.discovery.json.gz` | `iam.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260724` | 2026-07-28T11:54:58Z |
 | `dns-v1.discovery.json.gz` | `dns.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260723` | 2026-07-28T17:12:50Z |
-| `artifactregistry-v1.discovery.json.gz` | `artifactregistry.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260724` | 2026-07-28T17:13:47Z |
 | `cloudresourcemanager-v3.discovery.json.gz` | `cloudresourcemanager.googleapis.com` | `$discovery/rest?version=v3` | Apache-2.0 | `revision 20260715` | 2026-07-29T00:07:02Z |
 | `cloudresourcemanager-v1.discovery.json.gz` | `cloudresourcemanager.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260715` | 2026-07-29T00:07:02Z |
 | `cloudrun-v2.discovery.json.gz` | `run.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260727` | 2026-07-29T09:49:10Z |
 | `cloudrun-v1.discovery.json.gz` | `run.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260727` | 2026-07-29T10:08:40Z |
 | `apigateway-v1.discovery.json.gz` | `apigateway.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260724` | 2026-07-30T09:42:16Z |
+| `eventarc-v1.discovery.json.gz` | `eventarc.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260723` | 2026-07-31T07:21:41Z |
+| `artifactregistry-v1.discovery.json.gz` | `artifactregistry.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260727` | 2026-07-31T10:36:36Z |
+| `vpcaccess-v1.discovery.json.gz` | `vpcaccess.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260726` | 2026-07-31T12:31:56Z |
+| `dataflow-v1b3.discovery.json.gz` | `dataflow.googleapis.com` | `$discovery/rest?version=v1b3` | Apache-2.0 | `revision 20260729` | 2026-07-31T13:20:00Z |

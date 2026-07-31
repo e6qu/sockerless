@@ -4,6 +4,150 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-31 — Diagnostics found a real packet-filter defect
+
+The widened ECS Express rollout window did more than buy time: its new
+diagnostic showed two replacement tasks RUNNING beside the old one for the
+full two minutes, deployment IN_PROGRESS, no placement failures. The health
+gate never passed because the Express-managed security group carried no
+ingress permissions — and the real-VPC tier programs task security groups
+into an nftables bridge filter that ends in a terminal drop. Every health
+check and forwarded packet to the task's elastic network interface was
+discarded, so the old task could never retire. Real ECS Express admits the
+load balancer's flow to the container port; the sim's managed group now
+admits TCP 443 from the world and the container port from the VPC CIDR, the
+path its host-realized ALB data plane actually takes. The lifecycle test now
+runs in its own VPC with a caller group that authorizes the same flow, and
+its failure diagnostic reports each task's status and health and each
+target's state and reason. The focused official AWS SDK Express suite
+passed.
+
+Two neighbouring defects surfaced and were fixed in the same pass. A filtered
+unit-test run panicked: the delete-time drain test initialized four stores,
+but its task-stop events schedule an asynchronous service reconciliation
+that reads the scheduler-state, deployment-record, and alarm stores — nil
+interface stores dereferenced in a background goroutine and killed the test
+binary. The test now initializes what its side effects transitively read,
+and the complete AWS simulator module suite passed. And the surface-table
+seeder iterated filename globs in `LC_COLLATE` order, which differs between
+macOS (`en_US.UTF-8`) and the hosted runners (`C.UTF-8`); identical rows came
+out in different orders and the build gate reported stale tables. The script
+now pins `LC_ALL=C`.
+
+## 2026-07-31 — Specification drift and an honest rollout budget
+
+The consolidated branch's replacement hosted run failed two checks. Google
+Artifact Registry v1 had published Discovery revision 20260727 after the
+revision 20260724 pin was vendored. The repository vendor script's three-probe
+fetch retained the newer document; its methods, paths, and schema fields were
+identical to the CI-captured drift artifact except the revision marker, and
+the complete multi-probe freshness audit passed.
+
+The hosted Amazon ECS compute shard also exhausted the Express rollout
+assertion's thirty-second window. That rollout launches two replacement
+tasks through serialized start and stop transitions, waits out steady-state
+and target-health gating, tears down the previous task, and may be recovering
+from a transient placement failure through the scheduler's bounded one to
+thirty-two second retry chain — work real Amazon ECS expresses in minutes.
+The window now covers the full retry budget, and a failure prints the last
+observed desired, running, and pending counts, both task definitions, the
+deployment rollout state and reason, and the latest service events, so a
+recurrence reports its real cause instead of a bare timeout. The focused
+official AWS SDK Express suite passed.
+
+## 2026-07-31 — Hosted CI regressions became measured protocol fixes
+
+The persistent AWS SDK harness had selected a Route 53 port by checking UDP
+alone even though the simulator serves DNS on both UDP and TCP. A different
+process could therefore own the matching TCP coordinate and make the child
+simulator fail before an Amazon ECS restart scenario began. Package-wide and
+restart harnesses now test the same wildcard port on both protocols, and a
+dedicated regression repeats the actual dual bind. The real-container ECS
+service-adoption restart passed with those coordinates.
+
+AWS Glue's `ListGlossaryTerms` handler returned a convenient top-level
+`GlossaryId` that the vendored Smithy model did not declare. The response now
+contains only modeled `Items` and optional `NextToken` members. A signed raw
+AWS JSON request and the exact AWS CLI business-context lifecycle passed the
+runtime Smithy response-shape validator with no violations. The complete
+service shard also showed that entity coverage assumed its DynamoDB connection
+was the only table-bearing state in the shared account. The lifecycle now
+locates and validates its own created entity while allowing other legitimate
+tables, and its focused official AWS SDK scenario passed.
+
+The same full shard exposed a shutdown panic that its parent process had not
+treated as a failure: a Lambda event-source poller queried SQLite after the
+database closed. The server now owns store-backed worker cancellation and
+drain. Lambda event-source work, CloudWatch alarms, Application Auto Scaling,
+and Scheduler stop before the orderly checkpoint/close boundary. A
+deterministic worker-drain/reopen regression passed, and the persistent-state
+SDK lifecycle now rejects a nonzero child exit before reopening SQLite.
+
+Host disk exhaustion also left the cached Lambda Python 3.12 image pointing at
+a missing overlay lower layer. Only that replaceable image was removed and
+repulled; images, volumes, simulator state, and source clones were preserved.
+The real managed-runtime downstream-SDK scenario passed again, and its
+assertion now prints the complete Lambda failure payload instead of reducing
+an actionable runtime error to `FunctionError=Unhandled`.
+The exact official AWS SDK A-M shard then passed the final source state in
+300.747 seconds with clean child shutdowns.
+
+The full lint gate caught one lifecycle-construction leak: `NewServer` created
+its cancellation context before persistence path and database setup could
+return an error. Context creation now happens only after those fallible steps.
+The exact shared-module lint and complete shared tests passed.
+
+The repository allowed only squash merging, so the one-commit badge-refresh
+PR 869 was squash-merged through GitHub into PR 868's branch. Its complete
+change remained in the consolidated branch, PR 869 closed as merged, and PR
+868 became the sole open pull request.
+
+The replacement hosted run then failed before any Shauth browser assertion:
+Docker Hub timed out after fifteen seconds while Compose pulled the real
+PostgreSQL image. The relying-party harness now retries convergence of that
+same real PostgreSQL/Ory Hydra/Shauth stack four times with bounded backoff.
+Partial successful pulls and builds are reused by the next Compose convergence
+attempt, while exhaustion remains an explicit failure.
+
+The exact local rerun then exposed a second orchestration defect: the AWS
+relying party inherited Route 53's fixed port 5353 and could not start while
+that host DNS coordinate was occupied. Harness-owned simulators now request an
+operating-system-selected Route 53 UDP/TCP coordinate, preserving the real DNS
+service without a global-port collision.
+ShellCheck, bash and zsh parsing, and the complete real PostgreSQL/Ory
+Hydra/Shauth/Chromium relying-party matrix passed.
+
+The Eventarc v1 Discovery document advanced from revision 20260717 to
+20260723. The vendored document and provenance were refreshed; methods,
+resources, and schemas were unchanged, and the complete Google Cloud
+multi-probe freshness audit passed.
+
+## 2026-07-31 — AWS VPC and Glue service models reached complete registered coverage
+
+Amazon EC2 reached all 772 operations in its vendored service model. Regional
+account VPC encryption controls persisted their mode and eight exclusion
+classes, reconciled existing and newly created VPCs, and surfaced through the
+Cloudscape console. VPC endpoints retained payer responsibility, and endpoint
+service acceptance, rejection, and deletion established or removed the real
+local PrivateLink provider connection. Official AWS SDK, AWS CLI, HashiCorp AWS
+provider, and hard-restart scenarios exercised the lifecycle.
+
+AWS Glue reached all 297 operations in its vendored service model. The final 33
+operations added durable business glossaries and terms, form and asset schemas,
+assets, attachments, glossary associations, iterable-form reads, data-quality
+batch reads, and entity metadata/record access. Native entity reads used the
+durable Data Catalog and actual Amazon S3 objects; DynamoDB connections read
+real table schemas and items. IDs and client-token results survived hard
+simulator replacement. The AWS console added business-glossary operations and
+asset-type inventory through the public Glue APIs.
+
+The exact service-conformance report now names missing operations for every
+tracked AWS model rather than only the catalog subset. The full AWS simulator
+package, official AWS SDK and AWS CLI Glue lifecycles, hard-restart matrix,
+console typecheck, all 69 console package tests, production build, and focused
+browser accessibility checks passed. Amazon Simple Queue Service visibility
+timeout coverage also remained active in every Go test mode.
+
 ## 2026-07-30 — AWS SDK releases, local budgets, and ECS isolation stayed green
 
 The same-day AWS SDK wave advanced Lambda from `v1.100.2` to `v1.101.0` in
@@ -3502,6 +3646,32 @@ workloads retained Docker's real alias. Focused coordinate tests and the
 official AWS SDK Step Functions integration passed a real Amazon ECS task,
 AWS CodeBuild container, and vendor AWS CLI in 7.45 seconds.
 
+The hosted Amazon ECS compute shard exhausted its default subnet because the
+allocator only advanced a persistent cursor; addresses belonging to stopped
+tasks were never made available again. Allocation was changed to derive
+current ownership from live elastic network interfaces, NAT gateway addresses,
+and non-stopped ECS tasks, then circularly search the usable subnet range.
+Focused coverage filled a small subnet, observed real exhaustion, stopped a
+task, and reused its released address.
+
+The same investigation tightened the full task lifecycle. Startup and stop
+transitions were serialized so an asynchronous launch could not publish a task
+as running after it had stopped. Cleanup waited for real runtime removal in
+network-dependency order—dependents, primary workload, then pause holder—and
+used bounded exact-container removal when a runtime's background cleanup had
+not completed. Shell-based SDK fixtures were moved to BusyBox where a shell was
+the contract; the shared-localhost case used the compiled container-command
+fixture with a real HTTP listener and client probe. The complete AWS simulator
+module, shared runtime suite, focused multi-container case, and exact hosted
+`TestE` shard passed.
+
+That hosted rerun then cancelled the required combined simulator lint job at
+the exact five-minute job ceiling while golangci-lint was still active. The
+required `lint (simulators)` context and its complete module set were preserved.
+Only that matrix entry received a ten-minute job and step budget; every lighter
+lint shard retained five minutes. The repository's workflow-timeout gate,
+timeout-parser fixtures, and actionlint all passed.
+
 The final hosted rerun exposed two reproducibility assumptions. The root AWS
 Terraform graph had not declared a HashiCorp AWS provider version while its
 sibling packages still declared 6.47.0. Every graph now declared 6.50.0, and
@@ -3513,3 +3683,13 @@ queried the confirmation dialog synchronously while React Query was settling
 the error mutation. The assertion now awaited the retained accessible Fluent
 dialog after Azure Resource Manager's real error rendered. All 131 Azure
 console tests and the complete UI build/test fan-out passed.
+
+All three persistent cloud simulators strengthened their SQLite durability
+boundary. Database connections now use `synchronous=FULL` with WAL mode, and
+the shared server shutdown path truncate-checkpoints committed WAL records,
+closes the database, and reports either failure instead of returning while the
+store remains open. Multi-connection regressions in the AWS, Google Cloud, and
+Microsoft Azure shared modules proved the pragma on every connection, required
+an empty or absent WAL after orderly close, and reopened the same data
+successfully. The complete shared suites passed with real container-runtime
+access.

@@ -88,6 +88,15 @@ resource "aws_vpc" "tf_ec2_vpc" {
   cidr_block = "10.251.0.0/16"
 }
 
+resource "aws_vpc_encryption_control" "tf_ec2_vpc" {
+  vpc_id = aws_vpc.tf_ec2_vpc.id
+  mode   = "monitor"
+
+  tags = {
+    env = "terraform"
+  }
+}
+
 # data.aws_vpc by vpc-id filter — the fck-nat pattern; reads back the VPC's
 # CIDR from cidr_block_associations. With the broken filter this
 # returned the wrong VPC / an empty CIDR.

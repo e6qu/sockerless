@@ -359,7 +359,7 @@ func registerLambda(srv *sim.Server, startBackgroundPollers bool) {
 	lambdaLayers = sim.MakeStore[[]LambdaLayerVersion](srv.DB(), "lambda_layers")
 	lambdaESMLogger = srv.Logger()
 	if startBackgroundPollers {
-		startLambdaEventSourcePollers()
+		startLambdaEventSourcePollers(srv)
 	}
 
 	mux := srv

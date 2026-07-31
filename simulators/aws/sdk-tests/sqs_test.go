@@ -255,9 +255,6 @@ func TestSQS_ReceiveMessageRejectsInvalidWaitTimeSeconds(t *testing.T) {
 // TestSQS_VisibilityTimeoutExpiry asserts a message returns to
 // visible state after the per-receive timeout elapses.
 func TestSQS_VisibilityTimeoutExpiry(t *testing.T) {
-	if testing.Short() {
-		t.Skip("visibility-timeout expiry requires a real wait; -short skip")
-	}
 	client := sqsClient()
 	out, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{
 		QueueName: aws.String("vtq"),

@@ -415,6 +415,53 @@ func StopContainer(containerID string) {
 	_ = dockerClient.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 }
 
+// WaitContainerRemoved waits until the runtime no longer owns containerID.
+// Lifecycle callers use this after requesting a stop when the cloud resource
+// must not report its terminal state while its network endpoint or mounts are
+// still present.
+func WaitContainerRemoved(containerID string, timeout time.Duration) error {
+	if dockerClient == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err := dockerClient.ContainerInspect(ctx, containerID)
+		cancel()
+		if containerNotFoundError(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect container %s while waiting for removal: %w", containerID, err)
+		}
+		if !time.Now().Before(deadline) {
+			removeCtx, removeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			removeErr := dockerClient.ContainerRemove(removeCtx, containerID, container.RemoveOptions{Force: true})
+			removeCancel()
+			if removeErr == nil || containerNotFoundError(removeErr) {
+				return nil
+			}
+			return fmt.Errorf("container %s was not removed within %s and forced removal failed: %w", containerID, timeout, removeErr)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// containerNotFoundError accepts Docker's typed 404 and Podman's
+// Docker-compatible API response. Podman currently returns the missing
+// container database condition without Docker's NotFound error classification.
+func containerNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if client.IsErrNotFound(err) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no container with id") &&
+		strings.Contains(message, "no such container")
+}
+
 // RemoveVolume removes one explicitly named simulator-managed Docker volume.
 // Callers own the lifecycle decision; this helper never enumerates or prunes
 // unrelated volumes.

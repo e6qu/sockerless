@@ -2,6 +2,7 @@ package simulator
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +30,7 @@ func OpenDB(dataDir string) (*sql.DB, error) {
 	dsn := dbPath +
 		"?_pragma=busy_timeout(5000)" +
 		"&_pragma=journal_mode(WAL)" +
-		"&_pragma=synchronous(NORMAL)"
+		"&_pragma=synchronous(FULL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -44,4 +45,30 @@ func OpenDB(dataDir string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// CloseDB checkpoints all committed WAL records into the database before
+// closing it. FULL synchronous mode protects committed transactions when the
+// host loses power; the explicit checkpoint makes an orderly service shutdown
+// leave one self-contained database file for the next process.
+func CloseDB(db *sql.DB) error {
+	if db == nil {
+		return nil
+	}
+
+	var checkpointErr error
+	var busy, logFrames, checkpointedFrames int
+	if err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(
+		&busy, &logFrames, &checkpointedFrames,
+	); err != nil {
+		checkpointErr = fmt.Errorf("checkpoint sqlite WAL: %w", err)
+	} else if busy != 0 {
+		checkpointErr = fmt.Errorf(
+			"checkpoint sqlite WAL: %d of %d frames remained busy",
+			logFrames-checkpointedFrames,
+			logFrames,
+		)
+	}
+
+	return errors.Join(checkpointErr, db.Close())
 }

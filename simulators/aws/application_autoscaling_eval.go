@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // Application Auto Scaling target-tracking evaluator. AWS runs the
@@ -36,14 +39,20 @@ var (
 // startAppScalingEvalLoop launches the periodic target-tracking evaluator. It
 // is idempotent — registering Application Auto Scaling more than once (the
 // in-process build path) does not start a second goroutine.
-func startAppScalingEvalLoop() {
+func startAppScalingEvalLoop(srv *sim.Server) {
 	appScalingEvalOnce.Do(func() {
-		go func() {
+		srv.StartBackground(func(ctx context.Context) {
 			ticker := time.NewTicker(appScalingEvalInterval)
-			for range ticker.C {
-				appScalingEvaluatePolicies(time.Now().UTC())
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					appScalingEvaluatePolicies(time.Now().UTC())
+				}
 			}
-		}()
+		})
 	})
 }
 

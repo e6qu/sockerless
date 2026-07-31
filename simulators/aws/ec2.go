@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -353,14 +354,24 @@ var (
 	// across control-plane restarts; persisting the cursor prevents a restarted
 	// simulator from assigning an address that is already in use.
 	ec2SubnetIPCursor sim.Store[uint32]
+	// ec2SubnetIPAllocationMu serializes cursor advancement with the live
+	// allocation scan. Resource stores remain the durable source of truth for
+	// address ownership, while the cursor only chooses where the next scan
+	// starts.
+	ec2SubnetIPAllocationMu sync.Mutex
 )
 
-// AllocateSubnetIP picks the next available host address from a
-// subnet's CIDR block. Returns an error if the subnet isn't registered
-// (matches real AWS, where RunTask / CreateNetworkInterface against a
-// non-existent subnet returns InvalidSubnetID.NotFound). The first four
-// addresses (network + AWS-reserved router/DNS/future) and the last
-// (broadcast) are skipped, mirroring AWS's reserved-host convention.
+// AllocateSubnetIP picks the next free host address from a subnet's CIDR
+// block. Active cloud resources are the durable allocation ledger, so an
+// address returns to the pool when its network interface, NAT gateway, or
+// Amazon ECS task is deleted or stopped. The durable cursor only determines
+// where the circular search begins.
+//
+// Returns an error if the subnet isn't registered (matches real AWS, where
+// RunTask / CreateNetworkInterface against a non-existent subnet returns
+// InvalidSubnetID.NotFound). The first four addresses (network + AWS-reserved
+// router/DNS/future) and the last (broadcast) are skipped, mirroring AWS's
+// reserved-host convention.
 func AllocateSubnetIP(subnetID string) (string, error) {
 	subnet, ok := ec2Subnets.Get(subnetID)
 	if !ok {
@@ -376,37 +387,107 @@ func AllocateSubnetIP(subnetID string) (string, error) {
 		return "", fmt.Errorf("subnet %q CIDR %q too small for AWS host reservations", subnetID, subnet.CidrBlock)
 	}
 	maxHosts := uint32(1) << uint32(hostBits)
-	var cursor uint32
-	var exhausted bool
-	ec2SubnetIPCursor.Upsert(subnetID, func(next *uint32) {
-		if *next < 4 {
-			// AWS reserves the first four host addresses in every subnet
-			// (.0 network, .1 router, .2 DNS, .3 future use).
-			*next = 4
-		}
-		if *next >= maxHosts-1 {
-			exhausted = true
-			return
-		}
-		cursor = *next
-		*next++
-	})
-	if exhausted {
-		return "", fmt.Errorf("subnet %q exhausted: no host addresses left in %q", subnetID, subnet.CidrBlock)
-	}
 	base := cidr.IP.To4()
 	if base == nil {
 		return "", fmt.Errorf("subnet %q CidrBlock %q is not IPv4", subnetID, subnet.CidrBlock)
 	}
-	ip := make(net.IP, 4)
-	copy(ip, base)
-	hostInt := uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
-	hostInt += cursor
-	ip[0] = byte(hostInt >> 24)
-	ip[1] = byte(hostInt >> 16)
-	ip[2] = byte(hostInt >> 8)
-	ip[3] = byte(hostInt)
-	return ip.String(), nil
+
+	ec2SubnetIPAllocationMu.Lock()
+	defer ec2SubnetIPAllocationMu.Unlock()
+
+	cursor, ok := ec2SubnetIPCursor.Get(subnetID)
+	if !ok || cursor < 4 || cursor >= maxHosts-1 {
+		// AWS reserves the first four host addresses in every subnet
+		// (.0 network, .1 router, .2 DNS, .3 future use).
+		cursor = 4
+	}
+	allocated := ec2AllocatedSubnetIPv4(subnetID)
+	usableHosts := maxHosts - 5
+	for checked := uint32(0); checked < usableHosts; checked++ {
+		offset := cursor
+		cursor++
+		if cursor >= maxHosts-1 {
+			cursor = 4
+		}
+		ip := subnetIPv4AtOffset(base, offset)
+		if _, inUse := allocated[ip]; inUse {
+			continue
+		}
+		ec2SubnetIPCursor.Put(subnetID, cursor)
+		return ip, nil
+	}
+	return "", fmt.Errorf("subnet %q exhausted: no host addresses left in %q", subnetID, subnet.CidrBlock)
+}
+
+func subnetIPv4AtOffset(base net.IP, offset uint32) string {
+	hostInt := uint32(base[0])<<24 | uint32(base[1])<<16 | uint32(base[2])<<8 | uint32(base[3])
+	hostInt += offset
+	return net.IPv4(
+		byte(hostInt>>24),
+		byte(hostInt>>16),
+		byte(hostInt>>8),
+		byte(hostInt),
+	).String()
+}
+
+// ec2AllocatedSubnetIPv4 derives current address ownership from the durable
+// cloud resources that own the addresses. A stopped Amazon ECS task no longer
+// owns its elastic-network-interface address, matching Fargate lifecycle
+// semantics even though the stopped task record remains describable.
+func ec2AllocatedSubnetIPv4(subnetID string) map[string]struct{} {
+	allocated := make(map[string]struct{})
+	add := func(ip string) {
+		if ip != "" {
+			allocated[ip] = struct{}{}
+		}
+	}
+	if ec2NetworkInterfaces != nil {
+		for _, eni := range ec2NetworkInterfaces.List() {
+			if eni.SubnetId != subnetID {
+				continue
+			}
+			add(eni.PrivateIpAddress)
+			for _, ip := range eni.SecondaryPrivateIps {
+				add(ip)
+			}
+		}
+	}
+	if ec2NatGateways != nil {
+		for _, gateway := range ec2NatGateways.List() {
+			if gateway.SubnetId != subnetID {
+				continue
+			}
+			for _, address := range gateway.NatGatewayAddresses {
+				add(address.PrivateIp)
+			}
+		}
+	}
+	if ecsTasks != nil {
+		for _, task := range ecsTasks.List() {
+			if task.LastStatus == ECSTaskStatusStopped {
+				continue
+			}
+			var taskSubnet string
+			var taskIP string
+			for _, attachment := range task.Attachments {
+				if attachment.Type != "ElasticNetworkInterface" {
+					continue
+				}
+				for _, detail := range attachment.Details {
+					switch detail.Name {
+					case "subnetId":
+						taskSubnet = detail.Value
+					case "privateIPv4Address":
+						taskIP = detail.Value
+					}
+				}
+			}
+			if taskSubnet == subnetID {
+				add(taskIP)
+			}
+		}
+	}
+	return allocated
 }
 
 // ec2Owner() returns the EC2 resource owner — same as the AWS account
@@ -690,6 +771,11 @@ func handleDescribeRegions(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 	cidr := r.FormValue("CidrBlock")
+	requestedEncryptionMode, requestedExclusions, hasRequestedEncryption, err := vpcEncryptionConfigurationFromCreateRequest(r)
+	if err != nil {
+		ec2ErrorXML(w, "InvalidParameterValue", err.Error(), http.StatusBadRequest)
+		return
+	}
 	tenancy := r.FormValue("InstanceTenancy")
 	if tenancy == "" {
 		tenancy = "default"
@@ -709,6 +795,17 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 		EnableDnsHostnames: false,
 	}
 	ec2Vpcs.Put(id, vpc)
+	accountControl := currentAccountVpcEncryptionControl()
+	switch accountControl.Mode {
+	case "attempt-monitor":
+		applyAccountVpcEncryptionControl(id, "monitor", accountControl.Exclusions)
+	case "attempt-enforce":
+		applyAccountVpcEncryptionControl(id, "enforce", accountControl.Exclusions)
+	default:
+		if hasRequestedEncryption {
+			applyAccountVpcEncryptionControl(id, requestedEncryptionMode, requestedExclusions)
+		}
+	}
 	// Real AWS auto-creates a main route table per VPC (local route + a main
 	// association with no subnet). aws_vpc.main_route_table_id /
 	// default_route_table_id and aws_default_route_table read it back.
@@ -754,8 +851,12 @@ func vpcItemBodyXML(vpc EC2Vpc) string {
 	if dhcpOptionsID == "" {
 		dhcpOptionsID = "default"
 	}
-	return fmt.Sprintf(`<vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state><ownerId>%s</ownerId><isDefault>%t</isDefault><instanceTenancy>%s</instanceTenancy><dhcpOptionsId>%s</dhcpOptionsId>%s%s`,
-		vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, tenancy, dhcpOptionsID, cidrAssoc, writeTagSetXML(vpc.Tags))
+	encryptionControl := ""
+	if control, ok := vpcEncryptionControlForVPC(vpc.VpcId); ok {
+		encryptionControl = "<encryptionControl>" + vpcEncryptionControlXML(control) + "</encryptionControl>"
+	}
+	return fmt.Sprintf(`<vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state><ownerId>%s</ownerId><isDefault>%t</isDefault><instanceTenancy>%s</instanceTenancy><dhcpOptionsId>%s</dhcpOptionsId>%s%s%s`,
+		vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, tenancy, dhcpOptionsID, cidrAssoc, encryptionControl, writeTagSetXML(vpc.Tags))
 }
 
 func vpcItemXML(vpc EC2Vpc) string {
@@ -860,6 +961,11 @@ func handleDeleteVpc(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, s := range ec2Subnets.Filter(func(s EC2Subnet) bool { return s.VpcId == id }) {
 		ec2SubnetIPCursor.Delete(s.SubnetId)
+	}
+	for _, control := range ec2VpcEncryptionControls.Filter(func(control EC2VpcEncryptionControl) bool {
+		return control.VpcId == id
+	}) {
+		ec2VpcEncryptionControls.Delete(control.VpcEncryptionControlId)
 	}
 	ec2Vpcs.Delete(id)
 

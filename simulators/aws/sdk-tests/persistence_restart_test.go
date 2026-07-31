@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,6 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
 	gluetypes "github.com/aws/aws-sdk-go-v2/service/glue/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -44,16 +45,11 @@ import (
 
 func persistentSimulatorPorts(t *testing.T) (int, int) {
 	t.Helper()
-	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	tcpPort, err := freeTCPPort()
 	require.NoError(t, err)
-	tcpPort := tcpListener.Addr().(*net.TCPAddr).Port
-	require.NoError(t, tcpListener.Close())
-
-	udpListener, err := net.ListenPacket("udp", "127.0.0.1:0")
+	dnsPort, err := freeTCPUDPPort()
 	require.NoError(t, err)
-	udpPort := udpListener.LocalAddr().(*net.UDPAddr).Port
-	require.NoError(t, udpListener.Close())
-	return tcpPort, udpPort
+	return tcpPort, dnsPort
 }
 
 func startPersistentSimulator(t *testing.T, stateDir string, tcpPort, udpPort int, runtimeName string) *exec.Cmd {
@@ -92,6 +88,7 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	route53API := route53.NewFromConfig(cfg, func(o *route53.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	iamAPI := iam.NewFromConfig(cfg, func(o *iam.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	dynamoDBAPI := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	ec2API := ec2.NewFromConfig(cfg, func(o *ec2.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	glueAPI := glue.NewFromConfig(cfg, func(o *glue.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	stepFunctionsAPI := sfn.NewFromConfig(cfg, func(o *sfn.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	lambdaAPI := lambda.NewFromConfig(cfg, func(o *lambda.Options) { o.BaseEndpoint = aws.String(endpoint) })
@@ -200,6 +197,46 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	_, err = glueAPI.CreateDatabase(testCtx, &glue.CreateDatabaseInput{
 		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String("persistent-glue-database")},
 		Tags:          map[string]string{"persistence": "verified"},
+	})
+	require.NoError(t, err)
+	_, err = glueAPI.PutFormType(testCtx, &glue.PutFormTypeInput{
+		Name:   aws.String("PersistentMetadata"),
+		Schema: aws.String("structure PersistentMetadata { owner: String }"),
+	})
+	require.NoError(t, err)
+	_, err = glueAPI.PutAssetType(testCtx, &glue.PutAssetTypeInput{
+		Name: aws.String("PersistentDataSet"),
+		Forms: map[string]gluetypes.AssetTypeFormReference{
+			"metadata": {FormTypeIdentifier: aws.String("PersistentMetadata")},
+		},
+	})
+	require.NoError(t, err)
+	_, err = glueAPI.PutAsset(testCtx, &glue.PutAssetInput{
+		AssetTypeId: aws.String("PersistentDataSet"),
+		Identifier:  aws.String("persistent-business-asset"),
+		Name:        aws.String("Persistent business asset"),
+		Forms: map[string]gluetypes.AssetFormEntry{
+			"metadata": {
+				FormTypeId: aws.String("PersistentMetadata"),
+				Content:    aws.String(`{"owner":"platform"}`),
+			},
+		},
+	})
+	require.NoError(t, err)
+	persistentGlossary, err := glueAPI.CreateGlossary(testCtx, &glue.CreateGlossaryInput{
+		Name:        aws.String("Persistent glossary"),
+		ClientToken: aws.String("persistent-glossary-token"),
+	})
+	require.NoError(t, err)
+	persistentTerm, err := glueAPI.CreateGlossaryTerm(testCtx, &glue.CreateGlossaryTermInput{
+		GlossaryIdentifier: persistentGlossary.Id,
+		Name:               aws.String("Persistent term"),
+		ClientToken:        aws.String("persistent-term-token"),
+	})
+	require.NoError(t, err)
+	_, err = glueAPI.AssociateGlossaryTerms(testCtx, &glue.AssociateGlossaryTermsInput{
+		AssetIdentifier:         aws.String("persistent-business-asset"),
+		GlossaryTermIdentifiers: []string{aws.ToString(persistentTerm.Id)},
 	})
 	require.NoError(t, err)
 
@@ -374,7 +411,35 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	shutdownSimulator(cmd)
+	_, err = ec2API.ModifyAccountVpcEncryptionControl(testCtx, &ec2.ModifyAccountVpcEncryptionControlInput{
+		Mode:       ec2types.AccountVpcEncryptionControlModeAttemptMonitor,
+		NatGateway: ec2types.VpcEncryptionControlExclusionStateInputEnable,
+	})
+	require.NoError(t, err)
+	persistentVpc, err := ec2API.CreateVpc(testCtx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.88.0.0/16")})
+	require.NoError(t, err)
+	persistentVpcID := aws.ToString(persistentVpc.Vpc.VpcId)
+	persistentService, err := ec2API.CreateVpcEndpointServiceConfiguration(testCtx, &ec2.CreateVpcEndpointServiceConfigurationInput{
+		AcceptanceRequired:      aws.Bool(false),
+		NetworkLoadBalancerArns: []string{"arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/net/persistent-payer/abc"},
+	})
+	require.NoError(t, err)
+	persistentEndpoint, err := ec2API.CreateVpcEndpoint(testCtx, &ec2.CreateVpcEndpointInput{
+		VpcId:           aws.String(persistentVpcID),
+		ServiceName:     persistentService.ServiceConfiguration.ServiceName,
+		VpcEndpointType: ec2types.VpcEndpointTypeInterface,
+	})
+	require.NoError(t, err)
+	persistentEndpointID := aws.ToString(persistentEndpoint.VpcEndpoint.VpcEndpointId)
+	_, err = ec2API.ModifyVpcEndpointPayerResponsibility(testCtx, &ec2.ModifyVpcEndpointPayerResponsibilityInput{
+		ServiceId:           persistentService.ServiceConfiguration.ServiceId,
+		VpcEndpointId:       aws.String(persistentEndpointID),
+		Scope:               ec2types.PayerResponsibilityScopeVpcEndpointCharges,
+		PayerResponsibility: ec2types.PayerResponsibilityTypeVpcEndpointServiceAccount,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, shutdownSimulator(cmd), "persistent simulator must exit cleanly before SQLite is reopened")
 	cmd = startPersistentSimulator(t, stateDir, tcpPort, udpPort, "process")
 
 	amplifyAPI = amplify.NewFromConfig(cfg, func(o *amplify.Options) { o.BaseEndpoint = aws.String(endpoint) })
@@ -382,6 +447,7 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	route53API = route53.NewFromConfig(cfg, func(o *route53.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	iamAPI = iam.NewFromConfig(cfg, func(o *iam.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	dynamoDBAPI = dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	ec2API = ec2.NewFromConfig(cfg, func(o *ec2.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	glueAPI = glue.NewFromConfig(cfg, func(o *glue.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	stepFunctionsAPI = sfn.NewFromConfig(cfg, func(o *sfn.Options) { o.BaseEndpoint = aws.String(endpoint) })
 	lambdaAPI = lambda.NewFromConfig(cfg, func(o *lambda.Options) { o.BaseEndpoint = aws.String(endpoint) })
@@ -457,6 +523,26 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	value, ok := persistedItem.Item["value"].(*ddbtypes.AttributeValueMemberS)
 	require.True(t, ok)
 	assert.Equal(t, "survived", value.Value)
+	persistedAccountEncryption, err := ec2API.DescribeAccountVpcEncryptionControl(testCtx, &ec2.DescribeAccountVpcEncryptionControlInput{})
+	require.NoError(t, err)
+	require.NotNil(t, persistedAccountEncryption.AccountVpcEncryptionControl)
+	assert.Equal(t, ec2types.AccountVpcEncryptionControlModeAttemptMonitor, persistedAccountEncryption.AccountVpcEncryptionControl.Mode)
+	require.NotNil(t, persistedAccountEncryption.AccountVpcEncryptionControl.Exclusions)
+	assert.Equal(t, ec2types.VpcEncryptionControlExclusionStateEnabled, persistedAccountEncryption.AccountVpcEncryptionControl.Exclusions.NatGateway)
+	persistedVpcControls, err := ec2API.DescribeVpcEncryptionControls(testCtx, &ec2.DescribeVpcEncryptionControlsInput{
+		VpcIds: []string{persistentVpcID},
+	})
+	require.NoError(t, err)
+	require.Len(t, persistedVpcControls.VpcEncryptionControls, 1)
+	assert.Equal(t, ec2types.VpcEncryptionControlModeMonitor, persistedVpcControls.VpcEncryptionControls[0].Mode)
+	persistedEndpoint, err := ec2API.DescribeVpcEndpoints(testCtx, &ec2.DescribeVpcEndpointsInput{
+		VpcEndpointIds: []string{persistentEndpointID},
+	})
+	require.NoError(t, err)
+	require.Len(t, persistedEndpoint.VpcEndpoints, 1)
+	require.Len(t, persistedEndpoint.VpcEndpoints[0].PayerResponsibilities, 1)
+	assert.Equal(t, ec2types.PayerResponsibilityTypeVpcEndpointServiceAccount,
+		persistedEndpoint.VpcEndpoints[0].PayerResponsibilities[0].PayerResponsibilityType)
 	persistedGlueDatabase, err := glueAPI.GetDatabase(testCtx, &glue.GetDatabaseInput{
 		Name: aws.String("persistent-glue-database"),
 	})
@@ -467,6 +553,36 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "verified", persistedGlueTags.Tags["persistence"])
+	persistedBusinessAsset, err := glueAPI.GetAsset(testCtx, &glue.GetAssetInput{
+		Identifier: aws.String("persistent-business-asset"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "PersistentDataSet", aws.ToString(persistedBusinessAsset.AssetTypeId))
+	require.Contains(t, persistedBusinessAsset.Forms, "metadata")
+	assert.Equal(t, []string{aws.ToString(persistentTerm.Id)}, persistedBusinessAsset.GlossaryTerms)
+	persistedGlossary, err := glueAPI.GetGlossary(testCtx, &glue.GetGlossaryInput{
+		Identifier: persistentGlossary.Id,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Persistent glossary", aws.ToString(persistedGlossary.Name))
+	idempotentGlossary, err := glueAPI.CreateGlossary(testCtx, &glue.CreateGlossaryInput{
+		Name:        aws.String("Persistent glossary"),
+		ClientToken: aws.String("persistent-glossary-token"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, aws.ToString(persistentGlossary.Id), aws.ToString(idempotentGlossary.Id))
+	persistedTermOutput, err := glueAPI.GetGlossaryTerm(testCtx, &glue.GetGlossaryTermInput{
+		Identifier: persistentTerm.Id,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Persistent term", aws.ToString(persistedTermOutput.Name))
+	idempotentTerm, err := glueAPI.CreateGlossaryTerm(testCtx, &glue.CreateGlossaryTermInput{
+		GlossaryIdentifier: persistentGlossary.Id,
+		Name:               aws.String("Persistent term"),
+		ClientToken:        aws.String("persistent-term-token"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, aws.ToString(persistentTerm.Id), aws.ToString(idempotentTerm.Id))
 
 	persistedMachine, err := stepFunctionsAPI.DescribeStateMachine(testCtx, &sfn.DescribeStateMachineInput{
 		StateMachineArn: stateMachine.StateMachineArn,

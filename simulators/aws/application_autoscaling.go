@@ -113,7 +113,7 @@ func registerApplicationAutoScaling(r *sim.AWSRouter, srv *sim.Server, startBack
 		// Evaluate target-tracking policies and adjust capacity on a short
 		// cadence so a policy is observable inside a test. Idempotent across
 		// re-registrations in one process.
-		startAppScalingEvalLoop()
+		startAppScalingEvalLoop(srv)
 	}
 }
 

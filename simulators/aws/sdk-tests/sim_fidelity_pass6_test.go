@@ -184,7 +184,7 @@ func TestECS_ListTasksLaunchTypeFilter(t *testing.T) {
 		Memory:                  aws.String("512"),
 		ContainerDefinitions: []ecstypes.ContainerDefinition{{
 			Name:       aws.String("main"),
-			Image:      aws.String(evalImageName),
+			Image:      aws.String(busyboxImage),
 			EntryPoint: []string{"sh", "-c"},
 			Command:    []string{"sleep 5"},
 		}},

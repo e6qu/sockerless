@@ -12,7 +12,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: container-command hold|http|log|print|resolve|sleep|stdin-echo")
+		fmt.Fprintln(os.Stderr, "usage: container-command hold|http|probe-http|log|print|resolve|sleep|stdin-echo")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -44,6 +44,34 @@ func main() {
 		if err := http.ListenAndServe(fmt.Sprintf(":%d", port), handler); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
+		}
+	case "probe-http":
+		if len(os.Args) != 5 {
+			fmt.Fprintln(os.Stderr, "usage: container-command probe-http URL EXPECTED_RESPONSE TIMEOUT_SECONDS")
+			os.Exit(2)
+		}
+		timeoutSeconds, err := strconv.Atoi(os.Args[4])
+		if err != nil || timeoutSeconds < 1 {
+			fmt.Fprintf(os.Stderr, "invalid timeout seconds %q\n", os.Args[4])
+			os.Exit(2)
+		}
+		client := &http.Client{Timeout: 500 * time.Millisecond}
+		deadline := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
+		for {
+			response, requestErr := client.Get(os.Args[2])
+			if requestErr == nil {
+				body, readErr := io.ReadAll(response.Body)
+				_ = response.Body.Close()
+				if readErr == nil && response.StatusCode == http.StatusOK && string(body) == os.Args[3] {
+					fmt.Println(os.Args[3])
+					return
+				}
+			}
+			if time.Now().After(deadline) {
+				fmt.Fprintf(os.Stderr, "probe %s did not return %q\n", os.Args[2], os.Args[3])
+				os.Exit(1)
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
 	case "log":
 		if len(os.Args) < 3 {

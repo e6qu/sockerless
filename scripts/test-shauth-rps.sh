@@ -61,6 +61,22 @@ compose() {
     -f "$shauth_root/compose.yaml" "$@"
 }
 
+compose_up_with_retry() {
+  local attempt=1
+  local max_attempts=4
+  local retry_delay
+  while ! compose up --build --detach; do
+    if ((attempt >= max_attempts)); then
+      echo "docker compose up failed after ${max_attempts} attempts" >&2
+      return 1
+    fi
+    retry_delay=$((attempt * 5))
+    echo "::warning::docker compose up attempt ${attempt} failed; retrying the same real stack in ${retry_delay}s" >&2
+    sleep "$retry_delay"
+    attempt=$((attempt + 1))
+  done
+}
+
 cleanup() {
   status=$?
   trap - EXIT INT TERM
@@ -96,7 +112,7 @@ export SHAUTH_BOOTSTRAP_ADMIN_PASSWORD="$admin_password"
 export SHAUTH_BOOTSTRAP_APPS_JSON="$bootstrap_apps"
 
 compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-compose up --build --detach
+compose_up_with_retry
 
 wait_for_url() {
   local url=$1
@@ -182,6 +198,7 @@ start_simulator() {
   SIM_UI_PUBLIC_URL="http://localhost:$port" \
   SIM_UI_SESSION_SECRET="$session_secret" \
   SIM_UI_INSECURE_COOKIES=true \
+  SIM_DNS_PORT=0 \
   APPLICATION_RELEASE_REVISION="$6" \
   SOCKERLESS_CONSOLE_FEDERATION_AUDIENCE="${7:-}" \
     "$binary" >"$log_file" 2>&1 &

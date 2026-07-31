@@ -12,6 +12,12 @@
 
 set -euo pipefail
 
+# Filename glob order follows LC_COLLATE, and en_US.UTF-8 (common macOS
+# default) sorts `file_serverless.go` before `file.go` while C.UTF-8 (hosted
+# runners) sorts it after. Pin C collation so the generated row order is
+# identical on every operator machine and in CI.
+export LC_ALL=C
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${SEED_SURFACE_TABLES_OUT_DIR:-$REPO_ROOT/specs/SIM_SURFACE_TABLES}"
 MATRIX="$REPO_ROOT/specs/SIM_TEST_COVERAGE_MATRIX.md"
