@@ -21,6 +21,18 @@ cleanup ignored the transient dependency error while stopped containers still
 held a network. ECS helper VPCs now use the reserved 10.225-249 range and retry
 deletion until asynchronous task shutdown releases the network.
 
+The exact hosted Amazon ECS compute shard then exposed a real long-lived
+lifecycle defect: its default subnet exhausted because allocation advanced a
+cursor without reclaiming addresses from stopped tasks. Allocation now derives
+occupancy from live elastic network interfaces, NAT gateway addresses, and
+non-stopped ECS tasks, searches the usable range circularly, and reuses
+released addresses. Task startup and stop transitions are serialized, and
+cleanup removes dependent containers before their primary and pause network
+holders. Real compiled and BusyBox fixtures replaced shell commands that had
+been aimed at scratch images. The complete AWS simulator module, shared
+container runtime suite, multi-container localhost scenario, and exact
+`TestE` shard passed.
+
 Microsoft Azure resource-deletion dialogs retained Azure Resource Manager's
 actionable failure after a rejected request even when a concurrent Fluent UI
 backdrop event arrived. Backdrop dismissal was suppressed only while the error

@@ -347,6 +347,11 @@ var (
 	ecsRevisionMu      sync.Mutex
 	ecsRevisions       map[string]int // family -> latest revision
 	ecsProcessHandles  sync.Map       // map[taskID]*ecsTaskProcesses
+	// ecsTaskLifecycleLocks serialize asynchronous task startup with StopTask
+	// and service-scheduler stop requests. Stop must not return while an
+	// in-flight startup can still attach networking or publish RUNNING after
+	// the task was stopped.
+	ecsTaskLifecycleLocks sync.Map // map[taskID]*sync.Mutex
 )
 
 type ecsTaskProcesses struct {
@@ -379,6 +384,15 @@ func (p *ecsTaskProcesses) handleFor(containerName string) *sim.ContainerHandle 
 	return p.firstHandle()
 }
 
+func ecsTaskLifecycleLock(taskID string) *sync.Mutex {
+	lock, _ := ecsTaskLifecycleLocks.LoadOrStore(taskID, &sync.Mutex{})
+	mutex, ok := lock.(*sync.Mutex)
+	if !ok {
+		panic("Amazon ECS task lifecycle lock contained a non-mutex value")
+	}
+	return mutex
+}
+
 func stopECSTaskProcesses(p *ecsTaskProcesses) {
 	if p == nil {
 		return
@@ -391,19 +405,31 @@ func stopECSTaskProcesses(p *ecsTaskProcesses) {
 }
 
 func cleanupECSTaskProcesses(taskID string, p *ecsTaskProcesses) {
-	stopECSTaskProcesses(p)
-	ec2DetachRealECSTaskNIC(context.Background(), taskID)
-}
-
-func requestStopECSTaskProcesses(p *ecsTaskProcesses) {
 	if p == nil {
 		return
 	}
-	for _, h := range p.Handles {
-		if h != nil {
-			go sim.StopContainer(h.ContainerID)
+	stopECSTaskProcesses(p)
+	handles := make([]*sim.ContainerHandle, 0, len(p.Handles))
+	for name, handle := range p.Handles {
+		if name != p.MainContainerName && name != "__pause__" {
+			handles = append(handles, handle)
 		}
 	}
+	if mainHandle := p.Handles[p.MainContainerName]; mainHandle != nil {
+		handles = append(handles, mainHandle)
+	}
+	if pauseHandle := p.Handles["__pause__"]; pauseHandle != nil {
+		handles = append(handles, pauseHandle)
+	}
+	for _, handle := range handles {
+		if handle == nil || handle.ContainerID == "" {
+			continue
+		}
+		if err := sim.WaitContainerRemoved(handle.ContainerID, 5*time.Second); err != nil {
+			fmt.Fprintf(os.Stderr, "[sim-ecs] task %s: wait for container cleanup failed: %v\n", taskID, err)
+		}
+	}
+	ec2DetachRealECSTaskNIC(context.Background(), taskID)
 }
 
 func generateUUID() string {
@@ -1496,6 +1522,14 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 		// semantics and eliminates a class of races where callers (e.g.
 		// ExecuteCommand, task metadata) see RUNNING before the container exists.
 		go func(id string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, launchType, containerInstanceKey string) {
+			lifecycleLock := ecsTaskLifecycleLock(id)
+			lifecycleLock.Lock()
+			defer lifecycleLock.Unlock()
+			current, exists := ecsTasks.Get(id)
+			if !exists || current.DesiredStatus == ECSTaskStatusStopped {
+				return
+			}
+
 			// PROVISIONING → PENDING
 			ecsTasks.Update(id, func(t *ECSTask) {
 				t.LastStatus = ECSTaskStatusPending
@@ -1567,10 +1601,21 @@ func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsReques
 }
 
 func ecsWatchTaskProcesses(taskID, containerInstanceKey string, processes *ecsTaskProcesses) {
-	for name, handle := range processes.Handles {
-		go func(taskID, containerName string, handle *sim.ContainerHandle) {
+	for _, handle := range processes.Handles {
+		go func(taskID string, handle *sim.ContainerHandle) {
 			result := handle.Wait()
-			ecsProcessHandles.Delete(taskID)
+			lifecycleLock := ecsTaskLifecycleLock(taskID)
+			lifecycleLock.Lock()
+			defer lifecycleLock.Unlock()
+			owned, ownsLifecycle := ecsProcessHandles.LoadAndDelete(taskID)
+			if !ownsLifecycle {
+				return
+			}
+			ownedProcesses, ok := owned.(*ecsTaskProcesses)
+			if !ok {
+				panic("Amazon ECS task process registry contained a non-process value")
+			}
+			cleanupECSTaskProcesses(taskID, ownedProcesses)
 			stoppedAt := time.Now().Unix()
 			transitioned := false
 			ecsTasks.Update(taskID, func(t *ECSTask) {
@@ -1596,8 +1641,7 @@ func ecsWatchTaskProcesses(taskID, containerInstanceKey string, processes *ecsTa
 					ecsRequestServiceReconcileForTask(task)
 				}
 			}
-			cleanupECSTaskProcesses(taskID, processes)
-		}(taskID, name, handle)
+		}(taskID, handle)
 	}
 }
 
@@ -2429,6 +2473,10 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 // Returns false when the task is unknown. Used by the StopTask API handler
 // and the in-process service scheduler.
 func stopECSTask(taskID, reason, code string) bool {
+	lifecycleLock := ecsTaskLifecycleLock(taskID)
+	lifecycleLock.Lock()
+	defer lifecycleLock.Unlock()
+
 	existing, ok := ecsTasks.Get(taskID)
 	if !ok {
 		return false
@@ -2437,7 +2485,7 @@ func stopECSTask(taskID, reason, code string) bool {
 	// Stop running container if any
 	if v, ok := ecsProcessHandles.LoadAndDelete(taskID); ok {
 		if procs, ok := v.(*ecsTaskProcesses); ok {
-			requestStopECSTaskProcesses(procs)
+			cleanupECSTaskProcesses(taskID, procs)
 		}
 	}
 

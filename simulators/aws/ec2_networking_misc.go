@@ -478,27 +478,33 @@ func publicIpv4PoolRangeXML(rng EC2PublicIpv4PoolRange) string {
 // ---- NAT-gateway secondary addresses ----
 
 func handleAssignPrivateNatGatewayAddress(w http.ResponseWriter, r *http.Request) {
-	natGatewayAddressMutation(w, r, "AssignPrivateNatGatewayAddress", func(natgw *EC2NatGateway) {
-		ips := ec2ParamList(r, "PrivateIpAddress")
-		if len(ips) == 0 {
-			count, _ := strconv.Atoi(r.FormValue("PrivateIpAddressCount"))
-			if count == 0 {
-				count = 1
-			}
-			for i := 0; i < count; i++ {
-				ip, err := AllocateSubnetIP(natgw.SubnetId)
-				if err != nil {
-					return
-				}
-				ips = append(ips, ip)
-			}
+	natgw, ok := natGatewayAddressTarget(w, r)
+	if !ok {
+		return
+	}
+	ips := ec2ParamList(r, "PrivateIpAddress")
+	if len(ips) == 0 {
+		count, _ := strconv.Atoi(r.FormValue("PrivateIpAddressCount"))
+		if count == 0 {
+			count = 1
 		}
+		for i := 0; i < count; i++ {
+			ip, err := AllocateSubnetIP(natgw.SubnetId)
+			if err != nil {
+				ec2ErrorXML(w, "InsufficientFreeAddressesInSubnet", err.Error(), http.StatusBadRequest)
+				return
+			}
+			ips = append(ips, ip)
+		}
+	}
+	networkInterfaceID := natgw.NatGatewayAddresses[0].NetworkInterfaceId
+	natGatewayAddressMutation(w, r, "AssignPrivateNatGatewayAddress", func(natgw *EC2NatGateway) {
 		for _, ip := range ips {
 			next := make([]EC2NatGatewayAddress, 0, len(natgw.NatGatewayAddresses)+1)
 			next = append(next, natgw.NatGatewayAddresses...)
 			next = append(next, EC2NatGatewayAddress{
 				PrivateIp:          ip,
-				NetworkInterfaceId: natgw.NatGatewayAddresses[0].NetworkInterfaceId,
+				NetworkInterfaceId: networkInterfaceID,
 				IsPrimary:          false,
 				Status:             "succeeded",
 			})
@@ -521,31 +527,44 @@ func handleUnassignPrivateNatGatewayAddress(w http.ResponseWriter, r *http.Reque
 }
 
 func handleAssociateNatGatewayAddress(w http.ResponseWriter, r *http.Request) {
+	natgw, ok := natGatewayAddressTarget(w, r)
+	if !ok {
+		return
+	}
+	allocs := ec2ParamList(r, "AllocationId")
+	ips := ec2ParamList(r, "PrivateIpAddress")
+	addresses := make([]EC2NatGatewayAddress, 0, len(allocs))
+	for i, alloc := range allocs {
+		publicIP := ""
+		if elasticIP, found := ec2ElasticIPs.Get(alloc); found {
+			publicIP = elasticIP.PublicIp
+		}
+		var privateIP string
+		if i < len(ips) {
+			privateIP = ips[i]
+		} else {
+			var err error
+			privateIP, err = AllocateSubnetIP(natgw.SubnetId)
+			if err != nil {
+				ec2ErrorXML(w, "InsufficientFreeAddressesInSubnet", err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		addresses = append(addresses, EC2NatGatewayAddress{
+			AllocationId:       alloc,
+			PublicIp:           publicIP,
+			PrivateIp:          privateIP,
+			NetworkInterfaceId: natgw.NatGatewayAddresses[0].NetworkInterfaceId,
+			AssociationId:      ec2ID("eipassoc"),
+			IsPrimary:          false,
+			Status:             "succeeded",
+		})
+	}
 	natGatewayAddressMutation(w, r, "AssociateNatGatewayAddress", func(natgw *EC2NatGateway) {
-		allocs := ec2ParamList(r, "AllocationId")
-		ips := ec2ParamList(r, "PrivateIpAddress")
-		for i, alloc := range allocs {
-			publicIp := ""
-			if e, ok := ec2ElasticIPs.Get(alloc); ok {
-				publicIp = e.PublicIp
-			}
-			privateIp := ""
-			if i < len(ips) {
-				privateIp = ips[i]
-			} else if ip, err := AllocateSubnetIP(natgw.SubnetId); err == nil {
-				privateIp = ip
-			}
+		for _, address := range addresses {
 			next := make([]EC2NatGatewayAddress, 0, len(natgw.NatGatewayAddresses)+1)
 			next = append(next, natgw.NatGatewayAddresses...)
-			next = append(next, EC2NatGatewayAddress{
-				AllocationId:       alloc,
-				PublicIp:           publicIp,
-				PrivateIp:          privateIp,
-				NetworkInterfaceId: natgw.NatGatewayAddresses[0].NetworkInterfaceId,
-				AssociationId:      ec2ID("eipassoc"),
-				IsPrimary:          false,
-				Status:             "succeeded",
-			})
+			next = append(next, address)
 			natgw.NatGatewayAddresses = next
 		}
 	})
@@ -567,17 +586,26 @@ func handleDisassociateNatGatewayAddress(w http.ResponseWriter, r *http.Request)
 // natGatewayAddressMutation resolves the NAT gateway, applies the per-op
 // address-set mutation, and renders the shared
 // <natGatewayId>/<natGatewayAddressSet> response.
-func natGatewayAddressMutation(w http.ResponseWriter, r *http.Request, action string, mutate func(*EC2NatGateway)) {
+func natGatewayAddressTarget(w http.ResponseWriter, r *http.Request) (EC2NatGateway, bool) {
 	id := r.FormValue("NatGatewayId")
 	natgw, ok := ec2NatGateways.Get(id)
 	if !ok {
 		ec2ErrorXML(w, "NatGatewayNotFound", fmt.Sprintf("The NAT gateway '%s' does not exist", id), http.StatusBadRequest)
-		return
+		return EC2NatGateway{}, false
 	}
 	if len(natgw.NatGatewayAddresses) == 0 {
 		ec2ErrorXML(w, "InvalidParameterValue", fmt.Sprintf("NAT gateway '%s' has no primary address", id), http.StatusBadRequest)
+		return EC2NatGateway{}, false
+	}
+	return natgw, true
+}
+
+func natGatewayAddressMutation(w http.ResponseWriter, r *http.Request, action string, mutate func(*EC2NatGateway)) {
+	natgw, ok := natGatewayAddressTarget(w, r)
+	if !ok {
 		return
 	}
+	id := natgw.NatGatewayId
 	ec2NatGateways.Update(id, mutate)
 	natgw, _ = ec2NatGateways.Get(id)
 	ec2Response(w, action, fmt.Sprintf("<natGatewayId>%s</natGatewayId>%s", id, natgwAddrSetXML(natgw.NatGatewayAddresses)))

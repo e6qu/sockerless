@@ -3502,6 +3502,25 @@ workloads retained Docker's real alias. Focused coordinate tests and the
 official AWS SDK Step Functions integration passed a real Amazon ECS task,
 AWS CodeBuild container, and vendor AWS CLI in 7.45 seconds.
 
+The hosted Amazon ECS compute shard exhausted its default subnet because the
+allocator only advanced a persistent cursor; addresses belonging to stopped
+tasks were never made available again. Allocation was changed to derive
+current ownership from live elastic network interfaces, NAT gateway addresses,
+and non-stopped ECS tasks, then circularly search the usable subnet range.
+Focused coverage filled a small subnet, observed real exhaustion, stopped a
+task, and reused its released address.
+
+The same investigation tightened the full task lifecycle. Startup and stop
+transitions were serialized so an asynchronous launch could not publish a task
+as running after it had stopped. Cleanup waited for real runtime removal in
+network-dependency order—dependents, primary workload, then pause holder—and
+used bounded exact-container removal when a runtime's background cleanup had
+not completed. Shell-based SDK fixtures were moved to BusyBox where a shell was
+the contract; the shared-localhost case used the compiled container-command
+fixture with a real HTTP listener and client probe. The complete AWS simulator
+module, shared runtime suite, focused multi-container case, and exact hosted
+`TestE` shard passed.
+
 The final hosted rerun exposed two reproducibility assumptions. The root AWS
 Terraform graph had not declared a HashiCorp AWS provider version while its
 sibling packages still declared 6.47.0. Every graph now declared 6.50.0, and

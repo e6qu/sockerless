@@ -135,3 +135,22 @@ func TestMissingNetfilterTableHint_IgnoresUnrelatedFailures(t *testing.T) {
 		}
 	}
 }
+
+func TestContainerNotFoundErrorRecognizesPodmanCompatibilityResponse(t *testing.T) {
+	err := errors.New("Error response from daemon: no container with ID abc123 found in database: no such container")
+	if !containerNotFoundError(err) {
+		t.Fatalf("containerNotFoundError(%q) = false, want true", err)
+	}
+}
+
+func TestContainerNotFoundErrorRejectsOtherRuntimeFailures(t *testing.T) {
+	for _, err := range []error{
+		nil,
+		errors.New("Error response from daemon: permission denied"),
+		errors.New("Error response from daemon: no such image"),
+	} {
+		if containerNotFoundError(err) {
+			t.Errorf("containerNotFoundError(%v) = true, want false", err)
+		}
+	}
+}

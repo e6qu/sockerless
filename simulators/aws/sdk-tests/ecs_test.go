@@ -274,15 +274,9 @@ func TestECS_MultiContainerTaskSharesLocalhost(t *testing.T) {
 		Memory:                  aws.String("512"),
 		ContainerDefinitions: []ecstypes.ContainerDefinition{
 			{
-				Name:       aws.String("main"),
-				Image:      aws.String(evalImageName),
-				EntryPoint: []string{"sh", "-c"},
-				Command: []string{`for i in $(seq 1 50); do
-if nc -z 127.0.0.1 9090; then echo sidecar-ok; exit 0; fi
-sleep 0.1
-done
-echo sidecar-missing
-exit 1`},
+				Name:    aws.String("main"),
+				Image:   aws.String(containerCommandImage),
+				Command: []string{"probe-http", "http://127.0.0.1:9090", "sidecar-ok", "10"},
 				LogConfiguration: &ecstypes.LogConfiguration{
 					LogDriver: ecstypes.LogDriverAwslogs,
 					Options: map[string]string{
@@ -292,10 +286,9 @@ exit 1`},
 				},
 			},
 			{
-				Name:       aws.String("sidecar"),
-				Image:      aws.String(evalImageName),
-				EntryPoint: []string{"sh", "-c"},
-				Command:    []string{`while true; do { printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok'; } | nc -l -p 9090; done`},
+				Name:    aws.String("sidecar"),
+				Image:   aws.String(containerCommandImage),
+				Command: []string{"http", "9090", "sidecar-ok"},
 			},
 		},
 	})
@@ -367,7 +360,7 @@ func TestECS_ManagedEBSVolumeSnapshotRoundTripSDK(t *testing.T) {
 		}},
 		ContainerDefinitions: []ecstypes.ContainerDefinition{{
 			Name:       aws.String("writer"),
-			Image:      aws.String(evalImageName),
+			Image:      aws.String(busyboxImage),
 			EntryPoint: []string{"sh", "-c"},
 			Command:    []string{"printf 'sockerless-ebs-roundtrip' > /workspace/state.txt"},
 			MountPoints: []ecstypes.MountPoint{{
@@ -440,7 +433,7 @@ func TestECS_ManagedEBSVolumeSnapshotRoundTripSDK(t *testing.T) {
 		}},
 		ContainerDefinitions: []ecstypes.ContainerDefinition{{
 			Name:       aws.String("reader"),
-			Image:      aws.String(evalImageName),
+			Image:      aws.String(busyboxImage),
 			EntryPoint: []string{"sh", "-c"},
 			Command: []string{`test "$(cat /workspace/state.txt)" = "sockerless-ebs-roundtrip"
 echo EBS_ROUNDTRIP_OK`},
