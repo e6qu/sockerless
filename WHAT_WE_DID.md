@@ -51,6 +51,21 @@ PR 869 was squash-merged through GitHub into PR 868's branch. Its complete
 change remained in the consolidated branch, PR 869 closed as merged, and PR
 868 became the sole open pull request.
 
+The replacement hosted run then failed before any Shauth browser assertion:
+Docker Hub timed out after fifteen seconds while Compose pulled the real
+PostgreSQL image. The relying-party harness now retries convergence of that
+same real PostgreSQL/Ory Hydra/Shauth stack four times with bounded backoff.
+Partial successful pulls and builds are reused by the next Compose convergence
+attempt, while exhaustion remains an explicit failure.
+
+The exact local rerun then exposed a second orchestration defect: the AWS
+relying party inherited Route 53's fixed port 5353 and could not start while
+that host DNS coordinate was occupied. Harness-owned simulators now request an
+operating-system-selected Route 53 UDP/TCP coordinate, preserving the real DNS
+service without a global-port collision.
+ShellCheck, bash and zsh parsing, and the complete real PostgreSQL/Ory
+Hydra/Shauth/Chromium relying-party matrix passed.
+
 The Eventarc v1 Discovery document advanced from revision 20260717 to
 20260723. The vendored document and provenance were refreshed; methods,
 resources, and schemas were unchanged, and the complete Google Cloud

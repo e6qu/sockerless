@@ -40,6 +40,15 @@ the exact shared-module lint and complete tests passed.
 The badge-only stacked PR 869 was squash-merged through GitHub into PR 868's
 branch, retaining its complete change and restoring the one-open-PR invariant.
 
+The hosted Shauth relying-party job reached no browser assertion because its
+single Docker Hub request timed out while pulling PostgreSQL. The harness now
+retries convergence of the same real Compose stack four times with bounded
+backoff and still fails loudly after exhaustion.
+The local rerun then found the AWS relying party inheriting Route 53's fixed
+port 5353; harness-owned simulators now request an operating-system-selected
+DNS coordinate. ShellCheck, bash and zsh parsing, and the complete real
+PostgreSQL/Ory Hydra/Shauth/Chromium matrix passed.
+
 Host disk exhaustion damaged the cached Lambda Python 3.12 runtime image's
 overlay graph. Only that replaceable image was repulled; the real deployed
 Python function again used its bundled SDK to send to Amazon SQS. The scenario

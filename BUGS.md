@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2828 filed - 2828 fixed - 8 open - 16 false positives.**
+**2830 filed - 2830 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2830~~ | P1 | Shauth relying-party AWS simulator isolation | the harness inherited Route 53's fixed port 5353, so an occupied host DNS port prevented the AWS relying party from becoming healthy | The harness-owned AWS process now requests an operating-system-selected Route 53 UDP/TCP coordinate. The complete real PostgreSQL/Ory Hydra/Shauth/Chromium relying-party matrix passed. |
+| ~~2829~~ | P1 | Shauth relying-party browser CI orchestration | the harness made one `docker compose up` attempt and failed before testing when Docker Hub timed out pulling PostgreSQL after 15 seconds | The harness retries convergence of the same real Compose stack four times with bounded backoff and explicit exhaustion. Shell portability checks and the complete relying-party matrix passed after a real Docker Hub pull. |
 | ~~2824~~ | P1 | Pull-request consolidation | PRs 868 and 869 were simultaneously open, so the mandatory single-open-PR guard failed | The one-commit badge-refresh PR 869 was squash-merged through GitHub into PR 868's branch using the repository's only enabled merge method. Its complete change was retained, PR 869 closed as merged, and PR 868 remained the sole open pull request. |
 | ~~2828~~ | P1 | Shared simulator lifecycle initialization | Go vet found that `NewServer` created its background cancellation context before persistence path/database setup could return an error | `NewServer` now completes persistence path and database initialization before creating the server-owned context. The exact shared-module lint and complete shared test suite passed. |
 | ~~2827~~ | P0 | Simulator orderly background-worker shutdown | a Lambda event-source poller queried its SQLite store after the persistent child simulator had closed the database, panicking during a passing hard-restart shard | The server now cancels and drains registered background workers before checkpointing and closing SQLite. Lambda event-source work, CloudWatch alarms, Application Auto Scaling, and Scheduler use that lifecycle; a deterministic drain-and-reopen regression, a persistent child restart with mandatory clean exit, and the exact A-M shard passed. |
