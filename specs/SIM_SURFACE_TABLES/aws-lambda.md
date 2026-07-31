@@ -1,6 +1,6 @@
 # Sim surface — aws-lambda
 
-Surface registered in `simulators/aws/lambda_extras2.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/lambda.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,6 +13,44 @@ Surface registered in `simulators/aws/lambda_extras2.go` (and related files grou
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
+| `POST /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:368::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:369::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:370::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-03-31/functions/{name}/configuration` | ✓ `simulators/aws/lambda.go:371::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/invocations` | ✓ `simulators/aws/lambda.go:372::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:373::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/` | ✓ `simulators/aws/lambda.go:374::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:375::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:376::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:377::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:380::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:381::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:382::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:383::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:384::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:385::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:386::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:387::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:388::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/functions/{name}/policy/{statement}` | ✓ `simulators/aws/lambda.go:389::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:390::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:391::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:392::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:393::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2021-10-31/functions/{name}/urls` | ✓ `simulators/aws/lambda.go:394::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-03-31/event-source-mappings` | ✓ `simulators/aws/lambda.go:397::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/event-source-mappings` | ✓ `simulators/aws/lambda.go:398::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/event-source-mappings/{uuid}` | ✓ `simulators/aws/lambda.go:399::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-03-31/event-source-mappings/{uuid}` | ✓ `simulators/aws/lambda.go:400::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/event-source-mappings/{uuid}` | ✓ `simulators/aws/lambda.go:401::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2018-10-31/layers/{layer}/versions` | ✓ `simulators/aws/lambda.go:406::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2018-10-31/layers/{layer}/versions` | ✓ `simulators/aws/lambda.go:407::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2018-10-31/layers/{layer}/versions/{version}` | ✓ `simulators/aws/lambda.go:408::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2018-10-31/layers/{layer}/versions/{version}` | ✓ `simulators/aws/lambda.go:409::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2018-10-31/layers` | ✓ `simulators/aws/lambda.go:414::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2017-10-31/functions/{name}/concurrency` | ✓ `simulators/aws/lambda.go:417::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2019-09-30/functions/{name}/concurrency` | ✓ `simulators/aws/lambda.go:418::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2017-10-31/functions/{name}/concurrency` | ✓ `simulators/aws/lambda.go:419::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `PUT /2019-09-25/functions/{name}/event-invoke-config` | ✓ `simulators/aws/lambda_extras2.go:32::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /2019-09-25/functions/{name}/event-invoke-config` | ✓ `simulators/aws/lambda_extras2.go:33::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /2019-09-25/functions/{name}/event-invoke-config` | ✓ `simulators/aws/lambda_extras2.go:34::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -60,44 +98,6 @@ Surface registered in `simulators/aws/lambda_extras2.go` (and related files grou
 | `POST /2025-12-01/durable-execution-callbacks/{cbid}/succeed` | ✓ `simulators/aws/lambda_extras3.go:82::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /2025-12-01/durable-execution-callbacks/{cbid}/fail` | ✓ `simulators/aws/lambda_extras3.go:83::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /2025-12-01/durable-execution-callbacks/{cbid}/heartbeat` | ✓ `simulators/aws/lambda_extras3.go:84::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:368::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:369::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:370::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /2015-03-31/functions/{name}/configuration` | ✓ `simulators/aws/lambda.go:371::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2015-03-31/functions/{name}/invocations` | ✓ `simulators/aws/lambda.go:372::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:373::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/` | ✓ `simulators/aws/lambda.go:374::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:375::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:376::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:377::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:380::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:381::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:382::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:383::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:384::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:385::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:386::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:387::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:388::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2015-03-31/functions/{name}/policy/{statement}` | ✓ `simulators/aws/lambda.go:389::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:390::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:391::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:392::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:393::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2021-10-31/functions/{name}/urls` | ✓ `simulators/aws/lambda.go:394::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2015-03-31/event-source-mappings` | ✓ `simulators/aws/lambda.go:397::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-03-31/event-source-mappings` | ✓ `simulators/aws/lambda.go:398::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2015-03-31/event-source-mappings/{uuid}` | ✓ `simulators/aws/lambda.go:399::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /2015-03-31/event-source-mappings/{uuid}` | ✓ `simulators/aws/lambda.go:400::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2015-03-31/event-source-mappings/{uuid}` | ✓ `simulators/aws/lambda.go:401::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /2018-10-31/layers/{layer}/versions` | ✓ `simulators/aws/lambda.go:406::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2018-10-31/layers/{layer}/versions` | ✓ `simulators/aws/lambda.go:407::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2018-10-31/layers/{layer}/versions/{version}` | ✓ `simulators/aws/lambda.go:408::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2018-10-31/layers/{layer}/versions/{version}` | ✓ `simulators/aws/lambda.go:409::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2018-10-31/layers` | ✓ `simulators/aws/lambda.go:414::cloudTrailRecordedRESTDynamic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /2017-10-31/functions/{name}/concurrency` | ✓ `simulators/aws/lambda.go:417::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2019-09-30/functions/{name}/concurrency` | ✓ `simulators/aws/lambda.go:418::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /2017-10-31/functions/{name}/concurrency` | ✓ `simulators/aws/lambda.go:419::cloudTrailRecordedREST` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

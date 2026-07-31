@@ -4,6 +4,36 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-31 — Diagnostics found a real packet-filter defect
+
+The widened ECS Express rollout window did more than buy time: its new
+diagnostic showed two replacement tasks RUNNING beside the old one for the
+full two minutes, deployment IN_PROGRESS, no placement failures. The health
+gate never passed because the Express-managed security group carried no
+ingress permissions — and the real-VPC tier programs task security groups
+into an nftables bridge filter that ends in a terminal drop. Every health
+check and forwarded packet to the task's elastic network interface was
+discarded, so the old task could never retire. Real ECS Express admits the
+load balancer's flow to the container port; the sim's managed group now
+admits TCP 443 from the world and the container port from the VPC CIDR, the
+path its host-realized ALB data plane actually takes. The lifecycle test now
+runs in its own VPC with a caller group that authorizes the same flow, and
+its failure diagnostic reports each task's status and health and each
+target's state and reason. The focused official AWS SDK Express suite
+passed.
+
+Two neighbouring defects surfaced and were fixed in the same pass. A filtered
+unit-test run panicked: the delete-time drain test initialized four stores,
+but its task-stop events schedule an asynchronous service reconciliation
+that reads the scheduler-state, deployment-record, and alarm stores — nil
+interface stores dereferenced in a background goroutine and killed the test
+binary. The test now initializes what its side effects transitively read,
+and the complete AWS simulator module suite passed. And the surface-table
+seeder iterated filename globs in `LC_COLLATE` order, which differs between
+macOS (`en_US.UTF-8`) and the hosted runners (`C.UTF-8`); identical rows came
+out in different orders and the build gate reported stale tables. The script
+now pins `LC_ALL=C`.
+
 ## 2026-07-31 — Specification drift and an honest rollout budget
 
 The consolidated branch's replacement hosted run failed two checks. Google

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2832 filed - 2832 fixed - 8 open - 16 false positives.**
+**2835 filed - 2835 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2835~~ | P2 | Simulator surface-table generation | the seeder's filename glob order followed `LC_COLLATE`, so macOS (`en_US.UTF-8`) and hosted runners (`C.UTF-8`) emitted identical rows in different orders and the build gate reported stale tables | `scripts/seed-surface-tables.sh` pins `LC_ALL=C`, making the generated row order identical on every platform; ShellCheck plus bash and zsh syntax validation passed. |
+| ~~2834~~ | P1 | AWS simulator unit-test isolation | `TestECSStopServiceTasks_DrainsNonStopped` initialized only four stores, so the drain's asynchronous service reconciliation dereferenced a nil store interface and panicked the test binary in filtered runs | The test now initializes the scheduler-state, deployment-record, and alarm stores its asynchronous reconcile transitively reads. The filtered selection and the complete AWS simulator module suite passed. |
+| ~~2833~~ | P1 | AWS simulator ECS Express managed security group | the Express-managed security group had no ingress permissions, so the real-VPC tier's nftables filter dropped every health check and forwarded packet and an Express rollout could never become healthy | The managed group now admits TCP 443 from the world and the container port from the VPC CIDR — the sim's faithful realization of the ALB-to-task flow its data plane actually uses. The lifecycle test runs in its own VPC with an authorized caller group, and its rollout diagnostic reports per-task and per-target state. The focused official AWS SDK Express suite passed. |
 | ~~2832~~ | P1 | AWS simulator ECS Express hosted rollout validation | a 30-second assertion window could not cover a hosted rollout of two replacement tasks through serialized transitions, health gating, and the scheduler's bounded placement-retry chain | The rollout window now covers the full bounded retry budget, and the failure output retains desired/running/pending counts, both task definitions, deployment rollout state, and the latest service events so a recurrence reports its real cause. The focused official AWS SDK Express suite passed. |
 | ~~2831~~ | P2 | Google Cloud Artifact Registry specification freshness | hosted multi-probe validation observed revision 20260727 while revision 20260724 was vendored | The repository vendor script's three-probe fetch retained Artifact Registry v1 revision 20260727; its methods, paths, and schema fields were identical to the CI-captured drift artifact except the revision marker, and the complete multi-probe freshness audit passed. |
 | ~~2830~~ | P1 | Shauth relying-party AWS simulator isolation | the harness inherited Route 53's fixed port 5353, so an occupied host DNS port prevented the AWS relying party from becoming healthy | The harness-owned AWS process now requests an operating-system-selected Route 53 UDP/TCP coordinate. The complete real PostgreSQL/Ory Hydra/Shauth/Chromium relying-party matrix passed. |

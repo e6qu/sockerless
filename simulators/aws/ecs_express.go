@@ -241,7 +241,7 @@ func handleECSCreateExpressGatewayService(w http.ResponseWriter, r *http.Request
 	var createdSG string
 	securityGroups := netCfg.SecurityGroups
 	if len(securityGroups) == 0 {
-		createdSG = expressCreateSecurityGroup(serviceName, expressVPCFromSubnets(netCfg.Subnets))
+		createdSG = expressCreateSecurityGroup(serviceName, expressVPCFromSubnets(netCfg.Subnets), containerPort)
 		securityGroups = []string{createdSG}
 	}
 
@@ -891,16 +891,45 @@ func expressCreateListener(lbArn, certArn, tgArn string) string {
 	return arn
 }
 
-// expressCreateSecurityGroup creates an EC2 security group in the real
-// ec2SecurityGroups store and returns its id.
-func expressCreateSecurityGroup(serviceName, vpcID string) string {
+// expressCreateSecurityGroup models the managed security group ECS Express
+// creates for a service. Real Express pairs an ALB group (443 from the world
+// for a PUBLIC service) with a task group that admits the container port from
+// the ALB group; the sim composes both into one group. Its load balancer
+// terminates the listener on the host and reaches the task's elastic network
+// interface from the VPC gateway coordinate, so the faithful task-side rule
+// admits the container port from the VPC CIDR — the path health checks and
+// forwarded traffic really take, and the path the real-VPC tier enforces in
+// nftables. A rule-less group would install a deny-all ingress filter there
+// and the service could never become healthy.
+func expressCreateSecurityGroup(serviceName, vpcID string, containerPort int32) string {
 	id := ec2ID("sg")
+	vpcCIDR := "0.0.0.0/0"
+	if vpc, ok := ec2Vpcs.Get(vpcID); ok && vpc.CidrBlock != "" {
+		vpcCIDR = vpc.CidrBlock
+	}
 	sg := EC2SecurityGroup{
 		GroupId:     id,
 		GroupName:   "express-" + serviceName,
 		Description: "Managed by ECS Express for service " + serviceName,
 		VpcId:       vpcID,
 		OwnerId:     ec2Owner(),
+		IpPermissions: []EC2IpPermission{
+			{
+				IpProtocol: "tcp",
+				FromPort:   443,
+				ToPort:     443,
+				IpRanges:   []EC2IpRange{{CidrIp: "0.0.0.0/0", Description: "PUBLIC Express ingress"}},
+			},
+			{
+				IpProtocol: "tcp",
+				FromPort:   int(containerPort),
+				ToPort:     int(containerPort),
+				IpRanges:   []EC2IpRange{{CidrIp: vpcCIDR, Description: "Express load balancer to task"}},
+			},
+		},
+		IpPermissionsEgress: []EC2IpPermission{
+			{IpProtocol: "-1", IpRanges: []EC2IpRange{{CidrIp: "0.0.0.0/0"}}},
+		},
 	}
 	ec2SecurityGroups.Put(id, sg)
 	return id

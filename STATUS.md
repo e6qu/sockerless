@@ -6,6 +6,9 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
+| Amazon ECS Express managed security group | The Express-managed group admits TCP 443 from the world and the container port from the VPC CIDR, so the real-VPC tier's nftables enforcement passes the ALB health-check and forwarding flow and Express rollouts become healthy. The lifecycle test owns an isolated VPC and authorized caller group, and its diagnostic reports per-task and per-target state. |
+| Simulator surface-table generation | `scripts/seed-surface-tables.sh` pins `LC_ALL=C`, so macOS and hosted runners emit identical row order and the build gate compares like with like. |
+| AWS simulator unit-test isolation | The delete-time drain test initializes the scheduler-state, deployment-record, and alarm stores its asynchronous reconciliation reads; the complete AWS simulator module suite passed. |
 | Google Cloud Artifact Registry specification freshness | The multi-probe vendor fetch retained Artifact Registry v1 Discovery revision 20260727 after the hosted gate observed it; methods, paths, and schema fields were unchanged from the revision 20260724 pin, and the complete freshness audit passed. |
 | Amazon ECS Express hosted rollout validation | The rollout assertion window covers the scheduler's full bounded placement-retry chain, matching real Amazon ECS rollout timing, and failure output retains desired/running/pending counts, both task definitions, deployment state, and the latest service events. The focused official AWS SDK Express suite passed. |
 | Active branch | `fix/simulator-sqlite-durability` |
@@ -60,6 +63,9 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Open bugs | [BUGS.md](BUGS.md) retained 8 defects. AWS Amplify Hosting image optimization remained the next independent AWS fidelity slice; macOS Podman's missing nested KVM for the real Google Compute Engine Terraform graph and external-provider limitations remained explicit. |
 
 ## Verified Gates
+
+- The complete AWS simulator module suite passed after the drain test's store isolation fix, and the focused official AWS SDK ECS Express suite passed against the ingress-complete managed security group.
+- The surface-table seeder passed ShellCheck plus bash and zsh syntax validation with its pinned collation, and repeated local runs are byte-identical.
 
 - The complete Google Cloud specification freshness audit passed all probes with Artifact Registry v1 pinned at revision 20260727; methods, paths, and schema fields were unchanged from the previous pin.
 - The focused official AWS SDK ECS Express suite passed with the rollout assertion covering the scheduler's full bounded retry budget and retaining the complete last-observed service state in its failure diagnostic.

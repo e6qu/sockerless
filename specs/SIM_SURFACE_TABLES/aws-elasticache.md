@@ -1,6 +1,6 @@
 # Sim surface — aws-elasticache
 
-Surface registered in `simulators/aws/elasticache_serverless.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/elasticache.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,40 +13,6 @@ Surface registered in `simulators/aws/elasticache_serverless.go` (and related fi
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action CreateServerlessCache` | ✓ `simulators/aws/elasticache_serverless.go:133::handleECCreateServerlessCache` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeServerlessCaches` | ✓ `simulators/aws/elasticache_serverless.go:134::handleECDescribeServerlessCaches` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyServerlessCache` | ✓ `simulators/aws/elasticache_serverless.go:135::handleECModifyServerlessCache` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteServerlessCache` | ✓ `simulators/aws/elasticache_serverless.go:136::handleECDeleteServerlessCache` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateServerlessCacheSnapshot` | ✓ `simulators/aws/elasticache_serverless.go:139::handleECCreateServerlessSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeServerlessCacheSnapshots` | ✓ `simulators/aws/elasticache_serverless.go:140::handleECDescribeServerlessSnapshots` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteServerlessCacheSnapshot` | ✓ `simulators/aws/elasticache_serverless.go:141::handleECDeleteServerlessSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CopyServerlessCacheSnapshot` | ✓ `simulators/aws/elasticache_serverless.go:142::handleECCopyServerlessSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ExportServerlessCacheSnapshot` | ✓ `simulators/aws/elasticache_serverless.go:143::handleECExportServerlessSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:146::handleECCreateGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeGlobalReplicationGroups` | ✓ `simulators/aws/elasticache_serverless.go:147::handleECDescribeGlobalReplGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:148::handleECModifyGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:149::handleECDeleteGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DisassociateGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:150::handleECDisassociateGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action FailoverGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:151::handleECFailoverGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action IncreaseNodeGroupsInGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:152::handleECIncreaseNodeGroupsGlobal` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DecreaseNodeGroupsInGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:153::handleECDecreaseNodeGroupsGlobal` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action RebalanceSlotsInGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:154::handleECRebalanceSlotsGlobal` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CreateCacheSecurityGroup` | ✓ `simulators/aws/elasticache_serverless.go:157::handleECCreateCacheSecGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DeleteCacheSecurityGroup` | ✓ `simulators/aws/elasticache_serverless.go:158::handleECDeleteCacheSecGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action AuthorizeCacheSecurityGroupIngress` | ✓ `simulators/aws/elasticache_serverless.go:159::handleECAuthorizeCacheSecGroupIngress` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action RevokeCacheSecurityGroupIngress` | ✓ `simulators/aws/elasticache_serverless.go:160::handleECRevokeCacheSecGroupIngress` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DescribeUpdateActions` | ✓ `simulators/aws/elasticache_serverless.go:163::handleECDescribeUpdateActions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action BatchApplyUpdateAction` | ✓ `simulators/aws/elasticache_serverless.go:164::handleECBatchApplyUpdateAction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action BatchStopUpdateAction` | ✓ `simulators/aws/elasticache_serverless.go:165::handleECBatchStopUpdateAction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action IncreaseReplicaCount` | ✓ `simulators/aws/elasticache_serverless.go:168::handleECIncreaseReplicaCount` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DecreaseReplicaCount` | ✓ `simulators/aws/elasticache_serverless.go:169::handleECDecreaseReplicaCount` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ModifyReplicationGroupShardConfiguration` | ✓ `simulators/aws/elasticache_serverless.go:170::handleECModifyReplGroupShardConfig` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TestFailover` | ✓ `simulators/aws/elasticache_serverless.go:171::handleECTestFailover` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action ListAllowedNodeTypeModifications` | ✓ `simulators/aws/elasticache_serverless.go:174::handleECListAllowedNodeTypeModifications` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action PurchaseReservedCacheNodesOffering` | ✓ `simulators/aws/elasticache_serverless.go:175::handleECPurchaseReservedCacheNodesOffering` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action StartMigration` | ✓ `simulators/aws/elasticache_serverless.go:176::handleECStartMigration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action CompleteMigration` | ✓ `simulators/aws/elasticache_serverless.go:177::handleECCompleteMigration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TestMigration` | ✓ `simulators/aws/elasticache_serverless.go:178::handleECTestMigration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CreateCacheCluster` | ✓ `simulators/aws/elasticache.go:144::handleECCreate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeCacheClusters` | ✓ `simulators/aws/elasticache.go:145::handleECDescribe` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action ModifyCacheCluster` | ✓ `simulators/aws/elasticache.go:146::handleECModify` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -88,6 +54,40 @@ Surface registered in `simulators/aws/elasticache_serverless.go` (and related fi
 | `Action DescribeReservedCacheNodesOfferings` | ✓ `simulators/aws/elasticache.go:185::handleECDescribeReservedCacheNodesOfferings` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeServiceUpdates` | ✓ `simulators/aws/elasticache.go:186::handleECDescribeServiceUpdates` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeCacheSecurityGroups` | ✓ `simulators/aws/elasticache.go:187::handleECDescribeCacheSecurityGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateServerlessCache` | ✓ `simulators/aws/elasticache_serverless.go:133::handleECCreateServerlessCache` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeServerlessCaches` | ✓ `simulators/aws/elasticache_serverless.go:134::handleECDescribeServerlessCaches` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyServerlessCache` | ✓ `simulators/aws/elasticache_serverless.go:135::handleECModifyServerlessCache` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteServerlessCache` | ✓ `simulators/aws/elasticache_serverless.go:136::handleECDeleteServerlessCache` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateServerlessCacheSnapshot` | ✓ `simulators/aws/elasticache_serverless.go:139::handleECCreateServerlessSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeServerlessCacheSnapshots` | ✓ `simulators/aws/elasticache_serverless.go:140::handleECDescribeServerlessSnapshots` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteServerlessCacheSnapshot` | ✓ `simulators/aws/elasticache_serverless.go:141::handleECDeleteServerlessSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CopyServerlessCacheSnapshot` | ✓ `simulators/aws/elasticache_serverless.go:142::handleECCopyServerlessSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ExportServerlessCacheSnapshot` | ✓ `simulators/aws/elasticache_serverless.go:143::handleECExportServerlessSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:146::handleECCreateGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeGlobalReplicationGroups` | ✓ `simulators/aws/elasticache_serverless.go:147::handleECDescribeGlobalReplGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:148::handleECModifyGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:149::handleECDeleteGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DisassociateGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:150::handleECDisassociateGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action FailoverGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:151::handleECFailoverGlobalReplGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action IncreaseNodeGroupsInGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:152::handleECIncreaseNodeGroupsGlobal` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DecreaseNodeGroupsInGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:153::handleECDecreaseNodeGroupsGlobal` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RebalanceSlotsInGlobalReplicationGroup` | ✓ `simulators/aws/elasticache_serverless.go:154::handleECRebalanceSlotsGlobal` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateCacheSecurityGroup` | ✓ `simulators/aws/elasticache_serverless.go:157::handleECCreateCacheSecGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteCacheSecurityGroup` | ✓ `simulators/aws/elasticache_serverless.go:158::handleECDeleteCacheSecGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AuthorizeCacheSecurityGroupIngress` | ✓ `simulators/aws/elasticache_serverless.go:159::handleECAuthorizeCacheSecGroupIngress` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RevokeCacheSecurityGroupIngress` | ✓ `simulators/aws/elasticache_serverless.go:160::handleECRevokeCacheSecGroupIngress` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeUpdateActions` | ✓ `simulators/aws/elasticache_serverless.go:163::handleECDescribeUpdateActions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action BatchApplyUpdateAction` | ✓ `simulators/aws/elasticache_serverless.go:164::handleECBatchApplyUpdateAction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action BatchStopUpdateAction` | ✓ `simulators/aws/elasticache_serverless.go:165::handleECBatchStopUpdateAction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action IncreaseReplicaCount` | ✓ `simulators/aws/elasticache_serverless.go:168::handleECIncreaseReplicaCount` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DecreaseReplicaCount` | ✓ `simulators/aws/elasticache_serverless.go:169::handleECDecreaseReplicaCount` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyReplicationGroupShardConfiguration` | ✓ `simulators/aws/elasticache_serverless.go:170::handleECModifyReplGroupShardConfig` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TestFailover` | ✓ `simulators/aws/elasticache_serverless.go:171::handleECTestFailover` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListAllowedNodeTypeModifications` | ✓ `simulators/aws/elasticache_serverless.go:174::handleECListAllowedNodeTypeModifications` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action PurchaseReservedCacheNodesOffering` | ✓ `simulators/aws/elasticache_serverless.go:175::handleECPurchaseReservedCacheNodesOffering` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action StartMigration` | ✓ `simulators/aws/elasticache_serverless.go:176::handleECStartMigration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CompleteMigration` | ✓ `simulators/aws/elasticache_serverless.go:177::handleECCompleteMigration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TestMigration` | ✓ `simulators/aws/elasticache_serverless.go:178::handleECTestMigration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

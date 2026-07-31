@@ -4,6 +4,23 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The widened Express rollout window paid off immediately: its new diagnostic
+showed two replacement tasks RUNNING beside one old task for two minutes —
+the health gate never passed. The Express-managed security group had no
+ingress permissions, so the real-VPC tier's nftables filter dropped every
+health check and forwarded packet. The managed group now admits TCP 443 from
+the world and the container port from the VPC CIDR, the lifecycle test runs
+in its own VPC with an authorized caller group, and the rollout diagnostic
+reports per-task and per-target state. The focused official AWS SDK Express
+suite passed.
+
+The same pass fixed two neighbours. A filtered unit run panicked when the
+delete-time drain's asynchronous reconciliation read scheduler and alarm
+stores the test had not initialized; it now initializes them, and the
+complete AWS simulator module suite passed. The surface-table seeder's
+filename glob order followed `LC_COLLATE`, so macOS and hosted runners
+emitted identical rows in different orders; the script pins `LC_ALL=C`.
+
 The replacement hosted run drifted Google Artifact Registry v1 to Discovery
 revision 20260727 and timed out the ECS Express rollout assertion at thirty
 seconds. The repository vendor script retained the exact multi-probe revision
