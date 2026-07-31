@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // CloudWatch continuously re-evaluates each metric alarm against incoming
@@ -26,14 +29,19 @@ import (
 // startCWAlarmEvaluator launches the background goroutine that re-derives
 // every metric alarm's state every cwAlarmEvalInterval and dispatches the
 // configured action topics on state transitions.
-func startCWAlarmEvaluator() {
-	go func() {
+func startCWAlarmEvaluator(srv *sim.Server) {
+	srv.StartBackground(func(ctx context.Context) {
 		ticker := time.NewTicker(cwAlarmEvalInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			cwEvaluateAlarmsOnce()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cwEvaluateAlarmsOnce()
+			}
 		}
-	}()
+	})
 }
 
 const cwAlarmEvalInterval = 2 * time.Second

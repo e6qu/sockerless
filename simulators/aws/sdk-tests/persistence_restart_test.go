@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -46,16 +45,11 @@ import (
 
 func persistentSimulatorPorts(t *testing.T) (int, int) {
 	t.Helper()
-	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	tcpPort, err := freeTCPPort()
 	require.NoError(t, err)
-	tcpPort := tcpListener.Addr().(*net.TCPAddr).Port
-	require.NoError(t, tcpListener.Close())
-
-	udpListener, err := net.ListenPacket("udp", "127.0.0.1:0")
+	dnsPort, err := freeTCPUDPPort()
 	require.NoError(t, err)
-	udpPort := udpListener.LocalAddr().(*net.UDPAddr).Port
-	require.NoError(t, udpListener.Close())
-	return tcpPort, udpPort
+	return tcpPort, dnsPort
 }
 
 func startPersistentSimulator(t *testing.T, stateDir string, tcpPort, udpPort int, runtimeName string) *exec.Cmd {
@@ -445,7 +439,7 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	shutdownSimulator(cmd)
+	require.NoError(t, shutdownSimulator(cmd), "persistent simulator must exit cleanly before SQLite is reopened")
 	cmd = startPersistentSimulator(t, stateDir, tcpPort, udpPort, "process")
 
 	amplifyAPI = amplify.NewFromConfig(cfg, func(o *amplify.Options) { o.BaseEndpoint = aws.String(endpoint) })

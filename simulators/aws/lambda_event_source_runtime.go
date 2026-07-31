@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	sim "github.com/sockerless/simulator"
 )
 
 var (
@@ -17,11 +19,16 @@ var (
 	lambdaESMActive = map[string]bool{}
 )
 
-func startLambdaEventSourcePollers() {
-	go func() {
+func startLambdaEventSourcePollers(srv *sim.Server) {
+	srv.StartBackground(func(ctx context.Context) {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
-		for range ticker.C {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 			mappings := make([]LambdaEventSourceMapping, 0, lambdaESMs.Len())
 			for _, mapping := range lambdaESMs.List() {
 				if mapping.State == "Enabled" && strings.HasPrefix(mapping.EventSourceArn, "arn:aws:sqs:") {
@@ -30,11 +37,14 @@ func startLambdaEventSourcePollers() {
 			}
 			for _, mapping := range mappings {
 				if lambdaBeginESMRun(mapping.UUID) {
-					go lambdaPollSQSMapping(mapping)
+					mapping := mapping
+					srv.StartBackground(func(ctx context.Context) {
+						lambdaPollSQSMapping(ctx, mapping)
+					})
 				}
 			}
 		}
-	}()
+	})
 }
 
 func lambdaBeginESMRun(uuid string) bool {
@@ -53,8 +63,11 @@ func lambdaFinishESMRun(uuid string) {
 	lambdaESMRunMu.Unlock()
 }
 
-func lambdaPollSQSMapping(mapping LambdaEventSourceMapping) {
+func lambdaPollSQSMapping(ctx context.Context, mapping LambdaEventSourceMapping) {
 	defer lambdaFinishESMRun(mapping.UUID)
+	if ctx.Err() != nil {
+		return
+	}
 	queueName := snsTopicNameFromARN(mapping.EventSourceArn)
 	queue, ok := sqsQueues.Get(queueName)
 	if !ok {
@@ -82,6 +95,9 @@ func lambdaPollSQSMapping(mapping LambdaEventSourceMapping) {
 	if len(messages) == 0 {
 		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
 
 	payload, err := json.Marshal(map[string]any{"Records": lambdaSQSEventRecords(mapping.EventSourceArn, messages)})
 	if err != nil {
@@ -89,6 +105,9 @@ func lambdaPollSQSMapping(mapping LambdaEventSourceMapping) {
 		return
 	}
 	response, unhandled, _ := invokeLambdaViaRuntimeAPI(function, payload)
+	if ctx.Err() != nil {
+		return
+	}
 	if unhandled {
 		lambdaSetESMProcessingResult(mapping.UUID, "PROBLEM: Function call failed")
 		return

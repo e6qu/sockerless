@@ -86,7 +86,7 @@ def handler(event, context):
 		Payload:      []byte(`{}`),
 	})
 	require.NoError(t, err)
-	assert.Empty(t, aws.ToString(invoked.FunctionError))
+	assert.Empty(t, aws.ToString(invoked.FunctionError), "invoke payload: %s", invoked.Payload)
 	var output map[string]string
 	require.NoError(t, json.Unmarshal(invoked.Payload, &output))
 	assert.NotEmpty(t, output["messageId"])

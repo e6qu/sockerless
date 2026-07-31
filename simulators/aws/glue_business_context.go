@@ -464,7 +464,7 @@ func handleGlueListGlossaryTerms(w http.ResponseWriter, r *http.Request) {
 		return glueBusinessStringField(items[i], "Name") < glueBusinessStringField(items[j], "Name")
 	})
 	page, next := awsPage(items, req.NextToken, derefIntDefault(req.MaxResults, 0), 1000)
-	response := map[string]any{"GlossaryId": glossary.Id, "Items": page}
+	response := map[string]any{"Items": page}
 	if next != "" {
 		response["NextToken"] = next
 	}

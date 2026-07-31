@@ -1,7 +1,10 @@
 package aws_sdk_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -104,6 +107,22 @@ func TestGlueBusinessContextLifecycle_SDK(t *testing.T) {
 	terms, err := client.ListGlossaryTerms(ctx, &glue.ListGlossaryTermsInput{GlossaryIdentifier: glossary.Id})
 	require.NoError(t, err)
 	require.Len(t, terms.Items, 1)
+
+	rawListBody, err := json.Marshal(map[string]any{"GlossaryIdentifier": aws.ToString(glossary.Id)})
+	require.NoError(t, err)
+	rawListRequest, err := http.NewRequest(http.MethodPost, baseURL+"/", bytes.NewReader(rawListBody))
+	require.NoError(t, err)
+	rawListRequest.Header.Set("X-Amz-Target", "AWSGlue.ListGlossaryTerms")
+	rawListRequest.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	signRawSigV4JSON(t, rawListRequest, "glue", rawListBody)
+	rawListResponse, err := http.DefaultClient.Do(rawListRequest)
+	require.NoError(t, err)
+	defer rawListResponse.Body.Close()
+	require.Equal(t, http.StatusOK, rawListResponse.StatusCode)
+	var rawListOutput map[string]json.RawMessage
+	require.NoError(t, json.NewDecoder(rawListResponse.Body).Decode(&rawListOutput))
+	assert.Contains(t, rawListOutput, "Items")
+	assert.NotContains(t, rawListOutput, "GlossaryId")
 
 	associated, err := client.AssociateGlossaryTerms(ctx, &glue.AssociateGlossaryTermsInput{
 		AssetIdentifier:         aws.String("quarterly-sales"),
@@ -264,8 +283,14 @@ func TestGlueEntityRecordsAndBatchEvaluationRuns_SDK(t *testing.T) {
 		ConnectionName: aws.String("glue-dynamodb-connection"),
 	})
 	require.NoError(t, err)
-	require.Len(t, children.Entities, 1)
-	assert.Equal(t, "glue-business-entities", aws.ToString(children.Entities[0].EntityName))
+	var foundEntity bool
+	for _, entity := range children.Entities {
+		if aws.ToString(entity.EntityName) == "glue-business-entities" {
+			foundEntity = true
+			break
+		}
+	}
+	require.True(t, foundEntity, "connection entities should include the created DynamoDB table")
 
 	description, err := client.DescribeEntity(ctx, &glue.DescribeEntityInput{
 		ConnectionName: aws.String("glue-dynamodb-connection"),

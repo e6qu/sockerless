@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
@@ -33,14 +34,20 @@ var (
 )
 
 // startSchedulerFiringLoop launches the once-per-second evaluation loop.
-func startSchedulerFiringLoop() {
+func startSchedulerFiringLoop(srv *sim.Server) {
 	schedulerLoopOnce.Do(func() {
-		go func() {
+		srv.StartBackground(func(ctx context.Context) {
 			ticker := time.NewTicker(time.Second)
-			for range ticker.C {
-				schedulerTick(time.Now().UTC())
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					schedulerTick(time.Now().UTC())
+				}
 			}
-		}()
+		})
 	})
 }
 

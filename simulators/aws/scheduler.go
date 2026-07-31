@@ -119,7 +119,7 @@ func registerScheduler(srv *sim.Server) {
 	})
 
 	// Evaluate ScheduleExpressions and invoke due targets (ECS/Lambda/SQS/SNS).
-	startSchedulerFiringLoop()
+	startSchedulerFiringLoop(srv)
 }
 
 // schedulerRecorded wraps a Scheduler REST handler so its API call is recorded

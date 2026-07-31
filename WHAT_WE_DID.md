@@ -4,6 +4,58 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-31 — Hosted CI regressions became measured protocol fixes
+
+The persistent AWS SDK harness had selected a Route 53 port by checking UDP
+alone even though the simulator serves DNS on both UDP and TCP. A different
+process could therefore own the matching TCP coordinate and make the child
+simulator fail before an Amazon ECS restart scenario began. Package-wide and
+restart harnesses now test the same wildcard port on both protocols, and a
+dedicated regression repeats the actual dual bind. The real-container ECS
+service-adoption restart passed with those coordinates.
+
+AWS Glue's `ListGlossaryTerms` handler returned a convenient top-level
+`GlossaryId` that the vendored Smithy model did not declare. The response now
+contains only modeled `Items` and optional `NextToken` members. A signed raw
+AWS JSON request and the exact AWS CLI business-context lifecycle passed the
+runtime Smithy response-shape validator with no violations. The complete
+service shard also showed that entity coverage assumed its DynamoDB connection
+was the only table-bearing state in the shared account. The lifecycle now
+locates and validates its own created entity while allowing other legitimate
+tables, and its focused official AWS SDK scenario passed.
+
+The same full shard exposed a shutdown panic that its parent process had not
+treated as a failure: a Lambda event-source poller queried SQLite after the
+database closed. The server now owns store-backed worker cancellation and
+drain. Lambda event-source work, CloudWatch alarms, Application Auto Scaling,
+and Scheduler stop before the orderly checkpoint/close boundary. A
+deterministic worker-drain/reopen regression passed, and the persistent-state
+SDK lifecycle now rejects a nonzero child exit before reopening SQLite.
+
+Host disk exhaustion also left the cached Lambda Python 3.12 image pointing at
+a missing overlay lower layer. Only that replaceable image was removed and
+repulled; images, volumes, simulator state, and source clones were preserved.
+The real managed-runtime downstream-SDK scenario passed again, and its
+assertion now prints the complete Lambda failure payload instead of reducing
+an actionable runtime error to `FunctionError=Unhandled`.
+The exact official AWS SDK A-M shard then passed the final source state in
+300.747 seconds with clean child shutdowns.
+
+The full lint gate caught one lifecycle-construction leak: `NewServer` created
+its cancellation context before persistence path and database setup could
+return an error. Context creation now happens only after those fallible steps.
+The exact shared-module lint and complete shared tests passed.
+
+The repository allowed only squash merging, so the one-commit badge-refresh
+PR 869 was squash-merged through GitHub into PR 868's branch. Its complete
+change remained in the consolidated branch, PR 869 closed as merged, and PR
+868 became the sole open pull request.
+
+The Eventarc v1 Discovery document advanced from revision 20260717 to
+20260723. The vendored document and provenance were refreshed; methods,
+resources, and schemas were unchanged, and the complete Google Cloud
+multi-probe freshness audit passed.
+
 ## 2026-07-31 — AWS VPC and Glue service models reached complete registered coverage
 
 Amazon EC2 reached all 772 operations in its vendored service model. Regional

@@ -20,6 +20,34 @@ Amazon S3 state or an actual DynamoDB connection, while data-quality batch
 reads returned existing evaluation runs. The AWS console exposed business
 glossaries and asset types through public Glue APIs. Official AWS SDK, AWS CLI,
 simulator-package, hard-restart, console-package, and browser checks passed.
+`ListGlossaryTerms` also stopped emitting its undeclared top-level
+`GlossaryId`; signed raw SDK and exact CLI requests passed the runtime Smithy
+response-shape validator. Entity coverage locates the DynamoDB table it creates
+without assuming that earlier tests left the shared simulator account empty.
+
+The AWS SDK restart harness now reserves each Route 53 test coordinate only
+after binding the same wildcard port on TCP and UDP. The focused dual-protocol
+allocation regression and real-container ECS service-adoption restart passed.
+
+AWS store-backed periodic work now belongs to the server lifecycle. Orderly
+shutdown cancels and drains Lambda event-source, CloudWatch alarm, Application
+Auto Scaling, and Scheduler workers before SQLite is checkpointed and closed.
+A deterministic drain/reopen regression passed, and the persistent-state SDK
+scenario now requires its child process to exit cleanly before restart.
+The final exact official AWS SDK A-M shard passed in 300.747 seconds.
+Server context creation occurs only after fallible persistence initialization;
+the exact shared-module lint and complete tests passed.
+The badge-only stacked PR 869 was squash-merged through GitHub into PR 868's
+branch, retaining its complete change and restoring the one-open-PR invariant.
+
+Host disk exhaustion damaged the cached Lambda Python 3.12 runtime image's
+overlay graph. Only that replaceable image was repulled; the real deployed
+Python function again used its bundled SDK to send to Amazon SQS. The scenario
+now includes the complete invocation payload when a function error occurs.
+
+Google Cloud Eventarc v1 Discovery revision 20260723 replaced revision
+20260717. Only the revision marker changed, and the complete multi-probe
+Google Cloud specification freshness audit passed.
 
 Amazon Simple Queue Service visibility-timeout coverage always waited for real
 redelivery and no longer disappeared under Go's short mode.

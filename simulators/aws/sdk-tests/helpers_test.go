@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -114,6 +115,48 @@ func signRawSigV4JSON(t *testing.T, req *http.Request, service string, body []by
 	t.Helper()
 	sum := sha256.Sum256(body)
 	signRawSigV4(t, req, service, hex.EncodeToString(sum[:]))
+}
+
+func freeTCPPort() (int, error) {
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return 0, err
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		return 0, err
+	}
+	return port, nil
+}
+
+// freeTCPUDPPort returns one numeric port that was simultaneously available
+// on both protocols. Route 53 binds its configured DNS coordinate on TCP and
+// UDP, so selecting a UDP-only ephemeral port can collide with another
+// simulator's HTTP listener.
+func freeTCPUDPPort() (int, error) {
+	const attempts = 100
+	for attempt := 0; attempt < attempts; attempt++ {
+		tcpListener, err := net.Listen("tcp", ":0")
+		if err != nil {
+			return 0, err
+		}
+		port := tcpListener.Addr().(*net.TCPAddr).Port
+		udpListener, udpErr := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+		if udpErr != nil {
+			_ = tcpListener.Close()
+			continue
+		}
+		tcpCloseErr := tcpListener.Close()
+		udpCloseErr := udpListener.Close()
+		if tcpCloseErr != nil {
+			return 0, tcpCloseErr
+		}
+		if udpCloseErr != nil {
+			return 0, udpCloseErr
+		}
+		return port, nil
+	}
+	return 0, fmt.Errorf("could not find a port available on both TCP and UDP after %d attempts", attempts)
 }
 
 var (
@@ -287,22 +330,17 @@ func TestMain(m *testing.M) {
 		buildTerraformAWSImage(workloadPlatform)
 	}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	port, err := freeTCPPort()
 	if err != nil {
 		log.Fatalf("Failed to find free port: %v", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
 	simPort = port
-	ln.Close()
 
-	// Free UDP port for the Route 53 DNS server. The simulator and the
-	// test share SIM_DNS_PORT so both know where to send queries.
-	udpConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	// Route 53 serves the same DNS coordinate over UDP and TCP.
+	dnsPort, err = freeTCPUDPPort()
 	if err != nil {
 		log.Fatalf("Failed to find free DNS port: %v", err)
 	}
-	dnsPort = udpConn.(*net.UDPConn).LocalAddr().(*net.UDPAddr).Port
-	udpConn.Close()
 
 	simCmd = exec.Command(binaryPath)
 	simCmd.Env = append(os.Environ(),
@@ -328,21 +366,27 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func shutdownSimulator(cmd *exec.Cmd) {
+func shutdownSimulator(cmd *exec.Cmd) error {
 	if cmd == nil || cmd.Process == nil {
-		return
+		return nil
 	}
-	done := make(chan struct{})
+	done := make(chan error, 1)
 	go func() {
-		_ = cmd.Wait()
-		close(done)
+		done <- cmd.Wait()
 	}()
-	_ = cmd.Process.Signal(os.Interrupt)
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		return fmt.Errorf("signal simulator shutdown: %w", err)
+	}
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("wait for simulator shutdown: %w", err)
+		}
+		return nil
 	case <-time.After(15 * time.Second):
 		_ = cmd.Process.Kill()
 		<-done
+		return errors.New("simulator did not stop within 15 seconds")
 	}
 }
 
