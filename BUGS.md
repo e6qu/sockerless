@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2817 filed - 2817 fixed - 8 open - 16 false positives.**
+**2820 filed - 2820 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2820~~ | P2 | Amazon Simple Queue Service visibility-timeout validation | the real delayed redelivery path was omitted from short-mode runs | The visibility-timeout test now always exercises actual queue state and elapsed service time; it no longer reports a reduced green suite under Go's short mode. |
+| ~~2819~~ | P1 | AWS Glue service completeness | 33 vendored operations had no registered implementation, durable state, or console path | AWS Glue now implements all 297 vendored operations. Durable business glossaries, terms, forms, asset types, assets, attachments, associations, idempotency tokens, data-quality batches, native Data Catalog records, Amazon S3 record previews, and DynamoDB connection records passed official AWS SDK, AWS CLI, and hard-restart coverage; the console exposes glossaries and asset types through the same public APIs. |
+| ~~2818~~ | P1 | Amazon EC2 virtual private cloud account controls and PrivateLink fidelity | account encryption and endpoint payer responsibility were absent, while service acceptance did not drive a real provider connection | Amazon EC2 now implements all 772 vendored operations. Regional account VPC encryption modes and exclusions reconcile durable VPC state, endpoint payer responsibility persists, and acceptance/rejection/deletion controls a real local PrivateLink provider connection; official AWS SDK, AWS CLI, Terraform, hard-restart, and console coverage passed. |
 | ~~2817~~ | P1 | Hosted simulator lint budget | the required `lint (simulators)` job was cancelled at its exact five-minute job limit while golangci-lint was still running | The required status context remained unchanged, lighter lint shards retained five-minute limits, and only the simulator shard received a verifiable ten-minute job and step budget. Workflow timeout fixtures and actionlint passed. |
 | ~~2816~~ | P0 | AWS simulator Amazon ECS network and task lifecycle | subnet allocation never reclaimed stopped-task addresses, while asynchronous startup and dependency-ordered container teardown could outlive a terminal task transition | Subnet allocation now derives occupancy from live elastic network interfaces, NAT gateway addresses, and non-stopped ECS tasks, searches the usable range circularly, and reuses released addresses. Task startup and stop transitions are serialized, workload containers are removed in network-dependency order, and real compiled or BusyBox fixtures replaced shell commands aimed at scratch images. The exact hosted compute shard passed. |
 | ~~2815~~ | P0 | Simulator SQLite durability | persistent simulators used `synchronous=NORMAL` and returned from graceful HTTP shutdown without closing or checkpointing SQLite | All three cloud simulators now use SQLite `synchronous=FULL`, truncate-checkpoint committed WAL records during orderly shutdown, close the database, and surface checkpoint or close failures. Multi-connection regressions proved the durability pragma, empty post-close WAL, and preserved state after reopen. |

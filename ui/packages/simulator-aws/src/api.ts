@@ -2111,6 +2111,70 @@ export const fetchEC2Vpcs = async (): Promise<EC2Vpc[]> => {
   }));
 };
 
+export type EC2AccountVpcEncryptionMode = "unmanaged" | "attempt-monitor" | "attempt-enforce";
+export type EC2AccountVpcEncryptionExclusion =
+  | "InternetGateway"
+  | "EgressOnlyInternetGateway"
+  | "NatGateway"
+  | "VirtualPrivateGateway"
+  | "VpcPeering"
+  | "Lambda"
+  | "VpcLattice"
+  | "ElasticFileSystem";
+
+export interface EC2AccountVpcEncryptionControl {
+  state: string;
+  mode: EC2AccountVpcEncryptionMode;
+  managedBy: string;
+  lastUpdateTimestamp: string;
+  exclusions: Record<EC2AccountVpcEncryptionExclusion, boolean>;
+}
+
+const accountVpcEncryptionExclusionFields: Record<EC2AccountVpcEncryptionExclusion, string> = {
+  InternetGateway: "internetGateway",
+  EgressOnlyInternetGateway: "egressOnlyInternetGateway",
+  NatGateway: "natGateway",
+  VirtualPrivateGateway: "virtualPrivateGateway",
+  VpcPeering: "vpcPeering",
+  Lambda: "lambda",
+  VpcLattice: "vpcLattice",
+  ElasticFileSystem: "elasticFileSystem",
+};
+
+function accountVpcEncryptionControlFromXML(xml: Document): EC2AccountVpcEncryptionControl {
+  const control = xml.getElementsByTagName("accountVpcEncryptionControl")[0];
+  if (!control) throw new Error("Amazon EC2 returned no account VPC encryption control");
+  const exclusions = childElement(control, "exclusions");
+  return {
+    state: childText(control, "state"),
+    mode: childText(control, "mode") as EC2AccountVpcEncryptionMode,
+    managedBy: childText(control, "managedBy"),
+    lastUpdateTimestamp: childText(control, "lastUpdateTimestamp"),
+    exclusions: Object.fromEntries(
+      Object.entries(accountVpcEncryptionExclusionFields).map(([field, xmlName]) => [
+        field,
+        exclusions ? childText(exclusions, xmlName) === "enabled" : false,
+      ]),
+    ) as Record<EC2AccountVpcEncryptionExclusion, boolean>,
+  };
+}
+
+export const fetchEC2AccountVpcEncryptionControl = async (): Promise<EC2AccountVpcEncryptionControl> =>
+  accountVpcEncryptionControlFromXML(await awsQuery("ec2", EC2_VERSION, "DescribeAccountVpcEncryptionControl"));
+
+export const modifyEC2AccountVpcEncryptionControl = async (
+  mode: EC2AccountVpcEncryptionMode,
+  exclusions: Record<EC2AccountVpcEncryptionExclusion, boolean>,
+): Promise<EC2AccountVpcEncryptionControl> => {
+  const parameters: Record<string, string> = { Mode: mode };
+  for (const field of Object.keys(accountVpcEncryptionExclusionFields) as EC2AccountVpcEncryptionExclusion[]) {
+    parameters[field] = exclusions[field] ? "enable" : "disable";
+  }
+  return accountVpcEncryptionControlFromXML(
+    await awsQuery("ec2", EC2_VERSION, "ModifyAccountVpcEncryptionControl", parameters),
+  );
+};
+
 export interface EC2Subnet {
   subnetId: string;
   name: string;
@@ -3358,6 +3422,69 @@ export const fetchGlueJobs = async (): Promise<GlueJob[]> => {
     scriptLocation: job.Command?.ScriptLocation ?? "",
     createdOn: job.CreatedOn ?? 0,
   }));
+};
+
+export interface GlueGlossary {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export const fetchGlueGlossaries = async (): Promise<GlueGlossary[]> => {
+  const items: GlueGlossary[] = [];
+  let nextToken: string | undefined;
+  do {
+    const listed = await awsJson<{
+      Items?: { Id?: string; Name?: string; Description?: string }[];
+      NextToken?: string;
+    }>("glue", "AWSGlue.ListGlossaries", nextToken ? { NextToken: nextToken } : {});
+    items.push(
+      ...(listed.Items ?? []).map((glossary) => ({
+        id: glossary.Id ?? "",
+        name: glossary.Name ?? "",
+        description: glossary.Description ?? "",
+      })),
+    );
+    nextToken = listed.NextToken;
+  } while (nextToken);
+  return items;
+};
+
+export const createGlueGlossary = async (name: string, description: string): Promise<GlueGlossary> => {
+  const created = await awsJson<{ Id?: string; Name?: string; Description?: string }>(
+    "glue",
+    "AWSGlue.CreateGlossary",
+    { Name: name, ...(description ? { Description: description } : {}) },
+  );
+  return {
+    id: created.Id ?? "",
+    name: created.Name ?? name,
+    description: created.Description ?? description,
+  };
+};
+
+export const deleteGlueGlossary = async (identifier: string): Promise<void> => {
+  await awsJson("glue", "AWSGlue.DeleteGlossary", { Identifier: identifier });
+};
+
+export interface GlueAssetType {
+  id: string;
+  name: string;
+}
+
+export const fetchGlueAssetTypes = async (): Promise<GlueAssetType[]> => {
+  const items: GlueAssetType[] = [];
+  let nextToken: string | undefined;
+  do {
+    const listed = await awsJson<{ Items?: { Id?: string; Name?: string }[]; NextToken?: string }>(
+      "glue",
+      "AWSGlue.ListAssetTypes",
+      nextToken ? { NextToken: nextToken } : {},
+    );
+    items.push(...(listed.Items ?? []).map((assetType) => ({ id: assetType.Id ?? "", name: assetType.Name ?? "" })));
+    nextToken = listed.NextToken;
+  } while (nextToken);
+  return items;
 };
 
 // ---------------------------------------------------------------------------

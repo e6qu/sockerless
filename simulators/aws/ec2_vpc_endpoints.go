@@ -9,29 +9,35 @@ import (
 )
 
 // EC2VpcEndpoint models an AWS VPC endpoint (gateway, interface, or
-// gatewayLoadBalancer). It is a pure control-plane object: CreateVpcEndpoint
-// records it as "available" and DescribeVpcEndpoints reads it back, the same way
-// real AWS returns a synchronously-available gateway endpoint (interface
-// endpoints transition pending→available, but the API returns the endpoint
-// immediately either way).
+// gatewayLoadBalancer). Gateway endpoints are synchronously available.
+// Interface endpoints for a locally registered PrivateLink service retain the
+// provider-side pending-acceptance lifecycle in both endpoint views.
 type EC2VpcEndpoint struct {
-	VpcEndpointId       string
-	VpcEndpointType     string
-	VpcId               string
-	ServiceName         string
-	State               string
-	PolicyDocument      string
-	RouteTableIds       []string
-	SubnetIds           []string
-	SecurityGroupIds    []string
-	PrivateDnsEnabled   bool
-	RequesterManaged    bool
-	IpAddressType       string
-	NetworkInterfaceIds []string
-	DnsEntries          []EC2DnsEntry
-	OwnerId             string
-	CreationTimestamp   string
-	Tags                []EC2Tag
+	VpcEndpointId         string
+	VpcEndpointType       string
+	VpcId                 string
+	ServiceName           string
+	State                 string
+	PolicyDocument        string
+	RouteTableIds         []string
+	SubnetIds             []string
+	SecurityGroupIds      []string
+	PrivateDnsEnabled     bool
+	RequesterManaged      bool
+	IpAddressType         string
+	NetworkInterfaceIds   []string
+	DnsEntries            []EC2DnsEntry
+	OwnerId               string
+	CreationTimestamp     string
+	PayerResponsibilities []EC2PayerResponsibilityEntry
+	Tags                  []EC2Tag
+}
+
+// EC2PayerResponsibilityEntry records which account pays one supported class
+// of VPC endpoint charges.
+type EC2PayerResponsibilityEntry struct {
+	Scope                   string
+	PayerResponsibilityType string
 }
 
 // EC2DnsEntry is a (dnsName, hostedZoneId) pair an interface endpoint advertises.
@@ -66,13 +72,25 @@ func handleCreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 	subnetIds := ec2ParamList(r, "SubnetId")
 	routeTableIds := ec2ParamList(r, "RouteTableId")
 	sgIds := ec2ParamList(r, "SecurityGroupId")
+	var endpointService *EC2VpcEndpointServiceConfiguration
+	for _, cfg := range ec2VpcEndpointServices.List() {
+		if cfg.ServiceName == serviceName {
+			matched := cfg
+			endpointService = &matched
+			break
+		}
+	}
+	state := "Available"
+	if endpointService != nil && endpointService.AcceptanceRequired {
+		state = "PendingAcceptance"
+	}
 
 	ep := EC2VpcEndpoint{
 		VpcEndpointId:     id,
 		VpcEndpointType:   endpointType,
 		VpcId:             vpcId,
 		ServiceName:       serviceName,
-		State:             "Available",
+		State:             state,
 		PolicyDocument:    r.FormValue("PolicyDocument"),
 		RouteTableIds:     routeTableIds,
 		SubnetIds:         subnetIds,
@@ -82,7 +100,11 @@ func handleCreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 		IpAddressType:     r.FormValue("IpAddressType"),
 		OwnerId:           ec2Owner(),
 		CreationTimestamp: time.Now().UTC().Format(time.RFC3339),
-		Tags:              parseTags(r),
+		PayerResponsibilities: []EC2PayerResponsibilityEntry{{
+			Scope:                   "vpc-endpoint-charges",
+			PayerResponsibilityType: "vpc-endpoint-account",
+		}},
+		Tags: parseTags(r),
 	}
 
 	// Interface endpoints get one ENI per subnet plus a DNS entry; gateway
@@ -99,6 +121,21 @@ func handleCreateVpcEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ec2VpcEndpoints.Put(id, ep)
+	if endpointService != nil {
+		connectionID := ec2ID("vpce-conn")
+		ec2VpcEndpointConns.Put(connectionID, EC2VpcEndpointConnection{
+			VpcEndpointConnectionId: connectionID,
+			ServiceId:               endpointService.ServiceId,
+			VpcEndpointId:           id,
+			VpcEndpointOwner:        ec2Owner(),
+			VpcEndpointState:        state,
+			IpAddressType:           ep.IpAddressType,
+			VpcEndpointRegion:       awsRegion(),
+			CreationTimestamp:       ep.CreationTimestamp,
+			PayerResponsibilities:   append([]EC2PayerResponsibilityEntry(nil), ep.PayerResponsibilities...),
+			Tags:                    append([]EC2Tag(nil), ep.Tags...),
+		})
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateVpcEndpointResponse %s>
@@ -151,6 +188,11 @@ func handleDeleteVpcEndpoints(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		ec2VpcEndpoints.Delete(id)
+		for _, connection := range ec2VpcEndpointConns.List() {
+			if connection.VpcEndpointId == id {
+				ec2VpcEndpointConns.Delete(connection.VpcEndpointConnectionId)
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/xml")
@@ -184,8 +226,20 @@ func vpcEndpointFieldsXML(ep EC2VpcEndpoint) string {
 	b.WriteString(vpceIDSetXML("networkInterfaceIdSet", ep.NetworkInterfaceIds))
 	b.WriteString(vpceDnsEntrySetXML(ep.DnsEntries))
 	fmt.Fprintf(&b, "<creationTimestamp>%s</creationTimestamp>", ep.CreationTimestamp)
+	b.WriteString(vpcePayerResponsibilitiesXML(ep.PayerResponsibilities))
 	b.WriteString(writeTagSetXML(ep.Tags))
 	fmt.Fprintf(&b, "<ownerId>%s</ownerId>", ep.OwnerId)
+	return b.String()
+}
+
+func vpcePayerResponsibilitiesXML(entries []EC2PayerResponsibilityEntry) string {
+	var b strings.Builder
+	b.WriteString("<payerResponsibilitySet>")
+	for _, entry := range entries {
+		fmt.Fprintf(&b, "<item><scope>%s</scope><payerResponsibilityType>%s</payerResponsibilityType></item>",
+			entry.Scope, entry.PayerResponsibilityType)
+	}
+	b.WriteString("</payerResponsibilitySet>")
 	return b.String()
 }
 

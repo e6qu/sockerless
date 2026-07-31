@@ -771,6 +771,11 @@ func handleDescribeRegions(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 	cidr := r.FormValue("CidrBlock")
+	requestedEncryptionMode, requestedExclusions, hasRequestedEncryption, err := vpcEncryptionConfigurationFromCreateRequest(r)
+	if err != nil {
+		ec2ErrorXML(w, "InvalidParameterValue", err.Error(), http.StatusBadRequest)
+		return
+	}
 	tenancy := r.FormValue("InstanceTenancy")
 	if tenancy == "" {
 		tenancy = "default"
@@ -790,6 +795,17 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 		EnableDnsHostnames: false,
 	}
 	ec2Vpcs.Put(id, vpc)
+	accountControl := currentAccountVpcEncryptionControl()
+	switch accountControl.Mode {
+	case "attempt-monitor":
+		applyAccountVpcEncryptionControl(id, "monitor", accountControl.Exclusions)
+	case "attempt-enforce":
+		applyAccountVpcEncryptionControl(id, "enforce", accountControl.Exclusions)
+	default:
+		if hasRequestedEncryption {
+			applyAccountVpcEncryptionControl(id, requestedEncryptionMode, requestedExclusions)
+		}
+	}
 	// Real AWS auto-creates a main route table per VPC (local route + a main
 	// association with no subnet). aws_vpc.main_route_table_id /
 	// default_route_table_id and aws_default_route_table read it back.
@@ -835,8 +851,12 @@ func vpcItemBodyXML(vpc EC2Vpc) string {
 	if dhcpOptionsID == "" {
 		dhcpOptionsID = "default"
 	}
-	return fmt.Sprintf(`<vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state><ownerId>%s</ownerId><isDefault>%t</isDefault><instanceTenancy>%s</instanceTenancy><dhcpOptionsId>%s</dhcpOptionsId>%s%s`,
-		vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, tenancy, dhcpOptionsID, cidrAssoc, writeTagSetXML(vpc.Tags))
+	encryptionControl := ""
+	if control, ok := vpcEncryptionControlForVPC(vpc.VpcId); ok {
+		encryptionControl = "<encryptionControl>" + vpcEncryptionControlXML(control) + "</encryptionControl>"
+	}
+	return fmt.Sprintf(`<vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state><ownerId>%s</ownerId><isDefault>%t</isDefault><instanceTenancy>%s</instanceTenancy><dhcpOptionsId>%s</dhcpOptionsId>%s%s%s`,
+		vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, tenancy, dhcpOptionsID, cidrAssoc, encryptionControl, writeTagSetXML(vpc.Tags))
 }
 
 func vpcItemXML(vpc EC2Vpc) string {
@@ -941,6 +961,11 @@ func handleDeleteVpc(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, s := range ec2Subnets.Filter(func(s EC2Subnet) bool { return s.VpcId == id }) {
 		ec2SubnetIPCursor.Delete(s.SubnetId)
+	}
+	for _, control := range ec2VpcEncryptionControls.Filter(func(control EC2VpcEncryptionControl) bool {
+		return control.VpcId == id
+	}) {
+		ec2VpcEncryptionControls.Delete(control.VpcEncryptionControlId)
 	}
 	ec2Vpcs.Delete(id)
 

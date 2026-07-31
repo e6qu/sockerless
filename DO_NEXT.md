@@ -4,6 +4,26 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+Amazon EC2 implemented all 772 operations in the vendored service model.
+Regional account VPC encryption controls persisted their mode and exclusions,
+reconciled existing and newly created VPCs, and surfaced through the Cloudscape
+console. VPC endpoints persisted payer responsibility, and service acceptance,
+rejection, and deletion drove the real local PrivateLink provider connection.
+Official AWS SDK, AWS CLI, HashiCorp AWS provider, and hard-restart scenarios
+passed.
+
+AWS Glue implemented all 297 operations in the vendored service model.
+Durable business glossaries, terms, form types, asset types, assets,
+attachments, associations, and idempotency tokens survived hard simulator
+replacement. Entity metadata and records came from native Data Catalog and
+Amazon S3 state or an actual DynamoDB connection, while data-quality batch
+reads returned existing evaluation runs. The AWS console exposed business
+glossaries and asset types through public Glue APIs. Official AWS SDK, AWS CLI,
+simulator-package, hard-restart, console-package, and browser checks passed.
+
+Amazon Simple Queue Service visibility-timeout coverage always waited for real
+redelivery and no longer disappeared under Go's short mode.
+
 The same-day AWS SDK release wave advanced Lambda to `v1.101.0` in the Lambda
 backend and official SDK suite and IAM to `v1.57.0` in the SDK suite. The
 Lambda backend built and passed its tests, the complete official AWS SDK suite

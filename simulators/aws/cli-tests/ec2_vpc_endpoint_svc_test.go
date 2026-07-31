@@ -73,6 +73,33 @@ func TestEC2CLI_VpcEndpointServiceRoundTrip(t *testing.T) {
 	}
 }
 
+// TestEC2CLI_AccountVpcEncryptionControlRoundTrip drives the Region-scoped
+// account policy and proves that newly created VPCs inherit it through the
+// official AWS Command Line Interface.
+func TestEC2CLI_AccountVpcEncryptionControlRoundTrip(t *testing.T) {
+	initial := strings.TrimSpace(runCLI(t, awsCLI("ec2", "describe-account-vpc-encryption-control",
+		"--query", "AccountVpcEncryptionControl.[State,Mode,ManagedBy]", "--output", "text")))
+	if initial != "default-state\tunmanaged\taccount" {
+		t.Fatalf("initial account VPC encryption control = %q", initial)
+	}
+
+	modified := strings.TrimSpace(runCLI(t, awsCLI("ec2", "modify-account-vpc-encryption-control",
+		"--mode", "attempt-monitor", "--nat-gateway", "enable",
+		"--query", "AccountVpcEncryptionControl.[State,Mode,Exclusions.NatGateway]", "--output", "text")))
+	if modified != "transitions-successful\tattempt-monitor\tenabled" {
+		t.Fatalf("modified account VPC encryption control = %q", modified)
+	}
+
+	vpcID := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-vpc",
+		"--cidr-block", "10.56.0.0/16", "--query", "Vpc.VpcId", "--output", "text")))
+	inherited := strings.TrimSpace(runCLI(t, awsCLI("ec2", "describe-vpc-encryption-controls",
+		"--vpc-ids", vpcID,
+		"--query", "VpcEncryptionControls[0].Mode", "--output", "text")))
+	if inherited != "monitor" {
+		t.Fatalf("new VPC inherited encryption control = %q", inherited)
+	}
+}
+
 // TestEC2CLI_VpcCidrBlockRoundTrip drives associate/disassociate-vpc-cidr-block.
 func TestEC2CLI_VpcCidrBlockRoundTrip(t *testing.T) {
 	vpc := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-vpc",

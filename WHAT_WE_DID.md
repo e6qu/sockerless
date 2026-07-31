@@ -4,6 +4,32 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-31 — AWS VPC and Glue service models reached complete registered coverage
+
+Amazon EC2 reached all 772 operations in its vendored service model. Regional
+account VPC encryption controls persisted their mode and eight exclusion
+classes, reconciled existing and newly created VPCs, and surfaced through the
+Cloudscape console. VPC endpoints retained payer responsibility, and endpoint
+service acceptance, rejection, and deletion established or removed the real
+local PrivateLink provider connection. Official AWS SDK, AWS CLI, HashiCorp AWS
+provider, and hard-restart scenarios exercised the lifecycle.
+
+AWS Glue reached all 297 operations in its vendored service model. The final 33
+operations added durable business glossaries and terms, form and asset schemas,
+assets, attachments, glossary associations, iterable-form reads, data-quality
+batch reads, and entity metadata/record access. Native entity reads used the
+durable Data Catalog and actual Amazon S3 objects; DynamoDB connections read
+real table schemas and items. IDs and client-token results survived hard
+simulator replacement. The AWS console added business-glossary operations and
+asset-type inventory through the public Glue APIs.
+
+The exact service-conformance report now names missing operations for every
+tracked AWS model rather than only the catalog subset. The full AWS simulator
+package, official AWS SDK and AWS CLI Glue lifecycles, hard-restart matrix,
+console typecheck, all 69 console package tests, production build, and focused
+browser accessibility checks passed. Amazon Simple Queue Service visibility
+timeout coverage also remained active in every Go test mode.
+
 ## 2026-07-30 — AWS SDK releases, local budgets, and ECS isolation stayed green
 
 The same-day AWS SDK wave advanced Lambda from `v1.100.2` to `v1.101.0` in

@@ -107,6 +107,7 @@ type EC2VpcEndpointConnection struct {
 	IpAddressType           string
 	VpcEndpointRegion       string
 	CreationTimestamp       string
+	PayerResponsibilities   []EC2PayerResponsibilityEntry
 	Tags                    []EC2Tag
 }
 
@@ -1456,6 +1457,7 @@ func ec2VpcEndpointConnFieldsXML(c EC2VpcEndpointConnection) string {
 		fmt.Fprintf(&b, "<ipAddressType>%s</ipAddressType>", c.IpAddressType)
 	}
 	fmt.Fprintf(&b, "<vpcEndpointConnectionId>%s</vpcEndpointConnectionId>", c.VpcEndpointConnectionId)
+	b.WriteString(vpcePayerResponsibilitiesXML(c.PayerResponsibilities))
 	b.WriteString(writeTagSetXML(c.Tags))
 	if c.VpcEndpointRegion != "" {
 		fmt.Fprintf(&b, "<vpcEndpointRegion>%s</vpcEndpointRegion>", c.VpcEndpointRegion)
@@ -1505,6 +1507,10 @@ func ec2SetVpcEndpointConnState(w http.ResponseWriter, r *http.Request, op, newS
 			if c.ServiceId == serviceID && c.VpcEndpointId == vpceID {
 				c.VpcEndpointState = newState
 				ec2VpcEndpointConns.Put(c.VpcEndpointConnectionId, c)
+				if endpoint, ok := ec2VpcEndpoints.Get(vpceID); ok {
+					endpoint.State = newState
+					ec2VpcEndpoints.Put(vpceID, endpoint)
+				}
 				found = true
 			}
 		}
@@ -1521,11 +1527,11 @@ func ec2SetVpcEndpointConnState(w http.ResponseWriter, r *http.Request, op, newS
 }
 
 func handleAcceptVpcEndpointConnections(w http.ResponseWriter, r *http.Request) {
-	ec2SetVpcEndpointConnState(w, r, "AcceptVpcEndpointConnections", "available")
+	ec2SetVpcEndpointConnState(w, r, "AcceptVpcEndpointConnections", "Available")
 }
 
 func handleRejectVpcEndpointConnections(w http.ResponseWriter, r *http.Request) {
-	ec2SetVpcEndpointConnState(w, r, "RejectVpcEndpointConnections", "rejected")
+	ec2SetVpcEndpointConnState(w, r, "RejectVpcEndpointConnections", "Rejected")
 }
 
 func ec2ConnNotificationFieldsXML(n EC2ConnectionNotification) string {
