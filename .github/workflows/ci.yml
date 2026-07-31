@@ -584,7 +584,11 @@ jobs:
             timeout: 1500s
             timeout_minutes: 15
           - suite: compute
-            run: '^Test(CloudMap|DynamoDB|CLI_ECR|ECR|ECS|EFS|Logs)'
+            run: '^Test(CloudMap|DynamoDB|CLI_ECR|ECR|EFS|Logs)'
+            timeout: 1200s
+            timeout_minutes: 15
+          - suite: ecs
+            run: '^Test(ECS)'
             timeout: 1200s
             timeout_minutes: 15
           - suite: appdata

@@ -4,14 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
-The following hosted iteration surfaced one more specification edge and two
+The following hosted iteration surfaced one more specification edge and three
 more budget defects. A hosted edge served Dataflow v1b3 revision 20260729
 before operator-visible edges; the exact CI-captured document was vendored
 byte-for-byte, identical to the previous pin except its revision marker. The
 ARM64 core job's two-minute shared-module deadline could not hold a 73-second
 SQLite soak plus the remaining suite, so those packages now share the
 five-minute sibling deadline. Ten-second AWS Batch and CodeBuild workload
-assertions became sixty-second assertions with last-status diagnostics.
+assertions became sixty-second assertions with last-status diagnostics. The
+AWS CLI compute shard cancelled at its fifteen-minute limit on two of five
+runs, so its forty Amazon ECS tests moved into a dedicated `sim (aws cli ecs)`
+shard while the coverage gate still assigns all 664 CLI tests exactly once.
 
 The widened Express rollout window paid off immediately: its new diagnostic
 showed two replacement tasks RUNNING beside one old task for two minutes —

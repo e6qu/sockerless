@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2839 filed - 2839 fixed - 8 open - 16 false positives.**
+**2840 filed - 2840 fixed - 8 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -23,6 +23,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2840~~ | P1 | CI - AWS Command Line Interface compute shard | the compute shard's 121 tests (forty of them Amazon ECS) cancelled at its exact fifteen-minute job limit on roughly two of every five hosted runs | Measured hosted weight split Amazon ECS into its own `sim (aws cli ecs)` shard; the CLI shard-coverage gate still assigns all 664 tests exactly once across the nine shards. |
 | ~~2839~~ | P1 | Hosted AWS Batch and CodeBuild workload validation | ten-second assertions did not cover real container start and status propagation on a loaded hosted runner | Both assertions allow sixty seconds and report the last job or batch status with its reason. The focused official AWS SDK cases passed. |
 | ~~2838~~ | P1 | Core continuous-integration ARM64 budget | the shared simulator modules ran under a two-minute `go test` deadline while a single SQLite soak subtest takes 73 seconds on the ARM64 runner | The shared-module packages now use the same five-minute deadline as every sibling suite in the job, retaining a bounded per-package budget. |
 | ~~2837~~ | P2 | Google Cloud Dataflow specification freshness | a hosted edge served Dataflow v1b3 revision 20260729 while operator-visible edges still served revision 20260719 | The exact CI-captured revision 20260729 document was vendored byte-for-byte with updated provenance; its content was identical to the previous pin except the revision marker, and the complete multi-probe freshness audit passed. |
