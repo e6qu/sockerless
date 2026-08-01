@@ -24,6 +24,13 @@ var (
 	azureOIDCDiscovery singleflight.Group
 )
 
+// azureOIDCHTTPClient bounds every OpenID Connect discovery and JSON Web Key
+// Set fetch the federation path performs. Without it go-oidc falls back to
+// http.DefaultClient, whose zero timeout would let a slow issuer (an
+// unresolvable host, a proxy still starting) stall a token exchange for as
+// long as it keeps the connection open.
+var azureOIDCHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
 // handleAzureFederatedClientCredentials implements Microsoft Entra Workload
 // Identity Federation on the client_credentials grant: a confidential client
 // authenticates with a client_assertion that is an *external* OIDC token, and
@@ -146,7 +153,14 @@ func azureOIDCVerifier(ctx context.Context, issuer string) (*oidc.IDTokenVerifie
 		if cached, ok := azureOIDCVerifiers.Load(cacheKey); ok {
 			return azureCachedOIDCVerifier(cached)
 		}
-		provider, err := oidc.NewProvider(ctx, issuer)
+		// The provider (and the remote key set it constructs) outlives this
+		// request: it is cached process-wide and refetches the JWKS through
+		// the context captured here. A background context with the bounded
+		// client keeps later refreshes working after the first caller's
+		// request context is canceled, while the client timeout bounds every
+		// individual discovery and key-set fetch.
+		discoveryCtx := oidc.ClientContext(context.Background(), azureOIDCHTTPClient)
+		provider, err := oidc.NewProvider(discoveryCtx, issuer)
 		if err != nil {
 			return nil, err
 		}

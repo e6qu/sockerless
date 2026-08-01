@@ -237,7 +237,7 @@ func handleEHCreateNamespace(w http.ResponseWriter, r *http.Request) {
 			stored.Properties["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 		})
 	})
-	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.EventHub", n.Location, "operationResults", opID, r.URL.Query().Get("api-version"))
+	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.EventHub", n.Location, "operationStatuses", opID, r.URL.Query().Get("api-version"))
 	writeAzureAsyncCreateHeaders(w, opURL, azureCurrentRequestURL(r))
 	sim.WriteJSON(w, http.StatusCreated, n)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -244,15 +245,16 @@ func registerContainerApps(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/jobs/%s", sub, rg, name)
 
 		existing, exists := jobs.Get(resourceID)
+		if exists && existing.Properties.ProvisioningState == "Deleting" {
+			sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+				"Container app job '%s' is being deleted and cannot be updated until the delete operation completes.", name)
+			return
+		}
 
 		// Real ACA: Jobs go through Creating → Succeeded just like Apps.
 		// Mirror the Azure-AsyncOperation polling flow: store the resource
-		// with Succeeded directly + emit the header so SDK pollers
-		// exercise the real path. acaIssueAsyncOp handles the async-op
-		// store + the InProgress→Succeeded transition timer; the polling
-		// endpoint is registered in containerapps_apps.go alongside the
-		// Apps surface (operationStatuses/{opId} is shared across the
-		// Microsoft.App provider).
+		// with Succeeded directly + emit the shared ARM LRO headers so SDK
+		// pollers exercise the real path.
 		// Real ARM stamps SystemData.createdAt once and only updates
 		// lastModifiedAt on subsequent writes — preserve CreatedAt on update.
 		nowStamp := time.Now().UTC().Format(time.RFC3339Nano)
@@ -286,8 +288,8 @@ func registerContainerApps(srv *sim.Server) {
 
 		jobs.Put(resourceID, job)
 
-		opID := acaIssueAsyncOp(req.Location)
-		w.Header().Set("Azure-AsyncOperation", acaAsyncOpHeader(r, sub, req.Location, opID))
+		opID := issueAzureAsyncOperation(nil)
+		acaAsyncOpHeaders(w, r, sub, req.Location, opID)
 
 		if exists {
 			sim.WriteJSON(w, http.StatusOK, job)
@@ -355,19 +357,22 @@ func registerContainerApps(srv *sim.Server) {
 				"The Resource 'Microsoft.App/jobs/%s' under resource group '%s' was not found.", name, rg)
 			return
 		}
-		var req ContainerAppJob
-		if err := sim.ReadJSON(r, &req); err != nil {
+		patch, err := io.ReadAll(r.Body)
+		if err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to read request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		prior := job
+		if err := applyARMMergePatch(&job, patch); err != nil {
 			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.Tags != nil {
-			job.Tags = req.Tags
-		}
-		if req.Properties.Configuration != nil {
-			job.Properties.Configuration = req.Properties.Configuration
-		}
-		if req.Properties.Template != nil {
-			job.Properties.Template = req.Properties.Template
+		// Identity and server-owned fields are not client-writable.
+		job.ID, job.Name, job.Type, job.Location = prior.ID, prior.Name, prior.Type, prior.Location
+		job.SystemData = prior.SystemData
+		job.Properties.ProvisioningState = prior.Properties.ProvisioningState
+		if job.Properties.Configuration != nil && job.Properties.Configuration.TriggerType == "" {
+			job.Properties.Configuration.TriggerType = "Manual"
 		}
 		if job.SystemData != nil {
 			job.SystemData.LastModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -400,7 +405,10 @@ func registerContainerApps(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": secrets})
 	})
 
-	// DELETE - Delete job
+	// DELETE - Delete job. Real Azure ARM returns 202 Accepted with the LRO
+	// headers and an empty body for an existing job (the resource stays in
+	// provisioningState=Deleting until the operation completes) and 204 No
+	// Content when the job does not exist.
 	srv.HandleFunc("DELETE "+basePath+"/jobs/{jobName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
@@ -408,7 +416,15 @@ func registerContainerApps(srv *sim.Server) {
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/jobs/%s", sub, rg, name)
 
-		if jobs.Delete(resourceID) {
+		job, ok := jobs.Get(resourceID)
+		if !ok {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		job.Properties.ProvisioningState = "Deleting"
+		jobs.Put(resourceID, job)
+		opID := issueAzureAsyncOperation(func() {
+			jobs.Delete(resourceID)
 			// Also delete associated executions
 			execs := executions.Filter(func(e JobExecution) bool {
 				return strings.HasPrefix(e.ID, resourceID+"/executions/")
@@ -416,10 +432,9 @@ func registerContainerApps(srv *sim.Server) {
 			for _, e := range execs {
 				executions.Delete(e.ID)
 			}
-			w.WriteHeader(http.StatusOK)
-		} else {
-			w.WriteHeader(http.StatusNoContent)
-		}
+		})
+		acaAsyncOpHeaders(w, r, sub, job.Location, opID)
+		w.WriteHeader(http.StatusAccepted)
 	})
 
 	// POST - Start execution

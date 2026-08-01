@@ -71,7 +71,7 @@ DOCKER_REALNET_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e GO
 DOCKER_REALNET_FLAGS := --privileged
 
 docker-build: ## build the docker image
-	docker build -t $(IMAGE) -f Dockerfile ..
+	docker build --load -t $(IMAGE) -f Dockerfile ..
 
 docker-run: docker-build ## run the docker image
 	docker run --rm -p $(DEFAULT_PORT):$(DEFAULT_PORT) \

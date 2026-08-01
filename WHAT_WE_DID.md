@@ -4,6 +4,72 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-01 — Community-filed fidelity gaps across three sims and the deployment recipe
+
+Two community-filed issues and two staged contract gaps closed in one pass.
+GitHub issue #870: the call-time IAM gate derived a DynamoDB resource ARN only
+from a top-level `TableName`, so `TransactWriteItems`/`TransactGetItems` (and
+the `RequestItems`-keyed batch operations) evaluated against `*` and
+resource-scoped least-privilege policies denied them. The gate now derives
+the distinct per-item table ARNs and authorizes each one, mirroring AWS's
+per-item evaluation; official AWS SDK and AWS CLI regressions prove the
+granted table succeeds and an ungranted table denies for all four operations.
+
+Azure Container Apps PATCH became real RFC 7396 JSON Merge Patch — one shared
+generic helper merges recursively, deletes on null, and covers every modeled
+field — replacing three hand-enumerated per-resource merges with three
+different tag semantics. ACA DELETEs became true ARM long-running operations:
+202 with an empty body and absolute `Azure-AsyncOperation`/`operationResults`
+URLs from the shared ARM LRO helper (whose envelope gained `id` and whose
+`operationResults` route answers 202 while in progress), a `Deleting`
+provisioning state observable until completion, and 409 on writes during
+deletion. The ACA-only operation store, header builder, and status route were
+deleted. The still-unmodeled `Configuration` members (dapr, service, runtime,
+identity settings, max inactive revisions) are tracked as BUG-2842 because
+their faithful completion includes real runtime assembly.
+
+Google Cloud Run v2 update masks stopped silently dropping fields: the
+Service and RevisionTemplate models were completed to the vendored Discovery
+schema, service/worker-pool/instance masks are validated against the full
+mutable field set, `template.*` sub-paths merge member-wise on services and
+worker pools, and an unknown or output-only path returns 400 INVALID_ARGUMENT
+and changes nothing — the same contract the sim's Pub/Sub slice already
+enforced.
+
+Making `operationResults` honor ARM's real 202-with-no-body contract while
+an operation runs exposed two consumers that pointed `Azure-AsyncOperation`
+at that route instead of `operationStatuses`: the Event Hubs namespace and
+Container Instances group creates. Both now emit the correct pairing, like
+the Cosmos DB and Microsoft.Storage handlers already did (BUG-2849).
+
+The Azure test-image and runtime-image Docker builds (and the Google Cloud
+runtime-image build) gained the `--load` flag their sibling targets already
+carried, so a host whose default builder is a docker-container driver gets
+the image in its image store instead of only the BuildKit cache (BUG-2848).
+
+The validation pass also caught the shared e2e harness spawning the AWS
+simulator with no DNS coordinate, so its Route 53 listener bound the default
+port 5353 and collided with mDNS listeners (a running browser) on developer
+hosts. The harness now assigns an operating-system-selected port free on
+both TCP and UDP — the repair the AWS CLI and Shauth relying-party harnesses
+already carry (BUG-2847). The same-day AWS SDK patch wave was upgraded in
+the AWS common/ECS/Lambda backends, the AWS SDK test module, and the e2e
+module, with all upgraded modules rebuilt and retested.
+
+GitHub issue #853: the Azure sim 502'd through the deployment proxy during
+cold start, and `/auth/federation/token` was observed at ~50s. The deployment
+compose recipes gained `/health` healthchecks for all four sim services,
+Caddy now gates on healthy sims and converts residual proxy failures into an
+explicit 503 with Retry-After on every origin, OpenID Connect discovery and
+JWKS fetches are bounded by a 10-second client on a background context in
+both the federation verifier and the console auth layer (whose provider
+mutex previously pinned every login behind the unbounded fetch), the broker
+reuses one pooled HTTP client, and the three console SPAs deduplicate
+concurrent token exchanges. Azure module, shared-module, federation SDK, ACA
+SDK/CLI, full GCP SDK/CLI, IAM-focused AWS SDK/CLI, three UI package suites,
+265 Azure Playwright end-to-end checks, and compose/Caddyfile validation all
+passed.
+
 ## 2026-07-31 — Diagnostics found a real packet-filter defect
 
 The widened ECS Express rollout window did more than buy time: its new

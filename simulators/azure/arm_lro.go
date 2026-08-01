@@ -3,10 +3,24 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// AsyncOperationStatus is the ARM operation-status envelope a polled
+// Azure-AsyncOperation URL returns — `{"id":...,"name":...,"status":...}`
+// is what `armappcontainers` (and every azcore poller) reads. ID is
+// derived from the request path at read time so one stored record serves
+// both the operationStatuses and operationResults routes.
+type AsyncOperationStatus struct {
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name"`
+	Status    string `json:"status"` // InProgress / Succeeded / Failed
+	StartTime string `json:"startTime,omitempty"`
+	EndTime   string `json:"endTime,omitempty"`
+}
 
 var azureAsyncOps sim.Store[AsyncOperationStatus]
 
@@ -66,12 +80,20 @@ func handleAzureAsyncOperationStatus(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Operation %q not found.", opID)
 		return
 	}
+	op.ID = strings.Replace(r.URL.Path, "/operationResults/", "/operationStatuses/", 1)
 	// Real Azure returns a Retry-After on an in-progress operation poll; advertise
 	// a short one so the SDK poller re-polls promptly. Without it azcore falls
 	// back to its 30s default frequency (a Retry-After of 0 is ignored), which
 	// would make each long-running operation in a test take 30s.
 	if op.Status == "InProgress" {
 		w.Header().Set("Retry-After", "1")
+		// The operationResults route is ARM's Location-poll target: while the
+		// operation runs it answers 202 Accepted with no body; the envelope is
+		// the operationStatuses route's contract.
+		if strings.Contains(r.URL.Path, "/operationResults/") {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 	}
 	sim.WriteJSON(w, http.StatusOK, op)
 }

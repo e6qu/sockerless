@@ -198,35 +198,13 @@ func registerCloudRunWorkerPoolsV2(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
+		// A mask naming an unknown or output-only field is rejected with
+		// 400 INVALID_ARGUMENT, matching real Cloud Run v2.
 		if mask := r.URL.Query().Get("updateMask"); mask != "" {
-			has := func(p string) bool { return updateMaskHas(mask, p) }
-			merged := existing
-			if has("template") {
-				merged.Template = update.Template
-			}
-			if has("labels") {
-				merged.Labels = update.Labels
-			}
-			if has("annotations") {
-				merged.Annotations = update.Annotations
-			}
-			if has("scaling") {
-				merged.Scaling = update.Scaling
-			}
-			if has("instanceSplits") || has("instance_splits") {
-				merged.InstanceSplits = update.InstanceSplits
-			}
-			if has("description") {
-				merged.Description = update.Description
-			}
-			if has("launchStage") || has("launch_stage") {
-				merged.LaunchStage = update.LaunchStage
-			}
-			if has("customAudiences") || has("custom_audiences") {
-				merged.CustomAudiences = update.CustomAudiences
-			}
-			if has("binaryAuthorization") || has("binary_authorization") {
-				merged.BinaryAuthorization = update.BinaryAuthorization
+			merged, err := applyWorkerPoolUpdateMask(existing, update, mask)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+				return
 			}
 			update = merged
 		}

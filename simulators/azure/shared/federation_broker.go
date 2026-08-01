@@ -27,6 +27,11 @@ const FederationTokenPath = "/auth/federation/token"
 // federationExchangeTimeout bounds the server-side token exchange.
 const federationExchangeTimeout = 30 * time.Second
 
+// federationExchangeClient is shared across broker exchanges so connections
+// to the Microsoft Entra endpoint are pooled and reused instead of being
+// re-dialed (and re-handshaken) on every token request.
+var federationExchangeClient = &http.Client{Timeout: federationExchangeTimeout}
+
 // consoleFederationScopes maps the broker's scope names to the resource scopes
 // Microsoft Entra issues tokens for. Azure Resource Manager, Log Analytics,
 // and Microsoft Graph are separate resources, each reached with a token scoped
@@ -163,14 +168,13 @@ func (s *Server) exchangeFederationAssertion(r *http.Request, form url.Values) (
 	tokenPath := "/" + s.federation.tenant + "/oauth2/v2.0/token"
 	encoded := form.Encode()
 	if s.federation.endpoint != "" {
-		client := &http.Client{Timeout: federationExchangeTimeout}
 		request, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 			s.federation.endpoint+tokenPath, strings.NewReader(encoded))
 		if err != nil {
 			return 0, "", nil, err
 		}
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		response, err := client.Do(request)
+		response, err := federationExchangeClient.Do(request)
 		if err != nil {
 			return 0, "", nil, err
 		}

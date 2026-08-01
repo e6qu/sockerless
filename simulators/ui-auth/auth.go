@@ -172,13 +172,23 @@ func (a *Auth) Protect(next http.Handler) http.Handler {
 	})
 }
 
-func (a *Auth) providerFor(ctx context.Context) (*oidc.Provider, error) {
+// oidcDiscoveryClient bounds the issuer discovery and key-set fetches.
+// go-oidc otherwise uses http.DefaultClient, whose zero timeout would hold
+// providerMu — and with it every login, logout, and back-channel logout —
+// for as long as a slow or unreachable issuer keeps the connection open.
+var oidcDiscoveryClient = &http.Client{Timeout: 10 * time.Second}
+
+func (a *Auth) providerFor() (*oidc.Provider, error) {
 	a.providerMu.Lock()
 	defer a.providerMu.Unlock()
 	if a.provider != nil {
 		return a.provider, nil
 	}
-	provider, err := oidc.NewProvider(ctx, a.config.Issuer)
+	// The provider is cached for the process lifetime and refetches its key
+	// set through the context captured here, so discovery runs on a
+	// background context with the bounded client rather than the first
+	// caller's request context.
+	provider, err := oidc.NewProvider(oidc.ClientContext(context.Background(), oidcDiscoveryClient), a.config.Issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +222,7 @@ type sessionRecord struct {
 }
 
 func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
-	provider, err := a.providerFor(r.Context())
+	provider, err := a.providerFor()
 	if err != nil {
 		http.Error(w, "OIDC discovery failed", http.StatusBadGateway)
 		return
@@ -250,7 +260,7 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid OIDC authorization transaction", http.StatusBadRequest)
 		return
 	}
-	provider, err := a.providerFor(r.Context())
+	provider, err := a.providerFor()
 	if err != nil {
 		http.Error(w, "OIDC discovery failed", http.StatusBadGateway)
 		return
@@ -362,7 +372,7 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 		a.store.delete(session.ID)
 	}
 	a.clearCookie(w, a.config.CookieName)
-	provider, err := a.providerFor(r.Context())
+	provider, err := a.providerFor()
 	if err != nil {
 		http.Error(w, "OIDC discovery failed", http.StatusBadGateway)
 		return
@@ -433,7 +443,7 @@ func (a *Auth) backchannelLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "logout_token is required", http.StatusBadRequest)
 		return
 	}
-	provider, err := a.providerFor(r.Context())
+	provider, err := a.providerFor()
 	if err != nil {
 		http.Error(w, "OIDC discovery failed", http.StatusBadGateway)
 		return

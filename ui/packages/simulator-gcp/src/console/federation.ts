@@ -25,6 +25,7 @@ interface ConsoleConfig {
 
 let configPromise: Promise<ConsoleConfig> | null = null;
 let cachedToken: { value: string; expiresAt: number } | null = null;
+let inflightToken: Promise<string> | null = null;
 
 async function consoleConfig(): Promise<ConsoleConfig> {
   if (!configPromise) {
@@ -41,11 +42,25 @@ async function consoleConfig(): Promise<ConsoleConfig> {
 // Identity Federation token exchange, at whichever coordinate the console is
 // configured for.
 async function federatedToken(config: ConsoleConfig): Promise<string> {
-  const now = Date.now();
-  if (cachedToken && cachedToken.expiresAt - 30_000 > now) {
+  if (cachedToken && cachedToken.expiresAt - 30_000 > Date.now()) {
     return cachedToken.value;
   }
+  // One in-flight exchange: a console render fires many authorized reads at
+  // once, and without deduplication each would start its own token exchange
+  // before the first response lands in cachedToken.
+  if (inflightToken) {
+    return inflightToken;
+  }
+  inflightToken = exchangeFederatedToken(config);
+  try {
+    return await inflightToken;
+  } finally {
+    inflightToken = null;
+  }
+}
 
+async function exchangeFederatedToken(config: ConsoleConfig): Promise<string> {
+  const now = Date.now();
   const subjectResponse = await fetch(config.federationSubject!, { credentials: "include" });
   if (!subjectResponse.ok) {
     throw new Error(`could not read the operator assertion: HTTP ${subjectResponse.status}`);

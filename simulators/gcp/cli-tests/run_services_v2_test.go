@@ -1,7 +1,9 @@
 package gcp_cli_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +21,37 @@ func servicesBaseURL() string {
 
 func runServiceURL(name string) string {
 	return fmt.Sprintf("%s/v2/projects/%s/locations/%s/services/%s", baseURL, project, location, name)
+}
+
+// TestCloudRunV2Services_Wire_RejectsUnknownUpdateMask pins the real Cloud
+// Run v2 contract at the wire level: a PATCH whose updateMask names an
+// unknown field fails with 400 INVALID_ARGUMENT instead of silently
+// no-opping, while a valid masked patch merges only the masked field.
+func TestCloudRunV2Services_Wire_RejectsUnknownUpdateMask(t *testing.T) {
+	createBody := `{"labels":{"stage":"one"},"template":{"containers":[{"image":"gcr.io/test-project/mask"}]}}`
+	httpDoJSON(t, "POST", servicesBaseURL()+"?serviceId=cli-svc-badmask", createBody)
+
+	resp, err := httpDo("PATCH", runServiceURL("cli-svc-badmask")+"?updateMask=bogusField",
+		`{"labels":{"stage":"two"}}`)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.Equal(t, 400, resp.StatusCode, "unknown updateMask path must 400: %s", body)
+	var errResp struct {
+		Error struct {
+			Status string `json:"status"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(body, &errResp))
+	assert.Equal(t, "INVALID_ARGUMENT", errResp.Error.Status)
+
+	// The rejected patch must not have applied anything.
+	getOut := httpDoJSON(t, "GET", runServiceURL("cli-svc-badmask"), "")
+	var got struct {
+		Labels map[string]string `json:"labels"`
+	}
+	parseJSON(t, getOut, &got)
+	assert.Equal(t, "one", got.Labels["stage"], "a rejected mask must leave the service untouched")
 }
 
 func TestCloudRunV2Services_CLI_CreateGetDelete(t *testing.T) {
