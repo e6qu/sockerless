@@ -30,9 +30,20 @@ import (
 // simulated GCS slice. Each bucket becomes a subdirectory so Cloud Run
 // tasks the sim launches can bind-mount a real host path and observe
 // the same files across invocations.
+//
+// Resolution order:
+//  1. SIM_GCS_DATA_DIR — explicit override.
+//  2. <SIM_DATA_DIR>/gcs — when the simulator runs with a data
+//     directory, object payloads live next to the SQLite metadata so a
+//     restart on the same directory serves the same bytes.
+//  3. A temp-dir default, only when neither is set (state is then
+//     process-lifetime only, matching the in-memory stores).
 func gcsHostRoot() string {
 	if dir := os.Getenv("SIM_GCS_DATA_DIR"); dir != "" {
 		return dir
+	}
+	if dir := os.Getenv("SIM_DATA_DIR"); dir != "" {
+		return filepath.Join(dir, "gcs")
 	}
 	return filepath.Join(os.TempDir(), "sockerless-sim-gcs")
 }
@@ -397,16 +408,23 @@ func writeGCSPersistError(w http.ResponseWriter, action string, err error) {
 // gcsResumableSession holds the in-flight state of a resumable upload
 // between session initiation (POST with metadata) and finalization
 // (the chunk PUT that delivers the last byte). Keyed by upload_id in
-// gcsResumableSessions.
+// gcsResumableSessions. Real GCS resumable sessions survive server
+// restarts (the session URL stays valid for a week), so the session —
+// including the buffered bytes — lives in the store rather than a
+// process-local map.
 type gcsResumableSession struct {
-	mu     sync.Mutex
-	Bucket string
-	Object string
-	Attrs  GCSObject
-	Data   []byte
+	Bucket string    `json:"bucket"`
+	Object string    `json:"object"`
+	Attrs  GCSObject `json:"attrs"`
+	Data   []byte    `json:"data,omitempty"`
 }
 
-var gcsResumableSessions sync.Map // upload_id → *gcsResumableSession
+var gcsResumableSessions sim.Store[gcsResumableSession]
+
+// gcsResumableMu serializes the read-modify-write a chunk PUT performs
+// on its session record. Real clients upload a session's chunks
+// sequentially; this guards the store round-trip itself.
+var gcsResumableMu sync.Mutex
 
 // handleGCSResumableChunk processes a chunk PUT during a resumable
 // upload. The client sends `Content-Range: bytes <start>-<end>/<total>`
@@ -416,16 +434,10 @@ var gcsResumableSessions sync.Map // upload_id → *gcsResumableSession
 // Otherwise the sim returns 308 Resume Incomplete with a `Range` header
 // naming the bytes received so the client knows where to resume.
 func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID string, buckets sim.Store[Bucket], objects sim.Store[GCSObject]) {
-	sv, ok := gcsResumableSessions.Load(uploadID)
+	sess, ok := gcsResumableSessions.Get(uploadID)
 	if !ok {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
 			"resumable upload session %q not found", uploadID)
-		return
-	}
-	sess, ok := sv.(*gcsResumableSession)
-	if !ok {
-		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
-			"resumable upload session %q has unexpected type %T", uploadID, sv)
 		return
 	}
 	if _, exists := buckets.Get(sess.Bucket); !exists {
@@ -462,7 +474,14 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 		return
 	}
 
-	sess.mu.Lock()
+	gcsResumableMu.Lock()
+	sess, ok = gcsResumableSessions.Get(uploadID)
+	if !ok {
+		gcsResumableMu.Unlock()
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"resumable upload session %q not found", uploadID)
+		return
+	}
 	// Grow the buffer if this chunk extends past current length.
 	needed := int(end + 1)
 	if needed > len(sess.Data) {
@@ -474,9 +493,11 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 		copy(sess.Data[start:end+1], chunk)
 	}
 	dataLen := int64(len(sess.Data))
-	sess.mu.Unlock()
-
 	if total < 0 || dataLen < total {
+		// Buffer the chunk durably so the session resumes with its
+		// received bytes even across a simulator restart.
+		gcsResumableSessions.Put(uploadID, sess)
+		gcsResumableMu.Unlock()
 		// Resume Incomplete.
 		w.Header().Set("Range", fmt.Sprintf("bytes=0-%d", dataLen-1))
 		if strings.EqualFold(r.Header.Get("X-GUploader-No-308"), "yes") {
@@ -490,10 +511,9 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 
 	// Final chunk — finalize the object. Trim accumulated data to
 	// the exact total (in case the buffer was over-grown).
-	sess.mu.Lock()
 	finalData := sess.Data[:total]
-	sess.mu.Unlock()
 	gcsResumableSessions.Delete(uploadID)
+	gcsResumableMu.Unlock()
 
 	obj, err := persistGCSObject(objects, sess.Bucket, sess.Object, finalData, sess.Attrs)
 	if err != nil {
@@ -615,6 +635,7 @@ func requestScheme(r *http.Request) string {
 func registerGCS(srv *sim.Server) {
 	buckets := sim.MakeStore[Bucket](srv.DB(), "gcs_buckets")
 	gcsObjects = sim.MakeStore[GCSObject](srv.DB(), "gcs_objects")
+	gcsResumableSessions = sim.MakeStore[gcsResumableSession](srv.DB(), "gcs_resumable_sessions")
 	objects := gcsObjects
 
 	// Create bucket
@@ -1006,7 +1027,7 @@ func registerGCS(srv *sim.Server) {
 				return
 			}
 			sessionID := generateUUID()
-			gcsResumableSessions.Store(sessionID, &gcsResumableSession{
+			gcsResumableSessions.Put(sessionID, gcsResumableSession{
 				Bucket: bucketName,
 				Object: objectName,
 				Attrs:  objAttrs,

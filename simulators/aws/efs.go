@@ -17,11 +17,11 @@ import (
 // simulated EFS slice. Each filesystem + access point becomes a
 // subdirectory so Docker tasks the ECS slice launches can bind-mount
 // a real host path and observe the same files across tasks.
+// Resolution order: SIM_EFS_DATA_DIR (explicit override), then
+// <SIM_DATA_DIR>/efs (so file contents survive a simulator restart
+// alongside the SQLite control-plane state), then a temp directory.
 func efsHostRoot() string {
-	if dir := os.Getenv("SIM_EFS_DATA_DIR"); dir != "" {
-		return dir
-	}
-	return filepath.Join(os.TempDir(), "sockerless-sim-efs")
+	return simScopedDataDir("SIM_EFS_DATA_DIR", "efs", "sockerless-sim-efs")
 }
 
 // EFSFileSystemHostDir returns the on-disk directory backing a

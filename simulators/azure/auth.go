@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"html"
 	"math/big"
@@ -19,10 +21,14 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// azureSimSigningKey is the per-process RS256 key used to sign Azure AD
-// tokens the sim mints. Real Azure AD publishes public RSA signing keys
-// via JWKS; the simulator does the same so downstream data-plane clients
-// can verify bearer tokens without shared secrets.
+// azureSimSigningKey is the RS256 key used to sign Azure AD tokens the sim
+// mints. Real Azure AD publishes public RSA signing keys via JWKS and keeps
+// them stable across service restarts; the simulator does the same — the key
+// PEM is persisted in azureAuthSigningKeys on first use, so bearers minted
+// before a restart still verify against the JWKS afterwards.
+//
+// Authorization codes stay in a plain map: they live for 60 seconds and are
+// consumed exactly once, so they are genuinely transient process state.
 var (
 	azureSimSigningKeyOnce sync.Once
 	azureSimSigningKeyVal  *rsa.PrivateKey
@@ -31,9 +37,26 @@ var (
 	azureAuthCodeMu    sync.Mutex
 	azureAuthCodeStore = map[string]azureAuthCode{}
 
-	azureRefreshTokenMu    sync.Mutex
-	azureRefreshTokenStore = map[string]azureRefreshToken{}
+	// azureAuthSigningKeys and azureRefreshTokens default to in-memory
+	// stores (the same behavior MakeStore has without a database) so
+	// key minting and grant flows work in isolation; registerAzureAuthState
+	// rebinds them to the server's database before any request is served.
+	azureAuthSigningKeys sim.Store[string]            = sim.NewStateStore[string]()
+	azureRefreshTokens   sim.Store[azureRefreshToken] = sim.NewStateStore[azureRefreshToken]()
 )
+
+// azureSigningKeyStoreID is the row the durable RS256 signing-key PEM lives
+// under in azureAuthSigningKeys.
+const azureSigningKeyStoreID = "signing-key"
+
+// registerAzureAuthState binds the token-issuance state — the RS256 signing
+// key and issued refresh tokens — to the server's database so both survive a
+// SIM_PERSIST restart. Called from registerEntra, before the server accepts
+// requests.
+func registerAzureAuthState(srv *sim.Server) {
+	azureAuthSigningKeys = sim.MakeStore[string](srv.DB(), "azure_auth_signing_keys")
+	azureRefreshTokens = sim.MakeStore[azureRefreshToken](srv.DB(), "azure_auth_refresh_tokens")
+}
 
 const defaultAzureTokenAudience = "https://management.azure.com/"
 const azureAuthCodeTTL = time.Minute
@@ -70,9 +93,37 @@ var azureScopeAudienceOverrides = map[string]string{
 
 func azureSimSigningKey() (*rsa.PrivateKey, error) {
 	azureSimSigningKeyOnce.Do(func() {
-		azureSimSigningKeyVal, azureSimSigningKeyErr = rsa.GenerateKey(rand.Reader, 2048)
+		azureSimSigningKeyVal, azureSimSigningKeyErr = loadOrCreateAzureSimSigningKey()
 	})
 	return azureSimSigningKeyVal, azureSimSigningKeyErr
+}
+
+// loadOrCreateAzureSimSigningKey returns the durable RS256 signing key: the
+// PEM persisted in azureAuthSigningKeys when one exists, otherwise a freshly
+// generated key that is persisted for subsequent boots. A stored PEM that no
+// longer parses is corrupt simulator state and fails loudly — regenerating
+// would silently invalidate every outstanding bearer.
+func loadOrCreateAzureSimSigningKey() (*rsa.PrivateKey, error) {
+	if pemText, ok := azureAuthSigningKeys.Get(azureSigningKeyStoreID); ok {
+		block, _ := pem.Decode([]byte(pemText))
+		if block == nil || block.Type != "RSA PRIVATE KEY" {
+			return nil, fmt.Errorf("persisted Azure simulator signing key is not an RSA PRIVATE KEY PEM block")
+		}
+		key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse persisted Azure simulator signing key: %w", err)
+		}
+		return key, nil
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	azureAuthSigningKeys.Put(azureSigningKeyStoreID, string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})))
+	return key, nil
 }
 
 // CleanPathMiddleware removes double slashes from request paths.
@@ -679,15 +730,13 @@ func handleAzureAuthorizationCodeToken(w http.ResponseWriter, r *http.Request, t
 			sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
 			return
 		}
-		azureRefreshTokenMu.Lock()
-		azureRefreshTokenStore[refreshToken] = azureRefreshToken{
+		azureRefreshTokens.Put(refreshToken, azureRefreshToken{
 			TenantID: tenantID,
 			ClientID: clientID,
 			Scope:    scope,
 			Nonce:    authCode.Nonce,
 			UserOID:  authCode.UserOID,
-		}
-		azureRefreshTokenMu.Unlock()
+		})
 		body["refresh_token"] = refreshToken
 	}
 	sim.WriteJSON(w, http.StatusOK, body)
@@ -745,10 +794,7 @@ func handleAzureRefreshToken(w http.ResponseWriter, r *http.Request, tenantID, c
 }
 
 func lookupAzureRefreshToken(refreshToken string) (azureRefreshToken, bool) {
-	azureRefreshTokenMu.Lock()
-	defer azureRefreshTokenMu.Unlock()
-	stored, ok := azureRefreshTokenStore[refreshToken]
-	return stored, ok
+	return azureRefreshTokens.Get(refreshToken)
 }
 
 func consumeAzureAuthorizationCode(code string) (azureAuthCode, bool) {

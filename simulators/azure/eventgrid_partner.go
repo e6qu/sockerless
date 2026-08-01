@@ -156,6 +156,7 @@ func handleEventGridDeletePartnerNamespace(w http.ResponseWriter, r *http.Reques
 			eventGridPartnerChannels.Delete(ch.ID)
 		}
 	}
+	eventGridDropKeyGens(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -174,10 +175,7 @@ func handleEventGridListPartnerNamespaceKeys(w http.ResponseWriter, r *http.Requ
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "partner namespace %q not found", id)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]string{
-		"key1": simListKey32(id, "key1"),
-		"key2": simListKey32(id, "key2"),
-	})
+	sim.WriteJSON(w, http.StatusOK, eventGridListKeysResponse(id))
 }
 
 func handleEventGridRegeneratePartnerNamespaceKey(w http.ResponseWriter, r *http.Request) {

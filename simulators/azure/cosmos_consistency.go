@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // Cosmos consistency-level validation + session-token issuance.
@@ -100,13 +102,61 @@ func cosmosGuardConsistency(w http.ResponseWriter, r *http.Request, account stri
 // ── session tokens ───────────────────────────────────────────────────────────
 
 // cosmosPartitionLSNs holds the monotonic per-partition LSN for session-token
-// issuance, keyed by (account,db,coll,partition-key-component).
+// issuance, keyed by (account,db,coll,partition-key-component). The sync.Maps
+// are the in-process working copies; cosmosSessions is the durable copy so
+// session tokens and pkrange ids stay monotonic across a SIM_PERSIST restart —
+// real Cosmos never rewinds a partition's LSN, and a rewound token would make
+// read-your-writes and change-feed continuations lie.
 var (
 	cosmosPartitionLSNs   sync.Map // string -> *atomic.Uint64
 	cosmosPKRangeAssign   sync.Map // string (account/db/coll/pk) -> int (stable range id)
 	cosmosPKRangeNextID   atomic.Uint64
 	cosmosPKRangeAssignMu sync.Mutex
+	cosmosSessions        sim.Store[cosmosSessionRow]
 )
+
+// cosmosSessionRow is the durable record for one logical partition's session
+// state: the assigned partition-key-range id and the last-issued LSN. Key
+// repeats the store key because List carries values only.
+type cosmosSessionRow struct {
+	Key     string `json:"key"`
+	RangeID int    `json:"rangeId"`
+	LSN     uint64 `json:"lsn"`
+}
+
+// cosmosInitSessionState binds the durable session store and reloads the
+// working copies, seeding the next pkrange id above every persisted
+// assignment.
+func cosmosInitSessionState(srv *sim.Server) {
+	cosmosSessions = sim.MakeStore[cosmosSessionRow](srv.DB(), "cosmos_session_partitions")
+	var nextID uint64
+	for _, row := range cosmosSessions.List() {
+		cosmosPKRangeAssign.Store(row.Key, row.RangeID)
+		counter := &atomic.Uint64{}
+		counter.Store(row.LSN)
+		cosmosPartitionLSNs.Store(row.Key, counter)
+		if uint64(row.RangeID)+1 > nextID {
+			nextID = uint64(row.RangeID) + 1
+		}
+	}
+	if nextID > cosmosPKRangeNextID.Load() {
+		cosmosPKRangeNextID.Store(nextID)
+	}
+}
+
+// cosmosPersistSession writes a partition's durable session row, keeping the
+// stored LSN monotonic even when concurrent writers persist out of order.
+func cosmosPersistSession(key string, rangeID int, lsn uint64) {
+	if !cosmosSessions.Update(key, func(row *cosmosSessionRow) {
+		row.Key = key
+		row.RangeID = rangeID
+		if lsn > row.LSN {
+			row.LSN = lsn
+		}
+	}) {
+		cosmosSessions.Put(key, cosmosSessionRow{Key: key, RangeID: rangeID, LSN: lsn})
+	}
+}
 
 func cosmosSessionPartitionKey(account, db, coll, pkComponent string) string {
 	return account + "/" + db + "/" + coll + "/" + pkComponent
@@ -132,17 +182,21 @@ func cosmosPKRangeID(key string) int {
 	}
 	id := int(cosmosPKRangeNextID.Add(1) - 1)
 	cosmosPKRangeAssign.Store(key, id)
+	cosmosPersistSession(key, id, cosmosCurrentSessionLSN(key))
 	return id
 }
 
-// cosmosAdvanceSessionLSN bumps and returns the per-partition LSN for a write.
+// cosmosAdvanceSessionLSN bumps and returns the per-partition LSN for a write,
+// writing the new value through to the durable session store.
 func cosmosAdvanceSessionLSN(key string) uint64 {
 	v, _ := cosmosPartitionLSNs.LoadOrStore(key, &atomic.Uint64{})
 	c, ok := v.(*atomic.Uint64)
 	if !ok {
 		return 0
 	}
-	return c.Add(1)
+	lsn := c.Add(1)
+	cosmosPersistSession(key, cosmosPKRangeID(key), lsn)
+	return lsn
 }
 
 // cosmosCurrentSessionLSN returns the current per-partition LSN (0 if no write

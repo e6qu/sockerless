@@ -13,32 +13,32 @@ Surface registered in `simulators/azure/entra.go` (and related files grouped und
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1.0/groups` | ✓ `simulators/azure/entra.go:228::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1.0/groups/{groupId}` | ✓ `simulators/azure/entra.go:256::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1.0/groups/{groupId}` | ✓ `simulators/azure/entra.go:266::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1.0/groups/{groupId}/members/$ref` | ✓ `simulators/azure/entra.go:276::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1.0/groups/{groupId}/members` | ✓ `simulators/azure/entra.go:297::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1.0/groups/{groupId}/members/{userId}/$ref` | ✓ `simulators/azure/entra.go:324::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1.0/users` | ✓ `simulators/azure/entra.go:336::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1.0/users/{userId}` | ✓ `simulators/azure/entra.go:368::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `PATCH /v1.0/users/{userId}` | ✓ `simulators/azure/entra.go:380::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1.0/users/{userId}` | ✓ `simulators/azure/entra.go:408::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1.0/me/memberOf` | ✓ `simulators/azure/entra.go:425::handleGraphMemberOf` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1.0/me/transitiveMemberOf` | ✓ `simulators/azure/entra.go:426::handleGraphMemberOf` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1.0/applications` | ✓ `simulators/azure/entra.go:432::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1.0/applications` | ✓ `simulators/azure/entra.go:455::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1.0/applications/{appObjectId}` | ✓ `simulators/azure/entra.go:467::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `PATCH /v1.0/applications/{appObjectId}` | ✓ `simulators/azure/entra.go:476::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1.0/applications/{appObjectId}` | ✓ `simulators/azure/entra.go:504::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1.0/applications/{appObjectId}/addPassword` | ✓ `simulators/azure/entra.go:515::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1.0/applications/{appObjectId}/removePassword` | ✓ `simulators/azure/entra.go:531::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1.0/servicePrincipals` | ✓ `simulators/azure/entra.go:558::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1.0/servicePrincipals` | ✓ `simulators/azure/entra.go:591::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1.0/servicePrincipals/{spId}` | ✓ `simulators/azure/entra.go:611::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `PATCH /v1.0/servicePrincipals/{spId}` | ✓ `simulators/azure/entra.go:620::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1.0/servicePrincipals/{spId}` | ✓ `simulators/azure/entra.go:642::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1.0/servicePrincipals/{spId}/addPassword` | ✓ `simulators/azure/entra.go:650::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1.0/servicePrincipals/{spId}/removePassword` | ✓ `simulators/azure/entra.go:668::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1.0/groups` | ✓ `simulators/azure/entra.go:256::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /v1.0/groups/{groupId}` | ✓ `simulators/azure/entra.go:284::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /v1.0/groups/{groupId}` | ✓ `simulators/azure/entra.go:294::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1.0/groups/{groupId}/members/$ref` | ✓ `simulators/azure/entra.go:304::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /v1.0/groups/{groupId}/members` | ✓ `simulators/azure/entra.go:325::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /v1.0/groups/{groupId}/members/{userId}/$ref` | ✓ `simulators/azure/entra.go:352::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1.0/users` | ✓ `simulators/azure/entra.go:364::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /v1.0/users/{userId}` | ✓ `simulators/azure/entra.go:396::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `PATCH /v1.0/users/{userId}` | ✓ `simulators/azure/entra.go:408::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /v1.0/users/{userId}` | ✓ `simulators/azure/entra.go:436::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /v1.0/me/memberOf` | ✓ `simulators/azure/entra.go:454::handleGraphMemberOf` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /v1.0/me/transitiveMemberOf` | ✓ `simulators/azure/entra.go:455::handleGraphMemberOf` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1.0/applications` | ✓ `simulators/azure/entra.go:463::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /v1.0/applications` | ✓ `simulators/azure/entra.go:486::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /v1.0/applications/{appObjectId}` | ✓ `simulators/azure/entra.go:498::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `PATCH /v1.0/applications/{appObjectId}` | ✓ `simulators/azure/entra.go:507::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /v1.0/applications/{appObjectId}` | ✓ `simulators/azure/entra.go:535::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1.0/applications/{appObjectId}/addPassword` | ✓ `simulators/azure/entra.go:546::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1.0/applications/{appObjectId}/removePassword` | ✓ `simulators/azure/entra.go:562::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1.0/servicePrincipals` | ✓ `simulators/azure/entra.go:591::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /v1.0/servicePrincipals` | ✓ `simulators/azure/entra.go:624::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /v1.0/servicePrincipals/{spId}` | ✓ `simulators/azure/entra.go:644::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `PATCH /v1.0/servicePrincipals/{spId}` | ✓ `simulators/azure/entra.go:653::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /v1.0/servicePrincipals/{spId}` | ✓ `simulators/azure/entra.go:675::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1.0/servicePrincipals/{spId}/addPassword` | ✓ `simulators/azure/entra.go:683::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1.0/servicePrincipals/{spId}/removePassword` | ✓ `simulators/azure/entra.go:701::func` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
 
 ## Coverage status
 

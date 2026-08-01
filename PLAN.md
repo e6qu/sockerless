@@ -114,6 +114,8 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 84. Replaced ad-hoc Azure Container Apps PATCH merging with one shared RFC 7396 JSON Merge Patch helper and made app, job, and environment DELETEs true ARM long-running operations on the shared LRO store with 409 during deletion.
 85. Validated Google Cloud Run v2 update masks against the complete Discovery mutable field set — completing the Service and RevisionTemplate models — with member-wise `template.*` merging and 400 INVALID_ARGUMENT on unknown or output-only paths.
 86. Gated the deployment proxy on simulator `/health` checks, extended bounded cold-start retries and explicit 503 + Retry-After to every origin, bounded OpenID Connect discovery fetches in the federation and console-auth paths, and deduplicated concurrent console token exchanges, closing GitHub issue #853.
+87. Streamed workload container logs live into the CloudWatch, Cloud Logging, and Log Analytics sinks across all three simulator runtimes with an exactly-deduplicated post-exit drain, closing GitHub issue #872.
+88. Closed the cross-simulator persistence audit: bulk-data roots under `SIM_DATA_DIR`, durable Entra directory, Service Bus, Spanner, and Bigtable data planes, the ported hidden-sidecar codec for wire-hidden stored fields, persisted signing identities, counters, operations, snapshots, and resumable sessions, truthful post-restart workload reconciliation on EC2, Compute Engine, and Cloud Run, and an end-to-end restart regression suite per simulator.
 
 ## Verified Next Gaps
 

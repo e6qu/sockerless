@@ -654,10 +654,18 @@ func amplifyBuildProjectDirectory(workDir, appRoot, buildPath string) (string, e
 	return clean, nil
 }
 
+// amplifyBuildCacheRoot returns the on-disk root for AWS Amplify Hosting
+// build caches. Real Amplify persists the build cache across builds, so the
+// cache lives under <SIM_DATA_DIR>/amplify-cache when SIM_DATA_DIR — the
+// persistence coordinate the shared server config reads — is set, and a temp
+// directory otherwise.
+func amplifyBuildCacheRoot() string {
+	return simScopedDataDir("", "amplify-cache", "sockerless-amplify-cache")
+}
+
 func amplifyBuildCacheDirectory(appID, branch string) string {
 	return filepath.Join(
-		os.TempDir(),
-		"sockerless-amplify-cache",
+		amplifyBuildCacheRoot(),
 		appID,
 		fmt.Sprintf("%x", sha256.Sum256([]byte(branch))),
 	)
@@ -777,7 +785,7 @@ func amplifyCopyBuildFile(source, destination string, info fs.FileInfo) error {
 }
 
 func amplifyRemoveBuildCache(appID, branch string) {
-	target := filepath.Join(os.TempDir(), "sockerless-amplify-cache", appID)
+	target := filepath.Join(amplifyBuildCacheRoot(), appID)
 	if branch != "" {
 		target = filepath.Join(target, fmt.Sprintf("%x", sha256.Sum256([]byte(branch))))
 	}

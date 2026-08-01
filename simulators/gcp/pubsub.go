@@ -131,6 +131,7 @@ func registerPubSub(srv *sim.Server) {
 	psQueues = sim.MakeStore[psQueue](srv.DB(), "pubsub_queues")
 	psInFlight = sim.MakeStore[PSDeliveredMessage](srv.DB(), "pubsub_inflight")
 	psSnapshots = sim.MakeStore[PSSnapshot](srv.DB(), "pubsub_snapshots")
+	psSnapshotBacklogs = sim.MakeStore[[]PSMessage](srv.DB(), "pubsub_snapshot_backlogs")
 	psSchemaRevisions = sim.MakeStore[PSSchema](srv.DB(), "pubsub_schema_revisions")
 
 	// Topics.
@@ -231,6 +232,14 @@ func handlePSCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		ExpireTime: expire,
 		Labels:     req.Labels,
 	}
+	// Capture the subscription's outstanding backlog so a later Seek to this
+	// snapshot replays exactly these messages — the same semantics as the
+	// gRPC CreateSnapshot and real Pub/Sub.
+	if q, ok := psQueues.Get(req.Subscription); ok && len(q.Messages) > 0 {
+		captured := make([]PSMessage, len(q.Messages))
+		copy(captured, q.Messages)
+		psSnapshotBacklogs.Put(psSnapshotKey(project, snap), captured)
+	}
 	psSnapshots.Put(psSnapshotKey(project, snap), s)
 	sim.WriteJSON(w, http.StatusOK, s)
 }
@@ -275,6 +284,7 @@ func handlePSDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
 			"snapshot %q not found", snap)
 		return
 	}
+	psSnapshotBacklogs.Delete(psSnapshotKey(project, snap))
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

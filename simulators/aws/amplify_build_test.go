@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -180,7 +179,7 @@ func TestAmplifyBuildImageDefault(t *testing.T) {
 }
 
 func TestAmplifyBuildCacheBranchKeyCannotEscapeAppDirectory(t *testing.T) {
-	appDirectory := filepath.Join(os.TempDir(), "sockerless-amplify-cache", "dapp")
+	appDirectory := filepath.Join(amplifyBuildCacheRoot(), "dapp")
 	cacheDirectory := amplifyBuildCacheDirectory("dapp", "../../outside")
 	if filepath.Dir(cacheDirectory) != appDirectory {
 		t.Fatalf("branch cache escaped app directory: got %q, want child of %q", cacheDirectory, appDirectory)

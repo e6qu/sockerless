@@ -399,6 +399,10 @@ func handleSpannerDeleteDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spannerDDLs.Delete(name)
+	if err := spannerDropBackend(name); err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "release backing store for %q: %v", name, err)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

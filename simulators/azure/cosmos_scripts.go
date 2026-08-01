@@ -48,6 +48,9 @@ var cosmosScripts sim.Store[CosmosScript]
 
 func registerCosmosScripts(srv *sim.Server) {
 	cosmosScripts = sim.MakeStore[CosmosScript](srv.DB(), "cosmos_scripts")
+	for _, s := range cosmosScripts.List() {
+		cosmosRaiseETagFloor(cosmosETagSeqOf(s.ETag))
+	}
 
 	srv.HandleFunc("POST /dbs/{database}/colls/{container}/sprocs", handleCosmosCreateScript("sproc"))
 	srv.HandleFunc("GET /dbs/{database}/colls/{container}/sprocs", handleCosmosListScripts("sproc"))

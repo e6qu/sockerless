@@ -13,8 +13,8 @@ Surface registered in `simulators/azure/functions.go` (and related files grouped
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Web/checknameavailability` | ✓ `simulators/azure/functions.go:152::checkNameAvailabilityHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /api/function` | ✓ `simulators/azure/functions.go:374::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Web/checknameavailability` | ✓ `simulators/azure/functions.go:160::checkNameAvailabilityHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /api/function` | ✓ `simulators/azure/functions.go:382::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /subscriptions/{subscriptionId}/providers/Microsoft.Web/serverfarms` | ✓ `simulators/azure/web_more_extra.go:256::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Web/serverfarms` | ✓ `simulators/azure/web_more_extra.go:264::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `PATCH /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Web/serverfarms/{planName}` | ✓ `simulators/azure/web_more_extra.go:272::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |

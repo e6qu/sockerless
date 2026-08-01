@@ -127,6 +127,7 @@ func (s *bigtableInstanceAdminGRPC) DeleteInstance(_ context.Context, req *btadm
 	for _, table := range bigtableTables.List() {
 		if strings.HasPrefix(table.Name, name+"/tables/") {
 			bigtableTables.Delete(table.Name)
+			btDeleteTableData(table.Name)
 		}
 	}
 	return &emptypb.Empty{}, nil
@@ -236,6 +237,7 @@ func (s *bigtableTableAdminGRPC) DeleteTable(_ context.Context, req *btadmin.Del
 	if !bigtableTables.Delete(req.GetName()) {
 		return nil, status.Errorf(codes.NotFound, "table %q not found", req.GetName())
 	}
+	btDeleteTableData(req.GetName())
 	return &emptypb.Empty{}, nil
 }
 

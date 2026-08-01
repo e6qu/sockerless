@@ -86,11 +86,12 @@ func TestEventGrid_ARMControlPlaneMore(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, regenResp.Key1)
 	require.NotNil(t, regenResp.Key2)
-	// Rotated key1 differs from the deterministic listKeys key2.
+	// listKeys reflects the rotation, exactly as real EventGrid does: key1 is
+	// the regenerated value, key2 is unchanged.
 	keys, err := topics.ListSharedAccessKeys(ctx, rg, topicName, nil)
 	require.NoError(t, err)
 	assert.Equal(t, *keys.Key2, *regenResp.Key2)
-	assert.NotEqual(t, *keys.Key1, *regenResp.Key1)
+	assert.Equal(t, *keys.Key1, *regenResp.Key1)
 
 	// Topics_ListEventTypes (event types under the topic resource).
 	tePager := topics.NewListEventTypesPager(rg, "Microsoft.EventGrid", "topics", topicName, nil)

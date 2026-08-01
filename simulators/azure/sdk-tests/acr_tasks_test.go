@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -116,6 +117,22 @@ func TestACRTasks_ScheduleRunDockerBuild(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.Properties)
 	assert.Equal(t, armcontainerregistry.RunStatusSucceeded, *got.Properties.Status)
+
+	// 5. The run's build log is retrievable through the advertised log link,
+	// as a plain GET of the SAS-style URL — real ACR serves the full docker
+	// build/push output there.
+	sas, err := runsClient.GetLogSasURL(ctx, rg, regName, *result.Properties.RunID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, sas.LogLink)
+	assert.Contains(t, *sas.LogLink, "/acr/v1/logs/",
+		"the log link must point at the sim's run-log endpoint")
+	logResp, err := http.Get(*sas.LogLink)
+	require.NoError(t, err)
+	logBytes, _ := io.ReadAll(logResp.Body)
+	logResp.Body.Close()
+	require.Equal(t, http.StatusOK, logResp.StatusCode, "advertised logLink must resolve: %s", *sas.LogLink)
+	assert.Contains(t, string(logBytes), "The push refers to repository",
+		"the run log must carry the docker build/push output")
 }
 
 // pullImageWithRetry pulls an image with bounded exponential backoff so a

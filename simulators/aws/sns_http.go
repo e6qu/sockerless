@@ -29,7 +29,48 @@ var (
 	snsSigningCertName string
 )
 
+// SNSSigningIdentity is the persisted Amazon SNS message-signing key pair.
+// Real SNS keeps the same signing certificate available at its published
+// SigningCertURL long after a message was delivered, so the identity is
+// created once and reused across simulator restarts — otherwise every
+// previously delivered message would reference a cert URL that now 404s.
+type SNSSigningIdentity struct {
+	PrivateKeyPEM  []byte
+	CertificatePEM []byte
+}
+
 func registerSNSHTTPDelivery(srv *sim.Server) {
+	identities := sim.MakeStore[SNSSigningIdentity](srv.DB(), "sns_signing_identity")
+	identity, ok := identities.Get("default")
+	if !ok {
+		identity = generateSNSSigningIdentity()
+		identities.Put("default", identity)
+	}
+
+	keyBlock, _ := pem.Decode(identity.PrivateKeyPEM)
+	if keyBlock == nil {
+		panic("persisted Amazon SNS signing key is not PEM")
+	}
+	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		panic(fmt.Sprintf("parse persisted Amazon SNS signing key: %v", err))
+	}
+	certBlock, _ := pem.Decode(identity.CertificatePEM)
+	if certBlock == nil {
+		panic("persisted Amazon SNS signing certificate is not PEM")
+	}
+	sum := sha256.Sum256(certBlock.Bytes)
+	snsSigningKey = key
+	snsSigningCertPEM = identity.CertificatePEM
+	snsSigningCertName = hex.EncodeToString(sum[:])
+
+	srv.HandleFunc("GET /SimpleNotificationService-"+snsSigningCertName+".pem", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-pem-file")
+		_, _ = w.Write(snsSigningCertPEM)
+	})
+}
+
+func generateSNSSigningIdentity() SNSSigningIdentity {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		panic(fmt.Sprintf("generate Amazon SNS signing key: %v", err))
@@ -48,15 +89,10 @@ func registerSNSHTTPDelivery(srv *sim.Server) {
 	if err != nil {
 		panic(fmt.Sprintf("create Amazon SNS signing certificate: %v", err))
 	}
-	sum := sha256.Sum256(raw)
-	snsSigningKey = key
-	snsSigningCertPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: raw})
-	snsSigningCertName = hex.EncodeToString(sum[:])
-
-	srv.HandleFunc("GET /SimpleNotificationService-"+snsSigningCertName+".pem", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/x-pem-file")
-		_, _ = w.Write(snsSigningCertPEM)
-	})
+	return SNSSigningIdentity{
+		PrivateKeyPEM:  pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}),
+		CertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: raw}),
+	}
 }
 
 func snsRequestOrigin(r *http.Request) string {

@@ -51,6 +51,7 @@ Re-run `bash scripts/seed-surface-tables.sh` after adding new `HandleFunc` regis
 - [`aws-sts`](aws-sts.md)
 - [`aws-wafv2`](aws-wafv2.md)
 - [`azure-acr`](azure-acr.md)
+- [`azure-acr_tasks`](azure-acr_tasks.md)
 - [`azure-apim`](azure-apim.md)
 - [`azure-cache_redis`](azure-cache_redis.md)
 - [`azure-compute`](azure-compute.md)

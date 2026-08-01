@@ -29,19 +29,18 @@ func writeEventarcList[T any](w http.ResponseWriter, r *http.Request, items []T,
 }
 
 type EventarcTrigger struct {
-	Name                 string                 `json:"name"`
-	Uid                  string                 `json:"uid,omitempty"`
-	CreateTime           string                 `json:"createTime,omitempty"`
-	UpdateTime           string                 `json:"updateTime,omitempty"`
-	Labels               map[string]string      `json:"labels,omitempty"`
-	EventFilters         []EventarcEventFilter  `json:"eventFilters,omitempty"`
-	Destination          map[string]any         `json:"destination,omitempty"`
-	Transport            map[string]any         `json:"transport,omitempty"`
-	ServiceAccount       string                 `json:"serviceAccount,omitempty"`
-	EventDataContentType string                 `json:"eventDataContentType,omitempty"`
-	Channel              string                 `json:"channel,omitempty"`
-	Conditions           map[string]any         `json:"conditions,omitempty"`
-	Extra                map[string]interface{} `json:"-"`
+	Name                 string                `json:"name"`
+	Uid                  string                `json:"uid,omitempty"`
+	CreateTime           string                `json:"createTime,omitempty"`
+	UpdateTime           string                `json:"updateTime,omitempty"`
+	Labels               map[string]string     `json:"labels,omitempty"`
+	EventFilters         []EventarcEventFilter `json:"eventFilters,omitempty"`
+	Destination          map[string]any        `json:"destination,omitempty"`
+	Transport            map[string]any        `json:"transport,omitempty"`
+	ServiceAccount       string                `json:"serviceAccount,omitempty"`
+	EventDataContentType string                `json:"eventDataContentType,omitempty"`
+	Channel              string                `json:"channel,omitempty"`
+	Conditions           map[string]any        `json:"conditions,omitempty"`
 }
 
 type EventarcEventFilter struct {

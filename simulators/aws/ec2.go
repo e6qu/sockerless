@@ -230,6 +230,15 @@ type EC2Instance struct {
 	MetadataHttpEndpoint   string
 	MetadataHopLimit       int
 	MetadataInstanceTags   string
+	// StateTransitionReason is the free-text reason for the most recent
+	// state transition (the DescribeInstances <reason> element); empty
+	// while the instance is running.
+	StateTransitionReason string
+	// StateReasonCode/StateReasonMessage carry the structured stateReason
+	// (e.g. Client.UserInitiatedShutdown) a real DescribeInstances returns
+	// for stopped and terminated instances.
+	StateReasonCode    string
+	StateReasonMessage string
 }
 
 type EC2NetworkInterface struct {
@@ -559,6 +568,8 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2Snapshots = sim.MakeStore[EC2Snapshot](srv.DB(), "ec2_snapshots")
 	ec2RunTokens = sim.MakeStore[EC2RunInstancesToken](srv.DB(), "ec2_run_instances_tokens")
 	ec2SubnetIPCursor = sim.MakeStore[uint32](srv.DB(), "ec2_subnet_ip_cursors")
+
+	recoverEC2Instances()
 
 	// VPC
 	r.Register("DescribeAccountAttributes", handleDescribeAccountAttributes)
@@ -3227,13 +3238,22 @@ func ec2InstanceXML(inst EC2Instance) string {
 	if inst.PublicIpAddress != "" {
 		publicXML = fmt.Sprintf("<ipAddress>%s</ipAddress>", inst.PublicIpAddress)
 	}
+	reasonXML := "<reason/>"
+	if inst.StateTransitionReason != "" {
+		reasonXML = fmt.Sprintf("<reason>%s</reason>", inst.StateTransitionReason)
+	}
+	stateReasonXML := ""
+	if inst.StateReasonCode != "" {
+		stateReasonXML = fmt.Sprintf("\n    <stateReason><code>%s</code><message>%s</message></stateReason>",
+			inst.StateReasonCode, inst.StateReasonMessage)
+	}
 	return fmt.Sprintf(`<item>
     <instanceId>%s</instanceId>
     <imageId>%s</imageId>
     <instanceState><code>%d</code><name>%s</name></instanceState>
     <privateDnsName>ip-%s.%s.compute.internal</privateDnsName>
     <dnsName/>
-    <reason/>
+    %s
     %s
     <amiLaunchIndex>0</amiLaunchIndex>
     <productCodes/>
@@ -3245,7 +3265,7 @@ func ec2InstanceXML(inst EC2Instance) string {
     <vpcId>%s</vpcId>
     <privateIpAddress>%s</privateIpAddress>%s
     <sourceDestCheck>%t</sourceDestCheck>
-    <groupSet>%s</groupSet>
+    <groupSet>%s</groupSet>%s
     <architecture>%s</architecture>
     <rootDeviceType>ebs</rootDeviceType>
     <rootDeviceName>%s</rootDeviceName>
@@ -3258,8 +3278,8 @@ func ec2InstanceXML(inst EC2Instance) string {
     %s
   </item>`,
 		inst.InstanceId, inst.ImageId, instanceStateCode(inst.State), inst.State,
-		strings.ReplaceAll(inst.PrivateIpAddress, ".", "-"), awsRegion(), keyNameXML, inst.InstanceType, inst.LaunchTime,
-		awsAvailabilityZone(), monitoringState, inst.SubnetId, inst.VpcId, inst.PrivateIpAddress, publicXML, inst.SourceDestCheck, groups.String(),
+		strings.ReplaceAll(inst.PrivateIpAddress, ".", "-"), awsRegion(), reasonXML, keyNameXML, inst.InstanceType, inst.LaunchTime,
+		awsAvailabilityZone(), monitoringState, inst.SubnetId, inst.VpcId, inst.PrivateIpAddress, publicXML, inst.SourceDestCheck, groups.String(), stateReasonXML,
 		inst.Architecture, inst.RootDeviceName, inst.RootDeviceName, "vol-"+strings.TrimPrefix(inst.InstanceId, "i-"), inst.LaunchTime,
 		inst.EbsOptimized, iamXML, metaXML, cpuXML,
 		writeTagSetXML(inst.Tags), ni.String())
@@ -3885,6 +3905,46 @@ func ec2HasTagValue(tags []EC2Tag, key, value string) bool {
 	return false
 }
 
+// recoverEC2Instances reconciles persisted instance rows with the real
+// workloads on the host after a control-plane restart. Firecracker VMs, their
+// tap devices, and the IMDS bindings are process state and die with the
+// simulator, so a persisted instance still marked running or pending has no
+// backing workload; it transitions truthfully to stopped. VMs are never
+// re-adopted — the processes are dead. Hosts in the API-only tier (no real VM
+// execution) keep their purely modeled instance state unchanged, exactly as
+// before the restart.
+func recoverEC2Instances() {
+	if !ec2RealVMHostAvailable() {
+		return
+	}
+	recoverEC2InstancesWithVMLiveness(ec2RealVMAlive)
+}
+
+func recoverEC2InstancesWithVMLiveness(vmAlive func(instanceID string) bool) {
+	for _, inst := range ec2Instances.List() {
+		if inst.State != "running" && inst.State != "pending" {
+			continue
+		}
+		if vmAlive(inst.InstanceId) {
+			continue
+		}
+		transitioned := false
+		ec2Instances.Update(inst.InstanceId, func(current *EC2Instance) {
+			if current.State != "running" && current.State != "pending" {
+				return
+			}
+			transitioned = true
+			current.State = "stopped"
+			current.StateTransitionReason = "Server.InternalError: Instance workload not found after control-plane restart"
+			current.StateReasonCode = "Server.InternalError"
+			current.StateReasonMessage = "Server.InternalError: Instance workload not found after control-plane restart"
+		})
+		if transitioned {
+			fmt.Fprintf(os.Stderr, "[sim-ec2] instance %s: workload not found after control-plane restart; transitioned instance to stopped\n", inst.InstanceId)
+		}
+	}
+}
+
 func handleTerminateInstances(w http.ResponseWriter, r *http.Request) {
 	writeInstanceStateChange(w, r, "terminated", true)
 }
@@ -3925,6 +3985,16 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
 			}
 		}
 		inst.State = next
+		switch next {
+		case "running":
+			inst.StateTransitionReason = ""
+			inst.StateReasonCode = ""
+			inst.StateReasonMessage = ""
+		case "stopped", "terminated":
+			inst.StateTransitionReason = "User initiated (" + time.Now().UTC().Format("2006-01-02 15:04:05") + " GMT)"
+			inst.StateReasonCode = "Client.UserInitiatedShutdown"
+			inst.StateReasonMessage = "Client.UserInitiatedShutdown: User initiated shutdown"
+		}
 		ec2Instances.Put(id, inst)
 		if next == "stopped" {
 			ec2UpdateVolumeAttachmentsForInstance(id, "attached", "in-use")
@@ -4394,11 +4464,13 @@ func ebsCopyDockerVolumes(ctx context.Context, srcVolume, dstVolume string) erro
 	return nil
 }
 
+// ebsHostRoot returns the on-disk root for simulated EBS volume backing
+// images and snapshot payloads. Resolution order: SIM_EBS_DATA_DIR
+// (explicit override), then <SIM_DATA_DIR>/ebs (so volume contents survive
+// a simulator restart alongside the SQLite control-plane state), then a
+// temp directory.
 func ebsHostRoot() string {
-	if dir := os.Getenv("SIM_EBS_DATA_DIR"); dir != "" {
-		return dir
-	}
-	return filepath.Join(os.TempDir(), "sockerless-sim-ebs")
+	return simScopedDataDir("SIM_EBS_DATA_DIR", "ebs", "sockerless-sim-ebs")
 }
 
 func ebsVolumeHostDirPath(volumeID string) string {

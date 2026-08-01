@@ -82,8 +82,8 @@ Surface registered in `simulators/gcp/iam.go` (and related files grouped under t
 | `GET /v3/locations/{location}/tagBindingCollections/{collection}` | ✓ `simulators/gcp/iam.go:1602::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `PATCH /v3/locations/{location}/tagBindingCollections/{collection}` | ✓ `simulators/gcp/iam.go:1610::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /v3/locations/{location}/effectiveTagBindingCollections/{collection}` | ✓ `simulators/gcp/iam.go:1624::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /.well-known/openid-configuration` | ✓ `simulators/gcp/token_signing.go:293::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /.well-known/jwks.json` | ✓ `simulators/gcp/token_signing.go:304::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /.well-known/openid-configuration` | ✓ `simulators/gcp/token_signing.go:327::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /.well-known/jwks.json` | ✓ `simulators/gcp/token_signing.go:338::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

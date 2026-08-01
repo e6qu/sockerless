@@ -51,7 +51,9 @@ aws iam create-service-linked-role --aws-service-name cloudfront.amazonaws.com
 | `SIM_LISTEN_ADDR` | `:4566` | Listen address (`host:port`). |
 | `SIM_TLS_CERT`, `SIM_TLS_KEY` | unset | Enable HTTPS with the given cert/key. |
 | `SIM_RUNTIME` | `docker` | Initializes Docker/Podman for workload execution. Set `process` only for explicit API-only runs that do not invoke ECS/Lambda workload execution. |
-| `SIM_EBS_DATA_DIR` | `$TMPDIR/sockerless-sim-ebs` | Root directory for EC2/Firecracker EBS block images and snapshots derived from EC2 volumes. **Not used for ECS managed EBS volumes** — those use Docker named volumes (`sockerless-ebs-*`) so they are topology-independent. |
+| `SIM_DATA_DIR` | unset | Persistence root: the SQLite control-plane store, plus the default location of every bulk-data root below (`<SIM_DATA_DIR>/efs`, `/ebs`, `/amplify-cache`), so file contents survive restarts alongside the metadata that describes them. |
+| `SIM_EBS_DATA_DIR` | `<SIM_DATA_DIR>/ebs`, else `$TMPDIR/sockerless-sim-ebs` | Explicit override for the EC2/Firecracker EBS block-image root (volume backing files and snapshots). **Not used for ECS managed EBS volumes** — those use Docker named volumes (`sockerless-ebs-*`) so they are topology-independent. |
+| `SIM_EFS_DATA_DIR` | `<SIM_DATA_DIR>/efs`, else `$TMPDIR/sockerless-sim-efs` | Explicit override for the EFS file-system content root. |
 | `AWS_ENDPOINT_URL` | (client-side) | The AWS SDKs and AWS CLI's standard global endpoint setting. It routes every supported service to the simulator. |
 | `AWS_ENDPOINT_URL_<SERVICE>` | (client-side) | The AWS SDKs' standard per-service setting (for example `AWS_ENDPOINT_URL_SQS`). It overrides the global coordinate for that service. |
 | `AWS_DEFAULT_REGION` | `us-east-1` | The sim accepts any region; some validation (CloudFront → ACM us-east-1 pin) is region-aware. |

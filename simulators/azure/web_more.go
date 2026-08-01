@@ -772,7 +772,7 @@ func registerWebFunctionsRW(both, slot func(string, string, http.HandlerFunc)) {
 		req.ID = funcID(r)
 		req.Name = sim.PathParam(r, "siteName") + "/" + name
 		req.Type = "Microsoft.Web/sites/functions"
-		req.Properties.Name = name
+		req.FunctionName = name
 		azfFunctionConfigs.Put(req.ID, req)
 		sim.WriteJSON(w, http.StatusCreated, req)
 	})

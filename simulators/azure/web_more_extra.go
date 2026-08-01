@@ -102,7 +102,7 @@ func webSlotAzureStoragePut(w http.ResponseWriter, r *http.Request) {
 	}
 	store := webResourceStore(r)
 	row, _ := store.Get(webResourceID(r))
-	row.Properties.AzureStorageAccounts = req.Properties
+	row.AzureStorageAccounts = req.Properties
 	store.Put(webResourceID(r), row)
 	webWriteAzureStorage(w, webResourceID(r), req.Properties)
 }
@@ -112,7 +112,7 @@ func webSlotAzureStorageList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	row, _ := webResource(r)
-	webWriteAzureStorage(w, webResourceID(r), row.Properties.AzureStorageAccounts)
+	webWriteAzureStorage(w, webResourceID(r), row.AzureStorageAccounts)
 }
 
 func webWriteAzureStorage(w http.ResponseWriter, resID string, props map[string]*AzureStorageInfoValue) {

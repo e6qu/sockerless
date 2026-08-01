@@ -6,8 +6,10 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -49,17 +51,49 @@ type accessTokenSigner struct {
 	keyID string
 }
 
-// initAccessTokenSigner generates the simulator's access-token signing key.
-// It fails loud: an RSA generation failure aborts startup rather than
-// degrading to an unverifiable token.
-func initAccessTokenSigner() error {
+// accessTokenSigningKeyRecord is the persisted form of the simulator's
+// access-token signing key: the RSA private key as PKCS#1 PEM. Reusing the
+// key across restarts keeps pre-restart bearer tokens verifiable and the
+// published JWKS `kid` stable, the way a real identity provider's signing key
+// outlives any single server process.
+type accessTokenSigningKeyRecord struct {
+	PrivateKeyPEM string `json:"privateKeyPem"`
+}
+
+const accessTokenSigningKeyID = "access-token-signing-key"
+
+// initAccessTokenSigner loads the simulator's access-token signing key from
+// the persistence store, generating and persisting it on first boot. Without
+// persistence (db nil) the key is process-lifetime, matching the rest of the
+// in-memory state. It fails loud: an RSA generation failure or a corrupt
+// persisted key aborts startup rather than degrading to an unverifiable token.
+func initAccessTokenSigner(db *sql.DB) error {
 	if accessSigner != nil {
+		return nil
+	}
+	store := sim.MakeStore[accessTokenSigningKeyRecord](db, "token_signing_keys")
+	if rec, ok := store.Get(accessTokenSigningKeyID); ok {
+		block, _ := pem.Decode([]byte(rec.PrivateKeyPEM))
+		if block == nil {
+			return fmt.Errorf("persisted access-token signing key is not PEM")
+		}
+		key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return fmt.Errorf("parse persisted access-token signing key: %w", err)
+		}
+		accessSigner = &accessTokenSigner{key: key, keyID: rsaKeyID(&key.PublicKey)}
 		return nil
 	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return fmt.Errorf("generate simulator access-token signing key: %w", err)
 	}
+	store.Put(accessTokenSigningKeyID, accessTokenSigningKeyRecord{
+		PrivateKeyPEM: string(pem.EncodeToMemory(&pem.Block{
+			Type:  "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(key),
+		})),
+	})
 	accessSigner = &accessTokenSigner{key: key, keyID: rsaKeyID(&key.PublicKey)}
 	return nil
 }

@@ -39,6 +39,11 @@ go build -o simulator-azure .
 SIM_LISTEN_ADDR=:4568 ./simulator-azure
 ```
 
+With `SIM_PERSIST=true`, `SIM_DATA_DIR` is the persistence root: the SQLite
+control-plane store plus the Azure Files content root, which defaults to
+`<SIM_DATA_DIR>/files` (`SIM_AZURE_FILES_DATA_DIR` overrides) so share
+contents survive restarts alongside the metadata that describes them.
+
 Docker or Podman is required when Container Apps or Azure Functions calls execute
 workloads. For API-only checks that do not invoke workload execution,
 `SIM_RUNTIME=process` starts the Azure simulator without initializing
