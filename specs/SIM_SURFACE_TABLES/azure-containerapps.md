@@ -13,10 +13,10 @@ Surface registered in `simulators/azure/containerapps.go` (and related files gro
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.App/jobs` | ✓ `simulators/azure/containerapps.go:333::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.App/containerApps` | ✓ `simulators/azure/containerapps_apps.go:461::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.App/managedEnvironments` | ✓ `simulators/azure/containerappsenv.go:359::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App/managedEnvironments/{envName}/storages` | ✓ `simulators/azure/containerappsenv.go:560::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.App/jobs` | ✓ `simulators/azure/containerapps.go:335::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.App/containerApps` | ✓ `simulators/azure/containerapps_apps.go:385::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.App/managedEnvironments` | ✓ `simulators/azure/containerappsenv.go:376::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App/managedEnvironments/{envName}/storages` | ✓ `simulators/azure/containerappsenv.go:577::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

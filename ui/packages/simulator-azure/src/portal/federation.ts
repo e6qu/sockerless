@@ -57,6 +57,10 @@ export type CloudScope = "arm" | "logs" | "graph";
 
 let configPromise: Promise<PortalConfig> | null = null;
 const cachedTokens: Partial<Record<CloudScope, { value: string; expiresAt: number }>> = {};
+// One in-flight exchange per scope: a portal render fires many authorized
+// reads at once, and without deduplication each of them would start its own
+// broker exchange before the first response lands in cachedTokens.
+const inflightTokens: Partial<Record<CloudScope, Promise<string>>> = {};
 
 async function portalConfig(): Promise<PortalConfig> {
   if (!configPromise) {
@@ -87,19 +91,31 @@ function resolveFederation(config: PortalConfig): string | null {
 // federation.ts's module comment); this call only ever reaches the portal's
 // own origin.
 async function federatedToken(tokenEndpoint: string, scope: CloudScope): Promise<string> {
-  const now = Date.now();
   const cached = cachedTokens[scope];
-  if (cached && cached.expiresAt - 30_000 > now) {
+  if (cached && cached.expiresAt - 30_000 > Date.now()) {
     return cached.value;
   }
 
-  const response = await fetch(`${tokenEndpoint}?scope=${scope}`, { credentials: "include" });
-  if (!response.ok) {
-    throw new Error(`console federation broker returned HTTP ${response.status}`);
+  const inflight = inflightTokens[scope];
+  if (inflight) {
+    return inflight;
   }
-  const token = (await response.json()) as { access_token: string; expires_in: number };
-  cachedTokens[scope] = { value: token.access_token, expiresAt: now + token.expires_in * 1000 };
-  return token.access_token;
+  const exchange = (async () => {
+    const now = Date.now();
+    const response = await fetch(`${tokenEndpoint}?scope=${scope}`, { credentials: "include" });
+    if (!response.ok) {
+      throw new Error(`console federation broker returned HTTP ${response.status}`);
+    }
+    const token = (await response.json()) as { access_token: string; expires_in: number };
+    cachedTokens[scope] = { value: token.access_token, expiresAt: now + token.expires_in * 1000 };
+    return token.access_token;
+  })();
+  inflightTokens[scope] = exchange;
+  try {
+    return await exchange;
+  } finally {
+    delete inflightTokens[scope];
+  }
 }
 
 function baseFor(config: PortalConfig, scope: CloudScope): string {

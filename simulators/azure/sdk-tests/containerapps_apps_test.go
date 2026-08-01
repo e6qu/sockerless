@@ -465,3 +465,188 @@ func TestSDK_ContainerAppsApps_PatchMergesNotReplaces(t *testing.T) {
 	require.NotEmpty(t, patched.Properties.Template.Containers)
 	assert.Equal(t, "nginx:latest", patched.Properties.Template.Containers[0].Image)
 }
+
+// TestSDK_ContainerAppsApps_PatchRFC7396Semantics proves the PATCH handler
+// implements the full RFC 7396 JSON Merge Patch contract ARM documents: a
+// nested object merges member-wise (patching scale.minReplicas preserves
+// maxReplicas), and an explicit null removes the member (deleting a tag).
+func TestSDK_ContainerAppsApps_PatchRFC7396Semantics(t *testing.T) {
+	rg := "sdk-aca-rfc7396-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewContainerAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	envID := "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.App/managedEnvironments/sim-env"
+
+	createPoller, err := client.BeginCreateOrUpdate(ctx, rg, "rfc7396-app", armappcontainers.ContainerApp{
+		Location: to.Ptr("eastus"),
+		Tags:     map[string]*string{"keep": to.Ptr("kept"), "drop": to.Ptr("doomed")},
+		Properties: &armappcontainers.ContainerAppProperties{
+			EnvironmentID: to.Ptr(envID),
+			Template: &armappcontainers.Template{
+				Containers: []*armappcontainers.Container{
+					{Name: to.Ptr("main"), Image: to.Ptr("alpine:latest")},
+				},
+				Scale: &armappcontainers.Scale{
+					MinReplicas: to.Ptr[int32](1),
+					MaxReplicas: to.Ptr[int32](5),
+				},
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = createPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	defer func() {
+		delPoller, _ := client.BeginDelete(ctx, rg, "rfc7396-app", nil)
+		if delPoller != nil {
+			_, _ = delPoller.PollUntilDone(ctx, nil)
+		}
+	}()
+
+	// A merge patch that deletes one tag via null, adds another, and patches
+	// one member of the nested scale object.
+	patchURL := baseURL + "/subscriptions/" + subscriptionID +
+		"/resourceGroups/" + rg + "/providers/Microsoft.App/containerApps/rfc7396-app?api-version=2025-01-01"
+	patchBody := `{"tags":{"drop":null,"added":"new"},"properties":{"template":{"scale":{"minReplicas":2}}}}`
+	req, err := http.NewRequest("PATCH", patchURL, strings.NewReader(patchBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", simARMBearer)
+	patchResp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	patchBytes, _ := io.ReadAll(patchResp.Body)
+	patchResp.Body.Close()
+	require.Equal(t, 200, patchResp.StatusCode, "PATCH response: %s", patchBytes)
+
+	var patched struct {
+		Tags       map[string]string `json:"tags"`
+		Properties struct {
+			Template struct {
+				Containers []struct {
+					Image string `json:"image"`
+				} `json:"containers"`
+				Scale struct {
+					MinReplicas     int `json:"minReplicas"`
+					MaxReplicas     int `json:"maxReplicas"`
+					CooldownPeriod  int `json:"cooldownPeriod"`
+					PollingInterval int `json:"pollingInterval"`
+				} `json:"scale"`
+			} `json:"template"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(patchBytes, &patched))
+
+	// null removes the member; other members merge.
+	assert.Equal(t, map[string]string{"keep": "kept", "added": "new"}, patched.Tags,
+		"an explicit null in the merge patch must remove the tag")
+
+	// Nested objects merge member-wise: minReplicas updated, siblings kept.
+	assert.Equal(t, 2, patched.Properties.Template.Scale.MinReplicas)
+	assert.Equal(t, 5, patched.Properties.Template.Scale.MaxReplicas,
+		"patching scale.minReplicas must not discard scale.maxReplicas")
+	assert.Equal(t, 300, patched.Properties.Template.Scale.CooldownPeriod,
+		"server-stamped cooldownPeriod default must survive the merge")
+	assert.Equal(t, 30, patched.Properties.Template.Scale.PollingInterval,
+		"server-stamped pollingInterval default must survive the merge")
+
+	// Untouched members are preserved.
+	require.NotEmpty(t, patched.Properties.Template.Containers)
+	assert.Equal(t, "alpine:latest", patched.Properties.Template.Containers[0].Image)
+}
+
+// TestSDK_ContainerAppsApps_DeleteLROEnvelope proves the DELETE contract at
+// the wire level: 202 Accepted with an empty body, absolute
+// Azure-AsyncOperation and Location URLs, an operation-status envelope
+// carrying id/name/status, and a final GET that 404s once the operation
+// reports Succeeded.
+func TestSDK_ContainerAppsApps_DeleteLROEnvelope(t *testing.T) {
+	rg := "sdk-aca-dellro-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewContainerAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	envID := "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.App/managedEnvironments/sim-env"
+
+	createPoller, err := client.BeginCreateOrUpdate(ctx, rg, "dellro-app", armappcontainers.ContainerApp{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.ContainerAppProperties{
+			EnvironmentID: to.Ptr(envID),
+			Template: &armappcontainers.Template{
+				Containers: []*armappcontainers.Container{
+					{Name: to.Ptr("main"), Image: to.Ptr("alpine:latest")},
+				},
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = createPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	appURL := baseURL + "/subscriptions/" + subscriptionID +
+		"/resourceGroups/" + rg + "/providers/Microsoft.App/containerApps/dellro-app?api-version=2025-01-01"
+	req, err := http.NewRequest("DELETE", appURL, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", simARMBearer)
+	delResp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	delBody, _ := io.ReadAll(delResp.Body)
+	delResp.Body.Close()
+
+	require.Equal(t, 202, delResp.StatusCode, "DELETE must be a 202 LRO: %s", delBody)
+	assert.Empty(t, delBody, "a 202 DELETE response has no body")
+
+	opURL := delResp.Header.Get("Azure-AsyncOperation")
+	locURL := delResp.Header.Get("Location")
+	require.NotEmpty(t, opURL, "Azure-AsyncOperation header required on a 202 DELETE")
+	require.NotEmpty(t, locURL, "Location header required on a 202 DELETE")
+	assert.True(t, strings.HasPrefix(opURL, "http"), "Azure-AsyncOperation must be an absolute URL: %s", opURL)
+	assert.True(t, strings.HasPrefix(locURL, "http"), "Location must be an absolute URL: %s", locURL)
+	assert.Contains(t, opURL, "/providers/Microsoft.App/locations/", "operation URL follows ARM conventions")
+	assert.Contains(t, opURL, "/operationStatuses/")
+	assert.Contains(t, locURL, "/operationResults/")
+	assert.NotEmpty(t, delResp.Header.Get("Retry-After"))
+
+	// The operation-status envelope carries id/name/status and settles to
+	// Succeeded.
+	var envelope struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		opReq, err := http.NewRequest("GET", opURL, nil)
+		require.NoError(t, err)
+		opReq.Header.Set("Authorization", simARMBearer)
+		opResp, err := http.DefaultClient.Do(opReq)
+		require.NoError(t, err)
+		opBytes, _ := io.ReadAll(opResp.Body)
+		opResp.Body.Close()
+		require.Equal(t, 200, opResp.StatusCode, "operation status response: %s", opBytes)
+		require.NoError(t, json.Unmarshal(opBytes, &envelope))
+		require.NotEmpty(t, envelope.Name, "operation envelope must carry name")
+		require.Contains(t, envelope.ID, "/operationStatuses/", "operation envelope must carry its ARM id")
+		if envelope.Status == "Succeeded" {
+			break
+		}
+		require.Equal(t, "InProgress", envelope.Status)
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.Equal(t, "Succeeded", envelope.Status, "delete operation must settle to Succeeded")
+
+	// After the operation succeeds the resource is gone.
+	getReq, err := http.NewRequest("GET", appURL, nil)
+	require.NoError(t, err)
+	getReq.Header.Set("Authorization", simARMBearer)
+	getResp, err := http.DefaultClient.Do(getReq)
+	require.NoError(t, err)
+	getResp.Body.Close()
+	assert.Equal(t, 404, getResp.StatusCode, "GET after a completed delete must be 404")
+}

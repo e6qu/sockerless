@@ -28,6 +28,7 @@ interface ConsoleConfig {
 
 let configPromise: Promise<ConsoleConfig> | null = null;
 let cachedCreds: { value: AwsCredentials; expiresAt: number } | null = null;
+let inflightCreds: Promise<AwsCredentials> | null = null;
 
 async function consoleConfig(): Promise<ConsoleConfig> {
   if (!configPromise) {
@@ -44,11 +45,26 @@ function xmlText(xml: Document, tag: string): string {
 }
 
 async function federatedCredentials(config: ConsoleConfig): Promise<AwsCredentials> {
-  const now = Date.now();
-  if (cachedCreds && cachedCreds.expiresAt - 60_000 > now) {
+  if (cachedCreds && cachedCreds.expiresAt - 60_000 > Date.now()) {
     return cachedCreds.value;
   }
+  // One in-flight exchange: a console render fires many signed reads at
+  // once, and without deduplication each would start its own
+  // AssumeRoleWithWebIdentity exchange before the first response lands in
+  // cachedCreds.
+  if (inflightCreds) {
+    return inflightCreds;
+  }
+  inflightCreds = assumeFederatedCredentials(config);
+  try {
+    return await inflightCreds;
+  } finally {
+    inflightCreds = null;
+  }
+}
 
+async function assumeFederatedCredentials(config: ConsoleConfig): Promise<AwsCredentials> {
+  const now = Date.now();
   const subjectResponse = await fetch(config.federationSubject!, { credentials: "include" });
   if (!subjectResponse.ok) {
     throw new Error(`could not read the operator assertion: HTTP ${subjectResponse.status}`);

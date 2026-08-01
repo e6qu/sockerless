@@ -60,7 +60,9 @@ func TestIntegration_ACAJobLifecycle(t *testing.T) {
 	assert.Equal(t, "Stopped", execProps["status"])
 	assert.NotEmpty(t, execProps["endTime"])
 
-	// 8. Delete job
+	// 8. Delete job — ARM DELETE is a 202 long-running operation with the
+	// LRO headers; the job stays observable in provisioningState=Deleting
+	// until the operation completes.
 	delReq, _ := http.NewRequestWithContext(ctx, "DELETE",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
 		nil)
@@ -68,17 +70,28 @@ func TestIntegration_ACAJobLifecycle(t *testing.T) {
 	delResp, err := http.DefaultClient.Do(delReq)
 	require.NoError(t, err)
 	delResp.Body.Close()
-	require.Equal(t, http.StatusOK, delResp.StatusCode)
+	require.Equal(t, http.StatusAccepted, delResp.StatusCode)
+	require.NotEmpty(t, delResp.Header.Get("Azure-AsyncOperation"))
 
-	// 9. Verify 404 after delete
+	// 9. Verify 404 once the delete operation completes — poll like a real
+	// ARM client.
 	getReq, _ := http.NewRequestWithContext(ctx, "GET",
 		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
 		nil)
 	getReq.Header.Set("Authorization", simARMBearer)
-	getResp, err := http.DefaultClient.Do(getReq)
-	require.NoError(t, err)
-	getResp.Body.Close()
-	assert.Equal(t, http.StatusNotFound, getResp.StatusCode)
+	deadline := time.Now().Add(10 * time.Second)
+	status := 0
+	for time.Now().Before(deadline) {
+		getResp, err := http.DefaultClient.Do(getReq)
+		require.NoError(t, err)
+		getResp.Body.Close()
+		status = getResp.StatusCode
+		if status == http.StatusNotFound {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	assert.Equal(t, http.StatusNotFound, status)
 }
 
 func TestIntegration_AzureFunctionsLifecycle(t *testing.T) {

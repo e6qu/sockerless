@@ -178,6 +178,12 @@ services:
     depends_on:
       shauth:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4566/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
     volumes:
       - caddy-data:/caddy-data:ro
       - simulator-aws-data:/var/lib/sockerless/aws
@@ -211,6 +217,12 @@ services:
     depends_on:
       shauth:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4567/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
     volumes:
       - caddy-data:/caddy-data:ro
       - simulator-gcp-data:/var/lib/sockerless/gcp
@@ -232,6 +244,12 @@ services:
       # identity credential's client_assertion means fetching Shauth's real
       # discovery document/JWKS through caddy the same way.
       SSL_CERT_FILE: /caddy-data/caddy/pki/authorities/local/root.crt
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4568/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
     volumes:
       - caddy-data:/caddy-data:ro
       - simulator-azure-data:/var/lib/sockerless/azure
@@ -261,7 +279,13 @@ services:
       shauth:
         condition: service_started
       simulator-azure-cloud:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4568/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
     networks:
       default: {}
 
@@ -286,11 +310,11 @@ services:
       sockerless-admin:
         condition: service_started
       simulator-aws:
-        condition: service_started
+        condition: service_healthy
       simulator-gcp:
-        condition: service_started
+        condition: service_healthy
       simulator-azure-cloud:
-        condition: service_started
+        condition: service_healthy
     networks:
       default:
         aliases:

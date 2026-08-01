@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -45,12 +46,17 @@ func iamEnforce(w http.ResponseWriter, r *http.Request) bool {
 	if iamPermissionlessAction(action) {
 		return true // calls AWS authorizes for every caller regardless of policy
 	}
-	allowed, principalArn, registered := iamAuthorize(r, action, iamResourceARNForRequest(r, action))
-	if !registered || allowed {
-		return true // unknown/test credential (permissive) or an allowed action
+	for _, resource := range iamResourceARNsForRequest(r, action) {
+		allowed, principalArn, registered := iamAuthorize(r, action, resource)
+		if !registered {
+			return true // unknown/test credential — permissive
+		}
+		if !allowed {
+			iamWriteDeny(w, r, principalArn, action)
+			return false
+		}
 	}
-	iamWriteDeny(w, r, principalArn, action)
-	return false
+	return true
 }
 
 // iamAuthorize is the shared authorization core used by both the control-plane
@@ -220,12 +226,15 @@ func iamPermissionlessAction(action string) bool {
 	return false
 }
 
-// iamResourceARNForRequest derives the request's target resource ARN where it
-// is unambiguously available from the request parameters (so resource-scoped
-// policies and resource-based policies evaluate against the real resource). It
-// returns "*" when the resource can't be determined from the request alone —
-// the conservative default that never over-denies.
-func iamResourceARNForRequest(r *http.Request, action string) string {
+// iamResourceARNsForRequest derives the request's target resource ARNs where
+// they are unambiguously available from the request parameters (so
+// resource-scoped policies and resource-based policies evaluate against the
+// real resources). Most operations target one resource; DynamoDB transactions
+// and batches target every referenced table, and AWS authorizes each item
+// against its own table ARN, so all of them must be allowed. It returns
+// ["*"] when the resource can't be determined from the request alone — the
+// conservative default that never over-denies.
+func iamResourceARNsForRequest(r *http.Request, action string) []string {
 	service := strings.SplitN(action, ":", 2)[0]
 	region := iamRequestedRegion(r)
 	if region == "" {
@@ -235,62 +244,109 @@ func iamResourceARNForRequest(r *http.Request, action string) string {
 	arn := func(svc, resource string) string {
 		return "arn:aws:" + svc + ":" + region + ":" + acct + ":" + resource
 	}
+	one := func(s string) []string { return []string{s} }
 	switch service {
 	case "sns":
 		if a := r.FormValue("TopicArn"); a != "" {
-			return a
+			return one(a)
 		}
 	case "sqs":
 		if u := r.FormValue("QueueUrl"); u != "" {
 			if i := strings.LastIndex(u, "/"); i >= 0 {
-				return arn("sqs", u[i+1:])
+				return one(arn("sqs", u[i+1:]))
 			}
 		}
 	case "ec2":
 		// EC2 resource ids come as request parameters (query protocol).
 		for param, kind := range map[string]string{"VolumeId": "volume", "SnapshotId": "snapshot", "InstanceId": "instance", "NetworkInterfaceId": "network-interface"} {
 			if id := iamFirstFormValue(r, param); id != "" {
-				return arn("ec2", kind+"/"+id)
+				return one(arn("ec2", kind+"/"+id))
 			}
 		}
 	case "dynamodb":
 		if name := iamJSONBodyField(r, "TableName"); name != "" {
-			return arn("dynamodb", "table/"+name)
+			return one(arn("dynamodb", "table/"+name))
+		}
+		// TransactWriteItems / TransactGetItems / BatchGetItem / BatchWriteItem
+		// carry their table references per item, not top-level.
+		if tables := iamDynamoDBRequestTables(r); len(tables) > 0 {
+			arns := make([]string, len(tables))
+			for i, t := range tables {
+				arns[i] = arn("dynamodb", "table/"+t)
+			}
+			return arns
 		}
 	case "lambda":
 		if name := iamLambdaResourceName(r); name != "" {
 			if strings.HasPrefix(name, "arn:") {
-				return name
+				return one(name)
 			}
-			return arn("lambda", "function:"+name)
+			return one(arn("lambda", "function:"+name))
 		}
 	case "kms":
 		if id := iamJSONBodyField(r, "KeyId"); id != "" {
 			if strings.HasPrefix(id, "arn:") {
-				return id
+				return one(id)
 			}
-			return arn("kms", "key/"+id)
+			return one(arn("kms", "key/"+id))
 		}
 	case "secretsmanager":
 		if id := iamJSONBodyField(r, "SecretId"); id != "" {
 			if strings.HasPrefix(id, "arn:") {
-				return id
+				return one(id)
 			}
-			return arn("secretsmanager", "secret:"+id)
+			return one(arn("secretsmanager", "secret:"+id))
 		}
 	case "states":
 		if a := iamJSONBodyField(r, "stateMachineArn"); a != "" {
-			return a
+			return one(a)
 		}
 	case "kinesis":
 		if name := iamJSONBodyField(r, "StreamName"); name != "" {
-			return arn("kinesis", "stream/"+name)
+			return one(arn("kinesis", "stream/"+name))
 		}
 		if a := iamJSONBodyField(r, "StreamARN"); a != "" {
-			return a
+			return one(a)
 		}
 	}
-	return "*"
+	return one("*")
+}
+
+// iamDynamoDBRequestTables returns the distinct table names referenced by a
+// DynamoDB transaction (TransactItems[i].Put/Update/Delete/ConditionCheck/Get
+// .TableName) or batch (RequestItems keyed by table name), sorted for a
+// deterministic evaluation order.
+func iamDynamoDBRequestTables(r *http.Request) []string {
+	body := iamRequestBody(r)
+	if len(body) == 0 {
+		return nil
+	}
+	var req struct {
+		TransactItems []map[string]struct {
+			TableName string `json:"TableName"`
+		} `json:"TransactItems"`
+		RequestItems map[string]json.RawMessage `json:"RequestItems"`
+	}
+	if json.Unmarshal(body, &req) != nil {
+		return nil
+	}
+	set := map[string]struct{}{}
+	for _, item := range req.TransactItems {
+		for _, op := range item {
+			if op.TableName != "" {
+				set[op.TableName] = struct{}{}
+			}
+		}
+	}
+	for name := range req.RequestItems {
+		set[name] = struct{}{}
+	}
+	tables := make([]string, 0, len(set))
+	for name := range set {
+		tables = append(tables, name)
+	}
+	sort.Strings(tables)
+	return tables
 }
 
 // iamFirstFormValue returns a request parameter, also trying the `.1`-indexed
@@ -319,16 +375,26 @@ func iamLambdaResourceName(r *http.Request) string {
 	return ""
 }
 
-// iamJSONBodyField reads a top-level string field from an awsJson request body,
-// restoring the body so the downstream handler still sees it.
-func iamJSONBodyField(r *http.Request, field string) string {
+// iamRequestBody reads the full request body, restoring it so the downstream
+// handler still sees it.
+func iamRequestBody(r *http.Request) []byte {
 	if r.Body == nil {
-		return ""
+		return nil
 	}
 	body, err := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	if err != nil || len(body) == 0 {
+	if err != nil {
+		return nil
+	}
+	return body
+}
+
+// iamJSONBodyField reads a top-level string field from an awsJson request body,
+// restoring the body so the downstream handler still sees it.
+func iamJSONBodyField(r *http.Request, field string) string {
+	body := iamRequestBody(r)
+	if len(body) == 0 {
 		return ""
 	}
 	var m map[string]json.RawMessage

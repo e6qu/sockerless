@@ -100,10 +100,15 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	simPort := findFreePort()
 	backendPort := findFreePort()
 
-	// Start AWS simulator
+	// Start AWS simulator. The Route 53 endpoint serves one coordinate over
+	// both TCP and UDP; its default 5353 collides with mDNS listeners on
+	// developer hosts, so the harness assigns an operating-system-selected
+	// port.
 	fmt.Printf("Starting AWS simulator on :%d...\n", simPort)
 	simCmd := exec.Command(simBin)
-	simCmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort))
+	simCmd.Env = append(os.Environ(),
+		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort),
+		fmt.Sprintf("SIM_DNS_PORT=%d", findFreeTCPUDPPort()))
 	simCmd.Stdout = os.Stderr
 	simCmd.Stderr = os.Stderr
 	if err := simCmd.Start(); err != nil {
@@ -262,6 +267,27 @@ func findFreePort() int {
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 	return port
+}
+
+// findFreeTCPUDPPort reserves a coordinate that is free on both TCP and UDP,
+// for listeners (the AWS simulator's Route 53 DNS endpoint) that serve the
+// same port over both protocols.
+func findFreeTCPUDPPort() int {
+	for range 100 {
+		l, err := net.Listen("tcp", ":0")
+		if err != nil {
+			panic(err)
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		u, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+		l.Close()
+		if err != nil {
+			continue
+		}
+		u.Close()
+		return port
+	}
+	panic("no port free on both TCP and UDP after 100 attempts")
 }
 
 func waitForReady(url string, timeout time.Duration) error {

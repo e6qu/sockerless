@@ -2,6 +2,7 @@ package azure_cli_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -46,7 +47,17 @@ func TestContainerAppEnv_Delete(t *testing.T) {
 	runCLI(t, azRest("PUT", url, `{"location":"eastus","properties":{}}`))
 	runCLI(t, azRest("DELETE", url, ""))
 
-	cmd := azRest("GET", url, "")
-	_, err := cmd.CombinedOutput()
-	assert.Error(t, err, "Expected GET to fail after deletion")
+	// ARM DELETE is a 202 LRO: the environment stays observable in
+	// provisioningState=Deleting until the operation completes, then GET
+	// fails with 404. Poll like a real client.
+	deadline := time.Now().Add(10 * time.Second)
+	var err error
+	for time.Now().Before(deadline) {
+		_, err = azRest("GET", url, "").CombinedOutput()
+		if err != nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	assert.Error(t, err, "Expected GET to fail after the delete operation completes")
 }

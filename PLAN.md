@@ -110,6 +110,10 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 80. Kept Microsoft Azure Resource Manager deletion failures visible through concurrent Fluent UI backdrop events while preserving explicit Cancel and Escape dismissal.
 81. Upgraded the same-day AWS Lambda and IAM SDK release wave across the Lambda backend and official-client suite and passed the complete freshness audit.
 82. Gave the exhaustive local AWS SDK suite its own 30-minute package budget while preserving the independently bounded four-shard hosted execution.
+83. Derived per-item DynamoDB table ARNs for transactional and batch operations in call-time IAM enforcement, closing GitHub issue #870 with official AWS SDK and AWS CLI least-privilege regressions.
+84. Replaced ad-hoc Azure Container Apps PATCH merging with one shared RFC 7396 JSON Merge Patch helper and made app, job, and environment DELETEs true ARM long-running operations on the shared LRO store with 409 during deletion.
+85. Validated Google Cloud Run v2 update masks against the complete Discovery mutable field set — completing the Service and RevisionTemplate models — with member-wise `template.*` merging and 400 INVALID_ARGUMENT on unknown or output-only paths.
+86. Gated the deployment proxy on simulator `/health` checks, extended bounded cold-start retries and explicit 503 + Retry-After to every origin, bounded OpenID Connect discovery fetches in the federation and console-auth paths, and deduplicated concurrent console token exchanges, closing GitHub issue #853.
 
 ## Verified Next Gaps
 

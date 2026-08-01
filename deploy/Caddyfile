@@ -16,24 +16,61 @@
 	admin off
 }
 
+# Every origin gets the same cold-start treatment: keep the original request
+# pending across bounded connection retries while the backend binds its
+# listener (lb_try_duration/lb_try_interval), and turn a residual proxy
+# failure into an explicit 503 with Retry-After instead of a raw 502 that
+# dependents mistake for a broken deployment.
 https://{$SHAUTH_HOSTNAME}:{$CADDY_PORT} {
 	tls internal
-	reverse_proxy shauth:8080
+	reverse_proxy shauth:8080 {
+		lb_try_duration 10s
+		lb_try_interval 250ms
+	}
+	handle_errors 502 503 504 {
+		header Retry-After "5"
+		header Content-Type "text/plain; charset=utf-8"
+		respond "Shauth is starting; retry shortly." 503
+	}
 }
 
 https://{$ADMIN_HOSTNAME}:{$CADDY_PORT} {
 	tls internal
-	reverse_proxy sockerless-admin:9090
+	reverse_proxy sockerless-admin:9090 {
+		lb_try_duration 10s
+		lb_try_interval 250ms
+	}
+	handle_errors 502 503 504 {
+		header Retry-After "5"
+		header Content-Type "text/plain; charset=utf-8"
+		respond "The sockerless admin console is starting; retry shortly." 503
+	}
 }
 
 https://{$AWS_SIM_HOSTNAME}:{$CADDY_PORT} {
 	tls internal
-	reverse_proxy simulator-aws:4566
+	reverse_proxy simulator-aws:4566 {
+		lb_try_duration 10s
+		lb_try_interval 250ms
+	}
+	handle_errors 502 503 504 {
+		header Retry-After "5"
+		header Content-Type "text/plain; charset=utf-8"
+		respond "The AWS simulator is starting; retry shortly." 503
+	}
 }
 
 https://{$GCP_SIM_HOSTNAME}:{$CADDY_PORT} {
 	tls internal
-	reverse_proxy simulator-gcp:4567
+	reverse_proxy simulator-gcp:4567 {
+		lb_try_duration 10s
+		lb_try_interval 250ms
+	}
+	handle_errors 502 503 504 {
+		header Retry-After "5"
+		header Content-Type "text/plain; charset=utf-8"
+		respond "The Google Cloud simulator is starting; retry shortly." 503
+	}
 }
 
 # The Azure Resource Manager / Microsoft Graph / Azure Monitor data plane —
@@ -42,7 +79,15 @@ https://{$GCP_SIM_HOSTNAME}:{$CADDY_PORT} {
 # over TLS, so the simulator's stand-in does too.
 https://{$AZURE_CLOUD_SIM_HOSTNAME}:{$CADDY_PORT} {
 	tls internal
-	reverse_proxy simulator-azure-cloud:4568
+	reverse_proxy simulator-azure-cloud:4568 {
+		lb_try_duration 10s
+		lb_try_interval 250ms
+	}
+	handle_errors 502 503 504 {
+		header Retry-After "5"
+		header Content-Type "text/plain; charset=utf-8"
+		respond "The Microsoft Azure simulator is starting; retry shortly." 503
+	}
 }
 
 https://{$AZURE_CONSOLE_SIM_HOSTNAME}:{$CADDY_PORT} {

@@ -158,7 +158,7 @@ func handleACIContainerGroupPut(w http.ResponseWriter, r *http.Request) {
 			aciSetGroupProvisioning(stored, "Succeeded")
 		})
 	})
-	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.ContainerInstance", group.Location, "operationResults", opID, r.URL.Query().Get("api-version"))
+	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.ContainerInstance", group.Location, "operationStatuses", opID, r.URL.Query().Get("api-version"))
 	writeAzureAsyncCreateHeaders(w, opURL, azureCurrentRequestURL(r))
 	sim.WriteJSON(w, http.StatusCreated, group)
 }

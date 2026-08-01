@@ -136,6 +136,58 @@ func TestIAM_MintedKeyCallerIdentityAndWrongSecretCLI(t *testing.T) {
 	}
 }
 
+// TestIAM_DynamoDBTransactionsResourceScopedCLI proves `aws dynamodb
+// transact-write-items` works under the standard least-privilege pattern — a
+// policy whose Resource is one table's ARN — because the enforcement gate
+// derives table ARNs from TransactItems rather than a (missing) top-level
+// TableName (GitHub issue #870). A transaction touching an ungranted table is
+// denied AccessDeniedException.
+func TestIAM_DynamoDBTransactionsResourceScopedCLI(t *testing.T) {
+	for _, table := range []string{"cli-txn-scoped", "cli-txn-other"} {
+		runCLI(t, awsCLI("dynamodb", "create-table",
+			"--table-name", table,
+			"--billing-mode", "PAY_PER_REQUEST",
+			"--attribute-definitions", "AttributeName=id,AttributeType=S",
+			"--key-schema", "AttributeName=id,KeyType=HASH"))
+		table := table
+		t.Cleanup(func() { _ = awsCLI("dynamodb", "delete-table", "--table-name", table).Run() })
+	}
+
+	user := "cli-txn-scoped-user"
+	runCLI(t, awsCLI("iam", "create-user", "--user-name", user))
+	t.Cleanup(func() { _ = awsCLI("iam", "delete-user", "--user-name", user).Run() })
+	runCLI(t, awsCLI("iam", "put-user-policy", "--user-name", user,
+		"--policy-name", "one-table-txn",
+		"--policy-document", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow",`+
+			`"Action":["dynamodb:TransactWriteItems"],`+
+			`"Resource":["arn:aws:dynamodb:us-east-1:123456789012:table/cli-txn-scoped",`+
+			`"arn:aws:dynamodb:us-east-1:123456789012:table/cli-txn-scoped/index/*"]}]}`))
+	out := runCLI(t, awsCLI("iam", "create-access-key", "--user-name", user, "--output", "json"))
+	var ck struct {
+		AccessKey struct {
+			AccessKeyId     string `json:"AccessKeyId"`
+			SecretAccessKey string `json:"SecretAccessKey"`
+		} `json:"AccessKey"`
+	}
+	parseJSON(t, out, &ck)
+	t.Cleanup(func() {
+		_ = awsCLI("iam", "delete-access-key", "--user-name", user, "--access-key-id", ck.AccessKey.AccessKeyId).Run()
+	})
+
+	granted := awsCLI("dynamodb", "transact-write-items", "--transact-items",
+		`[{"Put":{"TableName":"cli-txn-scoped","Item":{"id":{"S":"txn-1"}}}}]`)
+	granted.Env = withCreds(granted.Env, ck.AccessKey.AccessKeyId, ck.AccessKey.SecretAccessKey)
+	runCLI(t, granted)
+
+	denied := awsCLI("dynamodb", "transact-write-items", "--transact-items",
+		`[{"Put":{"TableName":"cli-txn-other","Item":{"id":{"S":"txn-1"}}}}]`)
+	denied.Env = withCreds(denied.Env, ck.AccessKey.AccessKeyId, ck.AccessKey.SecretAccessKey)
+	deny := runCLIExpectError(t, denied)
+	if !strings.Contains(deny, "AccessDeniedException") {
+		t.Fatalf("transact-write-items on an ungranted table expected AccessDeniedException; got: %s", deny)
+	}
+}
+
 // withCreds replaces the AWS credential env entries so the CLI call is signed
 // with the given (restricted) access key.
 func withCreds(env []string, akid, secret string) []string {

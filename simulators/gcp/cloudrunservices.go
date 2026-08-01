@@ -102,72 +102,90 @@ func (e vpcEgressString) MarshalJSON() ([]byte, error) {
 // latestReadyRevision. Generation is encoded as a JSON string per
 // proto-JSON int64 rules.
 type ServiceV2 struct {
-	Name                  string            `json:"name"`
-	UID                   string            `json:"uid,omitempty"`
-	Generation            int64             `json:"generation,string,omitempty"`
-	Labels                map[string]string `json:"labels,omitempty"`
-	Annotations           map[string]string `json:"annotations,omitempty"`
-	CreateTime            string            `json:"createTime,omitempty"`
-	UpdateTime            string            `json:"updateTime,omitempty"`
-	LaunchStage           enumString        `json:"launchStage,omitempty"`
-	Ingress               enumString        `json:"ingress,omitempty"`
-	DefaultUriDisabled    bool              `json:"defaultUriDisabled,omitempty"`
-	Template              *RevisionTemplate `json:"template,omitempty"`
-	Traffic               []TrafficTarget   `json:"traffic,omitempty"`
-	TerminalCondition     *Condition        `json:"terminalCondition,omitempty"`
-	Conditions            []Condition       `json:"conditions,omitempty"`
-	LatestReadyRevision   string            `json:"latestReadyRevision,omitempty"`
-	LatestCreatedRevision string            `json:"latestCreatedRevision,omitempty"`
-	URI                   string            `json:"uri,omitempty"`
-	Reconciling           bool              `json:"reconciling,omitempty"`
+	Name                  string               `json:"name"`
+	UID                   string               `json:"uid,omitempty"`
+	Generation            int64                `json:"generation,string,omitempty"`
+	Labels                map[string]string    `json:"labels,omitempty"`
+	Annotations           map[string]string    `json:"annotations,omitempty"`
+	Description           string               `json:"description,omitempty"`
+	CreateTime            string               `json:"createTime,omitempty"`
+	UpdateTime            string               `json:"updateTime,omitempty"`
+	LaunchStage           enumString           `json:"launchStage,omitempty"`
+	Client                string               `json:"client,omitempty"`
+	ClientVersion         string               `json:"clientVersion,omitempty"`
+	Ingress               enumString           `json:"ingress,omitempty"`
+	DefaultUriDisabled    bool                 `json:"defaultUriDisabled,omitempty"`
+	InvokerIamDisabled    bool                 `json:"invokerIamDisabled,omitempty"`
+	IapEnabled            bool                 `json:"iapEnabled,omitempty"`
+	SshEnabled            bool                 `json:"sshEnabled,omitempty"`
+	CustomAudiences       []string             `json:"customAudiences,omitempty"`
+	BinaryAuthorization   *BinaryAuthorization `json:"binaryAuthorization,omitempty"`
+	Scaling               *ServiceScaling      `json:"scaling,omitempty"`
+	BuildConfig           *ServiceBuildConfig  `json:"buildConfig,omitempty"`
+	MultiRegionSettings   *MultiRegionSettings `json:"multiRegionSettings,omitempty"`
+	Template              *RevisionTemplate    `json:"template,omitempty"`
+	Traffic               []TrafficTarget      `json:"traffic,omitempty"`
+	TerminalCondition     *Condition           `json:"terminalCondition,omitempty"`
+	Conditions            []Condition          `json:"conditions,omitempty"`
+	LatestReadyRevision   string               `json:"latestReadyRevision,omitempty"`
+	LatestCreatedRevision string               `json:"latestCreatedRevision,omitempty"`
+	URI                   string               `json:"uri,omitempty"`
+	Reconciling           bool                 `json:"reconciling,omitempty"`
+}
+
+// ServiceScaling mirrors GoogleCloudRunV2ServiceScaling — service-level
+// scaling settings applied across revisions.
+type ServiceScaling struct {
+	MinInstanceCount    int32      `json:"minInstanceCount,omitempty"`
+	MaxInstanceCount    int32      `json:"maxInstanceCount,omitempty"`
+	ManualInstanceCount int32      `json:"manualInstanceCount,omitempty"`
+	ScalingMode         enumString `json:"scalingMode,omitempty"`
+}
+
+// ServiceBuildConfig mirrors GoogleCloudRunV2BuildConfig (the SDK type is
+// named BuildConfig; that spelling is taken by the Cloud Functions slice).
+type ServiceBuildConfig struct {
+	Name                   string            `json:"name,omitempty"`
+	SourceLocation         string            `json:"sourceLocation,omitempty"`
+	FunctionTarget         string            `json:"functionTarget,omitempty"`
+	ImageURI               string            `json:"imageUri,omitempty"`
+	BaseImage              string            `json:"baseImage,omitempty"`
+	EnableAutomaticUpdates bool              `json:"enableAutomaticUpdates,omitempty"`
+	WorkerPool             string            `json:"workerPool,omitempty"`
+	EnvironmentVariables   map[string]string `json:"environmentVariables,omitempty"`
+	ServiceAccount         string            `json:"serviceAccount,omitempty"`
+}
+
+// MultiRegionSettings mirrors GoogleCloudRunV2MultiRegionSettings.
+type MultiRegionSettings struct {
+	Regions       []string `json:"regions,omitempty"`
+	MultiRegionID string   `json:"multiRegionId,omitempty"`
 }
 
 // RevisionTemplate is the v2 Cloud Run revision template. Mirrors the
 // runpb.RevisionTemplate fields the backend's buildServiceSpec sets.
 type RevisionTemplate struct {
-	Labels      map[string]string `json:"labels,omitempty"`
-	Annotations map[string]string `json:"annotations,omitempty"`
-	Containers  []Container       `json:"containers,omitempty"`
-	Volumes     []Volume          `json:"volumes,omitempty"`
-	Scaling     *RevisionScaling  `json:"scaling,omitempty"`
-	VpcAccess   *VpcAccess        `json:"vpcAccess,omitempty"`
-	Timeout     string            `json:"timeout,omitempty"`
-}
-
-// mergeRevisionTemplate merges only the sub-paths of the template that
-// appear in the updateMask (e.g. "template.containers" replaces only
-// Containers, preserving Volumes, Scaling, etc.). The `has` closure
-// tests a dot-path against the mask fields.
-func mergeRevisionTemplate(existing, update *RevisionTemplate, has func(string) bool) *RevisionTemplate {
-	if existing == nil {
-		return update
-	}
-	if update == nil {
-		return existing
-	}
-	out := *existing
-	if has("template.containers") {
-		out.Containers = update.Containers
-	}
-	if has("template.volumes") {
-		out.Volumes = update.Volumes
-	}
-	if has("template.scaling") {
-		out.Scaling = update.Scaling
-	}
-	if has("template.vpcAccess") || has("template.vpc_access") {
-		out.VpcAccess = update.VpcAccess
-	}
-	if has("template.timeout") {
-		out.Timeout = update.Timeout
-	}
-	if has("template.labels") {
-		out.Labels = update.Labels
-	}
-	if has("template.annotations") {
-		out.Annotations = update.Annotations
-	}
-	return &out
+	Labels                        map[string]string `json:"labels,omitempty"`
+	Annotations                   map[string]string `json:"annotations,omitempty"`
+	Revision                      string            `json:"revision,omitempty"`
+	Containers                    []Container       `json:"containers,omitempty"`
+	Volumes                       []Volume          `json:"volumes,omitempty"`
+	Scaling                       *RevisionScaling  `json:"scaling,omitempty"`
+	VpcAccess                     *VpcAccess        `json:"vpcAccess,omitempty"`
+	Timeout                       string            `json:"timeout,omitempty"`
+	ServiceAccount                string            `json:"serviceAccount,omitempty"`
+	ExecutionEnvironment          enumString        `json:"executionEnvironment,omitempty"`
+	MaxInstanceRequestConcurrency int32             `json:"maxInstanceRequestConcurrency,omitempty"`
+	SessionAffinity               bool              `json:"sessionAffinity,omitempty"`
+	HealthCheckDisabled           bool              `json:"healthCheckDisabled,omitempty"`
+	EncryptionKey                 string            `json:"encryptionKey,omitempty"`
+	EncryptionKeyRevocationAction enumString        `json:"encryptionKeyRevocationAction,omitempty"`
+	EncryptionKeyShutdownDuration string            `json:"encryptionKeyShutdownDuration,omitempty"`
+	GpuZonalRedundancyDisabled    bool              `json:"gpuZonalRedundancyDisabled,omitempty"`
+	NodeSelector                  *NodeSelector     `json:"nodeSelector,omitempty"`
+	ServiceMesh                   *ServiceMesh      `json:"serviceMesh,omitempty"`
+	Client                        string            `json:"client,omitempty"`
+	ClientVersion                 string            `json:"clientVersion,omitempty"`
 }
 
 // RevisionScaling caps min/max instance counts for a Cloud Run service
@@ -744,50 +762,15 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		// fields into the existing service. A top-level mask like
 		// "template" replaces the whole template; a sub-path mask like
 		// "template.containers" replaces only that leaf, preserving the
-		// rest of the template. terraform-provider-google always sends
-		// a mask; an absent mask replaces all mutable fields.
+		// rest of the template. A mask naming an unknown or output-only
+		// field is rejected with 400 INVALID_ARGUMENT.
+		// terraform-provider-google always sends a mask; an absent mask
+		// replaces all mutable fields.
 		if mask := r.URL.Query().Get("updateMask"); mask != "" {
-			fields := strings.Split(mask, ",")
-			has := func(p string) bool {
-				for _, f := range fields {
-					f = strings.TrimSpace(f)
-					if f == p || strings.HasPrefix(f, p+".") {
-						return true
-					}
-				}
-				return false
-			}
-			exactHas := func(p string) bool {
-				for _, f := range fields {
-					if strings.TrimSpace(f) == p {
-						return true
-					}
-				}
-				return false
-			}
-			merged := existing
-			if exactHas("template") {
-				merged.Template = update.Template
-			} else if has("template") {
-				merged.Template = mergeRevisionTemplate(existing.Template, update.Template, has)
-			}
-			if has("labels") {
-				merged.Labels = update.Labels
-			}
-			if has("annotations") {
-				merged.Annotations = update.Annotations
-			}
-			if has("ingress") {
-				merged.Ingress = update.Ingress
-			}
-			if has("traffic") {
-				merged.Traffic = update.Traffic
-			}
-			if has("launchStage") || has("launch_stage") {
-				merged.LaunchStage = update.LaunchStage
-			}
-			if has("defaultUriDisabled") || has("default_uri_disabled") {
-				merged.DefaultUriDisabled = update.DefaultUriDisabled
+			merged, err := applyServiceUpdateMask(existing, update, mask)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+				return
 			}
 			update = merged
 		}

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -289,7 +290,9 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, env.wire())
 	})
 
-	// DELETE - Delete container app environment
+	// DELETE - Delete container app environment. Real Azure ARM returns 202
+	// Accepted with the LRO headers and an empty body for an existing
+	// environment and 204 No Content when it does not exist.
 	srv.HandleFunc("DELETE "+armBase+"/managedEnvironments/{envName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
@@ -297,13 +300,22 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
 			sub, rg, envName)
 
-		// Drop the backing Docker network when the env is removed.
-		if env, ok := environments.Get(resourceID); ok && env.DockerNetworkName != "" {
-			_ = sim.RemoveDockerNetwork(env.DockerNetworkName)
+		env, ok := environments.Get(resourceID)
+		if !ok {
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
-
-		environments.Delete(resourceID)
-		w.WriteHeader(http.StatusNoContent)
+		env.Properties.ProvisioningState = "Deleting"
+		environments.Put(resourceID, env)
+		opID := issueAzureAsyncOperation(func() {
+			// Drop the backing Docker network when the env is removed.
+			if env.DockerNetworkName != "" {
+				_ = sim.RemoveDockerNetwork(env.DockerNetworkName)
+			}
+			environments.Delete(resourceID)
+		})
+		acaAsyncOpHeaders(w, r, sub, env.Location, opID)
+		w.WriteHeader(http.StatusAccepted)
 	})
 
 	// PATCH - Update a managed environment. Real ACA models this as a
@@ -321,20 +333,25 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 				"Managed environment '%s' not found.", envName)
 			return
 		}
-		var req ContainerAppEnvironment
-		if err := sim.ReadJSON(r, &req); err != nil {
+		patch, err := io.ReadAll(r.Body)
+		if err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to read request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Merge over the ARM wire shape so sockerless-internal wiring (the
+		// backing Docker network) is neither patchable nor exposed.
+		merged := env.wire()
+		if err := applyARMMergePatch(&merged, patch); err != nil {
 			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.Tags != nil {
-			env.Tags = req.Tags
-		}
-		if req.Properties.AppLogsConfiguration != nil {
-			env.Properties.AppLogsConfiguration = req.Properties.AppLogsConfiguration
-		}
-		if req.Properties.WorkloadProfiles != nil {
-			env.Properties.WorkloadProfiles = req.Properties.WorkloadProfiles
-		}
+		// Identity and server-owned fields are not client-writable.
+		prior := env
+		env.Tags = merged.Tags
+		env.Properties = merged.Properties
+		env.Properties.ProvisioningState = prior.Properties.ProvisioningState
+		env.Properties.DefaultDomain = prior.Properties.DefaultDomain
+		env.Properties.StaticIp = prior.Properties.StaticIp
 		environments.Put(resourceID, env)
 		sim.WriteJSON(w, http.StatusOK, env.wire())
 	})

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -89,40 +90,6 @@ type ContainerAppSecret struct {
 	KeyVaultURL string `json:"keyVaultUrl,omitempty"` // external (operator-supplied): KV secret reference; ACA App runtime doesn't auto-resolve
 }
 
-// patchContainerAppConfig merges non-zero fields from src into dst.
-// This mirrors Azure ARM RFC-7396 JSON Merge Patch: fields the client
-// sends replace existing values; omitted fields are preserved.
-func patchContainerAppConfig(dst, src *ContainerAppConfig) {
-	if src.ActiveRevisionsMode != "" {
-		dst.ActiveRevisionsMode = src.ActiveRevisionsMode
-	}
-	if src.Ingress != nil {
-		dst.Ingress = src.Ingress
-	}
-	if src.Registries != nil {
-		dst.Registries = src.Registries
-	}
-	if src.Secrets != nil {
-		dst.Secrets = src.Secrets
-	}
-}
-
-// patchContainerAppTemplate merges non-zero fields from src into dst.
-func patchContainerAppTemplate(dst, src *ContainerAppTemplate) {
-	if src.Containers != nil {
-		dst.Containers = src.Containers
-	}
-	if src.InitContainers != nil {
-		dst.InitContainers = src.InitContainers
-	}
-	if src.Volumes != nil {
-		dst.Volumes = src.Volumes
-	}
-	if src.Scale != nil {
-		dst.Scale = src.Scale
-	}
-}
-
 // ContainerAppTemplate mirrors armappcontainers.Template.
 type ContainerAppTemplate struct {
 	Containers     []JobContainer     `json:"containers,omitempty"`
@@ -176,81 +143,54 @@ type CustomHostnameAnalysisResult struct {
 	AlternateTxtRecords                 []string `json:"alternateTxtRecords,omitempty"`
 }
 
-// AsyncOperationStatus is the response shape for a polled
-// Azure-AsyncOperation status URL — `{"status":"Succeeded","name":...}`
-// is what `armappcontainers` (and every azcore poller) reads.
-type AsyncOperationStatus struct {
-	Name      string `json:"name"`
-	Status    string `json:"status"` // InProgress / Succeeded / Failed
-	StartTime string `json:"startTime,omitempty"`
-	EndTime   string `json:"endTime,omitempty"`
-}
-
-// acaOps stores async-operation status keyed by opId. Initialized lazily
-// in registerContainerAppsApps + reused by registerContainerApps (Jobs).
-var acaOps sim.Store[AsyncOperationStatus]
 var acaApps sim.Store[ContainerApp]
 
 var acaAppReplicaHandles sync.Map // map[resourceID][]*sim.ContainerHandle
 
-// acaIssueAsyncOp records a new operation in the Creating→Succeeded
-// state machine. Returns the opId; the caller writes the
-// Azure-AsyncOperation header pointing at the polling URL. A goroutine
-// flips the op to Succeeded after the configured delay (compresses real
-// Azure's 30-60s reconcile window) — SDK pollers see the transition
-// without having to wait for a real-cloud-provisioning timeline.
-func acaIssueAsyncOp(loc string) string {
-	opID := generateUUID()
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	acaOps.Put(opID, AsyncOperationStatus{
-		Name:      opID,
-		Status:    "InProgress",
-		StartTime: now,
-	})
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		acaOps.Update(opID, func(o *AsyncOperationStatus) {
-			o.Status = "Succeeded"
-			o.EndTime = time.Now().UTC().Format(time.RFC3339Nano)
-		})
-	}()
-	return opID
+// stampContainerAppServerDefaults applies the defaults real ACA stamps
+// server-side on every write. terraform-provider-azurerm reads
+// properties.template.scale.cooldownPeriod (default 300) and pollingInterval
+// (default 30) and would otherwise drift to 0 on a post-apply plan; the
+// ingress FQDN and Single revisions mode are likewise server-populated.
+func stampContainerAppServerDefaults(app *ContainerApp, fqdn string) {
+	if app.Properties.Configuration != nil && app.Properties.Configuration.ActiveRevisionsMode == "" {
+		app.Properties.Configuration.ActiveRevisionsMode = "Single"
+	}
+	if app.Properties.Configuration != nil && app.Properties.Configuration.Ingress != nil {
+		app.Properties.Configuration.Ingress.Fqdn = fqdn
+	}
+	if app.Properties.Template == nil {
+		app.Properties.Template = &ContainerAppTemplate{}
+	}
+	if app.Properties.Template.Scale == nil {
+		app.Properties.Template.Scale = &ContainerAppScale{}
+	}
+	if app.Properties.Template.Scale.CooldownPeriod == nil {
+		cooldown := int32(300)
+		app.Properties.Template.Scale.CooldownPeriod = &cooldown
+	}
+	if app.Properties.Template.Scale.PollingInterval == nil {
+		polling := int32(30)
+		app.Properties.Template.Scale.PollingInterval = &polling
+	}
 }
 
-// acaAsyncOpHeader returns the Azure-AsyncOperation header value for a
-// given operation. Backend SDK pollers GET this URL until status=
-// Succeeded (or Failed), then do a final GET on the resource. The path
-// matches real ARM conventions for the Microsoft.App provider.
-func acaAsyncOpHeader(r *http.Request, sub, loc, opID string) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return fmt.Sprintf("%s://%s/subscriptions/%s/providers/Microsoft.App/locations/%s/operationStatuses/%s?api-version=2025-01-01",
-		scheme, r.Host, sub, loc, opID)
+// acaAsyncOpHeaders writes the ARM LRO response headers for a Microsoft.App
+// operation: Azure-AsyncOperation → the operationStatuses envelope URL,
+// Location → the operationResults URL, plus Retry-After. Both routes are
+// served by the shared ARM async-operation handler.
+func acaAsyncOpHeaders(w http.ResponseWriter, r *http.Request, sub, loc, opID string) {
+	apiVersion := r.URL.Query().Get("api-version")
+	writeAzureAsyncCreateHeaders(w,
+		azureAsyncOperationHeader(r, sub, "Microsoft.App", loc, "operationStatuses", opID, apiVersion),
+		azureAsyncOperationHeader(r, sub, "Microsoft.App", loc, "operationResults", opID, apiVersion))
 }
 
 func registerContainerAppsApps(srv *sim.Server) {
 	apps := sim.MakeStore[ContainerApp](srv.DB(), "aca_apps")
 	acaApps = apps
-	acaOps = sim.MakeStore[AsyncOperationStatus](srv.DB(), "aca_ops")
 
 	const basePath = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App"
-
-	// Operation status endpoint — Azure-AsyncOperation header points
-	// here. SDK pollers GET this URL with the api-version query param;
-	// we match real ARM by ignoring the api-version on read.
-	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.App/locations/{location}/operationStatuses/{opId}",
-		func(w http.ResponseWriter, r *http.Request) {
-			opID := sim.PathParam(r, "opId")
-			op, ok := acaOps.Get(opID)
-			if !ok {
-				sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
-					"Operation %q not found.", opID)
-				return
-			}
-			sim.WriteJSON(w, http.StatusOK, op)
-		})
 
 	// PUT - Create or update containerApp
 	srv.HandleFunc("PUT "+basePath+"/containerApps/{appName}", func(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +210,11 @@ func registerContainerAppsApps(srv *sim.Server) {
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
 		existing, exists := apps.Get(resourceID)
+		if exists && existing.Properties.ProvisioningState == "Deleting" {
+			sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+				"Container app '%s' is being deleted and cannot be updated until the delete operation completes.", name)
+			return
+		}
 
 		// Real ACA: PUT returns 201 Created with provisioningState=Creating
 		// + an Azure-AsyncOperation header pointing at an
@@ -328,33 +273,7 @@ func registerContainerAppsApps(srv *sim.Server) {
 			},
 			SystemData: systemData,
 		}
-		if app.Properties.Configuration != nil && app.Properties.Configuration.ActiveRevisionsMode == "" {
-			app.Properties.Configuration.ActiveRevisionsMode = "Single"
-		}
-		if app.Properties.Configuration != nil && app.Properties.Configuration.Ingress != nil {
-			app.Properties.Configuration.Ingress.Fqdn = fqdn
-		}
-
-		// KEDA scale settings: terraform-provider-azurerm reads
-		// properties.template.scale.cooldownPeriod (default 300) and
-		// pollingInterval (default 30) and would otherwise drift to 0 on a
-		// post-apply plan. Real ACA stamps these defaults server-side even
-		// when the request omits the scale block, so ensure a Scale object
-		// exists with them populated.
-		if app.Properties.Template == nil {
-			app.Properties.Template = &ContainerAppTemplate{}
-		}
-		if app.Properties.Template.Scale == nil {
-			app.Properties.Template.Scale = &ContainerAppScale{}
-		}
-		if app.Properties.Template.Scale.CooldownPeriod == nil {
-			cooldown := int32(300)
-			app.Properties.Template.Scale.CooldownPeriod = &cooldown
-		}
-		if app.Properties.Template.Scale.PollingInterval == nil {
-			polling := int32(30)
-			app.Properties.Template.Scale.PollingInterval = &polling
-		}
+		stampContainerAppServerDefaults(&app, fqdn)
 
 		if err := startACAAppReplicas(r.Context(), resourceID, app); err != nil {
 			sim.AzureErrorf(w, "ContainerAppRevisionFailed", http.StatusInternalServerError,
@@ -363,9 +282,9 @@ func registerContainerAppsApps(srv *sim.Server) {
 		}
 		apps.Put(resourceID, app)
 
-		// Set Azure-AsyncOperation so SDK pollers exercise the real flow.
-		opID := acaIssueAsyncOp(req.Location)
-		w.Header().Set("Azure-AsyncOperation", acaAsyncOpHeader(r, sub, req.Location, opID))
+		// Set the ARM LRO headers so SDK pollers exercise the real flow.
+		opID := issueAzureAsyncOperation(nil)
+		acaAsyncOpHeaders(w, r, sub, req.Location, opID)
 
 		if exists {
 			sim.WriteJSON(w, http.StatusOK, app)
@@ -434,8 +353,9 @@ func registerContainerAppsApps(srv *sim.Server) {
 	})
 
 	// DELETE - Delete containerApp. Real Azure ARM returns 202 Accepted
-	// with Azure-AsyncOperation + Location headers; the SDK poller follows
-	// the operation-status endpoint until Succeeded.
+	// with Azure-AsyncOperation + Location headers and an empty body; the
+	// resource stays observable in provisioningState=Deleting until the
+	// operation completes, then the final GET returns 404.
 	srv.HandleFunc("DELETE "+basePath+"/containerApps/{appName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
@@ -447,13 +367,17 @@ func registerContainerAppsApps(srv *sim.Server) {
 				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
 			return
 		}
-		apps.Delete(resourceID)
-		stopACAAppReplicas(resourceID)
-		opID := acaIssueAsyncOp(app.Location)
-		w.Header().Set("Azure-AsyncOperation", acaAsyncOpHeader(r, sub, app.Location, opID))
-		w.Header().Set("Location", resourceID)
-		app.Properties.ProvisioningState = "Succeeded"
-		sim.WriteJSON(w, http.StatusAccepted, app)
+		app.Properties.ProvisioningState = "Deleting"
+		apps.Put(resourceID, app)
+		opID := issueAzureAsyncOperation(func() {
+			// A concurrent PUT is rejected with 409 while the state is
+			// Deleting, so the record present here is still the one this
+			// operation owns.
+			apps.Delete(resourceID)
+			stopACAAppReplicas(resourceID)
+		})
+		acaAsyncOpHeaders(w, r, sub, app.Location, opID)
+		w.WriteHeader(http.StatusAccepted)
 	})
 
 	// GET - List containerApps by subscription. ARM exposes a
@@ -488,32 +412,30 @@ func registerContainerAppsApps(srv *sim.Server) {
 				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
 			return
 		}
+		if app.Properties.ProvisioningState == "Deleting" {
+			sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+				"Container app '%s' is being deleted and cannot be updated until the delete operation completes.", name)
+			return
+		}
 
-		var req ContainerApp
-		if err := sim.ReadJSON(r, &req); err != nil {
+		patch, err := io.ReadAll(r.Body)
+		if err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to read request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		prior := app
+		if err := applyARMMergePatch(&app, patch); err != nil {
 			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.Tags != nil {
-			if app.Tags == nil {
-				app.Tags = map[string]string{}
-			}
-			for k, v := range req.Tags {
-				app.Tags[k] = v
-			}
-		}
-		if req.Properties.Configuration != nil {
-			if app.Properties.Configuration == nil {
-				app.Properties.Configuration = &ContainerAppConfig{}
-			}
-			patchContainerAppConfig(app.Properties.Configuration, req.Properties.Configuration)
-		}
-		if req.Properties.Template != nil {
-			if app.Properties.Template == nil {
-				app.Properties.Template = &ContainerAppTemplate{}
-			}
-			patchContainerAppTemplate(app.Properties.Template, req.Properties.Template)
-		}
+		// Identity and server-owned fields are not client-writable.
+		app.ID, app.Name, app.Type, app.Location = prior.ID, prior.Name, prior.Type, prior.Location
+		app.SystemData = prior.SystemData
+		app.Properties.ProvisioningState = prior.Properties.ProvisioningState
+		app.Properties.LatestRevisionName = prior.Properties.LatestRevisionName
+		app.Properties.LatestReadyRevisionName = prior.Properties.LatestReadyRevisionName
+		app.Properties.LatestRevisionFqdn = prior.Properties.LatestRevisionFqdn
+		stampContainerAppServerDefaults(&app, prior.Properties.LatestRevisionFqdn)
 		if app.SystemData != nil {
 			app.SystemData.LastModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		}

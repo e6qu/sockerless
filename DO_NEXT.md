@@ -4,6 +4,21 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+Community-filed GitHub issues #870 and #853 closed alongside two staged
+contract gaps. The AWS call-time IAM gate derived per-item DynamoDB table
+ARNs for transactions and batches, so resource-scoped least-privilege
+policies authorized them. Azure Container Apps PATCH applied real RFC 7396
+JSON Merge Patch through one shared helper and its DELETEs became true ARM
+long-running operations on the shared LRO store, with 409 on writes during
+deletion; the unmodeled Configuration members remained tracked as BUG-2842.
+Google Cloud Run v2 update masks validated against the complete Discovery
+mutable field set and rejected unknown or output-only paths with 400
+INVALID_ARGUMENT instead of silently dropping them. The deployment recipe
+gated Caddy on simulator `/health` checks and answered residual proxy
+failures with 503 + Retry-After, while OpenID Connect discovery fetches in
+the federation and console-auth paths ran on a bounded background client and
+the console SPAs deduplicated concurrent token exchanges.
+
 A hosted services shard panicked after its real-workload assertions: a task-
 container-start goroutine launched by `runECSTasks` read the Elastic Load
 Balancing store after orderly shutdown had closed SQLite. Task startup now

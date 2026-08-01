@@ -151,47 +151,13 @@ func registerCloudRunInstancesV2(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
+		// A mask naming an unknown or output-only field is rejected with
+		// 400 INVALID_ARGUMENT, matching real Cloud Run v2.
 		if mask := r.URL.Query().Get("updateMask"); mask != "" {
-			merged := existing
-			has := func(p string) bool { return updateMaskHas(mask, p) }
-			if has("containers") {
-				merged.Containers = update.Containers
-			}
-			if has("volumes") {
-				merged.Volumes = update.Volumes
-			}
-			if has("labels") {
-				merged.Labels = update.Labels
-			}
-			if has("annotations") {
-				merged.Annotations = update.Annotations
-			}
-			if has("description") {
-				merged.Description = update.Description
-			}
-			if has("launchStage") || has("launch_stage") {
-				merged.LaunchStage = update.LaunchStage
-			}
-			if has("serviceAccount") || has("service_account") {
-				merged.ServiceAccount = update.ServiceAccount
-			}
-			if has("vpcAccess") || has("vpc_access") {
-				merged.VpcAccess = update.VpcAccess
-			}
-			if has("ingress") {
-				merged.Ingress = update.Ingress
-			}
-			if has("restartPolicy") || has("restart_policy") {
-				merged.RestartPolicy = update.RestartPolicy
-			}
-			if has("nodeSelector") || has("node_selector") {
-				merged.NodeSelector = update.NodeSelector
-			}
-			if has("binaryAuthorization") || has("binary_authorization") {
-				merged.BinaryAuthorization = update.BinaryAuthorization
-			}
-			if has("encryptionKey") || has("encryption_key") {
-				merged.EncryptionKey = update.EncryptionKey
+			merged, err := applyInstanceUpdateMask(existing, update, mask)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+				return
 			}
 			update = merged
 		}

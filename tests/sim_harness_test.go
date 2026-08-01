@@ -179,7 +179,12 @@ func startSimulator(binaryPath string, cloud string) (*simProcess, string, error
 
 	fmt.Printf("[sim] Starting simulator-%s on %s...\n", cloud, addr)
 	cmd := exec.Command(binaryPath)
-	cmd.Env = append(os.Environ(), "SIM_LISTEN_ADDR="+addr)
+	// The AWS simulator's Route 53 endpoint serves one coordinate over both
+	// TCP and UDP; its default 5353 collides with mDNS listeners on developer
+	// hosts, so the harness always assigns an operating-system-selected port.
+	cmd.Env = append(os.Environ(),
+		"SIM_LISTEN_ADDR="+addr,
+		fmt.Sprintf("SIM_DNS_PORT=%d", findFreeTCPUDPPort()))
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {

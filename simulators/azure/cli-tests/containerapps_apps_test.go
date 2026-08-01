@@ -57,17 +57,68 @@ func TestContainerAppsApps_CLI_CreateGetDelete(t *testing.T) {
 
 	runCLI(t, azRest("DELETE", appURL, ""))
 
-	// GET after delete should 404 — verify via raw HTTP since
+	// ARM DELETE is a 202 LRO: the app stays observable in
+	// provisioningState=Deleting until the operation completes, then GET
+	// returns 404. Poll like a real client — verify via raw HTTP since
 	// `az rest` exits non-zero on 404 and runCLI requires success.
 	req, err := http.NewRequest("GET", baseURL+"/subscriptions/"+subscriptionID+
 		"/resourceGroups/"+resourceGroup+
 		"/providers/Microsoft.App/containerApps/cli-test-app?api-version="+acaAPIVersion, nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+armBearer)
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	assert.Equal(t, 404, resp.StatusCode, "GET after delete must be 404")
+	deadline := time.Now().Add(10 * time.Second)
+	status := 0
+	for time.Now().Before(deadline) {
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		status = resp.StatusCode
+		if status == 404 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	assert.Equal(t, 404, status, "GET after the delete operation completes must be 404")
+}
+
+// TestContainerAppsApps_CLI_PatchMergeSemantics drives the RFC 7396 PATCH
+// contract over az rest: a null tag member deletes the tag, and a nested
+// scale patch merges member-wise instead of replacing the object.
+func TestContainerAppsApps_CLI_PatchMergeSemantics(t *testing.T) {
+	appURL := acaURL("containerApps/cli-patch-app")
+	body := `{
+		"location": "eastus",
+		"tags": { "keep": "kept", "drop": "doomed" },
+		"properties": {
+			"environmentId": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/managedEnvironments/sim-env",
+			"template": {
+				"containers": [{ "name": "main", "image": "alpine:latest" }],
+				"scale": { "minReplicas": 1, "maxReplicas": 5 }
+			}
+		}
+	}`
+	runCLI(t, azRest("PUT", appURL, body))
+	t.Cleanup(func() { _, _ = azRest("DELETE", appURL, "").CombinedOutput() })
+
+	out := runCLI(t, azRest("PATCH", appURL,
+		`{"tags":{"drop":null,"added":"new"},"properties":{"template":{"scale":{"minReplicas":2}}}}`))
+	var patched struct {
+		Tags       map[string]string `json:"tags"`
+		Properties struct {
+			Template struct {
+				Scale struct {
+					MinReplicas int `json:"minReplicas"`
+					MaxReplicas int `json:"maxReplicas"`
+				} `json:"scale"`
+			} `json:"template"`
+		} `json:"properties"`
+	}
+	parseJSON(t, out, &patched)
+	assert.Equal(t, map[string]string{"keep": "kept", "added": "new"}, patched.Tags,
+		"a null tag member in the merge patch must remove the tag")
+	assert.Equal(t, 2, patched.Properties.Template.Scale.MinReplicas)
+	assert.Equal(t, 5, patched.Properties.Template.Scale.MaxReplicas,
+		"patching scale.minReplicas must not discard scale.maxReplicas")
 }
 
 func TestContainerAppsApps_CLI_StartsRealReplicaAndLogs(t *testing.T) {
