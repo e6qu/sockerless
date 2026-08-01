@@ -88,24 +88,16 @@ type ContainerAppIdentitySettings struct {
 	Lifecycle string `json:"lifecycle,omitempty"`
 }
 
-// ContainerAppRuntime mirrors the Microsoft.App runtime configuration:
-// armappcontainers.Runtime carries the `java` member; `dotnet` is part of
-// the same `configuration.runtime` object in the Microsoft.App API
-// (api-version 2025-01-01) and round-trips for raw ARM clients.
+// ContainerAppRuntime mirrors armappcontainers.Runtime. Microsoft.App
+// api-version 2025-01-01 declares only the `java` member (`dotnet` exists
+// solely in newer preview api-versions the simulator does not serve).
 type ContainerAppRuntime struct {
-	Dotnet *ContainerAppRuntimeDotnet `json:"dotnet,omitempty"`
-	Java   *ContainerAppRuntimeJava   `json:"java,omitempty"`
+	Java *ContainerAppRuntimeJava `json:"java,omitempty"`
 }
 
 // ContainerAppRuntimeJava mirrors armappcontainers.RuntimeJava.
 type ContainerAppRuntimeJava struct {
 	EnableMetrics *bool `json:"enableMetrics,omitempty"`
-}
-
-// ContainerAppRuntimeDotnet mirrors the Microsoft.App
-// `configuration.runtime.dotnet` object.
-type ContainerAppRuntimeDotnet struct {
-	AutoConfigureDataProtection *bool `json:"autoConfigureDataProtection,omitempty"`
 }
 
 // ContainerAppService mirrors armappcontainers.Service — the dev

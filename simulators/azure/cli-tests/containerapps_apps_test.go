@@ -160,9 +160,8 @@ func TestContainerAppsApps_CLI_StartsRealReplicaAndLogs(t *testing.T) {
 
 // TestContainerAppsApps_CLI_ConfigurationRoundTrip drives every
 // configuration member — dapr, identitySettings, maxInactiveRevisions,
-// runtime (java + dotnet), and service — through az rest PUT/GET/PATCH,
-// pinning the raw ARM wire spelling of each member (dotnet is a raw-ARM
-// member the pinned Go SDK does not model, so this is its coverage).
+// runtime, and service — through az rest PUT/GET/PATCH, pinning the raw
+// ARM wire spelling of each member.
 func TestContainerAppsApps_CLI_ConfigurationRoundTrip(t *testing.T) {
 	appURL := acaURL("containerApps/cli-cfg-app")
 	body := `{
@@ -183,8 +182,7 @@ func TestContainerAppsApps_CLI_ConfigurationRoundTrip(t *testing.T) {
 					"logLevel": "debug"
 				},
 				"runtime": {
-					"java": { "enableMetrics": true },
-					"dotnet": { "autoConfigureDataProtection": true }
+					"java": { "enableMetrics": true }
 				},
 				"service": { "type": "redis" },
 				"identitySettings": [
@@ -213,9 +211,6 @@ func TestContainerAppsApps_CLI_ConfigurationRoundTrip(t *testing.T) {
 			Java struct {
 				EnableMetrics bool `json:"enableMetrics"`
 			} `json:"java"`
-			Dotnet struct {
-				AutoConfigureDataProtection bool `json:"autoConfigureDataProtection"`
-			} `json:"dotnet"`
 		} `json:"runtime"`
 		Service struct {
 			Type string `json:"type"`
@@ -244,7 +239,6 @@ func TestContainerAppsApps_CLI_ConfigurationRoundTrip(t *testing.T) {
 	assert.Equal(t, 8, cfg.Dapr.HTTPReadBufferSize)
 	assert.Equal(t, "debug", cfg.Dapr.LogLevel)
 	assert.True(t, cfg.Runtime.Java.EnableMetrics)
-	assert.True(t, cfg.Runtime.Dotnet.AutoConfigureDataProtection)
 	assert.Equal(t, "redis", cfg.Service.Type)
 	require.Len(t, cfg.IdentitySettings, 1)
 	assert.Contains(t, cfg.IdentitySettings[0].Identity, "/userAssignedIdentities/cli-identity")
@@ -268,7 +262,6 @@ func TestContainerAppsApps_CLI_ConfigurationRoundTrip(t *testing.T) {
 	assert.True(t, pcfg.Dapr.EnableAPILogging)
 	assert.Equal(t, 12, pcfg.MaxInactiveRevisions, "sibling configuration members must survive the merge")
 	assert.True(t, pcfg.Runtime.Java.EnableMetrics)
-	assert.True(t, pcfg.Runtime.Dotnet.AutoConfigureDataProtection)
 	assert.Equal(t, "redis", pcfg.Service.Type)
 	require.Len(t, pcfg.IdentitySettings, 1)
 }

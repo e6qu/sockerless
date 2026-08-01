@@ -29,9 +29,10 @@ ImageOptimization 404s now fall through to the declared fallback without
 breaking streaming, with route regexps compiled once at parse (BUG-2876).
 
 Azure Container Apps configuration completed (BUG-2842): dapr,
-identitySettings, maxInactiveRevisions, runtime (including the
-api-version member the pinned Go SDK does not yet model, covered through
-the CLI), and service round-trip at exact SDK wire spellings — and dapr
+identitySettings, maxInactiveRevisions, runtime, and service round-trip
+at exact SDK wire spellings — exactly the member set the vendored
+Microsoft.App 2025-01-01 swagger declares, verified by the runtime
+spec-shape validator — and dapr
 is a real runtime, not stored config: an enabled app's every replica gets
 the pinned daprd sidecar sharing its network namespace, flagged with the
 configured app-id/port/protocol/log settings, its stdout in the console
