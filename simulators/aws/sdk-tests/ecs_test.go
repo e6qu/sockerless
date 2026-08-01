@@ -1001,6 +1001,87 @@ func TestECS_TaskLogsToCloudWatch(t *testing.T) {
 	}, 30*time.Second, 250*time.Millisecond, "process stdout should reach CloudWatch logs; saw=%v", messages)
 }
 
+// TestECS_RunningTaskStreamsLogsLive proves the awslogs contract for a
+// long-running task: the container's stdout reaches its CloudWatch log
+// stream while the task is still RUNNING — real awslogs forwards each line
+// as it is produced, so a service task is observable without stopping it —
+// and the post-exit drain does not duplicate the lines the live stream
+// already delivered.
+func TestECS_RunningTaskStreamsLogsLive(t *testing.T) {
+	client, cluster, taskArn := ecsRunTaskHelper(t, "live-logs", ecstypes.ContainerDefinition{
+		Name:    aws.String("app"),
+		Image:   aws.String("alpine:latest"),
+		Command: []string{"sh", "-c", "echo live-line-from-running-task; tail -f /dev/null"},
+		LogConfiguration: &ecstypes.LogConfiguration{
+			LogDriver: ecstypes.LogDriverAwslogs,
+			Options: map[string]string{
+				"awslogs-group":         "/ecs/live-logs",
+				"awslogs-stream-prefix": "ecs",
+			},
+		},
+	})
+
+	cw := cwLogsClient()
+	countLiveLines := func() int {
+		streams, serr := cw.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
+			LogGroupName: aws.String("/ecs/live-logs"),
+		})
+		if serr != nil {
+			return 0
+		}
+		count := 0
+		for _, stream := range streams.LogStreams {
+			out, err := cw.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
+				LogGroupName:  aws.String("/ecs/live-logs"),
+				LogStreamName: stream.LogStreamName,
+			})
+			if err != nil {
+				continue
+			}
+			for _, e := range out.Events {
+				if *e.Message == "live-line-from-running-task" {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	// The application line must reach CloudWatch while the task runs.
+	require.Eventually(t, func() bool { return countLiveLines() >= 1 },
+		30*time.Second, 250*time.Millisecond,
+		"a running task's stdout must stream to CloudWatch before the task exits")
+
+	// The task is still RUNNING at the moment the line is observable.
+	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(cluster),
+		Tasks:   []string{taskArn},
+	})
+	require.NoError(t, err)
+	require.Len(t, descOut.Tasks, 1)
+	require.Equal(t, "RUNNING", aws.ToString(descOut.Tasks[0].LastStatus),
+		"the log line must be visible while the task is still RUNNING")
+
+	// Stop the task; the post-exit drain must not re-append the lines the
+	// live stream already delivered.
+	_, err = client.StopTask(ctx, &ecs.StopTaskInput{
+		Cluster: aws.String(cluster),
+		Task:    aws.String(taskArn),
+		Reason:  aws.String("live-log streaming regression complete"),
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		out, derr := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(cluster),
+			Tasks:   []string{taskArn},
+		})
+		return derr == nil && len(out.Tasks) == 1 && aws.ToString(out.Tasks[0].LastStatus) == "STOPPED"
+	}, 30*time.Second, 250*time.Millisecond, "task should stop")
+	assert.Never(t, func() bool { return countLiveLines() > 1 },
+		3*time.Second, 250*time.Millisecond,
+		"the post-exit drain must not duplicate lines the live stream delivered")
+}
+
 func TestECS_TaskNoCommandStaysRunning(t *testing.T) {
 	client, cluster, taskArn := ecsRunTaskHelper(t, "exec-nocmd", ecstypes.ContainerDefinition{
 		Name:    aws.String("app"),

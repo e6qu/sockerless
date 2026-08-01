@@ -756,6 +756,20 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 		_ = cli.ContainerKill(killCtx, containerID, "KILL")
 	}
 
+	// Stream logs live while the workload runs — the awslogs driver forwards
+	// each line to CloudWatch Logs as it is produced, so a long-running
+	// service task accumulates logs in near-real time instead of becoming
+	// visible only after it exits. The stream runs on a detached context so
+	// a caller-side cancel cannot truncate it before the exit drain below.
+	counting := &lineCountingSink{sink: sink, counts: map[string]int{}}
+	followCtx, followCancel := context.WithCancel(context.Background())
+	defer followCancel()
+	followDone := make(chan struct{})
+	go func() {
+		defer close(followDone)
+		followContainerLogs(followCtx, cli, containerID, counting)
+	}()
+
 	// Enforce timeout via a separate goroutine.
 	if cfg.Timeout > 0 {
 		go func() {
@@ -806,19 +820,87 @@ func waitAndCaptureLogs(ctx context.Context, cli *client.Client, containerID str
 		}
 	}
 
-	// Read the container's full log output via a single non-follow
-	// request. We deliberately do this AFTER ContainerWait instead of
-	// streaming live during execution: Docker's follow stream races
-	// with very short-lived containers (stdcopy sees EOF before all
-	// buffered output has been demuxed), and the sim's callers all
-	// wait for the container to finish before using the logs. Use a
-	// detached context with a generous timeout so any caller-side
-	// cancel doesn't interrupt the read mid-flight.
+	// The follow stream ends when the container exits; give it a bounded
+	// grace to deliver its tail, then release it.
+	select {
+	case <-followDone:
+	case <-time.After(10 * time.Second):
+		followCancel()
+		<-followDone
+	}
+
+	// Drain any remainder the follow stream did not deliver — it may have
+	// attached after a very short-lived container had already exited, or
+	// seen EOF before the final buffered lines were demuxed. Both reads
+	// walk the same per-stream log buffer in order, so skipping the lines
+	// the live stream already wrote appends exactly the missing tail
+	// without duplicating anything. Use a detached context with a generous
+	// timeout so any caller-side cancel doesn't interrupt the read.
 	readCtx, readCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer readCancel()
-	drainContainerLogs(readCtx, cli, containerID, sink)
+	drainContainerLogs(readCtx, cli, containerID, &lineSkippingSink{sink: sink, skip: counting.delivered()})
 
 	return result
+}
+
+// lineCountingSink forwards every line to the underlying sink while counting
+// deliveries per stream, so the post-exit drain can skip exactly the lines
+// the live follow stream already wrote.
+type lineCountingSink struct {
+	mu     sync.Mutex
+	sink   LogSink
+	counts map[string]int
+}
+
+func (s *lineCountingSink) WriteLog(line LogLine) {
+	s.mu.Lock()
+	s.counts[line.Stream]++
+	s.mu.Unlock()
+	s.sink.WriteLog(line)
+}
+
+// delivered snapshots the per-stream line counts. Call only after the follow
+// stream has finished.
+func (s *lineCountingSink) delivered() map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]int, len(s.counts))
+	for stream, n := range s.counts {
+		out[stream] = n
+	}
+	return out
+}
+
+// lineSkippingSink drops the first skip[stream] lines of each stream and
+// forwards the rest. Used from the single-goroutine post-exit drain.
+type lineSkippingSink struct {
+	sink LogSink
+	skip map[string]int
+}
+
+func (s *lineSkippingSink) WriteLog(line LogLine) {
+	if s.skip[line.Stream] > 0 {
+		s.skip[line.Stream]--
+		return
+	}
+	s.sink.WriteLog(line)
+}
+
+// followContainerLogs streams the container's demuxed log lines to sink as
+// they are produced; it returns when the container exits (Docker closes the
+// follow stream) or ctx is cancelled.
+func followContainerLogs(ctx context.Context, cli *client.Client, containerID string, sink LogSink) {
+	reader, err := cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Timestamps: false,
+	})
+	if err != nil {
+		return
+	}
+	defer reader.Close()
+	streamDockerLogs(reader, sink)
 }
 
 // drainContainerLogs reads the full container log via non-follow
