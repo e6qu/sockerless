@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2873 filed - 2871 fixed - 10 open - 16 false positives.**
+**2874 filed - 2872 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -25,6 +25,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2874~~ | P1 | Simulator test-harness health budgets | the six SDK/CLI harnesses waited at most 30 seconds (GCP/Azure effectively ~5s on connection-refused) for the simulator to become healthy, while registration's synchronous=FULL SQLite DDL alone measured ~25 seconds on a loaded hosted disk — the AWS CLI ECS shard died at startup | All six `waitForHealth` helpers share a 120-second wall-clock deadline with the DDL-phase rationale documented, still failing loudly with the last observed error. |
 | ~~2873~~ | P1 | CI - AWS CLI edge-delivery and appdata shards | both shards reached their measured 15-minute budget edge (14.4m), and a hosted edge-delivery run cancelled at exactly the job limit | AWS Glue (294s) and IAM (175s) moved into a dedicated `sim (aws cli glue-iam)` shard, returning all three jobs to roughly eleven minutes; the CLI shard-coverage gate still assigns all 665 tests exactly once across the ten shards. |
 | ~~2871~~ | P2 | Azure Container Registry run logs | `listLogSasUrl` advertised `/acr/v1/logs/{runId}` but no handler served it, and the docker build/push output was discarded on success | Runs capture their full build and push output into a durable `acr_run_logs` store and the advertised link serves it as a plain text blob, matching real ACR's log SAS contract. The ACR Tasks SDK test follows the emitted link. |
 | ~~2870~~ | P2 | Azure ARM long-running operations after restart | a persisted `InProgress` operation whose in-process completion timer died with the simulator stayed `InProgress` forever, hanging pollers | Registration flips stale persisted `InProgress` rows to `Failed` with an `OperationInterrupted` error member on the envelope (added `omitempty`, so successful responses are unchanged). |

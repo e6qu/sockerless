@@ -342,7 +342,11 @@ func shutdownSimulator(cmd *exec.Cmd) {
 
 func waitForHealth(url string) error {
 	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(30 * time.Second)
+	// Registration creates every persistent store table before the listener
+	// binds; with synchronous=FULL SQLite on a loaded hosted disk that DDL
+	// phase alone has measured ~25 seconds, so the budget covers it with
+	// headroom while still failing loudly.
+	deadline := time.Now().Add(120 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
