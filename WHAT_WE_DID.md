@@ -45,6 +45,14 @@ everything back — alongside store-reopen round-trips and recovery unit
 tests. The four remaining stateless key-regeneration surfaces are tracked
 as BUG-2872.
 
+The hosted run then cancelled the AWS CLI edge-delivery shard at exactly
+its 15-minute limit; a latency probe proved the live-stream change adds no
+per-container cost (~100ms for a short workload), and both that shard and
+appdata had already been at a measured 14.4-minute edge. AWS Glue and IAM
+moved into a dedicated `sim (aws cli glue-iam)` shard, returning all three
+jobs to roughly eleven minutes while the coverage gate still assigns all
+665 CLI tests exactly once.
+
 ## 2026-08-01 — Community-filed fidelity gaps across three sims and the deployment recipe
 
 Two community-filed issues and two staged contract gaps closed in one pass.

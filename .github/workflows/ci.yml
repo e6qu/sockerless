@@ -572,7 +572,14 @@ jobs:
             timeout: 1200s
             timeout_minutes: 15
           - suite: edge-delivery
-            run: '^Test(CloudFront|CloudTrail|CodeBuild|ELBv2|Firehose|Glue)'
+            run: '^Test(CloudFront|CloudTrail|CodeBuild|ELBv2|Firehose)'
+            timeout: 1200s
+            timeout_minutes: 15
+          # AWS Glue and IAM moved out of the edge-delivery and appdata shards
+          # after both jobs reached their measured 15-minute budget edge
+          # (14.4m); together they run well inside one shard's budget.
+          - suite: glue-iam
+            run: '^Test(Glue|IAM)'
             timeout: 1200s
             timeout_minutes: 15
           - suite: ec2-a-m
@@ -592,7 +599,7 @@ jobs:
             timeout: 1200s
             timeout_minutes: 15
           - suite: appdata
-            run: '^Test(CloudWatch|EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|Organizations|ResourceTags)'
+            run: '^Test(CloudWatch|EventBridge|Kinesis|KMS|Lambda|ElastiCache|Organizations|ResourceTags)'
             timeout: 1200s
             timeout_minutes: 15
           - suite: appdata2
