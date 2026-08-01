@@ -4,6 +4,18 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+GitHub issue #872 closed: workload container logs stream live to the cloud
+log sinks in all three simulators, with the post-exit drain deduplicated by
+per-stream line counts. A full cross-sim persistence audit then eliminated
+every found case of cloud state dying with the simulator process while its
+metadata persisted: bulk-data roots joined `SIM_DATA_DIR`, the in-memory
+Entra directory, Service Bus data plane, Spanner and Bigtable data planes
+moved to durable storage, the Azure store gained the AWS hidden-sidecar
+codec for wire-hidden fields, signing identities and counters persist, and
+workloads left RUNNING by a dead process settle truthfully at registration.
+Every simulator now carries an end-to-end restart regression suite. The
+four stateless key-regeneration surfaces remained tracked as BUG-2872.
+
 Community-filed GitHub issues #870 and #853 closed alongside two staged
 contract gaps. The AWS call-time IAM gate derived per-item DynamoDB table
 ARNs for transactions and batches, so resource-scoped least-privilege

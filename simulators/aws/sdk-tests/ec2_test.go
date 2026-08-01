@@ -344,13 +344,20 @@ func TestEC2_InstanceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	stopped, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 	require.NoError(t, err)
-	assert.Equal(t, types.InstanceStateNameStopped, stopped.Reservations[0].Instances[0].State.Name)
+	stoppedInstance := stopped.Reservations[0].Instances[0]
+	assert.Equal(t, types.InstanceStateNameStopped, stoppedInstance.State.Name)
+	assert.Contains(t, aws.ToString(stoppedInstance.StateTransitionReason), "User initiated")
+	require.NotNil(t, stoppedInstance.StateReason)
+	assert.Equal(t, "Client.UserInitiatedShutdown", aws.ToString(stoppedInstance.StateReason.Code))
 
 	_, err = client.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: []string{instanceID}})
 	require.NoError(t, err)
 	running, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 	require.NoError(t, err)
-	assert.Equal(t, types.InstanceStateNameRunning, running.Reservations[0].Instances[0].State.Name)
+	runningInstance := running.Reservations[0].Instances[0]
+	assert.Equal(t, types.InstanceStateNameRunning, runningInstance.State.Name)
+	assert.Empty(t, aws.ToString(runningInstance.StateTransitionReason))
+	assert.Nil(t, runningInstance.StateReason)
 
 	_, err = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{instanceID}})
 	require.NoError(t, err)

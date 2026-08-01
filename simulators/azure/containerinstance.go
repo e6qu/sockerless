@@ -72,12 +72,17 @@ var (
 	aciExecSessions    sync.Map
 	aciAttachSessions  sync.Map
 	aciLogMu           sync.Mutex
-	aciLogs            = map[string][]string{}
+	// aciLogs holds each container's log lines, keyed by runtime key. It is
+	// store-backed like the container groups themselves: real Azure serves a
+	// finished container's logs long after the platform restarts, so a
+	// SIM_PERSIST restart must not blank the Logs API while the group persists.
+	aciLogs sim.Store[[]string]
 )
 
 func registerContainerInstances(srv *sim.Server) {
 	aciContainerGroups = sim.MakeStore[ACIContainerGroup](srv.DB(), "aci_container_groups")
 	aciRuntimeRecords = sim.MakeStore[aciRuntimeRecord](srv.DB(), "aci_runtime_records")
+	aciLogs = sim.MakeStore[[]string](srv.DB(), "aci_container_logs")
 
 	const base = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerInstance/containerGroups"
 	srv.HandleFunc("PUT "+base+"/{containerGroupName}", handleACIContainerGroupPut)
@@ -277,9 +282,7 @@ func handleACIContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := aciRuntimeKey(id, containerName)
-	aciLogMu.Lock()
-	lines := append([]string(nil), aciLogs[key]...)
-	aciLogMu.Unlock()
+	lines, _ := aciLogs.Get(key)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"content": strings.Join(lines, "\n")})
 }
 
@@ -793,8 +796,11 @@ func aciStartGroupContainers(group ACIContainerGroup) error {
 		}
 		logKey := key
 		sink := sim.FuncSink(func(line sim.LogLine) {
+			// The append is a read-modify-write on the stored slice; the mutex
+			// keeps concurrent sink callbacks from dropping lines.
 			aciLogMu.Lock()
-			aciLogs[logKey] = append(aciLogs[logKey], line.Text)
+			lines, _ := aciLogs.Get(logKey)
+			aciLogs.Put(logKey, append(lines, line.Text))
 			aciLogMu.Unlock()
 		})
 		cfg := sim.ContainerConfig{

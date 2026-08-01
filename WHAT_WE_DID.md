@@ -4,6 +4,47 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-01 — Live log streaming and the cross-sim persistence sweep
+
+GitHub issue #872 closed: all three simulator container runtimes drained a
+workload's logs only after it exited, so a long-running ECS service task —
+and its Cloud Run and Container Apps siblings — was log-invisible while it
+ran. The runtimes now follow the Docker log stream live into the cloud
+sinks, and the post-exit drain skips exactly the per-stream line counts the
+live stream already delivered, so the short-lived-container EOF race stays
+covered without duplicating a single line. An ECS regression proves stdout
+reaches CloudWatch while the task is RUNNING and stays single after stop.
+
+A full persistence audit of all three simulators then closed every gap
+where cloud state died with the process despite `SIM_PERSIST=true` and the
+same storage attached. On AWS, the EFS, EBS, and Amplify-cache bulk-data
+roots moved under `SIM_DATA_DIR`, the SNS signing identity persists so
+delivered `SigningCertURL`s stay resolvable, and EC2 gained the recovery
+pass its ECS sibling already had — instances whose Firecracker VMs died
+report `stopped` with the real `stateReason` contract. On Google Cloud, GCS
+object bytes moved under the data dir, Spanner engines became real files
+with incremental DDL reconciliation, Bigtable rows persist (also fixing
+row resurrection after table recreation), the Compute operation registry,
+Pub/Sub snapshot backlogs, and resumable-upload sessions persist, the
+token-signing key survives restarts, and Cloud Run executions and Compute
+instances left RUNNING by a dead process settle truthfully. On Azure, the
+AWS hidden-sidecar codec was ported so stored types keep exported
+`json:"-"` state (Cosmos documents became query-reachable after restart;
+Files mounts, function names, Event Hubs creation times, and Entra secret
+hashes survive), the Entra directory and Service Bus messages moved from
+raw in-memory stores to SQLite, Cosmos consistency counters and Event Grid
+key generations persist (listKeys now returns rotated keys at all), ACI
+logs persist, the Azure Files content root moved under the data dir, auth
+signing keys and refresh tokens survive restarts, stale InProgress ARM
+operations settle Failed instead of hanging pollers, and ACR runs capture
+their real docker build/push output behind the advertised log link.
+
+Each simulator gained an end-to-end restart suite — write through real
+SDKs, SIGTERM the process, relaunch on the same data dir, and read
+everything back — alongside store-reopen round-trips and recovery unit
+tests. The four remaining stateless key-regeneration surfaces are tracked
+as BUG-2872.
+
 ## 2026-08-01 — Community-filed fidelity gaps across three sims and the deployment recipe
 
 Two community-filed issues and two staged contract gaps closed in one pass.

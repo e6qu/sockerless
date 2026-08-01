@@ -36,6 +36,12 @@ go build -o simulator-gcp .
 SIM_LISTEN_ADDR=:4567 ./simulator-gcp
 ```
 
+With `SIM_PERSIST=true`, `SIM_DATA_DIR` is the persistence root: the SQLite
+control-plane store plus the bulk-data roots that default beneath it —
+`<SIM_DATA_DIR>/gcs` (object bytes; `SIM_GCS_DATA_DIR` overrides) and
+`<SIM_DATA_DIR>/spanner` (file-backed database engines) — so payload bytes
+survive restarts alongside the metadata that describes them.
+
 ```bash
 # 2. Point any GCP client at it.
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_RUN=http://localhost:4567/

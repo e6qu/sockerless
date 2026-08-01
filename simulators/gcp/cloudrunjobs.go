@@ -467,6 +467,66 @@ func stopCloudRunJobProcesses(p *cloudRunJobProcesses) {
 // real Cloud Run. Unknown ops 404 instead of synthetic done=true.
 var crOperations sim.Store[Operation]
 
+// recoverCloudRunJobExecutions settles persisted executions that still claim
+// running tasks but whose workload process handles are absent. The processes a
+// Cloud Run Job execution runs die with the simulator process, so an execution
+// that was running before a control-plane restart can never complete on its
+// own; leaving it with runningCount > 0 would make clients poll forever.
+// Cloud Run reports such an execution as completed-failed (failedCount set,
+// completionTime stamped, terminal Completed condition CONDITION_FAILED), and
+// the sim does the same, with an honest message about the lost workload.
+func recoverCloudRunJobExecutions(jobs sim.Store[Job], executions sim.Store[Execution], tasks sim.Store[Task]) {
+	const message = "Workload containers not found after control-plane restart"
+	for _, exec := range executions.List() {
+		if exec.RunningCount == 0 {
+			continue
+		}
+		if _, ok := crjProcessHandles.Load(exec.Name); ok {
+			continue
+		}
+		completionTime := nowTimestamp()
+		transitioned := false
+		executions.Update(exec.Name, func(e *Execution) {
+			if e.RunningCount == 0 {
+				return
+			}
+			transitioned = true
+			e.CompletionTime = completionTime
+			e.FailedCount += e.RunningCount
+			e.RunningCount = 0
+			e.Conditions = []Condition{
+				{Type: "Ready", State: "CONDITION_FAILED", LastTransitionTime: completionTime, Message: message},
+				{Type: "Completed", State: "CONDITION_FAILED", LastTransitionTime: completionTime, Message: message},
+			}
+			e.Reconciling = false
+		})
+		if !transitioned {
+			continue
+		}
+		taskPrefix := exec.Name + "/tasks/"
+		for _, tk := range tasks.Filter(func(t Task) bool {
+			return strings.HasPrefix(t.Name, taskPrefix) && t.CompletionTime == ""
+		}) {
+			tasks.Update(tk.Name, func(t *Task) {
+				t.CompletionTime = completionTime
+				t.Conditions = []Condition{
+					{Type: "Started", State: "CONDITION_SUCCEEDED", LastTransitionTime: completionTime},
+					{Type: "Completed", State: "CONDITION_FAILED", LastTransitionTime: completionTime, Message: message},
+				}
+				t.Reconciling = false
+			})
+		}
+		if jobName, _, ok := strings.Cut(exec.Name, "/executions/"); ok {
+			jobs.Update(jobName, func(j *Job) {
+				if j.LatestCreatedExecution != nil && j.LatestCreatedExecution.Name == exec.Name && j.LatestCreatedExecution.CompletionTime == "" {
+					j.LatestCreatedExecution.CompletionTime = completionTime
+				}
+			})
+		}
+		fmt.Fprintf(os.Stderr, "[sim-cloudrun] execution %s: workload processes not found after control-plane restart; transitioned to failed\n", exec.Name)
+	}
+}
+
 func registerCloudRunJobs(srv *sim.Server) {
 	jobs := sim.MakeStore[Job](srv.DB(), "crj_jobs")
 	executions := sim.MakeStore[Execution](srv.DB(), "crj_executions")
@@ -474,6 +534,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 	if crOperations == nil {
 		crOperations = sim.MakeStore[Operation](srv.DB(), "operations")
 	}
+	recoverCloudRunJobExecutions(jobs, executions, tasks)
 
 	// Create job
 	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/jobs", func(w http.ResponseWriter, r *http.Request) {

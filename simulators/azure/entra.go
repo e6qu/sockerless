@@ -69,8 +69,12 @@ type EntraServicePrincipal struct {
 // EntraPasswordCredential is one client secret minted via addPassword. Real
 // Graph returns the secretText only on creation; subsequent reads carry the
 // metadata plus a three-character hint. The stored SecretHash (SHA-256 of the
-// secretText, never serialized) is what the v2.0 token endpoint validates —
-// real Microsoft Entra likewise stores only a derived verifier.
+// secretText) is what the v2.0 token endpoint validates — real Microsoft
+// Entra likewise stores only a derived verifier. Graph wire responses are
+// hand-built by entraPasswordCredentialJSON and never include the hash; the
+// json tag exists only so the nested hash persists inside the stored
+// application / service-principal records (the persistence sidecar covers
+// top-level json:"-" fields only).
 type EntraPasswordCredential struct {
 	KeyID         string `json:"keyId"`
 	DisplayName   string `json:"displayName,omitempty"`
@@ -78,17 +82,25 @@ type EntraPasswordCredential struct {
 	Hint          string `json:"hint,omitempty"`
 	StartDateTime string `json:"startDateTime,omitempty"`
 	EndDateTime   string `json:"endDateTime,omitempty"`
-	SecretHash    string `json:"-"`
+	SecretHash    string `json:"secretHash,omitempty"`
 }
 
+// The Entra directory stores are bound to the server's database in
+// registerEntra (and its application / service-principal sub-registrations),
+// so directory state — users, groups, memberships, app registrations, and
+// service principals with their credential hashes — survives a SIM_PERSIST
+// restart. registerEntra runs before any other service registration reads or
+// writes the directory (managed identities materialize service principals at
+// register time) and before the server accepts requests, so auth.go token
+// issuance always sees initialized stores.
 var (
-	entraUsersStore = sim.NewStateStore[EntraUser]()
+	entraUsersStore sim.Store[EntraUser]
 
-	entraGraphGroupStore      = sim.NewStateStore[EntraGraphGroup]()
-	entraGroupMembershipStore = sim.NewStateStore[entraGroupMembership]()
+	entraGraphGroupStore      sim.Store[EntraGraphGroup]
+	entraGroupMembershipStore sim.Store[entraGroupMembership]
 
-	entraApplicationStore      = sim.NewStateStore[EntraApplication]()
-	entraServicePrincipalStore = sim.NewStateStore[EntraServicePrincipal]()
+	entraApplicationStore      sim.Store[EntraApplication]
+	entraServicePrincipalStore sim.Store[EntraServicePrincipal]
 )
 
 // entraRegisterServicePrincipal records a service principal in the directory.
@@ -138,28 +150,35 @@ const (
 	entraBootstrapSPObjectID   = "00000000-0000-0000-0000-0000000000b2"
 )
 
-// init seeds the bootstrap application registration, its service principal,
-// and its client secret so the client_credentials grant is immediately usable
-// for entraBootstrapClientID — the same directory state an administrator
-// would provision once via the Certificates & secrets blade and the Enterprise
-// applications blade before handing the credential to automation.
-func init() {
-	hash := sha256.Sum256([]byte(entraBootstrapClientSecret))
-	now := time.Now().UTC()
-	entraApplicationStore.Put(entraBootstrapAppObjectID, EntraApplication{
-		ID:             entraBootstrapAppObjectID,
-		AppID:          entraBootstrapClientID,
-		DisplayName:    "Sockerless Bootstrap",
-		SignInAudience: "AzureADMyOrg",
-		PasswordCredentials: []EntraPasswordCredential{{
-			KeyID:         "00000000-0000-0000-0000-0000000000b3",
-			DisplayName:   "bootstrap",
-			StartDateTime: now.Format(time.RFC3339),
-			EndDateTime:   now.AddDate(10, 0, 0).Format(time.RFC3339),
-			SecretHash:    base64.RawStdEncoding.EncodeToString(hash[:]),
-		}},
-	})
-	entraRegisterServicePrincipal(entraBootstrapSPObjectID, entraBootstrapClientID, "Sockerless Bootstrap", "Application")
+// entraSeedBootstrap seeds the bootstrap application registration, its service
+// principal, and its client secret so the client_credentials grant is
+// immediately usable for entraBootstrapClientID — the same directory state an
+// administrator would provision once via the Certificates & secrets blade and
+// the Enterprise applications blade before handing the credential to
+// automation. Seeding is idempotent: a directory that already holds the
+// bootstrap rows (a persisted database on restart) keeps them untouched, so
+// credentials added to the bootstrap registration survive.
+func entraSeedBootstrap() {
+	if _, ok := entraApplicationStore.Get(entraBootstrapAppObjectID); !ok {
+		hash := sha256.Sum256([]byte(entraBootstrapClientSecret))
+		now := time.Now().UTC()
+		entraApplicationStore.Put(entraBootstrapAppObjectID, EntraApplication{
+			ID:             entraBootstrapAppObjectID,
+			AppID:          entraBootstrapClientID,
+			DisplayName:    "Sockerless Bootstrap",
+			SignInAudience: "AzureADMyOrg",
+			PasswordCredentials: []EntraPasswordCredential{{
+				KeyID:         "00000000-0000-0000-0000-0000000000b3",
+				DisplayName:   "bootstrap",
+				StartDateTime: now.Format(time.RFC3339),
+				EndDateTime:   now.AddDate(10, 0, 0).Format(time.RFC3339),
+				SecretHash:    base64.RawStdEncoding.EncodeToString(hash[:]),
+			}},
+		})
+	}
+	if _, ok := entraServicePrincipalStore.Get(entraBootstrapSPObjectID); !ok {
+		entraRegisterServicePrincipal(entraBootstrapSPObjectID, entraBootstrapClientID, "Sockerless Bootstrap", "Application")
+	}
 }
 
 // getEntraSimUser looks up a directory user by oid, falling back to the
@@ -223,6 +242,15 @@ func parseOIDFromBearer(r *http.Request) (string, bool) {
 }
 
 func registerEntra(srv *sim.Server) {
+	entraUsersStore = sim.MakeStore[EntraUser](srv.DB(), "entra_users")
+	entraGraphGroupStore = sim.MakeStore[EntraGraphGroup](srv.DB(), "entra_groups")
+	entraGroupMembershipStore = sim.MakeStore[entraGroupMembership](srv.DB(), "entra_group_memberships")
+
+	// Token-issuance state (RS256 signing key, refresh tokens) is directory
+	// state too — a restart must neither rotate the JWKS out from under
+	// live bearers nor invalidate issued refresh tokens.
+	registerAzureAuthState(srv)
+
 	// Microsoft Graph group management — standard provisioning surface.
 	// Real URL base: https://graph.microsoft.com/v1.0
 	srv.HandleFunc("POST /v1.0/groups", func(w http.ResponseWriter, r *http.Request) {
@@ -416,6 +444,7 @@ func registerEntra(srv *sim.Server) {
 
 	registerEntraApplications(srv)
 	registerEntraServicePrincipals(srv)
+	entraSeedBootstrap()
 
 	// Microsoft Graph delegated read endpoints.
 	// Real URL: https://graph.microsoft.com/v1.0/me/memberOf
@@ -429,6 +458,8 @@ func registerEntra(srv *sim.Server) {
 // registerEntraApplications mounts the Microsoft Graph application-registration
 // CRUD surface. Real URL base: https://graph.microsoft.com/v1.0/applications
 func registerEntraApplications(srv *sim.Server) {
+	entraApplicationStore = sim.MakeStore[EntraApplication](srv.DB(), "entra_applications")
+
 	srv.HandleFunc("POST /v1.0/applications", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			DisplayName    string `json:"displayName"`
@@ -555,6 +586,8 @@ func registerEntraApplications(srv *sim.Server) {
 // CRUD + addPassword surface. Real URL base:
 // https://graph.microsoft.com/v1.0/servicePrincipals
 func registerEntraServicePrincipals(srv *sim.Server) {
+	entraServicePrincipalStore = sim.MakeStore[EntraServicePrincipal](srv.DB(), "entra_service_principals")
+
 	srv.HandleFunc("POST /v1.0/servicePrincipals", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			AppID       string `json:"appId"`

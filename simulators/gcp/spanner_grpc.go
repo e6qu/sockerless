@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -99,6 +105,55 @@ type spannerPartitionRuntime struct {
 	read          *sppb.PartitionReadRequest
 }
 
+// spannerDataDir returns the directory holding file-backed Spanner engines,
+// or "" when the simulator runs without a data directory (engines are then
+// in-memory, matching the rest of the process-lifetime state).
+func spannerDataDir() string {
+	dir := os.Getenv("SIM_DATA_DIR")
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "spanner")
+}
+
+// spannerBackendFile derives the deterministic, filesystem-safe backing
+// filename for a database resource name: the name with every non-portable
+// rune replaced, plus a short digest of the original name so two names that
+// sanitize identically never share a file.
+func spannerBackendFile(dbName string) string {
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '.', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, dbName)
+	sum := sha256.Sum256([]byte(dbName))
+	return safe + "-" + hex.EncodeToString(sum[:8]) + ".db"
+}
+
+// The engine records how many of the database's DDL statements it has already
+// applied inside the engine itself, so a file-backed database reopened after a
+// restart does not re-run CREATE TABLE statements against its existing schema.
+func spannerReadAppliedDDLCount(db *sql.DB) (int, error) {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS _sockerless_applied_ddl (id INTEGER PRIMARY KEY CHECK (id = 0), count INTEGER NOT NULL)`); err != nil {
+		return 0, err
+	}
+	var n int
+	err := db.QueryRow(`SELECT count FROM _sockerless_applied_ddl WHERE id = 0`).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
+}
+
+func spannerWriteAppliedDDLCount(db *sql.DB, n int) error {
+	_, err := db.Exec(`INSERT OR REPLACE INTO _sockerless_applied_ddl (id, count) VALUES (0, ?)`, n)
+	return err
+}
+
 // spannerBackendFor returns the materialized SQLite backend for a database,
 // creating it and applying any pending DDL on first access. DDL statements
 // beyond what has already been applied are reconciled incrementally, mirroring
@@ -108,10 +163,20 @@ func spannerBackendFor(dbName string) (*spannerBackend, error) {
 	defer spannerBackendsMutex.Unlock()
 	b, ok := spannerBackends[dbName]
 	if !ok {
-		// In-memory DB. The unique shared cache name keeps each database
-		// isolated; modernc honors file::memory:?cache=shared semantics with a
-		// unique id so concurrent databases do not collide.
-		sqlDB, err := sql.Open("sqlite", "file:"+dbName+"?mode=memory&cache=shared")
+		// In-memory by default: the unique shared cache name keeps each
+		// database isolated; modernc honors file::memory:?cache=shared
+		// semantics with a unique id so concurrent databases do not collide.
+		// With a data directory the engine is a real file under
+		// <SIM_DATA_DIR>/spanner so committed rows survive a restart the way
+		// the SQLite-backed schema/session stores do.
+		dsn := "file:" + dbName + "?mode=memory&cache=shared"
+		if dir := spannerDataDir(); dir != "" {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, status.Errorf(codes.Internal, "create Spanner data dir for %s: %v", dbName, err)
+			}
+			dsn = "file:" + filepath.Join(dir, spannerBackendFile(dbName))
+		}
+		sqlDB, err := sql.Open("sqlite", dsn)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "open backing store for %s: %v", dbName, err)
 		}
@@ -119,7 +184,12 @@ func spannerBackendFor(dbName string) (*spannerBackend, error) {
 			_ = sqlDB.Close()
 			return nil, status.Errorf(codes.Internal, "ping backing store for %s: %v", dbName, err)
 		}
-		b = &spannerBackend{db: sqlDB}
+		applied, err := spannerReadAppliedDDLCount(sqlDB)
+		if err != nil {
+			_ = sqlDB.Close()
+			return nil, status.Errorf(codes.Internal, "read applied DDL count for %s: %v", dbName, err)
+		}
+		b = &spannerBackend{db: sqlDB, appliedDDLCount: applied}
 		spannerBackends[dbName] = b
 	}
 	b.mu.Lock()
@@ -138,8 +208,33 @@ func spannerBackendFor(dbName string) (*spannerBackend, error) {
 			return nil, status.Errorf(codes.InvalidArgument, "apply Cloud Spanner DDL %q: %v", stmt, err)
 		}
 		b.appliedDDLCount++
+		if err := spannerWriteAppliedDDLCount(b.db, b.appliedDDLCount); err != nil {
+			return nil, status.Errorf(codes.Internal, "record applied DDL for %s: %v", dbName, err)
+		}
 	}
 	return b, nil
+}
+
+// spannerDropBackend closes and discards a database's materialized engine and
+// removes its file backing, so DropDatabase releases the rows together with
+// the schema. An absent file (the database was never queried) is not an error.
+func spannerDropBackend(dbName string) error {
+	spannerBackendsMutex.Lock()
+	b := spannerBackends[dbName]
+	delete(spannerBackends, dbName)
+	spannerBackendsMutex.Unlock()
+	var errs []error
+	if b != nil {
+		b.mu.Lock()
+		errs = append(errs, b.db.Close())
+		b.mu.Unlock()
+	}
+	if dir := spannerDataDir(); dir != "" {
+		if err := os.Remove(filepath.Join(dir, spannerBackendFile(dbName))); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +301,9 @@ func spannerApplyDDLStatements(dbName string, statements []string) error {
 		return status.Errorf(codes.Internal, "commit Cloud Spanner schema update: %v", err)
 	}
 	b.appliedDDLCount += len(statements)
+	if err := spannerWriteAppliedDDLCount(b.db, b.appliedDDLCount); err != nil {
+		return status.Errorf(codes.Internal, "record applied DDL for %s: %v", dbName, err)
+	}
 	return nil
 }
 

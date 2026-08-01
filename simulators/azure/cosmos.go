@@ -13,8 +13,22 @@ import (
 )
 
 // cosmosETagSeq makes document ETags unique even within the same wall-clock
-// second, so optimistic-concurrency (If-Match) can distinguish two quick writes.
+// second, so optimistic-concurrency (If-Match) can distinguish two quick
+// writes. The sequence also orders the change feed, so each register function
+// whose store carries ETags raises the floor above every persisted sequence at
+// startup (cosmosRaiseETagFloor) — a change-feed continuation token issued
+// before a SIM_PERSIST restart must never observe the clock running backwards.
 var cosmosETagSeq atomic.Uint64
+
+// cosmosRaiseETagFloor lifts cosmosETagSeq to at least seq.
+func cosmosRaiseETagFloor(seq uint64) {
+	for {
+		cur := cosmosETagSeq.Load()
+		if seq <= cur || cosmosETagSeq.CompareAndSwap(cur, seq) {
+			return
+		}
+	}
+}
 
 // cosmosIfMatchOK reports whether the request's If-Match precondition is
 // satisfied against the current ETag (an absent header always passes).
@@ -101,6 +115,11 @@ func registerCosmosDB(srv *sim.Server) {
 	cosmosThroughputs = sim.MakeStore[CosmosThroughput](srv.DB(), "cosmos_throughputs")
 	cosmosDocs = sim.MakeStore[CosmosDocument](srv.DB(), "cosmos_documents")
 	cosmosDataColls = sim.MakeStore[CosmosDataColl](srv.DB(), "cosmos_data_collections")
+
+	cosmosInitSessionState(srv)
+	for _, d := range cosmosDocs.List() {
+		cosmosRaiseETagFloor(cosmosETagSeqOf(d.ETag))
+	}
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.DocumentDB/databaseAccounts"
 	srv.HandleFunc("PUT "+armBase+"/{account}", handleCosmosCreateAccount)

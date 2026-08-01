@@ -20,12 +20,43 @@ type AsyncOperationStatus struct {
 	Status    string `json:"status"` // InProgress / Succeeded / Failed
 	StartTime string `json:"startTime,omitempty"`
 	EndTime   string `json:"endTime,omitempty"`
+	// Error carries ARM's failed-operation error member
+	// (`{"error":{"code":...,"message":...}}`); present only on Failed
+	// operations, exactly as real Azure Resource Manager emits it.
+	Error *AsyncOperationError `json:"error,omitempty"`
+}
+
+// AsyncOperationError is the error member of a Failed ARM operation envelope.
+type AsyncOperationError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 var azureAsyncOps sim.Store[AsyncOperationStatus]
 
 func registerAzureAsyncOperations(srv *sim.Server) {
 	azureAsyncOps = sim.MakeStore[AsyncOperationStatus](srv.DB(), "azure_async_ops")
+	// An operation completes via an in-process goroutine, so a persisted row
+	// still InProgress after a restart can never complete — its goroutine died
+	// with the previous process. Real ARM fails an operation its backend lost
+	// rather than leaving pollers hanging forever; flip such rows to Failed
+	// with an error envelope saying so.
+	for _, op := range azureAsyncOps.List() {
+		if op.Status != "InProgress" {
+			continue
+		}
+		azureAsyncOps.Update(op.Name, func(stale *AsyncOperationStatus) {
+			if stale.Status != "InProgress" {
+				return
+			}
+			stale.Status = "Failed"
+			stale.EndTime = time.Now().UTC().Format(time.RFC3339Nano)
+			stale.Error = &AsyncOperationError{
+				Code:    "OperationInterrupted",
+				Message: "The operation was interrupted by a service restart before it completed and cannot be resumed. Retry the request.",
+			}
+		})
+	}
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/{provider}/locations/{location}/operationStatuses/{opId}", handleAzureAsyncOperationStatus)
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/{provider}/locations/{location}/operationResults/{opId}", handleAzureAsyncOperationStatus)
 }

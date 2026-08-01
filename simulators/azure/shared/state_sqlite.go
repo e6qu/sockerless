@@ -6,8 +6,94 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 	"sync"
 )
+
+const persistenceEnvelopeMagic = "SLP1"
+
+type persistenceEnvelope struct {
+	Data   json.RawMessage            `json:"data"`
+	Hidden map[string]json.RawMessage `json:"hidden,omitempty"`
+}
+
+// marshalPersistentValue keeps the resource's normal JSON representation
+// intact and stores exported json:"-" fields in a private sidecar. Simulator
+// resource structs also serve as Azure wire shapes, so internal source-of-truth
+// fields must remain hidden from API responses without disappearing from
+// SQLite. A field can opt out explicitly with persist:"-" when it is disposable
+// process coordination such as a channel.
+func marshalPersistentValue[T any](item T) ([]byte, error) {
+	data, err := json.Marshal(item)
+	if err != nil {
+		return nil, err
+	}
+	envelope := persistenceEnvelope{Data: data}
+	value := reflect.ValueOf(item)
+	for value.IsValid() && (value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer) {
+		if value.IsNil() {
+			break
+		}
+		value = value.Elem()
+	}
+	if value.IsValid() && value.Kind() == reflect.Struct {
+		typ := value.Type()
+		for i := 0; i < value.NumField(); i++ {
+			field := typ.Field(i)
+			if field.PkgPath != "" || field.Tag.Get("json") != "-" || field.Tag.Get("persist") == "-" {
+				continue
+			}
+			encoded, marshalErr := json.Marshal(value.Field(i).Interface())
+			if marshalErr != nil {
+				return nil, fmt.Errorf("marshal persistent field %s: %w", field.Name, marshalErr)
+			}
+			if envelope.Hidden == nil {
+				envelope.Hidden = make(map[string]json.RawMessage)
+			}
+			envelope.Hidden[field.Name] = encoded
+		}
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(persistenceEnvelopeMagic), encoded...), nil
+}
+
+func unmarshalPersistentValue[T any](data []byte, out *T) error {
+	if len(data) < len(persistenceEnvelopeMagic) ||
+		string(data[:len(persistenceEnvelopeMagic)]) != persistenceEnvelopeMagic {
+		// Databases written before persistence envelopes remain readable.
+		return json.Unmarshal(data, out)
+	}
+	var envelope persistenceEnvelope
+	if err := json.Unmarshal(data[len(persistenceEnvelopeMagic):], &envelope); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(envelope.Data, out); err != nil {
+		return err
+	}
+	value := reflect.ValueOf(out).Elem()
+	for value.IsValid() && (value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer) {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return nil
+	}
+	for name, encoded := range envelope.Hidden {
+		field := value.FieldByName(name)
+		if !field.IsValid() || !field.CanAddr() || !field.CanSet() {
+			continue
+		}
+		if err := json.Unmarshal(encoded, field.Addr().Interface()); err != nil {
+			return fmt.Errorf("unmarshal persistent field %s: %w", name, err)
+		}
+	}
+	return nil
+}
 
 // SQLiteStore is a persistent implementation of Store backed by SQLite.
 // Each instance maps to a single table with (key TEXT, value BLOB) schema.
@@ -50,14 +136,14 @@ func (s *SQLiteStore[T]) Get(id string) (T, bool) {
 		s.fatalDBErr("Get", id, err)
 	}
 	var v T
-	if err := json.Unmarshal(data, &v); err != nil {
+	if err := unmarshalPersistentValue(data, &v); err != nil {
 		s.fatalDBErr("Get unmarshal (corrupt row)", id, err)
 	}
 	return v, true
 }
 
 func (s *SQLiteStore[T]) Put(id string, item T) {
-	data, err := json.Marshal(item)
+	data, err := marshalPersistentValue(item)
 	if err != nil {
 		s.fatalDBErr("Put marshal", id, err)
 	}
@@ -98,7 +184,7 @@ func (s *SQLiteStore[T]) List() []T {
 			s.fatalDBErr("List scan", "", err)
 		}
 		var v T
-		if err := json.Unmarshal(data, &v); err != nil {
+		if err := unmarshalPersistentValue(data, &v); err != nil {
 			s.fatalDBErr("List unmarshal (corrupt row)", "", err)
 		}
 		result = append(result, v)
@@ -142,11 +228,11 @@ func (s *SQLiteStore[T]) Update(id string, fn func(*T)) bool {
 		s.fatalDBErr("Update read", id, err)
 	}
 	var v T
-	if err := json.Unmarshal(data, &v); err != nil {
+	if err := unmarshalPersistentValue(data, &v); err != nil {
 		s.fatalDBErr("Update unmarshal (corrupt row)", id, err)
 	}
 	fn(&v)
-	updated, err := json.Marshal(v)
+	updated, err := marshalPersistentValue(v)
 	if err != nil {
 		s.fatalDBErr("Update marshal", id, err)
 	}

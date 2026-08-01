@@ -13,7 +13,7 @@ Surface registered in `simulators/azure/files.go` (and related files grouped und
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/storageAccounts` | ✓ `simulators/azure/files.go:753::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/storageAccounts` | ✓ `simulators/azure/files.go:764::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /providers/Microsoft.Storage/operations` | ✓ `simulators/azure/storagearm.go:105::handleStorageOperationsList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/skus` | ✓ `simulators/azure/storagearm.go:106::handleStorageSkusList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /subscriptions/{subscriptionId}/providers/Microsoft.Storage/checknameavailability` | ✓ `simulators/azure/storagearm.go:109::handleStorageCheckNameAvailability` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |

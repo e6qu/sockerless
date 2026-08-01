@@ -91,10 +91,11 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 		return nil, err
 	}
 
-	// Generate the process-stable key every access-token minter signs with and
-	// the data-plane bearer middleware verifies against. Fails loud rather than
-	// serving unverifiable tokens.
-	if err := initAccessTokenSigner(); err != nil {
+	// Load or generate the key every access-token minter signs with and the
+	// data-plane bearer middleware verifies against. With persistence enabled
+	// the key survives restarts so pre-restart tokens stay verifiable. Fails
+	// loud rather than serving unverifiable tokens.
+	if err := initAccessTokenSigner(srv.DB()); err != nil {
 		return nil, err
 	}
 

@@ -434,6 +434,7 @@ func (c *sbAMQPConn) enqueue(address string, msg sbMessage) error {
 		st.nextSeq++
 		msg.SequenceNumber = st.nextSeq
 		st.messages = append(st.messages, msg)
+		st.persistLocked()
 		st.mu.Unlock()
 	}
 	return sbAMQPDeliverAvailableMessages(namespace, paths)
@@ -581,6 +582,7 @@ func (c *sbAMQPConn) popMessage(namespace, address string) ([]byte, bool) {
 	}
 	msg := st.messages[0]
 	st.messages = st.messages[1:]
+	st.persistLocked()
 	out := &amqp.Message{
 		DeliveryTag: []byte(generateUUID()),
 		Properties:  &amqp.MessageProperties{MessageID: msg.MessageID},

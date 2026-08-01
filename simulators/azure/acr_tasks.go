@@ -82,11 +82,26 @@ type acrDockerBuildRequest struct {
 }
 
 var acrRuns sim.Store[acrRun]
+var acrRunLogs sim.Store[string]
 var acrTasksLogger zerolog.Logger
 
 func registerACRTasks(srv *sim.Server) {
 	acrRuns = sim.MakeStore[acrRun](srv.DB(), "acr_runs")
+	acrRunLogs = sim.MakeStore[string](srv.DB(), "acr_run_logs")
 	acrTasksLogger = srv.Logger()
+
+	// The run-log endpoint listLogSasUrl advertises. Real ACR serves the
+	// build log as a plain text blob at a SAS-authorized URL; the sim's
+	// link carries the run id as the capability.
+	srv.HandleFunc("GET /acr/v1/logs/{runId}", func(w http.ResponseWriter, r *http.Request) {
+		log, ok := acrRunLogs.Get(sim.PathParam(r, "runId"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(log))
+	})
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerRegistry"
 	// scheduleRun / runs / the task-children action verbs are not in the
 	// path-normalization allowlist, so they are registered with the exact
@@ -248,7 +263,8 @@ func handleACRScheduleRun(w http.ResponseWriter, r *http.Request) {
 	// resource; the sim compresses that into the one call, exactly as the
 	// GCP Cloud Build slice does, so the SDK poller resolves on the first
 	// body read.
-	buildErr := executeACRBuild(r.Context(), req)
+	buildLog, buildErr := executeACRBuild(r.Context(), req)
+	acrRunLogs.Put(runID, buildLog)
 	run.Properties.FinishTime = time.Now().UTC().Format(time.RFC3339)
 	run.Properties.LastUpdatedTime = run.Properties.FinishTime
 	if buildErr != nil {
@@ -299,25 +315,29 @@ func dockerBuildxAvailable(ctx context.Context) bool {
 	return exec.CommandContext(ctx, "docker", "buildx", "version").Run() == nil
 }
 
-func executeACRBuild(ctx context.Context, req acrDockerBuildRequest) error {
+func executeACRBuild(ctx context.Context, req acrDockerBuildRequest) (string, error) {
+	var runLog strings.Builder
+	logf := func(format string, args ...any) {
+		fmt.Fprintf(&runLog, format+"\n", args...)
+	}
 	if len(req.ImageNames) == 0 {
-		return fmt.Errorf("imageNames is required")
+		return runLog.String(), fmt.Errorf("imageNames is required")
 	}
 	if req.SourceLocation == "" {
-		return fmt.Errorf("sourceLocation is required (only source-based DockerBuildRequest is supported)")
+		return runLog.String(), fmt.Errorf("sourceLocation is required (only source-based DockerBuildRequest is supported)")
 	}
 
 	account, container, blob, err := parseACRBlobURL(req.SourceLocation)
 	if err != nil {
-		return fmt.Errorf("parse sourceLocation: %w", err)
+		return runLog.String(), fmt.Errorf("parse sourceLocation: %w", err)
 	}
 	obj, ok := blobObjects.Get(blobObjectKey(account, container, blob))
 	if !ok {
-		return fmt.Errorf("source context blob %s/%s not found in storage account %s", container, blob, account)
+		return runLog.String(), fmt.Errorf("source context blob %s/%s not found in storage account %s", container, blob, account)
 	}
 
 	if _, err := exec.LookPath("docker"); err != nil {
-		return fmt.Errorf("docker CLI not available for ACR Tasks build: %w", err)
+		return runLog.String(), fmt.Errorf("docker CLI not available for ACR Tasks build: %w", err)
 	}
 
 	dockerfile := req.DockerFilePath
@@ -364,8 +384,10 @@ func executeACRBuild(ctx context.Context, req acrDockerBuildRequest) error {
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdin = bytes.NewReader(obj.Data)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("docker build %v failed: %w: %s", req.ImageNames, err, strings.TrimSpace(string(out)))
+	out, err := cmd.CombinedOutput()
+	runLog.Write(out)
+	if err != nil {
+		return runLog.String(), fmt.Errorf("docker build %v failed: %w: %s", req.ImageNames, err, strings.TrimSpace(string(out)))
 	}
 
 	// Push each tag to its registry and drop the local copy — the faithful
@@ -373,19 +395,22 @@ func executeACRBuild(ctx context.Context, req acrDockerBuildRequest) error {
 	// host. The image ref's host (e.g. the configured ACR endpoint) routes
 	// to the registry's /v2/; pushing is a plain registry-client operation.
 	if !req.IsPushEnabledOrDefault() {
-		return nil
+		return runLog.String(), nil
 	}
 	for _, img := range req.ImageNames {
+		logf("The push refers to repository [%s]", img)
 		push := exec.CommandContext(ctx, "docker", "push", img)
-		if out, err := push.CombinedOutput(); err != nil {
-			return fmt.Errorf("docker push %s failed: %w: %s", img, err, strings.TrimSpace(string(out)))
+		out, err := push.CombinedOutput()
+		runLog.Write(out)
+		if err != nil {
+			return runLog.String(), fmt.Errorf("docker push %s failed: %w: %s", img, err, strings.TrimSpace(string(out)))
 		}
 		if out, err := exec.CommandContext(ctx, "docker", "rmi", "-f", img).CombinedOutput(); err != nil {
 			acrTasksLogger.Warn().Str("image", img).Str("out", strings.TrimSpace(string(out))).
 				Msg("could not remove local ACR Task build output after push")
 		}
 	}
-	return nil
+	return runLog.String(), nil
 }
 
 // IsPushEnabledOrDefault reports whether the build output should be pushed.

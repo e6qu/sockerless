@@ -125,8 +125,13 @@ func buildSimulatorWithUI(cfg sim.Config, includeUI bool) (*sim.Server, error) {
 	srv.WrapHandler(sim.AzureCORSMiddleware)
 
 	// Register Azure service routes
-	// Monitor must be registered first to initialize monitorLogs store
-	// used by Container Apps and Functions log injection.
+	// Entra registers first: it initializes the directory stores (and the
+	// token-issuance state) that later registrations write at register
+	// time — managed identities materialize their service principals into
+	// the directory as part of their own registration.
+	registerEntra(srv)
+	// Monitor must be registered before Container Apps and Functions to
+	// initialize the monitorLogs store their log injection uses.
 	registerAzureMonitor(srv)
 	registerContainerApps(srv)
 	registerContainerAppsApps(srv)
@@ -175,9 +180,6 @@ func buildSimulatorWithUI(cfg sim.Config, includeUI bool) (*sim.Server, error) {
 	registerAppServicePlan(srv)
 	registerSubscription(srv)
 	registerSubscriptionAlias(srv)
-
-	// Entra identity seeding and Microsoft Graph delegated endpoints
-	registerEntra(srv)
 
 	// Embedded UI (no-op with -tags noui).
 	if includeUI {

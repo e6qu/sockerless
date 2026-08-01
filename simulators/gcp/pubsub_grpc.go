@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	pspb "cloud.google.com/go/pubsub/apiv1/pubsubpb"
+	sim "github.com/sockerless/simulator"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -90,12 +90,10 @@ func pubsubAckDeadlineSweeper() {
 // psSnapshotBacklogs holds the per-snapshot message backlog captured at
 // CreateSnapshot time, so a Seek to that snapshot replays exactly the messages
 // that were outstanding in the subscription when the snapshot was taken. This
-// mirrors real Pub/Sub's seek-replay semantics. It is process-local because
-// snapshots themselves are process-local resources.
-var psSnapshotBacklogs = struct {
-	sync.Mutex
-	m map[string][]PSMessage
-}{m: map[string][]PSMessage{}}
+// mirrors real Pub/Sub's seek-replay semantics. Snapshots are durable
+// resources, so the captured backlog is stored alongside them (registerPubSub
+// wires the store, keyed like psSnapshots) and is deleted with its snapshot.
+var psSnapshotBacklogs sim.Store[[]PSMessage]
 
 // ---------------------------------------------------------------------------
 // proto <-> REST-store converters
@@ -913,9 +911,7 @@ func (s *pubsubSubscriberGRPC) Seek(_ context.Context, req *pspb.SeekRequest) (*
 		// Replay the backlog captured when the snapshot was created: requeue every
 		// captured message ahead of the subscription's current queue so a
 		// subsequent pull redelivers them (at-least-once replay).
-		psSnapshotBacklogs.Lock()
-		backlog := psSnapshotBacklogs.m[key]
-		psSnapshotBacklogs.Unlock()
+		backlog, _ := psSnapshotBacklogs.Get(key)
 		if len(backlog) > 0 {
 			restored := make([]PSMessage, len(backlog))
 			copy(restored, backlog)
@@ -931,14 +927,12 @@ func (s *pubsubSubscriberGRPC) Seek(_ context.Context, req *pspb.SeekRequest) (*
 		// time is a no-op replay of the current backlog.
 		if target.Time != nil && target.Time.AsTime().Before(time.Unix(0, 0)) || (target.Time != nil && target.Time.AsTime().Equal(time.Unix(0, 0))) {
 			var backlog []PSMessage
-			psSnapshotBacklogs.Lock()
 			for _, snap := range psSnapshots.List() {
 				k := psSnapshotKeyFromName(snap.Name)
-				if b, ok := psSnapshotBacklogs.m[k]; ok && len(b) > 0 {
+				if b, ok := psSnapshotBacklogs.Get(k); ok && len(b) > 0 {
 					backlog = append(backlog, b...)
 				}
 			}
-			psSnapshotBacklogs.Unlock()
 			if len(backlog) > 0 {
 				if q, ok := psQueues.Get(subName); ok {
 					backlog = append(backlog, q.Messages...)
@@ -993,9 +987,7 @@ func (s *pubsubSubscriberGRPC) CreateSnapshot(_ context.Context, req *pspb.Creat
 	if q, ok := psQueues.Get(sub); ok && len(q.Messages) > 0 {
 		captured := make([]PSMessage, len(q.Messages))
 		copy(captured, q.Messages)
-		psSnapshotBacklogs.Lock()
-		psSnapshotBacklogs.m[key] = captured
-		psSnapshotBacklogs.Unlock()
+		psSnapshotBacklogs.Put(key, captured)
 	}
 	psSnapshots.Put(key, snap)
 	return psSnapshotToProto(snap), nil
@@ -1060,9 +1052,11 @@ func (s *pubsubSubscriberGRPC) ListSnapshots(_ context.Context, req *pspb.ListSn
 }
 
 func (s *pubsubSubscriberGRPC) DeleteSnapshot(_ context.Context, req *pspb.DeleteSnapshotRequest) (*emptypb.Empty, error) {
-	if !psSnapshots.Delete(psSnapshotKeyFromName(req.GetSnapshot())) {
+	key := psSnapshotKeyFromName(req.GetSnapshot())
+	if !psSnapshots.Delete(key) {
 		return nil, status.Errorf(codes.NotFound, "Resource not found (resource=%s)", req.GetSnapshot())
 	}
+	psSnapshotBacklogs.Delete(key)
 	return &emptypb.Empty{}, nil
 }
 

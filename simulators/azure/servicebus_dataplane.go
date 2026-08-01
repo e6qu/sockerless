@@ -47,33 +47,83 @@ type sbMessage struct {
 
 // sbQueueState is the per-queue message log. Topic subscriptions
 // share the same shape; one sbQueueState per `{namespace}/{topic}/{sub}`.
+// It is the in-process working copy of the queue; sbQueueDurable holds the
+// durable copy, written through under mu on every mutation so messages and
+// sequence numbers survive a SIM_PERSIST restart (a restart that rewound
+// sequence numbers would break consumer checkpoints, exactly as it would
+// against real Service Bus, which never reissues a sequence number).
 type sbQueueState struct {
 	mu       sync.Mutex
+	key      string
 	messages []sbMessage
 	nextSeq  int64
 }
 
+// sbQueueRecord is the durable snapshot of one queue (or topic
+// subscription): its pending messages and the next sequence number.
+type sbQueueRecord struct {
+	Messages []sbMessage `json:"messages"`
+	NextSeq  int64       `json:"nextSeq"`
+}
+
 var (
 	sbQueueMessages = sync.Map{} // key: "{namespace}/{queue}" or "{namespace}/{topic}/{sub}" → *sbQueueState
+	sbQueueDurable  sim.Store[sbQueueRecord]
 )
 
 func sbQueueKey(namespace, path string) string {
 	return namespace + "/" + path
 }
 
+// sbQueueStateFor returns the working copy for a queue key, loading the
+// durable record lazily on the first access after a restart.
 func sbQueueStateFor(key string) *sbQueueState {
-	v, _ := sbQueueMessages.LoadOrStore(key, &sbQueueState{})
-	st, ok := v.(*sbQueueState)
-	if !ok {
-		st = &sbQueueState{}
-		sbQueueMessages.Store(key, st)
+	if v, ok := sbQueueMessages.Load(key); ok {
+		if st, ok := v.(*sbQueueState); ok {
+			return st
+		}
 	}
-	return st
+	st := &sbQueueState{key: key}
+	if rec, ok := sbQueueDurable.Get(key); ok {
+		st.messages = rec.Messages
+		st.nextSeq = rec.NextSeq
+	}
+	actual, _ := sbQueueMessages.LoadOrStore(key, st)
+	loaded, ok := actual.(*sbQueueState)
+	if !ok {
+		sbQueueMessages.Store(key, st)
+		return st
+	}
+	return loaded
+}
+
+// persistLocked writes the queue's durable snapshot. Callers hold st.mu, so
+// snapshots are serialized per queue and never interleave out of order.
+func (st *sbQueueState) persistLocked() {
+	sbQueueDurable.Put(st.key, sbQueueRecord{Messages: st.messages, NextSeq: st.nextSeq})
+}
+
+// sbQueueCounts reports the total and currently-deliverable (unlocked or
+// lock-expired) message counts for a data-plane queue or subscription path —
+// the numbers the admin plane's MessageCount / ActiveMessageCount reflect on
+// real Service Bus.
+func sbQueueCounts(namespace, path string) (total int64, active int32) {
+	st := sbQueueStateFor(sbQueueKey(namespace, path))
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	now := time.Now().UTC()
+	for i := range st.messages {
+		if st.messages[i].LockToken == "" || st.messages[i].LockedUntilUtc.Before(now) {
+			active++
+		}
+	}
+	return int64(len(st.messages)), active
 }
 
 // registerServiceBusDataPlane wires the subdomain dispatcher. Requests
 // arriving with a `{namespace}.servicebus.<host>` Host route here.
 func registerServiceBusDataPlane(srv *sim.Server) {
+	sbQueueDurable = sim.MakeStore[sbQueueRecord](srv.DB(), "servicebus_queue_messages")
 	srv.WrapHandler(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			host := r.Host
@@ -175,6 +225,7 @@ func handleSBSendMessage(w http.ResponseWriter, r *http.Request, key string) {
 		SequenceNumber: st.nextSeq,
 	}
 	st.messages = append(st.messages, msg)
+	st.persistLocked()
 	st.mu.Unlock()
 	w.WriteHeader(http.StatusCreated)
 }
@@ -189,6 +240,7 @@ func handleSBReceiveAndDelete(w http.ResponseWriter, r *http.Request, key string
 	}
 	msg := st.messages[0]
 	st.messages = st.messages[1:]
+	st.persistLocked()
 	if err := writeSBMessageResponse(w, msg, "", http.StatusOK); err != nil {
 		// Headers may already be on the wire; can't switch to a 500
 		// envelope at this point. Log via the request logger.
@@ -221,6 +273,7 @@ func handleSBPeekLock(w http.ResponseWriter, r *http.Request, key string) {
 	}
 	st.messages[idx].LockToken = generateUUID()
 	st.messages[idx].LockedUntilUtc = now.Add(60 * time.Second)
+	st.persistLocked()
 	msg := st.messages[idx]
 	// Real Service Bus emits Location as
 	// `https://{ns}/{queue}/messages/{messageID}/{lockToken}` (or
@@ -256,6 +309,7 @@ func handleSBCompleteLock(w http.ResponseWriter, r *http.Request, key, msgID, lo
 		return
 	}
 	st.messages = append(st.messages[:idx], st.messages[idx+1:]...)
+	st.persistLocked()
 	w.WriteHeader(http.StatusNoContent)
 }
 

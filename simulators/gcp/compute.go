@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -99,12 +98,23 @@ var gcpAutoModeSubnetCIDRs = map[string]string{
 	"us-west4":                "10.182.0.0/20",
 }
 
-// computeOpRegistry records every operation the sim hands out (name→targetLink)
-// so an operations GET/wait for an unknown name 404s instead of fabricating DONE.
-var computeOpRegistry sync.Map
+// ComputeOperationRecord is one operation the sim has handed out, retained so
+// an operations GET/wait for an unknown name 404s instead of fabricating DONE.
+type ComputeOperationRecord struct {
+	Name       string `json:"name"`
+	TargetLink string `json:"targetLink,omitempty"`
+}
 
-func recordComputeOp(name, targetLink string) { computeOpRegistry.Store(name, targetLink) }
-func computeOpKnown(name string) bool         { _, ok := computeOpRegistry.Load(name); return ok }
+// computeOpRegistry records every operation the sim hands out, in the same
+// store family as the other services' LROs, so polling an operation name
+// issued before a restart still resolves. registerCompute wires it.
+var computeOpRegistry sim.Store[ComputeOperationRecord]
+
+func recordComputeOp(name, targetLink string) {
+	computeOpRegistry.Put(name, ComputeOperationRecord{Name: name, TargetLink: targetLink})
+}
+
+func computeOpKnown(name string) bool { _, ok := computeOpRegistry.Get(name); return ok }
 
 func newComputeOp(project, scope string, targetLink string) map[string]any {
 	return newComputeOpWithType(project, scope, targetLink, "operation")
@@ -617,6 +627,7 @@ var (
 )
 
 func registerCompute(srv *sim.Server) {
+	computeOpRegistry = sim.MakeStore[ComputeOperationRecord](srv.DB(), "compute_operations")
 	networks := sim.MakeStore[ComputeNetwork](srv.DB(), "compute_networks")
 	subnetworks := sim.MakeStore[ComputeSubnetwork](srv.DB(), "compute_subnetworks")
 	gcpSubnetworks = subnetworks
@@ -2062,9 +2073,34 @@ func computeZoneOp(project, zone, target, opType string) map[string]any {
 	}
 }
 
+// recoverComputeInstances transitions persisted instances that claim to be
+// running (or still staging) to TERMINATED when their real backing — the
+// Firecracker VM, its tap NIC, and the metadata IP mapping — did not survive
+// the control-plane restart. Real Compute Engine reports an instance whose VM
+// is gone as TERMINATED with a human-readable statusMessage; the sim does the
+// same and never re-adopts a lost VM.
+func recoverComputeInstances(instances sim.Store[ComputeInstance]) {
+	for _, inst := range instances.List() {
+		if inst.Status != ComputeInstanceRunning && inst.Status != ComputeInstanceStaging {
+			continue
+		}
+		if gcpRealVMAlive(inst.SelfLink) {
+			continue
+		}
+		instances.Update(inst.SelfLink, func(in *ComputeInstance) {
+			if in.Status != ComputeInstanceRunning && in.Status != ComputeInstanceStaging {
+				return
+			}
+			in.Status = ComputeInstanceTerminated
+			in.StatusMessage = "Instance workload not found after control-plane restart"
+		})
+	}
+}
+
 func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork], subnetworks sim.Store[ComputeSubnetwork]) {
 	instances := sim.MakeStore[ComputeInstance](srv.DB(), "compute_instances")
 	gcpInstances = instances
+	recoverComputeInstances(instances)
 	logger := srv.Logger()
 
 	instanceSelfLink := func(project, zone, name string) string {

@@ -69,6 +69,7 @@ func registerBigtable(srv *sim.Server) {
 	bigtableClusters = sim.MakeStore[bigtableCluster](srv.DB(), "bigtable_clusters")
 	bigtableMemoryLayers = sim.MakeStore[bigtableMemoryLayer](srv.DB(), "bigtable_memory_layers")
 	bigtableTables = sim.MakeStore[bigtableTable](srv.DB(), "bigtable_tables")
+	bigtableRows = sim.MakeStore[btStoredTableData](srv.DB(), "bigtable_table_rows")
 	bigtableAppProfiles = sim.MakeStore[bigtableResource](srv.DB(), "bigtable_app_profiles")
 	bigtableBackups = sim.MakeStore[bigtableResource](srv.DB(), "bigtable_backups")
 	bigtableAuthViews = sim.MakeStore[bigtableResource](srv.DB(), "bigtable_authorized_views")
@@ -346,6 +347,7 @@ func handleBigtableDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	for _, table := range bigtableTables.List() {
 		if strings.HasPrefix(table.Name, name+"/tables/") {
 			bigtableTables.Delete(table.Name)
+			btDeleteTableData(table.Name)
 		}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
@@ -956,6 +958,7 @@ func handleBigtableDeleteTable(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "table %q not found", name)
 		return
 	}
+	btDeleteTableData(name)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

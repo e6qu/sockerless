@@ -11,6 +11,7 @@ import (
 	"time"
 
 	btpb "cloud.google.com/go/bigtable/apiv2/bigtablepb"
+	sim "github.com/sockerless/simulator"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -44,12 +45,96 @@ var bigtableData = struct {
 	tables map[string]*btTableData
 }{tables: map[string]*btTableData{}}
 
+// btStoredCell / btStoredTableData mirror btCell / btTableData with exported
+// fields so a table's row data JSON round-trips through the durable store.
+type btStoredCell struct {
+	TimestampMicros int64    `json:"timestampMicros"`
+	Value           []byte   `json:"value,omitempty"`
+	Labels          []string `json:"labels,omitempty"`
+}
+
+type btStoredTableData struct {
+	Rows map[string]map[string]map[string][]btStoredCell `json:"rows"`
+}
+
+// bigtableRows is the durable copy of every table's row data, keyed by table
+// name. The in-memory btTableData is the working copy: every mutation writes
+// the table's rows through this store, and a table's first data access after
+// a restart hydrates the working copy from it. registerBigtable wires it to
+// the same database as the table-metadata store.
+var bigtableRows sim.Store[btStoredTableData]
+
+func btRowsToStored(rows map[string]map[string]map[string][]btCell) map[string]map[string]map[string][]btStoredCell {
+	out := make(map[string]map[string]map[string][]btStoredCell, len(rows))
+	for rowKey, fams := range rows {
+		outFams := make(map[string]map[string][]btStoredCell, len(fams))
+		for fam, cols := range fams {
+			outCols := make(map[string][]btStoredCell, len(cols))
+			for qual, cells := range cols {
+				outCells := make([]btStoredCell, len(cells))
+				for i, c := range cells {
+					outCells[i] = btStoredCell{TimestampMicros: c.ts, Value: c.value, Labels: c.labels}
+				}
+				outCols[qual] = outCells
+			}
+			outFams[fam] = outCols
+		}
+		out[rowKey] = outFams
+	}
+	return out
+}
+
+func btRowsFromStored(stored btStoredTableData) map[string]map[string]map[string][]btCell {
+	out := make(map[string]map[string]map[string][]btCell, len(stored.Rows))
+	for rowKey, fams := range stored.Rows {
+		outFams := make(map[string]map[string][]btCell, len(fams))
+		for fam, cols := range fams {
+			outCols := make(map[string][]btCell, len(cols))
+			for qual, cells := range cols {
+				outCells := make([]btCell, len(cells))
+				for i, c := range cells {
+					outCells[i] = btCell{ts: c.TimestampMicros, value: c.Value, labels: c.Labels}
+				}
+				outCols[qual] = outCells
+			}
+			outFams[fam] = outCols
+		}
+		out[rowKey] = outFams
+	}
+	return out
+}
+
+// btPersistTableData writes a table's working-copy rows to the durable store.
+// Callers hold td.mu.
+func btPersistTableData(name string, td *btTableData) {
+	if bigtableRows == nil {
+		return
+	}
+	bigtableRows.Put(name, btStoredTableData{Rows: btRowsToStored(td.rows)})
+}
+
+// btDeleteTableData drops a deleted table's rows from the working copy and
+// the durable store, so a table recreated under the same name starts empty.
+func btDeleteTableData(name string) {
+	bigtableData.mu.Lock()
+	delete(bigtableData.tables, name)
+	bigtableData.mu.Unlock()
+	if bigtableRows != nil {
+		bigtableRows.Delete(name)
+	}
+}
+
 func bigtableTableData(name string) *btTableData {
 	bigtableData.mu.Lock()
 	defer bigtableData.mu.Unlock()
 	td, ok := bigtableData.tables[name]
 	if !ok {
 		td = &btTableData{rows: map[string]map[string]map[string][]btCell{}}
+		if bigtableRows != nil {
+			if stored, found := bigtableRows.Get(name); found {
+				td.rows = btRowsFromStored(stored)
+			}
+		}
 		bigtableData.tables[name] = td
 	}
 	return td
@@ -192,6 +277,7 @@ func (s *bigtableDataGRPC) MutateRow(_ context.Context, req *btpb.MutateRowReque
 	if err := btApplyMutations(td, btTableFamilies(req.GetTableName()), string(req.GetRowKey()), req.GetMutations()); err != nil {
 		return nil, err
 	}
+	btPersistTableData(req.GetTableName(), td)
 	return &btpb.MutateRowResponse{}, nil
 }
 
@@ -212,6 +298,7 @@ func (s *bigtableDataGRPC) MutateRows(req *btpb.MutateRowsRequest, srv btpb.Bigt
 		}
 		entries = append(entries, st)
 	}
+	btPersistTableData(req.GetTableName(), td)
 	return srv.Send(&btpb.MutateRowsResponse{Entries: entries})
 }
 
@@ -240,6 +327,7 @@ func (s *bigtableDataGRPC) CheckAndMutateRow(_ context.Context, req *btpb.CheckA
 		if err := btApplyMutations(td, btTableFamilies(req.GetTableName()), rowKey, muts); err != nil {
 			return nil, err
 		}
+		btPersistTableData(req.GetTableName(), td)
 	}
 	return &btpb.CheckAndMutateRowResponse{PredicateMatched: matched}, nil
 }
@@ -280,6 +368,7 @@ func (s *bigtableDataGRPC) ReadModifyWriteRow(_ context.Context, req *btpb.ReadM
 			return nil, status.Error(codes.Unimplemented, "unsupported read-modify-write rule")
 		}
 	}
+	btPersistTableData(req.GetTableName(), td)
 	// The response carries only the new (latest) value of each modified column,
 	// not the full version history — matching real Bigtable.
 	var modified []btReadCell

@@ -281,6 +281,12 @@ var allowedNonSpecAzureRoutes = map[string]string{
 	"GET /subscriptions/{subscriptionId}/providers/{provider}/locations/{location}/operationResults/{opId}":                      "sim-emitted LRO polling URL (Location header)",
 	"GET /subscriptions/{subscriptionId}/providers/{provider}/locations/{location}/operationStatuses/{opId}":                     "sim-emitted LRO polling URL (Azure-AsyncOperation)",
 
+	// ACR Tasks run log: listLogSasUrl returns an opaque SAS URL to a log
+	// blob (real ACR hands out an Azure Storage SAS); the URL shape is
+	// service-internal and never appears in a swagger. The sim shapes its
+	// own log link, and clients fetch it verbatim.
+	"GET /acr/v1/logs/{runId}": "sim-emitted ACR Tasks run-log link (real API returns an opaque log SAS URL)",
+
 	// Exec bridges: the real APIs return an opaque WebSocket URI
 	// (webSocketUri / execEndpoint) that clients connect to verbatim;
 	// the sim shapes its own bridge URLs ARM-style. The session URL is

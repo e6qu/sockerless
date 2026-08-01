@@ -13,12 +13,12 @@ Surface registered in `simulators/azure/containerinstance.go` (and related files
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/containerGroups` | ✓ `simulators/azure/containerinstance.go:88::handleACIContainerGroupListBySubscription` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /providers/Microsoft.ContainerInstance/operations` | ✓ `simulators/azure/containerinstance.go:97::handleACIOperationsList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/locations/{location}/usages` | ✓ `simulators/azure/containerinstance.go:99::handleACILocationUsages` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/locations/{location}/capabilities` | ✓ `simulators/azure/containerinstance.go:100::handleACILocationCapabilities` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/locations/{location}/cachedImages` | ✓ `simulators/azure/containerinstance.go:101::handleACILocationCachedImages` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/providers/Microsoft.ContainerInstance/serviceAssociationLinks/default` | ✓ `simulators/azure/containerinstance.go:108::handleACISubnetServiceAssociationLinkDelete` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/containerGroups` | ✓ `simulators/azure/containerinstance.go:93::handleACIContainerGroupListBySubscription` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /providers/Microsoft.ContainerInstance/operations` | ✓ `simulators/azure/containerinstance.go:102::handleACIOperationsList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/locations/{location}/usages` | ✓ `simulators/azure/containerinstance.go:104::handleACILocationUsages` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/locations/{location}/capabilities` | ✓ `simulators/azure/containerinstance.go:105::handleACILocationCapabilities` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/locations/{location}/cachedImages` | ✓ `simulators/azure/containerinstance.go:106::handleACILocationCachedImages` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/providers/Microsoft.ContainerInstance/serviceAssociationLinks/default` | ✓ `simulators/azure/containerinstance.go:113::handleACISubnetServiceAssociationLinkDelete` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

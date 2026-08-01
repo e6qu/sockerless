@@ -3,9 +3,11 @@ package aws_sdk_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strconv"
@@ -35,6 +37,7 @@ import (
 	secretsmanagertypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	sfntypes "github.com/aws/aws-sdk-go-v2/service/sfn/types"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/aws-sdk-go-v2/service/wafv2"
@@ -439,6 +442,39 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	snsAPI := sns.NewFromConfig(cfg, func(o *sns.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	snsDeliveries := make(chan snsHTTPDelivery, 2)
+	snsEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		require.NoError(t, readErr)
+		snsDeliveries <- snsHTTPDelivery{headers: r.Header.Clone(), body: body}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(snsEndpoint.Close)
+	persistentTopic, err := snsAPI.CreateTopic(testCtx, &sns.CreateTopicInput{
+		Name: aws.String("persistent-signing-topic"),
+	})
+	require.NoError(t, err)
+	_, err = snsAPI.Subscribe(testCtx, &sns.SubscribeInput{
+		TopicArn:              persistentTopic.TopicArn,
+		Protocol:              aws.String("http"),
+		Endpoint:              aws.String(snsEndpoint.URL),
+		ReturnSubscriptionArn: true,
+	})
+	require.NoError(t, err)
+	snsConfirmation := receiveSNSHTTP(t, snsDeliveries)
+	var snsConfirmationEnvelope map[string]any
+	require.NoError(t, json.Unmarshal(snsConfirmation.body, &snsConfirmationEnvelope))
+	signingCertURL := snsHTTPString(snsConfirmationEnvelope, "SigningCertURL")
+	require.NotEmpty(t, signingCertURL)
+	certResponse, err := http.Get(signingCertURL)
+	require.NoError(t, err)
+	certBeforeRestart, err := io.ReadAll(certResponse.Body)
+	certResponse.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, certResponse.StatusCode)
+	require.NotEmpty(t, certBeforeRestart)
+
 	require.NoError(t, shutdownSimulator(cmd), "persistent simulator must exit cleanly before SQLite is reopened")
 	cmd = startPersistentSimulator(t, stateDir, tcpPort, udpPort, "process")
 
@@ -462,6 +498,16 @@ func TestAWSServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
 	})
+
+	certAfterResponse, err := http.Get(signingCertURL)
+	require.NoError(t, err)
+	certAfterRestart, err := io.ReadAll(certAfterResponse.Body)
+	certAfterResponse.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, certAfterResponse.StatusCode,
+		"the Amazon SNS SigningCertURL from a message delivered before the restart must remain fetchable")
+	assert.Equal(t, string(certBeforeRestart), string(certAfterRestart),
+		"the Amazon SNS SigningCertURL must serve the same certificate after a simulator restart")
 
 	persistedApp, err := amplifyAPI.GetApp(testCtx, &amplify.GetAppInput{AppId: aws.String(appID)})
 	require.NoError(t, err)

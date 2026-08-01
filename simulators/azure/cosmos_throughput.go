@@ -54,6 +54,9 @@ var cosmosOffers sim.Store[cosmosOffer]
 
 func registerCosmosThroughput(srv *sim.Server) {
 	cosmosOffers = sim.MakeStore[cosmosOffer](srv.DB(), "cosmos_offers")
+	for _, o := range cosmosOffers.List() {
+		cosmosRaiseETagFloor(cosmosETagSeqOf(o.ETag))
+	}
 
 	// The azcosmos offer machinery POSTs a query to /offers, then GETs/PUTs the
 	// matched offer by its rid-based self-link (offers/{offer}). These are reached

@@ -19,9 +19,20 @@ import (
 // becomes a nested subdirectory so the ACA Jobs / Apps executor can
 // bind-mount a real host path when it resolves a
 // Volume{StorageType: AzureFile}.
+//
+// Resolution order:
+//  1. SIM_AZURE_FILES_DATA_DIR — explicit operator override.
+//  2. <SIM_DATA_DIR>/files — when a data directory is configured, share
+//     contents live beside the SQLite database so a SIM_PERSIST restart
+//     that reattaches the same SIM_DATA_DIR sees the same bytes the
+//     persisted share metadata describes.
+//  3. A fixed path under os.TempDir() — no configured data directory.
 func azureFilesHostRoot() string {
 	if dir := os.Getenv("SIM_AZURE_FILES_DATA_DIR"); dir != "" {
 		return dir
+	}
+	if dataDir := os.Getenv("SIM_DATA_DIR"); dataDir != "" {
+		return filepath.Join(dataDir, "files")
 	}
 	return filepath.Join(os.TempDir(), "sockerless-sim-azure-files")
 }

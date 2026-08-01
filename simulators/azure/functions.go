@@ -22,31 +22,38 @@ import (
 )
 
 // Site represents an Azure Function App (Web App).
+//
+// AzureStorageAccounts is the site's Azure Files / Blob mount dictionary, set
+// via the azurestorageaccounts config sub-resource and never part of the
+// Microsoft.Web site wire shape (its own PUT/list routes serve it). It lives
+// at the top level of the stored record — not nested in SiteProperties —
+// because the persistence sidecar covers exported top-level json:"-" fields,
+// keeping the mounts durable across a SIM_PERSIST restart.
 type Site struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Kind       string            `json:"kind,omitempty"`
-	Location   string            `json:"location"`
-	Tags       map[string]string `json:"tags,omitempty"`
-	Properties SiteProperties    `json:"properties"`
+	ID                   string                            `json:"id"`
+	Name                 string                            `json:"name"`
+	Type                 string                            `json:"type"`
+	Kind                 string                            `json:"kind,omitempty"`
+	Location             string                            `json:"location"`
+	Tags                 map[string]string                 `json:"tags,omitempty"`
+	Properties           SiteProperties                    `json:"properties"`
+	AzureStorageAccounts map[string]*AzureStorageInfoValue `json:"-"`
 }
 
 // SiteProperties holds the properties of a function app.
 type SiteProperties struct {
-	State                string                            `json:"state,omitempty"`
-	DefaultHostName      string                            `json:"defaultHostName,omitempty"`
-	HostNames            []string                          `json:"hostNames,omitempty"`
-	Enabled              bool                              `json:"enabled"`
-	EnabledHostNames     []string                          `json:"enabledHostNames,omitempty"`
-	ServerFarmID         string                            `json:"serverFarmId,omitempty"`
-	Reserved             bool                              `json:"reserved,omitempty"`
-	SiteConfig           *SiteConfig                       `json:"siteConfig,omitempty"`
-	ResourceGroup        string                            `json:"resourceGroup,omitempty"`
-	LastModifiedTime     string                            `json:"lastModifiedTimeUtc,omitempty"`
-	HTTPSOnly            bool                              `json:"httpsOnly,omitempty"`
-	ClientCertMode       string                            `json:"clientCertMode,omitempty"`
-	AzureStorageAccounts map[string]*AzureStorageInfoValue `json:"-"`
+	State            string      `json:"state,omitempty"`
+	DefaultHostName  string      `json:"defaultHostName,omitempty"`
+	HostNames        []string    `json:"hostNames,omitempty"`
+	Enabled          bool        `json:"enabled"`
+	EnabledHostNames []string    `json:"enabledHostNames,omitempty"`
+	ServerFarmID     string      `json:"serverFarmId,omitempty"`
+	Reserved         bool        `json:"reserved,omitempty"`
+	SiteConfig       *SiteConfig `json:"siteConfig,omitempty"`
+	ResourceGroup    string      `json:"resourceGroup,omitempty"`
+	LastModifiedTime string      `json:"lastModifiedTimeUtc,omitempty"`
+	HTTPSOnly        bool        `json:"httpsOnly,omitempty"`
+	ClientCertMode   string      `json:"clientCertMode,omitempty"`
 }
 
 // SiteConfig holds the site configuration for a function app.
@@ -70,11 +77,17 @@ type NameValuePair struct {
 }
 
 // FunctionEnvelope represents a function within a function app.
+//
+// FunctionName is the function's short name, tracked internally; the real
+// Microsoft.Web wire shape carries only the ProxyResource `name`
+// ("<site>/<function>"), so the short name is never emitted. It sits at the
+// top level of the stored record so the persistence sidecar keeps it durable.
 type FunctionEnvelope struct {
-	ID         string                     `json:"id"`
-	Name       string                     `json:"name"`
-	Type       string                     `json:"type"`
-	Properties FunctionEnvelopeProperties `json:"properties"`
+	ID           string                     `json:"id"`
+	Name         string                     `json:"name"`
+	Type         string                     `json:"type"`
+	Properties   FunctionEnvelopeProperties `json:"properties"`
+	FunctionName string                     `json:"-"`
 }
 
 // FunctionEnvelopeProperties holds the properties of a function.
@@ -89,11 +102,6 @@ type FunctionEnvelope struct {
 // as external per the `sim-emitted-url-roundtrip` skill's
 // "document external" branch.
 type FunctionEnvelopeProperties struct {
-	// Name is the function's short name, tracked internally; the real
-	// Microsoft.Web FunctionEnvelopeProperties shape carries no `name`
-	// member (the name lives on the ProxyResource envelope), so it is not
-	// emitted on the wire.
-	Name              string         `json:"-"`
 	FunctionAppID     string         `json:"function_app_id,omitempty"`
 	ScriptHref        string         `json:"script_href,omitempty"` // external: Kudu admin URL on the deployed Function App
 	ConfigHref        string         `json:"config_href,omitempty"` // external: Kudu admin URL on the deployed Function App
@@ -458,11 +466,11 @@ func registerAzureFunctions(srv *sim.Server) {
 			return
 		}
 
-		site.Properties.AzureStorageAccounts = req.Properties
+		site.AzureStorageAccounts = req.Properties
 		sites.Put(resourceID, site)
 
 		// ARM convention: respond with the resource shape that was PUT.
-		props := site.Properties.AzureStorageAccounts
+		props := site.AzureStorageAccounts
 		if props == nil {
 			// Real Azure always returns `properties: {}` (empty object,
 			// not absent). terraform-provider-azurerm panics with
@@ -492,7 +500,7 @@ func registerAzureFunctions(srv *sim.Server) {
 				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
 			return
 		}
-		props := site.Properties.AzureStorageAccounts
+		props := site.AzureStorageAccounts
 		if props == nil {
 			// Real Azure always returns `properties: {}` (empty object,
 			// not absent). terraform-provider-azurerm panics with
@@ -948,7 +956,7 @@ type AzureStoragePropertyDictionaryResource struct {
 }
 
 // siteAzureStorageBinds realizes a single-container site's attached Azure Files
-// shares (Properties.AzureStorageAccounts, set via
+// shares (the site record's AzureStorageAccounts dictionary, set via
 // WebApps.UpdateAzureStorageAccounts) as Docker host binds
 // `<host-share-dir>:<mountPath>`, so the persistent container mounts the same
 // shared share that other containers mounting the same named volume see. This
@@ -959,7 +967,7 @@ func siteAzureStorageBinds(site *Site) []string {
 		return nil
 	}
 	var binds []string
-	for _, v := range site.Properties.AzureStorageAccounts {
+	for _, v := range site.AzureStorageAccounts {
 		if v == nil || v.AccountName == "" || v.ShareName == "" || v.MountPath == "" {
 			continue
 		}

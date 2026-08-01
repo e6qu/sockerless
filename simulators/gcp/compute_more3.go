@@ -3,9 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
-	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -777,9 +775,3 @@ func registerComputeRouterMore(srv *sim.Server) {
 // out compute_more3's bespoke handlers. The remaining registrations are
 // the standard CRUD families handled inline above (commitments, regional
 // targetTcpProxies, regional forwardingRules, networkEndpointGroups).
-
-// paginateListCompute and gcpApplyListParams are reused from the shared
-// compute list helpers; this reference keeps the imports honest in tranches
-// that only touch custom verb handlers.
-var _ = sort.Strings
-var _ = time.Now

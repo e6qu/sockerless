@@ -67,6 +67,13 @@ type ECSContainerDefinition struct {
 	// workingDirectory, privileged, stop/startTimeout, systemControls, …) forces
 	// a new revision every plan. Echoing the captured bytes round-trips every
 	// field faithfully while the typed fields above stay available to the runtime.
+	//
+	// Durability invariant: being unexported, this field is skipped by the
+	// persistence envelope's hidden-field sidecar; it survives restarts only
+	// because the custom MarshalJSON/UnmarshalJSON codec below re-emits and
+	// re-captures the bytes on every persist/load round trip. Removing that
+	// codec would silently drop every non-modeled container-definition field
+	// from persisted task definitions.
 	raw json.RawMessage `json:"-"`
 }
 

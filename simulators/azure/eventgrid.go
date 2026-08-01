@@ -287,10 +287,7 @@ func handleEventGridListTopicKeys(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "topic %q not found", id)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]string{
-		"key1": simListKey32(id, "key1"),
-		"key2": simListKey32(id, "key2"),
-	})
+	sim.WriteJSON(w, http.StatusOK, eventGridListKeysResponse(id))
 }
 
 func handleEventGridDeleteTopic(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +301,7 @@ func handleEventGridDeleteTopic(w http.ResponseWriter, r *http.Request) {
 			eventGridSubscriptions.Delete(sub.ID)
 		}
 	}
+	eventGridDropKeyGens(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -356,10 +354,7 @@ func handleEventGridListDomainKeys(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "domain %q not found", id)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]string{
-		"key1": simListKey32(id, "key1"),
-		"key2": simListKey32(id, "key2"),
-	})
+	sim.WriteJSON(w, http.StatusOK, eventGridListKeysResponse(id))
 }
 
 func handleEventGridDeleteDomain(w http.ResponseWriter, r *http.Request) {
@@ -374,6 +369,7 @@ func handleEventGridDeleteDomain(w http.ResponseWriter, r *http.Request) {
 			eventGridDomainTopics.Delete(topic.ID)
 		}
 	}
+	eventGridDropKeyGens(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
