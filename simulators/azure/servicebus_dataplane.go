@@ -136,7 +136,12 @@ func registerServiceBusDataPlane(srv *sim.Server) {
 				return
 			}
 			if strings.Trim(r.URL.Path, "/") == "$servicebus/websocket" {
+				// The AMQP transport authenticates through the CBS
+				// put-token handshake once the connection is established.
 				handleSBAMQPWebSocket(w, r, parts[0])
+				return
+			}
+			if !authorizeSBHTTPRequest(w, r, parts[0]) {
 				return
 			}
 			if handleSBAdminDataPlane(w, r, parts[0]) {
@@ -145,6 +150,39 @@ func registerServiceBusDataPlane(srv *sim.Server) {
 			handleSBRESTDataPlane(w, r, parts[0])
 		})
 	})
+}
+
+// authorizeSBHTTPRequest verifies the Shared Access Signature every Service
+// Bus HTTP caller — REST data plane and ATOM admin plane alike — presents in
+// the Authorization header, and writes the service's 401 when it does not
+// hold. The token must be signed with the current key of an authorization
+// rule at the addressed namespace or entity, so a rotated key takes effect
+// immediately.
+func authorizeSBHTTPRequest(w http.ResponseWriter, r *http.Request, namespace string) bool {
+	audience, err := verifyMessagingSAS(namespace, r.Header.Get("Authorization"))
+	if err != nil {
+		authErr, ok := err.(*sasAuthError)
+		if !ok {
+			authErr = errSASInvalidSignature
+		}
+		writeSBUnauthorized(w, authErr.Description)
+		return false
+	}
+	entity := strings.Trim(r.URL.Path, "/")
+	if !sasAudienceCoversEntity(audience, entity) {
+		writeSBUnauthorized(w,
+			fmt.Sprintf("Unauthorized access. The provided token does not grant access to %q.", entity))
+		return false
+	}
+	return true
+}
+
+// writeSBUnauthorized emits the `<Error><Code>401</Code><Detail>…</Detail></Error>`
+// body Service Bus returns for a refused token.
+func writeSBUnauthorized(w http.ResponseWriter, detail string) {
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.WriteHeader(http.StatusUnauthorized)
+	fmt.Fprintf(w, "<Error><Code>401</Code><Detail>%s</Detail></Error>", detail)
 }
 
 func handleSBRESTDataPlane(w http.ResponseWriter, r *http.Request, namespace string) {

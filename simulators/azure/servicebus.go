@@ -118,6 +118,7 @@ var (
 )
 
 func registerServiceBus(srv *sim.Server) {
+	makeAzureKeyGens(srv)
 	sbNamespaces = sim.MakeStore[SBNamespace](srv.DB(), "sb_namespaces")
 	sbQueues = sim.MakeStore[SBQueue](srv.DB(), "sb_queues")
 	sbTopics = sim.MakeStore[SBTopic](srv.DB(), "sb_topics")
@@ -322,6 +323,7 @@ func handleSBDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	for _, rule := range sbAuthRules.List() {
 		if strings.HasPrefix(rule.ID, prefix) {
 			sbAuthRules.Delete(rule.ID)
+			sbDropAuthRuleKeyGens(rule.ID)
 		}
 	}
 	for _, ruleSet := range sbNetworkRules.List() {
@@ -899,6 +901,8 @@ func handleSBDeleteQueue(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "queue not found")
 		return
 	}
+	// Real Service Bus deletes the queue's scoped authorization rules with it.
+	sbDropAuthRulesUnder(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -971,6 +975,8 @@ func handleSBDeleteTopic(w http.ResponseWriter, r *http.Request) {
 			sbRules.Delete(rule.ID)
 		}
 	}
+	// Real Service Bus deletes the topic's scoped authorization rules with it.
+	sbDropAuthRulesUnder(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1113,6 +1119,24 @@ func sbAuthRuleGet(scope string) http.HandlerFunc {
 	}
 }
 
+// sbDropAuthRuleKeyGens removes an authorization rule's key-rotation state,
+// so a later rule created under the same ID starts from fresh key material.
+func sbDropAuthRuleKeyGens(ruleID string) {
+	azureDropKeyGens(ruleID, "primary", "secondary")
+}
+
+// sbDropAuthRulesUnder deletes every authorization rule scoped under the
+// given parent resource ID, together with its key-rotation state.
+func sbDropAuthRulesUnder(parentID string) {
+	prefix := parentID + "/authorizationRules/"
+	for _, rule := range sbAuthRules.List() {
+		if strings.HasPrefix(rule.ID, prefix) {
+			sbAuthRules.Delete(rule.ID)
+			sbDropAuthRuleKeyGens(rule.ID)
+		}
+	}
+}
+
 func sbAuthRuleDelete(scope string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := sbAuthRuleParentID(r, scope) + "/authorizationRules/" + sim.PathParam(r, "rule")
@@ -1120,6 +1144,7 @@ func sbAuthRuleDelete(scope string) http.HandlerFunc {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "authorization rule not found: %s", id)
 			return
 		}
+		sbDropAuthRuleKeyGens(id)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -1143,11 +1168,14 @@ func sbAuthRuleList(scope string) http.HandlerFunc {
 
 // sbAuthRuleListKeysBody returns the canonical Service Bus AccessKeys
 // shape. Keys are deterministic 44-char base64 strings derived from
-// the rule resource ID (mirrors real-Azure SAS-key shape; same key
-// across reads, distinct between primary / secondary).
+// the rule resource ID + rotation generation (mirrors real-Azure
+// SAS-key shape; same key across reads, distinct between primary /
+// secondary, a new value after every regenerateKeys of that slot).
+// The connection strings embed the current key material, so they too
+// reflect every rotation performed so far.
 func sbAuthRuleListKeysBody(r *http.Request, ruleID, namespace, ruleName string) map[string]any {
-	primary := simListKey32(ruleID, "primary")
-	secondary := simListKey32(ruleID, "secondary")
+	primary := azureKeyMaterial32(ruleID, "primary")
+	secondary := azureKeyMaterial32(ruleID, "secondary")
 	// Real Azure builds Service Bus connection strings with the namespace
 	// endpoint followed by the SAS rule name and key.
 	endpoint := "Endpoint=" + azureServiceBusConnectionEndpoint(r, namespace)
@@ -1181,12 +1209,24 @@ func sbAuthRuleRegenerateKeys(scope string) http.HandlerFunc {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "authorization rule not found: %s", id)
 			return
 		}
-		// Real Azure rotates either primary or secondary based on the
-		// body's `keyType`; the new key is random. The sim is
-		// deterministic per resource ID, so post-rotation keys are
-		// identical to pre-rotation. Operators relying on rotation
-		// for security boundary testing should know — this is
-		// documented in the bug; the wire shape is correct.
+		// RegenerateAccessKeyParameters: keyType selects the slot; the optional
+		// key field pins the slot to caller-supplied material instead of an
+		// auto-generated value — both exactly as real Service Bus behaves.
+		var req struct {
+			KeyType string `json:"keyType"`
+			Key     string `json:"key"`
+		}
+		_ = sim.ReadJSON(r, &req)
+		switch req.KeyType {
+		case "PrimaryKey":
+			azureBumpKeyGen(id, "primary", req.Key)
+		case "SecondaryKey":
+			azureBumpKeyGen(id, "secondary", req.Key)
+		default:
+			sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest,
+				"keyType must be 'PrimaryKey' or 'SecondaryKey', got %q", req.KeyType)
+			return
+		}
 		ns := sim.PathParam(r, "name")
 		sim.WriteJSON(w, http.StatusOK, sbAuthRuleListKeysBody(r, id, ns, ruleName))
 	}

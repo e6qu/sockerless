@@ -105,6 +105,7 @@ type EHNetworkRuleSet struct {
 }
 
 func registerEventHubs(srv *sim.Server) {
+	makeAzureKeyGens(srv)
 	ehNamespaces = sim.MakeStore[EHNamespace](srv.DB(), "eventhub_namespaces")
 	ehEventHubs = sim.MakeStore[EHEventHub](srv.DB(), "eventhub_eventhubs")
 	ehConsumerGroups = sim.MakeStore[EHConsumerGroup](srv.DB(), "eventhub_consumer_groups")
@@ -272,7 +273,7 @@ func handleEHDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, rule := range ehAuthRules.List() {
 		if strings.HasPrefix(rule.ID, prefix) {
-			ehAuthRules.Delete(rule.ID)
+			ehDropAuthRule(rule.ID)
 		}
 	}
 	for _, pec := range ehPrivateConns.List() {
@@ -582,20 +583,12 @@ func handleEHListDRAuthorizationRuleKeys(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ruleName := sim.PathParam(r, "rule")
-	if _, ok := ehAuthRules.Get(parent + "/authorizationRules/" + ruleName); !ok {
+	ruleID := parent + "/authorizationRules/" + ruleName
+	if _, ok := ehAuthRules.Get(ruleID); !ok {
 		sim.AzureError(w, "ResourceNotFound", "authorization rule not found", http.StatusNotFound)
 		return
 	}
-	namespace := sim.PathParam(r, "name")
-	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	conn := fmt.Sprintf("Endpoint=%s;SharedAccessKeyName=%s;SharedAccessKey=%s", azureServiceBusConnectionEndpoint(r, namespace), ruleName, key)
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"keyName":                   ruleName,
-		"primaryKey":                key,
-		"secondaryKey":              key,
-		"primaryConnectionString":   conn,
-		"secondaryConnectionString": conn,
-	})
+	sim.WriteJSON(w, http.StatusOK, ehAuthKeysBody(r, ruleID, sim.PathParam(r, "name"), ruleName, "namespaces"))
 }
 
 func ehApplyNamespaceDefaults(n *EHNamespace, r *http.Request) {
@@ -719,7 +712,7 @@ func handleEHDeleteEventHub(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, rule := range ehAuthRules.List() {
 		if strings.HasPrefix(rule.ID, prefix) {
-			ehAuthRules.Delete(rule.ID)
+			ehDropAuthRule(rule.ID)
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -850,6 +843,14 @@ func ehAuthRuleGet(scope string) http.HandlerFunc {
 	}
 }
 
+// ehDropAuthRule removes an authorization rule together with its
+// key-rotation state, so a later rule created under the same ID starts from
+// fresh key material.
+func ehDropAuthRule(ruleID string) {
+	ehAuthRules.Delete(ruleID)
+	azureDropKeyGens(ruleID, "primary", "secondary")
+}
+
 func ehAuthRuleDelete(scope string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		parent, ok := ehAuthRuleParentID(r, scope)
@@ -857,7 +858,7 @@ func ehAuthRuleDelete(scope string) http.HandlerFunc {
 			sim.AzureError(w, "ResourceNotFound", "parent not found", http.StatusNotFound)
 			return
 		}
-		ehAuthRules.Delete(parent + "/authorizationRules/" + sim.PathParam(r, "rule"))
+		ehDropAuthRule(parent + "/authorizationRules/" + sim.PathParam(r, "rule"))
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -885,40 +886,78 @@ func ehAuthRuleList(scope string) http.HandlerFunc {
 
 func ehAuthRuleListKeys(scope string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ehWriteAuthKeys(w, r, scope)
+		_, ruleID, ok := ehResolveAuthRule(w, r, scope)
+		if !ok {
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, ehAuthKeysBody(r, ruleID, sim.PathParam(r, "name"), sim.PathParam(r, "rule"), scope))
 	}
 }
 
 func ehAuthRuleRegenerateKeys(scope string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ehWriteAuthKeys(w, r, scope)
+		_, ruleID, ok := ehResolveAuthRule(w, r, scope)
+		if !ok {
+			return
+		}
+		// RegenerateAccessKeyParameters: keyType selects the slot; the optional
+		// key field pins the slot to caller-supplied material instead of an
+		// auto-generated value — both exactly as real Event Hubs behaves.
+		var req struct {
+			KeyType string `json:"keyType"`
+			Key     string `json:"key"`
+		}
+		_ = sim.ReadJSON(r, &req)
+		switch req.KeyType {
+		case "PrimaryKey":
+			azureBumpKeyGen(ruleID, "primary", req.Key)
+		case "SecondaryKey":
+			azureBumpKeyGen(ruleID, "secondary", req.Key)
+		default:
+			sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest,
+				"keyType must be 'PrimaryKey' or 'SecondaryKey', got %q", req.KeyType)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, ehAuthKeysBody(r, ruleID, sim.PathParam(r, "name"), sim.PathParam(r, "rule"), scope))
 	}
 }
 
-func ehWriteAuthKeys(w http.ResponseWriter, r *http.Request, scope string) {
-	parent, ok := ehAuthRuleParentID(r, scope)
+// ehResolveAuthRule validates the parent + rule from the request path and
+// returns the rule's full resource ID.
+func ehResolveAuthRule(w http.ResponseWriter, r *http.Request, scope string) (parent, ruleID string, ok bool) {
+	parent, ok = ehAuthRuleParentID(r, scope)
 	if !ok {
 		sim.AzureError(w, "ResourceNotFound", "parent not found", http.StatusNotFound)
-		return
+		return "", "", false
 	}
-	ruleName := sim.PathParam(r, "rule")
-	if _, ok := ehAuthRules.Get(parent + "/authorizationRules/" + ruleName); !ok {
+	ruleID = parent + "/authorizationRules/" + sim.PathParam(r, "rule")
+	if _, ok := ehAuthRules.Get(ruleID); !ok {
 		sim.AzureError(w, "ResourceNotFound", "authorization rule not found", http.StatusNotFound)
-		return
+		return "", "", false
 	}
-	namespace := sim.PathParam(r, "name")
-	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	conn := fmt.Sprintf("Endpoint=%s;SharedAccessKeyName=%s;SharedAccessKey=%s", azureServiceBusConnectionEndpoint(r, namespace), ruleName, key)
+	return parent, ruleID, true
+}
+
+// ehAuthKeysBody is the canonical Event Hubs AccessKeys shape listKeys and
+// regenerateKeys both return. Keys are deterministic 44-char base64 strings
+// derived from the rule resource ID + rotation generation (mirroring the
+// real-Azure SAS-key shape); the connection strings embed the current key
+// material, so both reflect every rotation performed so far.
+func ehAuthKeysBody(r *http.Request, ruleID, namespace, ruleName, scope string) map[string]any {
+	primary := azureKeyMaterial32(ruleID, "primary")
+	secondary := azureKeyMaterial32(ruleID, "secondary")
+	endpoint := "Endpoint=" + azureServiceBusConnectionEndpoint(r, namespace)
+	entityPath := ""
 	if scope == "eventhubs" {
-		conn += ";EntityPath=" + sim.PathParam(r, "eventhub")
+		entityPath = ";EntityPath=" + sim.PathParam(r, "eventhub")
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"keyName":                   ruleName,
-		"primaryKey":                key,
-		"secondaryKey":              key,
-		"primaryConnectionString":   conn,
-		"secondaryConnectionString": conn,
-	})
+		"primaryKey":                primary,
+		"secondaryKey":              secondary,
+		"primaryConnectionString":   endpoint + ";SharedAccessKeyName=" + ruleName + ";SharedAccessKey=" + primary + entityPath,
+		"secondaryConnectionString": endpoint + ";SharedAccessKeyName=" + ruleName + ";SharedAccessKey=" + secondary + entityPath,
+	}
 }
 
 func ehAuthRuleParentID(r *http.Request, scope string) (string, bool) {

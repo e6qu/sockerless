@@ -85,6 +85,7 @@ var (
 )
 
 func registerAPIM(srv *sim.Server) {
+	makeAzureKeyGens(srv)
 	apimServices = sim.MakeStore[APIMService](srv.DB(), "apim_services")
 	apimApis = sim.MakeStore[APIMApi](srv.DB(), "apim_apis")
 	apimProducts = sim.MakeStore[APIMProduct](srv.DB(), "apim_products")
@@ -406,6 +407,7 @@ func handleAPIMDeleteService(w http.ResponseWriter, r *http.Request) {
 	for _, s := range apimSubscriptions.List() {
 		if strings.HasPrefix(s.ID, prefix) {
 			apimSubscriptions.Delete(s.ID)
+			apimDropSubscriptionKeyGens(s.ID)
 		}
 	}
 	rg := sim.PathParam(r, "resourceGroupName")
@@ -694,6 +696,7 @@ func handleAPIMDeleteSubscription(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "subscription not found")
 		return
 	}
+	apimDropSubscriptionKeyGens(id)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -708,10 +711,24 @@ func handleAPIMListSubscriptionSecrets(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "subscription not found")
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"primaryKey":   simListKey32(id, "apim-subscription-primary"),
-		"secondaryKey": simListKey32(id, "apim-subscription-secondary"),
-	})
+	sim.WriteJSON(w, http.StatusOK, apimSubscriptionKeysBody(id))
+}
+
+// apimSubscriptionKeysBody is the SubscriptionKeysContract listSecrets
+// returns, reflecting every regeneratePrimaryKey / regenerateSecondaryKey
+// performed so far.
+func apimSubscriptionKeysBody(id string) map[string]any {
+	return map[string]any{
+		"primaryKey":   azureKeyMaterial32(id, "apim-subscription-primary"),
+		"secondaryKey": azureKeyMaterial32(id, "apim-subscription-secondary"),
+	}
+}
+
+// apimDropSubscriptionKeyGens removes a deleted subscription's key-rotation
+// state so a later subscription created under the same ID starts from fresh
+// key material.
+func apimDropSubscriptionKeyGens(id string) {
+	azureDropKeyGens(id, "apim-subscription-primary", "apim-subscription-secondary")
 }
 
 func handleAPIMListSubscriptions(w http.ResponseWriter, r *http.Request) {

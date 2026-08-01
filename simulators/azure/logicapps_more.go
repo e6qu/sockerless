@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -324,21 +328,98 @@ func handleLogicWorkflowListSwagger(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// logicAccessKeySlot maps the KeyType enum regenerateAccessKey sends to the
+// workflow's access-key slot. Real Logic Apps signs callback URLs with the
+// primary key and keeps a secondary for staged rotation.
+func logicAccessKeySlot(keyType string) string {
+	switch strings.ToLower(keyType) {
+	case "primary", "":
+		return "logic-access-primary"
+	case "secondary":
+		return "logic-access-secondary"
+	}
+	return ""
+}
+
+// logicCallbackSignature derives the `sig` a Logic Apps callback URL carries.
+// Real Logic Apps signs the callback with the workflow's access key, so
+// regenerating that key invalidates every previously issued callback URL —
+// which is exactly what a caller observes here: listCallbackUrl returns a
+// different signature after regenerateAccessKey.
+func logicCallbackSignature(workflowID, path string) string {
+	key := azureKeyMaterial32(workflowID, "logic-access-primary")
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte(path))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// logicCallbackQueries is the query set a Logic Apps callback URL carries:
+// the API version, the signed permission + signature version, and the
+// access-key-derived signature.
+func logicCallbackQueries(workflowID, path string) map[string]any {
+	return map[string]any{
+		"api-version": "2016-10-01",
+		"sp":          "%2Ftriggers%2Fmanual%2Frun",
+		"sv":          "1.0",
+		"sig":         logicCallbackSignature(workflowID, path),
+	}
+}
+
+// logicCallbackURL appends the signed query string to a callback endpoint.
+func logicCallbackURL(endpoint string, queries map[string]any) string {
+	sep := "?"
+	if strings.Contains(endpoint, "?") {
+		sep = "&"
+	}
+	return fmt.Sprintf("%s%sapi-version=%s&sp=%s&sv=%s&sig=%s",
+		endpoint, sep, queries["api-version"], queries["sp"], queries["sv"], queries["sig"])
+}
+
+// logicDropWorkflowKeyGens removes a deleted workflow's access-key rotation
+// state so a later workflow of the same name signs with fresh key material.
+func logicDropWorkflowKeyGens(workflowID string) {
+	azureDropKeyGens(workflowID, "logic-access-primary", "logic-access-secondary")
+}
+
 func handleLogicWorkflowListCallbackURL(w http.ResponseWriter, r *http.Request) {
-	wf, ok := logicWorkflows.Get(strings.TrimSuffix(r.URL.Path, "/listCallbackUrl"))
+	id := strings.TrimSuffix(r.URL.Path, "/listCallbackUrl")
+	wf, ok := logicWorkflows.Get(id)
 	if !ok {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Workflow %q not found.", sim.PathParam(r, "workflowName"))
 		return
 	}
 	endpoint, _ := wf.Properties["accessEndpoint"].(string)
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": endpoint, "method": "POST"})
+	queries := logicCallbackQueries(id, id+"/triggers/manual/paths/invoke")
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"value":        logicCallbackURL(endpoint, queries),
+		"method":       "POST",
+		"basePath":     endpoint,
+		"relativePath": "/triggers/manual/paths/invoke",
+		"queries":      queries,
+	})
 }
 
+// handleLogicWorkflowRegenerateAccessKey rotates the workflow's primary or
+// secondary access key. Because callback URLs are signed with the access key,
+// a subsequent listCallbackUrl returns a different signature — real Logic
+// Apps invalidates outstanding callback URLs the same way.
 func handleLogicWorkflowRegenerateAccessKey(w http.ResponseWriter, r *http.Request) {
-	if _, ok := logicWorkflows.Get(strings.TrimSuffix(r.URL.Path, "/regenerateAccessKey")); !ok {
+	id := strings.TrimSuffix(r.URL.Path, "/regenerateAccessKey")
+	if _, ok := logicWorkflows.Get(id); !ok {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Workflow %q not found.", sim.PathParam(r, "workflowName"))
 		return
 	}
+	var req struct {
+		KeyType string `json:"keyType"`
+	}
+	_ = sim.ReadJSON(r, &req)
+	slot := logicAccessKeySlot(req.KeyType)
+	if slot == "" {
+		sim.AzureErrorf(w, "InvalidRequestContent", http.StatusBadRequest,
+			"The value '%s' is not valid for property 'keyType'.", req.KeyType)
+		return
+	}
+	azureBumpKeyGen(id, slot, "")
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -494,16 +575,30 @@ func handleLogicTriggerSchemaJSON(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleLogicTriggerListCallbackURL signs the trigger callback with the
+// parent workflow's access key, so regenerateAccessKey invalidates it exactly
+// as it invalidates the workflow-level callback.
 func handleLogicTriggerListCallbackURL(w http.ResponseWriter, r *http.Request) {
 	scheme := azureRequestScheme(r)
 	id := strings.TrimSuffix(r.URL.Path, "/listCallbackUrl")
+	workflowID := logicWorkflowIDForPath(r)
+	basePath := scheme + "://" + r.Host + id
+	queries := logicCallbackQueries(workflowID, id+"/run")
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"value":        scheme + "://" + r.Host + id + "/run",
+		"value":        logicCallbackURL(basePath+"/run", queries),
 		"method":       "POST",
-		"basePath":     scheme + "://" + r.Host + id,
+		"basePath":     basePath,
 		"relativePath": "/run",
-		"queries":      map[string]any{"api-version": "2016-10-01"},
+		"queries":      queries,
 	})
+}
+
+// logicWorkflowIDForPath returns the ARM resource ID of the workflow that
+// owns the addressed trigger (or trigger version), so every callback issued
+// under a workflow is signed with that workflow's access key.
+func logicWorkflowIDForPath(r *http.Request) string {
+	return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Logic/workflows/%s",
+		sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "workflowName"))
 }
 
 func handleLogicTriggerReset(w http.ResponseWriter, r *http.Request) {
@@ -615,6 +710,7 @@ func handleLogicIntegrationAccountDelete(w http.ResponseWriter, r *http.Request)
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Integration account %q not found.", sim.PathParam(r, "integrationAccountName"))
 		return
 	}
+	logicDropWorkflowKeyGens(id)
 	for _, art := range logicIAArtifacts.Filter(func(res LogicResource) bool { return strings.HasPrefix(res.ID, id+"/") }) {
 		logicIAArtifacts.Delete(art.ID)
 	}
@@ -629,14 +725,18 @@ func handleLogicIntegrationAccountListBySub(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// handleLogicIntegrationAccountCallbackURL signs the account's callback with
+// its access key, so regenerateAccessKey invalidates the outstanding URL the
+// way real Logic Apps does.
 func handleLogicIntegrationAccountCallbackURL(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSuffix(r.URL.Path, "/listCallbackUrl")
 	if _, ok := logicIntegrationAccts.Get(id); !ok {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Integration account %q not found.", sim.PathParam(r, "integrationAccountName"))
 		return
 	}
+	endpoint := azureRequestScheme(r) + "://" + r.Host + id + "/callback"
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"value": azureRequestScheme(r) + "://" + r.Host + id + "/callback",
+		"value": logicCallbackURL(endpoint, logicCallbackQueries(id, id+"/callback")),
 	})
 }
 
@@ -658,6 +758,10 @@ func handleLogicIntegrationAccountLogTrackingEvents(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleLogicIntegrationAccountRegenerateAccessKey rotates the account's
+// primary or secondary access key and returns the account, as real Logic Apps
+// does. The account's callback URL is signed with that key, so listCallbackUrl
+// returns a different signature afterwards.
 func handleLogicIntegrationAccountRegenerateAccessKey(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSuffix(r.URL.Path, "/regenerateAccessKey")
 	acct, ok := logicIntegrationAccts.Get(id)
@@ -665,6 +769,17 @@ func handleLogicIntegrationAccountRegenerateAccessKey(w http.ResponseWriter, r *
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Integration account %q not found.", sim.PathParam(r, "integrationAccountName"))
 		return
 	}
+	var req struct {
+		KeyType string `json:"keyType"`
+	}
+	_ = sim.ReadJSON(r, &req)
+	slot := logicAccessKeySlot(req.KeyType)
+	if slot == "" {
+		sim.AzureErrorf(w, "InvalidRequestContent", http.StatusBadRequest,
+			"The value '%s' is not valid for property 'keyType'.", req.KeyType)
+		return
+	}
+	azureBumpKeyGen(id, slot, "")
 	sim.WriteJSON(w, http.StatusOK, acct)
 }
 

@@ -579,3 +579,154 @@ func TestAmplifyDomainVerificationRoute53Flow(t *testing.T) {
 	_, err = r53.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(zoneID)})
 	require.NoError(t, err)
 }
+
+// A deployment carrying an invalid deploy-manifest.json must fail the way
+// real Amplify rejects it: the job lands FAILED with the DEPLOY step's log
+// carrying the validation error, and the bundle never becomes servable.
+func TestAmplifyDeploymentInvalidManifestFailsE2E(t *testing.T) {
+	c := amplifyClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	app, err := c.CreateApp(ctx, &amplify.CreateAppInput{
+		Name:     aws.String("badmanifest-app-" + time.Now().Format("150405.000000")),
+		Platform: amplifytypes.PlatformWebCompute,
+	})
+	require.NoError(t, err)
+	appID := aws.ToString(app.App.AppId)
+	defer func() { _, _ = c.DeleteApp(ctx, &amplify.DeleteAppInput{AppId: aws.String(appID)}) }()
+	_, err = c.CreateBranch(ctx, &amplify.CreateBranchInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"),
+	})
+	require.NoError(t, err)
+
+	zipBytes := amplifyZipBytes(t, map[string][]byte{
+		"deploy-manifest.json": []byte(`{"version": 2, "routes": []}`),
+		"static/index.html":    []byte("<html>ssr bundle</html>"),
+	})
+	createDep, err := c.CreateDeployment(ctx, &amplify.CreateDeploymentInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"),
+	})
+	require.NoError(t, err)
+	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, aws.ToString(createDep.ZipUploadUrl), bytes.NewReader(zipBytes))
+	require.NoError(t, err)
+	putReq.Header.Set("Content-Type", "application/zip")
+	putResp, err := http.DefaultClient.Do(putReq)
+	require.NoError(t, err)
+	putResp.Body.Close()
+	require.Equal(t, http.StatusOK, putResp.StatusCode)
+	jobID := aws.ToString(createDep.JobId)
+	_, err = c.StartDeployment(ctx, &amplify.StartDeploymentInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"), JobId: aws.String(jobID),
+	})
+	require.NoError(t, err)
+
+	job := amplifyWaitJobStatus(t, ctx, c, appID, "main", jobID, amplifytypes.JobStatusFailed)
+	deployStep := amplifyRequireJobStep(t, job, "DEPLOY")
+	require.Equal(t, amplifytypes.JobStatusFailed, deployStep.Status)
+	logURL := aws.ToString(deployStep.LogUrl)
+	require.NotEmpty(t, logURL, "failed DEPLOY step must carry a logUrl")
+	logResp, err := http.Get(logURL)
+	require.NoError(t, err)
+	logBody, err := io.ReadAll(logResp.Body)
+	logResp.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, logResp.StatusCode)
+	assert.Contains(t, string(logBody), "!!! CustomerError: We failed to validate the deploy-manifest.json file found in your build output directory")
+	assert.Contains(t, string(logBody), "version 2 not supported")
+
+	// The rejected bundle never serves.
+	resp, _ := amplifyHostGet(t, "main."+appID+".amplifyapp.com", "/", nil)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// Route fallbacks per the deployment specification: a target whose response
+// is a 404 falls back to the route's declared fallback target, for GET
+// requests without a body.
+func TestAmplifyHostingRouteFallbacksE2E(t *testing.T) {
+	c := amplifyClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	app, err := c.CreateApp(ctx, &amplify.CreateAppInput{
+		Name:     aws.String("fallback-app-" + time.Now().Format("150405.000000")),
+		Platform: amplifytypes.PlatformWebCompute,
+	})
+	require.NoError(t, err)
+	appID := aws.ToString(app.App.AppId)
+	defer func() { _, _ = c.DeleteApp(ctx, &amplify.DeleteAppInput{AppId: aws.String(appID)}) }()
+	_, err = c.CreateBranch(ctx, &amplify.CreateBranchInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"),
+	})
+	require.NoError(t, err)
+
+	manifest, err := json.Marshal(map[string]any{
+		"version":   1,
+		"framework": map[string]string{"name": "custom", "version": "1.0.0"},
+		"routes": []map[string]any{
+			{
+				"path":     "/_next/image",
+				"target":   map[string]string{"kind": "ImageOptimization"},
+				"fallback": map[string]string{"kind": "Compute", "src": "default"},
+			},
+			{
+				"path":     "/app/*",
+				"target":   map[string]string{"kind": "Compute", "src": "default"},
+				"fallback": map[string]string{"kind": "Static"},
+			},
+			{"path": "/*", "target": map[string]string{"kind": "Compute", "src": "default"}},
+		},
+		"computeResources": []map[string]string{
+			{"name": "default", "runtime": "nodejs20.x", "entrypoint": "index.js"},
+		},
+		"imageSettings": map[string]any{
+			"sizes":               []int{64},
+			"domains":             []string{},
+			"remotePatterns":      []any{},
+			"formats":             []string{"image/webp"},
+			"minimumCacheTTL":     60,
+			"dangerouslyAllowSVG": false,
+		},
+	})
+	require.NoError(t, err)
+	entrypoint := `const http = require('http');
+http.createServer((req, res) => {
+  if (req.url.startsWith('/app/missing')) { res.statusCode = 404; res.end('compute-404'); return; }
+  res.setHeader('content-type', 'text/plain');
+  res.end('compute:' + req.url);
+}).listen(process.env.PORT);
+`
+	amplifyDeployZip(t, ctx, c, appID, "main", amplifyZipBytes(t, map[string][]byte{
+		"deploy-manifest.json":     manifest,
+		"compute/default/index.js": []byte(entrypoint),
+		"static/app/missing-page":  []byte("static fallback for missing page"),
+	}))
+	host := "main." + appID + ".amplifyapp.com"
+
+	// Non-404 compute responses stream through untouched.
+	resp, body := amplifyHostGet(t, host, "/app/hello", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "compute proxy: %s", body)
+	assert.Equal(t, "compute:/app/hello", string(body))
+
+	// A compute 404 falls back to the route's Static fallback.
+	resp, body = amplifyHostGet(t, host, "/app/missing-page", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "compute->static fallback: %s", body)
+	assert.Equal(t, "static fallback for missing page", string(body))
+
+	// A compute 404 with no matching static fallback file stays a 404.
+	resp, _ = amplifyHostGet(t, host, "/app/missing-other", nil)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	// An ImageOptimization 404 (missing source artifact) falls back to the
+	// route's Compute fallback.
+	resp, body = amplifyHostGet(t, host, "/_next/image?url=%2Fnope.png&w=64&q=75", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "imageopt->compute fallback: %s", body)
+	assert.Equal(t, "compute:/_next/image?url=%2Fnope.png&w=64&q=75", string(body))
+
+	// Fallbacks apply to GET only: a POST that 404s on compute is served
+	// the compute 404, never the fallback.
+	postReq := func(r *http.Request) { r.Method = http.MethodPost }
+	resp, body = amplifyHostGet(t, host, "/app/missing-page", postReq)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "compute-404", string(body))
+}

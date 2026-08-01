@@ -158,6 +158,114 @@ func TestContainerAppsApps_CLI_StartsRealReplicaAndLogs(t *testing.T) {
 	}
 }
 
+// TestContainerAppsApps_CLI_ConfigurationRoundTrip drives every
+// configuration member — dapr, identitySettings, maxInactiveRevisions,
+// runtime, and service — through az rest PUT/GET/PATCH, pinning the raw
+// ARM wire spelling of each member.
+func TestContainerAppsApps_CLI_ConfigurationRoundTrip(t *testing.T) {
+	appURL := acaURL("containerApps/cli-cfg-app")
+	body := `{
+		"location": "eastus",
+		"properties": {
+			"environmentId": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/managedEnvironments/sim-env",
+			"configuration": {
+				"activeRevisionsMode": "Multiple",
+				"maxInactiveRevisions": 12,
+				"dapr": {
+					"enabled": false,
+					"appId": "cli-dapr-app",
+					"appPort": 9000,
+					"appProtocol": "grpc",
+					"enableApiLogging": true,
+					"httpMaxRequestSize": 16,
+					"httpReadBufferSize": 8,
+					"logLevel": "debug"
+				},
+				"runtime": {
+					"java": { "enableMetrics": true }
+				},
+				"service": { "type": "redis" },
+				"identitySettings": [
+					{ "identity": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/cli-identity", "lifecycle": "Init" }
+				]
+			}
+		}
+	}`
+	runCLI(t, azRest("PUT", appURL, body))
+	t.Cleanup(func() { _, _ = azRest("DELETE", appURL, "").CombinedOutput() })
+
+	type configShape struct {
+		ActiveRevisionsMode  string `json:"activeRevisionsMode"`
+		MaxInactiveRevisions int    `json:"maxInactiveRevisions"`
+		Dapr                 struct {
+			Enabled            bool   `json:"enabled"`
+			AppID              string `json:"appId"`
+			AppPort            int    `json:"appPort"`
+			AppProtocol        string `json:"appProtocol"`
+			EnableAPILogging   bool   `json:"enableApiLogging"`
+			HTTPMaxRequestSize int    `json:"httpMaxRequestSize"`
+			HTTPReadBufferSize int    `json:"httpReadBufferSize"`
+			LogLevel           string `json:"logLevel"`
+		} `json:"dapr"`
+		Runtime struct {
+			Java struct {
+				EnableMetrics bool `json:"enableMetrics"`
+			} `json:"java"`
+		} `json:"runtime"`
+		Service struct {
+			Type string `json:"type"`
+		} `json:"service"`
+		IdentitySettings []struct {
+			Identity  string `json:"identity"`
+			Lifecycle string `json:"lifecycle"`
+		} `json:"identitySettings"`
+	}
+	var got struct {
+		Properties struct {
+			Configuration configShape `json:"configuration"`
+		} `json:"properties"`
+	}
+	out := runCLI(t, azRest("GET", appURL, ""))
+	parseJSON(t, out, &got)
+	cfg := got.Properties.Configuration
+	assert.Equal(t, "Multiple", cfg.ActiveRevisionsMode)
+	assert.Equal(t, 12, cfg.MaxInactiveRevisions)
+	assert.False(t, cfg.Dapr.Enabled)
+	assert.Equal(t, "cli-dapr-app", cfg.Dapr.AppID)
+	assert.Equal(t, 9000, cfg.Dapr.AppPort)
+	assert.Equal(t, "grpc", cfg.Dapr.AppProtocol)
+	assert.True(t, cfg.Dapr.EnableAPILogging)
+	assert.Equal(t, 16, cfg.Dapr.HTTPMaxRequestSize)
+	assert.Equal(t, 8, cfg.Dapr.HTTPReadBufferSize)
+	assert.Equal(t, "debug", cfg.Dapr.LogLevel)
+	assert.True(t, cfg.Runtime.Java.EnableMetrics)
+	assert.Equal(t, "redis", cfg.Service.Type)
+	require.Len(t, cfg.IdentitySettings, 1)
+	assert.Contains(t, cfg.IdentitySettings[0].Identity, "/userAssignedIdentities/cli-identity")
+	assert.Equal(t, "Init", cfg.IdentitySettings[0].Lifecycle)
+
+	// An RFC 7396 merge patch of one dapr member must preserve every
+	// sibling dapr member and every sibling configuration member.
+	out = runCLI(t, azRest("PATCH", appURL,
+		`{"properties":{"configuration":{"dapr":{"logLevel":"warn"}}}}`))
+	var patched struct {
+		Properties struct {
+			Configuration configShape `json:"configuration"`
+		} `json:"properties"`
+	}
+	parseJSON(t, out, &patched)
+	pcfg := patched.Properties.Configuration
+	assert.Equal(t, "warn", pcfg.Dapr.LogLevel, "the patched dapr member must take the new value")
+	assert.Equal(t, "cli-dapr-app", pcfg.Dapr.AppID, "sibling dapr members must survive the merge")
+	assert.Equal(t, 9000, pcfg.Dapr.AppPort)
+	assert.Equal(t, "grpc", pcfg.Dapr.AppProtocol)
+	assert.True(t, pcfg.Dapr.EnableAPILogging)
+	assert.Equal(t, 12, pcfg.MaxInactiveRevisions, "sibling configuration members must survive the merge")
+	assert.True(t, pcfg.Runtime.Java.EnableMetrics)
+	assert.Equal(t, "redis", pcfg.Service.Type)
+	require.Len(t, pcfg.IdentitySettings, 1)
+}
+
 // WebApps.UpdateAzureStorageAccounts is what the azure-functions
 // backend uses to bind named volumes to Azure Files.
 func TestWebApps_CLI_UpdateAzureStorageAccounts(t *testing.T) {

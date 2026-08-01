@@ -44,6 +44,9 @@ type amplifyDeployManifest struct {
 	Routes           []amplifyManifestRoute        `json:"routes"`
 	ComputeResources []amplifyManifestComputeEntry `json:"computeResources,omitempty"`
 	ImageSettings    json.RawMessage               `json:"imageSettings,omitempty"`
+	// routeRegexps caches each route path pattern's compiled matcher, built
+	// once when the manifest is parsed instead of per request.
+	routeRegexps map[string]*regexp.Regexp
 }
 
 type amplifyManifestFramework struct {
@@ -80,7 +83,21 @@ func amplifyParseDeployManifest(data []byte) (*amplifyDeployManifest, error) {
 	if len(manifest.Routes) == 0 {
 		return nil, fmt.Errorf("deploy-manifest.json has no routes")
 	}
+	manifest.routeRegexps = map[string]*regexp.Regexp{}
+	for _, route := range manifest.Routes {
+		manifest.routeRegexps[route.Path] = amplifyCompileRoutePattern(route.Path)
+	}
 	return &manifest, nil
+}
+
+// routeMatches matches a manifest route path pattern against a request path,
+// through the matcher compiled at parse time (compiling on the spot for a
+// pattern outside the manifest's routes).
+func (m *amplifyDeployManifest) routeMatches(pattern, reqPath string) bool {
+	if re := m.routeRegexps[pattern]; re != nil {
+		return re.MatchString(reqPath)
+	}
+	return amplifyCompileRoutePattern(pattern).MatchString(reqPath)
 }
 
 func (m *amplifyDeployManifest) computeResource(name string) (amplifyManifestComputeEntry, bool) {
@@ -92,11 +109,11 @@ func (m *amplifyDeployManifest) computeResource(name string) (amplifyManifestCom
 	return amplifyManifestComputeEntry{}, false
 }
 
-// amplifyManifestRouteMatch matches a route path pattern against a request
-// path. The spec's patterns are simple globs ("/api/*", "/*.*", "/*") where
-// `*` matches any characters, including separators — the catch-all "/*"
-// matches every path.
-func amplifyManifestRouteMatch(pattern, reqPath string) bool {
+// amplifyCompileRoutePattern compiles a route path pattern. The spec's
+// patterns are simple globs ("/api/*", "/*.*", "/*") where `*` matches any
+// characters, including separators — the catch-all "/*" matches every path.
+// Every non-wildcard byte is quoted, so compilation cannot fail.
+func amplifyCompileRoutePattern(pattern string) *regexp.Regexp {
 	var b strings.Builder
 	b.WriteString("^")
 	for i, part := range strings.Split(pattern, "*") {
@@ -106,11 +123,7 @@ func amplifyManifestRouteMatch(pattern, reqPath string) bool {
 		b.WriteString(regexp.QuoteMeta(part))
 	}
 	b.WriteString("$")
-	re, err := regexp.Compile(b.String())
-	if err != nil {
-		return false
-	}
-	return re.MatchString(reqPath)
+	return regexp.MustCompile(b.String())
 }
 
 // ---------- compute container lifecycle ----------
@@ -373,17 +386,19 @@ func amplifyWaitForPort(port int, timeout time.Duration) error {
 // ---------- request routing ----------
 
 // amplifyServeManifestRoutes serves a WEB_COMPUTE request through the deploy
-// manifest's routes[]: first matching route wins; a Static miss falls back
-// to the route's fallback target.
+// manifest's routes[]: first matching route wins; a target that produces a
+// 404 falls back to the route's fallback target (the spec supports fallbacks
+// for GET requests without a body).
 func amplifyServeManifestRoutes(w http.ResponseWriter, r *http.Request, app AmplifyApp, br AmplifyBranch, content *amplifyHostedContent) {
 	for _, route := range content.Manifest.Routes {
-		if route.Target == nil || !amplifyManifestRouteMatch(route.Path, r.URL.Path) {
+		if route.Target == nil || !content.Manifest.routeMatches(route.Path, r.URL.Path) {
 			continue
 		}
-		if amplifyServeManifestTarget(w, r, app, br, content, route.Target) {
+		interceptNotFound := route.Fallback != nil && r.Method == http.MethodGet && r.ContentLength <= 0
+		if amplifyServeManifestTarget(w, r, app, br, content, route.Target, interceptNotFound) {
 			return
 		}
-		if route.Fallback != nil && amplifyServeManifestTarget(w, r, app, br, content, route.Fallback) {
+		if route.Fallback != nil && amplifyServeManifestTarget(w, r, app, br, content, route.Fallback, false) {
 			return
 		}
 		http.NotFound(w, r)
@@ -393,8 +408,10 @@ func amplifyServeManifestRoutes(w http.ResponseWriter, r *http.Request, app Ampl
 }
 
 // amplifyServeManifestTarget attempts one route target; reports whether the
-// request was handled (a Static miss is unhandled so fallbacks apply).
-func amplifyServeManifestTarget(w http.ResponseWriter, r *http.Request, app AmplifyApp, br AmplifyBranch, content *amplifyHostedContent, target *amplifyManifestTarget) bool {
+// request was handled. With interceptNotFound, a target whose response would
+// be a 404 writes nothing and reports unhandled so the route's fallback
+// target applies.
+func amplifyServeManifestTarget(w http.ResponseWriter, r *http.Request, app AmplifyApp, br AmplifyBranch, content *amplifyHostedContent, target *amplifyManifestTarget, interceptNotFound bool) bool {
 	switch target.Kind {
 	case "Static":
 		// The spec places compute-bundle static assets under static/.
@@ -418,22 +435,25 @@ func amplifyServeManifestTarget(w http.ResponseWriter, r *http.Request, app Ampl
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return true
 		}
-		if err := amplifyProxyToCompute(w, r, port); err != nil {
+		served, err := amplifyProxyToCompute(w, r, port, interceptNotFound)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
+			return true
 		}
-		return true
+		return served
 	case "ImageOptimization":
-		// Real Amplify runs an image-optimization service for this kind;
-		// the sim has none and won't pretend it transformed anything.
-		http.Error(w, "ImageOptimization routes are not supported by this simulator", http.StatusNotImplemented)
-		return true
+		return amplifyServeImageOptimization(w, r, app, br, content, target, interceptNotFound)
 	default:
 		http.Error(w, "deploy-manifest target kind "+target.Kind+" not supported", http.StatusBadGateway)
 		return true
 	}
 }
 
-func amplifyProxyToCompute(w http.ResponseWriter, r *http.Request, port int) error {
+// amplifyProxyToCompute forwards the request to the compute container. With
+// interceptNotFound, a 404 from compute is discarded and reported unserved
+// (nothing written) so the caller's fallback target applies; every other
+// response streams through untouched.
+func amplifyProxyToCompute(w http.ResponseWriter, r *http.Request, port int, interceptNotFound bool) (bool, error) {
 	upstreamURL := url.URL{
 		Scheme:   "http",
 		Host:     net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
@@ -444,16 +464,20 @@ func amplifyProxyToCompute(w http.ResponseWriter, r *http.Request, port int) err
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, r.Method, upstreamURL.String(), r.Body)
 	if err != nil {
-		return err
+		return false, err
 	}
 	req.Header = r.Header.Clone()
 	req.Host = r.Host
 	client := http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("forward to compute %s: %w", upstreamURL.Host, err)
+		return false, fmt.Errorf("forward to compute %s: %w", upstreamURL.Host, err)
 	}
 	defer resp.Body.Close()
+	if interceptNotFound && resp.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return false, nil
+	}
 	for key, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
@@ -461,5 +485,5 @@ func amplifyProxyToCompute(w http.ResponseWriter, r *http.Request, port int) err
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, err = io.Copy(w, resp.Body)
-	return err
+	return true, err
 }

@@ -392,7 +392,9 @@ func handleSBAdminGetEntity(w http.ResponseWriter, r *http.Request, namespace, n
 }
 
 func handleSBAdminDeleteEntity(w http.ResponseWriter, r *http.Request, namespace, name string) {
-	if sbQueues.Delete(sbAdminQueueID(namespace, name)) {
+	queueID := sbAdminQueueID(namespace, name)
+	if sbQueues.Delete(queueID) {
+		sbDropAuthRulesUnder(queueID)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -408,6 +410,7 @@ func handleSBAdminDeleteEntity(w http.ResponseWriter, r *http.Request, namespace
 				sbRules.Delete(rule.ID)
 			}
 		}
+		sbDropAuthRulesUnder(topicID)
 		w.WriteHeader(http.StatusOK)
 		return
 	}

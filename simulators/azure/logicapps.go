@@ -37,6 +37,7 @@ var (
 )
 
 func registerLogicApps(srv *sim.Server) {
+	makeAzureKeyGens(srv)
 	logicWorkflows = sim.MakeStore[LogicWorkflow](srv.DB(), "logic_workflows")
 	logicRuns = sim.MakeStore[LogicWorkflowRun](srv.DB(), "logic_workflow_runs")
 
@@ -188,6 +189,7 @@ func handleLogicWorkflowDelete(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Workflow %q not found.", sim.PathParam(r, "workflowName"))
 		return
 	}
+	logicDropWorkflowKeyGens(id)
 	for _, run := range logicRuns.List() {
 		if strings.HasPrefix(run.ID, id+"/runs/") {
 			logicRuns.Delete(run.ID)

@@ -199,12 +199,12 @@ func amplifyLatestSucceededJob(appID, branch string) (amplifyStoredJob, bool) {
 	return jobs[0], true
 }
 
-// amplifyUnpackJobArtifacts builds the served file map from a job's
-// hosted artifacts: a single zip artifact (build output / zip deployment) is
-// expanded, a multi-file artifact set (fileMap deployment) is served
-// directly. End-to-end test outputs and their metadata are separate Amplify
-// artifact roles and are never published as site content.
-func amplifyUnpackJobArtifacts(appID, branch, jobID string) *amplifyHostedContent {
+// amplifyJobArtifactFiles assembles a job's hosted-content file map: a
+// single zip artifact (build output / zip deployment) is expanded, a
+// multi-file artifact set (fileMap deployment) is used directly. End-to-end
+// test outputs and their metadata are separate Amplify artifact roles and
+// are never published as site content.
+func amplifyJobArtifactFiles(appID, branch, jobID string) map[string][]byte {
 	var stored []amplifyStoredArtifact
 	for _, a := range amplifyArtifacts.List() {
 		if a.AppId == appID && a.BranchName == branch && a.JobId == jobID && a.HostedContent {
@@ -249,12 +249,34 @@ func amplifyUnpackJobArtifacts(appID, branch, jobID string) *amplifyHostedConten
 			files[path.Clean(strings.TrimPrefix(a.Artifact.ArtifactFileName, "/"))] = obj.Data
 		}
 	}
+	return files
+}
+
+// amplifyPlatformUsesManifest reports whether the app platform consumes the
+// deployment specification's deploy-manifest.json.
+func amplifyPlatformUsesManifest(platform string) bool {
+	return platform == "WEB_COMPUTE" || platform == "WEB_DYNAMIC"
+}
+
+// amplifyUnpackJobArtifacts builds a branch's servable deployment content.
+// Deployments to manifest-consuming platforms are validated when the job
+// settles, so a stored deployment whose manifest no longer parses is corrupt
+// state — it yields no servable content rather than silently serving the SSR
+// bundle as a static site. On static platforms a deploy-manifest.json is
+// ordinary site content.
+func amplifyUnpackJobArtifacts(appID, branch, jobID string) *amplifyHostedContent {
+	files := amplifyJobArtifactFiles(appID, branch, jobID)
 	if len(files) == 0 {
 		return nil
 	}
 	content := &amplifyHostedContent{JobID: jobID, Files: files}
 	if manifestData, ok := files["deploy-manifest.json"]; ok {
-		if manifest, err := amplifyParseDeployManifest(manifestData); err == nil {
+		manifest, err := amplifyParseDeployManifest(manifestData)
+		if err != nil {
+			if stored, ok := amplifyApps.Get(appID); ok && amplifyPlatformUsesManifest(stored.App.Platform) {
+				return nil
+			}
+		} else {
 			content.Manifest = manifest
 		}
 	}

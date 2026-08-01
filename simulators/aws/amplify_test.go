@@ -22,6 +22,7 @@ func amplifyResetStores() {
 	amplifyArtifacts = sim.MakeStore[amplifyStoredArtifact](nil, "amplify_artifacts")
 	amplifyDeployments = sim.MakeStore[amplifyStoredDeployment](nil, "amplify_deployments")
 	amplifyRepositoryConnections = sim.MakeStore[amplifyRepositoryConnection](nil, "amplify_repository_connections")
+	amplifyOptimizedImages = sim.MakeStore[amplifyStoredOptimizedImage](nil, "amplify_optimized_images")
 	amplifyDomains = sim.MakeStore[amplifyStoredDomain](nil, "amplify_domains")
 	amplifyBackends = sim.MakeStore[amplifyStoredBackend](nil, "amplify_backends")
 	s3Buckets_ = sim.MakeStore[S3Bucket](nil, "s3_buckets")

@@ -424,5 +424,3 @@ func mysqlWriteAuthError(connection net.Conn, sequence byte, message string) {
 	payload = append(payload, message...)
 	_ = mysqlWritePacket(connection, sequence, payload)
 }
-
-var _ = time.Second

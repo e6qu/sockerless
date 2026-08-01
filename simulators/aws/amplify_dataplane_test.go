@@ -418,3 +418,31 @@ func TestAmplifyDomainVerificationEvaluation(t *testing.T) {
 		t.Fatalf("custom certificate: status %s", got.Domain.DomainStatus)
 	}
 }
+
+func TestAmplifyHostingCorruptStoredManifestServesNothing(t *testing.T) {
+	amplifyResetHostingState()
+	files := map[string]string{
+		"deploy-manifest.json": `{"version": 2, "routes": []}`,
+		"index.html":           "<html>root content</html>",
+	}
+
+	// A manifest-consuming platform whose stored manifest no longer parses
+	// has no servable content — never the SSR bundle served statically.
+	// (New deployments with an invalid manifest fail at deploy time; this
+	// covers corrupt stored state.)
+	amplifySeedApp("badmanifest1", "main")
+	amplifyApps.Update("badmanifest1", func(a *amplifyStoredApp) { a.App.Platform = "WEB_COMPUTE" })
+	amplifySeedDeployment(t, "badmanifest1", "main", "job-badman-1", files)
+	rec := amplifyHostingGet(t, "main.badmanifest1.amplifyapp.com", "/", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("WEB_COMPUTE corrupt manifest: status %d body %q", rec.Code, rec.Body.String())
+	}
+
+	// On a static platform the same file is ordinary site content.
+	amplifySeedApp("okmanifest1", "main")
+	amplifySeedDeployment(t, "okmanifest1", "main", "job-okman-1", files)
+	rec = amplifyHostingGet(t, "main.okmanifest1.amplifyapp.com", "/", nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "<html>root content</html>" {
+		t.Errorf("WEB static platform: status %d body %q", rec.Code, rec.Body.String())
+	}
+}

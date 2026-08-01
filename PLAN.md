@@ -116,6 +116,9 @@ The fidelity work stayed evidence-driven. AWS Lambda and AWS Step Functions cove
 86. Gated the deployment proxy on simulator `/health` checks, extended bounded cold-start retries and explicit 503 + Retry-After to every origin, bounded OpenID Connect discovery fetches in the federation and console-auth paths, and deduplicated concurrent console token exchanges, closing GitHub issue #853.
 87. Streamed workload container logs live into the CloudWatch, Cloud Logging, and Log Analytics sinks across all three simulator runtimes with an exactly-deduplicated post-exit drain, closing GitHub issue #872.
 88. Closed the cross-simulator persistence audit: bulk-data roots under `SIM_DATA_DIR`, durable Entra directory, Service Bus, Spanner, and Bigtable data planes, the ported hidden-sidecar codec for wire-hidden stored fields, persisted signing identities, counters, operations, snapshots, and resumable sessions, truthful post-restart workload reconciliation on EC2, Compute Engine, and Cloud Run, and an end-to-end restart regression suite per simulator.
+89. Implemented AWS Amplify Hosting image optimization to the published imageSettings and Next.js-optimizer contract, made malformed deploy manifests fail deployments with the real CustomerError surface, and completed route fallback across Static, Compute, and ImageOptimization targets.
+90. Completed the Azure Container Apps Configuration model at exact SDK wire spellings and assembled the real daprd sidecar runtime for dapr-enabled apps, proven against daprd's own metadata endpoint from a live replica.
+91. Landed durable key rotation across all seven Azure key-bearing surfaces, fixed Event Hubs' constant-key and Service Bus' orphaned-rule defects, implemented real SAS signature verification on the Event Hubs and Service Bus AMQP and HTTP data planes with negative-control coverage, and completed the Azure storage data-plane surface table's SDK/CLI client coverage.
 
 ## Verified Next Gaps
 
@@ -324,7 +327,7 @@ this order.
 - **BUG-1075 live-cloud validation:** the local-cloud runner cells are sim-proven, but live authenticated cloud validation remains open.
 - **BUG-1345 AzureAD Terraform provider upstream blocker:** add AzureAD Terraform tests only after the provider supports a Microsoft Graph endpoint override.
 - **BUG-2441 current `knip`/Node deprecation warning:** the unused-export gate passed, but the current `knip` 6.23.0 release still emitted Node's `DEP0205 module.register()` warning.
-- **Issue #363 versioned releases + GitHub Container Registry images:** still a release/distribution task.
+- **Issue #363 versioned releases + GitHub Container Registry images:** closed — versioned `v*` releases exist and the publication workflow ships GitHub Container Registry images for them.
 - **Simulator service ratchets:** AWS/GCP/Azure have operation-coverage gates that measure served surface (BUG-2651); continue ratcheting uncovered cloud services when Bleephub focus is not the immediate task. Google Cloud Spanner's REST session data plane was completed in this branch; Cloud Billing and the Azure Blob/File/Queue operations that declare a `501` gap remained among the largest measured surfaces.
 
 ## Compressed Foundation Summary
