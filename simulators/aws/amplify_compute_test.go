@@ -65,7 +65,7 @@ func TestAmplifyManifestRouteMatch(t *testing.T) {
 		{"/_amplify/image", "/_amplify/images", false},
 	}
 	for _, tc := range cases {
-		if got := amplifyManifestRouteMatch(tc.pattern, tc.path); got != tc.want {
+		if got := amplifyCompileRoutePattern(tc.pattern).MatchString(tc.path); got != tc.want {
 			t.Fatalf("match(%q, %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
 		}
 	}

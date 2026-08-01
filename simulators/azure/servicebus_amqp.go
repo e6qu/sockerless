@@ -40,6 +40,7 @@ const (
 	amqpDescSASLMechanism = 0x40
 	amqpDescSASLOutcome   = 0x44
 	amqpDescAccepted      = 0x24
+	amqpDescError         = 0x1d
 )
 
 var sbAMQPUpgrader = websocket.Upgrader{
@@ -57,8 +58,12 @@ type sbAMQPConn struct {
 	nextHandle   uint32
 	nextDelivery uint32
 	links        map[uint64]*sbAMQPLink
-	mu           sync.Mutex
-	writeMu      sync.Mutex
+	// claims holds the audiences this connection has authenticated through the
+	// CBS put-token handshake. An entity link may only be attached once a
+	// claim covering it has been granted, exactly as the real services require.
+	claims  []string
+	mu      sync.Mutex
+	writeMu sync.Mutex
 }
 
 type sbAMQPTransport interface {
@@ -169,6 +174,30 @@ func (c *sbAMQPConn) currentNamespace() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.namespace
+}
+
+// grantClaim records an audience this connection authenticated for.
+func (c *sbAMQPConn) grantClaim(audience string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, existing := range c.claims {
+		if existing == audience {
+			return
+		}
+	}
+	c.claims = append(c.claims, audience)
+}
+
+// hasClaimFor reports whether a granted claim authorizes an entity path.
+func (c *sbAMQPConn) hasClaimFor(entityPath string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, audience := range c.claims {
+		if sasAudienceCoversEntity(audience, entityPath) {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneSBAMQPLink(link *sbAMQPLink) *sbAMQPLink {
@@ -308,6 +337,13 @@ func (c *sbAMQPConn) handleAttach(frame amqpFrame) error {
 	if address == "" || address == "test" {
 		address = name
 	}
+	entityAddress := strings.Trim(address, "/")
+	// The CBS and management endpoints carry the handshake itself and are
+	// reachable before any claim exists; every entity link requires one.
+	if entityAddress != "$cbs" && entityAddress != "$management" &&
+		!c.hasClaimFor(sbAMQPEntityPath(entityAddress)) {
+		return c.refuseAttach(frame, name, clientHandle, clientRole, sourceAddress, entityAddress)
+	}
 	c.mu.Lock()
 	serverHandle := c.nextHandle
 	c.nextHandle++
@@ -362,6 +398,47 @@ func (c *sbAMQPConn) handleAttach(frame amqpFrame) error {
 		uint32(0),
 		uint32(1000),
 		uint32(0),
+	}))
+}
+
+// refuseAttach answers an attach for an entity the connection has not
+// authenticated for. Real Service Bus and Event Hubs complete the attach
+// handshake and immediately detach the link with the amqp:unauthorized-access
+// error condition, which is what the AMQP clients surface as an auth failure.
+func (c *sbAMQPConn) refuseAttach(frame amqpFrame, name string, clientHandle uint32, clientRole bool, sourceAddress, address string) error {
+	c.mu.Lock()
+	serverHandle := c.nextHandle
+	c.nextHandle++
+	c.mu.Unlock()
+
+	attachFields := []any{
+		name,
+		serverHandle,
+		!clientRole,
+		uint8(1),
+		field(frame.fields, 4),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		uint64(math.MaxUint32),
+	}
+	if clientRole {
+		attachFields[5] = encodeSource(sourceAddress)
+	} else {
+		attachFields[3] = uint8(2)
+	}
+	if err := c.writeFrame(amqpFrameTypeAMQP, frame.channel, encodeDescribedList(amqpDescAttach, attachFields)); err != nil {
+		return err
+	}
+	return c.writeFrame(amqpFrameTypeAMQP, frame.channel, encodeDescribedList(amqpDescDetach, []any{
+		serverHandle,
+		true,
+		amqpDescribed{code: amqpDescError, value: []any{
+			amqpSymbol(errSASInvalidSignature.Condition),
+			fmt.Sprintf("Unauthorized access. %q claim(s) are required to perform this operation.", address),
+		}},
 	}))
 }
 
@@ -452,6 +529,58 @@ func (c *sbAMQPConn) enqueuePaths(namespace, address string) []string {
 	return subs
 }
 
+// sbAMQPPutTokenOutcome verifies a CBS put-token request against the
+// addressed namespace's authorization rules. On success the audience is
+// recorded as a claim on the connection; on failure the caller answers with
+// the refusal the real services return.
+func (c *sbAMQPConn) sbAMQPPutTokenOutcome(req *amqp.Message) (statusCode int32, description string) {
+	token, _ := req.Value.(string)
+	audience, err := verifyMessagingSAS(c.currentNamespace(), token)
+	if err != nil {
+		authErr, ok := err.(*sasAuthError)
+		if !ok {
+			authErr = errSASInvalidSignature
+		}
+		return 401, authErr.Condition + ": " + authErr.Description
+	}
+	c.grantClaim(audience)
+	return 202, "Accepted"
+}
+
+// sbAMQPManagementEntity returns the entity a management RPC addresses, when
+// the request names one. Event Hubs metadata reads carry the hub in the `name`
+// application property; Service Bus operations such as peek and renew-lock are
+// scoped by the entity management link they arrive on, whose attach already
+// required a claim, so those report no entity and are authorized by holding
+// any claim on the connection.
+func sbAMQPManagementEntity(req *amqp.Message) (entity string, named bool) {
+	if req.ApplicationProperties == nil {
+		return "", false
+	}
+	if name, ok := req.ApplicationProperties["name"].(string); ok && name != "" {
+		return name, true
+	}
+	return "", false
+}
+
+// authorizedForManagement reports whether the connection may run a management
+// operation: a claim covering the named entity, or — for a link-scoped
+// operation — any claim at all.
+func (c *sbAMQPConn) authorizedForManagement(req *amqp.Message) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entity, named := sbAMQPManagementEntity(req)
+	if !named {
+		return len(c.claims) > 0
+	}
+	for _, audience := range c.claims {
+		if sasAudienceCoversManagement(audience, entity) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *sbAMQPConn) respondRPC(channel uint16, req *amqp.Message) error {
 	replyTo := ""
 	corr := any(nil)
@@ -479,6 +608,41 @@ func (c *sbAMQPConn) respondRPC(channel uint16, req *amqp.Message) error {
 	}
 	if link == nil {
 		return nil
+	}
+	// CBS put-token is the services' authentication handshake: verify the
+	// Shared Access Signature before anything else on this connection is
+	// allowed to address an entity.
+	if req.ApplicationProperties != nil && fmt.Sprint(req.ApplicationProperties["operation"]) == "put-token" {
+		statusCode, description := c.sbAMQPPutTokenOutcome(req)
+		resp := &amqp.Message{
+			Properties: &amqp.MessageProperties{CorrelationID: corr},
+			ApplicationProperties: map[string]any{
+				"status-code":        statusCode,
+				"status-description": description,
+			},
+		}
+		body, err := resp.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		return c.writeTransfer(channel, link, body, true)
+	}
+	// Every other management operation addresses an entity and therefore
+	// requires a claim, even when it arrives over the $cbs link.
+	if !c.authorizedForManagement(req) {
+		resp := &amqp.Message{
+			Properties: &amqp.MessageProperties{CorrelationID: corr},
+			ApplicationProperties: map[string]any{
+				"status-code": int32(401),
+				"status-description": errSASInvalidSignature.Condition +
+					": Unauthorized access. A claim is required to perform this operation.",
+			},
+		}
+		body, err := resp.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		return c.writeTransfer(channel, link, body, true)
 	}
 	if resp, ok := ehAMQPHandleRPC(c.currentNamespace(), req); ok {
 		body, err := resp.MarshalBinary()

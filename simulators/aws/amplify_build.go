@@ -486,6 +486,11 @@ func amplifyRunRealBuild(appID, branch, jobID, urlBase, repo, specText string, e
 		finishStep("DEPLOY", deployLog, AmplifyJobStatusFailed)
 		return AmplifyJobStatusFailed
 	}
+	if manifestErr := amplifyBuildOutputManifestError(appID, zipBytes); manifestErr != nil {
+		deployLog.Printf("!!! CustomerError: We failed to validate the deploy-manifest.json file found in your build output directory. %v", manifestErr)
+		finishStep("DEPLOY", deployLog, AmplifyJobStatusFailed)
+		return AmplifyJobStatusFailed
+	}
 	key := "artifacts/" + appID + "/" + branch + "/" + jobID + "/artifacts.zip"
 	amplifyPutS3Object(key, "application/zip", zipBytes)
 	amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, amplifyArtifactID(jobID), "artifacts.zip", key)
@@ -565,6 +570,38 @@ func amplifyCollectEndToEndTestArtifacts(
 // amplifyZipArtifacts zips baseDir's contents filtered by the buildSpec's
 // files patterns ('**/*' or empty = everything; otherwise path.Match against
 // the slash-separated relative path).
+// amplifyBuildOutputManifestError reports why the build output's
+// deploy-manifest.json is invalid for a manifest-consuming platform; nil
+// when the platform doesn't consume the manifest, the output carries none,
+// or the manifest parses.
+func amplifyBuildOutputManifestError(appID string, zipBytes []byte) error {
+	stored, ok := amplifyApps.Get(appID)
+	if !ok || !amplifyPlatformUsesManifest(stored.App.Platform) {
+		return nil
+	}
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return fmt.Errorf("read build output archive: %w", err)
+	}
+	for _, f := range zr.File {
+		if path.Clean(strings.TrimPrefix(f.Name, "/")) != "deploy-manifest.json" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return fmt.Errorf("read deploy-manifest.json: %w", err)
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return fmt.Errorf("read deploy-manifest.json: %w", err)
+		}
+		_, parseErr := amplifyParseDeployManifest(data)
+		return parseErr
+	}
+	return nil
+}
+
 func amplifyZipArtifacts(baseDir string, patterns []string, log *amplifyStepLog) ([]byte, int, error) {
 	info, err := os.Stat(baseDir)
 	if err != nil || !info.IsDir() {

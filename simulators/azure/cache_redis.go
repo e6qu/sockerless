@@ -60,6 +60,7 @@ var (
 )
 
 func registerCacheRedis(srv *sim.Server) {
+	makeAzureKeyGens(srv)
 	redisCaches = sim.MakeStore[RedisCache](srv.DB(), "redis_caches")
 	redisFirewallRules = sim.MakeStore[RedisFirewallRule](srv.DB(), "redis_firewall_rules")
 	redisAccessPolicies = sim.MakeStore[RedisSubResource](srv.DB(), "redis_access_policies")
@@ -201,14 +202,23 @@ func handleRedisCacheListFirewallRules(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 }
 
-// handleRedisCacheListKeys returns the primary + secondary access keys.
-// Real Azure generates 32-byte random keys per cache; the sim emits
-// deterministic 44-char base64 strings (sha256 of resource ID + key
-// kind) so the wire shape matches what clients expect (Redis AUTH
+// redisAccessKeysBody is the RedisAccessKeys shape listKeys and regenerateKey
+// both return, reflecting every rotation performed so far. Real Azure
+// generates 32-byte random keys per cache; the sim derives deterministic
+// 44-char base64 strings from the resource ID + key slot + rotation
+// generation so the wire shape matches what clients expect (Redis AUTH
 // tokens, downstream connection strings that reference the
-// `primary_access_key` attribute in terraform-provider-azurerm). Same
-// key across reads; distinct between primary / secondary; distinct
-// between caches.
+// `primary_access_key` attribute in terraform-provider-azurerm). Same key
+// across reads; distinct between primary / secondary; distinct between
+// caches; a new value after every regenerate of that slot.
+func redisAccessKeysBody(id string) map[string]any {
+	return map[string]any{
+		"primaryKey":   azureKeyMaterial32(id, "primary"),
+		"secondaryKey": azureKeyMaterial32(id, "secondary"),
+	}
+}
+
+// handleRedisCacheListKeys returns the primary + secondary access keys.
 func handleRedisCacheListKeys(w http.ResponseWriter, r *http.Request) {
 	sub := sim.PathParam(r, "subscriptionId")
 	rg := sim.PathParam(r, "resourceGroupName")
@@ -219,10 +229,7 @@ func handleRedisCacheListKeys(w http.ResponseWriter, r *http.Request) {
 			"Redis cache %q not found", name)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"primaryKey":   simListKey32(id, "primary"),
-		"secondaryKey": simListKey32(id, "secondary"),
-	})
+	sim.WriteJSON(w, http.StatusOK, redisAccessKeysBody(id))
 }
 
 func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
@@ -330,6 +337,7 @@ func handleRedisCacheDelete(w http.ResponseWriter, r *http.Request) {
 			"The Resource 'Microsoft.Cache/Redis/%s' under resource group '%s' was not found.", name, rg)
 		return
 	}
+	azureDropKeyGens(id, "primary", "secondary")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -376,10 +384,10 @@ func redisCacheExists(w http.ResponseWriter, sub, rg, name string) bool {
 }
 
 // handleRedisCacheRegenerateKey regenerates the primary or secondary access
-// key and returns the full RedisAccessKeys pair. The regenerated key is a new
-// deterministic value derived from the cache ID, the key kind, and a rotation
-// salt so a second regenerate of the same key yields a different value, while
-// the untouched key keeps its listKeys value.
+// key and returns the full RedisAccessKeys pair. The rotation is recorded per
+// key slot, so a subsequent listKeys observes the new value, a second
+// regenerate of the same slot yields yet another value, and the untouched
+// slot keeps its listKeys value.
 func handleRedisCacheRegenerateKey(w http.ResponseWriter, r *http.Request) {
 	sub := sim.PathParam(r, "subscriptionId")
 	rg := sim.PathParam(r, "resourceGroupName")
@@ -395,22 +403,17 @@ func handleRedisCacheRegenerateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := redisCacheID(sub, rg, name)
-	primary := simListKey32(id, "primary")
-	secondary := simListKey32(id, "secondary")
 	switch req.KeyType {
 	case "Primary":
-		primary = simListKey32(id, "primary-regenerated")
+		azureBumpKeyGen(id, "primary", "")
 	case "Secondary":
-		secondary = simListKey32(id, "secondary-regenerated")
+		azureBumpKeyGen(id, "secondary", "")
 	default:
 		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest,
 			"keyType must be 'Primary' or 'Secondary', got %q", req.KeyType)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"primaryKey":   primary,
-		"secondaryKey": secondary,
-	})
+	sim.WriteJSON(w, http.StatusOK, redisAccessKeysBody(id))
 }
 
 // handleRedisForceReboot reboots Redis node(s). Real Azure returns a status

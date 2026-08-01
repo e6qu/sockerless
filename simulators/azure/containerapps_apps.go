@@ -55,10 +55,63 @@ type ContainerAppProps struct {
 
 // ContainerAppConfig mirrors armappcontainers.Configuration.
 type ContainerAppConfig struct {
-	ActiveRevisionsMode string                 `json:"activeRevisionsMode,omitempty"`
-	Ingress             *ContainerAppIngress   `json:"ingress,omitempty"`
-	Registries          []ContainerAppRegistry `json:"registries,omitempty"`
-	Secrets             []ContainerAppSecret   `json:"secrets,omitempty"`
+	ActiveRevisionsMode  string                         `json:"activeRevisionsMode,omitempty"`
+	Dapr                 *ContainerAppDapr              `json:"dapr,omitempty"`
+	IdentitySettings     []ContainerAppIdentitySettings `json:"identitySettings,omitempty"`
+	Ingress              *ContainerAppIngress           `json:"ingress,omitempty"`
+	MaxInactiveRevisions *int32                         `json:"maxInactiveRevisions,omitempty"`
+	Registries           []ContainerAppRegistry         `json:"registries,omitempty"`
+	Runtime              *ContainerAppRuntime           `json:"runtime,omitempty"`
+	Secrets              []ContainerAppSecret           `json:"secrets,omitempty"`
+	Service              *ContainerAppService           `json:"service,omitempty"`
+}
+
+// ContainerAppDapr mirrors armappcontainers.Dapr. When Enabled is true
+// the sim injects a real daprd sidecar into every replica of the app —
+// see startACAAppDaprSidecar in containerapps_dapr.go.
+type ContainerAppDapr struct {
+	AppID              string `json:"appId,omitempty"`
+	AppPort            *int32 `json:"appPort,omitempty"`
+	AppProtocol        string `json:"appProtocol,omitempty"`
+	EnableAPILogging   *bool  `json:"enableApiLogging,omitempty"`
+	Enabled            *bool  `json:"enabled,omitempty"`
+	HTTPMaxRequestSize *int32 `json:"httpMaxRequestSize,omitempty"` // MB
+	HTTPReadBufferSize *int32 `json:"httpReadBufferSize,omitempty"` // KB
+	LogLevel           string `json:"logLevel,omitempty"`
+}
+
+// ContainerAppIdentitySettings mirrors armappcontainers.IdentitySettings —
+// per-managed-identity lifecycle settings. `identity` is a required member
+// (a user-assigned identity resource ID, or "system").
+type ContainerAppIdentitySettings struct {
+	Identity  string `json:"identity"`
+	Lifecycle string `json:"lifecycle,omitempty"`
+}
+
+// ContainerAppRuntime mirrors the Microsoft.App runtime configuration:
+// armappcontainers.Runtime carries the `java` member; `dotnet` is part of
+// the same `configuration.runtime` object in the Microsoft.App API
+// (api-version 2025-01-01) and round-trips for raw ARM clients.
+type ContainerAppRuntime struct {
+	Dotnet *ContainerAppRuntimeDotnet `json:"dotnet,omitempty"`
+	Java   *ContainerAppRuntimeJava   `json:"java,omitempty"`
+}
+
+// ContainerAppRuntimeJava mirrors armappcontainers.RuntimeJava.
+type ContainerAppRuntimeJava struct {
+	EnableMetrics *bool `json:"enableMetrics,omitempty"`
+}
+
+// ContainerAppRuntimeDotnet mirrors the Microsoft.App
+// `configuration.runtime.dotnet` object.
+type ContainerAppRuntimeDotnet struct {
+	AutoConfigureDataProtection *bool `json:"autoConfigureDataProtection,omitempty"`
+}
+
+// ContainerAppService mirrors armappcontainers.Service — the dev
+// ContainerApp Service binding. `type` is a required member.
+type ContainerAppService struct {
+	Type string `json:"type"`
 }
 
 // ContainerAppIngress mirrors armappcontainers.Ingress. The backend
@@ -600,6 +653,16 @@ func startACAAppReplicas(ctx context.Context, resourceID string, app ContainerAp
 			}
 			if i == 0 {
 				mainContainerID = handle.ContainerID
+			}
+			handles = append(handles, handle)
+		}
+		if d := containerAppDaprSpec(app); d != nil && mainContainerID != "" {
+			handle, err := startACAAppDaprSidecar(ctx, resourceID, app, d, replica, mainContainerID)
+			if err != nil {
+				for _, h := range handles {
+					h.Cancel()
+				}
+				return err
 			}
 			handles = append(handles, handle)
 		}

@@ -4,6 +4,22 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The last three locally actionable bugs closed in one pass: AWS Amplify
+Hosting image optimization became the real fetch-validate-transform-cache
+primitive with the Next.js-exact error contract; Azure Container Apps
+modeled its complete Configuration surface and assembles a real daprd
+sidecar for dapr-enabled apps; and key rotation landed across all seven
+Azure key-bearing surfaces. The rotation work exposed and closed Event
+Hubs' hardcoded constant keys, Service Bus' orphaned-rule deletes, and the
+messaging data planes' accept-any-key authentication — real SAS signature
+verification now guards the AMQP and HTTP surfaces with negative-control
+coverage. Amplify's silent malformed-manifest fallback and missing route
+fallback on Compute/ImageOptimization targets were fixed opportunistically,
+and the Azure storage data-plane surface table reached full SDK/CLI
+client coverage. The remaining open bugs are all externally gated
+(upstream providers, live-cloud credentials, carrier primitives, the
+Bleephub repository, macOS KVM).
+
 GitHub issue #872 closed: workload container logs stream live to the cloud
 log sinks in all three simulators, with the post-exit drain deduplicated by
 per-stream line counts. A full cross-sim persistence audit then eliminated

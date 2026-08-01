@@ -4,6 +4,65 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-01 — The last actionable bugs: Amplify image optimization, ACA dapr, and the Azure secret-rotation/auth sweep
+
+The three remaining locally actionable bugs closed together, and the Boy
+Scout rule turned each into a wider repair.
+
+AWS Amplify Hosting's image optimization primitive became real (BUG-2766):
+requests against ImageOptimization manifest targets validate against
+imageSettings — sizes, domains, remotePatterns with the real wildcard
+semantics, formats, dangerouslyAllowSVG, and both minimumCacheTTL
+spellings AWS's own specification uses — with the Next.js optimizer's
+exact 400 strings, fetch from the app's artifacts or an allowed remote,
+aspect-preserving no-upscale resize, animated and SVG passthrough rules,
+Accept-driven format negotiation whose Content-Type always matches the
+actual bytes (webp via a verified pure-Go encoder; AVIF never
+misdeclared), strong ETags with 304 revalidation, Cache-Control flooring,
+and a durable transform cache purged with its app or branch. Alongside it,
+two neighbouring Amplify defects surfaced and were fixed: a
+deploy-manifest.json that failed parsing had been silently ignored and the
+SSR bundle served as a static site — deployments now fail with Amplify's
+actual CustomerError log line (BUG-2875) — and the deploy spec's route
+fallback had only ever worked for Static misses; Compute and
+ImageOptimization 404s now fall through to the declared fallback without
+breaking streaming, with route regexps compiled once at parse (BUG-2876).
+
+Azure Container Apps configuration completed (BUG-2842): dapr,
+identitySettings, maxInactiveRevisions, runtime (including the
+api-version member the pinned Go SDK does not yet model, covered through
+the CLI), and service round-trip at exact SDK wire spellings — and dapr
+is a real runtime, not stored config: an enabled app's every replica gets
+the pinned daprd sidecar sharing its network namespace, flagged with the
+configured app-id/port/protocol/log settings, its stdout in the console
+log table and its lifecycle tied to the replica set. A live-replica test
+reads the real daprd metadata endpoint and asserts the configured
+identity arrived.
+
+The key-rotation gap (BUG-2872) closed across all seven Azure surfaces —
+Storage accounts, Redis, Event Hubs, Service Bus, API Management
+subscriptions, Container Registry admin credentials, and Logic Apps
+access keys (whose callback-URL signatures now rotate with their key,
+matching real Logic Apps) — through one durable per-resource-and-slot
+generation store. Pulling that thread exposed and fixed three deeper
+defects: Event Hubs had returned a single hardcoded constant as every
+rule's both keys (BUG-2877), Service Bus entity deletion orphaned
+entity-scoped authorization rules for same-name recreates (BUG-2878),
+and — the largest — both messaging data planes accepted any
+syntactically valid SharedAccessKey. Real SAS verification now guards the
+AMQP CBS handshake, entity attach, management RPC, and the HTTP/ATOM
+surfaces: signatures verify against the addressed rule's current
+rotation-aware keys, expiry is honored, failures answer with the real
+amqp:unauthorized-access condition or 401 body, every test derives real
+key material via listKeys, and negative controls prove wrong, expired,
+and foreign-namespace tokens are refused while a rotated-away key stops
+authenticating (BUG-2879).
+
+The 18 missing SDK/CLI coverage cells in the Azure storage data-plane
+surface table were filled with real client tests, a dead-code silencer
+left the RDS MySQL data plane, and a stale roadmap claim about versioned
+releases was corrected.
+
 ## 2026-08-01 — Live log streaming and the cross-sim persistence sweep
 
 GitHub issue #872 closed: all three simulator container runtimes drained a

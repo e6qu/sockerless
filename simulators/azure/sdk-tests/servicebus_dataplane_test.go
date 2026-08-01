@@ -30,6 +30,7 @@ func sbReq(t *testing.T, method, namespace, path string, body []byte, headers ma
 	req, err := http.NewRequest(method, baseURL+path, br)
 	require.NoError(t, err)
 	req.Host = namespace + ".servicebus.localhost"
+	req.Header.Set("Authorization", serviceBusHTTPAuthorization(t, namespace))
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -119,6 +120,9 @@ func TestServiceBus_PeekLockComplete(t *testing.T) {
 	completeReq, err := http.NewRequest("DELETE", baseURL+locURL.RequestURI(), nil)
 	require.NoError(t, err)
 	completeReq.Host = locURL.Host
+	// Following the Location header is still an authenticated Service Bus
+	// call, so it carries the same Shared Access Signature.
+	completeReq.Header.Set("Authorization", serviceBusHTTPAuthorization(t, ns))
 	completeResp, err := http.DefaultClient.Do(completeReq)
 	require.NoError(t, err)
 	completeResp.Body.Close()
@@ -166,7 +170,9 @@ func sbAMQPClient(t *testing.T, namespace string) *azservicebus.Client {
 	hostPort := strings.TrimPrefix(baseURL, "http://")
 	_, port, ok := strings.Cut(hostPort, ":")
 	require.True(t, ok, "baseURL must include a port: %s", baseURL)
-	conn := fmt.Sprintf("Endpoint=sb://%s.servicebus.localhost:%s/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", namespace, port)
+	conn := messagingConnectionString(namespace,
+		fmt.Sprintf("%s.servicebus.localhost:%s", namespace, port),
+		serviceBusNamespaceKey(t, namespace))
 	client, err := azservicebus.NewClientFromConnectionString(conn, &azservicebus.ClientOptions{
 		NewWebSocketConn: func(ctx context.Context, args azservicebus.NewWebSocketConnArgs) (net.Conn, error) {
 			u, err := url.Parse(args.Host)
@@ -195,7 +201,8 @@ func sbAMQPClient(t *testing.T, namespace string) *azservicebus.Client {
 
 func sbRawAMQPClient(t *testing.T, namespace string) *azservicebus.Client {
 	t.Helper()
-	conn := fmt.Sprintf("Endpoint=sb://%s.servicebus.localhost/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", namespace)
+	conn := messagingConnectionString(namespace, namespace+".servicebus.localhost",
+		serviceBusNamespaceKey(t, namespace))
 	client, err := azservicebus.NewClientFromConnectionString(conn, &azservicebus.ClientOptions{
 		CustomEndpoint: sbAMQPEndpoint,
 		TLSConfig: &tls.Config{

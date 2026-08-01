@@ -71,7 +71,9 @@ func sbAdminClient(t *testing.T, namespace string) *admin.Client {
 	hostPort := strings.TrimPrefix(baseURL, "http://")
 	_, port, ok := strings.Cut(hostPort, ":")
 	require.True(t, ok, "baseURL must include a port: %s", baseURL)
-	conn := fmt.Sprintf("Endpoint=sb://%s.servicebus.localhost:%s/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", namespace, port)
+	conn := messagingConnectionString(namespace,
+		fmt.Sprintf("%s.servicebus.localhost:%s", namespace, port),
+		serviceBusNamespaceKey(t, namespace))
 	client, err := admin.NewClientFromConnectionString(conn, &admin.ClientOptions{
 		ClientOptions: azcore.ClientOptions{Transport: sbAdminTransport{}},
 	})
@@ -87,6 +89,7 @@ func sbAdminRawGet(t *testing.T, namespace, target string) *http.Response {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+target, nil)
 	require.NoError(t, err)
 	req.Host = fmt.Sprintf("%s.servicebus.localhost:%s", namespace, port)
+	req.Header.Set("Authorization", serviceBusHTTPAuthorization(t, namespace))
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp

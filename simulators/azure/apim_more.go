@@ -762,6 +762,11 @@ func handleAPIMPatchSubscription(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, s)
 }
 
+// handleAPIMRegenerateSubKey serves both regeneratePrimaryKey and
+// regenerateSecondaryKey. The action verb in the path selects which key slot
+// rotates; a subsequent listSecrets returns the new material for that slot
+// while the other slot keeps its value. Real API Management answers both with
+// 204 No Content and returns the keys only through listSecrets.
 func handleAPIMRegenerateSubKey(w http.ResponseWriter, r *http.Request) {
 	id := apimServiceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) +
 		"/subscriptions/" + sim.PathParam(r, "sub")
@@ -769,6 +774,11 @@ func handleAPIMRegenerateSubKey(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "subscription not found")
 		return
 	}
+	slot := "apim-subscription-primary"
+	if strings.HasSuffix(strings.ToLower(r.URL.Path), "/regeneratesecondarykey") {
+		slot = "apim-subscription-secondary"
+	}
+	azureBumpKeyGen(id, slot, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 

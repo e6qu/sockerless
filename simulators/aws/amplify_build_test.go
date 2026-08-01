@@ -185,3 +185,30 @@ func TestAmplifyBuildCacheBranchKeyCannotEscapeAppDirectory(t *testing.T) {
 		t.Fatalf("branch cache escaped app directory: got %q, want child of %q", cacheDirectory, appDirectory)
 	}
 }
+
+func TestAmplifyBuildOutputManifestError(t *testing.T) {
+	amplifyResetHostingState()
+	amplifySeedApp("buildman1", "main")
+	amplifyApps.Update("buildman1", func(a *amplifyStoredApp) { a.App.Platform = "WEB_COMPUTE" })
+	amplifySeedApp("buildman2", "main") // static WEB platform
+
+	invalidZip := amplifyZipOf(t, map[string]string{"deploy-manifest.json": `{"version": 2}`})
+	validZip := amplifyZipOf(t, map[string]string{
+		"deploy-manifest.json": `{"version": 1, "framework": {"name": "custom", "version": "1.0.0"},
+			"routes": [{"path": "/*", "target": {"kind": "Static"}}]}`,
+	})
+	plainZip := amplifyZipOf(t, map[string]string{"index.html": "<html></html>"})
+
+	if err := amplifyBuildOutputManifestError("buildman1", invalidZip); err == nil {
+		t.Error("invalid manifest on a WEB_COMPUTE app must fail validation")
+	}
+	if err := amplifyBuildOutputManifestError("buildman1", validZip); err != nil {
+		t.Errorf("valid manifest: %v", err)
+	}
+	if err := amplifyBuildOutputManifestError("buildman1", plainZip); err != nil {
+		t.Errorf("no manifest in output: %v", err)
+	}
+	if err := amplifyBuildOutputManifestError("buildman2", invalidZip); err != nil {
+		t.Errorf("static WEB platform does not consume the manifest: %v", err)
+	}
+}

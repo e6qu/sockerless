@@ -458,6 +458,7 @@ func registerAmplify(srv *sim.Server) {
 	amplifyArtifacts = sim.MakeStore[amplifyStoredArtifact](srv.DB(), "amplify_artifacts")
 	amplifyDeployments = sim.MakeStore[amplifyStoredDeployment](srv.DB(), "amplify_deployments")
 	amplifyRepositoryConnections = sim.MakeStore[amplifyRepositoryConnection](srv.DB(), "amplify_repository_connections")
+	amplifyOptimizedImages = sim.MakeStore[amplifyStoredOptimizedImage](srv.DB(), "amplify_optimized_images")
 
 	mux := srv
 	appResource := cloudTrailRESTResource("AWS::Amplify::App", "appId", "arn")
@@ -647,6 +648,7 @@ func handleAmplifyDeleteApp(w http.ResponseWriter, r *http.Request) {
 		amplifyStopCompute(id, branchName)
 		amplifyInvalidateHostingCache(id, branchName)
 	}
+	amplifyPurgeOptimizedImages(id, "")
 	for _, dom := range amplifyDomains.List() {
 		if dom.AppId == id {
 			amplifyDomains.Delete(amplifyDomainKey(id, dom.Domain.DomainName))
@@ -1075,6 +1077,7 @@ func handleAmplifyDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	amplifyStopCompute(appID, name)
 	amplifyInvalidateHostingCache(appID, name)
+	amplifyPurgeOptimizedImages(appID, name)
 	amplifyRemoveBuildCache(appID, name)
 	delete(stored.Branches, name)
 	amplifyApps.Put(appID, stored)
@@ -1393,12 +1396,50 @@ func amplifyScheduleDeploymentMode(appID, branch, jobID, urlBase string, uploads
 			amplifySetJobStepArtifactsURL(jobID, "DEPLOY",
 				amplifyPresignedS3URLBase(urlBase, uploads[0].Key, http.MethodGet))
 		}
+		if manifestErr := amplifyDeploymentManifestError(appID, branch, jobID); manifestErr != nil {
+			amplifyFailJobDeployStep(appID, branch, jobID, urlBase, manifestErr)
+			return
+		}
 		if !amplifyAdvanceJob(jobID, AmplifyJobStatusRunning, AmplifyJobStatusSucceed) {
 			amplifyDeleteArtifactsForJob(jobID)
 			return
 		}
 		amplifyMarkProductionDeploy(appID, branch, jobID)
 	}()
+}
+
+// amplifyDeploymentManifestError reports why a settling deployment's
+// deploy-manifest.json is invalid for a manifest-consuming platform; nil
+// when the platform doesn't consume the manifest, the bundle carries none,
+// or the manifest parses.
+func amplifyDeploymentManifestError(appID, branch, jobID string) error {
+	stored, ok := amplifyApps.Get(appID)
+	if !ok || !amplifyPlatformUsesManifest(stored.App.Platform) {
+		return nil
+	}
+	manifestData, ok := amplifyJobArtifactFiles(appID, branch, jobID)["deploy-manifest.json"]
+	if !ok {
+		return nil
+	}
+	_, err := amplifyParseDeployManifest(manifestData)
+	return err
+}
+
+// amplifyFailJobDeployStep lands a deployment job FAILED the way real
+// Amplify rejects an invalid deployment bundle: the DEPLOY step fails with
+// the validation error in its log, the job summary lands FAILED, and the
+// bundle never becomes servable content.
+func amplifyFailJobDeployStep(appID, branch, jobID, urlBase string, cause error) {
+	stepLog := &amplifyStepLog{}
+	stepLog.Printf("!!! CustomerError: We failed to validate the deploy-manifest.json file found in your build output directory. %v", cause)
+	logURL := amplifyStoreStepLog(urlBase, appID, branch, jobID, "DEPLOY", stepLog)
+	amplifyUpdateJobStep(jobID, "DEPLOY", func(s *AmplifyJobStep) {
+		s.Status = AmplifyJobStatusFailed
+		s.EndTime = amplifyEpoch()
+		s.LogUrl = logURL
+	})
+	amplifyAdvanceJob(jobID, AmplifyJobStatusRunning, AmplifyJobStatusFailed)
+	amplifyDeleteArtifactsForJob(jobID)
 }
 
 func amplifySetJobStepArtifactsURL(jobID, stepName, artifactURL string) {

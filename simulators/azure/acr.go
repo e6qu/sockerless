@@ -72,6 +72,7 @@ type ACRCacheRuleProperties struct {
 var acrRegistries sim.Store[Registry]
 
 func registerACR(srv *sim.Server) {
+	makeAzureKeyGens(srv)
 	registries := sim.MakeStore[Registry](srv.DB(), "acr_registries")
 	acrRegistries = registries
 	// OCI Distribution data plane (shared registry library). ACR has no
@@ -240,13 +241,7 @@ func registerACR(srv *sim.Server) {
 				http.StatusBadRequest)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"username": name,
-			"passwords": []map[string]string{
-				{"name": "password", "value": simListKey32(resourceID, "password")},
-				{"name": "password2", "value": simListKey32(resourceID, "password2")},
-			},
-		})
+		sim.WriteJSON(w, http.StatusOK, acrAdminCredentialsBody(resourceID, name))
 	})
 
 	// DELETE - Delete registry
@@ -258,6 +253,7 @@ func registerACR(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s", sub, rg, name)
 
 		if registries.Delete(resourceID) {
+			acrDropCredentialKeyGens(resourceID)
 			w.WriteHeader(http.StatusOK)
 		} else {
 			w.WriteHeader(http.StatusNoContent)
@@ -723,6 +719,29 @@ func (k acrChildKind) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// acrAdminCredentialsBody is the RegistryListCredentialsResult shape
+// listCredentials and regenerateCredential both return. Real Azure Container
+// Registry names the two admin password slots "password" and "password2";
+// each carries deterministic material derived from the registry resource ID
+// and that slot's rotation generation, so a regenerated slot reads back with
+// its new value while the other slot is unchanged.
+func acrAdminCredentialsBody(registryID, registryName string) map[string]any {
+	return map[string]any{
+		"username": registryName,
+		"passwords": []map[string]string{
+			{"name": "password", "value": azureKeyMaterial32(registryID, "password")},
+			{"name": "password2", "value": azureKeyMaterial32(registryID, "password2")},
+		},
+	}
+}
+
+// acrDropCredentialKeyGens removes a deleted registry's admin-credential
+// rotation state so a later registry of the same name starts from fresh
+// passwords.
+func acrDropCredentialKeyGens(registryID string) {
+	azureDropKeyGens(registryID, "password", "password2")
+}
+
 func acrRegistryNotFound(w http.ResponseWriter, r *http.Request) {
 	sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
 		"The Resource 'Microsoft.ContainerRegistry/registries/%s' under resource group '%s' was not found.",
@@ -1090,21 +1109,27 @@ func registerACRRegistryActions(srv *sim.Server, registries sim.Store[Registry])
 		})
 	})
 
-	// POST .../regenerateCredential — regenerates an admin password.
+	// POST .../regenerateCredential — regenerates an admin password. The body's
+	// RegenerateCredentialParameters names the slot (password | password2);
+	// the response is the full credentials with that slot's new value, which a
+	// subsequent listCredentials returns.
 	srv.HandleFunc("POST "+acrARMBase+"/registries/{registryName}/regenerateCredential", func(w http.ResponseWriter, r *http.Request) {
 		regID, ok := acrRegistryID(r)
 		if !ok {
 			acrRegistryNotFound(w, r)
 			return
 		}
-		name := sim.PathParam(r, "registryName")
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"username": name,
-			"passwords": []map[string]string{
-				{"name": "password", "value": simListKey32(regID, "password")},
-				{"name": "password2", "value": simListKey32(regID, "password2")},
-			},
-		})
+		var req struct {
+			Name string `json:"name"`
+		}
+		_ = sim.ReadJSON(r, &req)
+		if req.Name != "password" && req.Name != "password2" {
+			sim.AzureErrorf(w, "InvalidParameter", http.StatusBadRequest,
+				"The value '%s' is not valid for parameter 'name'. Expected 'password' or 'password2'.", req.Name)
+			return
+		}
+		azureBumpKeyGen(regID, req.Name, "")
+		sim.WriteJSON(w, http.StatusOK, acrAdminCredentialsBody(regID, sim.PathParam(r, "registryName")))
 	})
 
 	// GET .../privateLinkResources — the registry exposes a single "registry" group.

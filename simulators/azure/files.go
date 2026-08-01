@@ -587,6 +587,7 @@ func registerAzureFiles(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s", sub, rg, name)
 
 		if storageAccounts.Delete(resourceID) {
+			storageDropAccountKeyGens(resourceID)
 			tablePrefix := resourceID + "/tableServices/default/tables/"
 			for _, t := range storageTables.List() {
 				if strings.HasPrefix(t.ID, tablePrefix) {
@@ -752,12 +753,7 @@ func registerAzureFiles(srv *sim.Server) {
 			return
 		}
 
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"keys": []map[string]any{
-				{"keyName": "key1", "value": simListKey64(acctID, "key1"), "permissions": "Full"},
-				{"keyName": "key2", "value": simListKey64(acctID, "key2"), "permissions": "Full"},
-			},
-		})
+		sim.WriteJSON(w, http.StatusOK, storageAccountKeysBody(acctID))
 	})
 
 	// GET - List storage accounts at subscription level (azurerm provider checks name uniqueness)

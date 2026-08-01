@@ -88,6 +88,7 @@ func readARMProperties(r *http.Request) (map[string]any, error) {
 func storageNow() string { return time.Now().UTC().Format(time.RFC3339) }
 
 func registerStorageAccounts(srv *sim.Server) {
+	makeAzureKeyGens(srv)
 	managementPolicies := sim.MakeStore[storageARMChild](srv.DB(), "storage_management_policies")
 	inventoryPolicies := sim.MakeStore[storageARMChild](srv.DB(), "storage_inventory_policies")
 	privateEndpointConns := sim.MakeStore[storageARMChild](srv.DB(), "storage_private_endpoint_connections")
@@ -497,6 +498,23 @@ func handleStorageAccountsListByRG(w http.ResponseWriter, r *http.Request) {
 
 // ---- account action verbs ----
 
+// storageAccountKeysBody is the AccountListKeysResult shape listKeys and
+// regenerateKey both return, reflecting every rotation performed so far.
+func storageAccountKeysBody(acctID string) map[string]any {
+	return map[string]any{
+		"keys": []map[string]any{
+			{"keyName": "key1", "value": azureKeyMaterial64(acctID, "key1"), "permissions": "Full"},
+			{"keyName": "key2", "value": azureKeyMaterial64(acctID, "key2"), "permissions": "Full"},
+		},
+	}
+}
+
+// storageDropAccountKeyGens removes a deleted account's key-rotation state so
+// a later account created under the same name starts from fresh keys.
+func storageDropAccountKeyGens(acctID string) {
+	azureDropKeyGens(acctID, "key1", "key2")
+}
+
 func handleStorageRegenerateKey(w http.ResponseWriter, r *http.Request) {
 	acctID, _, ok := requireStorageAccount(w, r)
 	if !ok {
@@ -506,12 +524,16 @@ func handleStorageRegenerateKey(w http.ResponseWriter, r *http.Request) {
 		KeyName string `json:"keyName"`
 	}
 	_ = sim.ReadJSON(r, &req)
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"keys": []map[string]any{
-			{"keyName": "key1", "value": simListKey64(acctID, "key1"), "permissions": "Full"},
-			{"keyName": "key2", "value": simListKey64(acctID, "key2"), "permissions": "Full"},
-		},
-	})
+	// AccountRegenerateKeyParameters names one of the two access keys; kerb1 /
+	// kerb2 exist only on accounts with Azure AD DS authentication, which the
+	// simulator does not model.
+	if req.KeyName != "key1" && req.KeyName != "key2" {
+		sim.AzureErrorf(w, "InvalidRequestPropertyValue", http.StatusBadRequest,
+			"The value '%s' is not valid for property 'keyName'.", req.KeyName)
+		return
+	}
+	azureBumpKeyGen(acctID, req.KeyName, "")
+	sim.WriteJSON(w, http.StatusOK, storageAccountKeysBody(acctID))
 }
 
 func storageSASToken(seed string) string {

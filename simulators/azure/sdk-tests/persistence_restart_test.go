@@ -153,6 +153,43 @@ func restartClientOpts(endpoint string) *arm.ClientOptions {
 
 // restartRawReq performs a raw HTTP request against the private instance,
 // optionally with a Host override (subdomain-routed data planes) and a bearer.
+// restartServiceBusAuthorization provisions a Service Bus namespace on the
+// restart suite's private simulator through ARM — which auto-provisions
+// RootManageSharedAccessKey — reads that rule's real key with listKeys, and
+// returns the Authorization header value a data-plane caller presents.
+func restartServiceBusAuthorization(t *testing.T, endpoint, bearer, namespace string) string {
+	t.Helper()
+	const apiVersion = "2022-10-01-preview"
+	rg := "persist-sb-rg"
+
+	resp := restartRawReq(t, "PUT", endpoint,
+		"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2021-04-01", "", bearer,
+		[]byte(`{"location":"eastus"}`), map[string]string{"Content-Type": "application/json"})
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, resp.StatusCode)
+	resp.Body.Close()
+
+	nsPath := "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.ServiceBus/namespaces/" + namespace
+	resp = restartRawReq(t, "PUT", endpoint, nsPath+"?api-version="+apiVersion, "", bearer,
+		[]byte(`{"location":"eastus","sku":{"name":"Standard","tier":"Standard"}}`),
+		map[string]string{"Content-Type": "application/json"})
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, resp.StatusCode)
+	resp.Body.Close()
+
+	resp = restartRawReq(t, "POST", endpoint,
+		nsPath+"/authorizationRules/"+messagingRootRule+"/listKeys?api-version="+apiVersion, "", bearer, nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var keys struct {
+		PrimaryKey string `json:"primaryKey"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&keys))
+	resp.Body.Close()
+	require.NotEmpty(t, keys.PrimaryKey)
+
+	return messagingSASToken(messagingRootRule, keys.PrimaryKey,
+		"https://"+namespace+".servicebus.localhost/")
+}
+
 func restartRawReq(t *testing.T, method, endpoint, path, host, bearer string, body []byte, headers map[string]string) *http.Response {
 	t.Helper()
 	var br io.Reader
@@ -245,9 +282,16 @@ func TestAzureServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	resp.Body.Close()
 
 	// ---- (b) Service Bus: enqueue a message before the restart ----
+	// The data plane authenticates every caller with a Shared Access
+	// Signature, so the namespace is provisioned through ARM first and the
+	// message is signed with its root rule's real key.
 	const sbHost = "persistns.servicebus.localhost"
+	sbAuth := restartServiceBusAuthorization(t, endpoint, preRestartBearer, "persistns")
 	resp = restartRawReq(t, "POST", endpoint, "/persistqueue/messages", sbHost, "",
-		[]byte("survived restart"), map[string]string{"Content-Type": "text/plain"})
+		[]byte("survived restart"), map[string]string{
+			"Content-Type":  "text/plain",
+			"Authorization": sbAuth,
+		})
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	resp.Body.Close()
 
@@ -358,9 +402,14 @@ func TestAzureServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	require.NotEmpty(t, grantToken)
 
 	// ---- (b) the enqueued message is received with its sequence number, and
-	// a post-restart message gets a strictly higher one ----
-	resp = restartRawReq(t, "DELETE", endpoint, "/persistqueue/messages/head", sbHost, "", nil, nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, "pre-restart Service Bus message must be receivable")
+	// a post-restart message gets a strictly higher one. The Shared Access
+	// Signature minted BEFORE the restart is reused throughout: the
+	// authorization rule and its key material are durable, so a token issued
+	// against the pre-restart simulator must still authenticate. ----
+	resp = restartRawReq(t, "DELETE", endpoint, "/persistqueue/messages/head", sbHost, "", nil,
+		map[string]string{"Authorization": sbAuth})
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"pre-restart Service Bus message must be receivable, and the pre-restart SAS must still verify against the persisted authorization rule key")
 	got, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Equal(t, "survived restart", string(got))
@@ -368,10 +417,14 @@ func TestAzureServiceStateSurvivesSimulatorRestart_SDK(t *testing.T) {
 	require.Greater(t, preSeq, int64(0))
 
 	resp = restartRawReq(t, "POST", endpoint, "/persistqueue/messages", sbHost, "",
-		[]byte("after restart"), map[string]string{"Content-Type": "text/plain"})
+		[]byte("after restart"), map[string]string{
+			"Content-Type":  "text/plain",
+			"Authorization": sbAuth,
+		})
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	resp.Body.Close()
-	resp = restartRawReq(t, "DELETE", endpoint, "/persistqueue/messages/head", sbHost, "", nil, nil)
+	resp = restartRawReq(t, "DELETE", endpoint, "/persistqueue/messages/head", sbHost, "", nil,
+		map[string]string{"Authorization": sbAuth})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 	postSeq := sbSequenceNumber(t, resp)

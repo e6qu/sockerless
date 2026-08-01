@@ -3,7 +3,6 @@ package azure_sdk_test
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"testing"
 	"time"
 
@@ -72,7 +71,8 @@ func TestEventHubsSDK_ARMAndAMQPRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, group, *createdGroup.Name)
 
-	conn := fmt.Sprintf("Endpoint=sb://%s.servicebus.localhost/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=;EntityPath=%s", ns, hub)
+	conn := messagingConnectionString(ns, ns+".servicebus.localhost",
+		eventHubsNamespaceKey(t, ns), "EntityPath="+hub)
 	producer, err := azeventhubs.NewProducerClientFromConnectionString(conn, "", &azeventhubs.ProducerClientOptions{
 		CustomEndpoint: sbAMQPEndpoint,
 		TLSConfig: &tls.Config{
