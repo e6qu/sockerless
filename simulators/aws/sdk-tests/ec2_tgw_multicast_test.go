@@ -243,13 +243,129 @@ func TestEC2_TGWPolicyTable(t *testing.T) {
 		TransitGatewayPolicyTableId: aws.String(ptID),
 	})
 	require.NoError(t, err)
-	assert.Empty(t, entries.TransitGatewayPolicyTableEntries)
+	assert.Empty(t, entries.TransitGatewayPolicyTableEntries, "a new policy table holds no rules")
 
 	_, err = client.DisassociateTransitGatewayPolicyTable(ctx, &ec2.DisassociateTransitGatewayPolicyTableInput{
 		TransitGatewayPolicyTableId: aws.String(ptID),
 		TransitGatewayAttachmentId:  aws.String(attID),
 	})
 	require.NoError(t, err)
+}
+
+// TestEC2_TGWPolicyTableEntries drives the policy-rule lifecycle a policy table
+// exists for: rules are created against a target route table, modified in
+// place, read back in rule-number order, and deleted. The entries read used to
+// answer with a fixed empty list because the API modelled no way to put a rule
+// in a table; it now reports what the table actually holds.
+func TestEC2_TGWPolicyTableEntries(t *testing.T) {
+	client := ec2Client()
+	tgwID, _, _, _ := tgwMcastFixture(t)
+
+	ptOut, err := client.CreateTransitGatewayPolicyTable(ctx, &ec2.CreateTransitGatewayPolicyTableInput{
+		TransitGatewayId: aws.String(tgwID),
+	})
+	require.NoError(t, err)
+	ptID := aws.ToString(ptOut.TransitGatewayPolicyTable.TransitGatewayPolicyTableId)
+	t.Cleanup(func() {
+		_, _ = client.DeleteTransitGatewayPolicyTable(ctx, &ec2.DeleteTransitGatewayPolicyTableInput{
+			TransitGatewayPolicyTableId: aws.String(ptID),
+		})
+	})
+
+	// The transit gateway's own default route table is the forwarding target.
+	rts, err := client.DescribeTransitGatewayRouteTables(ctx, &ec2.DescribeTransitGatewayRouteTablesInput{
+		Filters: []types.Filter{{Name: aws.String("transit-gateway-id"), Values: []string{tgwID}}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, rts.TransitGatewayRouteTables)
+	rtID := aws.ToString(rts.TransitGatewayRouteTables[0].TransitGatewayRouteTableId)
+
+	created, err := client.CreateTransitGatewayPolicyTableEntry(ctx, &ec2.CreateTransitGatewayPolicyTableEntryInput{
+		TransitGatewayPolicyTableId: aws.String(ptID),
+		PolicyRuleNumber:            aws.String("10"),
+		TargetRouteTableId:          aws.String(rtID),
+		PolicyRule: &types.TransitGatewayRequestPolicyRule{
+			SourceCidrBlock:      aws.String("10.0.0.0/16"),
+			DestinationCidrBlock: aws.String("10.1.0.0/16"),
+			Protocol:             aws.String("tcp"),
+			DestinationPortRange: aws.String("443"),
+			MetaData: &types.TransitGatewayRequestPolicyRuleMetaData{
+				MetaDataKey:   aws.String("tier"),
+				MetaDataValue: aws.String("prod"),
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created.TransitGatewayPolicyTableEntry)
+	assert.Equal(t, "10", aws.ToString(created.TransitGatewayPolicyTableEntry.PolicyRuleNumber))
+	assert.Equal(t, rtID, aws.ToString(created.TransitGatewayPolicyTableEntry.TargetRouteTableId))
+	require.NotNil(t, created.TransitGatewayPolicyTableEntry.PolicyRule)
+	assert.Equal(t, "10.0.0.0/16", aws.ToString(created.TransitGatewayPolicyTableEntry.PolicyRule.SourceCidrBlock))
+	require.NotNil(t, created.TransitGatewayPolicyTableEntry.PolicyRule.MetaData)
+	assert.Equal(t, "prod", aws.ToString(created.TransitGatewayPolicyTableEntry.PolicyRule.MetaData.MetaDataValue))
+
+	// A second rule with a lower number, to prove read-back is ordered by rule
+	// number numerically rather than by insertion or string order.
+	_, err = client.CreateTransitGatewayPolicyTableEntry(ctx, &ec2.CreateTransitGatewayPolicyTableEntryInput{
+		TransitGatewayPolicyTableId: aws.String(ptID),
+		PolicyRuleNumber:            aws.String("9"),
+		TargetRouteTableId:          aws.String(rtID),
+		PolicyRule: &types.TransitGatewayRequestPolicyRule{
+			SourceCidrBlock: aws.String("10.2.0.0/16"),
+		},
+	})
+	require.NoError(t, err)
+
+	listed, err := client.GetTransitGatewayPolicyTableEntries(ctx, &ec2.GetTransitGatewayPolicyTableEntriesInput{
+		TransitGatewayPolicyTableId: aws.String(ptID),
+	})
+	require.NoError(t, err)
+	require.Len(t, listed.TransitGatewayPolicyTableEntries, 2)
+	assert.Equal(t, "9", aws.ToString(listed.TransitGatewayPolicyTableEntries[0].PolicyRuleNumber))
+	assert.Equal(t, "10", aws.ToString(listed.TransitGatewayPolicyTableEntries[1].PolicyRuleNumber))
+
+	// A duplicate rule number is rejected rather than silently replacing.
+	_, err = client.CreateTransitGatewayPolicyTableEntry(ctx, &ec2.CreateTransitGatewayPolicyTableEntryInput{
+		TransitGatewayPolicyTableId: aws.String(ptID),
+		PolicyRuleNumber:            aws.String("10"),
+		TargetRouteTableId:          aws.String(rtID),
+	})
+	require.Error(t, err)
+
+	modified, err := client.ModifyTransitGatewayPolicyTableEntry(ctx, &ec2.ModifyTransitGatewayPolicyTableEntryInput{
+		TransitGatewayPolicyTableId: aws.String(ptID),
+		PolicyRuleNumber:            aws.String("10"),
+		PolicyRule: &types.TransitGatewayRequestPolicyRule{
+			SourceCidrBlock: aws.String("10.9.0.0/16"),
+			Protocol:        aws.String("udp"),
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, modified.TransitGatewayPolicyTableEntry.PolicyRule)
+	assert.Equal(t, "10.9.0.0/16", aws.ToString(modified.TransitGatewayPolicyTableEntry.PolicyRule.SourceCidrBlock))
+	assert.Equal(t, "udp", aws.ToString(modified.TransitGatewayPolicyTableEntry.PolicyRule.Protocol))
+	assert.Equal(t, rtID, aws.ToString(modified.TransitGatewayPolicyTableEntry.TargetRouteTableId),
+		"an omitted TargetRouteTableId leaves the entry pointing where it already pointed")
+
+	_, err = client.DeleteTransitGatewayPolicyTableEntry(ctx, &ec2.DeleteTransitGatewayPolicyTableEntryInput{
+		TransitGatewayPolicyTableId: aws.String(ptID),
+		PolicyRuleNumber:            aws.String("10"),
+	})
+	require.NoError(t, err)
+
+	after, err := client.GetTransitGatewayPolicyTableEntries(ctx, &ec2.GetTransitGatewayPolicyTableEntriesInput{
+		TransitGatewayPolicyTableId: aws.String(ptID),
+	})
+	require.NoError(t, err)
+	require.Len(t, after.TransitGatewayPolicyTableEntries, 1)
+	assert.Equal(t, "9", aws.ToString(after.TransitGatewayPolicyTableEntries[0].PolicyRuleNumber))
+
+	// Deleting a rule that is gone is an error, not a silent success.
+	_, err = client.DeleteTransitGatewayPolicyTableEntry(ctx, &ec2.DeleteTransitGatewayPolicyTableEntryInput{
+		TransitGatewayPolicyTableId: aws.String(ptID),
+		PolicyRuleNumber:            aws.String("10"),
+	})
+	require.Error(t, err)
 }
 
 // TestEC2_TGWMeteringPolicy exercises metering policy CRUD + entries.

@@ -147,6 +147,52 @@ func TestEC2CLI_TGWPolicyTable(t *testing.T) {
 		t.Fatalf("expected 0 policy table entries, got %q", entryCount)
 	}
 
+	// The policy rules the table exists to hold: create, read back, modify in
+	// place, delete. The entries read reported a fixed empty list until the API
+	// modelled a way to put a rule in a table.
+	rtID := strings.TrimSpace(runCLI(t, awsCLI("ec2", "describe-transit-gateway-route-tables",
+		"--filters", "Name=transit-gateway-id,Values="+tgwID,
+		"--query", "TransitGatewayRouteTables[0].TransitGatewayRouteTableId", "--output", "text")))
+	if rtID == "" || rtID == "None" {
+		t.Fatalf("transit gateway %s has no route table to target", tgwID)
+	}
+
+	createdRule := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-transit-gateway-policy-table-entry",
+		"--transit-gateway-policy-table-id", ptID,
+		"--policy-rule-number", "20",
+		"--target-route-table-id", rtID,
+		"--policy-rule", "SourceCidrBlock=10.0.0.0/16,Protocol=tcp,DestinationPortRange=443",
+		"--query", "TransitGatewayPolicyTableEntry.PolicyRuleNumber", "--output", "text")))
+	if createdRule != "20" {
+		t.Fatalf("create policy table entry returned rule %q, want 20", createdRule)
+	}
+
+	entrySource := strings.TrimSpace(runCLI(t, awsCLI("ec2", "get-transit-gateway-policy-table-entries",
+		"--transit-gateway-policy-table-id", ptID,
+		"--query", "TransitGatewayPolicyTableEntries[0].PolicyRule.SourceCidrBlock", "--output", "text")))
+	if entrySource != "10.0.0.0/16" {
+		t.Fatalf("policy table entry source CIDR is %q, want 10.0.0.0/16", entrySource)
+	}
+
+	modifiedProto := strings.TrimSpace(runCLI(t, awsCLI("ec2", "modify-transit-gateway-policy-table-entry",
+		"--transit-gateway-policy-table-id", ptID,
+		"--policy-rule-number", "20",
+		"--policy-rule", "SourceCidrBlock=10.5.0.0/16,Protocol=udp",
+		"--query", "TransitGatewayPolicyTableEntry.PolicyRule.Protocol", "--output", "text")))
+	if modifiedProto != "udp" {
+		t.Fatalf("modify policy table entry left protocol %q, want udp", modifiedProto)
+	}
+
+	runCLI(t, awsCLI("ec2", "delete-transit-gateway-policy-table-entry",
+		"--transit-gateway-policy-table-id", ptID, "--policy-rule-number", "20"))
+
+	entryCount = strings.TrimSpace(runCLI(t, awsCLI("ec2", "get-transit-gateway-policy-table-entries",
+		"--transit-gateway-policy-table-id", ptID,
+		"--query", "length(TransitGatewayPolicyTableEntries)", "--output", "text")))
+	if entryCount != "0" {
+		t.Fatalf("expected the table empty after deleting its only rule, got %q", entryCount)
+	}
+
 	runCLIIgnore(awsCLI("ec2", "disassociate-transit-gateway-policy-table",
 		"--transit-gateway-policy-table-id", ptID, "--transit-gateway-attachment-id", attID))
 }

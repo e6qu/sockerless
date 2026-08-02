@@ -98,8 +98,45 @@ jobs:
         run: zsh scripts/check-latest-deps.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Every cloud's vendored specifications are gated, not just one: the
+      # check takes a cloud argument, and passing only `gcp` let the AWS and
+      # Azure halves drift unnoticed. Each cloud is its own step so a drift
+      # names the cloud that drifted, and each captures the newer document it
+      # sampled so the refresh does not depend on the authoring machine's edge
+      # serving the same revision the runner saw.
+      - name: Check Amazon Web Services API specification freshness
+        id: aws-spec-freshness
+        run: bash scripts/check-spec-freshness.sh aws
+        env:
+          SPEC_FRESHNESS_CAPTURE_DIR: ${{ runner.temp }}/aws-spec-drift
+      - name: Preserve drifted Amazon Web Services API specifications
+        if: failure() && steps.aws-spec-freshness.outcome == 'failure'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: aws-smithy-drift
+          path: ${{ runner.temp }}/aws-spec-drift
+          if-no-files-found: ignore
+          retention-days: 1
+      - name: Check Microsoft Azure API specification freshness
+        id: azure-spec-freshness
+        # Runs even when the AWS step failed, so one drifted cloud does not
+        # hide another and a single run reports every cloud that needs a
+        # refresh.
+        if: '!cancelled()'
+        run: bash scripts/check-spec-freshness.sh azure
+        env:
+          SPEC_FRESHNESS_CAPTURE_DIR: ${{ runner.temp }}/azure-spec-drift
+      - name: Preserve drifted Microsoft Azure API specifications
+        if: failure() && steps.azure-spec-freshness.outcome == 'failure'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: azure-swagger-drift
+          path: ${{ runner.temp }}/azure-spec-drift
+          if-no-files-found: ignore
+          retention-days: 1
       - name: Check Google Cloud API specification freshness
         id: gcp-spec-freshness
+        if: '!cancelled()'
         run: bash scripts/check-spec-freshness.sh gcp
         env:
           SPEC_FRESHNESS_CAPTURE_DIR: ${{ runner.temp }}/gcp-spec-drift
