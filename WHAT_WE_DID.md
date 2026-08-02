@@ -4,6 +4,56 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-02 — Gating specification freshness on every cloud again
+
+`check-spec-freshness.sh` takes a cloud argument, and the `check-deps` job
+passed only `gcp` — so the Amazon Web Services and Microsoft Azure halves that
+BUG-2652 made a required gate had silently stopped running, and seven AWS
+Smithy models plus two Azure swaggers drifted unnoticed. All three clouds are
+gated again, each as its own step so a drift names the cloud that drifted and
+each capturing the newer document it sampled; Azure and Google Cloud run even
+when an earlier cloud failed, so one drift cannot hide another.
+
+Refreshing the models added exactly three operations, all Amazon EC2 transit
+gateway policy-table entries. They are implemented over a durable entry store
+with the target route table validated on write, duplicate rule numbers
+rejected, and an omitted target on modify leaving the entry pointing where it
+already pointed. That refresh also exposed an existing fake:
+`GetTransitGatewayPolicyTableEntries` had answered with a fixed empty list,
+honest while the API modelled no way to put a rule in a table and a stub the
+moment it did. It now reports what the table holds, ordered by rule number
+numerically so "9" precedes "10". Amazon EC2 ratcheted from 772 to 775.
+
+Shauth's integration into each simulator gained the regression it never had.
+The relying party was mounted in all three simulators and still is — it is an
+addition to each cloud's own authentication, not a replacement, and the console
+federates the operator's assertion into cloud credentials through the cloud's
+own primitive. What was missing was any test that a simulator actually mounts
+it: `simulators/ui-auth` has twenty tests, but every one of them proves the
+package in isolation, so the wiring could have regressed in any of the three
+without a single test noticing and a console would simply have stopped being
+able to sign anyone in. Each simulator now builds itself the way `main()` does
+with Shauth configured and asserts every endpoint of the contract is routed,
+that the session and federation-subject reads answer 401 anonymously rather
+than 404, and that the cloud data plane still demands its own credential —
+the assertion that makes "addition, not replacement" a tested property. A
+negative control that unmounts the relying party fails the test on every
+endpoint. The opt-in half is pinned too: with no identity-provider coordinate,
+no relying party is served.
+
+Amazon S3's three unserved operations were reclassified rather than
+implemented. `WriteGetObjectResponse` is the S3 Object Lambda callback a
+function makes on a per-request host; `CreateSession` and
+`ListDirectoryBuckets` are S3 Express One Zone operations served from
+`s3express-control` and the zonal bucket endpoints. None is addressed to the
+regional surface the simulator hosts, so implementing one means hosting
+another endpoint family and building the feature behind it — and neither
+feature has a consumer anywhere in this repository. The reasoning, and the
+condition that would justify revisiting it, now sits beside the ratchet list,
+in a hand-written section of the S3 surface table that survives regeneration,
+and in the conformance report, which says "not served by decision" instead of
+"missing".
+
 ## 2026-08-02 — Completing Google Cloud Resource Manager, and routing before authenticating
 
 Cloud Resource Manager was the simulator's most half-built Google service:

@@ -391,7 +391,7 @@ func serviceImplementedCount(m *smithyService, r conformanceRouters) int {
 // the query router's unversioned bucket is never counted for it (see
 // legacyQueryRegistrars).
 var serviceCoverageFloor = map[string]int{
-	"AmazonEC2":                            772, // ec2Query
+	"AmazonEC2":                            775, // ec2Query
 	"AWSSecurityTokenServiceV20110615":     11,  // STS (awsQuery, unversioned)
 	"AWSIdentityManagementV20100508":       176, // IAM (awsQuery, unversioned)
 	"AmazonEC2ContainerRegistry_V20150921": 58,  // ECR
@@ -479,23 +479,52 @@ func TestServiceConformance_Coverage(t *testing.T) {
 	}
 }
 
-// s3ConformanceMissing is S3's ratchet — the real S3 operations the REST sim does
-// not implement (mostly newer/niche surfaces: S3 Express directory buckets, the
-// bucket Metadata-table feature, ABAC, Object Lambda, S3 Select, Glacier restore,
-// and object ACL/lock/retention/legal-hold). The list is locked by
-// TestServiceConformance_S3Ratchet; implement one → remove it here.
+// s3ConformanceMissing is S3's ratchet: the three modelled S3 operations the
+// simulator does not serve. Every other operation in the vendored model is
+// implemented, so this list is the whole of S3's gap and it is not a backlog.
+//
+// READ THIS BEFORE ADDING THEM. All three are **scoped out by decision**, not
+// left undone by oversight, and the reason is the same for each: none of them
+// is addressed to the regional `s3.<region>.amazonaws.com` surface the
+// simulator hosts. The Smithy model routes each to a different endpoint family
+// through endpoint rules, so "implement the operation" is really "host another
+// endpoint family and build the feature behind it":
+//
+//   - WriteGetObjectResponse is the S3 Object Lambda callback. A client never
+//     calls it; an Object Lambda *function* calls it, on a per-request
+//     {RequestRoute}.s3-object-lambda.<region> host (the model marks it
+//     UseObjectLambdaEndpoint). Serving it standalone would be a handler with
+//     no caller — the operation only means anything once Object Lambda access
+//     points exist and route GetObject through a Lambda that then calls back.
+//
+//   - CreateSession and ListDirectoryBuckets are S3 Express One Zone
+//     operations, served from s3express-control.<region> and the zonal
+//     bucket endpoints (the model marks them smithy.rules#staticContextParams).
+//     They only mean anything once directory buckets exist as their own bucket
+//     type — distinct naming, zonal endpoints, and session-token authentication
+//     where the credentials CreateSession mints must actually verify on the
+//     requests that follow. A CreateSession that returned credentials nothing
+//     checks would be exactly the kind of fake this project forbids.
+//
+// Neither feature has a consumer here. Sockerless assembles the Docker and
+// Podman API from cloud primitives; no backend, agent, runner, console, or test
+// path uses S3 Express or Object Lambda, so building either would add surface
+// for the coverage number alone — and both would add a whole endpoint family
+// plus its feature semantics to keep faithful forever after.
+//
+// The condition to revisit is a real consumer, not a coverage sweep: a
+// sockerless backend that stores workload state in a directory bucket, or a
+// runner path that reads through an Object Lambda access point. If that
+// happens, implement the *feature* — the endpoint family, the bucket type or
+// the access point, and the authentication — and remove the entry here; do not
+// mount a bare handler on the regional surface, which no real client would
+// ever reach.
+//
+// The list is locked by TestServiceConformance_S3Ratchet.
 var s3ConformanceMissing = []string{
-	// WriteGetObjectResponse is an S3 Object Lambda data-plane callback addressed
-	// to a per-request {RequestRoute}.s3-object-lambda.<region> endpoint (the spec
-	// marks it UseObjectLambdaEndpoint), never the regional s3.amazonaws.com
-	// surface the simulator hosts — a dedicated-endpoint op. (SelectObjectContent,
-	// a vnd.amazon.eventstream op, IS now implemented + SDK/CLI-tested.)
 	"WriteGetObjectResponse",
-	// ListDirectoryBuckets and CreateSession are S3 Express operations served
-	// only from dedicated S3 Express endpoints (s3express-control / zonal), never
-	// the regional s3.amazonaws.com surface the simulator hosts (the spec marks
-	// them smithy.rules#staticContextParams) — so the sim does not host them.
-	"ListDirectoryBuckets", "CreateSession",
+	"ListDirectoryBuckets",
+	"CreateSession",
 }
 
 // TestServiceConformance_S3Ratchet locks S3's REST operation-coverage gap set,
@@ -542,7 +571,11 @@ func TestServiceConformance_S3Coverage(t *testing.T) {
 		}
 	}
 	sort.Strings(missing)
-	t.Logf("AmazonS3: %d/%d operations implemented; missing (%d): %v",
+	// "missing" reads as a backlog and invites someone to close it. These
+	// three are scoped out by decision — each belongs to an endpoint family
+	// this simulator does not host — and s3ConformanceMissing carries the
+	// reasoning and the condition that would justify revisiting it.
+	t.Logf("AmazonS3: %d/%d operations implemented; %d not served by decision (see s3ConformanceMissing): %v",
 		len(m.Ops)-len(missing), len(m.Ops), len(missing), missing)
 }
 

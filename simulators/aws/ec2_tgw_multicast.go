@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -71,6 +73,25 @@ type EC2TGWMeteringPolicy struct {
 	Tags                           []EC2Tag
 }
 
+// EC2TGWPolicyTableEntry records one policy rule in a transit gateway policy
+// table. A rule matches traffic on the five-tuple and carries metadata that
+// selects the route table the matched traffic is forwarded to; the rule number
+// identifies the entry within its table.
+type EC2TGWPolicyTableEntry struct {
+	TransitGatewayPolicyTableId string
+	PolicyRuleNumber            string
+	TargetRouteTableId          string
+	State                       string
+	// Policy rule criteria.
+	SourceCidrBlock      string
+	SourcePortRange      string
+	DestinationCidrBlock string
+	DestinationPortRange string
+	Protocol             string
+	MetaDataKey          string
+	MetaDataValue        string
+}
+
 // EC2TGWMeteringPolicyEntry records a metering policy entry (a metering rule).
 type EC2TGWMeteringPolicyEntry struct {
 	TransitGatewayMeteringPolicyId string
@@ -106,6 +127,7 @@ var (
 	ec2TGWMulticastGroups        sim.Store[EC2TGWMulticastGroup]
 	ec2TGWPolicyTables           sim.Store[EC2TGWPolicyTable]
 	ec2TGWPolicyTableAssocs      sim.Store[EC2TGWPolicyTableAssociation]
+	ec2TGWPolicyTableEntries     sim.Store[EC2TGWPolicyTableEntry]
 	ec2TGWMeteringPolicies       sim.Store[EC2TGWMeteringPolicy]
 	ec2TGWMeteringPolicyEntries  sim.Store[EC2TGWMeteringPolicyEntry]
 	ec2TGWRouteTableAnnouncement sim.Store[EC2TGWRouteTableAnnouncement]
@@ -116,6 +138,7 @@ func registerEC2TGWMulticast(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2TGWMulticastGroups = sim.MakeStore[EC2TGWMulticastGroup](srv.DB(), "ec2_tgw_multicast_groups")
 	ec2TGWPolicyTables = sim.MakeStore[EC2TGWPolicyTable](srv.DB(), "ec2_tgw_policy_tables")
 	ec2TGWPolicyTableAssocs = sim.MakeStore[EC2TGWPolicyTableAssociation](srv.DB(), "ec2_tgw_policy_table_associations")
+	ec2TGWPolicyTableEntries = sim.MakeStore[EC2TGWPolicyTableEntry](srv.DB(), "ec2_tgw_policy_table_entries")
 	ec2TGWMeteringPolicies = sim.MakeStore[EC2TGWMeteringPolicy](srv.DB(), "ec2_tgw_metering_policies")
 	ec2TGWMeteringPolicyEntries = sim.MakeStore[EC2TGWMeteringPolicyEntry](srv.DB(), "ec2_tgw_metering_policy_entries")
 	ec2TGWRouteTableAnnouncement = sim.MakeStore[EC2TGWRouteTableAnnouncement](srv.DB(), "ec2_tgw_route_table_announcements")
@@ -140,6 +163,9 @@ func registerEC2TGWMulticast(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DisassociateTransitGatewayPolicyTable", handleDisassociateTransitGatewayPolicyTable)
 	r.Register("GetTransitGatewayPolicyTableAssociations", handleGetTransitGatewayPolicyTableAssociations)
 	r.Register("GetTransitGatewayPolicyTableEntries", handleGetTransitGatewayPolicyTableEntries)
+	r.Register("CreateTransitGatewayPolicyTableEntry", handleCreateTransitGatewayPolicyTableEntry)
+	r.Register("ModifyTransitGatewayPolicyTableEntry", handleModifyTransitGatewayPolicyTableEntry)
+	r.Register("DeleteTransitGatewayPolicyTableEntry", handleDeleteTransitGatewayPolicyTableEntry)
 
 	// Metering policies.
 	r.Register("CreateTransitGatewayMeteringPolicy", handleCreateTransitGatewayMeteringPolicy)
@@ -457,11 +483,124 @@ func handleGetTransitGatewayPolicyTableEntries(w http.ResponseWriter, r *http.Re
 		ec2ErrorXML(w, "InvalidTransitGatewayPolicyTableId.NotFound", "policy table not found: "+ptID, http.StatusBadRequest)
 		return
 	}
-	// Policy table entries derive from the cloud-managed policy document; with
-	// no rules pushed the table is empty, which the SDK reads as an empty list.
-	tgwResponse(w, "GetTransitGatewayPolicyTableEntries",
-		"<transitGatewayPolicyTableEntries/>")
+	entries := ec2TGWPolicyTableEntries.Filter(func(e EC2TGWPolicyTableEntry) bool {
+		return e.TransitGatewayPolicyTableId == ptID
+	})
+	sort.Slice(entries, func(i, j int) bool {
+		return policyRuleOrder(entries[i].PolicyRuleNumber, entries[j].PolicyRuleNumber)
+	})
+	var b strings.Builder
+	b.WriteString("<transitGatewayPolicyTableEntries>")
+	for _, e := range entries {
+		fmt.Fprintf(&b, "<item>%s</item>", tgwPolicyTableEntryBodyXML(e))
+	}
+	b.WriteString("</transitGatewayPolicyTableEntries>")
+	tgwResponse(w, "GetTransitGatewayPolicyTableEntries", b.String())
 }
+
+// policyRuleOrder compares two rule numbers the way a policy table evaluates
+// them: numerically, since a rule number is a decimal string and "10" follows
+// "9" rather than preceding it. A value that is not a number sorts after every
+// number, by its own string order.
+func policyRuleOrder(a, b string) bool {
+	an, aErr := strconv.Atoi(a)
+	bn, bErr := strconv.Atoi(b)
+	switch {
+	case aErr == nil && bErr == nil:
+		return an < bn
+	case aErr == nil:
+		return true
+	case bErr == nil:
+		return false
+	}
+	return a < b
+}
+
+// policyTableEntryRule reads the rule criteria a create or modify request
+// carries. The wire flattens TransitGatewayRequestPolicyRule's members under
+// the "PolicyRule." prefix.
+func policyTableEntryRule(r *http.Request, e *EC2TGWPolicyTableEntry) {
+	e.SourceCidrBlock = r.FormValue("PolicyRule.SourceCidrBlock")
+	e.SourcePortRange = r.FormValue("PolicyRule.SourcePortRange")
+	e.DestinationCidrBlock = r.FormValue("PolicyRule.DestinationCidrBlock")
+	e.DestinationPortRange = r.FormValue("PolicyRule.DestinationPortRange")
+	e.Protocol = r.FormValue("PolicyRule.Protocol")
+	e.MetaDataKey = r.FormValue("PolicyRule.MetaData.MetaDataKey")
+	e.MetaDataValue = r.FormValue("PolicyRule.MetaData.MetaDataValue")
+}
+
+func handleCreateTransitGatewayPolicyTableEntry(w http.ResponseWriter, r *http.Request) {
+	ptID := r.FormValue("TransitGatewayPolicyTableId")
+	if _, ok := ec2TGWPolicyTables.Get(ptID); !ok {
+		ec2ErrorXML(w, "InvalidTransitGatewayPolicyTableId.NotFound", "policy table not found: "+ptID, http.StatusBadRequest)
+		return
+	}
+	ruleNum := r.FormValue("PolicyRuleNumber")
+	key := policyTableEntryKey(ptID, ruleNum)
+	if _, exists := ec2TGWPolicyTableEntries.Get(key); exists {
+		ec2ErrorXML(w, "TransitGatewayPolicyTableEntry.Duplicate",
+			"policy rule "+ruleNum+" already exists in policy table "+ptID, http.StatusBadRequest)
+		return
+	}
+	targetRT := r.FormValue("TargetRouteTableId")
+	if _, ok := ec2TransitGatewayRouteTables.Get(targetRT); !ok {
+		ec2ErrorXML(w, "InvalidRouteTableID.NotFound", "transit gateway route table not found: "+targetRT, http.StatusBadRequest)
+		return
+	}
+	e := EC2TGWPolicyTableEntry{
+		TransitGatewayPolicyTableId: ptID,
+		PolicyRuleNumber:            ruleNum,
+		TargetRouteTableId:          targetRT,
+		State:                       "active",
+	}
+	policyTableEntryRule(r, &e)
+	ec2TGWPolicyTableEntries.Put(key, e)
+	tgwResponse(w, "CreateTransitGatewayPolicyTableEntry",
+		"<transitGatewayPolicyTableEntry>"+tgwPolicyTableEntryBodyXML(e)+"</transitGatewayPolicyTableEntry>")
+}
+
+func handleModifyTransitGatewayPolicyTableEntry(w http.ResponseWriter, r *http.Request) {
+	ptID := r.FormValue("TransitGatewayPolicyTableId")
+	ruleNum := r.FormValue("PolicyRuleNumber")
+	key := policyTableEntryKey(ptID, ruleNum)
+	e, ok := ec2TGWPolicyTableEntries.Get(key)
+	if !ok {
+		ec2ErrorXML(w, "InvalidTransitGatewayPolicyTableEntry.NotFound",
+			"policy table entry not found: "+ptID+" rule "+ruleNum, http.StatusBadRequest)
+		return
+	}
+	// TargetRouteTableId is optional on modify: an omitted value leaves the
+	// entry pointing where it already pointed.
+	if targetRT := r.FormValue("TargetRouteTableId"); targetRT != "" {
+		if _, exists := ec2TransitGatewayRouteTables.Get(targetRT); !exists {
+			ec2ErrorXML(w, "InvalidRouteTableID.NotFound", "transit gateway route table not found: "+targetRT, http.StatusBadRequest)
+			return
+		}
+		e.TargetRouteTableId = targetRT
+	}
+	policyTableEntryRule(r, &e)
+	ec2TGWPolicyTableEntries.Put(key, e)
+	tgwResponse(w, "ModifyTransitGatewayPolicyTableEntry",
+		"<transitGatewayPolicyTableEntry>"+tgwPolicyTableEntryBodyXML(e)+"</transitGatewayPolicyTableEntry>")
+}
+
+func handleDeleteTransitGatewayPolicyTableEntry(w http.ResponseWriter, r *http.Request) {
+	ptID := r.FormValue("TransitGatewayPolicyTableId")
+	ruleNum := r.FormValue("PolicyRuleNumber")
+	key := policyTableEntryKey(ptID, ruleNum)
+	e, ok := ec2TGWPolicyTableEntries.Get(key)
+	if !ok {
+		ec2ErrorXML(w, "InvalidTransitGatewayPolicyTableEntry.NotFound",
+			"policy table entry not found: "+ptID+" rule "+ruleNum, http.StatusBadRequest)
+		return
+	}
+	ec2TGWPolicyTableEntries.Delete(key)
+	e.State = "deleted"
+	tgwResponse(w, "DeleteTransitGatewayPolicyTableEntry",
+		"<transitGatewayPolicyTableEntry>"+tgwPolicyTableEntryBodyXML(e)+"</transitGatewayPolicyTableEntry>")
+}
+
+func policyTableEntryKey(ptID, ruleNum string) string { return ptID + "/" + ruleNum }
 
 // ============================================================================
 // Metering policies
@@ -751,6 +890,35 @@ func tgwPolicyTableBodyXML(pt EC2TGWPolicyTable) string {
 			"<creationTime>%s</creationTime>%s",
 		pt.TransitGatewayPolicyTableId, pt.TransitGatewayId, pt.State,
 		pt.CreationTime, writeTagSetXML(pt.Tags))
+}
+
+func tgwPolicyTableEntryBodyXML(e EC2TGWPolicyTableEntry) string {
+	var rule strings.Builder
+	rule.WriteString("<policyRule>")
+	if e.SourceCidrBlock != "" {
+		fmt.Fprintf(&rule, "<sourceCidrBlock>%s</sourceCidrBlock>", e.SourceCidrBlock)
+	}
+	if e.SourcePortRange != "" {
+		fmt.Fprintf(&rule, "<sourcePortRange>%s</sourcePortRange>", e.SourcePortRange)
+	}
+	if e.DestinationCidrBlock != "" {
+		fmt.Fprintf(&rule, "<destinationCidrBlock>%s</destinationCidrBlock>", e.DestinationCidrBlock)
+	}
+	if e.DestinationPortRange != "" {
+		fmt.Fprintf(&rule, "<destinationPortRange>%s</destinationPortRange>", e.DestinationPortRange)
+	}
+	if e.Protocol != "" {
+		fmt.Fprintf(&rule, "<protocol>%s</protocol>", e.Protocol)
+	}
+	if e.MetaDataKey != "" || e.MetaDataValue != "" {
+		fmt.Fprintf(&rule, "<metaData><metaDataKey>%s</metaDataKey><metaDataValue>%s</metaDataValue></metaData>",
+			e.MetaDataKey, e.MetaDataValue)
+	}
+	rule.WriteString("</policyRule>")
+	return fmt.Sprintf(
+		"<policyRuleNumber>%s</policyRuleNumber>%s"+
+			"<targetRouteTableId>%s</targetRouteTableId><state>%s</state>",
+		e.PolicyRuleNumber, rule.String(), e.TargetRouteTableId, e.State)
 }
 
 func tgwPolicyTableAssociationBodyXML(a EC2TGWPolicyTableAssociation) string {

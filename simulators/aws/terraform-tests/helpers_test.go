@@ -112,8 +112,9 @@ func TestMain(m *testing.M) {
 		}
 		caddyBin = requireExecutable(caddyBin, "AWS Terraform HTTPS gateway tests")
 
-		gatewayPort = freeTCPPort()
-		gatewayAdminPort := freeTCPPort()
+		gatewayPorts := reserveTCPPorts(2)
+		gatewayPort = gatewayPorts[0]
+		gatewayAdminPort := gatewayPorts[1]
 		caCertFile = filepath.Join(gatewayDir, "data", "caddy", "pki", "authorities", "local", "root.crt")
 		gatewayCmd = exec.Command(caddyBin, "run", "--config", filepath.Join(repoRoot, "make", "https-gateway", "Caddyfile"), "--adapter", "caddyfile")
 		gatewayCmd.Env = append(os.Environ(),
@@ -402,13 +403,29 @@ func mergeNoProxy(existing string, entries ...string) string {
 	return strings.Join(merged, ",")
 }
 
-func freeTCPPort() int {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		log.Fatalf("Failed to find free port: %v", err)
+// reserveTCPPorts returns n distinct ports free for the WILDCARD bind the
+// gateway performs. Probing one at a time on 127.0.0.1 got both halves wrong:
+// a port free on loopback is not necessarily free for a ":port" bind, and each
+// probe released its port before returning it, so the next probe could be
+// handed the one just released. Holding every listener open until all n are
+// chosen makes them distinct by construction.
+func reserveTCPPorts(n int) []int {
+	listeners := make([]net.Listener, 0, n)
+	ports := make([]int, 0, n)
+	for range n {
+		ln, err := net.Listen("tcp", ":0")
+		if err != nil {
+			log.Fatalf("Failed to reserve port: %v", err)
+		}
+		listeners = append(listeners, ln)
+		ports = append(ports, ln.Addr().(*net.TCPAddr).Port)
 	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
+	for _, ln := range listeners {
+		if err := ln.Close(); err != nil {
+			log.Fatalf("Failed to close port reservation: %v", err)
+		}
+	}
+	return ports
 }
 
 func requireExecutable(name, purpose string) string {
