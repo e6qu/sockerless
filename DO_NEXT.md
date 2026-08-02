@@ -2,6 +2,17 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS.md) - narrative [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
+## Next
+
+Four pieces are sized, designed and staged in [PLAN.md](PLAN.md) § "Staged:
+Traffic Capture, Virtual Machines, and the Compute/Console Tails": real
+traffic capture (which is what BUG-2888 needs), Azure virtual machines from
+11 of 29 to complete, Google Compute Engine's ~455-method tail, and the Azure
+console's service surface. The first two are Linux-only real-execution work —
+network namespaces for capture, nested KVM for guests — so they belong on a
+branch that can be driven through the real-network container harness and the
+capable-Linux CI gate rather than folded into unrelated work.
+
 ## Completed Baseline
 
 Google Cloud Resource Manager reached complete coverage on all three API

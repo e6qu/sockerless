@@ -322,6 +322,79 @@ this order.
    through the console's server-side broker with faithful ARM/Graph CORS, the
    harness running the Azure console and cloud as separate processes.
 
+## Staged: Traffic Capture, Virtual Machines, and the Compute/Console Tails
+
+These four are sized and designed, not started. Each is staged rather than
+folded into an unrelated branch because each is Linux-only real-execution work
+or a long tail that would swamp a review.
+
+1. **Real traffic capture** (closes BUG-2888, and Google Compute Engine
+   `packetMirrorings`). A capture's content is genuine traffic recorded off a
+   workload's interface, so the mechanism has to be real: bind an `AF_PACKET`
+   raw socket inside the target's network namespace, write real pcap, and land
+   it where the cloud says it lands — for Azure that is the storage account
+   named by `PacketCaptureStorageLocation.storageId` / `storagePath`, which the
+   simulator's own Blob data plane already serves, so the round trip is real
+   end to end. The six `PacketCaptures_*` operations then sit on top of that:
+   `Create` starts a capture bounded by `timeLimitInSeconds`,
+   `totalBytesPerSession` and `bytesToCapturePerPacket`, `GetStatus` reports
+   the real session state, `Stop` finalises the file. A session reported
+   `Running` with no packets behind it would be fiction, which is why the
+   operations cannot land before the mechanism. Requires a Linux host with
+   network namespaces; verifiable in the repository's real-network container
+   harness.
+
+2. **Azure virtual machines, 11 of 29 to complete.** Served today: create,
+   patch, get, instance view, both lists, delete, and the
+   start/powerOff/restart/deallocate actions. The rest divide by what they
+   need. Straight off existing state: `ListAvailableSizes` (the Compute
+   catalogue is already modelled), `ListByLocation`, `SimulateEviction`,
+   `Generalize`. Off the real Firecracker guest: `Redeploy`, `Reimage`,
+   `Reapply`, `PerformMaintenance` operate on the guest process, and
+   `RetrieveBootDiagnosticsData` returns the guest's real console output.
+   Needing new substrate: `Capture` (an image captured from a running guest),
+   the five `VirtualMachineExtensions_*` operations (an extension that runs
+   for real inside the guest), and `AssessPatches` / `InstallPatches` (which
+   need an in-guest agent to be anything other than invented). Booting a guest
+   needs nested KVM, so this is a capable-Linux gate — see BUG-2764.
+
+3. **Google Compute Engine's long tail**: 910 unserved method spellings
+   (~455 methods). The weight sits in `instanceGroupManagers` (80 spellings),
+   `instances` (74), `disks` (38), `securityPolicies` (30), `reservations`
+   (28) and `snapshots` (20); the remainder is a genuine tail —
+   interconnects, cross-site networks, composite health checks — with low
+   value per operation. Stage by resource family, highest-weight first, so
+   each pass is reviewable.
+
+4. **The Azure console's service surface**: the portal exposes 7 blades
+   (Container Registry, Container Apps jobs, Entra app registrations, Function
+   Apps, Monitor, Storage, Subscriptions) while the simulator serves roughly
+   35 resource providers. The seven entries currently marked not-supported are
+   honest — the simulator does not serve those services either — so this is
+   about the services served with no blade at all: Key Vault, Event Hubs,
+   Service Bus, Cosmos DB, the Microsoft.Network family, App Service, and
+   virtual machines. Stage by service, following the descriptor-driven blade
+   pattern already in `catalog.ts`.
+
+### Planned: a separate provisioning service
+
+Capacity is currently coupled to each simulator process: a simulator that
+serves an API also owns the machines, namespaces and guests behind it. The
+intended direction is to decouple capacity into its own provisioning service
+that the simulators request execution from, so capacity can be scheduled
+across machines independently of which cloud API is being served. This is a
+recorded future addition, not current work, and nothing should be designed
+around it yet — the execution model below stands until it exists.
+
+**Execution model (current and intended).** Machine-level cloud APIs — Amazon
+EC2 instances, Google Compute Engine instances, Azure virtual machines — boot
+real Firecracker microVMs, and nested virtualization is an accepted
+requirement for them. Managed serverless and managed container services —
+AWS Lambda, Amazon ECS, Google Cloud Run and Cloud Run Functions, Azure
+Container Apps and Azure Functions — stay on containers. That split is what
+`specs/SIMULATOR_REAL_EXECUTION.md` already documents and implements;
+recording it here so the provisioning service, when it arrives, preserves it.
+
 ## Standing Work
 
 - **Bleephub full-service parity:** continue closing REST, GraphQL, UI, runner, auth, Pages, release, packages, and repository-provider gaps until Bleephub is usable as a real GitHub-compatible service.
