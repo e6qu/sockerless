@@ -25,7 +25,18 @@ var (
 	azureAdvertisedEndpointsErr  error
 )
 
+// azureRequestScheme reports the scheme the CLIENT used, which is what every
+// absolute URL the simulator emits (long-running-operation polling targets,
+// Key Vault endpoints, advertised data-plane hosts) must carry. Behind a TLS
+// terminating gateway r.TLS is nil even though the client spoke HTTPS, so the
+// forwarded-proto header the gateway sets is authoritative when present.
 func azureRequestScheme(r *http.Request) string {
+	if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
+		if i := strings.IndexByte(fp, ','); i >= 0 {
+			fp = fp[:i] // first hop is the client-facing scheme
+		}
+		return strings.ToLower(strings.TrimSpace(fp))
+	}
 	if r.TLS != nil {
 		return "https"
 	}
@@ -112,6 +123,13 @@ func azureStorageEndpointURL(r *http.Request, account, service string) string {
 				"service": service,
 			})))
 		}
+	}
+	// A request that already arrived at the service's own hostname is
+	// addressing the very endpoint being reported, so the endpoint is the host
+	// it used. Prefixing the subdomain again would advertise
+	// `acct.file.acct.file.<host>`, a name that resolves nowhere.
+	if hostname, _ := azureRequestHostParts(r); strings.HasPrefix(hostname, account+"."+service+".") {
+		return fmt.Sprintf("%s://%s/", azureRequestScheme(r), r.Host)
 	}
 	return fmt.Sprintf("%s://%s/", azureRequestScheme(r), azureEndpointHost(r, account, service))
 }

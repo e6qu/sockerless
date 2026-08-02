@@ -231,6 +231,14 @@ var (
 	storageTables     sim.Store[StorageTable]
 	azBlobContainers  sim.Store[BlobContainer]
 	azFileShares      sim.Store[FileShare]
+	// azStorageServiceProps holds the `Microsoft.Storage/storageAccounts/
+	// {blob,file,queue,table}Services/default` resources, keyed
+	// `<accountId>/<service>`. It is the account-wide service configuration an
+	// administrator writes; the Files data plane reads the share
+	// delete-retention policy from the fileServices entry, which is what
+	// decides whether Delete Share destroys a share or keeps it for Restore
+	// Share.
+	azStorageServiceProps sim.Store[map[string]any]
 )
 
 func storageTableResourceID(sub, rg, account, table string) string {
@@ -795,8 +803,24 @@ func registerAzureFiles(srv *sim.Server) {
 		}
 	}
 
-	srv.HandleFunc("GET "+armBase+"/storageAccounts/{accountName}/fileServices/default",
-		storageServiceHandler("fileServices", "Microsoft.Storage/storageAccounts/fileServices"))
+	// fileServices/default carries the account-wide File service configuration
+	// (cors, shareDeleteRetentionPolicy, protocolSettings) an administrator
+	// writes through `PUT .../fileServices/default`. Reading it back here is
+	// what makes that write observable, and the Files data plane's Delete Share
+	// and Restore Share read the share delete-retention policy from it.
+	srv.HandleFunc("GET "+armBase+"/storageAccounts/{accountName}/fileServices/default", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		account := sim.PathParam(r, "accountName")
+		acctID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s", sub, rg, account)
+		if _, ok := storageAccounts.Get(acctID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Storage/storageAccounts/%s' under resource group '%s' was not found.", account, rg)
+			return
+		}
+		props, _ := azStorageServiceProps.Get(acctID + "/fileServices")
+		sim.WriteJSON(w, http.StatusOK, fileServiceResponse(acctID+"/fileServices/default", props))
+	})
 	srv.HandleFunc("GET "+armBase+"/storageAccounts/{accountName}/queueServices/default",
 		storageServiceHandler("queueServices", "Microsoft.Storage/storageAccounts/queueServices"))
 	srv.HandleFunc("GET "+armBase+"/storageAccounts/{accountName}/tableServices/default",
@@ -807,6 +831,11 @@ func registerAzureFiles(srv *sim.Server) {
 	// terraform's azurerm_storage_account.blob_properties round-trips. PUT
 	// stores the supplied properties keyed by account; GET returns them.
 	blobServiceProps := sim.MakeStore[map[string]any](srv.DB(), "blob_service_properties")
+	// The Blob data plane reads the container delete-retention policy from here:
+	// Azure configures container soft delete on this ARM resource, not on the
+	// data-plane service-properties document, and Restore Container is governed
+	// by it.
+	blobARMServiceProps = blobServiceProps
 	blobServicePath := armBase + "/storageAccounts/{accountName}/blobServices/default"
 	blobServiceResourceID := func(r *http.Request) (acctID, resourceID, account, rg string) {
 		sub := sim.PathParam(r, "subscriptionId")
@@ -1037,6 +1066,29 @@ func registerAzureFiles(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 	})
 
+}
+
+// fileServiceResponse builds the ARM fileServices/default resource envelope
+// around the properties an administrator wrote. Real Azure always surfaces a
+// cors element and a shareDeleteRetentionPolicy, reporting the policy disabled
+// when nobody has enabled it.
+func fileServiceResponse(resourceID string, props map[string]any) map[string]any {
+	merged := map[string]any{
+		"cors": map[string]any{"corsRules": []any{}},
+		"shareDeleteRetentionPolicy": map[string]any{
+			"enabled": false,
+			"days":    0,
+		},
+	}
+	for k, v := range props {
+		merged[k] = v
+	}
+	return map[string]any{
+		"id":         resourceID,
+		"name":       "default",
+		"type":       "Microsoft.Storage/storageAccounts/fileServices",
+		"properties": merged,
+	}
 }
 
 // blobServiceResponse builds the ARM blobServices/default resource envelope,

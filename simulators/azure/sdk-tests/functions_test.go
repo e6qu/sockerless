@@ -144,7 +144,7 @@ func TestAzureFunctions_InvokeInjectsLogEntries(t *testing.T) {
 
 func TestAzureFunctions_InvokeExecutesCommand(t *testing.T) {
 	rg, name := "func-exec-rg", "exec-func-app"
-	azureCreateSiteWithImage(t, rg, name, []string{"echo", "hello-from-azure"}, "alpine:latest")
+	azureCreateSiteWithImage(t, rg, name, []string{"echo", "hello-from-azure"}, "public.ecr.aws/docker/library/alpine:latest")
 	defer azureDeleteSite(rg, name)
 
 	respBody := azureInvokeFunction(t, name)
@@ -153,7 +153,7 @@ func TestAzureFunctions_InvokeExecutesCommand(t *testing.T) {
 
 func TestAzureFunctions_InvokeNonZeroExit(t *testing.T) {
 	rg, name := "func-fail-rg", "fail-func-app"
-	azureCreateSiteWithImage(t, rg, name, []string{"sh", "-c", "exit 1"}, "alpine:latest")
+	azureCreateSiteWithImage(t, rg, name, []string{"sh", "-c", "exit 1"}, "public.ecr.aws/docker/library/alpine:latest")
 	defer azureDeleteSite(rg, name)
 
 	azureInvokeFunctionExpectError(t, name)
@@ -185,7 +185,7 @@ func TestAzureFunctions_InvokeNonZeroExit(t *testing.T) {
 
 func TestAzureFunctions_InvokeLogsRealOutput(t *testing.T) {
 	rg, name := "func-out-rg", "out-func-app"
-	azureCreateSiteWithImage(t, rg, name, []string{"echo", "real-azure-output"}, "alpine:latest")
+	azureCreateSiteWithImage(t, rg, name, []string{"echo", "real-azure-output"}, "public.ecr.aws/docker/library/alpine:latest")
 	defer azureDeleteSite(rg, name)
 
 	azureInvokeFunction(t, name)

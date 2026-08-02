@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -634,64 +633,15 @@ func storageMetadataValue(metadata map[string]*string, name string) string {
 	return ""
 }
 
-// requireStorageDataPlaneGap asserts that a real Azure Storage SDK call
-// surfaces the simulator's declared gap as a typed 501 NotImplemented failure —
-// not as a success the caller would go on to trust.
-func requireStorageDataPlaneGap(t *testing.T, err error, what string) {
-	t.Helper()
-	require.Error(t, err, "%s: the simulator does not implement this operation and must say so", what)
-	var respErr *azcore.ResponseError
-	require.True(t, errors.As(err, &respErr), "%s: want *azcore.ResponseError, got %T: %v", what, err, err)
-	require.Equal(t, http.StatusNotImplemented, respErr.StatusCode, "%s: %v", what, err)
-	require.Equal(t, "NotImplemented", respErr.ErrorCode, "%s: %v", what, err)
-}
-
 // TestStorageDataPlane_UnservedOperationsDeclareGaps drives the operations the
-// simulator's Blob / Files / Queues dispatchers do NOT implement through the
-// real Azure SDK clients. Each must fail with the declared gap, and — the part
-// that matters — must leave the resource exactly as it was. The dispatchers
-// used to select a handler by `comp` and fall through for an unrecognized
-// value, so Set Blob Tier ran Put Blob (creating or truncating the blob and
-// answering 201 Created), Create Directory ran Create File, and Set Queue ACL
-// ran Create Queue.
+// simulator's Files / Queues dispatchers do NOT implement through the real
+// Azure SDK clients. Each must fail with the declared gap, and — the part that
+// matters — must leave the resource exactly as it was: a dispatcher that
+// selected a handler by `comp` and fell through for an unrecognized value would
+// run Create File where Create Directory was asked for, and Create Queue where
+// Set Queue ACL was. The Blob plane serves its whole documented surface, so it
+// has no arm here; its operations are covered in blob_dataplane_test.go.
 func TestStorageDataPlane_UnservedOperationsDeclareGaps(t *testing.T) {
-	t.Run("blob", func(t *testing.T) {
-		account, container, blobName := "sdkgapblob", "gap-container", "kept.txt"
-		payload := []byte("kept through every refused operation")
-
-		client, err := azblob.NewClientWithNoCredential(storageSDKURL(t, account, "blob"),
-			&azblob.ClientOptions{ClientOptions: storageSDKOptions()})
-		require.NoError(t, err)
-		_, err = client.CreateContainer(ctx, container, nil)
-		require.NoError(t, err)
-		t.Cleanup(func() { _, _ = client.DeleteContainer(ctx, container, nil) })
-		_, err = client.UploadBuffer(ctx, container, blobName, payload, nil)
-		require.NoError(t, err)
-
-		blobClient := client.ServiceClient().NewContainerClient(container).NewBlobClient(blobName)
-		_, err = blobClient.SetTier(ctx, blob.AccessTierCool, nil)
-		requireStorageDataPlaneGap(t, err, "Set Blob Tier")
-		_, err = blobClient.SetMetadata(ctx, map[string]*string{"owner": to.Ptr("sockerless")}, nil)
-		requireStorageDataPlaneGap(t, err, "Set Blob Metadata")
-		_, err = blobClient.CreateSnapshot(ctx, nil)
-		requireStorageDataPlaneGap(t, err, "Create Snapshot")
-
-		download, err := client.DownloadStream(ctx, container, blobName, nil)
-		require.NoError(t, err)
-		got, err := io.ReadAll(download.Body)
-		require.NoError(t, err)
-		require.NoError(t, download.Body.Close())
-		assert.Equal(t, payload, got, "the blob must survive every refused operation untouched")
-
-		// A refused operation on a name that does not exist must not bring the
-		// blob into being.
-		absent := client.ServiceClient().NewContainerClient(container).NewBlobClient("never-created.txt")
-		_, err = absent.SetTier(ctx, blob.AccessTierCool, nil)
-		requireStorageDataPlaneGap(t, err, "Set Blob Tier on an absent blob")
-		_, err = client.DownloadStream(ctx, container, "never-created.txt", nil)
-		require.Error(t, err, "the refused Set Blob Tier must not have created the blob")
-	})
-
 	t.Run("file", func(t *testing.T) {
 		account, share, fileName := "sdkgapfile", "gap-share", "kept.txt"
 		payload := []byte("kept files payload")
@@ -710,16 +660,24 @@ func TestStorageDataPlane_UnservedOperationsDeclareGaps(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, fileClient.UploadBuffer(ctx, payload, nil))
 
+		// Create Directory used to land on Create File and answer 201 for a
+		// directory that was never created; it now creates a real directory,
+		// and the file beside it is untouched.
 		dirClient, err := directory.NewClientWithNoCredential(storageSDKURL(t, account, "file")+share+"/subdir",
 			&directory.ClientOptions{ClientOptions: storageSDKOptions()})
 		require.NoError(t, err)
 		_, err = dirClient.Create(ctx, nil)
-		requireStorageDataPlaneGap(t, err, "Create Directory")
-
+		require.NoError(t, err)
 		_, err = fileClient.SetMetadata(ctx, nil)
-		requireStorageDataPlaneGap(t, err, "Set File Metadata")
+		require.NoError(t, err)
 		_, err = fileClient.SetHTTPHeaders(ctx, nil)
-		requireStorageDataPlaneGap(t, err, "Set File HTTP Headers")
+		require.NoError(t, err)
+
+		// A `comp` the Files data plane does not define must still be refused
+		// rather than fall through to Create File.
+		resp := storageRawRequest(t, http.MethodPut, account, "file", "/"+share+"/"+fileName+"?comp=tier")
+		require.Equal(t, http.StatusNotImplemented, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 
 		buf := make([]byte, len(payload))
 		n, err := fileClient.DownloadBuffer(ctx, buf, nil)
@@ -728,6 +686,8 @@ func TestStorageDataPlane_UnservedOperationsDeclareGaps(t *testing.T) {
 		assert.Equal(t, payload, buf, "the file must survive every refused operation untouched")
 
 		_, err = fileClient.Delete(ctx, nil)
+		require.NoError(t, err)
+		_, err = dirClient.Delete(ctx, nil)
 		require.NoError(t, err)
 	})
 
@@ -753,21 +713,34 @@ func TestStorageDataPlane_UnservedOperationsDeclareGaps(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "sockerless", storageMetadataValue(props.Metadata, "owner"))
 
-		_, err = queueClient.SetAccessPolicy(ctx, nil)
-		requireStorageDataPlaneGap(t, err, "Set Queue ACL")
-		_, err = queueClient.GetAccessPolicy(ctx, nil)
-		requireStorageDataPlaneGap(t, err, "Get Queue ACL")
+		// Set Queue ACL used to land on Create Queue: for a name that did not
+		// exist it created the queue and answered 201. It now stores the
+		// policies, and Get Queue ACL reads back exactly what was set.
+		_, err = queueClient.SetAccessPolicy(ctx, &azqueue.SetAccessPolicyOptions{
+			QueueACL: []*azqueue.SignedIdentifier{{
+				ID: to.Ptr("gap-policy"),
+				AccessPolicy: &azqueue.AccessPolicy{
+					Permission: to.Ptr("rap"),
+				},
+			}},
+		})
+		require.NoError(t, err)
+		acl, err := queueClient.GetAccessPolicy(ctx, nil)
+		require.NoError(t, err)
+		require.Len(t, acl.SignedIdentifiers, 1)
+		require.NotNil(t, acl.SignedIdentifiers[0].ID)
+		assert.Equal(t, "gap-policy", *acl.SignedIdentifiers[0].ID)
 
-		// The refused access-policy calls must not have disturbed the queue.
+		// The access-policy calls must not have disturbed the queue.
 		props, err = queueClient.GetProperties(ctx, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "sockerless", storageMetadataValue(props.Metadata, "owner"))
 
-		// A refused operation on a queue that does not exist must not create it.
+		// An operation on a queue that does not exist must not create it.
 		absent := serviceClient.NewQueueClient("neveraqueue")
 		_, err = absent.SetAccessPolicy(ctx, nil)
-		requireStorageDataPlaneGap(t, err, "Set Queue ACL on an absent queue")
+		require.Error(t, err, "Set Queue ACL on a queue that does not exist must fail")
 		_, err = absent.GetProperties(ctx, nil)
-		require.Error(t, err, "the refused Set Queue ACL must not have created the queue")
+		require.Error(t, err, "the failed Set Queue ACL must not have created the queue")
 	})
 }

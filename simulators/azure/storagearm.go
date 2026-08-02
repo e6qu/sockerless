@@ -42,6 +42,9 @@ type storageARMChild struct {
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
+// azureStoragePECs holds the private endpoint connections on storage accounts.
+var azureStoragePECs sim.Store[storageARMChild]
+
 func storageAcctResourceID(sub, rg, account string) string {
 	return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s",
 		sub, rg, account)
@@ -92,12 +95,20 @@ func registerStorageAccounts(srv *sim.Server) {
 	managementPolicies := sim.MakeStore[storageARMChild](srv.DB(), "storage_management_policies")
 	inventoryPolicies := sim.MakeStore[storageARMChild](srv.DB(), "storage_inventory_policies")
 	privateEndpointConns := sim.MakeStore[storageARMChild](srv.DB(), "storage_private_endpoint_connections")
+	// A private endpoint targeting a storage account opens its connection in
+	// this very collection, so the endpoint's view and the account's
+	// privateEndpointConnections surface read one object.
+	azureStoragePECs = privateEndpointConns
 	objectReplicationPolicies := sim.MakeStore[storageARMChild](srv.DB(), "storage_object_replication_policies")
 	encryptionScopes := sim.MakeStore[storageARMChild](srv.DB(), "storage_encryption_scopes")
 	localUsers := sim.MakeStore[storageARMChild](srv.DB(), "storage_local_users")
 	immutabilityPolicies := sim.MakeStore[storageARMChild](srv.DB(), "storage_immutability_policies")
 	storageQueues := sim.MakeStore[storageARMChild](srv.DB(), "storage_queues")
 	serviceProperties := sim.MakeStore[map[string]any](srv.DB(), "storage_service_properties")
+	// The blob/file/queue/table service resources an administrator writes here
+	// configure the matching data planes; the Files data plane reads the share
+	// delete-retention policy from this store.
+	azStorageServiceProps = serviceProperties
 
 	const acct = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Storage/storageAccounts/{accountName}"
 

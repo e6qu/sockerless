@@ -193,7 +193,7 @@ func (s *Server) exchangeFederationAssertion(r *http.Request, form url.Values) (
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Host = r.Host
 	recorder := &federationResponseRecorder{header: make(http.Header), status: http.StatusOK}
-	s.handler.ServeHTTP(recorder, request)
+	s.finalHandler().ServeHTTP(recorder, request)
 	return recorder.status, recorder.header.Get("Content-Type"), recorder.body.Bytes(), nil
 }
 

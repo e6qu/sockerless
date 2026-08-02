@@ -13,14 +13,14 @@ Surface registered in `simulators/azure/files.go` (and related files grouped und
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/storageAccounts` | ✓ `simulators/azure/files.go:760::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /providers/Microsoft.Storage/operations` | ✓ `simulators/azure/storagearm.go:106::handleStorageOperationsList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/skus` | ✓ `simulators/azure/storagearm.go:107::handleStorageSkusList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Storage/checknameavailability` | ✓ `simulators/azure/storagearm.go:110::handleStorageCheckNameAvailability` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/locations/{location}/usages` | ✓ `simulators/azure/storagearm.go:111::handleStorageUsagesByLocation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/deletedAccounts` | ✓ `simulators/azure/storagearm.go:112::handleStorageDeletedAccountsList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/locations/{location}/deletedAccounts/{deletedAccountName}` | ✓ `simulators/azure/storagearm.go:113::handleStorageDeletedAccountGet` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Storage/storageAccounts` | ✓ `simulators/azure/storagearm.go:114::handleStorageAccountsListByRG` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/storageAccounts` | ✓ `simulators/azure/files.go:768::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /providers/Microsoft.Storage/operations` | ✓ `simulators/azure/storagearm.go:117::handleStorageOperationsList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/skus` | ✓ `simulators/azure/storagearm.go:118::handleStorageSkusList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Storage/checknameavailability` | ✓ `simulators/azure/storagearm.go:121::handleStorageCheckNameAvailability` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/locations/{location}/usages` | ✓ `simulators/azure/storagearm.go:122::handleStorageUsagesByLocation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/deletedAccounts` | ✓ `simulators/azure/storagearm.go:123::handleStorageDeletedAccountsList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/locations/{location}/deletedAccounts/{deletedAccountName}` | ✓ `simulators/azure/storagearm.go:124::handleStorageDeletedAccountGet` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Storage/storageAccounts` | ✓ `simulators/azure/storagearm.go:125::handleStorageAccountsListByRG` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

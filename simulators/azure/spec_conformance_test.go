@@ -303,15 +303,6 @@ var allowedNonSpecAzureRoutes = map[string]string{
 var vendoredForRefClosure = map[string]bool{
 	"cosmos-db-arm-privateendpointconnection-2021-10-15.swagger.json.gz": true,
 	"cosmos-db-arm-privateendpointconnection-2024-08-15.swagger.json.gz": true,
-	"network-arm-applicationgateway-2025-03-01.swagger.json.gz":          true,
-	"network-arm-applicationsecuritygroup-2025-03-01.swagger.json.gz":    true,
-	"network-arm-networkmanager-2025-03-01.swagger.json.gz":              true,
-	"network-arm-networkprofile-2025-03-01.swagger.json.gz":              true,
-	"network-arm-networkwatcher-2025-03-01.swagger.json.gz":              true,
-	"network-arm-privateendpoint-2025-03-01.swagger.json.gz":             true,
-	"network-arm-privatelinkservice-2025-03-01.swagger.json.gz":          true,
-	"network-arm-serviceendpointpolicy-2025-03-01.swagger.json.gz":       true,
-	"network-arm-virtualnetworktap-2025-03-01.swagger.json.gz":           true,
 }
 
 // vendoredHostRoutedDataPlane lists swagger files for data planes the

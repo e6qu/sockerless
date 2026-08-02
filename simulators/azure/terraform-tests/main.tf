@@ -604,6 +604,22 @@ resource "azurerm_storage_share" "az_st_share" {
   }
 }
 
+# Azure Files directories — the Files data plane's Create / Get / Delete
+# Directory operations, which is how a nested path inside a share comes into
+# being. An Azure Container Apps or Azure Functions workload mounting the share
+# walks exactly this tree, so a share is only usable as a volume if directories
+# below its root are real. The provider reads each directory back on every
+# refresh, so the idempotency plan covers Get Directory Properties too.
+resource "azurerm_storage_share_directory" "az_st_share_dir" {
+  name              = "build"
+  storage_share_url = azurerm_storage_share.az_st_share.url
+}
+
+resource "azurerm_storage_share_directory" "az_st_share_subdir" {
+  name              = "${azurerm_storage_share_directory.az_st_share_dir.name}/artifacts"
+  storage_share_url = azurerm_storage_share.az_st_share.url
+}
+
 # Linux Function App — AZF runner backend's host primitive.
 resource "azurerm_linux_function_app" "az_fa" {
   name                       = "tf-azrm-fa"
@@ -819,6 +835,148 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "az_pg_fw" {
   end_ip_address   = "10.0.0.10"
 }
 
+# ---------- Azure Private Link (both halves) + the attachment resources ----------
+# The provider half is a private link service in front of the load balancer's
+# frontend; the consumer half is a private endpoint in its own subnet. The
+# endpoint's create opens a connection on the service, and the provider reads
+# that connection's state back on every plan — so the two surfaces have to
+# address one object for the apply to be idempotent. A second endpoint targets
+# the Key Vault, which exercises the same integration across resource
+# providers, and its private DNS zone group publishes the vault's private-link
+# record into the zone the zone's own record surface then serves.
+
+resource "azurerm_virtual_network" "az_pl_vnet" {
+  name                = "tf-azrm-pl-vnet"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  address_space       = ["10.95.0.0/16"]
+}
+
+resource "azurerm_subnet" "az_pl_nat_subnet" {
+  name                 = "tf-azrm-pl-nat-subnet"
+  resource_group_name  = azurerm_resource_group.az_rg.name
+  virtual_network_name = azurerm_virtual_network.az_pl_vnet.name
+  address_prefixes     = ["10.95.1.0/24"]
+}
+
+resource "azurerm_subnet" "az_pl_pe_subnet" {
+  name                 = "tf-azrm-pl-pe-subnet"
+  resource_group_name  = azurerm_resource_group.az_rg.name
+  virtual_network_name = azurerm_virtual_network.az_pl_vnet.name
+  address_prefixes     = ["10.95.2.0/24"]
+}
+
+resource "azurerm_application_security_group" "az_asg" {
+  name                = "tf-azrm-asg"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+
+  tags = {
+    tier = "web"
+  }
+}
+
+resource "azurerm_private_link_service" "az_pls" {
+  name                = "tf-azrm-pls"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+
+  auto_approval_subscription_ids              = ["00000000-0000-0000-0000-000000000001"]
+  visibility_subscription_ids                 = ["00000000-0000-0000-0000-000000000001"]
+  load_balancer_frontend_ip_configuration_ids = [one(azurerm_lb.az_lb.frontend_ip_configuration).id]
+
+  # A static address keeps the configuration and the service's own report of
+  # the NAT configuration in agreement: the provider records whatever address
+  # the service assigns, and refuses a later plan that would take an assigned
+  # address back out of the configuration.
+  nat_ip_configuration {
+    name                       = "natcfg1"
+    primary                    = true
+    subnet_id                  = azurerm_subnet.az_pl_nat_subnet.id
+    private_ip_address         = "10.95.1.10"
+    private_ip_address_version = "IPv4"
+  }
+}
+
+resource "azurerm_private_endpoint" "az_pe" {
+  name                = "tf-azrm-pe"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  subnet_id           = azurerm_subnet.az_pl_pe_subnet.id
+
+  private_service_connection {
+    name                           = "tf-azrm-pe"
+    is_manual_connection           = false
+    private_connection_resource_id = azurerm_private_link_service.az_pls.id
+  }
+}
+
+resource "azurerm_private_endpoint_application_security_group_association" "az_pe_asg" {
+  private_endpoint_id           = azurerm_private_endpoint.az_pe.id
+  application_security_group_id = azurerm_application_security_group.az_asg.id
+}
+
+resource "azurerm_private_dns_zone" "az_kv_pdns" {
+  name                = "privatelink.vaultcore.azure.net"
+  resource_group_name = azurerm_resource_group.az_rg.name
+}
+
+resource "azurerm_private_endpoint" "az_kv_pe" {
+  name                = "tf-azrm-kv-pe"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  subnet_id           = azurerm_subnet.az_pl_pe_subnet.id
+
+  private_service_connection {
+    name                           = "tf-azrm-kv-pe"
+    is_manual_connection           = false
+    private_connection_resource_id = azurerm_key_vault.az_kv.id
+    subresource_names              = ["vault"]
+  }
+
+  private_dns_zone_group {
+    name                 = "default"
+    private_dns_zone_ids = [azurerm_private_dns_zone.az_kv_pdns.id]
+  }
+}
+
+# ---------- Network profile + service endpoint policy ----------
+
+resource "azurerm_subnet" "az_np_subnet" {
+  name                 = "tf-azrm-np-subnet"
+  resource_group_name  = azurerm_resource_group.az_rg.name
+  virtual_network_name = azurerm_virtual_network.az_pl_vnet.name
+  address_prefixes     = ["10.95.3.0/24"]
+}
+
+resource "azurerm_network_profile" "az_np" {
+  name                = "tf-azrm-np"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+
+  container_network_interface {
+    name = "tf-azrm-cnic"
+
+    ip_configuration {
+      name      = "ipconfig1"
+      subnet_id = azurerm_subnet.az_np_subnet.id
+    }
+  }
+}
+
+resource "azurerm_subnet_service_endpoint_storage_policy" "az_sep" {
+  name                = "tf-azrm-sep"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+
+  definition {
+    name              = "allow-one-account"
+    description       = "restrict storage service endpoint traffic to one account"
+    service           = "Microsoft.Storage"
+    service_resources = [azurerm_storage_account.az_st.id]
+  }
+}
+
 # ---------- Outputs (cross-resource invariants) ----------
 
 output "resource_group_id" {
@@ -1017,6 +1175,14 @@ output "azrm_storage_share_id" {
   value = azurerm_storage_share.az_st_share.id
 }
 
+output "azrm_storage_share_directory_id" {
+  value = azurerm_storage_share_directory.az_st_share_subdir.id
+}
+
+output "azrm_storage_share_directory_name" {
+  value = azurerm_storage_share_directory.az_st_share_subdir.name
+}
+
 output "azrm_function_app_id" {
   value = azurerm_linux_function_app.az_fa.id
 }
@@ -1047,4 +1213,228 @@ output "azrm_apim_product_id" {
 
 output "azrm_apim_subscription_id" {
   value = azurerm_api_management_subscription.az_apim_sub.id
+}
+
+output "azrm_application_security_group_id" {
+  value = azurerm_application_security_group.az_asg.id
+}
+
+output "azrm_private_link_service_id" {
+  value = azurerm_private_link_service.az_pls.id
+}
+
+output "azrm_private_link_service_alias" {
+  value = azurerm_private_link_service.az_pls.alias
+}
+
+output "azrm_private_endpoint_id" {
+  value = azurerm_private_endpoint.az_pe.id
+}
+
+output "azrm_private_endpoint_private_ip" {
+  value = one(azurerm_private_endpoint.az_pe.private_service_connection).private_ip_address
+}
+
+output "azrm_private_endpoint_nic_id" {
+  value = one(azurerm_private_endpoint.az_pe.network_interface).id
+}
+
+output "azrm_kv_private_endpoint_id" {
+  value = azurerm_private_endpoint.az_kv_pe.id
+}
+
+output "azrm_kv_private_endpoint_custom_dns_fqdn" {
+  value = one(azurerm_private_endpoint.az_kv_pe.custom_dns_configs).fqdn
+}
+
+output "azrm_kv_private_endpoint_dns_zone_group_id" {
+  value = one(azurerm_private_endpoint.az_kv_pe.private_dns_zone_group).id
+}
+
+output "azrm_network_profile_id" {
+  value = azurerm_network_profile.az_np.id
+}
+
+output "azrm_subnet_service_endpoint_storage_policy_id" {
+  value = azurerm_subnet_service_endpoint_storage_policy.az_sep.id
+}
+
+# ---------- Application Gateway ----------
+# Azure's layer-7 load balancer, deployed into its own subnet and fronted by a
+# public address. The listener, the URL path map and the request routing rule
+# are the routing program the gateway's data plane executes: a request that
+# matches no path rule goes to the default pool, and /api/* goes to the other
+# one.
+
+resource "azurerm_virtual_network" "az_appgw_vnet" {
+  name                = "tf-azrm-appgw-vnet"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  address_space       = ["10.96.0.0/16"]
+}
+
+resource "azurerm_subnet" "az_appgw_subnet" {
+  name                 = "tf-azrm-appgw-subnet"
+  resource_group_name  = azurerm_resource_group.az_rg.name
+  virtual_network_name = azurerm_virtual_network.az_appgw_vnet.name
+  address_prefixes     = ["10.96.1.0/24"]
+}
+
+resource "azurerm_public_ip" "az_appgw_pip" {
+  name                = "tf-azrm-appgw-pip"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_application_gateway" "az_appgw" {
+  name                = "tf-azrm-appgw"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+
+  sku {
+    name     = "Standard_v2"
+    tier     = "Standard_v2"
+    capacity = 2
+  }
+
+  gateway_ip_configuration {
+    name      = "gw-ipcfg"
+    subnet_id = azurerm_subnet.az_appgw_subnet.id
+  }
+
+  frontend_ip_configuration {
+    name                 = "public"
+    public_ip_address_id = azurerm_public_ip.az_appgw_pip.id
+  }
+
+  frontend_port {
+    name = "port-80"
+    port = 80
+  }
+
+  backend_address_pool {
+    name         = "web"
+    ip_addresses = ["10.96.1.10"]
+  }
+
+  backend_address_pool {
+    name         = "api"
+    ip_addresses = ["10.96.1.11"]
+  }
+
+  probe {
+    name                = "web-probe"
+    protocol            = "Http"
+    path                = "/healthz"
+    interval            = 30
+    timeout             = 30
+    unhealthy_threshold = 3
+    host                = "127.0.0.1"
+
+    match {
+      status_code = ["200-399"]
+    }
+  }
+
+  backend_http_settings {
+    name                  = "web-settings"
+    cookie_based_affinity = "Disabled"
+    port                  = 80
+    protocol              = "Http"
+    request_timeout       = 30
+    probe_name            = "web-probe"
+  }
+
+  backend_http_settings {
+    name                  = "api-settings"
+    cookie_based_affinity = "Disabled"
+    port                  = 8080
+    protocol              = "Http"
+    request_timeout       = 30
+  }
+
+  http_listener {
+    name                           = "listener"
+    frontend_ip_configuration_name = "public"
+    frontend_port_name             = "port-80"
+    protocol                       = "Http"
+  }
+
+  url_path_map {
+    name                               = "site-paths"
+    default_backend_address_pool_name  = "web"
+    default_backend_http_settings_name = "web-settings"
+
+    path_rule {
+      name                       = "api"
+      paths                      = ["/api/*"]
+      backend_address_pool_name  = "api"
+      backend_http_settings_name = "api-settings"
+    }
+  }
+
+  request_routing_rule {
+    name               = "site-rule"
+    rule_type          = "PathBasedRouting"
+    priority           = 100
+    http_listener_name = "listener"
+    url_path_map_name  = "site-paths"
+  }
+}
+
+# ---------- Network Watcher ----------
+# The regional diagnostics anchor, plus the flow log configuration of a network
+# security group — the record the watcher's target-addressed flow log
+# operations read and write.
+
+resource "azurerm_network_watcher" "az_nw" {
+  name                = "tf-azrm-network-watcher"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  tags = {
+    team = "network"
+  }
+}
+
+# ---------- Virtual Network Manager ----------
+# The scope-and-deployment half of centrally managed networking: the manager
+# declares the subscriptions it governs and the configuration kinds it may
+# manage there.
+
+resource "azurerm_network_manager" "az_netman" {
+  name                = "tf-azrm-network-manager"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  description         = "terraform network manager"
+  scope_accesses      = ["Connectivity", "SecurityAdmin"]
+
+  scope {
+    subscription_ids = ["/subscriptions/00000000-0000-0000-0000-000000000001"]
+  }
+}
+
+output "azrm_application_gateway_id" {
+  value = azurerm_application_gateway.az_appgw.id
+}
+
+output "azrm_application_gateway_backend_pool_ids" {
+  value = [for pool in azurerm_application_gateway.az_appgw.backend_address_pool : pool.id]
+}
+
+output "azrm_application_gateway_listener_ids" {
+  value = [for listener in azurerm_application_gateway.az_appgw.http_listener : listener.id]
+}
+
+output "azrm_network_watcher_id" {
+  value = azurerm_network_watcher.az_nw.id
+}
+
+output "azrm_network_manager_id" {
+  value = azurerm_network_manager.az_netman.id
+}
+
+output "azrm_network_manager_scope_accesses" {
+  value = azurerm_network_manager.az_netman.scope_accesses
 }

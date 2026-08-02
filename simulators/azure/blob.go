@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -17,50 +15,113 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// Azure Storage Blob data plane.
+// Azure Storage Blob data plane
+// (https://learn.microsoft.com/rest/api/storageservices/blob-service-rest-api).
 //
-// ARM `Microsoft.Storage/storageAccounts/{name}` returns an
-// advertised endpoint URL like `https://{name}.blob.<host>:<port>/`
-// in its `primaryEndpoints.blob` field. Real SDK / azcopy / az CLI
-// consumers follow that URL for Put/Get/Head/Delete/List operations
-// against blob containers + blobs. Previously the sim emitted
-// the URL but had no handler servicing it — operators got 404 on
-// the URL the sim itself handed them.
+// ARM `Microsoft.Storage/storageAccounts/{name}` advertises this plane at
+// `https://{name}.blob.<host>:<port>/` in its `primaryEndpoints.blob` field, and
+// real SDK / azcopy / az CLI consumers follow that URL. The middleware installed
+// by registerBlobDataPlane claims requests addressed there — plus the
+// Azurite-compatible `/{account}/…` path-style form SDKs use against a localhost
+// endpoint — and handleBlobDataPlane selects the operation from the
+// `restype` + `comp` query pair the service itself discriminates on.
 //
-// Wire format (per Azure REST docs, https://learn.microsoft.com/rest/api/storageservices/blob-service-rest-api):
+// The whole vendored Blob data-plane surface is served: containers, blobs, the
+// copy family, blocks, page and append ranges, snapshots and soft delete, tags,
+// tier and expiry, immutability and legal hold, leases, blob query, blob batch
+// and the account-wide service operations. Blob type is enforced — a page
+// operation on a block blob is refused with InvalidBlobType — and a page blob's
+// written ranges are tracked separately from its bytes, so a page written with
+// zeros is distinguishable from a sparse one.
 //
-//	PUT    /{container}?restype=container          CreateContainer
-//	DELETE /{container}?restype=container          DeleteContainer
-//	GET    /{container}?restype=container          GetContainerProperties
-//	GET    /{container}?restype=container&comp=list ListBlobs (XML)
-//	GET    /?comp=list                             ListContainers (XML)
-//	PUT    /{container}/{blob}                     PutBlob
-//	PUT    /{container}/{blob}?comp=block          StageBlock
-//	PUT    /{container}/{blob}?comp=blocklist      CommitBlockList
-//	GET    /{container}/{blob}                     GetBlob
-//	GET    /{container}/{blob}?comp=blocklist      GetBlockList
-//	HEAD   /{container}/{blob}                     GetBlobProperties
-//	DELETE /{container}/{blob}                     DeleteBlob
-//
-// The sim collapses block-blob / page-blob / append-blob into one
-// stored byte slice; `x-ms-blob-type` is recorded for round-trip
-// fidelity but not enforced. SSE-C headers
-// (`x-ms-encryption-key-sha256`) surface via the sentinel-header
-// log added in 173.0 but are not enforced by the handler.
+// SSE-C headers (`x-ms-encryption-key-sha256`) surface through the
+// sentinel-header log but are not enforced by the handler.
+
+// BlobLease is the lock Lease Blob / Lease Container establishes on a resource.
+// Azure derives the reported lease state, status and duration from the clock, so
+// only the facts are stored: the lease ID, the requested duration (-1 for an
+// infinite lease, 15–60 seconds for a finite one), when a finite lease runs out,
+// when a pending break completes, and whether a break has already completed.
+type BlobLease struct {
+	ID        string
+	Duration  int32
+	ExpiresAt time.Time
+	BreakAt   time.Time
+	Broken    bool
+}
+
+// BlobPageRange is one written (non-sparse) byte range of a page blob. Start and
+// End are both inclusive, exactly as Azure reports them in Get Page Ranges.
+type BlobPageRange struct {
+	Start int64
+	End   int64
+}
+
+// BlobSignedIdentifier is one stored access policy of a container ACL.
+type BlobSignedIdentifier struct {
+	ID         string
+	Start      string
+	Expiry     string
+	Permission string
+}
 
 type BlobObject struct {
-	Account      string
-	Container    string
-	Name         string
+	Account   string
+	Container string
+	Name      string
+	// Snapshot is empty for the base blob and carries the snapshot timestamp
+	// (`?snapshot=<ts>`) for a snapshot, which is how Azure addresses one.
+	Snapshot     string
 	Data         []byte
 	ContentType  string
 	BlobType     string
 	ETag         string
 	LastModified string
+	CreationTime string
 	Metadata     map[string]string
-	CopyID       string
-	CopyStatus   string
-	CopySource   string
+	Tags         map[string]string
+
+	CacheControl       string
+	ContentEncoding    string
+	ContentLanguage    string
+	ContentDisposition string
+	// ContentMD5 is base64, the encoding both x-ms-blob-content-md5 and the
+	// Content-MD5 response header use.
+	ContentMD5 string
+
+	AccessTier           string
+	AccessTierInferred   bool
+	AccessTierChangeTime string
+	ExpiresOn            string
+
+	SequenceNumber      int64
+	CommittedBlockCount int32
+	Sealed              bool
+
+	// PageRanges tracks the written extents of a page blob; everything outside
+	// them is sparse and reads back as zeros.
+	PageRanges []BlobPageRange
+
+	Lease BlobLease
+
+	ImmutabilityPolicyExpiry string
+	ImmutabilityPolicyMode   string
+	LegalHold                bool
+
+	// Deleted marks a soft-deleted blob, retained because the account's blob
+	// service properties declare a delete-retention policy.
+	Deleted                bool
+	DeletedTime            string
+	RemainingRetentionDays int32
+
+	CopyID                  string
+	CopyStatus              string
+	CopySource              string
+	CopyProgress            string
+	CopyCompletionTime      string
+	CopyStatusDescription   string
+	IncrementalCopy         bool
+	CopyDestinationSnapshot string
 }
 
 type BlobContainerData struct {
@@ -69,6 +130,16 @@ type BlobContainerData struct {
 	Created  string
 	ETag     string
 	Metadata map[string]string
+	// Version identifies one incarnation of a container name, which is how
+	// Restore Container addresses a soft-deleted container.
+	Version           string
+	PublicAccess      string
+	Lease             BlobLease
+	SignedIdentifiers []BlobSignedIdentifier
+
+	Deleted                bool
+	DeletedTime            string
+	RemainingRetentionDays int32
 }
 
 type BlobBlockData struct {
@@ -133,16 +204,22 @@ func indexRemove(idx map[string]map[string]struct{}, group, key string) {
 	}
 }
 
-func putBlobObject(account, container, name string, b BlobObject) {
-	key := blobObjectKey(account, container, name)
+// putBlobObject stores a blob (or one of its snapshots) under the key its own
+// Account/Container/Name/Snapshot fields address, keeping the container index in
+// step. The record carries its own coordinates, so it is the single source of
+// the key.
+func putBlobObject(b BlobObject) {
+	key := blobObjectKeyOf(b)
 	blobIndexMu.Lock()
-	indexAdd(blobIndex, blobContainerKey(account, container), key)
+	indexAdd(blobIndex, blobContainerKey(b.Account, b.Container), key)
 	blobIndexMu.Unlock()
 	blobObjects.Put(key, b)
 }
 
-func deleteBlobObject(account, container, name string) {
-	key := blobObjectKey(account, container, name)
+// deleteBlobSnapshot removes one stored record — the base blob when snapshot is
+// empty, a snapshot otherwise — and keeps the container index in step.
+func deleteBlobSnapshot(account, container, name, snapshot string) {
+	key := blobSnapshotKey(account, container, name, snapshot)
 	blobIndexMu.Lock()
 	indexRemove(blobIndex, blobContainerKey(account, container), key)
 	blobIndexMu.Unlock()
@@ -209,6 +286,8 @@ func registerBlobDataPlane(srv *sim.Server) {
 	blobObjects = sim.MakeStore[BlobObject](srv.DB(), "blob_objects")
 	blobContainersData = sim.MakeStore[BlobContainerData](srv.DB(), "blob_containers_data")
 	blobBlocks = sim.MakeStore[BlobBlockData](srv.DB(), "blob_blocks")
+	blobServicePropsStore = sim.MakeStore[BlobServiceConfig](srv.DB(), "blob_dataplane_service_properties")
+	blobDelegationKeys = sim.MakeStore[BlobUserDelegationKey](srv.DB(), "blob_user_delegation_keys")
 
 	// Rebuild the secondary indexes from any persisted store contents so a
 	// restart with a SQLite-backed store starts consistent.
@@ -217,7 +296,7 @@ func registerBlobDataPlane(srv *sim.Server) {
 	blockIndex = map[string]map[string]struct{}{}
 	blocksByContainer = map[string]map[string]struct{}{}
 	for _, b := range blobObjects.List() {
-		indexAdd(blobIndex, blobContainerKey(b.Account, b.Container), blobObjectKey(b.Account, b.Container, b.Name))
+		indexAdd(blobIndex, blobContainerKey(b.Account, b.Container), blobObjectKeyOf(b))
 	}
 	for _, bl := range blobBlocks.List() {
 		indexAdd(blockIndex, blobObjectKey(bl.Account, bl.Container, bl.Blob), blobBlockKey(bl.Account, bl.Container, bl.Blob, bl.BlockID))
@@ -424,153 +503,98 @@ func blobStoragePage[T any](r *http.Request, items []T, name func(T) string) ([]
 func blobObjectKey(account, container, name string) string {
 	return account + "/" + container + "/" + name
 }
+
+// blobSnapshotKey addresses one snapshot of a blob. Azure addresses a snapshot
+// with the `?snapshot=<timestamp>` query on the base blob's URL, and the store
+// key mirrors that spelling so the base blob and its snapshots are distinct
+// rows under the same container index.
+func blobSnapshotKey(account, container, name, snapshot string) string {
+	if snapshot == "" {
+		return blobObjectKey(account, container, name)
+	}
+	return blobObjectKey(account, container, name) + "?snapshot=" + snapshot
+}
+
+func blobObjectKeyOf(b BlobObject) string {
+	return blobSnapshotKey(b.Account, b.Container, b.Name, b.Snapshot)
+}
+
 func blobContainerKey(account, container string) string {
 	return account + "/" + container
+}
+
+// blobDeletedContainerKey addresses one soft-deleted incarnation of a container
+// name. A container name can be recreated after a delete, so the live row and
+// every retained deleted row have to coexist; Azure distinguishes them by the
+// version Restore Container takes.
+func blobDeletedContainerKey(account, container, version string) string {
+	return account + "/" + container + "#deleted#" + version
 }
 func blobBlockKey(account, container, blob, blockID string) string {
 	return account + "/" + container + "/" + blob + "/" + blockID
 }
 
 // handleBlobDataPlane dispatches one Blob Storage data-plane request. The
-// operation is selected by the `restype` + `comp` query pair at three levels
-// (service `/`, container `/{container}`, blob `/{container}/{blob}`); the
-// combinations below are the complete set the simulator serves:
+// operation is selected by the `restype` + `comp` query pair — plus, where Azure
+// overloads one `comp` across several operations, the discriminating request
+// header — at three levels: service `/`, container `/{container}` and blob
+// `/{container}/{blob}`.
 //
-//	GET    /?comp=list                                ListContainers
-//	GET    /?restype=service&comp=properties           GetBlobServiceProperties
-//	HEAD   /?restype=service&comp=properties           GetBlobServiceProperties
-//	PUT    /{container}?restype=container              CreateContainer
-//	GET    /{container}?restype=container              GetContainerProperties
-//	HEAD   /{container}?restype=container              GetContainerProperties
-//	DELETE /{container}?restype=container              DeleteContainer
-//	GET    /{container}?restype=container&comp=list    ListBlobs (flat + hierarchical)
-//	PUT    /{container}/{blob}                         PutBlob   (x-ms-blob-type)
-//	PUT    /{container}/{blob}   + x-ms-copy-source     CopyBlob
-//	PUT    /{container}/{blob}?comp=block               StageBlock
-//	PUT    /{container}/{blob}?comp=blocklist           CommitBlockList
-//	GET    /{container}/{blob}                          GetBlob
-//	GET    /{container}/{blob}?comp=blocklist           GetBlockList
-//	HEAD   /{container}/{blob}                          GetBlobProperties
-//	DELETE /{container}/{blob}                          DeleteBlob
-//
-// Every other restype/comp value — Set Blob Tier, Set Blob Metadata, the lease
-// verbs, page and append ranges, blob tags, snapshots, container ACLs, the
-// service-level batch/filter/statistics operations — is a declared gap, not a
-// fall-through to whichever sibling handler happens to sit under the same
-// method. A fall-through would perform a DIFFERENT operation than the caller
-// asked for and report it as success.
+// A `restype`/`comp` combination the dispatcher does not recognize is answered
+// with a declared gap, never by falling through to whichever sibling handler
+// happens to sit under the same method: a fall-through would perform a DIFFERENT
+// operation than the caller asked for and report it as success.
 func handleBlobDataPlane(w http.ResponseWriter, r *http.Request, account string) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	q := r.URL.Query()
 	comp, restype := q.Get("comp"), q.Get("restype")
 
-	// Service level: /?comp=…
+	// Service level: /?restype=…&comp=…
 	if path == "" {
-		if r.Method == http.MethodGet && restype == "" && comp == "list" {
-			handleListContainers(w, r, account)
-			return
-		}
-		// Get Blob Service Properties. The azurerm provider polls this while
-		// waiting for a storage account's data plane to come up, so it is part
-		// of creating an account rather than an optional extra. The Queues
-		// plane answers the same operation from the same defaults.
-		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
-			restype == "service" && comp == "properties" {
-			writeStorageXML(w, http.StatusOK, defaultStorageServiceProperties())
-			return
-		}
-		writeStorageOperationNotImplemented(w, r, "Blob")
+		handleBlobServiceLevel(w, r, account, restype, comp)
 		return
 	}
 
 	segs := strings.SplitN(path, "/", 2)
 	container := segs[0]
 	if len(segs) == 1 {
-		// Container level: every served operation carries restype=container.
-		if restype != "container" {
-			writeStorageOperationNotImplemented(w, r, "Blob")
-			return
-		}
-		switch r.Method {
-		case http.MethodPut:
-			if comp != "" {
-				// comp=metadata / rename / undelete / lease / acl — each a real
-				// container operation the simulator does not implement. Creating
-				// the container instead would answer a lease acquisition with a
-				// brand-new container.
-				writeStorageOperationNotImplemented(w, r, "Blob")
-				return
-			}
-			handleCreateContainer(w, r, account, container)
-		case http.MethodDelete:
-			if comp != "" {
-				writeStorageOperationNotImplemented(w, r, "Blob")
-				return
-			}
-			handleDeleteContainer(w, r, account, container)
-		case http.MethodGet:
-			switch comp {
-			case "list":
-				handleListBlobs(w, r, account, container)
-			case "":
-				handleGetContainer(w, r, account, container)
-			default:
-				writeStorageOperationNotImplemented(w, r, "Blob")
-			}
-		case http.MethodHead:
-			if comp != "" {
-				writeStorageOperationNotImplemented(w, r, "Blob")
-				return
-			}
-			handleGetContainer(w, r, account, container)
-		default:
-			writeStorageOperationNotImplemented(w, r, "Blob")
-		}
+		handleBlobContainerLevel(w, r, account, container, restype, comp)
 		return
 	}
 
-	// Blob level: /{container}/{blob}. restype is never part of a served blob
-	// operation (restype=account&comp=properties is Get Account Information).
 	blob := segs[1]
+	// Get Account Information is the one blob-level operation carrying a
+	// restype; every other blob operation has none.
 	if restype != "" {
+		if r.Method == http.MethodGet && restype == "account" && comp == "properties" {
+			handleBlobGetAccountInfo(w, r, account)
+			return
+		}
 		writeStorageOperationNotImplemented(w, r, "Blob")
 		return
 	}
 	switch r.Method {
 	case http.MethodPut:
-		switch comp {
-		case "block":
-			// Stage Block carries the block body; Stage Block From URL names a
-			// source blob in x-ms-copy-source and is a different operation.
-			// Staging the (empty) request body for it would silently commit
-			// nothing where the caller asked for the source's bytes.
-			if r.Header.Get("x-ms-copy-source") != "" {
-				writeStorageOperationNotImplemented(w, r, "Blob")
-				return
-			}
-			handleStageBlock(w, r, account, container, blob)
-		case "blocklist":
-			handleCommitBlockList(w, r, account, container, blob)
-		case "":
-			// Copy Blob is the bare PUT plus x-ms-copy-source — Azure spells it
-			// with no comp at all.
-			if r.Header.Get("x-ms-copy-source") != "" {
-				handleCopyBlob(w, r, account, container, blob)
-				return
-			}
-			handlePutBlob(w, r, account, container, blob)
-		default:
-			writeStorageOperationNotImplemented(w, r, "Blob")
-		}
+		handleBlobLevelPut(w, r, account, container, blob, comp)
 	case http.MethodGet:
 		switch comp {
 		case "blocklist":
 			handleGetBlockList(w, r, account, container, blob)
+		case "pagelist":
+			handleGetPageRanges(w, r, account, container, blob)
+		case "tags":
+			handleGetBlobTags(w, r, account, container, blob)
 		case "":
 			handleGetBlob(w, r, account, container, blob)
 		default:
 			writeStorageOperationNotImplemented(w, r, "Blob")
 		}
+	case http.MethodPost:
+		if comp == "query" {
+			handleBlobQuery(w, r, account, container, blob)
+			return
+		}
+		writeStorageOperationNotImplemented(w, r, "Blob")
 	case http.MethodHead:
 		if comp != "" {
 			writeStorageOperationNotImplemented(w, r, "Blob")
@@ -578,11 +602,183 @@ func handleBlobDataPlane(w http.ResponseWriter, r *http.Request, account string)
 		}
 		handleHeadBlob(w, r, account, container, blob)
 	case http.MethodDelete:
+		switch comp {
+		case "immutabilityPolicies":
+			handleDeleteBlobImmutabilityPolicy(w, r, account, container, blob)
+		case "":
+			handleDeleteBlob(w, r, account, container, blob)
+		default:
+			writeStorageOperationNotImplemented(w, r, "Blob")
+		}
+	default:
+		writeStorageOperationNotImplemented(w, r, "Blob")
+	}
+}
+
+// handleBlobLevelPut resolves the blob-level PUT operations. Azure overloads two
+// `comp` values across several operations and discriminates them by header:
+// `comp=properties` is Set Blob HTTP Headers unless x-ms-blob-content-length
+// (Resize) or x-ms-sequence-number-action (Update Sequence Number) is present,
+// and `comp=page` is Upload Pages unless x-ms-page-write says `clear`.
+func handleBlobLevelPut(w http.ResponseWriter, r *http.Request, account, container, blob, comp string) {
+	switch comp {
+	case "block":
+		if r.Header.Get("x-ms-copy-source") != "" {
+			handleStageBlockFromURL(w, r, account, container, blob)
+			return
+		}
+		handleStageBlock(w, r, account, container, blob)
+	case "blocklist":
+		handleCommitBlockList(w, r, account, container, blob)
+	case "lease":
+		handleBlobLease(w, r, account, container, blob)
+	case "metadata":
+		handleSetBlobMetadata(w, r, account, container, blob)
+	case "properties":
+		switch {
+		case r.Header.Get("x-ms-blob-content-length") != "":
+			handlePageBlobResize(w, r, account, container, blob)
+		case r.Header.Get("x-ms-sequence-number-action") != "":
+			handlePageBlobUpdateSequenceNumber(w, r, account, container, blob)
+		default:
+			handleSetBlobHTTPHeaders(w, r, account, container, blob)
+		}
+	case "tier":
+		handleSetBlobTier(w, r, account, container, blob)
+	case "expiry":
+		handleSetBlobExpiry(w, r, account, container, blob)
+	case "tags":
+		handleSetBlobTags(w, r, account, container, blob)
+	case "snapshot":
+		handleCreateBlobSnapshot(w, r, account, container, blob)
+	case "undelete":
+		handleUndeleteBlob(w, r, account, container, blob)
+	case "immutabilityPolicies":
+		handleSetBlobImmutabilityPolicy(w, r, account, container, blob)
+	case "legalhold":
+		handleSetBlobLegalHold(w, r, account, container, blob)
+	case "copy":
+		handleBlobCompCopy(w, r, account, container, blob)
+	case "incrementalcopy":
+		handlePageBlobCopyIncremental(w, r, account, container, blob)
+	case "page":
+		if strings.EqualFold(r.Header.Get("x-ms-page-write"), "clear") {
+			handlePageBlobClearPages(w, r, account, container, blob)
+			return
+		}
+		if r.Header.Get("x-ms-copy-source") != "" {
+			handlePageBlobUploadPagesFromURL(w, r, account, container, blob)
+			return
+		}
+		handlePageBlobUploadPages(w, r, account, container, blob)
+	case "appendblock":
+		if r.Header.Get("x-ms-copy-source") != "" {
+			handleAppendBlockFromURL(w, r, account, container, blob)
+			return
+		}
+		handleAppendBlock(w, r, account, container, blob)
+	case "seal":
+		handleAppendBlobSeal(w, r, account, container, blob)
+	case "":
+		// Copy Blob is the bare PUT plus x-ms-copy-source — Azure spells it
+		// with no comp at all.
+		if r.Header.Get("x-ms-copy-source") != "" {
+			handleCopyBlob(w, r, account, container, blob)
+			return
+		}
+		handlePutBlob(w, r, account, container, blob)
+	default:
+		writeStorageOperationNotImplemented(w, r, "Blob")
+	}
+}
+
+// handleBlobServiceLevel resolves the account-wide operations addressed at `/`.
+func handleBlobServiceLevel(w http.ResponseWriter, r *http.Request, account, restype, comp string) {
+	switch {
+	case r.Method == http.MethodGet && restype == "" && comp == "list":
+		handleListContainers(w, r, account)
+	case r.Method == http.MethodGet && restype == "" && comp == "blobs":
+		handleFilterBlobs(w, r, account, "")
+	case r.Method == http.MethodPost && restype == "" && comp == "batch":
+		handleBlobSubmitBatch(w, r, account, "")
+	case (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+		restype == "service" && comp == "properties":
+		// Get Blob Service Properties. The azurerm provider polls this while
+		// waiting for a storage account's data plane to come up, so it is part
+		// of creating an account rather than an optional extra.
+		handleGetBlobServiceProperties(w, r, account)
+	case r.Method == http.MethodPut && restype == "service" && comp == "properties":
+		handleSetBlobServiceProperties(w, r, account)
+	case r.Method == http.MethodGet && restype == "service" && comp == "stats":
+		handleGetBlobServiceStatistics(w, r, account)
+	case r.Method == http.MethodPost && restype == "service" && comp == "userdelegationkey":
+		handleGetUserDelegationKey(w, r, account)
+	case r.Method == http.MethodGet && restype == "account" && comp == "properties":
+		handleBlobGetAccountInfo(w, r, account)
+	default:
+		writeStorageOperationNotImplemented(w, r, "Blob")
+	}
+}
+
+// handleBlobContainerLevel resolves the operations addressed at `/{container}`.
+func handleBlobContainerLevel(w http.ResponseWriter, r *http.Request, account, container, restype, comp string) {
+	if restype == "account" && comp == "properties" && r.Method == http.MethodGet {
+		handleBlobGetAccountInfo(w, r, account)
+		return
+	}
+	if restype != "container" {
+		writeStorageOperationNotImplemented(w, r, "Blob")
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		switch comp {
+		case "":
+			handleCreateContainer(w, r, account, container)
+		case "metadata":
+			handleSetContainerMetadata(w, r, account, container)
+		case "acl":
+			handleSetContainerAccessPolicy(w, r, account, container)
+		case "lease":
+			handleContainerLease(w, r, account, container)
+		case "rename":
+			handleRenameContainer(w, r, account, container)
+		case "undelete":
+			handleRestoreContainer(w, r, account, container)
+		default:
+			writeStorageOperationNotImplemented(w, r, "Blob")
+		}
+	case http.MethodDelete:
 		if comp != "" {
 			writeStorageOperationNotImplemented(w, r, "Blob")
 			return
 		}
-		handleDeleteBlob(w, r, account, container, blob)
+		handleDeleteContainer(w, r, account, container)
+	case http.MethodGet:
+		switch comp {
+		case "list":
+			handleListBlobs(w, r, account, container)
+		case "acl":
+			handleGetContainerAccessPolicy(w, r, account, container)
+		case "blobs":
+			handleFilterBlobs(w, r, account, container)
+		case "":
+			handleGetContainer(w, r, account, container)
+		default:
+			writeStorageOperationNotImplemented(w, r, "Blob")
+		}
+	case http.MethodPost:
+		if comp == "batch" {
+			handleBlobSubmitBatch(w, r, account, container)
+			return
+		}
+		writeStorageOperationNotImplemented(w, r, "Blob")
+	case http.MethodHead:
+		if comp != "" {
+			writeStorageOperationNotImplemented(w, r, "Blob")
+			return
+		}
+		handleGetContainer(w, r, account, container)
 	default:
 		writeStorageOperationNotImplemented(w, r, "Blob")
 	}
@@ -596,11 +792,13 @@ func handleCreateContainer(w http.ResponseWriter, r *http.Request, account, cont
 		return
 	}
 	c := BlobContainerData{
-		Account:  account,
-		Name:     container,
-		Created:  time.Now().UTC().Format(http.TimeFormat),
-		ETag:     `"` + generateUUID() + `"`,
-		Metadata: collectMetadata(r),
+		Account:      account,
+		Name:         container,
+		Created:      time.Now().UTC().Format(http.TimeFormat),
+		ETag:         `"` + generateUUID() + `"`,
+		Metadata:     collectMetadata(r),
+		Version:      generateUUID(),
+		PublicAccess: r.Header.Get("x-ms-blob-public-access"),
 	}
 	blobContainersData.Put(key, c)
 	w.Header().Set("ETag", c.ETag)
@@ -609,16 +807,36 @@ func handleCreateContainer(w http.ResponseWriter, r *http.Request, account, cont
 }
 
 func handleDeleteContainer(w http.ResponseWriter, r *http.Request, account, container string) {
-	if !blobContainersData.Delete(blobContainerKey(account, container)) {
+	key := blobContainerKey(account, container)
+	c, ok := blobContainersData.Get(key)
+	if !ok {
 		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
+	if !blobContainerWriteAllowed(w, r, c) {
+		return
+	}
+	blobContainersData.Delete(key)
+
+	// With a container delete-retention policy in force the container and its
+	// contents are retained for the policy's window and Restore Container brings
+	// them back; without one the delete is permanent.
+	if days, soft := blobContainerSoftDeleteDays(account); soft {
+		c.Deleted = true
+		c.DeletedTime = blobNowHTTP()
+		c.RemainingRetentionDays = days
+		c.Lease = BlobLease{}
+		blobContainersData.Put(blobDeletedContainerKey(account, container, c.Version), c)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
 	// Cascade-delete this container's blobs and their staged/committed blocks
 	// via the secondary indexes, touching only the container's own keys.
 	for _, key := range blobKeysInContainer(account, container) {
 		if b, ok := blobObjects.Get(key); ok {
-			deleteBlobObject(b.Account, b.Container, b.Name)
+			deleteBlobSnapshot(b.Account, b.Container, b.Name, b.Snapshot)
 		}
 	}
 	for _, key := range blockKeysInContainer(account, container) {
@@ -636,51 +854,153 @@ func handleGetContainer(w http.ResponseWriter, r *http.Request, account, contain
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
+	writeContainerHeaders(w, c)
+	w.WriteHeader(http.StatusOK)
+}
+
+// writeContainerHeaders emits the container property headers Get Container
+// Properties answers with: identity, metadata, lease state and access level.
+func writeContainerHeaders(w http.ResponseWriter, c BlobContainerData) {
 	w.Header().Set("Last-Modified", c.Created)
 	w.Header().Set("ETag", c.ETag)
 	for k, v := range c.Metadata {
 		w.Header().Set("x-ms-meta-"+k, v)
 	}
-	w.WriteHeader(http.StatusOK)
+	writeBlobLeaseHeaders(w, c.Lease, time.Now())
+	if c.PublicAccess != "" {
+		w.Header().Set("x-ms-blob-public-access", c.PublicAccess)
+	}
+	w.Header().Set("x-ms-has-immutability-policy", "false")
+	w.Header().Set("x-ms-has-legal-hold", "false")
+}
+
+// blobListContainerProperties is the <Properties> element of one container in a
+// List Containers response.
+type blobListContainerProperties struct {
+	LastModified           string `xml:"Last-Modified"`
+	ETag                   string `xml:"Etag"`
+	LeaseStatus            string `xml:"LeaseStatus,omitempty"`
+	LeaseState             string `xml:"LeaseState,omitempty"`
+	LeaseDuration          string `xml:"LeaseDuration,omitempty"`
+	PublicAccess           string `xml:"PublicAccess,omitempty"`
+	HasImmutabilityPolicy  bool   `xml:"HasImmutabilityPolicy"`
+	HasLegalHold           bool   `xml:"HasLegalHold"`
+	DeletedTime            string `xml:"DeletedTime,omitempty"`
+	RemainingRetentionDays *int32 `xml:"RemainingRetentionDays,omitempty"`
+}
+
+type blobListContainerEntry struct {
+	Name       string                      `xml:"Name"`
+	Deleted    *bool                       `xml:"Deleted,omitempty"`
+	Version    string                      `xml:"Version,omitempty"`
+	Properties blobListContainerProperties `xml:"Properties"`
+	Metadata   *blobMetadataElement        `xml:"Metadata,omitempty"`
+}
+
+// blobMetadataElement carries x-ms-meta-* pairs as the arbitrarily named child
+// elements Azure's list responses use.
+type blobMetadataElement struct {
+	Entries []blobMetadataEntry `xml:",any"`
+}
+
+type blobMetadataEntry struct {
+	XMLName xml.Name
+	Value   string `xml:",chardata"`
+}
+
+func blobMetadataXML(m map[string]string) *blobMetadataElement {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	el := &blobMetadataElement{}
+	for _, k := range keys {
+		el.Entries = append(el.Entries, blobMetadataEntry{XMLName: xml.Name{Local: k}, Value: m[k]})
+	}
+	return el
 }
 
 func handleListContainers(w http.ResponseWriter, r *http.Request, account string) {
-	type containerProperties struct {
-		LastModified string `xml:"Last-Modified"`
-		ETag         string `xml:"Etag"`
-	}
-	type containerEntry struct {
-		Name       string              `xml:"Name"`
-		Properties containerProperties `xml:"Properties"`
-	}
 	type enum struct {
-		XMLName         xml.Name         `xml:"EnumerationResults"`
-		ServiceEndpoint string           `xml:"ServiceEndpoint,attr"`
-		Containers      []containerEntry `xml:"Containers>Container"`
-		NextMarker      string           `xml:"NextMarker"`
+		XMLName         xml.Name                 `xml:"EnumerationResults"`
+		ServiceEndpoint string                   `xml:"ServiceEndpoint,attr"`
+		Prefix          string                   `xml:"Prefix,omitempty"`
+		Containers      []blobListContainerEntry `xml:"Containers>Container"`
+		NextMarker      string                   `xml:"NextMarker"`
 	}
-	prefix := account + "/"
-	var all []containerEntry
-	for _, c := range blobContainersData.List() {
-		if strings.HasPrefix(blobContainerKey(c.Account, c.Name), prefix) {
-			all = append(all, containerEntry{
-				Name: c.Name,
-				Properties: containerProperties{
-					LastModified: c.Created,
-					ETag:         c.ETag,
-				},
-			})
-		}
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	q := r.URL.Query()
+	include := blobListIncludeSet(q.Get("include"))
+	reqPrefix := q.Get("prefix")
+	now := time.Now()
 
-	page, marker := blobStoragePage(r, all, func(e containerEntry) string { return e.Name })
+	prefix := account + "/"
+	var all []blobListContainerEntry
+	for _, c := range blobContainersData.List() {
+		if !strings.HasPrefix(blobContainerKey(c.Account, c.Name), prefix) {
+			continue
+		}
+		if c.Deleted && !include["deleted"] {
+			continue
+		}
+		if reqPrefix != "" && !strings.HasPrefix(c.Name, reqPrefix) {
+			continue
+		}
+		state := blobLeaseState(c.Lease, now)
+		entry := blobListContainerEntry{
+			Name: c.Name,
+			Properties: blobListContainerProperties{
+				LastModified:  c.Created,
+				ETag:          c.ETag,
+				LeaseStatus:   blobLeaseStatus(state),
+				LeaseState:    state,
+				LeaseDuration: blobLeaseDurationType(c.Lease, state),
+				PublicAccess:  c.PublicAccess,
+			},
+		}
+		if c.Deleted {
+			deleted := true
+			retention := c.RemainingRetentionDays
+			entry.Deleted = &deleted
+			entry.Version = c.Version
+			entry.Properties.DeletedTime = c.DeletedTime
+			entry.Properties.RemainingRetentionDays = &retention
+		}
+		if include["metadata"] {
+			entry.Metadata = blobMetadataXML(c.Metadata)
+		}
+		all = append(all, entry)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Name != all[j].Name {
+			return all[i].Name < all[j].Name
+		}
+		return all[i].Version < all[j].Version
+	})
+
+	page, marker := blobStoragePage(r, all, func(e blobListContainerEntry) string { return e.Name })
 	out := enum{
 		ServiceEndpoint: azureStorageEndpointURL(r, account, "blob"),
+		Prefix:          reqPrefix,
 		Containers:      page,
 		NextMarker:      marker,
 	}
 	writeStorageXML(w, http.StatusOK, out)
+}
+
+// blobListIncludeSet parses the comma-separated `include=` list a List
+// Containers / List Blobs request carries (snapshots, metadata, deleted, tags, …).
+func blobListIncludeSet(raw string) map[string]bool {
+	out := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		if v := strings.ToLower(strings.TrimSpace(part)); v != "" {
+			out[v] = true
+		}
+	}
+	return out
 }
 
 func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container string) {
@@ -688,14 +1008,6 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
-	}
-	type blobEntry struct {
-		Name       string `xml:"Name"`
-		Properties struct {
-			ContentLength int    `xml:"Content-Length"`
-			ETag          string `xml:"Etag"`
-			LastModified  string `xml:"Last-Modified"`
-		} `xml:"Properties"`
 	}
 	type blobPrefixEntry struct {
 		Name string `xml:"Name"`
@@ -706,30 +1018,28 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 		ContainerName   string            `xml:"ContainerName,attr"`
 		Prefix          string            `xml:"Prefix,omitempty"`
 		Delimiter       string            `xml:"Delimiter,omitempty"`
-		Blobs           []blobEntry       `xml:"Blobs>Blob"`
+		Blobs           []blobListEntry   `xml:"Blobs>Blob"`
 		BlobPrefixes    []blobPrefixEntry `xml:"Blobs>BlobPrefix"`
 		NextMarker      string            `xml:"NextMarker"`
 	}
 
 	reqPrefix := r.URL.Query().Get("prefix")
 	delimiter := r.URL.Query().Get("delimiter")
+	include := blobListIncludeSet(r.URL.Query().Get("include"))
 
-	var all []blobEntry
-	for _, key := range blobKeysInContainer(account, container) {
-		b, ok := blobObjects.Get(key)
-		if !ok {
+	var all []blobListEntry
+	for _, b := range blobsInContainer(account, container) {
+		if b.Snapshot != "" && !include["snapshots"] {
+			continue
+		}
+		if b.Deleted && !include["deleted"] {
 			continue
 		}
 		if reqPrefix != "" && !strings.HasPrefix(b.Name, reqPrefix) {
 			continue
 		}
-		be := blobEntry{Name: b.Name}
-		be.Properties.ContentLength = len(b.Data)
-		be.Properties.ETag = b.ETag
-		be.Properties.LastModified = b.LastModified
-		all = append(all, be)
+		all = append(all, blobListEntryFor(b, include))
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
 
 	// With a delimiter, roll names that contain it (past the request prefix)
 	// into virtual directories surfaced as <BlobPrefix> entries; only names
@@ -737,7 +1047,7 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 	var prefixEntries []blobPrefixEntry
 	if delimiter != "" {
 		seenPrefix := map[string]bool{}
-		var flat []blobEntry
+		var flat []blobListEntry
 		for _, be := range all {
 			rest := strings.TrimPrefix(be.Name, reqPrefix)
 			if idx := strings.Index(rest, delimiter); idx >= 0 {
@@ -754,7 +1064,7 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 		sort.Slice(prefixEntries, func(i, j int) bool { return prefixEntries[i].Name < prefixEntries[j].Name })
 	}
 
-	page, marker := blobStoragePage(r, all, func(e blobEntry) string { return e.Name })
+	page, marker := blobStoragePage(r, all, func(e blobListEntry) string { return e.Name })
 	out := enum{
 		ServiceEndpoint: azureStorageEndpointURL(r, account, "blob"),
 		ContainerName:   container,
@@ -793,43 +1103,110 @@ func handlePutBlob(w http.ResponseWriter, r *http.Request, account, container, b
 		return
 	}
 	existing, exists := blobObjects.Get(blobObjectKey(account, container, blob))
+	if exists && existing.Deleted {
+		exists = false
+		existing = BlobObject{}
+	}
 	if !azureBlobPreconditionOK(w, r, existing.ETag, exists) {
 		return
 	}
-	body, err := openStreamingBody(r)
-	if err != nil {
-		writeStorageError(w, "UnsupportedHttpVerb", err.Error(), http.StatusUnsupportedMediaType)
+	if !blobWriteAllowed(w, r, existing, exists) {
 		return
 	}
-	defer body.Close()
-	data, err := io.ReadAll(body)
-	if err != nil {
-		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
-		return
+	blobType := r.Header.Get("x-ms-blob-type")
+	if blobType == "" {
+		blobType = "BlockBlob"
 	}
-	hash := md5.Sum(data)
-	etag := `"` + hex.EncodeToString(hash[:]) + `"`
-	lastMod := time.Now().UTC().Format(http.TimeFormat)
-	contentType := r.Header.Get("x-ms-blob-content-type")
-	if contentType == "" {
-		contentType = r.Header.Get("Content-Type")
+
+	var data []byte
+	switch blobType {
+	case "PageBlob":
+		// Create Page Blob declares the blob's size and writes no bytes: the
+		// whole blob starts sparse.
+		size, err := strconv.ParseInt(r.Header.Get("x-ms-blob-content-length"), 10, 64)
+		if err != nil || size < 0 || size%blobPageSize != 0 {
+			writeStorageError(w, "InvalidHeaderValue",
+				"The value for one of the HTTP headers is not in the correct format: x-ms-blob-content-length.",
+				http.StatusBadRequest)
+			return
+		}
+		data = make([]byte, size)
+	case "AppendBlob":
+		// Create Append Blob writes no bytes either; Append Block adds them.
+		data = nil
+	default:
+		body, err := openStreamingBody(r)
+		if err != nil {
+			writeStorageError(w, "UnsupportedHttpVerb", err.Error(), http.StatusUnsupportedMediaType)
+			return
+		}
+		defer body.Close()
+		data, err = io.ReadAll(body)
+		if err != nil {
+			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
+
 	b := BlobObject{
 		Account:      account,
 		Container:    container,
 		Name:         blob,
 		Data:         data,
-		ContentType:  contentType,
-		BlobType:     r.Header.Get("x-ms-blob-type"),
-		ETag:         etag,
-		LastModified: lastMod,
+		BlobType:     blobType,
+		CreationTime: blobNowHTTP(),
 		Metadata:     collectMetadata(r),
+		Tags:         parseBlobTagsHeader(r.Header.Get("x-ms-tags")),
+		Lease:        existing.Lease,
 	}
-	putBlobObject(account, container, blob, b)
-	w.Header().Set("ETag", etag)
-	w.Header().Set("Last-Modified", lastMod)
-	w.Header().Set("Content-MD5", hex.EncodeToString(hash[:]))
+	applyBlobHTTPHeaders(&b, r)
+	if b.ContentType == "" {
+		b.ContentType = r.Header.Get("Content-Type")
+	}
+	if blobType == "PageBlob" {
+		if seq, err := strconv.ParseInt(r.Header.Get("x-ms-blob-sequence-number"), 10, 64); err == nil {
+			b.SequenceNumber = seq
+		}
+	}
+	if tier := r.Header.Get("x-ms-access-tier"); tier != "" {
+		b.AccessTier = tier
+		b.AccessTierChangeTime = blobNowHTTP()
+	} else {
+		b.AccessTier = blobDefaultTier(blobType)
+		b.AccessTierInferred = true
+	}
+	b.ContentMD5 = blobContentMD5(data)
+	blobTouch(&b)
+	putBlobObject(b)
+
+	w.Header().Set("ETag", b.ETag)
+	w.Header().Set("Last-Modified", b.LastModified)
+	w.Header().Set("Content-MD5", b.ContentMD5)
+	w.Header().Set("x-ms-request-server-encrypted", "true")
 	w.WriteHeader(http.StatusCreated)
+}
+
+// blobDefaultTier is the access tier Azure infers for a blob whose upload did
+// not name one. Page blobs live on the premium/page tier scale and report none.
+func blobDefaultTier(blobType string) string {
+	if blobType == "PageBlob" {
+		return ""
+	}
+	return "Hot"
+}
+
+// applyBlobHTTPHeaders folds the x-ms-blob-* system-property headers of a write
+// request into the stored record. They are the same header set Put Blob and
+// Set Blob HTTP Headers both carry.
+func applyBlobHTTPHeaders(b *BlobObject, r *http.Request) {
+	b.ContentType = r.Header.Get("x-ms-blob-content-type")
+	b.ContentEncoding = r.Header.Get("x-ms-blob-content-encoding")
+	b.ContentLanguage = r.Header.Get("x-ms-blob-content-language")
+	b.ContentDisposition = r.Header.Get("x-ms-blob-content-disposition")
+	b.CacheControl = r.Header.Get("x-ms-blob-cache-control")
+	if md5 := r.Header.Get("x-ms-blob-content-md5"); md5 != "" {
+		b.ContentMD5 = md5
+	}
 }
 
 func handleCopyBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
@@ -845,42 +1222,85 @@ func handleCopyBlob(w http.ResponseWriter, r *http.Request, account, container, 
 			"The specified copy source is invalid.", http.StatusNotFound)
 		return
 	}
-	source, ok := blobObjects.Get(blobObjectKey(srcAccount, srcContainer, srcBlob))
-	if !ok {
+	source, ok := blobObjects.Get(blobSnapshotKey(srcAccount, srcContainer, srcBlob, blobCopySourceSnapshot(sourceURL)))
+	if !ok || source.Deleted {
 		writeStorageError(w, "CannotVerifyCopySource",
 			"The specified copy source does not exist.", http.StatusNotFound)
 		return
 	}
 
+	existing, exists := blobObjects.Get(blobObjectKey(account, container, blob))
+	if exists && existing.Deleted {
+		exists = false
+		existing = BlobObject{}
+	}
+	if !blobWriteAllowed(w, r, existing, exists) {
+		return
+	}
+
 	data := append([]byte(nil), source.Data...)
-	hash := md5.Sum(data)
-	etag := `"` + hex.EncodeToString(hash[:]) + `"`
-	lastMod := time.Now().UTC().Format(http.TimeFormat)
 	metadata := collectMetadata(r)
 	if len(metadata) == 0 {
 		metadata = cloneBlobMetadata(source.Metadata)
 	}
 	copyID := generateUUID()
+	completion := blobNowHTTP()
 	dst := BlobObject{
-		Account:      account,
-		Container:    container,
-		Name:         blob,
-		Data:         data,
-		ContentType:  source.ContentType,
-		BlobType:     source.BlobType,
-		ETag:         etag,
-		LastModified: lastMod,
-		Metadata:     metadata,
-		CopyID:       copyID,
-		CopyStatus:   "success",
-		CopySource:   sourceURL,
+		Account:            account,
+		Container:          container,
+		Name:               blob,
+		Data:               data,
+		ContentType:        source.ContentType,
+		ContentEncoding:    source.ContentEncoding,
+		ContentLanguage:    source.ContentLanguage,
+		ContentDisposition: source.ContentDisposition,
+		CacheControl:       source.CacheControl,
+		ContentMD5:         blobContentMD5(data),
+		BlobType:           source.BlobType,
+		CreationTime:       completion,
+		Metadata:           metadata,
+		Tags:               parseBlobTagsHeader(r.Header.Get("x-ms-tags")),
+		PageRanges:         append([]BlobPageRange(nil), source.PageRanges...),
+		SequenceNumber:     source.SequenceNumber,
+		AccessTier:         source.AccessTier,
+		AccessTierInferred: source.AccessTierInferred,
+		Lease:              existing.Lease,
+		CopyID:             copyID,
+		CopyStatus:         "success",
+		CopySource:         sourceURL,
+		CopyProgress:       fmt.Sprintf("%d/%d", len(data), len(data)),
+		CopyCompletionTime: completion,
 	}
-	putBlobObject(account, container, blob, dst)
-	w.Header().Set("ETag", etag)
-	w.Header().Set("Last-Modified", lastMod)
+	if dst.Tags == nil {
+		dst.Tags = cloneBlobMetadata(source.Tags)
+	}
+	if tier := r.Header.Get("x-ms-access-tier"); tier != "" {
+		dst.AccessTier = tier
+		dst.AccessTierInferred = false
+		dst.AccessTierChangeTime = completion
+	}
+	blobTouch(&dst)
+	putBlobObject(dst)
+	w.Header().Set("ETag", dst.ETag)
+	w.Header().Set("Last-Modified", dst.LastModified)
 	w.Header().Set("x-ms-copy-id", copyID)
 	w.Header().Set("x-ms-copy-status", "success")
+	// Copy Blob From URL is the synchronous spelling: it carries
+	// x-ms-requires-sync and answers with the copied content's MD5.
+	if strings.EqualFold(r.Header.Get("x-ms-requires-sync"), "true") {
+		w.Header().Set("Content-MD5", dst.ContentMD5)
+	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// blobCopySourceSnapshot reads the `?snapshot=` a copy source URL may carry, so
+// copying from a snapshot copies the snapshot's bytes.
+func blobCopySourceSnapshot(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("snapshot")
 }
 
 func parseBlobCopySource(raw string) (account, container, blob string, ok bool) {
@@ -954,8 +1374,14 @@ func handleStageBlock(w http.ResponseWriter, r *http.Request, account, container
 	blockID := r.URL.Query().Get("blockid")
 	if blockID == "" {
 		writeStorageError(w, "MissingRequiredQueryParameter",
-			"StageBlock requires blockid.", http.StatusBadRequest)
+			"A query parameter that's mandatory for this request is not specified: blockid.",
+			http.StatusBadRequest)
 		return
+	}
+	if existing, ok := blobObjects.Get(blobObjectKey(account, container, blob)); ok {
+		if !blobLeaseAccessOK(w, r, existing.Lease, "blob") {
+			return
+		}
 	}
 	body, err := openStreamingBody(r)
 	if err != nil {
@@ -993,10 +1419,18 @@ func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, cont
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
+	priorBlob, priorExists := blobObjects.Get(blobObjectKey(account, container, blob))
+	if priorExists && priorBlob.Deleted {
+		priorExists, priorBlob = false, BlobObject{}
+	}
+	if !blobWriteAllowed(w, r, priorBlob, priorExists) {
+		return
+	}
 	defer r.Body.Close()
 	var req blockListRequest
 	if err := xml.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeStorageError(w, "InvalidXmlDocument", err.Error(), http.StatusBadRequest)
+		writeStorageError(w, "InvalidXmlDocument",
+			"XML specified is not syntactically valid.", http.StatusBadRequest)
 		return
 	}
 	refs := make([]blockRef, 0, len(req.Committed)+len(req.Latest)+len(req.Uncommitted))
@@ -1072,22 +1506,34 @@ func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, cont
 		putBlobBlock(account, container, blob, ref.id, block)
 	}
 
-	hash := md5.Sum(data)
-	etag := `"` + hex.EncodeToString(hash[:]) + `"`
-	lastMod := time.Now().UTC().Format(http.TimeFormat)
-	putBlobObject(account, container, blob, BlobObject{
-		Account:      account,
-		Container:    container,
-		Name:         blob,
-		Data:         data,
-		ContentType:  r.Header.Get("Content-Type"),
-		BlobType:     "BlockBlob",
-		ETag:         etag,
-		LastModified: lastMod,
-		Metadata:     collectMetadata(r),
-	})
-	w.Header().Set("ETag", etag)
-	w.Header().Set("Last-Modified", lastMod)
+	committedBlob := BlobObject{
+		Account:            account,
+		Container:          container,
+		Name:               blob,
+		Data:               data,
+		BlobType:           "BlockBlob",
+		CreationTime:       blobNowHTTP(),
+		Metadata:           collectMetadata(r),
+		Tags:               parseBlobTagsHeader(r.Header.Get("x-ms-tags")),
+		ContentMD5:         blobContentMD5(data),
+		AccessTier:         "Hot",
+		AccessTierInferred: true,
+		Lease:              priorBlob.Lease,
+	}
+	applyBlobHTTPHeaders(&committedBlob, r)
+	if committedBlob.ContentType == "" {
+		committedBlob.ContentType = r.Header.Get("Content-Type")
+	}
+	if tier := r.Header.Get("x-ms-access-tier"); tier != "" {
+		committedBlob.AccessTier = tier
+		committedBlob.AccessTierInferred = false
+		committedBlob.AccessTierChangeTime = blobNowHTTP()
+	}
+	blobTouch(&committedBlob)
+	putBlobObject(committedBlob)
+	w.Header().Set("ETag", committedBlob.ETag)
+	w.Header().Set("Last-Modified", committedBlob.LastModified)
+	w.Header().Set("Content-MD5", committedBlob.ContentMD5)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -1150,7 +1596,7 @@ func handleGetBlockList(w http.ResponseWriter, r *http.Request, account, contain
 }
 
 func handleGetBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
-	b, ok := blobObjects.Get(blobObjectKey(account, container, blob))
+	b, ok := lookupBlob(r, account, container, blob)
 	if !ok {
 		writeStorageError(w, "BlobNotFound",
 			"The specified blob does not exist.", http.StatusNotFound)
@@ -1238,7 +1684,7 @@ func azureStorageReadRange(w http.ResponseWriter, r *http.Request, size int64) (
 }
 
 func handleHeadBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
-	b, ok := blobObjects.Get(blobObjectKey(account, container, blob))
+	b, ok := lookupBlob(r, account, container, blob)
 	if !ok {
 		writeStorageError(w, "BlobNotFound",
 			"The specified blob does not exist.", http.StatusNotFound)
@@ -1248,8 +1694,9 @@ func handleHeadBlob(w http.ResponseWriter, r *http.Request, account, container, 
 }
 
 func handleDeleteBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
-	existing, exists := blobObjects.Get(blobObjectKey(account, container, blob))
-	if !exists {
+	snapshot := r.URL.Query().Get("snapshot")
+	existing, exists := blobObjects.Get(blobSnapshotKey(account, container, blob, snapshot))
+	if !exists || existing.Deleted {
 		writeStorageError(w, "BlobNotFound",
 			"The specified blob does not exist.", http.StatusNotFound)
 		return
@@ -1257,12 +1704,62 @@ func handleDeleteBlob(w http.ResponseWriter, r *http.Request, account, container
 	if !azureBlobPreconditionOK(w, r, existing.ETag, true) {
 		return
 	}
-	deleteBlobObject(account, container, blob)
-	for _, key := range blockKeysForBlob(account, container, blob) {
-		if block, ok := blobBlocks.Get(key); ok {
-			deleteBlobBlock(block.Account, block.Container, block.Blob, block.BlockID)
+	if !blobWriteAllowed(w, r, existing, true) {
+		return
+	}
+
+	// x-ms-delete-snapshots decides what happens to a base blob that still has
+	// snapshots: `include` deletes them with it, `only` deletes just them, and
+	// omitting the header on a blob that has snapshots is an error.
+	deleteSnapshots := strings.ToLower(r.Header.Get("x-ms-delete-snapshots"))
+	var snapshots []BlobObject
+	if snapshot == "" {
+		for _, s := range blobsInContainer(account, container) {
+			if s.Name == blob && s.Snapshot != "" && !s.Deleted {
+				snapshots = append(snapshots, s)
+			}
+		}
+		if len(snapshots) > 0 && deleteSnapshots == "" {
+			writeStorageError(w, "SnapshotsPresent",
+				"This operation is not permitted because the blob has snapshots.",
+				http.StatusConflict)
+			return
 		}
 	}
+
+	days, soft := blobSoftDeleteDays(account)
+	removeOne := func(b BlobObject) {
+		if soft {
+			b.Deleted = true
+			b.DeletedTime = blobNowHTTP()
+			b.RemainingRetentionDays = days
+			b.Lease = BlobLease{}
+			putBlobObject(b)
+			return
+		}
+		deleteBlobSnapshot(b.Account, b.Container, b.Name, b.Snapshot)
+		if b.Snapshot == "" {
+			for _, key := range blockKeysForBlob(b.Account, b.Container, b.Name) {
+				if block, ok := blobBlocks.Get(key); ok {
+					deleteBlobBlock(block.Account, block.Container, block.Blob, block.BlockID)
+				}
+			}
+		}
+	}
+
+	if snapshot == "" && deleteSnapshots == "only" {
+		for _, s := range snapshots {
+			removeOne(s)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if snapshot == "" {
+		for _, s := range snapshots {
+			removeOne(s)
+		}
+	}
+	removeOne(existing)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -1270,8 +1767,26 @@ func writeBlobHeaders(w http.ResponseWriter, b BlobObject) {
 	if b.ContentType != "" {
 		w.Header().Set("Content-Type", b.ContentType)
 	}
+	if b.ContentEncoding != "" {
+		w.Header().Set("Content-Encoding", b.ContentEncoding)
+	}
+	if b.ContentLanguage != "" {
+		w.Header().Set("Content-Language", b.ContentLanguage)
+	}
+	if b.ContentDisposition != "" {
+		w.Header().Set("Content-Disposition", b.ContentDisposition)
+	}
+	if b.CacheControl != "" {
+		w.Header().Set("Cache-Control", b.CacheControl)
+	}
+	if b.ContentMD5 != "" {
+		w.Header().Set("Content-MD5", b.ContentMD5)
+	}
 	if b.BlobType != "" {
 		w.Header().Set("x-ms-blob-type", b.BlobType)
+	}
+	if b.CreationTime != "" {
+		w.Header().Set("x-ms-creation-time", b.CreationTime)
 	}
 	if b.CopyID != "" {
 		w.Header().Set("x-ms-copy-id", b.CopyID)
@@ -1282,9 +1797,58 @@ func writeBlobHeaders(w http.ResponseWriter, b BlobObject) {
 	if b.CopySource != "" {
 		w.Header().Set("x-ms-copy-source", b.CopySource)
 	}
+	if b.CopyProgress != "" {
+		w.Header().Set("x-ms-copy-progress", b.CopyProgress)
+	}
+	if b.CopyCompletionTime != "" {
+		w.Header().Set("x-ms-copy-completion-time", b.CopyCompletionTime)
+	}
+	if b.CopyDestinationSnapshot != "" {
+		w.Header().Set("x-ms-copy-destination-snapshot", b.CopyDestinationSnapshot)
+	}
+	if b.IncrementalCopy {
+		w.Header().Set("x-ms-incremental-copy", "true")
+	}
+	if b.AccessTier != "" {
+		w.Header().Set("x-ms-access-tier", b.AccessTier)
+	}
+	if b.AccessTierInferred {
+		w.Header().Set("x-ms-access-tier-inferred", "true")
+	}
+	if b.AccessTierChangeTime != "" {
+		w.Header().Set("x-ms-access-tier-change-time", b.AccessTierChangeTime)
+	}
+	if b.ExpiresOn != "" {
+		w.Header().Set("x-ms-expiry-time", b.ExpiresOn)
+	}
+	if b.BlobType == "PageBlob" {
+		w.Header().Set("x-ms-blob-sequence-number", strconv.FormatInt(b.SequenceNumber, 10))
+	}
+	if b.BlobType == "AppendBlob" {
+		w.Header().Set("x-ms-blob-committed-block-count", strconv.FormatInt(int64(b.CommittedBlockCount), 10))
+		if b.Sealed {
+			w.Header().Set("x-ms-blob-sealed", "true")
+		}
+	}
+	if b.ImmutabilityPolicyExpiry != "" {
+		w.Header().Set("x-ms-immutability-policy-until-date", b.ImmutabilityPolicyExpiry)
+		w.Header().Set("x-ms-immutability-policy-mode", b.ImmutabilityPolicyMode)
+	}
+	if b.LegalHold {
+		w.Header().Set("x-ms-legal-hold", "true")
+	}
+	if n := len(b.Tags); n > 0 {
+		w.Header().Set("x-ms-tag-count", strconv.Itoa(n))
+	}
+	if b.Snapshot != "" {
+		w.Header().Set("x-ms-snapshot", b.Snapshot)
+	}
+	writeBlobLeaseHeaders(w, b.Lease, time.Now())
+	w.Header().Set("x-ms-server-encrypted", "true")
 	w.Header().Set("ETag", b.ETag)
 	w.Header().Set("Last-Modified", b.LastModified)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(b.Data)))
+	w.Header().Set("Accept-Ranges", "bytes")
 	for k, v := range b.Metadata {
 		w.Header().Set("x-ms-meta-"+k, v)
 	}

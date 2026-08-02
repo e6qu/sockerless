@@ -180,6 +180,9 @@ func buildSimulatorWithUI(cfg sim.Config, includeUI bool) (*sim.Server, error) {
 	registerAppServicePlan(srv)
 	registerSubscription(srv)
 	registerSubscriptionAlias(srv)
+	registerSubscriptionOwnership(srv)
+	registerSubscriptionPolicy(srv)
+	registerSubscriptionOperations(srv)
 
 	// Embedded UI (no-op with -tags noui).
 	if includeUI {

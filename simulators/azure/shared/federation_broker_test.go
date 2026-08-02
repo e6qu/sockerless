@@ -166,10 +166,10 @@ func TestFederationTokenRequiresOperatorSession(t *testing.T) {
 // co-served exchange path (empty SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT)
 // reaches the token endpoint through s.handler — the same fully-built
 // middleware chain an external HTTP client reaches — rather than a
-// registration-time snapshot that could go stale. s.handler is assigned once
-// in NewServer before it returns, and every WrapHandler call thereafter
-// reassigns the same field, so a handler invoked later (as this one is, from
-// inside a request) always sees the final, fully-wrapped chain.
+// registration-time snapshot that could go stale. The chain is resolved
+// through finalHandler at dispatch time, so a handler invoked later (as this
+// one is, from inside a request) always sees the final, fully-wrapped chain
+// including every WrapHandler layer added after construction.
 func TestExchangeFederationAssertionUsesFullHandlerChainInProcess(t *testing.T) {
 	t.Setenv("SIM_RUNTIME", "process")
 	srv, err := NewServer(Config{Provider: "azure", LogLevel: "disabled"})

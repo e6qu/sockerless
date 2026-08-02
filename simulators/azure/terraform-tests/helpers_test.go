@@ -238,7 +238,14 @@ func runTerraformTestsInDocker() int {
 		innerTimeout = "600s"
 	}
 	args = append(args, "-e", "TERRAFORM_TEST_TIMEOUT="+innerTimeout)
-	args = append(args, image, "go", "test", "-v", "-count=1", "-timeout", innerTimeout, "./...")
+	args = append(args, image, "go", "test", "-v", "-count=1", "-timeout", innerTimeout)
+	// Carry the caller's selection into the container. Dropping it silently ran
+	// the whole suite for a `-run`-scoped invocation, so a developer narrowing to
+	// one test still launched every heavyweight terraform graph.
+	if extra := strings.Fields(os.Getenv("TERRAFORM_TEST_ARGS")); len(extra) > 0 {
+		args = append(args, extra...)
+	}
+	args = append(args, "./...")
 
 	run := exec.Command("docker", args...)
 	run.Stdout = os.Stdout

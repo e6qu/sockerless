@@ -4,6 +4,19 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+The Azure simulator's assessed surface gaps closed: the Blob, Files, and Queue
+data planes serve every documented operation (69/69, 51/51, 16/16), all nine
+previously unserved Microsoft.Network swaggers now serve 116 of 123
+operations, and Microsoft.Subscription serves 15/15 — the measured Azure floor
+moved from 1786 to 1998. Six defects surfaced by that work were fixed with it,
+including host-addressed data planes bypassing the observability middlewares
+in all three simulators and an NSG rule-compilation failure that broke every
+interface in a governed subnet on a real-network host. The Application Gateway
+managed WAF catalog and Network Watcher packet captures remain deliberately
+unbuilt and tracked, because both would require presenting data the simulator
+cannot compute. The next measured ratchet candidates are Azure App Service
+(161/692), Google Cloud Billing (6/36), and Cloud Resource Manager v1 (26/76).
+
 The last three locally actionable bugs closed in one pass: AWS Amplify
 Hosting image optimization became the real fetch-validate-transform-cache
 primitive with the Next.js-exact error contract; Azure Container Apps

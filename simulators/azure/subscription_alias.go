@@ -14,8 +14,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -32,17 +34,23 @@ type SubscriptionAliasRecord struct {
 	ProvisioningState    string
 	AcceptOwnershipState string
 	CreatedTime          string
+	ResellerID           string
+	ManagementGroupID    string
+	SubscriptionOwnerID  string
+	SubscriptionTenantID string
+	Tags                 map[string]string
 }
 
 // AzureSubscriptionRecord backs GET /subscriptions[/{id}] for subscriptions
 // created through the alias API or mutated through the Microsoft.Subscription
 // rename/cancel/enable actions. Subscriptions without a record keep the
 // simulator's implicit identity (display name "Simulator Subscription",
-// state Enabled).
+// state Enabled, the simulator's own tenant).
 type AzureSubscriptionRecord struct {
 	SubscriptionID string
 	DisplayName    string
 	State          string
+	TenantID       string
 }
 
 var (
@@ -136,12 +144,24 @@ func registerSubscriptionAlias(srv *sim.Server) {
 
 func handleSubscriptionAliasCreate(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "aliasName")
+	callerTenant, callerObjectID, err := azureARMCallerPrincipal(r)
+	if err != nil {
+		subscriptionRPError(w, "InvalidAuthenticationToken", err.Error(), http.StatusUnauthorized)
+		return
+	}
 	var req struct {
 		Properties *struct {
-			DisplayName    string `json:"displayName"`
-			Workload       string `json:"workload"`
-			BillingScope   string `json:"billingScope"`
-			SubscriptionID string `json:"subscriptionId"`
+			DisplayName          string `json:"displayName"`
+			Workload             string `json:"workload"`
+			BillingScope         string `json:"billingScope"`
+			SubscriptionID       string `json:"subscriptionId"`
+			ResellerID           string `json:"resellerId"`
+			AdditionalProperties *struct {
+				ManagementGroupID    string            `json:"managementGroupId"`
+				SubscriptionTenantID string            `json:"subscriptionTenantId"`
+				SubscriptionOwnerID  string            `json:"subscriptionOwnerId"`
+				Tags                 map[string]string `json:"tags"`
+			} `json:"additionalProperties"`
 		} `json:"properties"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -181,15 +201,49 @@ func handleSubscriptionAliasCreate(w http.ResponseWriter, r *http.Request) {
 	adopting := req.Properties.SubscriptionID != ""
 	subscriptionID := req.Properties.SubscriptionID
 	displayName := req.Properties.DisplayName
+	currentTenant := callerTenant
 	if adopting {
 		// Adoption attaches an alias to a subscription that already exists;
 		// its display name is the subscription's, not the request's (rename
 		// is the API that changes it).
-		displayName, _ = azureSubscriptionView(subscriptionID)
-	} else {
+		displayName, _, currentTenant = azureSubscriptionView(subscriptionID)
+	}
+
+	// additionalProperties directs the subscription at a tenant and an owner.
+	// A directed creation does not hand the subscription over by itself: it
+	// leaves an ownership request the destination owner accepts.
+	var managementGroupID, ownerID, destinationTenant string
+	var tags map[string]string
+	if extra := req.Properties.AdditionalProperties; extra != nil {
+		managementGroupID = extra.ManagementGroupID
+		ownerID = extra.SubscriptionOwnerID
+		destinationTenant = extra.SubscriptionTenantID
+		tags = extra.Tags
+	}
+	directed := destinationTenant != "" || ownerID != ""
+	if destinationTenant == "" {
+		destinationTenant = currentTenant
+	}
+
+	// A subscription directed at a tenant other than the one that holds it
+	// today is leaving that tenant, which is what
+	// blockSubscriptionsLeavingTenant governs.
+	if !strings.EqualFold(destinationTenant, currentTenant) &&
+		azureSubscriptionPolicyDenies(currentTenant, callerObjectID, policyBlockSubscriptionsLeavingTenant) {
+		subscriptionRPError(w, policyBlockSubscriptionsLeavingTenant, fmt.Sprintf(
+			"The subscription policy of tenant '%s' blocks subscriptions from leaving the tenant.",
+			currentTenant), http.StatusForbidden)
+		return
+	}
+
+	if !adopting {
 		subscriptionID = generateUUID()
 	}
 
+	// Ownership of a directed subscription starts Pending and stays Pending
+	// until Subscription_AcceptOwnership completes the handover; a subscription
+	// created for the caller's own use needs no handover and settles Completed
+	// with the alias's provisioning.
 	alias := SubscriptionAliasRecord{
 		Name:                 name,
 		SubscriptionID:       subscriptionID,
@@ -199,8 +253,26 @@ func handleSubscriptionAliasCreate(w http.ResponseWriter, r *http.Request) {
 		ProvisioningState:    "Accepted",
 		AcceptOwnershipState: "Pending",
 		CreatedTime:          time.Now().UTC().Format(time.RFC3339Nano),
+		ResellerID:           req.Properties.ResellerID,
+		ManagementGroupID:    managementGroupID,
+		SubscriptionOwnerID:  ownerID,
+		SubscriptionTenantID: destinationTenant,
+		Tags:                 tags,
 	}
 	azureSubscriptionAliases.Put(name, alias)
+
+	if directed {
+		azureSubscriptionOwnerships.Put(subscriptionID, SubscriptionOwnershipRecord{
+			SubscriptionID:       subscriptionID,
+			AliasName:            name,
+			AcceptOwnershipState: "Pending",
+			ProvisioningState:    "Pending",
+			BillingOwner:         azureBillingOwnerUPN(callerObjectID),
+			SubscriptionTenantID: destinationTenant,
+			DisplayName:          displayName,
+			Tags:                 tags,
+		})
+	}
 
 	go func() {
 		// The subscription materializes while the alias provisions — the
@@ -213,16 +285,31 @@ func handleSubscriptionAliasCreate(w http.ResponseWriter, r *http.Request) {
 				SubscriptionID: subscriptionID,
 				DisplayName:    displayName,
 				State:          "Enabled",
+				TenantID:       currentTenant,
 			})
 		}
 		azureSubscriptionAliases.Update(name, func(rec *SubscriptionAliasRecord) {
 			rec.ProvisioningState = "Succeeded"
-			rec.AcceptOwnershipState = "Completed"
+			if !directed {
+				rec.AcceptOwnershipState = "Completed"
+			}
 		})
 	}()
 
 	w.Header().Set("Retry-After", "1")
 	sim.WriteJSON(w, http.StatusCreated, subscriptionAliasResponse(alias))
+}
+
+// azureBillingOwnerUPN reports the user principal name of the principal that
+// raised an ownership request. Only a directory user has one: an application
+// principal authenticates without a user principal name, and the ownership
+// status then carries none.
+func azureBillingOwnerUPN(objectID string) string {
+	user, err := azureGrantUser(objectID)
+	if err != nil {
+		return ""
+	}
+	return user.PreferredUsername
 }
 
 func subscriptionAliasResponse(alias SubscriptionAliasRecord) map[string]any {
@@ -236,6 +323,24 @@ func subscriptionAliasResponse(alias SubscriptionAliasRecord) map[string]any {
 	}
 	if alias.BillingScope != "" {
 		props["billingScope"] = alias.BillingScope
+	}
+	if alias.ResellerID != "" {
+		props["resellerId"] = alias.ResellerID
+	}
+	if alias.ManagementGroupID != "" {
+		props["managementGroupId"] = alias.ManagementGroupID
+	}
+	if alias.SubscriptionOwnerID != "" {
+		props["subscriptionOwnerId"] = alias.SubscriptionOwnerID
+	}
+	if len(alias.Tags) > 0 {
+		props["tags"] = alias.Tags
+	}
+	if alias.AcceptOwnershipState == "Pending" && alias.SubscriptionID != "" {
+		// The URL an owner accepts the subscription at is
+		// Subscription_AcceptOwnership's own route, relative to the Azure
+		// Resource Manager endpoint the alias was read from.
+		props["acceptOwnershipUrl"] = "/providers/Microsoft.Subscription/subscriptions/" + alias.SubscriptionID + "/acceptOwnership"
 	}
 	return map[string]any{
 		"id":         "/providers/Microsoft.Subscription/aliases/" + alias.Name,
@@ -251,11 +356,12 @@ func ensureAzureSubscriptionRecord(sub string) {
 	if _, ok := azureSubscriptionRecords.Get(sub); ok {
 		return
 	}
-	displayName, state := azureSubscriptionView(sub)
+	displayName, state, tenantID := azureSubscriptionView(sub)
 	azureSubscriptionRecords.Put(sub, AzureSubscriptionRecord{
 		SubscriptionID: sub,
 		DisplayName:    displayName,
 		State:          state,
+		TenantID:       tenantID,
 	})
 }
 
