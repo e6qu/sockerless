@@ -768,7 +768,7 @@ func handleKeyVaultPECPut(w http.ResponseWriter, r *http.Request) {
 		Properties: props,
 	}
 	keyVaultPrivConn.Put(id, pec)
-	sim.WriteJSON(w, http.StatusOK, pec)
+	sim.WriteJSON(w, http.StatusOK, keyVaultPECWire(pec))
 }
 
 func handleKeyVaultPECGet(w http.ResponseWriter, r *http.Request) {
@@ -781,6 +781,26 @@ func handleKeyVaultPECGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, pec)
+}
+
+// keyVaultPECWire projects a stored private endpoint connection onto the
+// members Microsoft.KeyVault declares. The connection object is shared with
+// the Microsoft.Network private-endpoint surface, which carries additional
+// members of its own (group ids, the link identifier, the endpoint's location
+// and address); emitting those here would answer a Key Vault client with
+// fields its contract does not define.
+func keyVaultPECWire(pec KeyVaultPrivateEndpointConnection) KeyVaultPrivateEndpointConnection {
+	if pec.Properties == nil {
+		return pec
+	}
+	declared := make(map[string]any, 3)
+	for _, member := range []string{"privateEndpoint", "privateLinkServiceConnectionState", "provisioningState"} {
+		if v, ok := pec.Properties[member]; ok {
+			declared[member] = v
+		}
+	}
+	pec.Properties = declared
+	return pec
 }
 
 func handleKeyVaultPECDelete(w http.ResponseWriter, r *http.Request) {
@@ -806,10 +826,11 @@ func handleKeyVaultPECList(w http.ResponseWriter, r *http.Request) {
 	out := keyVaultPrivConn.Filter(func(p KeyVaultPrivateEndpointConnection) bool {
 		return strings.HasPrefix(p.ID, prefix)
 	})
-	if out == nil {
-		out = []KeyVaultPrivateEndpointConnection{}
+	wire := make([]KeyVaultPrivateEndpointConnection, 0, len(out))
+	for _, pec := range out {
+		wire = append(wire, keyVaultPECWire(pec))
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": wire})
 }
 
 // handleKeyVaultPrivateLinkResources returns the vault's single "vault"

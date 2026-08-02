@@ -941,6 +941,9 @@ func stampApplicationGatewayChildren(gw *ApplicationGateway) {
 		c.Properties.ProvisioningState = "Succeeded"
 	})
 	applicationGatewayStamp(gw.ID, "rewriteRuleSets", p.RewriteRuleSets, func(c *ApplicationGatewayRewriteRuleSet) {
+		// ApplicationGatewayRewriteRuleSet declares only id, name, etag and
+		// properties — unlike its sibling collections it carries no `type`.
+		c.Type = ""
 		c.Properties.ProvisioningState = "Succeeded"
 	})
 	applicationGatewayStamp(gw.ID, "redirectConfigurations", p.RedirectConfigurations, nil)

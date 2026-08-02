@@ -68,8 +68,15 @@ func statLinkCount(info os.FileInfo) (int, bool) {
 // which clearing a range can actually take space out of a file.
 func fileAllocationBlockSize(info os.FileInfo) (int64, bool) {
 	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || st.Blksize <= 0 {
+	if !ok {
 		return 0, false
 	}
-	return int64(st.Blksize), true
+	// Stat_t.Blksize is int32 on darwin and linux/arm64 but int64 on
+	// linux/amd64, so the conversion is required on some build targets and
+	// redundant on others.
+	size := int64(st.Blksize) //nolint:unconvert // width varies by GOOS/GOARCH
+	if size <= 0 {
+		return 0, false
+	}
+	return size, true
 }

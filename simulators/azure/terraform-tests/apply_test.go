@@ -390,10 +390,6 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmNetworkWatcher, "/providers/Microsoft.Network/networkWatchers/tf-azrm-network-watcher",
 		"network watcher id must include canonical ARM path; got %s", azrmNetworkWatcher)
 
-	azrmFlowLog := outputs.must(t, "azrm_network_watcher_flow_log_id")
-	require.Contains(t, azrmFlowLog, azrmNetworkWatcher+"/flowLogs/tf-azrm-flow-log",
-		"flow log id must be addressed under its network watcher; got %s", azrmFlowLog)
-
 	azrmNetworkManager := outputs.must(t, "azrm_network_manager_id")
 	require.Contains(t, azrmNetworkManager, "/providers/Microsoft.Network/networkManagers/tf-azrm-network-manager",
 		"network manager id must include canonical ARM path; got %s", azrmNetworkManager)

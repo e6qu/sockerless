@@ -27,7 +27,7 @@ Resources covered (azurerm — sim ships custom cloud metadata + OAuth2 token en
 - `azurerm_service_plan` + `azurerm_linux_function_app` (the AZF runner backend host + workload)
 - `azurerm_api_management` + API + product + subscription
 - `azurerm_application_gateway` (the layer-7 load balancer, with its listener, URL path map, probes and routing rule)
-- `azurerm_network_watcher` + `azurerm_network_watcher_flow_log`
+- `azurerm_network_watcher` (the provider refuses to create NSG flow logs — Azure retired their creation on 2025-06-30 — so the simulator's flowLogs surface is covered by the SDK and CLI suites instead)
 - `azurerm_network_manager`
 
 ### Instance discovery is not on the azurerm authentication path

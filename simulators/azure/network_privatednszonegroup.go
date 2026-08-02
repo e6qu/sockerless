@@ -21,9 +21,10 @@ import (
 // PrivateDNSZoneGroup mirrors
 // Microsoft.Network/privateEndpoints/privateDnsZoneGroups.
 type PrivateDNSZoneGroup struct {
-	ID         string                        `json:"id,omitempty"`
-	Name       string                        `json:"name,omitempty"`
-	Type       string                        `json:"type,omitempty"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	// PrivateDnsZoneGroup declares id, name, etag and properties; the ARM
+	// resource carries no `type` member.
 	Etag       string                        `json:"etag,omitempty"`
 	Properties PrivateDNSZoneGroupProperties `json:"properties"`
 }
@@ -99,7 +100,6 @@ func registerPrivateEndpointDNSZoneGroups(srv *sim.Server) {
 		group := PrivateDNSZoneGroup{
 			ID:   id,
 			Name: sim.PathParam(r, "privateDnsZoneGroupName"),
-			Type: "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
 			Etag: azureNetworkEtag(),
 			Properties: PrivateDNSZoneGroupProperties{
 				ProvisioningState:     "Succeeded",

@@ -1383,33 +1383,12 @@ resource "azurerm_application_gateway" "az_appgw" {
 # security group — the record the watcher's target-addressed flow log
 # operations read and write.
 
-resource "azurerm_network_security_group" "az_flow_nsg" {
-  name                = "tf-azrm-flow-nsg"
-  resource_group_name = azurerm_resource_group.az_rg.name
-  location            = azurerm_resource_group.az_rg.location
-}
-
 resource "azurerm_network_watcher" "az_nw" {
   name                = "tf-azrm-network-watcher"
   resource_group_name = azurerm_resource_group.az_rg.name
   location            = azurerm_resource_group.az_rg.location
   tags = {
     team = "network"
-  }
-}
-
-resource "azurerm_network_watcher_flow_log" "az_flow_log" {
-  name                 = "tf-azrm-flow-log"
-  network_watcher_name = azurerm_network_watcher.az_nw.name
-  resource_group_name  = azurerm_resource_group.az_rg.name
-  location             = azurerm_resource_group.az_rg.location
-  target_resource_id   = azurerm_network_security_group.az_flow_nsg.id
-  storage_account_id   = azurerm_storage_account.az_st.id
-  enabled              = true
-
-  retention_policy {
-    enabled = true
-    days    = 7
   }
 }
 
@@ -1444,10 +1423,6 @@ output "azrm_application_gateway_listener_ids" {
 
 output "azrm_network_watcher_id" {
   value = azurerm_network_watcher.az_nw.id
-}
-
-output "azrm_network_watcher_flow_log_id" {
-  value = azurerm_network_watcher_flow_log.az_flow_log.id
 }
 
 output "azrm_network_manager_id" {
