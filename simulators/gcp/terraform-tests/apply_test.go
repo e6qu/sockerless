@@ -357,9 +357,12 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Equal(t, "constraints/iam.disableServiceAccountCreation",
 		outputs.must(t, "organization_org_policy_constraint"))
 
+	// The provider normalizes the API's "liens/{id}" resource name down to the
+	// bare id in state, so what a lien round-trips through terraform is the
+	// identifier — the wire shape itself is asserted in the SDK suite.
 	lienName := outputs.must(t, "resource_manager_lien_name")
-	require.Regexp(t, `^liens/[0-9]+$`, lienName,
-		"google_resource_manager_lien.name must be the lien resource name the v1 create returned; got %s", lienName)
+	require.Regexp(t, `^[0-9]+$`, lienName,
+		"google_resource_manager_lien.name must be the lien identifier the v1 create returned; got %s", lienName)
 
 	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
