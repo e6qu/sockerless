@@ -48,9 +48,7 @@ import (
 
 func persistentSimulatorPorts(t *testing.T) (int, int) {
 	t.Helper()
-	tcpPort, err := freeTCPPort()
-	require.NoError(t, err)
-	dnsPort, err := freeTCPUDPPort()
+	tcpPort, dnsPort, err := freeSimulatorPortPair()
 	require.NoError(t, err)
 	return tcpPort, dnsPort
 }

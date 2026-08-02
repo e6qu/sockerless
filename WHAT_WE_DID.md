@@ -53,6 +53,22 @@ once they know the request is theirs — which incidentally fixed the Compute
 Engine load-balancer front end, where reaching a simulated load balancer had
 required an OAuth2 token no real client sends to one.
 
+Two more intermittent failures surfaced in this branch's CI and were fixed
+rather than retried. The AWS restart harness chose the simulator's HTTP port
+and its Route 53 dual-protocol port with two independent probes, each of which
+released its ephemeral port before returning the number — so the operating
+system could hand the second probe the port the first had just released, and
+the simulator bound its Route 53 listener on its own HTTP coordinate. One
+reservation helper now holds the HTTP port open across the DNS probe and fails
+loudly if the two ever match. The accompanying test guards the deterministic
+half of that contract and says plainly that it does not reproduce the race,
+because the previous code still passes it on an idle machine.
+
+Cloud Resource Manager v2 was vendored from revision 20260709, which is what
+Google's edge served the authoring machine while the hosted runner saw
+20260715. The document CI captured is now vendored verbatim; its method and
+schema sets are identical, so no floor moved.
+
 An intermittent Azure console test failure surfaced during this branch's CI
 and was fixed rather than retried. The delete-error test captured the Fluent
 `DialogSurface` once and used it as the `within()` scope across later
