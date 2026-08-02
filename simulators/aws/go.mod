@@ -16,6 +16,7 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/sockerless/simulator v0.0.0
 	github.com/sockerless/simulator-realexec v0.0.0
+	github.com/sockerless/simulator-ui-auth v0.0.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
@@ -67,7 +68,6 @@ require (
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
-	github.com/sockerless/simulator-ui-auth v0.0.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

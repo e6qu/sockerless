@@ -533,7 +533,7 @@ jobs:
       - name: Pull DynamoDB Local (differential oracle)
         # TestDynamoDB_DifferentialVsLocal lives in the data shard.
         if: matrix.suite == 'data'
-        run: docker pull amazon/dynamodb-local:latest
+        run: docker pull public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest
         timeout-minutes: 4
       - name: Run AWS SDK tests
         # The suite has exhausted the runner volume from a 89 GB starting
