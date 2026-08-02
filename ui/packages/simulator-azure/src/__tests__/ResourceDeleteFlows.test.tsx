@@ -163,7 +163,13 @@ describe("ACRRegistriesPage delete", () => {
     const backdrop = document.getElementById("acr-delete-backdrop");
     expect(backdrop).not.toBeNull();
     fireEvent.click(backdrop!);
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    // The dialog stays open and keeps the failure on screen. Query for it
+    // rather than reading the DOM at the single instant the click returns:
+    // the click schedules a re-render, and the dialog never legitimately
+    // disappears here, so retrying cannot mask a regression — a suppressed
+    // dismissal that actually closed would keep failing until the timeout.
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("active replications");
     fireEvent.click(within(dialog).getByTestId("acr-delete-cancel"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });

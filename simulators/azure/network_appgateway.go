@@ -1006,8 +1006,11 @@ func provisionApplicationGateway(ctx context.Context, gw *ApplicationGateway, pr
 	for i := range gw.Properties.FrontendIPConfigurations {
 		fe := &gw.Properties.FrontendIPConfigurations[i]
 		if fe.Properties.PublicIPAddress != nil && fe.Properties.PublicIPAddress.ID != "" {
+			// A public frontend holds no private address, but it still reports
+			// the allocation method every frontend carries — the HashiCorp
+			// provider reads it back on refresh and re-plans the gateway when
+			// it is absent.
 			fe.Properties.PrivateIPAddress = ""
-			fe.Properties.PrivateIPAllocationMethod = ""
 			continue
 		}
 		if fe.Properties.Subnet == nil || fe.Properties.Subnet.ID == "" {

@@ -267,6 +267,14 @@ func TestNetworkApplicationGateway_RoutesRealTraffic(t *testing.T) {
 	assert.Equal(t, armnetwork.ApplicationGatewaySSLPolicyName("AppGwSslPolicy20220101"), *created.Properties.DefaultPredefinedSSLPolicy)
 	// The tier follows from the SKU name when the request leaves it out.
 	assert.Equal(t, armnetwork.ApplicationGatewayTierStandardV2, *created.Properties.SKU.Tier)
+	// A public frontend holds no private address, but it still reports the
+	// allocation method every frontend carries. The HashiCorp provider reads
+	// this back on refresh, so an absent value re-plans an unchanged gateway.
+	require.Len(t, created.Properties.FrontendIPConfigurations, 1)
+	publicFrontend := created.Properties.FrontendIPConfigurations[0].Properties
+	assert.Empty(t, publicFrontend.PrivateIPAddress)
+	require.NotNil(t, publicFrontend.PrivateIPAllocationMethod)
+	assert.Equal(t, armnetwork.IPAllocationMethodDynamic, *publicFrontend.PrivateIPAllocationMethod)
 	// Every child collection member is given the ARM identity a real gateway
 	// assigns it, which is what the sibling references in the same body resolve
 	// against.
