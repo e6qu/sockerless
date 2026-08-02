@@ -24,6 +24,23 @@ honest while the API modelled no way to put a rule in a table and a stub the
 moment it did. It now reports what the table holds, ordered by rule number
 numerically so "9" precedes "10". Amazon EC2 ratcheted from 772 to 775.
 
+Shauth's integration into each simulator gained the regression it never had.
+The relying party was mounted in all three simulators and still is — it is an
+addition to each cloud's own authentication, not a replacement, and the console
+federates the operator's assertion into cloud credentials through the cloud's
+own primitive. What was missing was any test that a simulator actually mounts
+it: `simulators/ui-auth` has twenty tests, but every one of them proves the
+package in isolation, so the wiring could have regressed in any of the three
+without a single test noticing and a console would simply have stopped being
+able to sign anyone in. Each simulator now builds itself the way `main()` does
+with Shauth configured and asserts every endpoint of the contract is routed,
+that the session and federation-subject reads answer 401 anonymously rather
+than 404, and that the cloud data plane still demands its own credential —
+the assertion that makes "addition, not replacement" a tested property. A
+negative control that unmounts the relying party fails the test on every
+endpoint. The opt-in half is pinned too: with no identity-provider coordinate,
+no relying party is served.
+
 Amazon S3's three unserved operations were reclassified rather than
 implemented. `WriteGetObjectResponse` is the S3 Object Lambda callback a
 function makes on a per-request host; `CreateSession` and
