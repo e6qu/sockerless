@@ -133,12 +133,11 @@ var azureMethodFloor = map[string]int{
 	"network-arm-networkmanager-2025-03-01":       8,
 	"network-arm-networkprofile-2025-03-01":       6,
 	"network-arm-networksecuritygroup-2025-03-01": 12,
-	// 29 of 35. The six PacketCaptures operations are the gap: a packet
-	// capture's whole content is the traffic it records off a machine's
-	// interface into a storage account, and the simulator has no capture path
-	// to produce it — a session reported as Running with no packets behind it
-	// would be a fiction.
-	"network-arm-networkwatcher-2025-03-01":         29,
+	// Complete, including the six PacketCaptures operations: a capture opens a
+	// packet socket on the target machine's interface and writes the frames it
+	// records into the storage account it names, through the same Blob data
+	// plane a client reads them back from.
+	"network-arm-networkwatcher-2025-03-01":         35,
 	"network-arm-privateendpoint-2025-03-01":        11,
 	"network-arm-privatelinkservice-2025-03-01":     13,
 	"network-arm-publicipaddress-2025-03-01":        9,

@@ -21,6 +21,35 @@ func consoleAssets() fstest.MapFS {
 	return fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>console</title>")}}
 }
 
+// consoleConfigPath is the console's configuration document, which RegisterUI
+// mounts whether or not an identity provider is configured.
+const consoleConfigPath = "/ui/config.json"
+
+// ensureConsoleRegistered mounts the console — and with it the Shauth relying
+// party — if the build has not already done so.
+//
+// The production build embeds the console and registers it during
+// buildSimulator; the `noui` build compiles that away entirely, which is how
+// `make unit-test` and CI run. Registering unconditionally panics on the first
+// of those with a duplicate-pattern conflict, and skipping it entirely tests
+// nothing on the second. Probing the mux covers both, and asserts the same
+// contract either way.
+func ensureConsoleRegistered(srv *sim.Server) {
+	// Probe the console config, which RegisterUI mounts unconditionally, and
+	// require an EXACT pattern match. A catch-all subtree — Cloud Storage's
+	// `/{bucket}/{object...}`, for one — matches this path too, so "some
+	// pattern answered" would report the console as registered when it is not
+	// and the registration would be skipped.
+	// The session path would be the wrong signal: with no identity provider
+	// configured the console is still registered while the relying party is
+	// not, and re-registering would conflict on the console's own routes.
+	probe := httptest.NewRequest(http.MethodGet, consoleConfigPath, nil)
+	if _, pattern := srv.Mux().Handler(probe); pattern == "GET "+consoleConfigPath {
+		return
+	}
+	srv.RegisterUI(consoleAssets())
+}
+
 // Shauth is an ADDITION to each simulator's cloud authentication, never a
 // replacement for it. The cloud data plane keeps demanding the credential its
 // real API demands; Shauth sits alongside it as the console's own OpenID
@@ -62,7 +91,7 @@ func TestShauthIsMountedAlongsideCloudAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSimulator with Shauth configured: %v", err)
 	}
-	srv.RegisterUI(consoleAssets())
+	ensureConsoleRegistered(srv)
 	srv.WrapHandler(bearerAuthMiddleware(srv))
 
 	get := func(path string) *httptest.ResponseRecorder {
@@ -129,7 +158,7 @@ func TestShauthAbsentWhenUnconfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSimulator: %v", err)
 	}
-	srv.RegisterUI(consoleAssets())
+	ensureConsoleRegistered(srv)
 	srv.WrapHandler(bearerAuthMiddleware(srv))
 
 	req := httptest.NewRequest(http.MethodGet, uiauth.SessionPath, nil)
