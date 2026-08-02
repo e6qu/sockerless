@@ -104,10 +104,14 @@ func TestUnservedCustomMethodsAreMethodNotFound(t *testing.T) {
 		name, method, host, path, body string
 	}{
 		{
-			name:   "CloudResourceManagerGetOrgPolicy",
+			// projects.move is a v3 verb; Cloud Resource Manager v1 does not
+			// define it. The v1 fan-in must reject it as an unrouted method
+			// rather than report the project — which here does not exist — as
+			// inaccessible.
+			name:   "CloudResourceManagerV1UnroutedProjectMethod",
 			method: http.MethodPost,
 			host:   "cloudresourcemanager.googleapis.com",
-			path:   "/v1/projects/test-project:getOrgPolicy",
+			path:   "/v1/projects/no-such-project:move",
 			body:   `{}`,
 		},
 		{

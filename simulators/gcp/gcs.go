@@ -1220,6 +1220,12 @@ func registerGCS(srv *sim.Server) {
 	// top-level paths (e.g. AIP-151 `/v1/...` operations) and answer
 	// them with a GCS-shaped 404 that looks like a real GCS not-found
 	// to clients.
+	//
+	// Because the pattern matches every URI, the credential gate that fronts
+	// the published API methods does not cover it — a request this route does
+	// not serve must not read as an authentication failure. The bearer is
+	// verified here instead, once the bucket has resolved: a path that names no
+	// bucket is not found, and a real bucket requires the token.
 	srv.HandleFunc("/{bucket}/{object...}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.NotFound(w, r)
@@ -1233,6 +1239,9 @@ func registerGCS(srv *sim.Server) {
 		}
 		if _, ok := buckets.Get(bucketName); !ok {
 			http.NotFound(w, r)
+			return
+		}
+		if !verifyRequestBearer(w, r) {
 			return
 		}
 		key := bucketName + "/" + objectName

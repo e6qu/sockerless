@@ -58,6 +58,14 @@ provider "google" {
   resource_manager_custom_endpoint = "${var.endpoint}/v1/"
   cloud_billing_custom_endpoint    = "${var.endpoint}/v1/"
 
+  # google_folder speaks the Cloud Resource Manager v3 folders collection
+  # through its own generated client, which honors
+  # resource_manager_v3_custom_endpoint — without it the resource reaches real
+  # cloudresourcemanager.googleapis.com regardless of the v1 override above.
+  # google_folder_organization_policy addresses the same folder over the v1
+  # org-policy verbs, which resource_manager_custom_endpoint routes.
+  resource_manager_v3_custom_endpoint = "${var.endpoint}/v3/"
+
 }
 
 provider "google-beta" {
@@ -923,6 +931,53 @@ resource "google_project" "tf_project" {
 }
 
 
+# Resource hierarchy and Organization Policy over the Cloud Resource Manager
+# wire. google_folder speaks the folders collection; the three
+# *_organization_policy resources and google_resource_manager_lien speak v1 —
+# setOrgPolicy / getOrgPolicy / clearOrgPolicy on the project, folder and
+# organization, and the liens collection.
+resource "google_folder" "tf_folder" {
+  display_name        = "TF Test Folder"
+  parent              = "organizations/123456789012"
+  deletion_protection = false
+}
+
+resource "google_project_organization_policy" "tf_project_org_policy" {
+  project    = google_project.tf_project.project_id
+  constraint = "constraints/iam.disableServiceAccountKeyCreation"
+
+  boolean_policy {
+    enforced = true
+  }
+}
+
+resource "google_folder_organization_policy" "tf_folder_org_policy" {
+  folder     = google_folder.tf_folder.name
+  constraint = "constraints/gcp.resourceLocations"
+
+  list_policy {
+    allow {
+      values = ["in:us-locations"]
+    }
+  }
+}
+
+resource "google_organization_policy" "tf_org_policy" {
+  org_id     = "123456789012"
+  constraint = "constraints/iam.disableServiceAccountCreation"
+
+  boolean_policy {
+    enforced = false
+  }
+}
+
+resource "google_resource_manager_lien" "tf_lien" {
+  parent       = "projects/${google_project.tf_project.number}"
+  restrictions = ["resourcemanager.projects.delete"]
+  origin       = "terraform-tests"
+  reason       = "Terraform lien coverage"
+}
+
 # ---------- Outputs (cross-resource invariants) ----------
 
 output "compute_disk_self_link" {
@@ -1179,4 +1234,32 @@ output "project_id" {
 
 output "project_number" {
   value = google_project.tf_project.number
+}
+
+output "folder_name" {
+  value = google_folder.tf_folder.name
+}
+
+output "folder_parent" {
+  value = google_folder.tf_folder.parent
+}
+
+output "project_org_policy_constraint" {
+  value = google_project_organization_policy.tf_project_org_policy.constraint
+}
+
+output "project_org_policy_enforced" {
+  value = google_project_organization_policy.tf_project_org_policy.boolean_policy[0].enforced
+}
+
+output "folder_org_policy_allowed_values" {
+  value = google_folder_organization_policy.tf_folder_org_policy.list_policy[0].allow[0].values
+}
+
+output "organization_org_policy_constraint" {
+  value = google_organization_policy.tf_org_policy.constraint
+}
+
+output "resource_manager_lien_name" {
+  value = google_resource_manager_lien.tf_lien.name
 }

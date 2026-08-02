@@ -67,7 +67,7 @@ func main() {
 	// (token minters, OpenID Connect discovery/JWKS, health, GCE metadata, the
 	// console, or the OCI registry). Applied here so it is the outermost wrap on
 	// the final handler chain.
-	srv.WrapHandler(bearerAuthMiddleware)
+	srv.WrapHandler(bearerAuthMiddleware(srv))
 
 	// Start gRPC server for Cloud Logging
 	grpcPort := grpcPortFromConfig(cfg.ListenAddr)

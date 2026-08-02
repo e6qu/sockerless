@@ -4,6 +4,19 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Completed Baseline
 
+Google Cloud Resource Manager reached complete coverage on all three API
+versions — v1 76/76, v2 24/24 over a newly vendored Discovery document, v3
+126/126 — closing the Organization Policy family on every hierarchy node,
+`getAncestry`, the organizations and liens collections, and the v2 folders
+collection `gcloud resource-manager folders` speaks. Two IAM constraints are
+enforced by the service they govern, so an organization policy changes
+behavior rather than only being recorded. Two defects surfaced with it and
+were fixed: the simulator answered 401 for every unrouted path instead of 404
+(GitHub issue #875), and the Compute Engine load-balancer front end demanded a
+Google access token no real client sends to a load balancer. The next measured
+ratchet candidates are Azure App Service (161/692), Google Cloud Billing
+(6/36), Spanner (82/198) and Cloud Run v1 (100/152).
+
 The Azure simulator's assessed surface gaps closed: the Blob, Files, and Queue
 data planes serve every documented operation (69/69, 51/51, 16/16), all nine
 previously unserved Microsoft.Network swaggers now serve 116 of 123

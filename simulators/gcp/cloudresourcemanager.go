@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -296,6 +297,218 @@ func crmV1LRO(p CRMProject) Operation {
 	return op
 }
 
+// crmLiens holds every lien. The v1 and v3 collections are the same resource
+// under two spellings, so one store serves both.
+var crmLiens sim.Store[CRMLien]
+
+// crmProjectDeleteLien reports the lien blocking a project's deletion, if any.
+// A lien whose restrictions name resourcemanager.projects.delete is exactly
+// what the collection exists for: real DeleteProject refuses while one is in
+// place, and the caller removes the lien before retrying. The parent may name
+// the project by id or by number, both of which the API accepts.
+func crmProjectDeleteLien(p CRMProject) (CRMLien, bool) {
+	parents := []string{"projects/" + p.ProjectId, p.Name}
+	for _, l := range crmLiens.List() {
+		if !slices.Contains(parents, l.Parent) {
+			continue
+		}
+		if slices.Contains(l.Restrictions, "resourcemanager.projects.delete") {
+			return l, true
+		}
+	}
+	return CRMLien{}, false
+}
+
+// crmProjectDeleteBlocked writes the response DeleteProject returns while a
+// lien holds the project, and reports whether it wrote one.
+func crmProjectDeleteBlocked(w http.ResponseWriter, p CRMProject) bool {
+	if _, held := crmProjectDeleteLien(p); !held {
+		return false
+	}
+	sim.GCPError(w, http.StatusBadRequest, "Precondition check failed.", "FAILED_PRECONDITION")
+	return true
+}
+
+// crmCreateLien serves liens.create for both API versions.
+func crmCreateLien(w http.ResponseWriter, r *http.Request) {
+	var req CRMLien
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	l := CRMLien{
+		Name:         "liens/" + gcpNumericID(16),
+		Parent:       req.Parent,
+		Restrictions: req.Restrictions,
+		Reason:       req.Reason,
+		Origin:       req.Origin,
+		CreateTime:   nowTimestamp(),
+	}
+	crmLiens.Put(l.Name, l)
+	sim.WriteJSON(w, http.StatusOK, l)
+}
+
+// crmListLiens serves liens.list for both API versions.
+func crmListLiens(w http.ResponseWriter, r *http.Request) {
+	parent := r.URL.Query().Get("parent")
+	rows := crmLiens.Filter(func(l CRMLien) bool { return parent == "" || l.Parent == parent })
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	page, next, ok := paginateList(w, r, rows)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"liens": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// crmGetLien serves liens.get for both API versions.
+func crmGetLien(w http.ResponseWriter, r *http.Request) {
+	l, ok := crmLiens.Get("liens/" + sim.PathParam(r, "lien"))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "lien not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, l)
+}
+
+// crmDeleteLien serves liens.delete for both API versions.
+func crmDeleteLien(w http.ResponseWriter, r *http.Request) {
+	name := "liens/" + sim.PathParam(r, "lien")
+	if !crmLiens.Delete(name) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "lien not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// CRMOrganization mirrors the cloudresourcemanager#Organization (v3)
+// resource. The v1 wire renders the same record through crmV1Organization.
+type CRMOrganization struct {
+	Name                string `json:"name"`
+	DisplayName         string `json:"displayName,omitempty"`
+	DirectoryCustomerId string `json:"directoryCustomerId,omitempty"`
+	State               string `json:"state,omitempty"`
+	CreateTime          string `json:"createTime,omitempty"`
+	UpdateTime          string `json:"updateTime,omitempty"`
+	Etag                string `json:"etag,omitempty"`
+}
+
+// crmOrganizations holds the organizations the caller can see. An
+// organization is created by Cloud Identity, not by Cloud Resource Manager,
+// so the store has no create method: crmEnsureDefaultOrganization
+// materializes the deployment's one organization the way
+// crmEnsureDefaultProject materializes its projects.
+var crmOrganizations sim.Store[CRMOrganization]
+
+// crmEnsureDefaultOrganization materializes the organization every bootstrap
+// resource hangs off — the parent crmDefaultOrganization names. Idempotent
+// across restarts.
+func crmEnsureDefaultOrganization() {
+	if _, ok := crmOrganizations.Get(crmDefaultOrganization); ok {
+		return
+	}
+	crmOrganizations.Put(crmDefaultOrganization, CRMOrganization{
+		Name:                crmDefaultOrganization,
+		DisplayName:         "example.com",
+		DirectoryCustomerId: "C0xxxxxxx",
+		State:               "ACTIVE",
+		CreateTime:          nowTimestamp(),
+		UpdateTime:          nowTimestamp(),
+		Etag:                crmEtag(),
+	})
+}
+
+// crmOrganizationPermissionDenied writes the response Cloud Resource Manager
+// returns for an organization the caller cannot see: 403 PERMISSION_DENIED,
+// never 404 — as with projects, the API does not disclose existence.
+func crmOrganizationPermissionDenied(w http.ResponseWriter) {
+	crmProjectPermissionDenied(w)
+}
+
+// crmV1OrganizationOwner mirrors the cloudresourcemanager#OrganizationOwner
+// (v1) message.
+type crmV1OrganizationOwner struct {
+	DirectoryCustomerId string `json:"directoryCustomerId,omitempty"`
+}
+
+// crmV1OrganizationMsg mirrors the cloudresourcemanager#Organization (v1)
+// resource: the customer id moves under owner, and lifecycleState replaces
+// v3's state.
+type crmV1OrganizationMsg struct {
+	Name           string                  `json:"name"`
+	DisplayName    string                  `json:"displayName,omitempty"`
+	Owner          *crmV1OrganizationOwner `json:"owner,omitempty"`
+	CreationTime   string                  `json:"creationTime,omitempty"`
+	LifecycleState string                  `json:"lifecycleState,omitempty"`
+}
+
+// crmV1Organization renders the stored organization in the v1 wire shape.
+func crmV1Organization(o CRMOrganization) crmV1OrganizationMsg {
+	msg := crmV1OrganizationMsg{
+		Name:           o.Name,
+		DisplayName:    o.DisplayName,
+		CreationTime:   o.CreateTime,
+		LifecycleState: o.State,
+	}
+	if o.DirectoryCustomerId != "" {
+		msg.Owner = &crmV1OrganizationOwner{DirectoryCustomerId: o.DirectoryCustomerId}
+	}
+	return msg
+}
+
+// crmOrganizationMatch evaluates a SearchOrganizations filter against an
+// organization. The documented fields are domain and owner.directoryCustomerId,
+// joined by whitespace or AND; a bare term matches the display name. An empty
+// filter matches every organization the caller can see.
+func crmOrganizationMatch(o CRMOrganization, filter string) bool {
+	for _, term := range strings.Fields(filter) {
+		if strings.EqualFold(term, "AND") {
+			continue
+		}
+		key, val, found := strings.Cut(term, ":")
+		val = strings.Trim(val, `"`)
+		switch {
+		case !found:
+			if !crmFieldMatch("*"+strings.Trim(term, `"`)+"*", o.DisplayName) {
+				return false
+			}
+		case key == "domain" || key == "displayName":
+			if !crmFieldMatch(val, o.DisplayName) {
+				return false
+			}
+		case key == "owner.directoryCustomerId" || key == "directoryCustomerId":
+			if !crmFieldMatch(val, o.DirectoryCustomerId) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// crmProjectAncestry renders the projects.getAncestry (v1) answer: the project
+// itself first — identified by its project number, the way the v1 ResourceId
+// spells a project — then each ancestor up to the organization.
+func crmProjectAncestry(p CRMProject) []map[string]any {
+	ancestors := []map[string]any{{"resourceId": crmV1ResourceID{
+		Type: "project",
+		ID:   strings.TrimPrefix(p.Name, "projects/"),
+	}}}
+	chain := crmOrgPolicyAncestry("projects/" + p.ProjectId)
+	// crmOrgPolicyAncestry runs root-first and includes the project itself;
+	// getAncestry runs leaf-first over the ancestors only.
+	for i := len(chain) - 2; i >= 0; i-- {
+		if rid := crmParentToV1(chain[i]); rid != nil {
+			ancestors = append(ancestors, map[string]any{"resourceId": *rid})
+		}
+	}
+	return ancestors
+}
+
 // crmGetOperation serves the Cloud Resource Manager operations.get read for
 // both API versions; the operation store holds every settled CRM operation.
 func crmGetOperation(w http.ResponseWriter, r *http.Request) {
@@ -308,12 +521,40 @@ func crmGetOperation(w http.ResponseWriter, r *http.Request) {
 }
 
 // crmV1ProjectPOSTMethods are the POST custom methods the simulator serves on
-// a Cloud Resource Manager v1 project.
-var crmV1ProjectPOSTMethods = map[string]bool{
+// a Cloud Resource Manager v1 project: the lifecycle verb, the IAM triple, the
+// hierarchy read, and the org-policy family every hierarchy node exposes.
+var crmV1ProjectPOSTMethods = crmWithOrgPolicyVerbs(map[string]bool{
 	"undelete":           true,
+	"getAncestry":        true,
 	"getIamPolicy":       true,
 	"setIamPolicy":       true,
 	"testIamPermissions": true,
+})
+
+// crmV1FolderPOSTMethods are the POST custom methods Cloud Resource Manager v1
+// serves on a folder. v1 models no folder lifecycle — folders are created,
+// read and moved through v3 — so the org-policy family is the whole set.
+var crmV1FolderPOSTMethods = crmWithOrgPolicyVerbs(nil)
+
+// crmV1OrganizationPOSTMethods are the POST custom methods Cloud Resource
+// Manager v1 serves on an organization.
+var crmV1OrganizationPOSTMethods = crmWithOrgPolicyVerbs(map[string]bool{
+	"getIamPolicy":       true,
+	"setIamPolicy":       true,
+	"testIamPermissions": true,
+})
+
+// crmWithOrgPolicyVerbs adds the six org-policy verbs to a resource's own
+// served set.
+func crmWithOrgPolicyVerbs(own map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for verb := range own {
+		out[verb] = true
+	}
+	for verb := range crmOrgPolicyVerbs {
+		out[verb] = true
+	}
+	return out
 }
 
 // The v3 sibling set. v3 adds projects.move to the methods v1 serves.
@@ -329,7 +570,7 @@ var crmV3ProjectPOSTMethods = map[string]bool{
 // the operations.get polls of both API versions, and the Cloud Billing
 // project billing-info read. The v1 GetProject read stays in registerCRMv3
 // next to its v3 sibling.
-func registerCloudResourceManagerV1(srv *sim.Server, projectPolicies sim.Store[IAMPolicy]) {
+func registerCloudResourceManagerV1(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[IAMPolicy]) {
 	// projects.create (v1): gcloud projects create POSTs the v1 Project
 	// and waits on the returned operation.
 	srv.HandleFunc("POST /v1/projects", func(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +646,9 @@ func registerCloudResourceManagerV1(srv *sim.Server, projectPolicies sim.Store[I
 			sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Project \"%s\" has lifecycle state %s; delete requires ACTIVE", p.ProjectId, p.State)
 			return
 		}
+		if crmProjectDeleteBlocked(w, p) {
+			return
+		}
 		p.State = "DELETE_REQUESTED"
 		p.DeleteTime = nowTimestamp()
 		p.UpdateTime = nowTimestamp()
@@ -436,25 +680,19 @@ func registerCloudResourceManagerV1(srv *sim.Server, projectPolicies sim.Store[I
 		sim.WriteJSON(w, http.StatusOK, crmV1Project(p))
 	})
 
-	// projects colon-verbs (v1): undelete + the IAM triple gcloud projects
-	// get-iam-policy / set-iam-policy speak. The policy store is shared
-	// with the v3 verbs, so both API versions address one policy.
-	//
-	// crmV1ProjectPOSTMethods is that served set. Cloud Resource Manager v1
-	// documents more POST custom methods on a project — getAncestry and the
-	// org-policy family (getOrgPolicy, setOrgPolicy, clearOrgPolicy,
-	// getEffectiveOrgPolicy, listOrgPolicies, listAvailableOrgPolicyConstraints)
-	// — that the simulator does not serve.
+	// projects colon-verbs (v1): undelete, getAncestry, the org-policy family
+	// and the IAM triple gcloud projects get-iam-policy / set-iam-policy
+	// speak. The policy store is shared with the v3 verbs, so both API
+	// versions address one policy.
 	srv.HandleFunc("POST /v1/projects/{projectAction}", func(w http.ResponseWriter, r *http.Request) {
 		idAction := sim.PathParam(r, "projectAction")
 		id, action, found := gcpCustomMethod(idAction)
 		// Resolve the method before the project, the way Google's frontend
 		// does. This pattern receives every POST custom method addressed to a
 		// project — including other services' (Cloud SQL Admin's
-		// projects:pointInTimeRestore) and the org-policy methods this
-		// simulator does not serve — and answering those with the project's
-		// 403 would claim the project is inaccessible when the method is
-		// simply not routed.
+		// projects:pointInTimeRestore) — and answering those with the
+		// project's 403 would claim the project is inaccessible when the
+		// method is simply not routed.
 		if !found || !crmV1ProjectPOSTMethods[action] {
 			gcpMethodNotFound(w)
 			return
@@ -464,11 +702,19 @@ func registerCloudResourceManagerV1(srv *sim.Server, projectPolicies sim.Store[I
 			crmProjectPermissionDenied(w)
 			return
 		}
+		if crmOrgPolicyVerb(w, r, "projects/"+p.ProjectId, action) {
+			return
+		}
 		if crmIamVerb(w, r, projectPolicies, p.ProjectId+":"+action, "project") {
 			return
 		}
-		// crmIamVerb served the IAM triple, so undelete is the only method
-		// crmV1ProjectPOSTMethods still admits here.
+		if action == "getAncestry" {
+			sim.WriteJSON(w, http.StatusOK, map[string]any{"ancestor": crmProjectAncestry(p)})
+			return
+		}
+		// The org-policy family, the IAM triple and getAncestry are served
+		// above, so undelete is the only method crmV1ProjectPOSTMethods still
+		// admits here.
 		if p.State != "DELETE_REQUESTED" {
 			sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Project \"%s\" has lifecycle state %s; undelete requires DELETE_REQUESTED", p.ProjectId, p.State)
 			return
@@ -479,6 +725,89 @@ func registerCloudResourceManagerV1(srv *sim.Server, projectPolicies sim.Store[I
 		crmProjects.Put(p.ProjectId, p)
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
+
+	// folders colon-verbs (v1): the org-policy family
+	// terraform-provider-google's google_folder_organization_policy speaks.
+	// The folder itself lives in the v3 store both API versions read.
+	srv.HandleFunc("POST /v1/folders/{folderAction}", func(w http.ResponseWriter, r *http.Request) {
+		id, action, found := gcpCustomMethod(sim.PathParam(r, "folderAction"))
+		if !found || !crmV1FolderPOSTMethods[action] {
+			gcpMethodNotFound(w)
+			return
+		}
+		name := "folders/" + id
+		if _, ok := crmFolders.Get(name); !ok {
+			crmFolderNotFound(w)
+			return
+		}
+		if !crmOrgPolicyVerb(w, r, name, action) {
+			gcpMethodNotFound(w)
+		}
+	})
+
+	// organizations (v1): the get and search reads gcloud organizations
+	// describe / list speak, the IAM triple, and the org-policy family
+	// terraform-provider-google's google_organization_policy speaks.
+	srv.HandleFunc("GET /v1/organizations/{org}", func(w http.ResponseWriter, r *http.Request) {
+		org, ok := crmOrganizations.Get("organizations/" + sim.PathParam(r, "org"))
+		if !ok {
+			crmOrganizationPermissionDenied(w)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, crmV1Organization(org))
+	})
+	srv.HandleFunc("POST /v1/organizations:search", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Filter    string `json:"filter"`
+			PageSize  int    `json:"pageSize"`
+			PageToken string `json:"pageToken"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		rows := crmOrganizations.Filter(func(o CRMOrganization) bool { return crmOrganizationMatch(o, req.Filter) })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		out := make([]crmV1OrganizationMsg, 0, len(rows))
+		for _, o := range rows {
+			out = append(out, crmV1Organization(o))
+		}
+		page, next, ok := crmOrgPolicyPage(w, out, req.PageSize, req.PageToken)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"organizations": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("POST /v1/organizations/{orgAction}", func(w http.ResponseWriter, r *http.Request) {
+		idAction := sim.PathParam(r, "orgAction")
+		id, action, found := gcpCustomMethod(idAction)
+		if !found || !crmV1OrganizationPOSTMethods[action] {
+			gcpMethodNotFound(w)
+			return
+		}
+		name := "organizations/" + id
+		if _, ok := crmOrganizations.Get(name); !ok {
+			crmOrganizationPermissionDenied(w)
+			return
+		}
+		if crmOrgPolicyVerb(w, r, name, action) {
+			return
+		}
+		if !crmIamVerb(w, r, resourcePolicies, idAction, "organization") {
+			gcpMethodNotFound(w)
+		}
+	})
+
+	// liens (v1): the same lien store the v3 collection serves.
+	// terraform-provider-google's google_resource_manager_lien speaks v1.
+	srv.HandleFunc("POST /v1/liens", crmCreateLien)
+	srv.HandleFunc("GET /v1/liens", crmListLiens)
+	srv.HandleFunc("GET /v1/liens/{lien}", crmGetLien)
+	srv.HandleFunc("DELETE /v1/liens/{lien}", crmDeleteLien)
 
 	// operations.get — v1 (gcloud's create waiter, terraform's
 	// ResourceManagerOperationWaiter) and v3 (the resourcemanager GAPIC

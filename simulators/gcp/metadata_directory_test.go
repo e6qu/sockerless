@@ -25,7 +25,7 @@ func metadataTreeServer(t *testing.T) func(path string) *httptest.ResponseRecord
 	if err != nil {
 		t.Fatalf("buildSimulator: %v", err)
 	}
-	srv.WrapHandler(bearerAuthMiddleware)
+	srv.WrapHandler(bearerAuthMiddleware(srv))
 	return func(path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set("Metadata-Flavor", "Google")
@@ -108,7 +108,7 @@ func TestMetadataRootResidencyProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSimulator: %v", err)
 	}
-	srv.WrapHandler(bearerAuthMiddleware)
+	srv.WrapHandler(bearerAuthMiddleware(srv))
 	plain := httptest.NewRecorder()
 	srv.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, "/", nil))
 	if plain.Header().Get("Metadata-Flavor") != "" {
@@ -193,7 +193,7 @@ func TestMetadataDirectoryRequiresFlavorHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSimulator: %v", err)
 	}
-	srv.WrapHandler(bearerAuthMiddleware)
+	srv.WrapHandler(bearerAuthMiddleware(srv))
 
 	for _, path := range []string{
 		"/computeMetadata/v1/",

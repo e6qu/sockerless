@@ -58,6 +58,39 @@ func TestDataPlaneAuth_RejectsMissingAndInvalidTokens(t *testing.T) {
 	})
 }
 
+// TestDataPlaneAuth_UnroutedPathsAnswerNotFoundAnonymously pins the ordering
+// Google's own API frontend uses: a URI no method publishes is answered before
+// the credential is examined, so it reads 404 without a token, while a real API
+// path reads 401. Authenticating first would report every path the simulator
+// does not serve as one that merely rejected the caller — the absence of a
+// route and an authentication failure would be indistinguishable.
+func TestDataPlaneAuth_UnroutedPathsAnswerNotFoundAnonymously(t *testing.T) {
+	for _, path := range []string{
+		"/api/sessions/me",
+		"/api/definitely-not-a-real-path",
+		"/v1/no-such-google-surface/test-project",
+	} {
+		req, err := http.NewRequest(http.MethodGet, baseURL+path, nil)
+		require.NoError(t, err)
+		resp, err := rawClient.Do(req)
+		require.NoError(t, err, path)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+			"%s publishes no method, so it is not found — not unauthenticated", path)
+	}
+
+	// A path a method does publish still answers 401 without a token, so the
+	// route-first ordering has not disabled the credential gate.
+	req, err := http.NewRequest(http.MethodGet,
+		baseURL+"/v2/projects/test-project/locations/us-central1/services", nil)
+	require.NoError(t, err)
+	resp, err := rawClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assertUnauthenticatedShape(t, resp)
+}
+
 // TestDataPlaneAuth_ExemptEndpoints proves the surfaces a real Google client
 // reaches without an OAuth2 token stay reachable without one: the health check,
 // OpenID Connect discovery, and the JSON Web Key Set.

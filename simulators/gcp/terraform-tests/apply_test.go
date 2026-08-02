@@ -50,7 +50,11 @@ import (
 //   - spanner.googleapis.com (instance + database)
 //   - bigtableadmin.googleapis.com (instance + table)
 //   - cloudresourcemanager.googleapis.com v1 (google_project create +
-//     operation wait + read + soft-delete on destroy)
+//     operation wait + read + soft-delete on destroy; the org-policy verbs
+//     behind google_project_organization_policy /
+//     google_folder_organization_policy / google_organization_policy; the
+//     liens collection behind google_resource_manager_lien) and the folders
+//     collection behind google_folder
 //   - cloudbilling.googleapis.com (projects.getBillingInfo, read by the
 //     google_project Read path)
 func TestTerraformApplyDestroy(t *testing.T) {
@@ -337,6 +341,26 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Regexp(t, `^[1-9][0-9]{11}$`, projectNumber,
 		"google_project.number must be the real 12-digit project number the v1 read returns; got %s", projectNumber)
 
+	folderName := outputs.must(t, "folder_name")
+	require.Regexp(t, `^folders/[1-9][0-9]{11}$`, folderName,
+		"google_folder.name must be the folder resource name the create operation settled on; got %s", folderName)
+	require.Equal(t, "organizations/123456789012", outputs.must(t, "folder_parent"))
+
+	require.Equal(t, "constraints/iam.disableServiceAccountKeyCreation",
+		outputs.must(t, "project_org_policy_constraint"),
+		"google_project_organization_policy round-trips its constraint through setOrgPolicy + getOrgPolicy")
+	require.Equal(t, true, outputs.mustValue(t, "project_org_policy_enforced"),
+		"the boolean policy reads back enforced")
+	require.Equal(t, []any{"in:us-locations"},
+		outputs.mustValue(t, "folder_org_policy_allowed_values"),
+		"google_folder_organization_policy round-trips its allowed values")
+	require.Equal(t, "constraints/iam.disableServiceAccountCreation",
+		outputs.must(t, "organization_org_policy_constraint"))
+
+	lienName := outputs.must(t, "resource_manager_lien_name")
+	require.Regexp(t, `^liens/[0-9]+$`, lienName,
+		"google_resource_manager_lien.name must be the lien resource name the v1 create returned; got %s", lienName)
+
 	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
 }
@@ -385,6 +409,15 @@ func (o tfOutputs) must(t *testing.T, key string) string {
 	require.True(t, ok, "output %q is not a string (got %T)", key, v.Value)
 	require.NotEmpty(t, s, "output %q is empty", key)
 	return s
+}
+
+// mustValue reads an output of any type, for the booleans and lists a string
+// or number accessor cannot carry.
+func (o tfOutputs) mustValue(t *testing.T, key string) any {
+	t.Helper()
+	v, ok := o[key]
+	require.True(t, ok, "output %q missing from terraform state", key)
+	return v.Value
 }
 
 // mustNumber reads a numeric output (terraform encodes every number as a JSON

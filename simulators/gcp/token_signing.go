@@ -376,28 +376,71 @@ func requestOrigin(r *http.Request) string {
 // Metadata-Flavor header instead), the console and its own authentication
 // layer, and the OCI registry data plane (its own registry-token/Basic scheme)
 // — are exempt.
-func bearerAuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isAuthExempt(r) {
+//
+// A URI no method publishes is answered before the credential is examined, the
+// way Google's own API frontend does: `GET https://run.googleapis.com/nope`
+// answers 404 anonymously while `GET .../v2/projects/…/services` answers 401.
+// Authenticating first would make every unrouted path answer 401 and turn the
+// absence of a route into an authentication failure, hiding both from a
+// client — the simulator would report an endpoint it does not serve as one
+// that merely rejected the caller.
+func bearerAuthMiddleware(srv *sim.Server) func(http.Handler) http.Handler {
+	mux := srv.Mux()
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isAuthExempt(r) || !publishesAPIMethod(mux, r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !verifyRequestBearer(w, r) {
+				return
+			}
 			next.ServeHTTP(w, r)
-			return
-		}
-		auth := r.Header.Get("Authorization")
-		const prefix = "Bearer "
-		if !strings.HasPrefix(auth, prefix) {
-			sim.GCPError(w, http.StatusUnauthorized,
-				"Request is missing required authentication credential. Expected OAuth 2 access token, login cookie or other valid authentication credential.",
-				"UNAUTHENTICATED")
-			return
-		}
-		if err := verifyAccessToken(strings.TrimSpace(auth[len(prefix):])); err != nil {
-			sim.GCPError(w, http.StatusUnauthorized,
-				"Invalid authentication credentials: "+err.Error(),
-				"UNAUTHENTICATED")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+		})
+	}
+}
+
+// verifyRequestBearer checks the request's OAuth2 access token against the key
+// the simulator issued it with, writing Google's UNAUTHENTICATED response and
+// reporting false when it is missing or unverifiable. A host-addressed data
+// plane that the API-method gate does not cover calls it itself, once it knows
+// the request is one it serves.
+func verifyRequestBearer(w http.ResponseWriter, r *http.Request) bool {
+	auth := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		sim.GCPError(w, http.StatusUnauthorized,
+			"Request is missing required authentication credential. Expected OAuth 2 access token, login cookie or other valid authentication credential.",
+			"UNAUTHENTICATED")
+		return false
+	}
+	if err := verifyAccessToken(strings.TrimSpace(auth[len(prefix):])); err != nil {
+		sim.GCPError(w, http.StatusUnauthorized,
+			"Invalid authentication credentials: "+err.Error(),
+			"UNAUTHENTICATED")
+		return false
+	}
+	return true
+}
+
+// gcpDataPlaneCatchAlls are the mount patterns of the simulator's
+// host-addressed data planes: the Compute Engine load-balancer front end,
+// which claims every path on a forwarding rule's address, and the Cloud
+// Storage XML data plane, which claims every path whose first segment is a
+// bucket. They match any URI, so a match on one is not evidence that a Google
+// API method publishes it — the handler behind each decides from the Host or
+// the bucket, and does its own authentication once it has.
+var gcpDataPlaneCatchAlls = map[string]bool{
+	"/{path...}":            true,
+	"/{bucket}/{object...}": true,
+}
+
+// publishesAPIMethod reports whether a Google API method claims the request.
+// Go's ServeMux answers an unmatched request with its own not-found handler and
+// an empty pattern; a matched one names the pattern that will serve it.
+func publishesAPIMethod(mux *http.ServeMux, r *http.Request) bool {
+	_, pattern := mux.Handler(r)
+	return pattern != "" && !gcpDataPlaneCatchAlls[pattern]
 }
 
 // isAuthExempt reports whether a request reaches a surface a real Google client

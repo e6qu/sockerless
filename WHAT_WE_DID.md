@@ -4,6 +4,66 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-02 — Completing Google Cloud Resource Manager, and routing before authenticating
+
+Cloud Resource Manager was the simulator's most half-built Google service:
+v3 served all 63 of its methods, but v1 served 13 of 38 and v2 — the version
+`gcloud resource-manager folders` actually speaks — was not mounted at all.
+All three versions are now complete: v1 at 76/76 method spellings, v2 at 24/24
+over a newly vendored Discovery document, v3 unchanged at 126/126.
+
+The bulk of v1's gap was Organization Policy: the same six methods
+(`getOrgPolicy`, `setOrgPolicy`, `clearOrgPolicy`, `getEffectiveOrgPolicy`,
+`listOrgPolicies`, `listAvailableOrgPolicyConstraints`) on each of project,
+folder and organization. Policies are stored against the node they are set on,
+and `getEffectiveOrgPolicy` resolves one by walking the hierarchy from the
+organization down — a boolean policy replaces what it inherits, a list policy
+replaces it unless it declares `inheritFromParent`, and `restoreDefault` at any
+level discards everything above it. Etags carry the optimistic concurrency the
+API documents: an empty etag writes unconditionally, a stale one is ABORTED.
+
+The constraint catalog and the accepted set are deliberately one set. A
+constraint outside the catalog is INVALID_ARGUMENT on write, and each catalog
+entry's display name, description, value type and default are Google's own
+from the published Organization Policy constraints reference — nothing about
+them is invented. Two of them are enforced by the service they govern:
+`iam.disableServiceAccountKeyCreation` and `iam.disableServiceAccountCreation`
+make Identity and Access Management refuse with the exact FAILED_PRECONDITION
+message and 400 status Google's own troubleshooting reference prints, so a
+policy set through Cloud Resource Manager changes what another slice does
+rather than being a record nobody reads.
+
+The rest of v1 followed: `getAncestry` walks the same hierarchy leaf-first,
+organizations became a real store (an organization the caller cannot see is
+403, never 404, as with projects) rather than a canned response for any id,
+and the liens collection is one store under both the v1 and v3 spellings —
+and now enforced, since a lien exists to stop a project being deleted and had
+been a record nobody consulted.
+
+Two defects surfaced alongside it, both about answering a question before the
+one that was asked. The simulator authenticated before routing, so every URI no
+Google method publishes came back 401 UNAUTHENTICATED instead of 404 — an
+absent endpoint and a rejected credential looked the same to a client, which is
+what GitHub issue #875 had reported as a missing session endpoint. Routing now
+comes first, matching Google's own frontend, verified against it:
+`GET https://run.googleapis.com/nope` is 404 anonymously while
+`GET .../v2/projects/…/services` is 401. The two host-addressed data planes
+whose mounts match every URI sit outside that gate and authenticate themselves
+once they know the request is theirs — which incidentally fixed the Compute
+Engine load-balancer front end, where reaching a simulated load balancer had
+required an OAuth2 token no real client sends to one.
+
+Every method ships with its three client surfaces. The official Go clients
+cover all three API versions including `folders:search`, which has no gcloud
+command; `gcloud resource-manager org-policies`, `gcloud organizations`,
+`gcloud projects get-ancestors`, `gcloud resource-manager folders` and
+`gcloud alpha resource-manager liens` cover the CLI; and the Terraform stack
+gained `google_folder`, the three `*_organization_policy` resources and
+`google_resource_manager_lien`, applied, replanned to a zero diff and
+destroyed against the simulator. `google_folder` needed the provider's
+`resource_manager_v3_custom_endpoint` coordinate — without it the resource
+reaches real Google regardless of the v1 override.
+
 ## 2026-08-02 — Completing the Azure simulator's assessed surface
 
 A measured survey of what remained unbuilt put the Azure storage data planes
