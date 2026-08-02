@@ -4,6 +4,49 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-03 — Recording real traffic, and Azure Network Watcher packet captures
+
+BUG-2888 asked for six operations and was really asking for a mechanism: a
+packet capture's entire content is the traffic that crossed an interface, so
+there was nothing to serve until something could record it.
+
+The mechanism is an `AF_PACKET` socket — the same one tcpdump uses — opened on
+the interface inside the workload's own network namespace. Entering that
+namespace is the delicate part, because `setns` applies to a thread rather than
+a process: the socket is opened on a locked operating-system thread that is
+returned to the host namespace before release, and a thread that cannot be
+returned is deliberately leaked instead of handed back to the scheduler. One
+leaked thread costs far less than unrelated goroutines silently running inside
+a workload's namespace. The capture file is libpcap written directly, and it is
+validated by `tcpdump` and `file(1)` rather than by the code that produced it.
+
+Three things were wrong until real traffic went through it, and none of the
+unit tests caught them because they had been written to match the same beliefs
+as the code. A capture filtered to TCP recorded the link's ARP, because frames
+with no readable five-tuple were being kept on the theory that a filter should
+not remove what it could not evaluate — real tcpdump does not behave that way,
+and neither does this now. A refactor let the kernel truncate frames, which
+destroyed the original length the format exists to preserve. And the capability
+gate demanded nftables, which a capture never uses.
+
+All six `PacketCaptures_*` operations sit on that mechanism, taking Network
+Watcher from 29 of 35 operations to 35 of 35. `Create` resolves the target
+machine to the live interface carrying its traffic; `queryStatus` reconciles
+against the session, so a capture that reached its own bound reports `Stopped`
+with the reason instead of still claiming to run; `Stop` writes the recording
+into the storage account the capture named, through the same Blob data plane a
+client downloads it from. A target with no live interface is refused with the
+reason, because a caller cannot distinguish a fabricated empty capture from a
+real one that saw no traffic.
+
+Google Compute Engine's `packetMirrorings` did not land with it. Capture and
+mirroring share only half a mechanism: a capture records frames into a file,
+while a mirroring policy continuously forwards duplicated frames to a collector
+load balancer. The read half is now available; the forwarder is not, and a
+policy that recorded `enable: true` while mirroring nothing would be the same
+fiction packet captures were before this work. It is staged with that reason in
+PLAN.md.
+
 ## 2026-08-02 — Gating specification freshness on every cloud again
 
 `check-spec-freshness.sh` takes a cloud argument, and the `check-deps` job

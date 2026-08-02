@@ -209,6 +209,17 @@ func handlePacketCaptureCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// storagePath is computed by the service: a request that names only an
+	// account gets back where the recording will land, which is what a client
+	// reads to know where to fetch it from.
+	if props.StorageLocation.StoragePath == "" && props.StorageLocation.StorageId != "" {
+		if account := storageAccountNameFromID(props.StorageLocation.StorageId); account != "" {
+			props.StorageLocation.StoragePath = fmt.Sprintf(
+				"https://%s.blob.core.windows.net/%s/%s.cap",
+				account, packetCaptureDefaultContainer, strings.TrimPrefix(id, "/"))
+		}
+	}
+
 	props.ProvisioningState = "Succeeded"
 	capture := AzurePacketCapture{
 		ID:               id,
