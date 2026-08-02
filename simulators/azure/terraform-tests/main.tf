@@ -885,10 +885,16 @@ resource "azurerm_private_link_service" "az_pls" {
   visibility_subscription_ids                 = ["00000000-0000-0000-0000-000000000001"]
   load_balancer_frontend_ip_configuration_ids = [one(azurerm_lb.az_lb.frontend_ip_configuration).id]
 
+  # A static address keeps the configuration and the service's own report of
+  # the NAT configuration in agreement: the provider records whatever address
+  # the service assigns, and refuses a later plan that would take an assigned
+  # address back out of the configuration.
   nat_ip_configuration {
-    name      = "natcfg1"
-    primary   = true
-    subnet_id = azurerm_subnet.az_pl_nat_subnet.id
+    name                       = "natcfg1"
+    primary                    = true
+    subnet_id                  = azurerm_subnet.az_pl_nat_subnet.id
+    private_ip_address         = "10.95.1.10"
+    private_ip_address_version = "IPv4"
   }
 }
 

@@ -780,7 +780,7 @@ func handleKeyVaultPECGet(w http.ResponseWriter, r *http.Request) {
 			"Private endpoint connection %q not found.", sim.PathParam(r, "pec"))
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, pec)
+	sim.WriteJSON(w, http.StatusOK, keyVaultPECWire(pec))
 }
 
 // keyVaultPECWire projects a stored private endpoint connection onto the
