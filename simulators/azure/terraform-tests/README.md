@@ -8,6 +8,7 @@ Resources covered (azurerm — sim ships custom cloud metadata + OAuth2 token en
 - `azurerm_network_security_group` / `azurerm_network_security_rule`
 - `azurerm_storage_account` (Azure Files / runner shared volumes; a second account backs the Function App)
 - `azurerm_storage_container` / `azurerm_storage_table` (storage data plane)
+- `azurerm_storage_share` + `azurerm_storage_share_directory` (Azure Files data plane; the nested directory a Container Apps / Azure Functions volume mount walks)
 - `azurerm_key_vault` + access policy + secret / key / certificate (runner credential storage, control + data plane)
 - `azurerm_container_registry` (Standard)
 - `azurerm_user_assigned_identity`
@@ -25,6 +26,9 @@ Resources covered (azurerm — sim ships custom cloud metadata + OAuth2 token en
 - `azurerm_logic_app_workflow` / `azurerm_container_group`
 - `azurerm_service_plan` + `azurerm_linux_function_app` (the AZF runner backend host + workload)
 - `azurerm_api_management` + API + product + subscription
+- `azurerm_application_gateway` (the layer-7 load balancer, with its listener, URL path map, probes and routing rule)
+- `azurerm_network_watcher` + `azurerm_network_watcher_flow_log`
+- `azurerm_network_manager`
 
 ### Instance discovery is not on the azurerm authentication path
 

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -196,107 +198,6 @@ func TestBlobDataPlaneServedOperations(t *testing.T) {
 		http.StatusAccepted, "DeleteContainer")
 }
 
-func TestBlobDataPlaneUnservedCompDeclaresGap(t *testing.T) {
-	srv := buildStorageTestSim(t)
-	const account, container, blob = "gapblobacct2", "gap-container", "gap.txt"
-
-	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "blob", "/"+container+"?restype=container", nil, nil),
-		http.StatusCreated, "CreateContainer")
-	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "blob", "/"+container+"/"+blob, []byte("v1"),
-		map[string]string{"x-ms-blob-type": "BlockBlob"}), http.StatusCreated, "PutBlob")
-
-	blobBody := func() string {
-		rec := storagePlaneReq(t, srv, http.MethodGet, account, "blob", "/"+container+"/"+blob, nil, nil)
-		assertStatus(t, rec, http.StatusOK, "GetBlob")
-		return rec.Body.String()
-	}
-
-	// Set Blob Tier on an EXISTING blob: the fall-through wrote the (empty)
-	// request body over the blob's contents and answered 201 Created.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "blob",
-		"/"+container+"/"+blob+"?comp=tier", nil, map[string]string{"x-ms-access-tier": "Cool"}),
-		"PUT blob ?comp=tier")
-	if got := blobBody(); got != "v1" {
-		t.Fatalf("blob contents = %q after a refused Set Blob Tier, want %q — the gap performed a sibling write", got, "v1")
-	}
-
-	// Set Blob Tier addressed at a name that does not exist: the fall-through
-	// CREATED the blob.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "blob",
-		"/"+container+"/never-created.txt?comp=tier", nil, map[string]string{"x-ms-access-tier": "Cool"}),
-		"PUT new blob ?comp=tier")
-	rec := storagePlaneReq(t, srv, http.MethodGet, account, "blob", "/"+container+"/never-created.txt", nil, nil)
-	assertStatus(t, rec, http.StatusNotFound, "GetBlob after refused Set Blob Tier")
-
-	// The rest of the blob-level PUT verbs, each of which used to land on
-	// Put Blob and overwrite the blob.
-	for _, comp := range []string{"metadata", "snapshot", "expiry", "tags", "undelete", "seal", "legalhold",
-		"appendblock", "incrementalcopy", "immutabilityPolicies", "copy", "lease", "page", "properties"} {
-		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "blob",
-			"/"+container+"/"+blob+"?comp="+comp, []byte("clobber"), nil), "PUT blob ?comp="+comp)
-		if got := blobBody(); got != "v1" {
-			t.Fatalf("blob contents = %q after a refused ?comp=%s, want %q", got, comp, "v1")
-		}
-	}
-
-	// Stage Block From URL is a Stage Block sibling discriminated by
-	// x-ms-copy-source; staging the empty body for it would commit nothing.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "blob",
-		"/"+container+"/"+blob+"?comp=block&blockid=YmxvY2sx", nil,
-		map[string]string{"x-ms-copy-source": "http://" + account + ".blob.localhost/" + container + "/" + blob}),
-		"PUT blob ?comp=block with x-ms-copy-source")
-	rec = storagePlaneReq(t, srv, http.MethodGet, account, "blob",
-		"/"+container+"/"+blob+"?comp=blocklist&blocklisttype=all", nil, nil)
-	assertStatus(t, rec, http.StatusOK, "GetBlockList")
-	if strings.Contains(rec.Body.String(), "<Name>") {
-		t.Fatalf("block list = %s after a refused Stage Block From URL, want no staged block", rec.Body.String())
-	}
-
-	// GET/DELETE blob-level gaps must not read or delete the blob.
-	for _, comp := range []string{"tags", "pagelist"} {
-		rec = storagePlaneReq(t, srv, http.MethodGet, account, "blob", "/"+container+"/"+blob+"?comp="+comp, nil, nil)
-		assertStorageGap(t, rec, "GET blob ?comp="+comp)
-		if strings.Contains(rec.Body.String(), "v1") {
-			t.Fatalf("GET ?comp=%s returned the blob contents: %s", comp, rec.Body.String())
-		}
-	}
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodDelete, account, "blob",
-		"/"+container+"/"+blob+"?comp=immutabilityPolicies", nil, nil), "DELETE blob ?comp=immutabilityPolicies")
-	if got := blobBody(); got != "v1" {
-		t.Fatalf("blob contents = %q after a refused Delete Immutability Policy, want %q", got, "v1")
-	}
-
-	// Container level: every unserved comp used to reach Create/Delete/Get
-	// Container.
-	for _, comp := range []string{"metadata", "rename", "undelete", "acl", "lease"} {
-		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "blob",
-			"/never-a-container?restype=container&comp="+comp, nil, nil), "PUT container ?comp="+comp)
-		rec = storagePlaneReq(t, srv, http.MethodGet, account, "blob", "/never-a-container?restype=container", nil, nil)
-		assertStatus(t, rec, http.StatusNotFound, "GetContainerProperties after refused ?comp="+comp)
-	}
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodDelete, account, "blob",
-		"/"+container+"?restype=container&comp=lease", nil, nil), "DELETE container ?comp=lease")
-	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "blob", "/"+container+"?restype=container", nil, nil),
-		http.StatusOK, "container survives a refused DELETE ?comp=lease")
-
-	// Get Account Information is addressed with restype=account, never
-	// restype=container — it must not read back container properties.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "blob",
-		"/"+container+"?restype=account&comp=properties", nil, nil), "GET container ?restype=account")
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "blob",
-		"/"+container+"/"+blob+"?restype=account&comp=properties", nil, nil), "GET blob ?restype=account")
-
-	// Service level.
-	for _, target := range []string{"/?comp=batch", "/?comp=blobs",
-		"/?restype=service&comp=stats", "/?restype=account&comp=properties", "/"} {
-		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "blob", target, nil, nil),
-			"GET service "+target)
-	}
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "blob",
-		"/?restype=service&comp=properties", []byte("<StorageServiceProperties/>"), nil),
-		"PUT service ?restype=service&comp=properties")
-}
-
 // ── Files ───────────────────────────────────────────────────────────
 
 func TestFilesDataPlaneServedOperations(t *testing.T) {
@@ -413,69 +314,177 @@ func TestFilesDataPlaneUnservedCompDeclaresGap(t *testing.T) {
 		return rec.Body.String()
 	}
 
-	// Create Directory used to land on Create File and answer 201 for a
-	// directory that was never created.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
-		"/"+share+"/subdir?restype=directory", nil, nil), "PUT ?restype=directory")
-	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", "/"+share+"/subdir", nil, nil),
-		http.StatusNotFound, "the refused Create Directory created nothing")
-
-	// File-level comps that used to overwrite the file through Create File.
-	for _, comp := range []string{"metadata", "properties", "lease", "rename", "copy", "forceclosehandles"} {
+	// A `comp` the Files data plane does not define must not fall through to
+	// Create File, which would overwrite the file and report 201.
+	for _, comp := range []string{"tier", "acl", "blocklist", "snapshot", "undelete"} {
 		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
 			"/"+share+"/"+file+"?comp="+comp, []byte("clobber"), nil), "PUT file ?comp="+comp)
 		if got := fileBody(); got != string(payload) {
 			t.Fatalf("file contents = %q after a refused ?comp=%s, want %q", got, comp, payload)
 		}
 	}
-	// Upload Range From URL is discriminated by x-ms-copy-source.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
-		"/"+share+"/"+file+"?comp=range", nil, map[string]string{
-			"x-ms-range":       "bytes=0-4",
-			"x-ms-copy-source": "http://" + account + ".file.localhost/" + share + "/" + file,
-		}), "PUT file ?comp=range with x-ms-copy-source")
-	if got := fileBody(); got != string(payload) {
-		t.Fatalf("file contents = %q after a refused Upload Range From URL, want %q", got, payload)
-	}
-	// Hard and symbolic links address a file path with restype.
-	for _, restype := range []string{"hardlink", "symboliclink"} {
+	// A `restype` naming no Files resource kind is refused the same way.
+	for _, restype := range []string{"container", "junction"} {
 		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
 			"/"+share+"/"+file+"?restype="+restype, []byte("clobber"), nil), "PUT file ?restype="+restype)
 		if got := fileBody(); got != string(payload) {
 			t.Fatalf("file contents = %q after a refused ?restype=%s, want %q", got, restype, payload)
 		}
 	}
-	// GET/DELETE gaps must not read or delete the file.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "file",
-		"/"+share+"/"+file+"?comp=rangelist", nil, nil), "GET file ?comp=rangelist")
+	// DELETE carries no `comp` on any Files operation, so one must not delete.
 	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodDelete, account, "file",
 		"/"+share+"/"+file+"?comp=lease", nil, nil), "DELETE file ?comp=lease")
 	if got := fileBody(); got != string(payload) {
 		t.Fatalf("file contents = %q after a refused DELETE ?comp=lease, want %q", got, payload)
 	}
-
-	// Share level: an unserved comp must not create, read back or delete the
-	// share.
-	for _, comp := range []string{"metadata", "properties", "snapshot", "lease", "filepermission", "undelete"} {
-		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
-			"/never-a-share?restype=share&comp="+comp, nil, nil), "PUT share ?comp="+comp)
-		assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", "/never-a-share?restype=share", nil, nil),
-			http.StatusNotFound, "the refused ?comp="+comp+" created no share")
-	}
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "file",
-		"/"+share+"?restype=share&comp=stats", nil, nil), "GET share ?comp=stats")
 	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodDelete, account, "file",
 		"/"+share+"?restype=share&comp=lease", nil, nil), "DELETE share ?comp=lease")
 	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", "/"+share+"?restype=share", nil, nil),
 		http.StatusOK, "share survives a refused DELETE ?comp=lease")
 
-	// Directory operations below the share root, and the service level.
-	for _, target := range []string{"/" + share + "/subdir?restype=directory&comp=list",
-		"/" + share + "/subdir?comp=listhandles"} {
-		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", target, nil, nil), "GET "+target)
-	}
+	// A share operation addressed with a comp the service does not define must
+	// not create the share it names.
 	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
-		"/?restype=service&comp=properties", []byte("<StorageServiceProperties/>"), nil), "PUT service properties")
+		"/never-a-share?restype=share&comp=tier", nil, nil), "PUT share ?comp=tier")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", "/never-a-share?restype=share", nil, nil),
+		http.StatusNotFound, "the refused ?comp=tier created no share")
+
+	// The share root is addressed as a share or as a directory, never as a
+	// file, so a bare PUT on it is not Create File.
+	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share, nil,
+		map[string]string{"x-ms-content-length": "5"}), "PUT share root as a file")
+	// Nor is the share root a directory anyone creates.
+	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
+		"/"+share+"?restype=directory", nil, nil), "PUT share root ?restype=directory")
+
+	// The service level defines no listing under `restype=service`.
+	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "file",
+		"/?restype=service&comp=list", nil, nil), "GET service ?comp=list")
+}
+
+// TestFilesDataPlaneDirectoryAndShareOperationsAreServed drives the operations
+// that make a nested Azure Files path usable — the ones an Azure Container Apps
+// or Azure Functions workload's volume story depends on — end to end through the
+// data plane, then looks at the directory a mounting workload sees.
+func TestFilesDataPlaneNestedPathsAreReal(t *testing.T) {
+	srv := buildStorageTestSim(t)
+	const account, share = "nestedfileacct", "nested-share"
+	payload := []byte("nested payload")
+
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"?restype=share", nil, nil),
+		http.StatusCreated, "CreateShare")
+
+	// A directory is only created inside a directory that exists.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
+		"/"+share+"/a/b?restype=directory", nil, nil), http.StatusNotFound, "CreateDirectory without its parent")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
+		"/"+share+"/a?restype=directory", nil, map[string]string{"x-ms-meta-owner": "sockerless"}),
+		http.StatusCreated, "CreateDirectory a")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
+		"/"+share+"/a/b?restype=directory", nil, nil), http.StatusCreated, "CreateDirectory a/b")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file",
+		"/"+share+"/a?restype=directory", nil, nil), http.StatusConflict, "CreateDirectory on an existing name")
+
+	rec := storagePlaneReq(t, srv, http.MethodGet, account, "file", "/"+share+"/a?restype=directory", nil, nil)
+	assertStatus(t, rec, http.StatusOK, "GetDirectoryProperties")
+	if got := rec.Header().Get("x-ms-meta-owner"); got != "sockerless" {
+		t.Fatalf("x-ms-meta-owner = %q on Get Directory Properties, want %q", got, "sockerless")
+	}
+
+	// A file at depth lands in the real nested directory.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/a/b/deep.txt", nil,
+		map[string]string{"x-ms-content-length": fmt.Sprintf("%d", len(payload))}), http.StatusCreated, "CreateFile at depth")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/a/b/deep.txt?comp=range", payload,
+		map[string]string{"x-ms-range": fmt.Sprintf("bytes=0-%d", len(payload)-1)}), http.StatusCreated, "UploadRange at depth")
+	onDisk := filepath.Join(FileShareHostDir(account, share), "a", "b", "deep.txt")
+	if got, err := os.ReadFile(onDisk); err != nil || string(got) != string(payload) {
+		t.Fatalf("file at %s = %q (err %v), want %q", onDisk, got, err, payload)
+	}
+
+	rec = storagePlaneReq(t, srv, http.MethodGet, account, "file", "/"+share+"/a/b?restype=directory&comp=list", nil, nil)
+	assertStatus(t, rec, http.StatusOK, "ListFilesAndDirectories at depth")
+	if !strings.Contains(rec.Body.String(), "deep.txt") {
+		t.Fatalf("listing at depth = %s, want it to name deep.txt", rec.Body.String())
+	}
+
+	// Rename moves the entry in the share's directory tree.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/a/b/renamed.txt?comp=rename", nil,
+		map[string]string{"x-ms-file-rename-source": "http://" + account + ".file.localhost/" + share + "/a/b/deep.txt"}),
+		http.StatusOK, "RenameFile")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "file", "/"+share+"/a/b/deep.txt", nil, nil),
+		http.StatusNotFound, "the renamed source is gone")
+	rec = storagePlaneReq(t, srv, http.MethodGet, account, "file", "/"+share+"/a/b/renamed.txt", nil, nil)
+	assertStatus(t, rec, http.StatusOK, "DownloadFile after rename")
+	if rec.Body.String() != string(payload) {
+		t.Fatalf("renamed file = %q, want %q", rec.Body.String(), payload)
+	}
+
+	// A directory holding anything cannot be deleted.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodDelete, account, "file", "/"+share+"/a/b?restype=directory", nil, nil),
+		http.StatusConflict, "DeleteDirectory on a non-empty directory")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodDelete, account, "file", "/"+share+"/a/b/renamed.txt", nil, nil),
+		http.StatusAccepted, "DeleteFile at depth")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodDelete, account, "file", "/"+share+"/a/b?restype=directory", nil, nil),
+		http.StatusAccepted, "DeleteDirectory")
+	if _, err := os.Stat(filepath.Join(FileShareHostDir(account, share), "a", "b")); !os.IsNotExist(err) {
+		t.Fatalf("the deleted directory is still on disk: %v", err)
+	}
+}
+
+// TestFilesDataPlaneLeaseGuardsWrites: a lease on a file or share is a lock, and
+// a write without the matching lease id is refused with the service's own
+// precondition failure.
+func TestFilesDataPlaneLeaseGuardsWrites(t *testing.T) {
+	srv := buildStorageTestSim(t)
+	const account, share, file = "leasefileacct", "lease-share", "leased.txt"
+	payload := []byte("leased payload")
+
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"?restype=share", nil, nil),
+		http.StatusCreated, "CreateShare")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/"+file, nil,
+		map[string]string{"x-ms-content-length": fmt.Sprintf("%d", len(payload))}), http.StatusCreated, "CreateFile")
+
+	rec := storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/"+file+"?comp=lease", nil,
+		map[string]string{"x-ms-lease-action": "acquire", "x-ms-proposed-lease-id": "11111111-2222-3333-4444-555555555555"})
+	assertStatus(t, rec, http.StatusCreated, "AcquireFileLease")
+	leaseID := rec.Header().Get("x-ms-lease-id")
+	if leaseID != "11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("x-ms-lease-id = %q, want the proposed lease id", leaseID)
+	}
+
+	// A write with no lease id, and a write with the wrong one, are both
+	// refused — and neither touches the file.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/"+file+"?comp=range", payload,
+		map[string]string{"x-ms-range": fmt.Sprintf("bytes=0-%d", len(payload)-1)}),
+		http.StatusPreconditionFailed, "UploadRange without the lease id")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/"+file+"?comp=range", payload,
+		map[string]string{"x-ms-range": fmt.Sprintf("bytes=0-%d", len(payload)-1),
+			"x-ms-lease-id": "99999999-9999-9999-9999-999999999999"}),
+		http.StatusPreconditionFailed, "UploadRange with the wrong lease id")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodDelete, account, "file", "/"+share+"/"+file, nil, nil),
+		http.StatusPreconditionFailed, "DeleteFile without the lease id")
+
+	// The holder of the lease writes.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/"+file+"?comp=range", payload,
+		map[string]string{"x-ms-range": fmt.Sprintf("bytes=0-%d", len(payload)-1), "x-ms-lease-id": leaseID}),
+		http.StatusCreated, "UploadRange with the lease id")
+
+	// Releasing the lease reopens the file to everyone.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"/"+file+"?comp=lease", nil,
+		map[string]string{"x-ms-lease-action": "release", "x-ms-lease-id": leaseID}),
+		http.StatusOK, "ReleaseFileLease")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodDelete, account, "file", "/"+share+"/"+file, nil, nil),
+		http.StatusAccepted, "DeleteFile after the lease was released")
+
+	// The same lock on the share refuses Delete Share.
+	rec = storagePlaneReq(t, srv, http.MethodPut, account, "file", "/"+share+"?restype=share&comp=lease", nil,
+		map[string]string{"x-ms-lease-action": "acquire"})
+	assertStatus(t, rec, http.StatusCreated, "AcquireShareLease")
+	shareLease := rec.Header().Get("x-ms-lease-id")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodDelete, account, "file", "/"+share+"?restype=share", nil, nil),
+		http.StatusPreconditionFailed, "DeleteShare without the share lease id")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodDelete, account, "file", "/"+share+"?restype=share", nil,
+		map[string]string{"x-ms-lease-id": shareLease}), http.StatusAccepted, "DeleteShare with the share lease id")
 }
 
 // ── Queues ──────────────────────────────────────────────────────────
@@ -535,37 +544,26 @@ func TestQueuesDataPlaneUnservedCompDeclaresGap(t *testing.T) {
 		[]byte(`<QueueMessage><MessageText>aGVsbG8=</MessageText></QueueMessage>`), nil),
 		http.StatusCreated, "PutMessage")
 
-	// Set Queue ACL used to land on Create Queue: for a name that did not
-	// exist it created the queue and answered 201.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "queue", "/never-a-queue?comp=acl", nil, nil),
-		"PUT queue ?comp=acl")
-	assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/never-a-queue?comp=metadata", nil, nil),
-		http.StatusNotFound, "the refused Set Queue ACL created no queue")
+	// A `comp` the Queues data plane does not define must not fall through to
+	// Create Queue, which for a name that does not exist would create it.
+	for _, comp := range []string{"properties", "tier", "snapshot"} {
+		assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "queue",
+			"/never-a-queue?comp="+comp, nil, nil), "PUT queue ?comp="+comp)
+		assertStatus(t, storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/never-a-queue?comp=metadata", nil, nil),
+			http.StatusNotFound, "the refused ?comp="+comp+" created no queue")
+	}
 
-	// Get Queue ACL used to land on Get Queue Metadata and answer 200.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/"+queue+"?comp=acl", nil, nil),
-		"GET queue ?comp=acl")
 	// A bare GET on the queue is not an operation Azure documents.
 	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/"+queue, nil, nil),
 		"GET queue (no comp)")
 
 	// Delete Queue is the bare DELETE; with a comp it must not delete.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodDelete, account, "queue", "/"+queue+"?comp=acl", nil, nil),
-		"DELETE queue ?comp=acl")
+	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodDelete, account, "queue", "/"+queue+"?comp=metadata", nil, nil),
+		"DELETE queue ?comp=metadata")
 	rec := storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/"+queue+"?comp=metadata", nil, nil)
-	assertStatus(t, rec, http.StatusOK, "queue survives a refused DELETE ?comp=acl")
+	assertStatus(t, rec, http.StatusOK, "queue survives a refused DELETE ?comp=metadata")
 	if got := rec.Header().Get("x-ms-meta-owner"); got != "sockerless" {
 		t.Fatalf("queue metadata = %q after refused operations, want it unchanged", got)
-	}
-
-	// Update Message.
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodPut, account, "queue",
-		"/"+queue+"/messages/some-id?popreceipt=x&visibilitytimeout=0",
-		[]byte(`<QueueMessage><MessageText>b3RoZXI=</MessageText></QueueMessage>`), nil), "PUT message")
-	rec = storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/"+queue+"/messages?peekonly=true", nil, nil)
-	assertStatus(t, rec, http.StatusOK, "PeekMessages")
-	if !strings.Contains(rec.Body.String(), "aGVsbG8=") {
-		t.Fatalf("PeekMessages body = %s, want the original message intact", rec.Body.String())
 	}
 
 	// A comp on the messages collection names no documented operation, so it
@@ -576,12 +574,109 @@ func TestQueuesDataPlaneUnservedCompDeclaresGap(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "aGVsbG8=") {
 		t.Fatalf("PeekMessages body = %s, want the message to survive a refused clear", rec.Body.String())
 	}
+}
 
-	// Service level: Set Service Properties used to be answered by the GET
-	// handler, so a write was reported as applied.
-	rec = storagePlaneReq(t, srv, http.MethodPut, account, "queue", "/?restype=service&comp=properties",
-		[]byte("<StorageServiceProperties/>"), nil)
-	assertStorageGap(t, rec, "PUT service properties")
-	assertStorageGap(t, storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/?restype=service&comp=stats", nil, nil),
-		"GET service statistics")
+// TestQueuesDataPlaneUpdateMessageExtendsInvisibility drives Update Message —
+// the operation a long-running consumer calls to keep a message it is still
+// working on invisible — through the pop-receipt check that makes it the
+// dequeuer's alone.
+func TestQueuesDataPlaneUpdateMessageExtendsInvisibility(t *testing.T) {
+	srv := buildStorageTestSim(t)
+	const account, queue = "updqueueacct", "upd-queue"
+
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "queue", "/"+queue, nil, nil),
+		http.StatusCreated, "CreateQueue")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPost, account, "queue", "/"+queue+"/messages",
+		[]byte(`<QueueMessage><MessageText>aGVsbG8=</MessageText></QueueMessage>`), nil),
+		http.StatusCreated, "PutMessage")
+
+	rec := storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/"+queue+"/messages?visibilitytimeout=1", nil, nil)
+	assertStatus(t, rec, http.StatusOK, "GetMessages")
+	var dequeued struct {
+		Messages []struct {
+			MessageID  string `xml:"MessageId"`
+			PopReceipt string `xml:"PopReceipt"`
+		} `xml:"QueueMessage"`
+	}
+	if err := xml.Unmarshal(rec.Body.Bytes(), &dequeued); err != nil || len(dequeued.Messages) != 1 {
+		t.Fatalf("GetMessages = %s (err %v), want one message", rec.Body.String(), err)
+	}
+	id, receipt := dequeued.Messages[0].MessageID, dequeued.Messages[0].PopReceipt
+
+	// A stale pop receipt updates nothing.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "queue",
+		"/"+queue+"/messages/"+id+"?popreceipt=not-the-receipt&visibilitytimeout=60", nil, nil),
+		http.StatusBadRequest, "UpdateMessage with a stale pop receipt")
+
+	// The dequeuer extends the invisibility and replaces the content; the
+	// response supersedes the pop receipt it was given.
+	rec = storagePlaneReq(t, srv, http.MethodPut, account, "queue",
+		"/"+queue+"/messages/"+id+"?popreceipt="+receipt+"&visibilitytimeout=600",
+		[]byte(`<QueueMessage><MessageText>b3RoZXI=</MessageText></QueueMessage>`), nil)
+	assertStatus(t, rec, http.StatusNoContent, "UpdateMessage")
+	updated := rec.Header().Get("x-ms-popreceipt")
+	if updated == "" || updated == receipt {
+		t.Fatalf("x-ms-popreceipt = %q, want a fresh receipt superseding %q", updated, receipt)
+	}
+	if rec.Header().Get("x-ms-time-next-visible") == "" {
+		t.Fatalf("Update Message must report x-ms-time-next-visible")
+	}
+
+	// The extended invisibility holds: the message is not handed to another
+	// consumer, and a peek does not see it either.
+	rec = storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/"+queue+"/messages", nil, nil)
+	assertStatus(t, rec, http.StatusOK, "GetMessages during the extended invisibility")
+	if strings.Contains(rec.Body.String(), "<MessageId>") {
+		t.Fatalf("GetMessages = %s, want no message while the invisibility holds", rec.Body.String())
+	}
+
+	// The superseded receipt can no longer delete the message; the fresh one can.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodDelete, account, "queue",
+		"/"+queue+"/messages/"+id+"?popreceipt="+receipt, nil, nil),
+		http.StatusBadRequest, "DeleteMessage with the superseded pop receipt")
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodDelete, account, "queue",
+		"/"+queue+"/messages/"+id+"?popreceipt="+updated, nil, nil),
+		http.StatusNoContent, "DeleteMessage with the fresh pop receipt")
+}
+
+// TestQueuesDataPlaneAccessPolicyAndServiceProperties drives the queue's stored
+// access policies and the service-level configuration a write must actually
+// change.
+func TestQueuesDataPlaneAccessPolicyAndServiceProperties(t *testing.T) {
+	srv := buildStorageTestSim(t)
+	const account, queue = "aclqueueacct", "acl-queue"
+
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "queue", "/"+queue, nil, nil),
+		http.StatusCreated, "CreateQueue")
+
+	policy := []byte(`<SignedIdentifiers><SignedIdentifier><Id>consumer</Id><AccessPolicy>` +
+		`<Start>2026-07-28T10:00:00Z</Start><Expiry>2026-07-29T10:00:00Z</Expiry>` +
+		`<Permission>rap</Permission></AccessPolicy></SignedIdentifier></SignedIdentifiers>`)
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "queue", "/"+queue+"?comp=acl", policy, nil),
+		http.StatusNoContent, "SetQueueAccessPolicy")
+	rec := storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/"+queue+"?comp=acl", nil, nil)
+	assertStatus(t, rec, http.StatusOK, "GetQueueAccessPolicy")
+	if !strings.Contains(rec.Body.String(), "<Id>consumer</Id>") ||
+		!strings.Contains(rec.Body.String(), "<Permission>rap</Permission>") {
+		t.Fatalf("GetQueueAccessPolicy body = %s, want the stored policy", rec.Body.String())
+	}
+
+	// Set Service Properties used to be answered by the GET handler, so a write
+	// was reported as applied while nothing changed.
+	assertStatus(t, storagePlaneReq(t, srv, http.MethodPut, account, "queue", "/?restype=service&comp=properties",
+		[]byte(`<StorageServiceProperties><Logging><Version>1.0</Version><Delete>true</Delete>`+
+			`<Read>true</Read><Write>true</Write><RetentionPolicy><Enabled>true</Enabled>`+
+			`<Days>4</Days></RetentionPolicy></Logging></StorageServiceProperties>`), nil),
+		http.StatusAccepted, "SetServiceProperties")
+	rec = storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/?restype=service&comp=properties", nil, nil)
+	assertStatus(t, rec, http.StatusOK, "GetServiceProperties")
+	if !strings.Contains(rec.Body.String(), "<Days>4</Days>") {
+		t.Fatalf("GetServiceProperties body = %s, want the properties Set Service Properties wrote", rec.Body.String())
+	}
+
+	rec = storagePlaneReq(t, srv, http.MethodGet, account, "queue", "/?restype=service&comp=stats", nil, nil)
+	assertStatus(t, rec, http.StatusOK, "GetServiceStatistics")
+	if !strings.Contains(rec.Body.String(), "<Status>live</Status>") {
+		t.Fatalf("GetServiceStatistics body = %s, want a GeoReplication status", rec.Body.String())
+	}
 }

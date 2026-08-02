@@ -114,7 +114,7 @@ func registerSubscription(srv *sim.Server) {
 			"value": []map[string]any{{
 				"id":            "/tenants/" + simTenantID,
 				"tenantId":      simTenantID,
-				"displayName":   "Simulator Tenant",
+				"displayName":   azureTenantDisplayName(simTenantID),
 				"defaultDomain": "simulator.onmicrosoft.com",
 				"tenantType":    "AAD",
 				"countryCode":   "US",
@@ -171,6 +171,17 @@ func registerSubscription(srv *sim.Server) {
 // (also used by the instance-metadata endpoints).
 const azureDefaultSubscriptionID = "00000000-0000-0000-0000-000000000001"
 
+// azureTenantDisplayName reports a tenant's display name. The simulator's own
+// tenant is the one directory it holds; a tenant a caller names in a
+// cross-tenant request belongs to a directory the simulator cannot read, and
+// so has no name to report.
+func azureTenantDisplayName(tenantID string) string {
+	if tenantID == simTenantID {
+		return "Simulator Tenant"
+	}
+	return ""
+}
+
 // azureSubscriptionIDsWithResourceGroups returns the distinct subscription IDs
 // that own at least one resource group.
 func azureSubscriptionIDsWithResourceGroups() []string {
@@ -187,22 +198,29 @@ func azureSubscriptionIDsWithResourceGroups() []string {
 	return out
 }
 
-// azureSubscriptionView reports a subscription's display name and state:
-// the stored row when the Microsoft.Subscription API created or mutated it,
-// the simulator's implicit identity otherwise.
-func azureSubscriptionView(sub string) (displayName, state string) {
+// azureSubscriptionView reports a subscription's display name, state and
+// tenant: the stored row when the Microsoft.Subscription API created or
+// mutated it, the simulator's implicit identity otherwise. A subscription
+// whose stored row names no tenant lives in the simulator's own tenant — only
+// a subscription created for, or handed to, another tenant names a different
+// one.
+func azureSubscriptionView(sub string) (displayName, state, tenantID string) {
 	if rec, ok := azureSubscriptionRecords.Get(sub); ok {
-		return rec.DisplayName, rec.State
+		tenant := rec.TenantID
+		if tenant == "" {
+			tenant = simTenantID
+		}
+		return rec.DisplayName, rec.State, tenant
 	}
-	return "Simulator Subscription", "Enabled"
+	return "Simulator Subscription", "Enabled", simTenantID
 }
 
 func azureSubscriptionObject(sub string) map[string]any {
-	displayName, state := azureSubscriptionView(sub)
+	displayName, state, tenantID := azureSubscriptionView(sub)
 	return map[string]any{
 		"id":             "/subscriptions/" + sub,
 		"subscriptionId": sub,
-		"tenantId":       simTenantID,
+		"tenantId":       tenantID,
 		"displayName":    displayName,
 		"state":          state,
 		"subscriptionPolicies": map[string]any{

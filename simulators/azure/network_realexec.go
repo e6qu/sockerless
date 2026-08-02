@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"net/http"
 	"sort"
@@ -35,12 +36,16 @@ func azureRequireNetworkHost(w http.ResponseWriter) bool {
 	return true
 }
 
+// azureRealName derives the host-side name of a namespace, bridge, veth or tap
+// from the ARM resource it realizes. Linux caps an interface name at 15
+// characters, far shorter than a resource id, so the name is the prefix plus a
+// hash of the WHOLE id: two resources that differ anywhere — a different
+// resource group, a different parent, a different child name — get different
+// host objects, which a positional truncation of the id could not guarantee.
 func azureRealName(prefix, id string) string {
-	id = strings.NewReplacer("/", "", "-", "", "_", "").Replace(id)
-	if len(id) > 10 {
-		id = id[len(id)-10:]
-	}
-	name := prefix + id
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(strings.ToLower(id)))
+	name := prefix + strconv.FormatUint(h.Sum64(), 36)
 	if len(name) > 15 {
 		return name[:15]
 	}
@@ -470,6 +475,13 @@ func azureIngressPacketRules(nic NetworkInterface) ([]realexec.PacketRule, bool)
 			if !strings.EqualFold(defaultString(props.Direction, "Inbound"), "Inbound") {
 				continue
 			}
+			// A rule scoped to destination application security groups governs
+			// only the interfaces in those groups; on every other interface the
+			// rule is simply not part of the filter.
+			if len(props.DestinationApplicationSecurityGroups) > 0 &&
+				!azureNICInApplicationSecurityGroups(nic, props.DestinationApplicationSecurityGroups) {
+				continue
+			}
 			verdict := "drop"
 			if strings.EqualFold(props.Access, "Allow") {
 				verdict = "accept"
@@ -477,7 +489,14 @@ func azureIngressPacketRules(nic NetworkInterface) ([]realexec.PacketRule, bool)
 			rules = append(rules, azurePacketRulesForSecurityRule(props, verdict)...)
 		}
 		for _, cidr := range azureNICVNetCIDRs(nic) {
-			rules = append(rules, realexec.PacketRule{Protocol: "*", SourceCIDR: cidr, Action: "accept"})
+			// The packet filter spells "every protocol" the way the host's rule
+			// compiler does; the security-rule spelling "*" is Azure's and has
+			// to be translated, exactly as it is for a rule's own protocol.
+			rules = append(rules, realexec.PacketRule{
+				Protocol:   azurePacketProtocol("*"),
+				SourceCIDR: cidr,
+				Action:     "accept",
+			})
 		}
 	}
 	return rules, true
@@ -510,7 +529,16 @@ func azureAttachedNSGs(nic NetworkInterface) []NetworkSecurityGroup {
 }
 
 func azurePacketRulesForSecurityRule(props SecurityRuleProperties, verdict string) []realexec.PacketRule {
-	sources := azureAddressPrefixes(props.SourceAddressPrefix, props.SourceAddressPrefixes)
+	// A rule written against source application security groups matches the
+	// members of those groups and nothing else — an empty group therefore
+	// matches no traffic, rather than falling back to the "any address" default
+	// an absent address prefix carries.
+	var sources []string
+	if len(props.SourceApplicationSecurityGroups) > 0 {
+		sources = azureApplicationSecurityGroupMemberIPs(props.SourceApplicationSecurityGroups)
+	} else {
+		sources = azureAddressPrefixes(props.SourceAddressPrefix, props.SourceAddressPrefixes)
+	}
 	ports := azurePortRanges(props.DestinationPortRange, props.DestinationPortRanges)
 	var rules []realexec.PacketRule
 	for _, source := range sources {

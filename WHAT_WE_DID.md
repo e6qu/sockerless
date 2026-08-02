@@ -4,6 +4,73 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-02 — Completing the Azure simulator's assessed surface
+
+A measured survey of what remained unbuilt put the Azure storage data planes
+at the bottom: Blob served 18 of its 69 documented operations, Files 13 of 51,
+Queues 11 of 16, and nine vendored Microsoft.Network swaggers served nothing
+at all. That surface is now complete or near it, and the measured Azure floor
+moved from 1786 to 1998 operations across 91 documents.
+
+Blob reached 69/69 with behavior rather than storage: lease state is resolved
+from the clock so a finite lease genuinely expires and a pending break
+completes, and it is enforced on every write path; snapshots are real
+addressable byte copies; soft delete is driven by the account's own retention
+configuration, taking container retention from ARM because the data-plane
+contract has no such field and inventing one would have been a fidelity break;
+page blobs enforce 512-byte alignment over explicitly tracked sparse ranges;
+batch is real multipart re-dispatched through the simulator's own handlers;
+and Blob Query returns a real Avro object-container response with its grammar
+boundary enforced rather than answered with wrong rows.
+
+Files reached 51/51, which mattered most for directories — everything below a
+share root had returned 501, so nested paths were unusable and the Azure Files
+volume story the Container Apps and Functions backends depend on was blocked.
+Directories are now real directories on the backing store, hard and symbolic
+links are real links with escape refused, snapshots are recursive copies, and
+range listing reads the filesystem's own extent map. Clearing a range punches
+a real hole so the extent map agrees with the client's view. Queues reached
+16/16, including the visibility-timeout extension every long-running consumer
+calls.
+
+Microsoft.Network went from nothing to 116 of 123 operations across all nine
+swaggers. A private endpoint writes its connection into the same object the
+target resource's own surface serves, so approving on either side is what the
+other reports; endpoints take real addresses from the subnet fabric;
+application security group membership actually affects NSG evaluation, with an
+empty group matching nothing rather than everything; the Application Gateway
+is a real forwarding L7 listener that selects listeners and rules, applies
+path maps, redirects and rewrites, and reports backend health from probes it
+actually ran; and Network Watcher answers IP-flow-verify, next-hop,
+security-group-view, topology and connectivity checks by evaluating the real
+rules, routes and address space, opening real TCP connections to measure
+latency. Microsoft.Subscription reached 15/15, its ownership handover
+implemented against the published examples — which put the long-running
+operation's polling target somewhere other than assumed, and which is the only
+shape that makes the operation-get route reachable at all.
+
+Two surfaces stayed deliberately unbuilt and are tracked rather than faked:
+the Application Gateway's managed WAF rule-set catalog is data the simulator
+does not carry, and packet captures have no capture path, so a session
+reporting Running with no packets behind it would be fiction.
+
+The work turned up six defects along the way, all fixed. Host-addressed data
+planes — Azure storage and Key Vault, Amazon S3, Cloud Storage — served every
+request outside the logging, request-id and tracing middlewares, so a whole
+class of traffic was invisible in the request log; all three simulators now
+separate the routing core from the observability chain. On a real-network host
+every interface in an NSG-governed subnet failed to create, because the
+virtual-network allow emitted a protocol the host rule compiler rejects. Both
+Azure Terraform suites ran in the checked-in configuration directory and
+deleted its state on entry, so two concurrent runs destroyed each other's
+state mid-apply and produced what looked exactly like provider drift; both now
+run in per-test workspaces, and the Docker harness stopped discarding the
+caller's test selection, which is what made those collisions easy to hit.
+Absolute URLs the simulator emits now honor the forwarded-proto header, so a
+deployment behind its TLS gateway stops advertising http:// polling targets to
+clients that can only reach it over https://. A netns name derived from an ARM
+id's last ten characters collided between resources with similar suffixes.
+
 ## 2026-08-01 — The last actionable bugs: Amplify image optimization, ACA dapr, and the Azure secret-rotation/auth sweep
 
 The three remaining locally actionable bugs closed together, and the Boy

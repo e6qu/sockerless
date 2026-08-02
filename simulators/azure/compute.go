@@ -122,6 +122,16 @@ type NetworkInterfaceIPConfigurationProperties struct {
 	PrivateIPAddressVersion         string              `json:"privateIPAddressVersion,omitempty"`
 	Primary                         bool                `json:"primary,omitempty"`
 	ProvisioningState               string              `json:"provisioningState,omitempty"`
+	// ApplicationSecurityGroups are the groups this IP configuration belongs
+	// to. Membership is what a network security group rule written against a
+	// group resolves to when the simulator programs the interface's filter.
+	ApplicationSecurityGroups []SubResource `json:"applicationSecurityGroups,omitempty"`
+	// ApplicationGatewayBackendAddressPools are the application gateway backend
+	// pools this IP configuration joined. A workload joins a gateway's backend
+	// through its interface, exactly as it joins a load balancer's, and the
+	// membership declared here is what the pool reports as its backend IP
+	// configurations and what the gateway's data plane forwards to.
+	ApplicationGatewayBackendAddressPools []SubResource `json:"applicationGatewayBackendAddressPools,omitempty"`
 }
 
 type VirtualMachine struct {

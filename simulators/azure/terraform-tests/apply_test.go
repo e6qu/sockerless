@@ -43,6 +43,13 @@ import (
 //   - Microsoft.Web/serverfarms + sites (Function App)
 //   - Microsoft.Web/sites/networkConfig/virtualNetwork (App Service regional
 //     VNet "swift" integration) + a Microsoft.Web/serverFarms-delegated subnet
+//   - Microsoft.Network/applicationSecurityGroups
+//   - Microsoft.Network/privateLinkServices + privateEndpoints (both halves of
+//     Azure Private Link, including the endpoint's application-security-group
+//     association and a Key Vault-targeted endpoint whose private DNS zone
+//     group publishes into a Microsoft.Network/privateDnsZones zone)
+//   - Microsoft.Network/networkProfiles
+//   - Microsoft.Network/serviceEndpointPolicies
 //
 // The Microsoft.Subscription alias slice runs separately in
 // TestTerraformSubscriptionApplyDestroy (its own CI shard): each
@@ -50,8 +57,7 @@ import (
 // StateChangeConf settle delays, too slow for this stack's CI budget.
 func TestTerraformApplyDestroy(t *testing.T) {
 	requireTerraformNetworkHost(t)
-	dir := tfStackDir()
-	cleanTerraformWorkspace(t, dir)
+	dir := tfStackWorkspace(t)
 	out, err := runTimed(t, "terraform init", terraformCmd(dir, "init"))
 	require.NoError(t, err, "terraform init failed:\n%s", out)
 
@@ -275,6 +281,18 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"/providers/Microsoft.Storage/storageAccounts/tfazrmst12345/fileServices/default/shares/tfazrmshare",
 		"azurerm storage share id must include the canonical ARM path; got %s", azrmStorageShare)
 
+	// The nested directory the Files data plane created: the provider addresses
+	// it inside the share it was created in, and reads it back on every
+	// refresh — so the clean idempotency plan above also proves Get Directory
+	// Properties answers for a directory below the share root.
+	azrmShareDirectory := outputs.must(t, "azrm_storage_share_directory_id")
+	require.Contains(t, azrmShareDirectory, "tfazrmshare",
+		"azurerm storage share directory id must address the share it lives in; got %s", azrmShareDirectory)
+	require.Contains(t, azrmShareDirectory, "artifacts",
+		"azurerm storage share directory id must name the nested directory; got %s", azrmShareDirectory)
+	require.Equal(t, "build/artifacts", outputs.must(t, "azrm_storage_share_directory_name"),
+		"the nested directory must be created below the share root, not at it")
+
 	azrmFA := outputs.must(t, "azrm_function_app_id")
 	require.Contains(t, azrmFA, "/providers/Microsoft.Web/sites/tf-azrm-fa",
 		"azurerm Function App id must include canonical ARM path; got %s", azrmFA)
@@ -307,6 +325,82 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmAPIMSub, "/service/tf-azrm-apim/subscriptions/",
 		"APIM subscription id must include the service+subscription path; got %s", azrmAPIMSub)
 
+	azrmASG := outputs.must(t, "azrm_application_security_group_id")
+	require.Contains(t, azrmASG, "/providers/Microsoft.Network/applicationSecurityGroups/tf-azrm-asg",
+		"application security group id must include canonical ARM path; got %s", azrmASG)
+
+	azrmPLS := outputs.must(t, "azrm_private_link_service_id")
+	require.Contains(t, azrmPLS, "/providers/Microsoft.Network/privateLinkServices/tf-azrm-pls",
+		"private link service id must include canonical ARM path; got %s", azrmPLS)
+
+	azrmPLSAlias := outputs.must(t, "azrm_private_link_service_alias")
+	require.Contains(t, azrmPLSAlias, "tf-azrm-pls.",
+		"private link service alias must be minted from the service name; got %s", azrmPLSAlias)
+
+	azrmPE := outputs.must(t, "azrm_private_endpoint_id")
+	require.Contains(t, azrmPE, "/providers/Microsoft.Network/privateEndpoints/tf-azrm-pe",
+		"private endpoint id must include canonical ARM path; got %s", azrmPE)
+
+	// The address the endpoint reports is the one its subnet allocated, so it
+	// has to fall inside that subnet's prefix rather than be an invented value.
+	azrmPEIP := outputs.must(t, "azrm_private_endpoint_private_ip")
+	require.True(t, strings.HasPrefix(azrmPEIP, "10.95.2."),
+		"private endpoint address must come from its own subnet 10.95.2.0/24; got %s", azrmPEIP)
+
+	azrmPENIC := outputs.must(t, "azrm_private_endpoint_nic_id")
+	require.Contains(t, azrmPENIC, "/providers/Microsoft.Network/networkInterfaces/",
+		"private endpoint must own an ordinary network interface; got %s", azrmPENIC)
+
+	azrmKVPE := outputs.must(t, "azrm_kv_private_endpoint_id")
+	require.Contains(t, azrmKVPE, "/providers/Microsoft.Network/privateEndpoints/tf-azrm-kv-pe",
+		"Key Vault private endpoint id must include canonical ARM path; got %s", azrmKVPE)
+
+	azrmKVPEFqdn := outputs.must(t, "azrm_kv_private_endpoint_custom_dns_fqdn")
+	require.Equal(t, "tf-azrm-kv.vault.azure.net", azrmKVPEFqdn,
+		"the endpoint must publish the vault's own fully-qualified name; got %s", azrmKVPEFqdn)
+
+	azrmKVPEZoneGroup := outputs.must(t, "azrm_kv_private_endpoint_dns_zone_group_id")
+	require.Contains(t, azrmKVPEZoneGroup, "/privateEndpoints/tf-azrm-kv-pe/privateDnsZoneGroups/default",
+		"private DNS zone group id must include the child ARM path; got %s", azrmKVPEZoneGroup)
+
+	azrmNetworkProfile := outputs.must(t, "azrm_network_profile_id")
+	require.Contains(t, azrmNetworkProfile, "/providers/Microsoft.Network/networkProfiles/tf-azrm-np",
+		"network profile id must include canonical ARM path; got %s", azrmNetworkProfile)
+
+	azrmSEP := outputs.must(t, "azrm_subnet_service_endpoint_storage_policy_id")
+	require.Contains(t, azrmSEP, "/providers/Microsoft.Network/serviceEndpointPolicies/tf-azrm-sep",
+		"service endpoint policy id must include canonical ARM path; got %s", azrmSEP)
+
+	azrmAppGateway := outputs.must(t, "azrm_application_gateway_id")
+	require.Contains(t, azrmAppGateway, "/providers/Microsoft.Network/applicationGateways/tf-azrm-appgw",
+		"application gateway id must include canonical ARM path; got %s", azrmAppGateway)
+	// The gateway's child collections are addressed under the gateway itself,
+	// which is what the sibling references inside its own configuration resolve
+	// against — the provider reads those ids straight back out of the create.
+	for _, poolID := range outputs.mustList(t, "azrm_application_gateway_backend_pool_ids") {
+		require.Contains(t, poolID, azrmAppGateway+"/backendAddressPools/",
+			"backend pool id must be addressed under the gateway; got %s", poolID)
+	}
+	for _, listenerID := range outputs.mustList(t, "azrm_application_gateway_listener_ids") {
+		require.Contains(t, listenerID, azrmAppGateway+"/httpListeners/",
+			"listener id must be addressed under the gateway; got %s", listenerID)
+	}
+
+	azrmNetworkWatcher := outputs.must(t, "azrm_network_watcher_id")
+	require.Contains(t, azrmNetworkWatcher, "/providers/Microsoft.Network/networkWatchers/tf-azrm-network-watcher",
+		"network watcher id must include canonical ARM path; got %s", azrmNetworkWatcher)
+
+	azrmFlowLog := outputs.must(t, "azrm_network_watcher_flow_log_id")
+	require.Contains(t, azrmFlowLog, azrmNetworkWatcher+"/flowLogs/tf-azrm-flow-log",
+		"flow log id must be addressed under its network watcher; got %s", azrmFlowLog)
+
+	azrmNetworkManager := outputs.must(t, "azrm_network_manager_id")
+	require.Contains(t, azrmNetworkManager, "/providers/Microsoft.Network/networkManagers/tf-azrm-network-manager",
+		"network manager id must include canonical ARM path; got %s", azrmNetworkManager)
+	require.ElementsMatch(t, []string{"Connectivity", "SecurityAdmin"},
+		outputs.mustList(t, "azrm_network_manager_scope_accesses"),
+		"the manager must report the configuration kinds it was given access to")
+
 	out, err = runTimed(t, "terraform destroy", terraformCmd(dir, "destroy", "-auto-approve"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
 }
@@ -318,18 +412,31 @@ func requireTerraformNetworkHost(t *testing.T) {
 	}
 }
 
-func cleanTerraformWorkspace(t *testing.T, dir string) {
+// tfStackWorkspace copies the checked-in stack configuration into a
+// per-test directory. Running terraform in the checked-in directory made two
+// concurrent runs share one state file and one provider lock: whichever
+// started second wiped the first run's state mid-apply, and the first then
+// re-planned resources it had just created — indistinguishable from a
+// simulator refresh defect. A private workspace per run also leaves the tree
+// free of state, lock, and crash artifacts.
+func tfStackWorkspace(t *testing.T) string {
 	t.Helper()
-	for _, name := range []string{
-		".terraform",
-		".terraform.lock.hcl",
-		"terraform.tfstate",
-		"terraform.tfstate.backup",
-		"crash.log",
-	} {
-		err := os.RemoveAll(filepath.Join(dir, name))
-		require.NoError(t, err, "clean terraform workspace artifact %s", name)
+	src := tfStackDir()
+	dst := t.TempDir()
+	entries, err := os.ReadDir(src)
+	require.NoError(t, err, "read the stack configuration at %s", src)
+	copied := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".tf" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(src, entry.Name()))
+		require.NoError(t, err, "read %s", entry.Name())
+		require.NoError(t, os.WriteFile(filepath.Join(dst, entry.Name()), data, 0o600), "write %s", entry.Name())
+		copied++
 	}
+	require.NotZero(t, copied, "no .tf files found in the stack configuration at %s", src)
+	return dst
 }
 
 type tfOutputs map[string]struct {
@@ -346,6 +453,24 @@ func (o tfOutputs) must(t *testing.T, key string) string {
 	require.True(t, ok, "output %q is not a string (got %T)", key, v.Value)
 	require.NotEmpty(t, s, "output %q is empty", key)
 	return s
+}
+
+// mustList reads a list-of-strings output, which the application gateway's
+// child-id outputs and the network manager's scope accesses are.
+func (o tfOutputs) mustList(t *testing.T, key string) []string {
+	t.Helper()
+	v, ok := o[key]
+	require.True(t, ok, "output %q missing from terraform state", key)
+	raw, ok := v.Value.([]any)
+	require.True(t, ok, "output %q is not a list (got %T)", key, v.Value)
+	values := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		s, ok := entry.(string)
+		require.True(t, ok, "output %q holds a non-string entry (got %T)", key, entry)
+		values = append(values, s)
+	}
+	require.NotEmpty(t, values, "output %q is empty", key)
+	return values
 }
 
 func readOutputs(t *testing.T, dir string) tfOutputs {

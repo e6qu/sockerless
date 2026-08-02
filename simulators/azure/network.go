@@ -79,14 +79,22 @@ type Subnet struct {
 }
 
 type SubnetProperties struct {
-	AddressPrefix                     string             `json:"addressPrefix,omitempty"`
-	AddressPrefixes                   []string           `json:"addressPrefixes,omitempty"`
-	NetworkSecurityGroup              *NSGReference      `json:"networkSecurityGroup,omitempty"`
-	NatGateway                        *SubResource       `json:"natGateway,omitempty"`
+	AddressPrefix        string        `json:"addressPrefix,omitempty"`
+	AddressPrefixes      []string      `json:"addressPrefixes,omitempty"`
+	NetworkSecurityGroup *NSGReference `json:"networkSecurityGroup,omitempty"`
+	NatGateway           *SubResource  `json:"natGateway,omitempty"`
+	// RouteTable is the user-defined routing attached to the subnet. Its routes
+	// override the platform's system routes for the addresses they cover, which
+	// is what a next-hop query resolves against.
+	RouteTable                        *SubResource       `json:"routeTable,omitempty"`
 	Delegations                       []SubnetDelegation `json:"delegations,omitempty"`
 	ProvisioningState                 string             `json:"provisioningState"`
 	PrivateEndpointNetworkPolicies    string             `json:"privateEndpointNetworkPolicies,omitempty"`
 	PrivateLinkServiceNetworkPolicies string             `json:"privateLinkServiceNetworkPolicies,omitempty"`
+	// ServiceEndpointPolicies are the service endpoint policies enforced on
+	// traffic leaving this subnet; the policy resource reports the subnets that
+	// reference it from here.
+	ServiceEndpointPolicies []SubResource `json:"serviceEndpointPolicies,omitempty"`
 }
 
 type NSGReference struct {
@@ -139,6 +147,12 @@ type SecurityRuleProperties struct {
 	Priority                   int      `json:"priority"`
 	Direction                  string   `json:"direction"`
 	ProvisioningState          string   `json:"provisioningState,omitempty"`
+	// Application security groups name the rule's endpoints by membership
+	// instead of by address. A source group contributes the addresses of its
+	// members to the rule's match; a destination group scopes the rule to the
+	// interfaces that belong to it, and the rule is not programmed on any other.
+	SourceApplicationSecurityGroups      []SubResource `json:"sourceApplicationSecurityGroups,omitempty"`
+	DestinationApplicationSecurityGroups []SubResource `json:"destinationApplicationSecurityGroups,omitempty"`
 }
 
 // NatGateway mirrors Microsoft.Network/natGateways. Sockerless flows
@@ -431,10 +445,12 @@ func registerNetwork(srv *sim.Server) {
 				AddressPrefixes:                   req.Properties.AddressPrefixes,
 				NetworkSecurityGroup:              req.Properties.NetworkSecurityGroup,
 				NatGateway:                        req.Properties.NatGateway,
+				RouteTable:                        req.Properties.RouteTable,
 				Delegations:                       req.Properties.Delegations,
 				ProvisioningState:                 "Succeeded",
 				PrivateEndpointNetworkPolicies:    privateEndpointPolicies,
 				PrivateLinkServiceNetworkPolicies: privateLinkPolicies,
+				ServiceEndpointPolicies:           req.Properties.ServiceEndpointPolicies,
 			},
 		}
 		// A subnet delegated to Microsoft.Web/serverFarms is App Service's
@@ -926,6 +942,18 @@ func registerNetwork(srv *sim.Server) {
 	registerNetworkInterfaceSubResources(srv)
 	registerRouteTableRoutes(srv)
 	registerNetworkMoreOps(srv)
+
+	// Private Link (both halves), plus the Microsoft.Network resources that
+	// describe how workloads attach to a virtual network.
+	registerNetworkApplicationSecurityGroups(srv)
+	registerNetworkPrivateLinkServices(srv)
+	registerNetworkPrivateEndpoints(srv)
+	registerNetworkProfiles(srv)
+	registerNetworkVirtualNetworkTaps(srv)
+	registerNetworkServiceEndpointPolicies(srv)
+	registerNetworkApplicationGateways(srv)
+	registerNetworkManagers(srv)
+	registerNetworkWatchers(srv)
 }
 
 // azureTagsObject is the ARM TagsObject request body shared by every

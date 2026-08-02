@@ -46,13 +46,15 @@ import (
 // metadata. The data plane stores per-share metadata; the share's files live in
 // the share's backing directory (FileShareHostDir).
 type FileShareData struct {
-	Account  string
-	Name     string
-	Quota    int // GiB
-	Metadata map[string]string
-	Created  string
-	ETag     string
-	ACLs     []TableSignedIdentifier
+	Account    string
+	Name       string
+	Quota      int // GiB
+	AccessTier string
+	RootSquash string
+	Metadata   map[string]string
+	Created    string
+	ETag       string
+	ACLs       []TableSignedIdentifier
 }
 
 // FileObject carries the properties of one file in a share that a filesystem
@@ -83,6 +85,7 @@ type QueueData struct {
 	Created  string
 	Metadata map[string]string
 	Messages []QueueMessage
+	ACLs     []TableSignedIdentifier
 }
 
 type QueueMessage struct {
@@ -154,6 +157,8 @@ func registerStorageDataPlane(srv *sim.Server) {
 	queueData = sim.MakeStore[QueueData](srv.DB(), "queue_data")
 	tableData = sim.MakeStore[TableData](srv.DB(), "table_data")
 	tableEntities = sim.MakeStore[TableEntity](srv.DB(), "table_entities")
+	registerFilesDataPlaneStores(srv)
+	registerQueuesDataPlaneStores(srv)
 
 	srv.WrapHandler(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,130 +280,55 @@ func fileObjectKey(account, share, p string) string {
 }
 
 // handleFilesDataPlane dispatches one Files data-plane request. As on the Blob
-// plane the operation comes from the `restype` + `comp` query pair, and these
-// combinations are the complete set the simulator serves:
+// plane the operation comes from the `restype` + `comp` query pair rather than
+// from the path, so the dispatcher resolves that pair explicitly: a value it
+// does not recognize is answered with a declared gap, never handed to whichever
+// sibling handler happens to sit under the same method. Without that,
+// `PUT /{share}/{dir}?restype=directory` (Create Directory) would land on
+// Create File and report 201 for a directory that was never created.
 //
-//	GET    /?comp=list                                   ListShares
-//	PUT    /{share}?restype=share                         CreateShare
-//	GET    /{share}?restype=share                         GetShareProperties
-//	HEAD   /{share}?restype=share                         GetShareProperties
-//	DELETE /{share}?restype=share                         DeleteShare
-//	GET    /{share}?restype=directory&comp=list           ListFilesAndDirectories (share root)
-//	PUT    /{share}/{path}                                CreateFile (x-ms-content-length)
-//	PUT    /{share}/{path}?comp=range                     UploadRange
-//	GET    /{share}/{path}                                DownloadFile
-//	HEAD   /{share}/{path}                                GetFileProperties
-//	DELETE /{share}/{path}                                DeleteFile
+// Three levels are addressed:
 //
-// Everything else — the share lease / snapshot / permission / statistics
-// verbs, every directory operation below the share root, file leases, handles,
-// range lists, renames, hard and symbolic links — is a declared gap. The
-// directory verbs matter most here: without the check, `PUT /{share}/{dir}
-// ?restype=directory` (Create Directory) would land on Create File and answer
-// 201 for a directory that was never created.
+//	/                      the File service     (list shares, service properties, delegation key)
+//	/{share}?restype=share the share itself     (CRUD, lease, snapshot, permissions, ACL, stats, restore)
+//	/{share}/{path...}     an entry in a share  (directories and files at any depth, plus links and handles)
 func handleFilesDataPlane(w http.ResponseWriter, r *http.Request, account string) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	q := r.URL.Query()
 	restype, comp := q.Get("restype"), q.Get("comp")
 
-	// Service level: /?comp=list
+	// Service level.
 	if path == "" {
-		if r.Method == http.MethodGet && restype == "" && comp == "list" {
+		switch {
+		case r.Method == http.MethodGet && restype == "" && comp == "list":
 			handleFilesListShares(w, r, account)
-			return
-		}
-		// Get File Service Properties, the Files sibling of the operation the
-		// Blob and Queue planes answer. The azurerm provider polls a service's
-		// properties while waiting for a storage account's data plane.
-		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
-			restype == "service" && comp == "properties" {
-			writeStorageXML(w, http.StatusOK, defaultStorageServiceProperties())
-			return
-		}
-		writeStorageOperationNotImplemented(w, r, "Files")
-		return
-	}
-
-	// Share level: /{share}?restype=share, plus the share root addressed as a
-	// directory (?restype=directory&comp=list).
-	if !strings.Contains(path, "/") {
-		switch restype {
-		case "share":
-			if comp == "acl" {
-				handleFilesShareACL(w, r, account, path)
-				return
-			}
-			if comp != "" {
-				writeStorageOperationNotImplemented(w, r, "Files")
-				return
-			}
-			switch r.Method {
-			case http.MethodPut:
-				handleFilesCreateShare(w, r, account, path)
-			case http.MethodDelete:
-				handleFilesDeleteShare(w, r, account, path)
-			case http.MethodGet, http.MethodHead:
-				handleFilesGetShareProperties(w, r, account, path)
-			default:
-				writeStorageOperationNotImplemented(w, r, "Files")
-			}
-		case "directory":
-			if r.Method == http.MethodGet && comp == "list" {
-				handleFilesListFiles(w, r, account, path)
-				return
-			}
-			writeStorageOperationNotImplemented(w, r, "Files")
+		case (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			restype == "service" && comp == "properties":
+			// The azurerm provider polls a service's properties while waiting
+			// for a storage account's data plane.
+			handleFilesGetServiceProperties(w, r, account)
+		case r.Method == http.MethodPut && restype == "service" && comp == "properties":
+			handleFilesSetServiceProperties(w, r, account)
+		case r.Method == http.MethodPost && restype == "service" && comp == "userdelegationkey":
+			handleFilesGetUserDelegationKey(w, r, account)
 		default:
 			writeStorageOperationNotImplemented(w, r, "Files")
 		}
 		return
 	}
 
-	// File level: /{share}/{path...}. restype selects a directory, hard-link or
-	// symbolic-link operation, none of which the simulator implements.
-	i := strings.Index(path, "/")
-	share, filePath := path[:i], path[i+1:]
-	if restype != "" || filePath == "" {
-		writeStorageOperationNotImplemented(w, r, "Files")
+	share, entryPath, _ := strings.Cut(path, "/")
+	entryPath = strings.Trim(entryPath, "/")
+	if share == "" {
+		writeStorageError(w, "InvalidUri",
+			"The requested URI does not represent any resource on the server.", http.StatusBadRequest)
 		return
 	}
-	switch r.Method {
-	case http.MethodPut:
-		switch comp {
-		case "":
-			handleFilesCreateFile(w, r, account, share, filePath)
-		case "range":
-			// Upload Range writes the request body; Upload Range From URL names
-			// a source in x-ms-copy-source and is a different operation.
-			if r.Header.Get("x-ms-copy-source") != "" {
-				writeStorageOperationNotImplemented(w, r, "Files")
-				return
-			}
-			handleFilesUploadRange(w, r, account, share, filePath)
-		default:
-			writeStorageOperationNotImplemented(w, r, "Files")
-		}
-	case http.MethodGet:
-		if comp != "" {
-			writeStorageOperationNotImplemented(w, r, "Files")
-			return
-		}
-		handleFilesGetFile(w, r, account, share, filePath)
-	case http.MethodHead:
-		if comp != "" {
-			writeStorageOperationNotImplemented(w, r, "Files")
-			return
-		}
-		handleFilesHeadFile(w, r, account, share, filePath)
-	case http.MethodDelete:
-		if comp != "" {
-			writeStorageOperationNotImplemented(w, r, "Files")
-			return
-		}
-		handleFilesDeleteFile(w, r, account, share, filePath)
-	default:
-		writeStorageOperationNotImplemented(w, r, "Files")
+	if entryPath == "" && restype == "share" {
+		handleFilesShareOperation(w, r, account, share, comp)
+		return
 	}
+	handleFilesEntryOperation(w, r, account, share, entryPath, restype, comp)
 }
 
 func handleFilesShareACL(w http.ResponseWriter, r *http.Request, account, share string) {
@@ -418,6 +348,9 @@ func handleFilesShareACL(w http.ResponseWriter, r *http.Request, account, share 
 			sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		}
 	case http.MethodPut:
+		if !filesRequireLease(w, r, account, share, "", "share") {
+			return
+		}
 		var body TableSignedIdentifiers
 		if err := xml.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
 			writeStorageError(w, "InvalidXmlDocument", "The XML specified is not syntactically valid.", http.StatusBadRequest)
@@ -469,11 +402,17 @@ func handleFilesCreateShare(w http.ResponseWriter, r *http.Request, account, sha
 		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
 	}
+	accessTier := r.Header.Get("x-ms-access-tier")
+	if accessTier == "" {
+		accessTier = "TransactionOptimized"
+	}
 	s := FileShareData{
 		Account: account, Name: share, Quota: quota,
-		Metadata: collectMetadata(r),
-		Created:  time.Now().UTC().Format(http.TimeFormat),
-		ETag:     `"` + generateUUID() + `"`,
+		AccessTier: accessTier,
+		RootSquash: r.Header.Get("x-ms-root-squash"),
+		Metadata:   collectMetadata(r),
+		Created:    time.Now().UTC().Format(http.TimeFormat),
+		ETag:       `"` + generateUUID() + `"`,
 	}
 	fileShareData.Put(key, s)
 	upsertFileShareARMProjection(account, share, s.Quota, s.Metadata)
@@ -482,13 +421,47 @@ func handleFilesCreateShare(w http.ResponseWriter, r *http.Request, account, sha
 	w.WriteHeader(http.StatusCreated)
 }
 
+// handleFilesDeleteShare is Delete Share. A single snapshot is deleted when the
+// request names one; otherwise the share goes, and with it its files,
+// snapshots, permissions and leases. Where the account's File service carries a
+// share delete-retention policy the share is soft-deleted instead, so Restore
+// Share can bring it back with its contents intact.
 func handleFilesDeleteShare(w http.ResponseWriter, r *http.Request, account, share string) {
-	if !fileShareData.Delete(fileShareKey(account, share)) {
+	key := fileShareKey(account, share)
+	data, ok := fileShareData.Get(key)
+	if !ok {
 		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
 		return
 	}
+	if snapshot := r.URL.Query().Get("sharesnapshot"); snapshot != "" {
+		snapKey := fileShareSnapshotKey(account, share, snapshot)
+		if _, ok := fileShareSnapshots.Get(snapKey); !ok {
+			writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+			return
+		}
+		if err := os.RemoveAll(fileShareSnapshotHostDir(account, share, snapshot)); err != nil {
+			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+			return
+		}
+		fileShareSnapshots.Delete(snapKey)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if !filesRequireLease(w, r, account, share, "", "share") {
+		return
+	}
+	fileShareData.Delete(key)
 	deleteFileObjectProperties(account, share)
-	if err := removeFileShareHostDir(account, share); err != nil {
+	if err := filesDeleteShareContents(account, share); err != nil {
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if filesSoftDeleteRetentionDays(account) > 0 {
+		if err := filesSoftDeleteShare(account, share, data); err != nil {
+			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else if err := removeFileShareHostDir(account, share); err != nil {
 		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -502,94 +475,174 @@ func handleFilesGetShareProperties(w http.ResponseWriter, r *http.Request, accou
 		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
 		return
 	}
+	if snapshot := r.URL.Query().Get("sharesnapshot"); snapshot != "" {
+		snap, ok := fileShareSnapshots.Get(fileShareSnapshotKey(account, share, snapshot))
+		if !ok {
+			writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+			return
+		}
+		s.Quota, s.Metadata, s.Created, s.ETag = snap.Quota, snap.Metadata, snap.Created, snap.ETag
+	}
+	lease, held := filesActiveLease(account, share, "")
 	w.Header().Set("Last-Modified", s.Created)
 	w.Header().Set("ETag", s.ETag)
 	w.Header().Set("x-ms-share-quota", fmt.Sprintf("%d", s.Quota))
+	if s.AccessTier != "" {
+		w.Header().Set("x-ms-access-tier", s.AccessTier)
+	}
+	if s.RootSquash != "" {
+		w.Header().Set("x-ms-root-squash", s.RootSquash)
+	}
+	w.Header().Set("x-ms-lease-state", filesLeaseState(lease, held))
+	if held {
+		w.Header().Set("x-ms-lease-status", "locked")
+		if lease.Duration > 0 {
+			w.Header().Set("x-ms-lease-duration", "fixed")
+		} else {
+			w.Header().Set("x-ms-lease-duration", "infinite")
+		}
+	} else {
+		w.Header().Set("x-ms-lease-status", "unlocked")
+	}
 	for k, v := range s.Metadata {
 		w.Header().Set("x-ms-meta-"+k, v)
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleFilesListShares is List Shares. It enumerates the account's shares, and
+// their snapshots when `include=snapshots` asks for them, paging the
+// enumeration the way the service does: `prefix` filters, `marker` resumes
+// after the last entry the previous page returned, and `maxresults` bounds the
+// page.
 func handleFilesListShares(w http.ResponseWriter, r *http.Request, account string) {
 	type shareProperties struct {
 		LastModified string `xml:"Last-Modified"`
 		ETag         string `xml:"Etag"`
 		Quota        int    `xml:"Quota"`
+		AccessTier   string `xml:"AccessTier,omitempty"`
 	}
 	type shareEntry struct {
 		Name       string          `xml:"Name"`
+		Snapshot   string          `xml:"Snapshot,omitempty"`
+		Deleted    bool            `xml:"Deleted,omitempty"`
+		Version    string          `xml:"Version,omitempty"`
 		Properties shareProperties `xml:"Properties"`
 	}
 	type enum struct {
-		XMLName xml.Name     `xml:"EnumerationResults"`
-		Shares  []shareEntry `xml:"Shares>Share"`
+		XMLName         xml.Name     `xml:"EnumerationResults"`
+		ServiceEndpoint string       `xml:"ServiceEndpoint,attr"`
+		Prefix          string       `xml:"Prefix,omitempty"`
+		Marker          string       `xml:"Marker,omitempty"`
+		MaxResults      *int32       `xml:"MaxResults,omitempty"`
+		Shares          []shareEntry `xml:"Shares>Share"`
+		NextMarker      string       `xml:"NextMarker"`
 	}
-	out := enum{}
-	prefix := account + "/"
+	q := r.URL.Query()
+	prefix, marker := q.Get("prefix"), q.Get("marker")
+	maxResults := 0
+	if raw := q.Get("maxresults"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			writeStorageError(w, "OutOfRangeQueryParameterValue",
+				"One of the query parameters specified in the request URI is outside the permissible range: maxresults.",
+				http.StatusBadRequest)
+			return
+		}
+		maxResults = n
+	}
+	includeSnapshots, includeDeleted := false, false
+	for _, include := range q["include"] {
+		for _, value := range strings.Split(include, ",") {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "snapshots":
+				includeSnapshots = true
+			case "deleted":
+				includeDeleted = true
+			}
+		}
+	}
+
+	// One entry per share, plus one per snapshot when asked for, ordered the
+	// way the service enumerates them: by name, and within a name by snapshot.
+	var candidates []shareEntry
 	for _, s := range fileShareData.List() {
-		if strings.HasPrefix(fileShareKey(s.Account, s.Name), prefix) {
-			out.Shares = append(out.Shares, shareEntry{
-				Name: s.Name,
+		if s.Account != account {
+			continue
+		}
+		candidates = append(candidates, shareEntry{
+			Name: s.Name,
+			Properties: shareProperties{
+				LastModified: s.Created,
+				ETag:         s.ETag,
+				Quota:        s.Quota,
+				AccessTier:   s.AccessTier,
+			},
+		})
+		if !includeSnapshots {
+			continue
+		}
+		for _, snap := range filesShareSnapshotsFor(account, s.Name) {
+			candidates = append(candidates, shareEntry{
+				Name:     s.Name,
+				Snapshot: snap.Snapshot,
 				Properties: shareProperties{
-					LastModified: s.Created,
-					ETag:         s.ETag,
-					Quota:        s.Quota,
+					LastModified: snap.Created,
+					ETag:         snap.ETag,
+					Quota:        snap.Quota,
 				},
 			})
 		}
 	}
-	writeStorageXML(w, http.StatusOK, out)
-}
+	if includeDeleted {
+		for _, deleted := range fileDeletedShares.List() {
+			if deleted.Account != account {
+				continue
+			}
+			candidates = append(candidates, shareEntry{
+				Name:    deleted.Share,
+				Deleted: true,
+				Version: deleted.Version,
+				Properties: shareProperties{
+					LastModified: deleted.Deleted,
+					Quota:        deleted.Quota,
+				},
+			})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Name != candidates[j].Name {
+			return candidates[i].Name < candidates[j].Name
+		}
+		if candidates[i].Snapshot != candidates[j].Snapshot {
+			return candidates[i].Snapshot < candidates[j].Snapshot
+		}
+		return candidates[i].Version < candidates[j].Version
+	})
 
-// handleFilesListFiles is List Directories and Files on the share root. It
-// enumerates the share's backing directory, so it names both what was written
-// through this data plane and what a container mounting the share created.
-func handleFilesListFiles(w http.ResponseWriter, r *http.Request, account, share string) {
-	if _, ok := fileShareData.Get(fileShareKey(account, share)); !ok {
-		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
-		return
+	out := enum{
+		ServiceEndpoint: azureStorageEndpointURL(r, account, "file"),
+		Prefix:          prefix,
+		Marker:          marker,
 	}
-	if !isStoragePathSegment(account) || !isStoragePathSegment(share) {
-		writeStorageError(w, "InvalidResourceName",
-			"The specified resource name contains invalid characters.", http.StatusBadRequest)
-		return
+	if maxResults > 0 {
+		n := int32(maxResults)
+		out.MaxResults = &n
 	}
-	entries, err := os.ReadDir(FileShareHostDir(account, share))
-	if err != nil {
-		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
-		return
-	}
-	type fileProperties struct {
-		ContentLength int64 `xml:"Content-Length"`
-	}
-	type fileEntry struct {
-		Name       string         `xml:"Name"`
-		Properties fileProperties `xml:"Properties"`
-	}
-	type directoryEntry struct {
-		Name string `xml:"Name"`
-	}
-	type enum struct {
-		XMLName     xml.Name         `xml:"EnumerationResults"`
-		Directories []directoryEntry `xml:"Entries>Directory"`
-		Files       []fileEntry      `xml:"Entries>File"`
-	}
-	out := enum{}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			out.Directories = append(out.Directories, directoryEntry{Name: entry.Name()})
+	for _, entry := range candidates {
+		token := entry.Name + "/" + entry.Snapshot + "/" + entry.Version
+		if prefix != "" && !strings.HasPrefix(entry.Name, prefix) {
 			continue
 		}
-		info, err := entry.Info()
-		if err != nil {
-			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
-			return
+		if marker != "" && token <= marker {
+			continue
 		}
-		out.Files = append(out.Files, fileEntry{
-			Name:       entry.Name(),
-			Properties: fileProperties{ContentLength: info.Size()},
-		})
+		if maxResults > 0 && len(out.Shares) == maxResults {
+			out.NextMarker = marker
+			break
+		}
+		out.Shares = append(out.Shares, entry)
+		marker = token
 	}
 	writeStorageXML(w, http.StatusOK, out)
 }
@@ -602,6 +655,9 @@ func handleFilesListFiles(w http.ResponseWriter, r *http.Request, account, share
 func handleFilesCreateFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
 	if _, ok := fileShareData.Get(fileShareKey(account, share)); !ok {
 		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+		return
+	}
+	if !filesRequireLease(w, r, account, share, filePath, "file") {
 		return
 	}
 	raw := r.Header.Get("x-ms-content-length")
@@ -682,6 +738,9 @@ func handleFilesUploadRange(w http.ResponseWriter, r *http.Request, account, sha
 	if !ok {
 		return
 	}
+	if !filesRequireLease(w, r, account, share, filePath, "file") {
+		return
+	}
 	rangeHeader := r.Header.Get("x-ms-range")
 	if rangeHeader == "" {
 		rangeHeader = r.Header.Get("Range")
@@ -708,8 +767,9 @@ func handleFilesUploadRange(w http.ResponseWriter, r *http.Request, account, sha
 	length := end - start + 1
 
 	defer r.Body.Close()
-	data := make([]byte, length)
-	if !strings.EqualFold(r.Header.Get("x-ms-write"), "clear") {
+	clear := strings.EqualFold(r.Header.Get("x-ms-write"), "clear")
+	var data []byte
+	if !clear {
 		// "update" is the default write mode: the body supplies the bytes.
 		body, err := openStreamingBody(r)
 		if err != nil {
@@ -735,7 +795,12 @@ func handleFilesUploadRange(w http.ResponseWriter, r *http.Request, account, sha
 		return
 	}
 	defer f.Close()
-	if _, err := f.WriteAt(data, start); err != nil {
+	if clear {
+		if err := filesClearFileRange(f, info, start, length); err != nil {
+			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else if _, err := f.WriteAt(data, start); err != nil {
 		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -809,8 +874,38 @@ func statShareFile(w http.ResponseWriter, account, share, filePath string) (stri
 	return hostPath, info, props, true
 }
 
+// statShareFileForRead resolves one file the way a read addresses it: in the
+// share itself, or in the copy a snapshot froze when the request carries
+// `?sharesnapshot=`.
+func statShareFileForRead(w http.ResponseWriter, r *http.Request, account, share, filePath string) (string, os.FileInfo, FileObject, bool) {
+	if r.URL.Query().Get("sharesnapshot") == "" {
+		return statShareFile(w, account, share, filePath)
+	}
+	root, ok := filesShareRootDir(w, r, account, share)
+	if !ok {
+		return "", nil, FileObject{}, false
+	}
+	hostPath, ok := filesEntryHostPath(root, filePath)
+	if !ok {
+		writeStorageError(w, "InvalidResourceName",
+			"The specified resource name contains invalid characters.", http.StatusBadRequest)
+		return "", nil, FileObject{}, false
+	}
+	info, err := os.Stat(hostPath)
+	if err != nil || info.IsDir() {
+		if err != nil && !os.IsNotExist(err) {
+			writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+			return "", nil, FileObject{}, false
+		}
+		writeStorageError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
+		return "", nil, FileObject{}, false
+	}
+	props, _ := fileObjects.Get(fileObjectKey(account, share, filePath))
+	return hostPath, info, props, true
+}
+
 func handleFilesGetFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
-	hostPath, info, props, ok := statShareFile(w, account, share, filePath)
+	hostPath, info, props, ok := statShareFileForRead(w, r, account, share, filePath)
 	if !ok {
 		return
 	}
@@ -836,11 +931,19 @@ func handleFilesGetFile(w http.ResponseWriter, r *http.Request, account, share, 
 }
 
 func handleFilesHeadFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
-	_, info, props, ok := statShareFile(w, account, share, filePath)
+	_, info, props, ok := statShareFileForRead(w, r, account, share, filePath)
 	if !ok {
 		return
 	}
 	writeFileHeaders(w, props, info)
+	lease, held := filesActiveLease(account, share, filePath)
+	w.Header().Set("x-ms-lease-state", filesLeaseState(lease, held))
+	if held {
+		w.Header().Set("x-ms-lease-status", "locked")
+	} else {
+		w.Header().Set("x-ms-lease-status", "unlocked")
+	}
+	writeFileSMBHeaders(w, share, filePath, info, "", "")
 }
 
 func handleFilesDeleteFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
@@ -848,6 +951,10 @@ func handleFilesDeleteFile(w http.ResponseWriter, r *http.Request, account, shar
 	if !ok {
 		return
 	}
+	if !filesRequireLease(w, r, account, share, filePath, "file") {
+		return
+	}
+	fileLeases.Delete(fileLeaseKey(account, share, filePath))
 	if err := os.Remove(hostPath); err != nil {
 		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
@@ -910,13 +1017,12 @@ func queueKey(account, queue string) string { return account + "/" + queue }
 //	GET    /{queue}/messages                        GetMessages
 //	GET    /{queue}/messages?peekonly=true          PeekMessages
 //	DELETE /{queue}/messages                        ClearMessages
+//	PUT    /{queue}/messages/{messageid}            UpdateMessage
 //	DELETE /{queue}/messages/{messageid}            DeleteMessage
-//
-// Set Service Properties, Get Service Statistics, the queue access policy
-// (comp=acl) and Update Message are declared gaps. Set Service Properties in
-// particular used to be answered by the GET handler — the caller was handed the
-// unchanged properties document and a 200, as though its write had taken
-// effect.
+//	GET    /{queue}?comp=acl                        GetQueueAccessPolicy
+//	PUT    /{queue}?comp=acl                        SetQueueAccessPolicy
+//	PUT    /?restype=service&comp=properties        SetServiceProperties
+//	GET    /?restype=service&comp=stats             GetServiceStatistics
 func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account string) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	q := r.URL.Query()
@@ -929,7 +1035,11 @@ func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 			handleQueuesList(w, r, account)
 		case (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
 			restype == "service" && comp == "properties":
-			writeStorageXML(w, http.StatusOK, defaultStorageServiceProperties())
+			handleQueuesGetServiceProperties(w, r, account)
+		case r.Method == http.MethodPut && restype == "service" && comp == "properties":
+			handleQueuesSetServiceProperties(w, r, account)
+		case r.Method == http.MethodGet && restype == "service" && comp == "stats":
+			handleQueuesGetServiceStatistics(w, r, account)
 		default:
 			writeStorageOperationNotImplemented(w, r, "Queues")
 		}
@@ -944,6 +1054,10 @@ func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 	}
 
 	if len(segs) == 1 {
+		if comp == "acl" {
+			handleQueueACL(w, r, account, queue)
+			return
+		}
 		switch r.Method {
 		case http.MethodPut:
 			switch comp {
@@ -962,7 +1076,8 @@ func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 			handleQueueDelete(w, r, account, queue)
 		case http.MethodGet, http.MethodHead:
 			// Get Queue Metadata is the only documented read on the queue
-			// itself, and Azure addresses it with comp=metadata.
+			// itself besides the access policy, and Azure addresses it with
+			// comp=metadata.
 			if comp != "metadata" {
 				writeStorageOperationNotImplemented(w, r, "Queues")
 				return
@@ -1003,13 +1118,14 @@ func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 	}
 	if len(segs) == 3 {
 		messageID := segs[2]
-		if r.Method == http.MethodDelete {
+		switch r.Method {
+		case http.MethodDelete:
 			handleQueueDeleteMessage(w, r, account, queue, messageID)
-			return
+		case http.MethodPut:
+			handleQueueUpdateMessage(w, r, account, queue, messageID)
+		default:
+			writeStorageOperationNotImplemented(w, r, "Queues")
 		}
-		// PUT /{queue}/messages/{messageid} is Update Message, which the
-		// simulator does not implement.
-		writeStorageOperationNotImplemented(w, r, "Queues")
 		return
 	}
 	writeStorageError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
@@ -1244,16 +1360,35 @@ func handleQueueDeleteMessage(w http.ResponseWriter, r *http.Request, account, q
 		return
 	}
 	popReceipt := r.URL.Query().Get("popreceipt")
+	var found, mismatched bool
 	queueData.Update(key, func(qq *QueueData) {
 		out := qq.Messages[:0]
 		for _, m := range qq.Messages {
-			if m.MessageID == messageID && m.PopReceipt == popReceipt {
-				continue
+			if m.MessageID == messageID {
+				found = true
+				if m.PopReceipt != popReceipt {
+					mismatched = true
+				} else {
+					continue
+				}
 			}
 			out = append(out, m)
 		}
 		qq.Messages = out
 	})
+	// A delete is only the holder of the pop receipt's to make, and the service
+	// says so rather than reporting a deletion that did not happen.
+	if !found {
+		writeStorageError(w, "MessageNotFound",
+			"The specified message does not exist.", http.StatusNotFound)
+		return
+	}
+	if mismatched {
+		writeStorageError(w, "PopReceiptMismatch",
+			"The specified pop receipt did not match the pop receipt for a dequeued message.",
+			http.StatusBadRequest)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

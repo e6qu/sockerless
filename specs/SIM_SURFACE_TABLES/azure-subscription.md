@@ -20,13 +20,13 @@ Surface registered in `simulators/azure/subscription.go` (and related files grou
 | `GET /tenants` | ✓ `simulators/azure/subscription.go:112::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /providers/Microsoft.Resources/checkResourceName` | ✓ `simulators/azure/subscription.go:126::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /subscriptions/{subscriptionId}/providers/Microsoft.Resources/checkZonePeers/` | ✓ `simulators/azure/subscription.go:148::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /providers/Microsoft.Subscription/aliases/{aliasName}` | ✓ `simulators/azure/subscription_alias.go:60::handleSubscriptionAliasCreate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /providers/Microsoft.Subscription/aliases/{aliasName}` | ✓ `simulators/azure/subscription_alias.go:63::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /providers/Microsoft.Subscription/aliases/{aliasName}` | ✓ `simulators/azure/subscription_alias.go:80::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /providers/Microsoft.Subscription/aliases` | ✓ `simulators/azure/subscription_alias.go:90::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Subscription/cancel` | ✓ `simulators/azure/subscription_alias.go:102::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Subscription/enable` | ✓ `simulators/azure/subscription_alias.go:109::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Subscription/rename` | ✓ `simulators/azure/subscription_alias.go:116::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /providers/Microsoft.Subscription/aliases/{aliasName}` | ✓ `simulators/azure/subscription_alias.go:68::handleSubscriptionAliasCreate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /providers/Microsoft.Subscription/aliases/{aliasName}` | ✓ `simulators/azure/subscription_alias.go:71::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /providers/Microsoft.Subscription/aliases/{aliasName}` | ✓ `simulators/azure/subscription_alias.go:88::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /providers/Microsoft.Subscription/aliases` | ✓ `simulators/azure/subscription_alias.go:98::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Subscription/cancel` | ✓ `simulators/azure/subscription_alias.go:110::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Subscription/enable` | ✓ `simulators/azure/subscription_alias.go:117::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Subscription/rename` | ✓ `simulators/azure/subscription_alias.go:124::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 
@@ -34,4 +34,15 @@ Surface registered in `simulators/azure/subscription.go` (and related files grou
 - Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
+
+The simulator serves every operation the vendored
+`subscription-arm-subscriptions-2021-10-01` Swagger declares (15 of 15; the
+count is locked by `azureMethodFloor` in `simulators/azure/azure_coverage_test.go`).
+
+The `tf-test` cells above read `n/a` for the ownership, policy and
+operation-catalog rows because the AzureRM provider wraps none of them:
+`azurerm_subscription` covers the alias creation and the cancel/rename/enable
+actions, and there is no provider resource for the ownership handover, the
+tenant policy, the billing-account policy, or the provider operation catalog.
+
 <!-- HAND-WRITTEN END -->

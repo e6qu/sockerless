@@ -152,6 +152,81 @@ func TestSubscriptionAlias_CreateLifecycle(t *testing.T) {
 	assert.Equal(t, armsubscriptions.SubscriptionStateEnabled, *sub.State)
 }
 
+// TestSubscriptionAlias_ProviderRefreshReadPath walks the exact two-call
+// sequence the azurerm provider's `azurerm_subscription` refresh performs
+// against a live alias: Alias_Get for the alias named in the resource id,
+// then Subscriptions_Get for the subscription id that alias reports. The
+// provider stores what those two responses carry — the alias resource path
+// as the resource id, and the subscription's id, display name and tenant id
+// as attributes — so a missing member in either response makes it either
+// drop the resource from state (plan: create) or plan a spurious change.
+//
+// Refresh is repeated to assert the read is stable: the same alias must keep
+// answering with the same subscription id, and the subscription must stay
+// Enabled once the creation operation has settled.
+func TestSubscriptionAlias_ProviderRefreshReadPath(t *testing.T) {
+	aliasClient, err := armsubscription.NewAliasClient(&fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	subsClient, err := armsubscriptions.NewClient(&fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+
+	const aliasName = "sdk-test-sub-alias-refresh"
+	const billingScope = "/providers/Microsoft.Billing/billingAccounts/sim-billing-account/enrollmentAccounts/sim-enrollment"
+	poller, err := aliasClient.BeginCreate(ctx, aliasName, armsubscription.PutAliasRequest{
+		Properties: &armsubscription.PutAliasRequestProperties{
+			DisplayName:  to.Ptr("SDK Refresh Subscription"),
+			Workload:     to.Ptr(armsubscription.WorkloadProduction),
+			BillingScope: to.Ptr(billingScope),
+		},
+	}, nil)
+	require.NoError(t, err)
+	created, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, created.Properties)
+	require.NotNil(t, created.Properties.SubscriptionID)
+	newSubID := *created.Properties.SubscriptionID
+	t.Cleanup(func() {
+		_, err := aliasClient.Delete(ctx, aliasName, nil)
+		require.NoError(t, err)
+	})
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		alias, err := aliasClient.Get(ctx, aliasName, nil)
+		require.NoError(t, err, "refresh %d: Alias_Get", attempt)
+		require.NotNil(t, alias.ID, "refresh %d: alias id is the terraform resource id", attempt)
+		assert.Equal(t, "/providers/Microsoft.Subscription/aliases/"+aliasName, *alias.ID)
+		require.NotNil(t, alias.Name)
+		assert.Equal(t, aliasName, *alias.Name)
+		require.NotNil(t, alias.Type)
+		assert.Equal(t, "Microsoft.Subscription/aliases", *alias.Type)
+		require.NotNil(t, alias.Properties, "refresh %d: alias properties", attempt)
+		require.NotNil(t, alias.Properties.SubscriptionID,
+			"refresh %d: the alias must report its subscription id — the provider reads the subscription through it", attempt)
+		assert.Equal(t, newSubID, *alias.Properties.SubscriptionID)
+		require.NotNil(t, alias.Properties.ProvisioningState)
+		assert.Equal(t, armsubscription.ProvisioningStateSucceeded, *alias.Properties.ProvisioningState)
+		require.NotNil(t, alias.Properties.Workload)
+		assert.Equal(t, armsubscription.WorkloadProduction, *alias.Properties.Workload)
+		require.NotNil(t, alias.Properties.BillingScope)
+		assert.Equal(t, billingScope, *alias.Properties.BillingScope)
+
+		sub, err := subsClient.Get(ctx, *alias.Properties.SubscriptionID, nil)
+		require.NoError(t, err, "refresh %d: Subscriptions_Get", attempt)
+		require.NotNil(t, sub.ID)
+		assert.Equal(t, "/subscriptions/"+newSubID, *sub.ID)
+		require.NotNil(t, sub.SubscriptionID)
+		assert.Equal(t, newSubID, *sub.SubscriptionID)
+		require.NotNil(t, sub.DisplayName,
+			"refresh %d: the subscription must report its display name — the provider stores it as subscription_name", attempt)
+		assert.Equal(t, "SDK Refresh Subscription", *sub.DisplayName)
+		require.NotNil(t, sub.TenantID,
+			"refresh %d: the subscription must report its tenant id — the provider stores it as tenant_id", attempt)
+		assert.Equal(t, simTenantID, *sub.TenantID)
+		require.NotNil(t, sub.State)
+		assert.Equal(t, armsubscriptions.SubscriptionStateEnabled, *sub.State)
+	}
+}
+
 // TestSubscriptionAlias_AdoptExistingSubscription creates an alias for an
 // already-existing subscription id — the second creation mode the alias API
 // supports (properties.subscriptionId instead of a billing scope).

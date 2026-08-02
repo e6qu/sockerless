@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -161,8 +162,16 @@ func TestFilesDataPlaneReadsWhatAMountingContainerWrote(t *testing.T) {
 	}
 	rec = filesPlaneRequest(t, srv, http.MethodGet, account, "/"+share+"?restype=directory&comp=list", nil, nil)
 	requireFilesStatus(t, rec, http.StatusOK, "ListFilesAndDirectories")
-	if !strings.Contains(rec.Body.String(), "<Directory><Name>logs</Name></Directory>") {
-		t.Fatalf("directory listing = %s, want it to name the logs directory", rec.Body.String())
+	listing := rec.Body.String()
+	directories, files, err := parseFilesListing(listing)
+	if err != nil {
+		t.Fatalf("parse directory listing %s: %v", listing, err)
+	}
+	if len(directories) != 1 || directories[0] != "logs" {
+		t.Fatalf("directory listing = %s, want the logs directory listed as a Directory", listing)
+	}
+	if len(files) != 1 || files[0] != "result.txt" {
+		t.Fatalf("directory listing = %s, want result.txt listed as a File", listing)
 	}
 }
 
@@ -309,4 +318,30 @@ func TestFilesDataPlaneProjectsARMShareOntoTheMountedDirectory(t *testing.T) {
 	}
 	requireFilesStatus(t, filesPlaneRequest(t, srv, http.MethodGet, account, "/"+share+"?restype=share", nil, nil),
 		http.StatusNotFound, "GetShareProperties after ARM delete")
+}
+
+// parseFilesListing decodes a List Directories and Files response into the
+// directory and file names it enumerates, so a test asserts what the listing
+// says rather than how the XML happens to be laid out.
+func parseFilesListing(body string) (directories, files []string, err error) {
+	var doc struct {
+		Entries struct {
+			Directories []struct {
+				Name string `xml:"Name"`
+			} `xml:"Directory"`
+			Files []struct {
+				Name string `xml:"Name"`
+			} `xml:"File"`
+		} `xml:"Entries"`
+	}
+	if err := xml.Unmarshal([]byte(body), &doc); err != nil {
+		return nil, nil, err
+	}
+	for _, d := range doc.Entries.Directories {
+		directories = append(directories, d.Name)
+	}
+	for _, f := range doc.Entries.Files {
+		files = append(files, f.Name)
+	}
+	return directories, files, nil
 }

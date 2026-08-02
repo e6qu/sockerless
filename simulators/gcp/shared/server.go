@@ -28,9 +28,14 @@ type ServiceHandler interface {
 
 // Server is the main simulator HTTP server.
 type Server struct {
-	config  Config
-	logger  zerolog.Logger
-	mux     *http.ServeMux
+	config Config
+	logger zerolog.Logger
+	mux    *http.ServeMux
+	// routed is the routing core: the mux plus the middlewares that must run
+	// after a request has been claimed. WrapHandler wraps this, so a
+	// host-addressed data plane intercepts ahead of the generic path handlers
+	// while still being observed by the outer chain built in finalHandler.
+	routed  http.Handler
 	handler http.Handler
 	db      *sql.DB         // nil when persistence disabled
 	tracker *ProcessTracker // nil when persistence disabled
@@ -104,11 +109,8 @@ func NewServer(cfg Config) (*Server, error) {
 	// middlewares run inside the span. Spans emit to a no-op tracer
 	// unless main.go calls InitObservability with OTEL_EXPORTER_OTLP_ENDPOINT
 	// set in the env.
-	var handler http.Handler = mux
-	handler = AuthPassthroughMiddleware(cfg.Provider)(handler)
-	handler = LoggingMiddleware(logger, cfg.Provider)(handler)
-	handler = RequestIDMiddleware(cfg.Provider)(handler)
-	handler = otelhttp.NewHandler(handler, "sockerless-sim-"+cfg.Provider)
+	var routed http.Handler = mux
+	routed = AuthPassthroughMiddleware(cfg.Provider)(routed)
 
 	// Initialize Docker/Podman for workload execution. SIM_RUNTIME=process
 	// is an explicit API-only startup mode for non-execution service slices.
@@ -122,11 +124,11 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	srv := &Server{
-		config:  cfg,
-		logger:  logger,
-		mux:     mux,
-		handler: handler,
-		uiAuth:  uiAuth,
+		config: cfg,
+		logger: logger,
+		mux:    mux,
+		routed: routed,
+		uiAuth: uiAuth,
 	}
 
 	// Open SQLite database if persistence enabled. No fallback —
@@ -179,12 +181,28 @@ func (s *Server) RoutePatterns() []string {
 // data planes and the spec-validation capture use this to observe or route
 // requests before generic path handlers.
 func (s *Server) WrapHandler(middleware func(http.Handler) http.Handler) {
-	s.handler = middleware(s.handler)
+	s.routed = middleware(s.routed)
+	s.handler = nil
+}
+
+// finalHandler returns the outermost chain, building it on first use after the
+// last WrapHandler call. otelhttp is outermost so per-request spans see the
+// post-routing path; logging and request-id run inside the span and outside
+// every wrapper, so a request a host-addressed data plane claims is observed
+// like any other.
+func (s *Server) finalHandler() http.Handler {
+	if s.handler == nil {
+		h := s.routed
+		h = LoggingMiddleware(s.logger, s.config.Provider)(h)
+		h = RequestIDMiddleware(s.config.Provider)(h)
+		s.handler = otelhttp.NewHandler(h, "sockerless-sim-"+s.config.Provider)
+	}
+	return s.handler
 }
 
 // ServeHTTP serves through the same final handler chain as ListenAndServe.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.handler.ServeHTTP(w, r)
+	s.finalHandler().ServeHTTP(w, r)
 }
 
 // Mux returns the underlying ServeMux for direct registration.
@@ -212,7 +230,7 @@ func (s *Server) Logger() zerolog.Logger {
 func (s *Server) ListenAndServe() error {
 	srv := &http.Server{
 		Addr:    s.config.ListenAddr,
-		Handler: s.handler,
+		Handler: s.finalHandler(),
 		// Bound only the header read (slowloris protection). A fixed
 		// ReadTimeout/WriteTimeout caps the WHOLE body, which cuts off large
 		// image-layer / build-context uploads + downloads under load —

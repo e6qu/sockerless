@@ -115,28 +115,43 @@ var azureMethodFloor = map[string]int{
 	"monitor-dataplane-datacollectionrules-2023-01-01": 1,
 	"monitor-dataplane-operationalinsights-v1":         5,
 	"msi-arm-managedidentity-2024-11-30":               12,
-	"network-arm-applicationgateway-2025-03-01":        0,
-	"network-arm-applicationsecuritygroup-2025-03-01":  0,
-	"network-arm-loadbalancer-2025-03-01":              27,
-	"network-arm-natgateway-2025-03-01":                6,
-	"network-arm-networkinterface-2025-03-01":          15,
-	"network-arm-networkmanager-2025-03-01":            0,
-	"network-arm-networkprofile-2025-03-01":            0,
-	"network-arm-networksecuritygroup-2025-03-01":      12,
-	"network-arm-networkwatcher-2025-03-01":            0,
-	"network-arm-privateendpoint-2025-03-01":           0,
-	"network-arm-privatelinkservice-2025-03-01":        0,
-	"network-arm-publicipaddress-2025-03-01":           9,
-	"network-arm-publicipprefix-2025-03-01":            6,
-	"network-arm-routetable-2025-03-01":                10,
-	"network-arm-serviceendpointpolicy-2025-03-01":     0,
-	"network-arm-virtualnetwork-2025-03-01":            21,
-	"network-arm-virtualnetworktap-2025-03-01":         0,
-	"operationalinsights-arm-sharedkeys-2020-08-01":    1,
-	"operationalinsights-arm-workspaces-2020-08-01":    8,
-	"postgresql-arm-openapi-2025-08-01":                66,
-	"privatedns-arm-privatedns-2024-06-01":             17,
-	"redis-arm-redis-2024-11-01":                       41,
+	// 21 of 22. ApplicationGateways_ListAvailableWafRuleSets is the one left
+	// out: its answer is the Core Rule Set catalog — every rule id, group and
+	// description of every OWASP and Microsoft managed rule set — which the
+	// simulator does not carry and cannot compute, and a partial catalog
+	// presented as the real one would be worse than an honest gap.
+	"network-arm-applicationgateway-2025-03-01":       21,
+	"network-arm-applicationsecuritygroup-2025-03-01": 6,
+	"network-arm-loadbalancer-2025-03-01":             27,
+	"network-arm-natgateway-2025-03-01":               6,
+	"network-arm-networkinterface-2025-03-01":         15,
+	// Azure Virtual Network Manager's own resource, its commit and its
+	// deployment status. The configuration resources a commit deploys
+	// (network groups, connectivity and security-admin configurations) are
+	// separate specifications that are not vendored here, so a commit that
+	// names one is refused for the configuration that does not exist.
+	"network-arm-networkmanager-2025-03-01":       8,
+	"network-arm-networkprofile-2025-03-01":       6,
+	"network-arm-networksecuritygroup-2025-03-01": 12,
+	// 29 of 35. The six PacketCaptures operations are the gap: a packet
+	// capture's whole content is the traffic it records off a machine's
+	// interface into a storage account, and the simulator has no capture path
+	// to produce it — a session reported as Running with no packets behind it
+	// would be a fiction.
+	"network-arm-networkwatcher-2025-03-01":         29,
+	"network-arm-privateendpoint-2025-03-01":        11,
+	"network-arm-privatelinkservice-2025-03-01":     13,
+	"network-arm-publicipaddress-2025-03-01":        9,
+	"network-arm-publicipprefix-2025-03-01":         6,
+	"network-arm-routetable-2025-03-01":             10,
+	"network-arm-serviceendpointpolicy-2025-03-01":  10,
+	"network-arm-virtualnetwork-2025-03-01":         21,
+	"network-arm-virtualnetworktap-2025-03-01":      6,
+	"operationalinsights-arm-sharedkeys-2020-08-01": 1,
+	"operationalinsights-arm-workspaces-2020-08-01": 8,
+	"postgresql-arm-openapi-2025-08-01":             66,
+	"privatedns-arm-privatedns-2024-06-01":          17,
+	"redis-arm-redis-2024-11-01":                    41,
 	// Lowered from 36. The generic-resource operations — the five methods on
 	// "/{resourceId}" and the five on ".../providers/{ns}/{parentResourcePath}/
 	// {type}/{name}" — all mux-miss. Their templates are almost pure parameters,
@@ -163,40 +178,34 @@ var azureMethodFloor = map[string]int{
 	// instead of falling through to whichever sibling handler sits under the
 	// same method. What the numbers cover:
 	//
-	//   blob 17/69 — containers (create/get/delete/list, flat + hierarchical),
-	//     blobs (put/get/head/delete, copy via x-ms-copy-source), block staging
-	//     and commit, and ListContainers. Unserved: every lease verb, Set Blob
-	//     Tier / Metadata / Tags / Expiry / HTTP headers, page and append
-	//     ranges, snapshots, undelete, immutability and legal hold, blob query,
-	//     container ACL / metadata / rename / undelete / filter, and the
-	//     service-level batch, filter, statistics, account-info and
-	//     Set Service Properties operations. Get Blob Service Properties is
-	//     served: the azurerm provider polls it while waiting for a storage
-	//     account's data plane, so it is part of creating an account.
-	//     Blob_StartCopyFromURL and
-	//     Blob_CopyFromURL count as unserved because the specification
-	//     addresses them at "?comp=copy", a spelling no client sends — the
-	//     simulator serves Copy Blob where Azure documents it, at the bare PUT
-	//     carrying x-ms-copy-source.
-	//   file 13/51 — shares (create/get/delete/ACL get+set), the share-root
-	//     directory listing, and files (create/download/properties/delete/upload-range).
-	//     Unserved: every directory operation below the share root, share
-	//     lease / snapshot / permission / statistics / metadata / properties /
-	//     undelete, file leases, handles, range lists, renames, copies, hard and
-	//     symbolic links, and Set File Service Properties. Get File Service
-	//     Properties is served, the Files sibling of the operation the Blob and
-	//     Queue planes answer.
-	//     File_UploadRangeFromURL counts as served only because the probe cannot
-	//     send its required x-ms-copy-source header, so it reaches the Upload
-	//     Range handler; with the header the dispatcher declares the gap.
-	//   queue 11/16 — queues (create/delete/metadata get+set) and messages
-	//     (enqueue/dequeue/peek/clear/delete). Unserved: Set Service Properties,
-	//     Get Service Statistics, the queue access policy (comp=acl) and Update
-	//     Message.
-	"storage-dataplane-blob-2026-04-06":         18,
-	"storage-dataplane-file-2026-04-06":         13,
-	"storage-dataplane-queue-2018-03-28":        11,
-	"subscription-arm-subscriptions-2021-10-01": 7,
+	//   blob 69/69 — the whole vendored Blob data-plane surface: containers
+	//     (create/get/delete/list flat + hierarchical, metadata, ACL, rename,
+	//     restore, batch, filter, lease), blobs (put/get/head/delete, the copy
+	//     family, block staging and commit, page and append ranges, snapshots,
+	//     undelete, tags, tier, expiry, HTTP headers, immutability and legal
+	//     hold, lease, query), and the account-wide service operations
+	//     (properties get+set, statistics, user delegation key, account info,
+	//     filter, batch). Copy Blob is reachable both where Azure documents it —
+	//     the bare PUT carrying x-ms-copy-source — and at the "?comp=copy" key
+	//     the specification models it under.
+	//   file 51/51 — the whole documented Files data plane: the service
+	//     (list shares, service properties get+set, user delegation key), the
+	//     share (create/get/delete, lease, snapshot, stored permissions, ACL,
+	//     statistics, metadata, properties, restore), every directory operation
+	//     at any depth, and every file operation (create, download, properties,
+	//     metadata, leases, ranges and range lists, handles, rename, copy, hard
+	//     and symbolic links).
+	//   queue 16/16 — the whole documented Queues data plane: the service
+	//     (list queues, service properties get+set, statistics), the queue
+	//     (create/delete, metadata get+set, access policy get+set) and messages
+	//     (enqueue/dequeue/peek/clear/update/delete).
+	"storage-dataplane-blob-2026-04-06":  69,
+	"storage-dataplane-file-2026-04-06":  51,
+	"storage-dataplane-queue-2018-03-28": 16,
+	// The whole document: aliases, the subscription actions, the ownership
+	// acceptance long-running operation and its status, the tenant and
+	// billing-account policies, and the provider operation catalog.
+	"subscription-arm-subscriptions-2021-10-01": 15,
 	"web-arm-openapi-2025-03-01":                161,
 }
 
