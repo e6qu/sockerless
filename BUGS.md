@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2897 filed - 2895 fixed - 10 open - 16 false positives.**
+**2898 filed - 2896 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -24,6 +24,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2898~~ | P2 | Azure console delete-error test scoped its assertions to a retired dialog surface | the test captured the `DialogSurface` node once and kept using it as the `within()` scope across interactions; a re-render mounts a new surface and Fluent's tabster modalizer retires the old one with `aria-hidden="true"`, which `*ByRole` queries skip — so the captured node still resolved as an element while scoping every role query inside it to nothing, failing as "Unable to find role=alert" against a printed DOM that plainly contained the alert. Intermittent, and it fired on a hosted runner after passing the run before | Each scoped assertion resolves the live dialog first. It asserts nothing weaker — an accessible dialog must exist and must contain the accessible alert — confirmed by a negative control that lets a backdrop click discard the error and still fails. |
 | ~~2897~~ | P2 | An organization policy was escapable by addressing the project by number | every Cloud Resource Manager method accepts a project by id or by number, but the hierarchy walk keyed on whatever spelling its caller passed — so a service enforcing a constraint against `projects/{number}` found no policy where one was set under `projects/{id}` and allowed the operation the policy forbids | The walk canonicalizes each hierarchy node to the project id before reading policies. A negative control confirms the regression fails against the previous keying. |
 | ~~2896~~ | P2 | Cloud Resource Manager liens were recorded but never enforced | a lien exists to block a project's deletion, and the simulator's `DeleteProject` ignored the collection entirely — a project could be soft-deleted with a `resourcemanager.projects.delete` lien held on it, which is the one thing the resource prevents | Both API versions refuse the delete with the real FAILED_PRECONDITION contract while such a lien names the project by id or by number, and proceed once it is removed. |
 | ~~2895~~ | P2 | Google simulator answered UNAUTHENTICATED for every unrouted path | the bearer gate ran before routing, so a URI no Google method publishes came back 401 instead of 404 — the absence of a route and a rejected credential were indistinguishable to a client, and a probe of a nonexistent endpoint read as an authentication failure (GitHub issue #875) | The gate asks the mux whether a method claims the request first, matching Google's own API frontend: `GET https://run.googleapis.com/nope` answers 404 anonymously while a real API path answers 401. The two host-addressed data planes whose mount patterns match every URI are outside the gate and authenticate themselves once they know the request is theirs. |

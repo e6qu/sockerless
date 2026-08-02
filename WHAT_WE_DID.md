@@ -53,6 +53,17 @@ once they know the request is theirs — which incidentally fixed the Compute
 Engine load-balancer front end, where reaching a simulated load balancer had
 required an OAuth2 token no real client sends to one.
 
+An intermittent Azure console test failure surfaced during this branch's CI
+and was fixed rather than retried. The delete-error test captured the Fluent
+`DialogSurface` once and used it as the `within()` scope across later
+interactions; a re-render mounts a new surface and tabster's modalizer retires
+the old one with `aria-hidden="true"`, which `*ByRole` queries skip. The
+captured node therefore still resolved as an element while scoping every role
+query inside it to nothing — the failure read "Unable to find role=alert"
+against a printed DOM that plainly contained the alert. Each scoped assertion
+now resolves the live dialog first, which asserts nothing weaker: a negative
+control that lets a backdrop click discard the error still fails.
+
 Every method ships with its three client surfaces. The official Go clients
 cover all three API versions including `folders:search`, which has no gcloud
 command; `gcloud resource-manager org-policies`, `gcloud organizations`,
