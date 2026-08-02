@@ -397,6 +397,11 @@ func fingerprintMatches(current, supplied string) bool {
 	return supplied == "" || supplied == current
 }
 
+// registerGCPComputeLoadBalancerDataPlane mounts the front end a forwarding
+// rule's address answers on. It claims every path, so it is addressed by Host
+// rather than by path, and it carries no Google access token — a client reaching
+// a load balancer is reaching the workload behind it, not a Google API. A Host
+// that names no forwarding rule is not found.
 func registerGCPComputeLoadBalancerDataPlane(srv *sim.Server) {
 	srv.HandleFunc("/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		fr, ok := gcpForwardingRuleFromDataPlaneHost(r.Host)

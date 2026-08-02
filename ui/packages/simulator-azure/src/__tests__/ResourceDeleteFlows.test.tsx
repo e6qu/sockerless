@@ -37,6 +37,23 @@ function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 }
 
+/**
+ * Resolves the dialog surface that is currently in the accessibility tree.
+ *
+ * A re-render can mount a new `DialogSurface` and leave the previous one in
+ * the document with `aria-hidden="true"`, which is how Fluent's tabster
+ * modalizer retires a surface. `*ByRole` queries ignore an `aria-hidden`
+ * subtree, so a node captured before the re-render still resolves as an
+ * element while scoping every role query inside it to nothing — the failure
+ * reads "Unable to find role=alert" against a printed DOM that plainly
+ * contains the alert. Re-resolving before each scoped assertion keeps the
+ * scope on the live surface, and asserts nothing weaker: an accessible dialog
+ * must still exist, and it must still contain the accessible alert.
+ */
+async function liveDialog(): Promise<HTMLElement> {
+  return screen.findByRole("dialog");
+}
+
 function armError(code: string, message: string, status: number): Response {
   return jsonResponse({ error: { code, message } }, status);
 }
@@ -150,12 +167,9 @@ describe("ACRRegistriesPage delete", () => {
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Select ${id}` }));
     fireEvent.click(screen.getByTestId("acr-delete"));
-    const dialog = await screen.findByRole("dialog", { name: "Delete myregistry1?" });
-    fireEvent.click(within(dialog).getByTestId("acr-delete-confirm"));
+    fireEvent.click(within(await liveDialog()).getByTestId("acr-delete-confirm"));
 
-    const alert = await within(dialog).findByRole("alert");
-    expect(alert.textContent).toContain("active replications");
-    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect((await within(await liveDialog()).findByRole("alert")).textContent).toContain("active replications");
 
     // A backdrop click that races with the immediate error response must not
     // discard Azure Resource Manager's actionable failure. Explicit Cancel
@@ -168,9 +182,8 @@ describe("ACRRegistriesPage delete", () => {
     // the click schedules a re-render, and the dialog never legitimately
     // disappears here, so retrying cannot mask a regression — a suppressed
     // dismissal that actually closed would keep failing until the timeout.
-    expect(await screen.findByRole("dialog")).toBeTruthy();
-    expect((await within(dialog).findByRole("alert")).textContent).toContain("active replications");
-    fireEvent.click(within(dialog).getByTestId("acr-delete-cancel"));
+    expect((await within(await liveDialog()).findByRole("alert")).textContent).toContain("active replications");
+    fireEvent.click(within(await liveDialog()).getByTestId("acr-delete-cancel"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

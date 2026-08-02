@@ -117,18 +117,6 @@ func signRawSigV4JSON(t *testing.T, req *http.Request, service string, body []by
 	signRawSigV4(t, req, service, hex.EncodeToString(sum[:]))
 }
 
-func freeTCPPort() (int, error) {
-	listener, err := net.Listen("tcp", ":0")
-	if err != nil {
-		return 0, err
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	if err := listener.Close(); err != nil {
-		return 0, err
-	}
-	return port, nil
-}
-
 // freeTCPUDPPort returns one numeric port that was simultaneously available
 // on both protocols. Route 53 binds its configured DNS coordinate on TCP and
 // UDP, so selecting a UDP-only ephemeral port can collide with another
@@ -157,6 +145,37 @@ func freeTCPUDPPort() (int, error) {
 		return port, nil
 	}
 	return 0, fmt.Errorf("could not find a port available on both TCP and UDP after %d attempts", attempts)
+}
+
+// freeSimulatorPortPair reserves a simulator's HTTP coordinate and its Route 53
+// DNS coordinate as a pair that cannot be the same port.
+//
+// Selecting them with two independent probes is not enough. Each probe binds an
+// ephemeral port and releases it before returning the number, so the operating
+// system is free to hand the second probe the port the first just released. The
+// simulator then binds its Route 53 listener on the coordinate its HTTP server
+// needs and dies with "listen tcp :<port>: bind: address already in use", which
+// surfaces as a health-check timeout in whichever test launched it. Holding the
+// HTTP reservation open across the DNS probe removes the overlap: the DNS probe
+// binds TCP too, so it cannot be handed the held port.
+func freeSimulatorPortPair() (httpPort int, dnsPort int, err error) {
+	holder, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return 0, 0, err
+	}
+	httpPort = holder.Addr().(*net.TCPAddr).Port
+	dnsPort, dnsErr := freeTCPUDPPort()
+	closeErr := holder.Close()
+	if dnsErr != nil {
+		return 0, 0, dnsErr
+	}
+	if closeErr != nil {
+		return 0, 0, closeErr
+	}
+	if httpPort == dnsPort {
+		return 0, 0, fmt.Errorf("http and Route 53 coordinates collided on port %d", httpPort)
+	}
+	return httpPort, dnsPort, nil
 }
 
 var (
@@ -330,17 +349,14 @@ func TestMain(m *testing.M) {
 		buildTerraformAWSImage(workloadPlatform)
 	}
 
-	port, err := freeTCPPort()
+	// Route 53 serves the same DNS coordinate over UDP and TCP, and it must not
+	// land on the port the HTTP server is about to take.
+	port, dnsPortValue, err := freeSimulatorPortPair()
 	if err != nil {
-		log.Fatalf("Failed to find free port: %v", err)
+		log.Fatalf("Failed to reserve simulator ports: %v", err)
 	}
 	simPort = port
-
-	// Route 53 serves the same DNS coordinate over UDP and TCP.
-	dnsPort, err = freeTCPUDPPort()
-	if err != nil {
-		log.Fatalf("Failed to find free DNS port: %v", err)
-	}
+	dnsPort = dnsPortValue
 
 	simCmd = exec.Command(binaryPath)
 	simCmd.Env = append(os.Environ(),

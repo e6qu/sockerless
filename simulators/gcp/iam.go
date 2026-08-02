@@ -138,6 +138,15 @@ func registerIAM(srv *sim.Server) {
 			return
 		}
 
+		// The org policy the constraint governs is resolved through the
+		// project's place in the resource hierarchy, so a policy set on the
+		// organization or an intervening folder reaches the project too.
+		if crmOrgPolicyBooleanEnforced("projects/"+project, crmConstraintDisableServiceAccountCreation) {
+			sim.GCPError(w, http.StatusBadRequest,
+				"Service account creation is not allowed on this project.", "FAILED_PRECONDITION")
+			return
+		}
+
 		email := fmt.Sprintf("%s@%s.iam.gserviceaccount.com", req.AccountId, project)
 		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
 
@@ -284,6 +293,11 @@ func registerIAM(srv *sim.Server) {
 		sa, ok := serviceAccounts.Get(saName)
 		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Service account %s not found", email)
+			return
+		}
+		if crmOrgPolicyBooleanEnforced("projects/"+project, crmConstraintDisableServiceAccountKeyCreation) {
+			sim.GCPError(w, http.StatusBadRequest,
+				"Key creation is not allowed on this service account.", "FAILED_PRECONDITION")
 			return
 		}
 		keyID := generateUUID()
@@ -884,10 +898,14 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 	projects := sim.MakeStore[CRMProject](srv.DB(), "crm_projects")
 	crmProjects = projects
 	crmEnsureDefaultProject()
-	registerCloudResourceManagerV1(srv, projectPolicies)
+	crmOrganizations = sim.MakeStore[CRMOrganization](srv.DB(), "crm_organizations")
+	crmEnsureDefaultOrganization()
 	folders := sim.MakeStore[CRMFolder](srv.DB(), "crm_folders")
 	crmFolders = folders
-	liens := sim.MakeStore[CRMLien](srv.DB(), "crm_liens")
+	crmLiens = sim.MakeStore[CRMLien](srv.DB(), "crm_liens")
+	crmOrgPolicies = sim.MakeStore[CRMOrgPolicyRow](srv.DB(), "crm_org_policies")
+	registerCloudResourceManagerV1(srv, projectPolicies, resourcePolicies)
+	registerCloudResourceManagerV2(srv, resourcePolicies)
 	tagKeys := sim.MakeStore[CRMTagKey](srv.DB(), "crm_tag_keys")
 	tagValues := sim.MakeStore[CRMTagValue](srv.DB(), "crm_tag_values")
 	tagBindings := sim.MakeStore[CRMTagBinding](srv.DB(), "crm_tag_bindings")
@@ -1052,6 +1070,9 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 		// project may be deleted.
 		if p.State != "ACTIVE" {
 			sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Project \"%s\" has lifecycle state %s; delete requires ACTIVE", p.ProjectId, p.State)
+			return
+		}
+		if crmProjectDeleteBlocked(w, p) {
 			return
 		}
 		p.State = "DELETE_REQUESTED"
@@ -1229,82 +1250,46 @@ func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[
 	})
 
 	// ---- organizations (v3) ----------------------------------------------
+	// The organization store is shared with the v1 reads; an organization the
+	// caller cannot see is a 403, never a 404.
 	srv.HandleFunc("GET /v3/organizations:search", func(w http.ResponseWriter, r *http.Request) {
-		// The sim models a single representative organization the harness's
-		// projects/folders attach under.
-		org := map[string]any{
-			"name":                "organizations/123456789012",
-			"displayName":         "example.com",
-			"directoryCustomerId": "C0xxxxxxx",
-			"state":               "ACTIVE",
+		rows := crmOrganizations.Filter(func(o CRMOrganization) bool {
+			return crmOrganizationMatch(o, r.URL.Query().Get("query"))
+		})
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{"organizations": []any{org}})
+		resp := map[string]any{"organizations": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 	srv.HandleFunc("GET /v3/organizations/{org}", func(w http.ResponseWriter, r *http.Request) {
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"name":                "organizations/" + sim.PathParam(r, "org"),
-			"displayName":         "example.com",
-			"directoryCustomerId": "C0xxxxxxx",
-			"state":               "ACTIVE",
-		})
+		org, ok := crmOrganizations.Get("organizations/" + sim.PathParam(r, "org"))
+		if !ok {
+			crmOrganizationPermissionDenied(w)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, org)
 	})
 	srv.HandleFunc("POST /v3/organizations/{orgAction}", func(w http.ResponseWriter, r *http.Request) {
 		idAction := sim.PathParam(r, "orgAction")
 		if crmIamVerb(w, r, resourcePolicies, idAction, "organization") {
 			return
 		}
-		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported organization action")
+		gcpMethodNotFound(w)
 	})
 
 	// ---- liens (v3) ------------------------------------------------------
-	srv.HandleFunc("POST /v3/liens", func(w http.ResponseWriter, r *http.Request) {
-		var req CRMLien
-		if err := sim.ReadJSON(r, &req); err != nil {
-			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
-			return
-		}
-		l := CRMLien{
-			Name:         "liens/" + gcpNumericID(16),
-			Parent:       req.Parent,
-			Restrictions: req.Restrictions,
-			Reason:       req.Reason,
-			Origin:       req.Origin,
-			CreateTime:   nowTimestamp(),
-		}
-		liens.Put(l.Name, l)
-		sim.WriteJSON(w, http.StatusOK, l)
-	})
-	srv.HandleFunc("GET /v3/liens", func(w http.ResponseWriter, r *http.Request) {
-		parent := r.URL.Query().Get("parent")
-		rows := liens.Filter(func(l CRMLien) bool { return parent == "" || l.Parent == parent })
-		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
-		page, next, ok := paginateList(w, r, rows)
-		if !ok {
-			return
-		}
-		resp := map[string]any{"liens": page}
-		if next != "" {
-			resp["nextPageToken"] = next
-		}
-		sim.WriteJSON(w, http.StatusOK, resp)
-	})
-	srv.HandleFunc("GET /v3/liens/{lien}", func(w http.ResponseWriter, r *http.Request) {
-		l, ok := liens.Get("liens/" + sim.PathParam(r, "lien"))
-		if !ok {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "lien not found")
-			return
-		}
-		sim.WriteJSON(w, http.StatusOK, l)
-	})
-	srv.HandleFunc("DELETE /v3/liens/{lien}", func(w http.ResponseWriter, r *http.Request) {
-		name := "liens/" + sim.PathParam(r, "lien")
-		if _, ok := liens.Get(name); !ok {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "lien not found")
-			return
-		}
-		liens.Delete(name)
-		sim.WriteJSON(w, http.StatusOK, map[string]any{})
-	})
+	// One lien collection under two spellings: the handlers are shared with
+	// the v1 routes in cloudresourcemanager.go.
+	srv.HandleFunc("POST /v3/liens", crmCreateLien)
+	srv.HandleFunc("GET /v3/liens", crmListLiens)
+	srv.HandleFunc("GET /v3/liens/{lien}", crmGetLien)
+	srv.HandleFunc("DELETE /v3/liens/{lien}", crmDeleteLien)
 
 	// The v3 operations.get read lives in cloudresourcemanager.go
 	// (crmGetOperation) — every CRM LRO is persisted, so a poll returns

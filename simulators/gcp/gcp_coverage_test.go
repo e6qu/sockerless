@@ -57,6 +57,12 @@ import (
 var gcpMethodFloor = map[string]int{
 	"compute-v1":              1116,
 	"cloudresourcemanager-v3": 126,
+
+	// Cloud Resource Manager v2: every documented method is served. v2's only
+	// collection is folders — the wire gcloud's `resource-manager folders`
+	// group speaks — over the same folder store v3 serves; its operations.get
+	// is spelled at the v1 path, which the v1 routes already answer.
+	"cloudresourcemanager-v2": 24,
 	"bigtableadmin-v2":        164,
 	"cloudrun-v1":             100,
 	"dataflow-v1b3":           84,
@@ -79,13 +85,11 @@ var gcpMethodFloor = map[string]int{
 	// misses.
 	"cloudbilling-v1": 6,
 
-	// Cloud Resource Manager v1: the projects lifecycle (create, get, list,
-	// update, delete, undelete), the IAM triple and the operations poll are
-	// served; the org-policy family (getOrgPolicy, setOrgPolicy,
-	// clearOrgPolicy, getEffectiveOrgPolicy, listOrgPolicies,
-	// listAvailableOrgPolicyConstraints), getAncestry, and the folders,
-	// organizations and liens collections are not.
-	"cloudresourcemanager-v1": 26,
+	// Cloud Resource Manager v1: every documented method is served — the
+	// projects lifecycle and its getAncestry hierarchy read, the IAM triple,
+	// the organizations and liens collections, the operations poll, and the
+	// org-policy family on all three hierarchy nodes.
+	"cloudresourcemanager-v1": 76,
 
 	// Cloud Storage: objects.restore, objects.move, objects.bulkRestore and
 	// objectAccessControls.insert are unmounted — the probe gets Go's own mux
@@ -203,7 +207,7 @@ func newGCPCoverageProbe(t *testing.T) *gcpCoverageProbe {
 	if err != nil {
 		t.Fatalf("buildSimulator: %v", err)
 	}
-	srv.WrapHandler(bearerAuthMiddleware)
+	srv.WrapHandler(bearerAuthMiddleware(srv))
 	now := time.Now()
 	return &gcpCoverageProbe{
 		handler: srv,
