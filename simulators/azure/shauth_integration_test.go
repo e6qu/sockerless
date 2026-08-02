@@ -4,10 +4,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 
 	sim "github.com/sockerless/simulator"
 	uiauth "github.com/sockerless/simulator-ui-auth"
 )
+
+// consoleAssets stands in for the embedded single-page application. The
+// simulator mounts its Shauth relying party from RegisterUI, which the
+// production build reaches through registerUI with the embedded `dist`
+// directory — and which the `noui` build compiles away entirely. Handing
+// RegisterUI a filesystem directly exercises the mounting contract itself, so
+// these tests assert the wiring under every build tag rather than only the one
+// that embeds the console.
+func consoleAssets() fstest.MapFS {
+	return fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>console</title>")}}
+}
 
 // Shauth is an ADDITION to the Azure simulator's own authentication, never a
 // replacement for it: Azure Resource Manager keeps demanding its bearer, and
@@ -39,6 +51,7 @@ func TestShauthIsMountedAlongsideAzureAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSimulator with Shauth configured: %v", err)
 	}
+	srv.RegisterUI(consoleAssets())
 
 	get := func(path string) int {
 		t.Helper()
@@ -79,6 +92,7 @@ func TestShauthAbsentWhenUnconfiguredAzure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSimulator: %v", err)
 	}
+	srv.RegisterUI(consoleAssets())
 	req := httptest.NewRequest(http.MethodGet, uiauth.SessionPath, nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)

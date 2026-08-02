@@ -106,8 +106,17 @@ jobs:
       # serving the same revision the runner saw.
       - name: Check Amazon Web Services API specification freshness
         id: aws-spec-freshness
+        # The AWS and Azure specifications live in GitHub repositories, so this
+        # check resolves their upstream tip through the GitHub API.
+        # Unauthenticated requests are rate limited and the script treats a
+        # throttled reply as "cannot query upstream" — correctly refusing to
+        # pass a gate it could not evaluate — so the token is passed explicitly,
+        # exactly as the dependency-freshness steps above do. Google Cloud's
+        # Discovery documents are fetched from Google's own endpoints and need
+        # no token.
         run: bash scripts/check-spec-freshness.sh aws
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SPEC_FRESHNESS_CAPTURE_DIR: ${{ runner.temp }}/aws-spec-drift
       - name: Preserve drifted Amazon Web Services API specifications
         if: failure() && steps.aws-spec-freshness.outcome == 'failure'
@@ -125,6 +134,7 @@ jobs:
         if: '!cancelled()'
         run: bash scripts/check-spec-freshness.sh azure
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SPEC_FRESHNESS_CAPTURE_DIR: ${{ runner.temp }}/azure-spec-drift
       - name: Preserve drifted Microsoft Azure API specifications
         if: failure() && steps.azure-spec-freshness.outcome == 'failure'
