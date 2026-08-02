@@ -459,6 +459,12 @@ func TestNetworkApplicationGateway_PrivateLink(t *testing.T) {
 	require.NotNil(t, privateAddress)
 	assert.True(t, strings.HasPrefix(*privateAddress, "10.61.1."),
 		"the frontend address must come out of the gateway subnet, got %q", *privateAddress)
+	// Every frontend reports an allocation method — a frontend that named no
+	// static address is dynamic. Terraform reads this back on refresh, so an
+	// absent value re-plans the gateway on an unchanged configuration.
+	require.NotNil(t, gw.Properties.FrontendIPConfigurations[0].Properties.PrivateIPAllocationMethod)
+	assert.Equal(t, armnetwork.IPAllocationMethodDynamic,
+		*gw.Properties.FrontendIPConfigurations[0].Properties.PrivateIPAllocationMethod)
 
 	linkClient, err := armnetwork.NewApplicationGatewayPrivateLinkResourcesClient(subscriptionID, &fakeCredential{}, clientOpts())
 	require.NoError(t, err)

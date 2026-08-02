@@ -872,6 +872,15 @@ func stampApplicationGatewayChildren(gw *ApplicationGateway) {
 		})
 	}
 	applicationGatewayStamp(gw.ID, "frontendIPConfigurations", p.FrontendIPConfigurations, func(c *ApplicationGatewayFrontendIPConfiguration) {
+		// The service reports an allocation method on every frontend, public
+		// or private; a frontend that named no static address is dynamic.
+		if c.Properties.PrivateIPAllocationMethod == "" {
+			if c.Properties.PrivateIPAddress != "" {
+				c.Properties.PrivateIPAllocationMethod = "Static"
+			} else {
+				c.Properties.PrivateIPAllocationMethod = "Dynamic"
+			}
+		}
 		c.Properties.ProvisioningState = "Succeeded"
 	})
 	applicationGatewayStamp(gw.ID, "frontendPorts", p.FrontendPorts, func(c *ApplicationGatewayFrontendPort) {
