@@ -29,4 +29,29 @@ Surface registered in `simulators/aws/s3.go` (and related files grouped under th
 - Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
+
+## The three unserved operations are scoped out, not outstanding
+
+Amazon S3 serves every operation in the vendored Smithy model except three, and
+those three are a **decision**, not a backlog. Do not open them as a coverage
+gap; the reasoning, in full, lives next to the ratchet list in
+`simulators/aws/service_conformance_test.go` (`s3ConformanceMissing`).
+
+| Operation | Endpoint family it actually belongs to | Why a handler alone would be a fake |
+|---|---|---|
+| `WriteGetObjectResponse` | `{RequestRoute}.s3-object-lambda.<region>` (per request) | Only an S3 Object Lambda *function* calls it. Without Object Lambda access points routing `GetObject` through a Lambda, the operation has no caller. |
+| `CreateSession` | `s3express-control.<region>` / zonal bucket endpoints | Mints session credentials that later requests authenticate with. With no directory-bucket type and no session auth to verify them against, the credentials would be checked by nothing. |
+| `ListDirectoryBuckets` | `s3express-control.<region>` | Lists a bucket type the simulator does not model. |
+
+None of the three is addressed to the regional `s3.<region>.amazonaws.com`
+surface this simulator hosts, so implementing one means hosting another
+endpoint family and building the feature behind it — S3 Express One Zone as its
+own bucket type, or S3 Object Lambda access points. No backend, agent, runner,
+console, or test path in this repository uses either feature.
+
+**Revisit when a real consumer appears** — a backend storing workload state in a
+directory bucket, or a runner reading through an Object Lambda access point —
+and then implement the feature, not a bare handler on an endpoint no real
+client would reach.
+
 <!-- HAND-WRITTEN END -->
