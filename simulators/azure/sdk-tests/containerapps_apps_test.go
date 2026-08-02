@@ -414,7 +414,7 @@ func TestSDK_ContainerAppsApps_PatchMergesNotReplaces(t *testing.T) {
 	patchBody := `{
 		"properties": {
 			"template": {
-				"containers": [{"name":"main","image":"public.ecr.aws/docker/library/nginx:latest"}]
+				"containers": [{"name":"main","image":"public.ecr.aws/docker/library/alpine:3.20"}]
 			}
 		}
 	}`
@@ -463,7 +463,7 @@ func TestSDK_ContainerAppsApps_PatchMergesNotReplaces(t *testing.T) {
 
 	// Container image updated.
 	require.NotEmpty(t, patched.Properties.Template.Containers)
-	assert.Equal(t, "public.ecr.aws/docker/library/nginx:latest", patched.Properties.Template.Containers[0].Image)
+	assert.Equal(t, "public.ecr.aws/docker/library/alpine:3.20", patched.Properties.Template.Containers[0].Image)
 }
 
 // TestSDK_ContainerAppsApps_PatchRFC7396Semantics proves the PATCH handler

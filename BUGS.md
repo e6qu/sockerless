@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2891 filed - 2889 fixed - 10 open - 16 false positives.**
+**2892 filed - 2890 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -24,6 +24,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2892~~ | P2 | Azure Container Apps workload image acquisition | the Container Apps suites pulled their workload image inside the window a test allows the replica to reach RUNNING, so a cold runner's registry transfer surfaced as "container never started" rather than as image acquisition | The CLI harness pre-pulls the workload images with bounded backoff before any test deadline is running, matching the AWS harness; the patch-merge test's second image names a tag the repository already fetches rather than a second repository. |
 | ~~2891~~ | P1 | Azure private endpoint connection collections | `privateLinkServiceConnections` and `manualPrivateLinkServiceConnections` were omitted when empty, but the service reports both unconditionally — and the HashiCorp provider walks both on delete without a presence check, so the omission crashed the provider mid-destroy with a nil dereference rather than surfacing an actionable error | Both collections are always reported, empty when unused, pinned by a unit test that needs no real-network host. |
 | ~~2890~~ | P2 | Azure Container Apps test images pulled from Docker Hub | the Container Apps CLI and SDK suites named bare `alpine:latest`, so a throttled or slow Docker Hub answered a replica start with a pull timeout and failed four tests for reasons unrelated to the code under test | Every Azure suite image now names the ECR Public mirror the rest of the repository already uses. |
 | ~~2889~~ | P2 | Azure console delete-error test race | the assertion read the DOM at the single instant a backdrop click returned, while that click schedules a re-render | It queries for the retained dialog and its retained error, which cannot mask a regression: a dismissal that really closed the surface keeps failing until the timeout. |

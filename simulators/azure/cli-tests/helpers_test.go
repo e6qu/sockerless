@@ -136,6 +136,18 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to create resource group: %v\n%s", err, out)
 	}
 
+	// Pull the workload images the Container Apps suites start, before any
+	// test's own deadline is running. A cold runner's registry transfer would
+	// otherwise sit inside the window a test allows for the container to reach
+	// RUNNING, and surface as "container never started" rather than as the
+	// image acquisition it actually is.
+	for _, image := range []string{
+		"public.ecr.aws/docker/library/alpine:latest",
+		"public.ecr.aws/docker/library/alpine:3.20",
+	} {
+		pullWorkloadImage(image)
+	}
+
 	code := m.Run()
 
 	simCmd.Process.Kill()
@@ -338,4 +350,25 @@ func waitForCLIJSON(t *testing.T, url string, ready func(string) bool) string {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// pullWorkloadImage fetches an image with bounded exponential backoff, so a
+// transient registry throttle does not fail the whole suite before it starts.
+func pullWorkloadImage(image string) {
+	delay := time.Second
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			time.Sleep(delay)
+			if delay < 8*time.Second {
+				delay *= 2
+			}
+		}
+		out, err := exec.Command("docker", "pull", image).CombinedOutput()
+		if err == nil {
+			return
+		}
+		lastErr = fmt.Errorf("%v: %s", err, out)
+	}
+	log.Fatalf("pull %s after retries: %v", image, lastErr)
 }
