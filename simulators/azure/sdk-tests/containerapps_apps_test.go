@@ -51,7 +51,7 @@ func TestSDK_ContainerAppsApps_CreateGetDelete(t *testing.T) {
 				Containers: []*armappcontainers.Container{
 					{
 						Name:  to.Ptr("main"),
-						Image: to.Ptr("alpine:latest"),
+						Image: to.Ptr("public.ecr.aws/docker/library/alpine:latest"),
 					},
 				},
 				Scale: &armappcontainers.Scale{
@@ -275,7 +275,7 @@ func TestSDK_ContainerAppsApps_SystemDataPreservedAcrossUpdates(t *testing.T) {
 	// Update with a different image — wait long enough that any restamp
 	// would produce a strictly later timestamp than originalCreatedAt.
 	time.Sleep(20 * time.Millisecond)
-	upPoller, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-systemdata-app", mkApp("alpine:latest"), nil)
+	upPoller, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-systemdata-app", mkApp("public.ecr.aws/docker/library/alpine:latest"), nil)
 	require.NoError(t, err)
 	updated, err := upPoller.PollUntilDone(ctx, nil)
 	require.NoError(t, err)
@@ -385,7 +385,7 @@ func TestSDK_ContainerAppsApps_PatchMergesNotReplaces(t *testing.T) {
 			},
 			Template: &armappcontainers.Template{
 				Containers: []*armappcontainers.Container{
-					{Name: to.Ptr("main"), Image: to.Ptr("alpine:latest")},
+					{Name: to.Ptr("main"), Image: to.Ptr("public.ecr.aws/docker/library/alpine:latest")},
 				},
 				Volumes: []*armappcontainers.Volume{
 					{Name: to.Ptr("data"), StorageType: to.Ptr(armappcontainers.StorageType("EmptyDirectory"))},
@@ -414,7 +414,7 @@ func TestSDK_ContainerAppsApps_PatchMergesNotReplaces(t *testing.T) {
 	patchBody := `{
 		"properties": {
 			"template": {
-				"containers": [{"name":"main","image":"nginx:latest"}]
+				"containers": [{"name":"main","image":"public.ecr.aws/docker/library/nginx:latest"}]
 			}
 		}
 	}`
@@ -463,7 +463,7 @@ func TestSDK_ContainerAppsApps_PatchMergesNotReplaces(t *testing.T) {
 
 	// Container image updated.
 	require.NotEmpty(t, patched.Properties.Template.Containers)
-	assert.Equal(t, "nginx:latest", patched.Properties.Template.Containers[0].Image)
+	assert.Equal(t, "public.ecr.aws/docker/library/nginx:latest", patched.Properties.Template.Containers[0].Image)
 }
 
 // TestSDK_ContainerAppsApps_PatchRFC7396Semantics proves the PATCH handler
@@ -488,7 +488,7 @@ func TestSDK_ContainerAppsApps_PatchRFC7396Semantics(t *testing.T) {
 			EnvironmentID: to.Ptr(envID),
 			Template: &armappcontainers.Template{
 				Containers: []*armappcontainers.Container{
-					{Name: to.Ptr("main"), Image: to.Ptr("alpine:latest")},
+					{Name: to.Ptr("main"), Image: to.Ptr("public.ecr.aws/docker/library/alpine:latest")},
 				},
 				Scale: &armappcontainers.Scale{
 					MinReplicas: to.Ptr[int32](1),
@@ -555,7 +555,7 @@ func TestSDK_ContainerAppsApps_PatchRFC7396Semantics(t *testing.T) {
 
 	// Untouched members are preserved.
 	require.NotEmpty(t, patched.Properties.Template.Containers)
-	assert.Equal(t, "alpine:latest", patched.Properties.Template.Containers[0].Image)
+	assert.Equal(t, "public.ecr.aws/docker/library/alpine:latest", patched.Properties.Template.Containers[0].Image)
 }
 
 // TestSDK_ContainerAppsApps_DeleteLROEnvelope proves the DELETE contract at
@@ -580,7 +580,7 @@ func TestSDK_ContainerAppsApps_DeleteLROEnvelope(t *testing.T) {
 			EnvironmentID: to.Ptr(envID),
 			Template: &armappcontainers.Template{
 				Containers: []*armappcontainers.Container{
-					{Name: to.Ptr("main"), Image: to.Ptr("alpine:latest")},
+					{Name: to.Ptr("main"), Image: to.Ptr("public.ecr.aws/docker/library/alpine:latest")},
 				},
 			},
 		},

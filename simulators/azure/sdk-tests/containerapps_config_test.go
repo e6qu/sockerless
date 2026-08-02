@@ -267,7 +267,7 @@ func TestSDK_ContainerAppsApps_DaprSidecarServesRealDaprAPI(t *testing.T) {
 					},
 					{
 						Name:    to.Ptr("client"),
-						Image:   to.Ptr("alpine:latest"),
+						Image:   to.Ptr("public.ecr.aws/docker/library/alpine:latest"),
 						Command: []*string{to.Ptr("/bin/sh")},
 						Args:    []*string{to.Ptr("-c"), to.Ptr(metadataScript)},
 					},

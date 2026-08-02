@@ -98,7 +98,7 @@ func TestStorageSDK_FilesDataPlaneBytesReachAContainerAppsMount(t *testing.T) {
 				}},
 				Containers: []*armappcontainers.Container{{
 					Name:    to.Ptr("reader"),
-					Image:   to.Ptr("alpine:latest"),
+					Image:   to.Ptr("public.ecr.aws/docker/library/alpine:latest"),
 					Command: []*string{to.Ptr("sh"), to.Ptr("-c"), to.Ptr(readBack)},
 					VolumeMounts: []*armappcontainers.VolumeMount{{
 						VolumeName: to.Ptr("share"),

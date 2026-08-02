@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2888 filed - 2886 fixed - 10 open - 16 false positives.**
+**2891 filed - 2889 fixed - 10 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -24,6 +24,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2891~~ | P1 | Azure private endpoint connection collections | `privateLinkServiceConnections` and `manualPrivateLinkServiceConnections` were omitted when empty, but the service reports both unconditionally — and the HashiCorp provider walks both on delete without a presence check, so the omission crashed the provider mid-destroy with a nil dereference rather than surfacing an actionable error | Both collections are always reported, empty when unused, pinned by a unit test that needs no real-network host. |
+| ~~2890~~ | P2 | Azure Container Apps test images pulled from Docker Hub | the Container Apps CLI and SDK suites named bare `alpine:latest`, so a throttled or slow Docker Hub answered a replica start with a pull timeout and failed four tests for reasons unrelated to the code under test | Every Azure suite image now names the ECR Public mirror the rest of the repository already uses. |
+| ~~2889~~ | P2 | Azure console delete-error test race | the assertion read the DOM at the single instant a backdrop click returned, while that click schedules a re-render | It queries for the retained dialog and its retained error, which cannot mask a regression: a dismissal that really closed the surface keeps failing until the timeout. |
 | ~~2886~~ | P1 | Azure simulator NSG rule compilation on a real-network host | `azureIngressPacketRules` emitted a `Protocol: "*"` packet rule for the virtual-network-CIDR allow, which the host rule compiler rejects — so on a real-network host EVERY network interface in an NSG-governed subnet failed to create with a 503 | The VNet allow goes through the same protocol translation as every other rule. Found by the Network Watcher diagnostics work, which evaluates the real rule set. |
 | ~~2885~~ | P2 | Azure Terraform Docker harness dropped the caller's test selection | `runTerraformTestsInDocker` hardcoded `go test … ./...` and discarded `TERRAFORM_TEST_ARGS`, so `make terraform-test TERRAFORM_TEST_ARGS='-run TestX'` silently ran every heavyweight graph inside the container — which is what made concurrent terraform runs, and the shared-workspace collisions they caused, easy to hit | The harness forwards the caller's arguments into the container before the package selector. |
 | ~~2884~~ | P2 | Azure simulator emitted URL scheme behind a TLS gateway | `azureRequestScheme` derived the scheme from `r.TLS` alone, so behind the deployment's TLS-terminating gateway (where the simulator is reached over plaintext) every absolute URL it emitted — long-running-operation polling targets, Key Vault endpoints, advertised data-plane hosts — advertised `http://` to clients that can only reach the deployment over `https://` | The forwarded-proto header the gateway sets is authoritative when present (first hop of a proxy chain), matching what the metadata and auth surfaces already did; a table-driven regression covers direct TLS, plaintext, gateway-terminated, chained, and case-variant requests. |

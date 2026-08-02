@@ -30,7 +30,7 @@ func TestContainerApps_CLI_StartAndCheckLogs(t *testing.T) {
 			"template": {
 				"containers": [{
 					"name": "app",
-					"image": "alpine:latest",
+					"image": "public.ecr.aws/docker/library/alpine:latest",
 					"command": ["echo", "hello-from-aca"]
 				}]
 			}
@@ -92,7 +92,7 @@ func TestContainerApps_CLI_StartFailure(t *testing.T) {
 			"template": {
 				"containers": [{
 					"name": "app",
-					"image": "alpine:latest",
+					"image": "public.ecr.aws/docker/library/alpine:latest",
 					"command": ["sh", "-c", "exit 1"]
 				}]
 			}

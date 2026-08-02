@@ -31,7 +31,7 @@ func newACAApp(t *testing.T, client *armappcontainers.ContainerAppsClient, rg, n
 			EnvironmentID: to.Ptr(envID),
 			Template: &armappcontainers.Template{
 				Containers: []*armappcontainers.Container{
-					{Name: to.Ptr("main"), Image: to.Ptr("alpine:latest")},
+					{Name: to.Ptr("main"), Image: to.Ptr("public.ecr.aws/docker/library/alpine:latest")},
 				},
 				Scale: &armappcontainers.Scale{
 					MinReplicas: to.Ptr[int32](1),
@@ -178,7 +178,7 @@ func TestSDK_Jobs_UpdateListStopMultiple(t *testing.T) {
 				},
 				Template: &armappcontainers.JobTemplate{
 					Containers: []*armappcontainers.Container{
-						{Name: to.Ptr("main"), Image: to.Ptr("alpine:latest")},
+						{Name: to.Ptr("main"), Image: to.Ptr("public.ecr.aws/docker/library/alpine:latest")},
 					},
 				},
 			},
