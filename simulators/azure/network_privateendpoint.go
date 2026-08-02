@@ -42,12 +42,16 @@ type PrivateEndpoint struct {
 // PrivateEndpointProperties holds the endpoint's configuration and the
 // read-only state the Microsoft.Network resource provider computes for it.
 type PrivateEndpointProperties struct {
-	Subnet                              *SubResource                     `json:"subnet,omitempty"`
-	NetworkInterfaces                   []SubResource                    `json:"networkInterfaces,omitempty"`
-	ProvisioningState                   string                           `json:"provisioningState,omitempty"`
-	IPVersionType                       string                           `json:"ipVersionType,omitempty"`
-	PrivateLinkServiceConnections       []PrivateLinkServiceConnection   `json:"privateLinkServiceConnections,omitempty"`
-	ManualPrivateLinkServiceConnections []PrivateLinkServiceConnection   `json:"manualPrivateLinkServiceConnections,omitempty"`
+	Subnet            *SubResource  `json:"subnet,omitempty"`
+	NetworkInterfaces []SubResource `json:"networkInterfaces,omitempty"`
+	ProvisioningState string        `json:"provisioningState,omitempty"`
+	IPVersionType     string        `json:"ipVersionType,omitempty"`
+	// Both connection collections are always present, empty when unused: the
+	// service reports them unconditionally, and a client that walks them
+	// without checking for absence — the HashiCorp provider does exactly that
+	// on delete — faults on a document that omits either.
+	PrivateLinkServiceConnections       []PrivateLinkServiceConnection   `json:"privateLinkServiceConnections"`
+	ManualPrivateLinkServiceConnections []PrivateLinkServiceConnection   `json:"manualPrivateLinkServiceConnections"`
 	CustomDNSConfigs                    []PrivateEndpointCustomDNSConfig `json:"customDnsConfigs,omitempty"`
 	ApplicationSecurityGroups           []SubResource                    `json:"applicationSecurityGroups,omitempty"`
 	IPConfigurations                    []PrivateEndpointIPConfiguration `json:"ipConfigurations,omitempty"`
@@ -247,6 +251,12 @@ func provisionPrivateEndpoint(ctx context.Context, pe *PrivateEndpoint, previous
 // every read: the address the subnet allocated, the custom DNS configuration it
 // publishes, and each connection's approval state as the target now reports it.
 func projectPrivateEndpoint(pe *PrivateEndpoint) {
+	if pe.Properties.PrivateLinkServiceConnections == nil {
+		pe.Properties.PrivateLinkServiceConnections = []PrivateLinkServiceConnection{}
+	}
+	if pe.Properties.ManualPrivateLinkServiceConnections == nil {
+		pe.Properties.ManualPrivateLinkServiceConnections = []PrivateLinkServiceConnection{}
+	}
 	address := ""
 	if len(pe.Properties.NetworkInterfaces) > 0 {
 		address = azurePlatformNICPrivateIP(pe.Properties.NetworkInterfaces[0].ID)
