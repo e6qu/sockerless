@@ -61,18 +61,7 @@ func Start(t *testing.T, configDir string) *Env {
 		}
 	}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("find free port: %v", err)
-	}
-	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
-	if !ok {
-		t.Fatalf("free-port listener address is not TCP: %T", ln.Addr())
-	}
-	port := tcpAddr.Port
-	if err := ln.Close(); err != nil {
-		t.Fatalf("close free-port listener: %v", err)
-	}
+	port := reservePorts(t, 1)[0]
 
 	cmd := exec.Command(binaryPath)
 	cmd.Env = append(
@@ -378,8 +367,8 @@ func startHTTPSGateway(t *testing.T, env *Env, stateDir, simDir string, simPort 
 	if err := os.MkdirAll(gatewayDir, 0o755); err != nil {
 		t.Fatalf("create HTTPS gateway state dir: %v", err)
 	}
-	gatewayPort := freeTCPPort(t)
-	gatewayAdminPort := freeTCPPort(t)
+	gatewayPorts := reservePorts(t, 2)
+	gatewayPort, gatewayAdminPort := gatewayPorts[0], gatewayPorts[1]
 	env.CACertFile = filepath.Join(gatewayDir, "data", "caddy", "pki", "authorities", "local", "root.crt")
 	env.gatewayCmd = exec.Command(caddyBin, "run", "--config", filepath.Join(repoRoot, "make", "https-gateway", "Caddyfile"), "--adapter", "caddyfile")
 	env.gatewayCmd.Env = append(os.Environ(),
@@ -484,21 +473,43 @@ func trustedHTTPClient(caCert string) (*http.Client, error) {
 	}, nil
 }
 
-func freeTCPPort(t *testing.T) int {
+// reservePorts returns n distinct ports that are free for the WILDCARD bind the
+// child processes perform.
+//
+// Two things were wrong with probing them one at a time on 127.0.0.1. The
+// simulator and the gateway bind ":<port>", every interface, and a port free on
+// loopback is not necessarily free for a wildcard bind — the reservation has to
+// be made the same way the bind will be. And each probe released its port
+// before returning the number, so the operating system was free to hand the
+// next probe the port the previous one had just released, which is how two of
+// these processes end up assigned the same coordinate and the second dies with
+// "bind: address already in use". Holding every listener open until all n are
+// chosen makes them distinct by construction; they are released together at the
+// end, as close as possible to the child binding them.
+func reservePorts(t *testing.T, n int) []int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("find free port: %v", err)
+	listeners := make([]net.Listener, 0, n)
+	ports := make([]int, 0, n)
+	defer func() {
+		for _, ln := range listeners {
+			if err := ln.Close(); err != nil {
+				t.Fatalf("close port reservation: %v", err)
+			}
+		}
+	}()
+	for range n {
+		ln, err := net.Listen("tcp", ":0")
+		if err != nil {
+			t.Fatalf("reserve port: %v", err)
+		}
+		listeners = append(listeners, ln)
+		tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+		if !ok {
+			t.Fatalf("port reservation address is not TCP: %T", ln.Addr())
+		}
+		ports = append(ports, tcpAddr.Port)
 	}
-	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
-	if !ok {
-		t.Fatalf("free-port listener address is not TCP: %T", ln.Addr())
-	}
-	port := tcpAddr.Port
-	if err := ln.Close(); err != nil {
-		t.Fatalf("close free-port listener: %v", err)
-	}
-	return port
+	return ports
 }
 
 func requireExecutable(t *testing.T, name, purpose string) string {
