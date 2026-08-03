@@ -192,7 +192,7 @@ func registerCodeBuild(r *sim.AWSRouter, srv *sim.Server) {
 }
 
 func cbARN(resource string) string {
-	return fmt.Sprintf("arn:aws:codebuild:us-east-1:123456789012:%s", resource)
+	return fmt.Sprintf("arn:aws:codebuild:%s:%s:%s", awsRegion(), awsAccountID(), resource)
 }
 
 func cbEpochNow() float64 {

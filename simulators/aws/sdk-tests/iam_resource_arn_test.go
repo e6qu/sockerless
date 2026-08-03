@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,5 +147,53 @@ func TestIAM_ResourceARN_DynamoDBTransactionsAndBatches(t *testing.T) {
 		},
 	})
 	require.Error(t, err, "a batch get on an ungranted table must be denied")
+	assert.Equal(t, "AccessDeniedException", errCodeOf(err))
+}
+
+// TestIAM_ResourceARN_ECR proves the enforcement gate derives an Amazon
+// Elastic Container Registry request's repository ARN from the body, so the
+// least-privilege pattern a control plane writes — read access to one
+// repository namespace — allows the repositories under that prefix and denies
+// the rest. Repository names contain slashes and IAM's `*` spans them, so a
+// nested name under the granted prefix is allowed too.
+func TestIAM_ResourceARN_ECR(t *testing.T) {
+	admin := iamClient()
+	ecrAdmin := ecrClient()
+
+	for _, name := range []string{"scoped-ns/control-plane", "scoped-ns/golden/omnibus", "other-ns/control-plane"} {
+		_, err := ecrAdmin.CreateRepository(ctx, &ecr.CreateRepositoryInput{RepositoryName: aws.String(name)})
+		require.NoError(t, err)
+	}
+
+	user := "ecr-scoped-user"
+	_, err := admin.CreateUser(ctx, &iam.CreateUserInput{UserName: aws.String(user)})
+	require.NoError(t, err)
+	defer admin.DeleteUser(ctx, &iam.DeleteUserInput{UserName: aws.String(user)})
+	_, err = admin.PutUserPolicy(ctx, &iam.PutUserPolicyInput{
+		UserName:   aws.String(user),
+		PolicyName: aws.String("one-namespace"),
+		PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow",` +
+			`"Action":["ecr:DescribeImages","ecr:ListImages"],` +
+			`"Resource":"arn:aws:ecr:us-east-1:123456789012:repository/scoped-ns/*"}]}`),
+	})
+	require.NoError(t, err)
+	key, err := admin.CreateAccessKey(ctx, &iam.CreateAccessKeyInput{UserName: aws.String(user)})
+	require.NoError(t, err)
+
+	cfg := aws.Config{Region: "us-east-1", Credentials: credentials.NewStaticCredentialsProvider(
+		aws.ToString(key.AccessKey.AccessKeyId), aws.ToString(key.AccessKey.SecretAccessKey), "")}
+	scoped := ecr.NewFromConfig(cfg, func(o *ecr.Options) { o.BaseEndpoint = aws.String(baseURL) })
+
+	_, err = scoped.DescribeImages(ctx, &ecr.DescribeImagesInput{RepositoryName: aws.String("scoped-ns/control-plane")})
+	assert.NoError(t, err, "DescribeImages on a repository under the granted prefix must succeed")
+
+	_, err = scoped.DescribeImages(ctx, &ecr.DescribeImagesInput{RepositoryName: aws.String("scoped-ns/golden/omnibus")})
+	assert.NoError(t, err, "a nested repository name under the granted prefix must succeed")
+
+	_, err = scoped.ListImages(ctx, &ecr.ListImagesInput{RepositoryName: aws.String("scoped-ns/control-plane")})
+	assert.NoError(t, err, "ListImages on a repository under the granted prefix must succeed")
+
+	_, err = scoped.DescribeImages(ctx, &ecr.DescribeImagesInput{RepositoryName: aws.String("other-ns/control-plane")})
+	require.Error(t, err, "a repository outside the granted prefix must be denied")
 	assert.Equal(t, "AccessDeniedException", errCodeOf(err))
 }

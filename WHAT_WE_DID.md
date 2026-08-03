@@ -4,6 +4,86 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-03 — Resource-scoped IAM grants authorize the resources they name
+
+The call-time IAM gate decides an Amazon Elastic Container Registry call
+against the resource the request targets, which it had never derived.
+`iamResourceARNsForRequest` resolves a target ARN service by service and had no
+ECR case, so every ECR call fell through to the literal `"*"` — and a requested
+resource of `"*"` matches only a policy whose `Resource` is itself `"*"`. A role
+granting `ecr:DescribeImages` on `repository/edd-dev/*` was denied on every
+repository it named. The fallback's own comment called this "the conservative
+default that never over-denies"; it is the opposite, and the comment now says
+which way it fails, so the next missing service reads as this same defect
+rather than as a new one.
+
+ECR names its target in the request body, so the gate reads it there:
+`repositoryName` on the per-repository operations, the `repositoryNames` filter
+a `DescribeRepositories` call passes, and `resourceArn` on the tagging
+operations. Every named repository must be authorized, which is what AWS does
+with a filtered call. Registry-wide operations — `GetAuthorizationToken`, an
+unfiltered `DescribeRepositories` — name no repository and keep the
+account-level `"*"` the other services use for the same case.
+
+Repository names contain slashes and IAM's `*` spans them, so `edd-dev/*`
+covers `edd-dev/golden/omnibus`. The glob matcher already behaved that way; the
+regression pins it rather than assuming it, alongside the derivation for each
+request shape and a repository outside the granted prefix that stays denied.
+
+The same deployed control-plane role scopes AWS CodeBuild, Amazon CloudWatch
+Logs, Amazon ECS, `iam:PassRole` and AWS WAFv2, and those statements were
+denied for the same reason. Writing five more cases by hand would have repeated
+the mistake in a sixth, because the thing the switch kept getting wrong was not
+the extraction — it was knowing which resource a given action authorizes
+against. AWS publishes that, machine-readable, at the Service Reference
+endpoint, and the Smithy models the simulator already vendors do not carry it
+(only Amazon ECS and AWS Lambda ship the `aws.iam#iamAction` trait). So the
+Service Reference for all 33 gated services is vendored under
+`specs/cloud-api/aws/service-reference/`, `scripts/gen-aws-iam-resource-types.sh`
+generates the action-to-resource-type table the gate reads, a test rebuilds that
+table from the vendored documents and fails on any divergence, and the freshness
+gate pins each document by the published index's `modified` timestamp.
+
+That left only the half no specification can state — pulling the identifier out
+of the request — which is now written for AWS CodeBuild (including the project
+inside a build id), Amazon ECS (cluster, service, task, container instance,
+task set, capacity provider, and the revision `RegisterTaskDefinition` is about
+to assign, which the simulator knows because it owns the counter), IAM (whose
+ARNs are global and carry no region), Amazon CloudWatch Logs and AWS WAFv2.
+
+The log-group question the bug flagged is settled by the reference rather than
+by preference, and the answer is not the accommodating one: a log-group ARN
+carries no trailing `:*`. Exactly four actions — `CreateLogStream`,
+`DeleteLogStream`, `GetLogEvents`, `PutLogEvents` — authorize against the log
+*stream*, whose ARN is the group's with `:log-stream:<name>` appended; the other
+36 authorize against the group. A grant written `"${arn}"` alongside
+`"${arn}:*"` therefore covers both, and one written only as `"${arn}:*"` covers
+the stream writes and not the group reads — which is what real AWS does, so the
+simulator does it too.
+
+`iam:PassRole` is not an operation anyone calls; it is a second authorization
+AWS runs against the role a request hands to a service. That check now runs,
+carrying `iam:PassedToService` from a table generated out of every vendored
+document, and the roles are found by scanning the request for role ARNs rather
+than by a list of field names that would miss the next service. A caller
+allowed to register a task definition but allowed to pass only one role is
+denied when it passes another, which is the entire point of scoping PassRole.
+
+Two things were fixed on the way past: `cbARN` hardcoded `us-east-1` and
+`123456789012` instead of the configured region and account, and
+`GetLogEvents` served an unbounded page anchored at the oldest event. The
+second cost a reader real time — the service returns at most 10,000 events or
+1 MB and, with `startFromHead` unset, anchors that page at the *end* of the
+stream, so a default read of a busy stream showed the beginning of history and
+looked like a workload producing nothing. The page is bounded now whether or
+not a limit is passed.
+
+What remains is measured rather than unknown. 358 of the 1,972 served
+operations that authorize against a resource type derive it;
+`TestIAMResourceDerivationCoverage` ratchets that number and prints the
+per-service remainder, largest first, so the next service is a decision about
+which to take rather than a rediscovery of the gap. That remainder is BUG-2909.
+
 ## 2026-08-03 — Recording real traffic, and Azure Network Watcher packet captures
 
 BUG-2888 asked for six operations and was really asking for a mechanism: a

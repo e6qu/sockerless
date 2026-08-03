@@ -56,7 +56,97 @@ func iamEnforce(w http.ResponseWriter, r *http.Request) bool {
 			return false
 		}
 	}
+	return iamEnforcePassRole(w, r, action)
+}
+
+// iamEnforcePassRole runs the second authorization AWS performs when a request
+// hands a role to a service: iam:PassRole against the role's own ARN, with
+// iam:PassedToService set to the service principal that will assume it. A
+// caller allowed to create the resource but not to pass that role is denied,
+// which is what makes a PassRole statement scoped to specific roles mean
+// anything. Operations that pass no role, and requests that name none, are
+// unaffected.
+func iamEnforcePassRole(w http.ResponseWriter, r *http.Request, action string) bool {
+	principals, ok := iamPassRoleOperations[action]
+	if !ok {
+		return true
+	}
+	roles := iamPassedRoleARNs(r)
+	if len(roles) == 0 {
+		return true
+	}
+	extra := map[string][]string{}
+	if len(principals) > 0 {
+		extra["iam:PassedToService"] = principals
+	}
+	for _, role := range roles {
+		allowed, principalArn, registered := iamAuthorizeWithContext(r, "iam:PassRole", role, extra)
+		if !registered {
+			return true
+		}
+		if !allowed {
+			iamWriteDeny(w, r, principalArn, "iam:PassRole")
+			return false
+		}
+	}
 	return true
+}
+
+// iamPassedRoleARNs returns the distinct IAM role ARNs a request carries.
+// Services name the field differently and nest it at different depths (Amazon
+// ECS sends taskRoleArn and executionRoleArn at the top level and again under
+// overrides; AWS CodeBuild sends serviceRole; AWS Lambda sends Role), so the
+// request is scanned for values that are role ARNs rather than matched against
+// a per-service list of field names that would silently miss the next service.
+func iamPassedRoleARNs(r *http.Request) []string {
+	var roles []string
+	seen := map[string]struct{}{}
+	add := func(v string) {
+		if !iamIsRoleARN(v) {
+			return
+		}
+		if _, dup := seen[v]; dup {
+			return
+		}
+		seen[v] = struct{}{}
+		roles = append(roles, v)
+	}
+	if body := iamRequestBody(r); len(body) > 0 {
+		var doc any
+		if json.Unmarshal(body, &doc) == nil {
+			iamWalkJSONStrings(doc, add)
+		}
+	}
+	// Query-protocol services carry the role as a form parameter.
+	_ = r.ParseForm()
+	for _, values := range r.Form {
+		for _, v := range values {
+			add(v)
+		}
+	}
+	sort.Strings(roles)
+	return roles
+}
+
+func iamIsRoleARN(v string) bool {
+	return strings.HasPrefix(v, "arn:aws:iam::") && strings.Contains(v, ":role/")
+}
+
+// iamWalkJSONStrings calls visit for every string anywhere in a decoded JSON
+// document.
+func iamWalkJSONStrings(node any, visit func(string)) {
+	switch v := node.(type) {
+	case string:
+		visit(v)
+	case []any:
+		for _, item := range v {
+			iamWalkJSONStrings(item, visit)
+		}
+	case map[string]any:
+		for _, item := range v {
+			iamWalkJSONStrings(item, visit)
+		}
+	}
 }
 
 // iamAuthorize is the shared authorization core used by both the control-plane
@@ -67,6 +157,14 @@ func iamEnforce(w http.ResponseWriter, r *http.Request) bool {
 // permission boundary. registered is false for unknown/test credentials (the
 // permissive default — the caller should allow).
 func iamAuthorize(r *http.Request, action, resource string) (allowed bool, principalArn string, registered bool) {
+	return iamAuthorizeWithContext(r, action, resource, nil)
+}
+
+// iamAuthorizeWithContext is iamAuthorize with additional condition-context
+// keys the caller supplies — the keys AWS derives from what the request is
+// doing rather than from its envelope, such as iam:PassedToService on the
+// PassRole check.
+func iamAuthorizeWithContext(r *http.Request, action, resource string, extra map[string][]string) (allowed bool, principalArn string, registered bool) {
 	akid := iamAccessKeyIDFromRequest(r)
 	principalArn, docs, userName, ok := iamPrincipalForAccessKey(akid)
 	if !ok {
@@ -95,6 +193,9 @@ func iamAuthorize(r *http.Request, action, resource string) (allowed bool, princ
 	// Resource-scoped / service-specific keys (aws:ResourceTag/*, ecs:cluster,
 	// aws:RequestTag/*, aws:TagKeys) from the request's target resource.
 	iamPopulateResourceConditionKeys(r, action, ctx)
+	for key, values := range extra {
+		ctx[key] = values
+	}
 
 	decision, _ := iamEvalDecision(docs, action, resource, ctx)
 	if decision == "explicitDeny" {
@@ -231,9 +332,12 @@ func iamPermissionlessAction(action string) bool {
 // resource-scoped policies and resource-based policies evaluate against the
 // real resources). Most operations target one resource; DynamoDB transactions
 // and batches target every referenced table, and AWS authorizes each item
-// against its own table ARN, so all of them must be allowed. It returns
-// ["*"] when the resource can't be determined from the request alone — the
-// conservative default that never over-denies.
+// against its own table ARN, so all of them must be allowed. It returns ["*"]
+// when the resource can't be determined from the request alone, which is not a
+// neutral default: a literal "*" matches only a policy whose Resource is itself
+// "*", so a service missing from the switch below denies every resource-scoped
+// grant written against it. A service whose requests name their target belongs
+// here.
 func iamResourceARNsForRequest(r *http.Request, action string) []string {
 	service := strings.SplitN(action, ":", 2)[0]
 	region := iamRequestedRegion(r)
@@ -308,8 +412,63 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 		if a := iamJSONBodyField(r, "StreamARN"); a != "" {
 			return one(a)
 		}
+	case "ecr":
+		if arns := iamECRRequestRepositoryARNs(r, arn); len(arns) > 0 {
+			return arns
+		}
+	}
+	// Services whose target resource is derived from the resource types AWS
+	// declares for the action rather than from a hand-written case above; see
+	// iam_resource_arns.go.
+	if arns := iamDerivedResourceARNs(r, service, strings.TrimPrefix(action, service+":"), arn); len(arns) > 0 {
+		return arns
 	}
 	return one("*")
+}
+
+// iamECRRequestRepositoryARNs returns the repository ARNs an Amazon Elastic
+// Container Registry (ECR) request targets. ECR identifies a repository in the
+// request body — repositoryName on the per-repository operations, the
+// repositoryNames filter DescribeRepositories and the scanning-configuration
+// batch accept, and resourceArn on the tagging operations — and AWS authorizes
+// every named repository, so a filtered call must be allowed for all of them.
+// Registry-wide calls (GetAuthorizationToken, an unfiltered
+// DescribeRepositories, the registry policy and replication operations) name no
+// repository and return nothing, leaving the caller's account-level "*".
+func iamECRRequestRepositoryARNs(r *http.Request, arn func(svc, resource string) string) []string {
+	body := iamRequestBody(r)
+	if len(body) == 0 {
+		return nil
+	}
+	var req struct {
+		RepositoryName  string   `json:"repositoryName"`
+		RepositoryNames []string `json:"repositoryNames"`
+		ResourceArn     string   `json:"resourceArn"`
+	}
+	if json.Unmarshal(body, &req) != nil {
+		return nil
+	}
+	if req.ResourceArn != "" {
+		return []string{req.ResourceArn}
+	}
+	names := req.RepositoryNames
+	if req.RepositoryName != "" {
+		names = append([]string{req.RepositoryName}, names...)
+	}
+	arns := make([]string, 0, len(names))
+	seen := map[string]struct{}{}
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		a := arn("ecr", "repository/"+name)
+		if _, dup := seen[a]; dup {
+			continue
+		}
+		seen[a] = struct{}{}
+		arns = append(arns, a)
+	}
+	return arns
 }
 
 // iamDynamoDBRequestTables returns the distinct table names referenced by a

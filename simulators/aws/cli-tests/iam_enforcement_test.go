@@ -188,6 +188,56 @@ func TestIAM_DynamoDBTransactionsResourceScopedCLI(t *testing.T) {
 	}
 }
 
+// TestIAM_ECRResourceScopedCLI proves `aws ecr describe-images` works under a
+// policy scoped to a repository namespace, because the enforcement gate derives
+// the repository ARN from the request's repositoryName. Repository names carry
+// slashes and IAM's `*` spans them, so a nested name under the granted prefix
+// is allowed; a repository outside the prefix is denied AccessDeniedException.
+func TestIAM_ECRResourceScopedCLI(t *testing.T) {
+	for _, repo := range []string{"cli-scoped-ns/app", "cli-scoped-ns/golden/omnibus", "cli-other-ns/app"} {
+		runCLI(t, awsCLI("ecr", "create-repository", "--repository-name", repo))
+		repo := repo
+		t.Cleanup(func() { _ = awsCLI("ecr", "delete-repository", "--repository-name", repo, "--force").Run() })
+	}
+
+	user := "cli-ecr-scoped-user"
+	runCLI(t, awsCLI("iam", "create-user", "--user-name", user))
+	t.Cleanup(func() { _ = awsCLI("iam", "delete-user", "--user-name", user).Run() })
+	runCLI(t, awsCLI("iam", "put-user-policy", "--user-name", user,
+		"--policy-name", "one-namespace",
+		"--policy-document", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow",`+
+			`"Action":["ecr:DescribeImages","ecr:ListImages"],`+
+			`"Resource":"arn:aws:ecr:us-east-1:123456789012:repository/cli-scoped-ns/*"}]}`))
+	// The inline policy has to go before the user does, exactly as on real IAM.
+	t.Cleanup(func() {
+		_ = awsCLI("iam", "delete-user-policy", "--user-name", user, "--policy-name", "one-namespace").Run()
+	})
+	out := runCLI(t, awsCLI("iam", "create-access-key", "--user-name", user, "--output", "json"))
+	var ck struct {
+		AccessKey struct {
+			AccessKeyId     string `json:"AccessKeyId"`
+			SecretAccessKey string `json:"SecretAccessKey"`
+		} `json:"AccessKey"`
+	}
+	parseJSON(t, out, &ck)
+	t.Cleanup(func() {
+		_ = awsCLI("iam", "delete-access-key", "--user-name", user, "--access-key-id", ck.AccessKey.AccessKeyId).Run()
+	})
+
+	for _, repo := range []string{"cli-scoped-ns/app", "cli-scoped-ns/golden/omnibus"} {
+		granted := awsCLI("ecr", "describe-images", "--repository-name", repo)
+		granted.Env = withCreds(granted.Env, ck.AccessKey.AccessKeyId, ck.AccessKey.SecretAccessKey)
+		runCLI(t, granted)
+	}
+
+	denied := awsCLI("ecr", "describe-images", "--repository-name", "cli-other-ns/app")
+	denied.Env = withCreds(denied.Env, ck.AccessKey.AccessKeyId, ck.AccessKey.SecretAccessKey)
+	deny := runCLIExpectError(t, denied)
+	if !strings.Contains(deny, "AccessDeniedException") {
+		t.Fatalf("describe-images on a repository outside the granted prefix expected AccessDeniedException; got: %s", deny)
+	}
+}
+
 // withCreds replaces the AWS credential env entries so the CLI call is signed
 // with the given (restricted) access key.
 func withCreds(env []string, akid, secret string) []string {
