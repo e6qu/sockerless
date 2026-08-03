@@ -144,13 +144,24 @@ type VirtualMachine struct {
 }
 
 type VMProperties struct {
-	HardwareProfile   map[string]any   `json:"hardwareProfile,omitempty"`
-	StorageProfile    map[string]any   `json:"storageProfile,omitempty"`
-	OSProfile         map[string]any   `json:"osProfile,omitempty"`
-	NetworkProfile    VMNetworkProfile `json:"networkProfile,omitempty"`
-	ProvisioningState string           `json:"provisioningState,omitempty"`
-	VMID              string           `json:"vmId,omitempty"`
-	InstanceView      *VMInstanceView  `json:"instanceView,omitempty"`
+	HardwareProfile map[string]any   `json:"hardwareProfile,omitempty"`
+	StorageProfile  map[string]any   `json:"storageProfile,omitempty"`
+	OSProfile       map[string]any   `json:"osProfile,omitempty"`
+	NetworkProfile  VMNetworkProfile `json:"networkProfile,omitempty"`
+	// DiagnosticsProfile carries bootDiagnostics, which names whether the
+	// machine writes boot artifacts and to which storage account. It is a
+	// modelled member rather than a dropped one because
+	// RetrieveBootDiagnosticsData reads it, and because a member the model
+	// drops reads back missing and shows up as perpetual drift in a client
+	// that sent it.
+	DiagnosticsProfile map[string]any `json:"diagnosticsProfile,omitempty"`
+	// Priority and EvictionPolicy are what make a machine a Spot machine and
+	// decide what an eviction does to it.
+	Priority          string          `json:"priority,omitempty"`
+	EvictionPolicy    string          `json:"evictionPolicy,omitempty"`
+	ProvisioningState string          `json:"provisioningState,omitempty"`
+	VMID              string          `json:"vmId,omitempty"`
+	InstanceView      *VMInstanceView `json:"instanceView,omitempty"`
 }
 
 type VMNetworkProfile struct {
@@ -181,6 +192,10 @@ var (
 	azureNICs             sim.Store[NetworkInterface]
 	azureVMs              sim.Store[VirtualMachine]
 	azureVMStates         sim.Store[string]
+	// azureVMGeneralized records which machines have been generalized, which
+	// is what makes an image capturable from one and what the instance view
+	// reports as its operating-system state.
+	azureVMGeneralized sim.Store[bool]
 )
 
 func registerCompute(srv *sim.Server) {
@@ -190,6 +205,7 @@ func registerCompute(srv *sim.Server) {
 	azureNICs = sim.MakeStore[NetworkInterface](srv.DB(), "network_interfaces")
 	azureVMs = sim.MakeStore[VirtualMachine](srv.DB(), "compute_virtual_machines")
 	azureVMStates = sim.MakeStore[string](srv.DB(), "compute_virtual_machine_states")
+	azureVMGeneralized = sim.MakeStore[bool](srv.DB(), "compute_virtual_machine_generalized")
 
 	registerComputeCatalog(srv)
 	registerPublicIPAddresses(srv)
@@ -197,30 +213,12 @@ func registerCompute(srv *sim.Server) {
 	registerLoadBalancers(srv)
 	registerNetworkInterfaces(srv)
 	registerVirtualMachines(srv)
+	registerVirtualMachineOperations(srv)
 }
 
 func registerComputeCatalog(srv *sim.Server) {
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.Compute/locations/{location}/vmSizes", func(w http.ResponseWriter, r *http.Request) {
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"value": []map[string]any{
-				{
-					"name":                 "Standard_B1s",
-					"numberOfCores":        1,
-					"osDiskSizeInMB":       1047552,
-					"resourceDiskSizeInMB": 4096,
-					"memoryInMB":           1024,
-					"maxDataDiskCount":     2,
-				},
-				{
-					"name":                 "Standard_B2s",
-					"numberOfCores":        2,
-					"osDiskSizeInMB":       1047552,
-					"resourceDiskSizeInMB": 8192,
-					"memoryInMB":           4096,
-					"maxDataDiskCount":     4,
-				},
-			},
-		})
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": azureVMSizeCatalogue()})
 	})
 
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus", func(w http.ResponseWriter, r *http.Request) {
@@ -1288,11 +1286,17 @@ func virtualMachineWithInstanceView(vm VirtualMachine) VirtualMachine {
 		state = "PowerState/running"
 	}
 	display := strings.TrimPrefix(state, "PowerState/")
-	vm.Properties.InstanceView = &VMInstanceView{
-		Statuses: []VMStatus{
-			{Code: "ProvisioningState/succeeded", Level: "Info", DisplayStatus: "Provisioning succeeded"},
-			{Code: state, Level: "Info", DisplayStatus: "VM " + display},
-		},
+	statuses := []VMStatus{
+		{Code: "ProvisioningState/succeeded", Level: "Info", DisplayStatus: "Provisioning succeeded"},
+		{Code: state, Level: "Info", DisplayStatus: "VM " + display},
 	}
+	// A generalized machine reports it, which is how a caller knows an image
+	// can be captured from it.
+	if generalized, _ := azureVMGeneralized.Get(vm.ID); generalized {
+		statuses = append(statuses, VMStatus{
+			Code: "OSState/generalized", Level: "Info", DisplayStatus: "VM generalized",
+		})
+	}
+	vm.Properties.InstanceView = &VMInstanceView{Statuses: statuses}
 	return vm
 }
