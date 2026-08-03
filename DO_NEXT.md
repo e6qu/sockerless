@@ -4,14 +4,29 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Next
 
-Four pieces are sized, designed and staged in [PLAN.md](PLAN.md) § "Staged:
-Traffic Capture, Virtual Machines, and the Compute/Console Tails": real
-traffic capture (which is what BUG-2888 needs), Azure virtual machines from
-11 of 29 to complete, Google Compute Engine's ~455-method tail, and the Azure
-console's service surface. The first two are Linux-only real-execution work —
-network namespaces for capture, nested KVM for guests — so they belong on a
-branch that can be driven through the real-network container harness and the
-capable-Linux CI gate rather than folded into unrelated work.
+Resource-scoped IAM authorization is spec-driven now, and the remainder is
+measured rather than unknown: BUG-2909 records the 1,614 served operations that
+still authorize against a literal `"*"`, largest first — Amazon EC2 (515), AWS
+Glue (204), Amazon RDS (146), AWS Systems Manager (101), Amazon ElastiCache
+(70). Closing one is mechanical: add the service to
+`scripts/gen-aws-iam-resource-types.sh`, write the extractor that reads the
+identifier out of its requests, and raise `iamDerivationCoverageFloor`. The
+vendored AWS Service Reference already carries every resource type and ARN
+format needed, so no new fidelity question has to be settled first.
+
+Three pieces remain sized, designed and staged in [PLAN.md](PLAN.md) §
+"Staged: Traffic Capture, Virtual Machines, and the Compute/Console Tails" —
+real traffic capture, the fourth, shipped with BUG-2888. Google Compute Engine
+`packetMirrorings` is the natural continuation of it: the capture engine
+supplies the read half and the five-tuple filter, and what it does not supply
+is a forwarder that duplicates frames toward a collector load balancer, which
+is the whole of the remaining work alongside resolving `collectorIlb`. Azure
+virtual machines stand at 11 of 29, Google Compute Engine's ~455-method tail
+and the Azure console's service surface are the breadth items. Mirroring and
+the virtual machines are Linux-only real-execution work — network namespaces
+for the forwarder, nested KVM for guests — so they belong on a branch driven
+through the real-network container harness and the capable-Linux CI gate
+rather than folded into unrelated work.
 
 An operator-side step is outstanding and is not a code change: deployments
 pinned to a simulator image built before live workload log streaming landed

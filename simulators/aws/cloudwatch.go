@@ -435,6 +435,34 @@ func handleCWPutLogEvents(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// The bounds GetLogEvents applies when the caller names no limit: at most
+// 10,000 events, and at most 1 MB of payload, where each event costs its
+// message's bytes plus the 26-byte per-event overhead CloudWatch Logs counts.
+const (
+	cwGetLogEventsMaxEvents = 10000
+	cwGetLogEventsMaxBytes  = 1024 * 1024
+	cwLogEventOverheadBytes = 26
+)
+
+// cwGetLogEventsDefaultPage returns how many of the newest events fit in a
+// default page. It measures from the tail because that is the end the default
+// page is anchored at, so the count answers "how many of the latest events are
+// returned", not "how many of the oldest".
+func cwGetLogEventsDefaultPage(events []CWLogEvent) int {
+	total, count := 0, 0
+	for i := len(events) - 1; i >= 0 && count < cwGetLogEventsMaxEvents; i-- {
+		total += len(events[i].Message) + cwLogEventOverheadBytes
+		if total > cwGetLogEventsMaxBytes && count > 0 {
+			break
+		}
+		count++
+	}
+	if count == 0 {
+		count = 1 // a single event larger than the cap is still returned
+	}
+	return count
+}
+
 func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LogGroupName  string `json:"logGroupName"`
@@ -481,6 +509,25 @@ func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, e)
 	}
 
+	if req.Limit < 0 || req.Limit > cwGetLogEventsMaxEvents {
+		sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+			"1 validation error detected: Value '%d' at 'limit' failed to satisfy constraint: "+
+				"Member must have value less than or equal to %d", req.Limit, cwGetLogEventsMaxEvents)
+		return
+	}
+
+	// A page is bounded whether or not the caller asked for a limit: AWS
+	// returns "as many log events as can fit in a response size of 1 MB, up to
+	// 10,000 log events" by default. An unbounded page is not a harmless
+	// superset — with startFromHead unset the page is anchored at the tail, so
+	// serving every event from the oldest is how a reader of a busy stream sees
+	// the beginning of history where the service would have shown them the
+	// latest lines.
+	page := req.Limit
+	if page == 0 {
+		page = cwGetLogEventsDefaultPage(filtered)
+	}
+
 	// Parse offset from NextToken (format: "f/{offset}" or "b/{offset}").
 	// On the first call (no token), startFromHead chooses the window: true →
 	// earliest events first (offset 0); false/unset (the documented default) →
@@ -496,8 +543,8 @@ func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		fromHead := req.StartFromHead != nil && *req.StartFromHead
-		if !fromHead && req.Limit > 0 && len(filtered) > req.Limit {
-			offset = len(filtered) - req.Limit
+		if !fromHead && len(filtered) > page {
+			offset = len(filtered) - page
 		}
 	}
 
@@ -508,9 +555,8 @@ func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 		filtered = nil
 	}
 
-	// Apply limit after offset
-	if req.Limit > 0 && len(filtered) > req.Limit {
-		filtered = filtered[:req.Limit]
+	if len(filtered) > page {
+		filtered = filtered[:page]
 	}
 	if filtered == nil {
 		filtered = []CWLogEvent{}
