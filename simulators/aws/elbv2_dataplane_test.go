@@ -163,3 +163,111 @@ func TestELBv2TargetHostHeaderMatchesALBDefaults(t *testing.T) {
 		t.Fatalf("preserved Host header = %q", got)
 	}
 }
+
+// A load balancer returns its target's redirect to the client. Following one
+// itself fetches the redirect target and answers with that instead, discarding
+// the Set-Cookie the redirect carried — which is exactly how an OpenID Connect
+// sign-in behind this data plane fails with no error anywhere (issue #883).
+//
+// Every redirect status is covered deliberately. In production the defect looked
+// selective — 307 and 308 reached the browser intact while 301, 302 and 303 did
+// not — but that was only because a request forwarded from a server has no
+// rewindable body for Go to replay. Nothing about the defect is status-specific,
+// and a bodyless request like the one below follows all five.
+func TestELBv2DataPlaneReturnsTargetRedirectsInsteadOfFollowingThem(t *testing.T) {
+	t.Setenv("SIM_RUNTIME", "process")
+	srv, err := sim.NewServer(sim.Config{Provider: "aws", LogLevel: "disabled"})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	registerELBv2(sim.NewAWSQueryRouter(), srv)
+	registerELBv2DataPlane(srv)
+
+	const sessionCookie = "session=granted; Path=/; HttpOnly"
+	var landingRequests int
+	redirectStatus := http.StatusFound
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			_, _ = w.Write([]byte("ok"))
+		case "/landing":
+			landingRequests++
+			_, _ = w.Write([]byte("followed-the-redirect"))
+		default:
+			w.Header().Set("Location", "/landing")
+			w.Header().Add("Set-Cookie", sessionCookie)
+			w.WriteHeader(redirectStatus)
+		}
+	}))
+	defer target.Close()
+	parsedTargetURL, err := url.Parse(target.URL)
+	if err != nil {
+		t.Fatalf("parse target URL %s: %v", target.URL, err)
+	}
+	targetHost, targetPortText, err := net.SplitHostPort(parsedTargetURL.Host)
+	if err != nil {
+		t.Fatalf("target URL host has no port: %s: %v", target.URL, err)
+	}
+	targetPort, err := strconv.Atoi(targetPortText)
+	if err != nil {
+		t.Fatalf("target URL port is not numeric: %s: %v", target.URL, err)
+	}
+
+	lb := ELBv2LoadBalancer{
+		Arn:     "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/redirect-lb/abc123",
+		Name:    "redirect-lb",
+		DNSName: "redirect-lb-abc123.elb.us-east-1.amazonaws.com",
+		Type:    "application",
+	}
+	tg := ELBv2TargetGroup{
+		Arn:                 "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/redirect-tg/abc123",
+		Protocol:            "HTTP",
+		Port:                80,
+		HealthCheckProtocol: "HTTP",
+		HealthCheckPath:     "/healthz",
+		HealthCheckTimeout:  2,
+		Targets:             []ELBv2TargetDescription{{ID: targetHost, Port: targetPort}},
+	}
+	listener := ELBv2Listener{
+		Arn:             "arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/redirect-lb/abc123/def456",
+		LoadBalancerArn: lb.Arn,
+		Protocol:        "HTTP",
+		Port:            80,
+		DefaultActions:  []ELBv2Action{{Type: "forward", TargetGroupArn: tg.Arn}},
+	}
+	elbv2LoadBalancers.Put(lb.Arn, lb)
+	elbv2TargetGroups.Put(tg.Arn, tg)
+	elbv2Listeners.Put(listener.Arn, listener)
+
+	for _, status := range []int{
+		http.StatusMovedPermanently,
+		http.StatusFound,
+		http.StatusSeeOther,
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect,
+	} {
+		redirectStatus = status
+		landingRequests = 0
+
+		req := httptest.NewRequest(http.MethodGet, "http://simulator/oauth/callback?code=abc", nil)
+		req.Host = lb.DNSName
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+
+		if rr.Code != status {
+			t.Errorf("target answered %d; client received %d (body %q)", status, rr.Code, rr.Body.String())
+		}
+		if got := rr.Header().Get("Location"); got != "/landing" {
+			t.Errorf("%d: Location = %q, want %q", status, got, "/landing")
+		}
+		if got := rr.Header().Values("Set-Cookie"); len(got) != 1 || got[0] != sessionCookie {
+			t.Errorf("%d: Set-Cookie = %q, want exactly [%q]", status, got, sessionCookie)
+		}
+		if landingRequests != 0 {
+			t.Errorf("%d: data plane fetched the redirect target %d time(s) itself", status, landingRequests)
+		}
+		if strings.Contains(rr.Body.String(), "followed-the-redirect") {
+			t.Errorf("%d: client received the redirect target's body instead of the redirect", status)
+		}
+	}
+}

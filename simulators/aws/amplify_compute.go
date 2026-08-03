@@ -468,7 +468,7 @@ func amplifyProxyToCompute(w http.ResponseWriter, r *http.Request, port int, int
 	}
 	req.Header = r.Header.Clone()
 	req.Host = r.Host
-	client := http.Client{Timeout: 30 * time.Second}
+	client := http.Client{Timeout: 30 * time.Second, CheckRedirect: returnRedirectsToClient}
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("forward to compute %s: %w", upstreamURL.Host, err)
