@@ -350,10 +350,15 @@ func ecsTasksWireInclude(tasks []ECSTask, includeTags bool) []ecsTaskWire {
 var (
 	ecsClusters        sim.Store[ECSCluster]
 	ecsTaskDefinitions sim.Store[ECSTaskDefinition]
-	ecsTasks           sim.Store[ECSTask]
-	ecsRevisionMu      sync.Mutex
-	ecsRevisions       map[string]int // family -> latest revision
-	ecsProcessHandles  sync.Map       // map[taskID]*ecsTaskProcesses
+	// The data plane consults this store on every forwarded request, and a
+	// forwarded request can arrive before this service is registered — a
+	// simulator assembled without it, or a test that mounts one data plane.
+	// An empty store answers the question truthfully (nothing is registered,
+	// so nothing is associated); a nil one panicked in the middle of serving.
+	ecsTasks          sim.Store[ECSTask] = sim.NewStateStore[ECSTask]()
+	ecsRevisionMu     sync.Mutex
+	ecsRevisions      map[string]int // family -> latest revision
+	ecsProcessHandles sync.Map       // map[taskID]*ecsTaskProcesses
 	// ecsTaskLifecycleLocks serialize asynchronous task startup with StopTask
 	// and service-scheduler stop requests. Stop must not return while an
 	// in-flight startup can still attach networking or publish RUNNING after
