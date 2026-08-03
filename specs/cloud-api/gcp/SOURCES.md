@@ -33,5 +33,5 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `dataflow-v1b3.discovery.json.gz` | `dataflow.googleapis.com` | `$discovery/rest?version=v1b3` | Apache-2.0 | `revision 20260729` | 2026-07-31T13:20:00Z |
 | `cloudresourcemanager-v2.discovery.json.gz` | `cloudresourcemanager.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260715` | 2026-08-02T15:05:53Z |
 | `cloudbilling-v1.discovery.json.gz` | `cloudbilling.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260731` | 2026-08-03T20:29:32Z |
-| `pubsub-v1.discovery.json.gz` | `pubsub.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260721` | 2026-08-03T20:29:33Z |
-| `iam-v1.discovery.json.gz` | `iam.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260724` | 2026-08-03T20:54:52Z |
+| `pubsub-v1.discovery.json.gz` | `pubsub.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision20260728` | 2026-08-03T20:29:33Z |
+| `iam-v1.discovery.json.gz` | `iam.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision20260731` | 2026-08-03T20:54:52Z |
