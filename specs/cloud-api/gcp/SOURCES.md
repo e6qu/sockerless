@@ -21,7 +21,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `cloudfunctions-v2.discovery.json.gz` | `cloudfunctions.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260723` | 2026-07-28T11:54:55Z |
 | `redis-v1.discovery.json.gz` | `redis.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260723` | 2026-07-28T11:54:56Z |
 | `serviceusage-v1.discovery.json.gz` | `serviceusage.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260721` | 2026-07-28T11:54:57Z |
-| `iam-v1.discovery.json.gz` | `iam.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260724` | 2026-07-28T11:54:58Z |
 | `dns-v1.discovery.json.gz` | `dns.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260723` | 2026-07-28T17:12:50Z |
 | `cloudresourcemanager-v3.discovery.json.gz` | `cloudresourcemanager.googleapis.com` | `$discovery/rest?version=v3` | Apache-2.0 | `revision 20260715` | 2026-07-29T00:07:02Z |
 | `cloudresourcemanager-v1.discovery.json.gz` | `cloudresourcemanager.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260715` | 2026-07-29T00:07:02Z |
@@ -35,3 +34,4 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `cloudresourcemanager-v2.discovery.json.gz` | `cloudresourcemanager.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260715` | 2026-08-02T15:05:53Z |
 | `cloudbilling-v1.discovery.json.gz` | `cloudbilling.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260731` | 2026-08-03T20:29:32Z |
 | `pubsub-v1.discovery.json.gz` | `pubsub.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260721` | 2026-08-03T20:29:33Z |
+| `iam-v1.discovery.json.gz` | `iam.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260724` | 2026-08-03T20:54:52Z |
