@@ -394,6 +394,14 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 			}
 			return one(arn("secretsmanager", "secret:"+id))
 		}
+		// CreateSecret names the secret it is about to create in Name, not in
+		// SecretId. Without this the request falls through to "*", which no
+		// policy scoped to a name prefix can ever match, so a role holding
+		// exactly the grant it needs is denied — and the denial claims the
+		// ACTION is not allowed, which sends the reader to the wrong place.
+		if name := iamJSONBodyField(r, "Name"); name != "" {
+			return one(arn("secretsmanager", "secret:"+name))
+		}
 	case "states":
 		if a := iamJSONBodyField(r, "stateMachineArn"); a != "" {
 			return one(a)
