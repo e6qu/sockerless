@@ -10,6 +10,7 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -112,7 +113,7 @@ func (w *OTelLogWriter) Write(p []byte) (int, error) {
 	record.SetTimestamp(parseZerologTimestamp(entry))
 	record.SetObservedTimestamp(time.Now())
 	if msg, ok := entry["message"].(string); ok {
-		record.SetBody(otellog.StringValue(msg))
+		record.SetBody(attribute.StringValue(msg))
 	}
 	level, _ := entry["level"].(string)
 	severity, severityText := zerologLevelToOTel(level)
@@ -123,7 +124,7 @@ func (w *OTelLogWriter) Write(p []byte) (int, error) {
 		case "level", "message", "time":
 			continue
 		}
-		record.AddAttributes(otellog.KeyValue{Key: k, Value: otelValueOf(v)})
+		record.AddAttributes(attribute.KeyValue{Key: attribute.Key(k), Value: otelValueOf(v)})
 	}
 	w.logger.Emit(context.Background(), record)
 	return len(p), nil
@@ -161,26 +162,26 @@ func zerologLevelToOTel(level string) (otellog.Severity, string) {
 	return otellog.SeverityInfo, level
 }
 
-func otelValueOf(v any) otellog.Value {
+func otelValueOf(v any) attribute.Value {
 	switch x := v.(type) {
 	case nil:
-		return otellog.StringValue("")
+		return attribute.StringValue("")
 	case string:
-		return otellog.StringValue(x)
+		return attribute.StringValue(x)
 	case bool:
-		return otellog.BoolValue(x)
+		return attribute.BoolValue(x)
 	case float64:
 		if x == float64(int64(x)) {
-			return otellog.Int64Value(int64(x))
+			return attribute.Int64Value(int64(x))
 		}
-		return otellog.Float64Value(x)
+		return attribute.Float64Value(x)
 	case int:
-		return otellog.Int64Value(int64(x))
+		return attribute.Int64Value(int64(x))
 	case int64:
-		return otellog.Int64Value(x)
+		return attribute.Int64Value(x)
 	}
 	if b, err := json.Marshal(v); err == nil {
-		return otellog.StringValue(string(b))
+		return attribute.StringValue(string(b))
 	}
-	return otellog.StringValue("")
+	return attribute.StringValue("")
 }
