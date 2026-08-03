@@ -110,6 +110,23 @@ func elbv2HealthyTargetForListener(ctx context.Context, listener ELBv2Listener) 
 	return ELBv2TargetGroup{}, ELBv2TargetDescription{}, false
 }
 
+// returnRedirectsToClient stops a forwarding client following a target's
+// redirect. A load balancer hands the 3xx back to the caller; it never chases
+// one itself. Following it fetches the redirect TARGET and answers with that
+// instead, and because the forwarding client keeps no cookie jar, any
+// Set-Cookie the redirect carried is discarded on the way. That silently breaks
+// every OpenID Connect sign-in behind the data plane: the browser gets a 200 at
+// the callback URL with no session and no error to explain it.
+//
+// Go replays a redirected request only when it can rewind the body. A request
+// forwarded from a server has no rewindable body, so in production 307 and 308
+// happen to survive while 301, 302 and 303 — the set every OpenID Connect
+// library uses — are followed. That accident is why the live symptom looked
+// selective; the defect itself is not status-specific.
+func returnRedirectsToClient(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 func elbv2ProxyHTTPRequest(w http.ResponseWriter, r *http.Request, listener ELBv2Listener, tg ELBv2TargetGroup, address string) error {
 	scheme := "http"
 	if strings.EqualFold(tg.Protocol, "HTTPS") {
@@ -129,7 +146,7 @@ func elbv2ProxyHTTPRequest(w http.ResponseWriter, r *http.Request, listener ELBv
 	}
 	req.Header = r.Header.Clone()
 	req.Host = elbv2TargetHostHeader(r.Host, listener)
-	client := http.Client{Timeout: 30 * time.Second}
+	client := http.Client{Timeout: 30 * time.Second, CheckRedirect: returnRedirectsToClient}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("forward to target %s: %w", address, err)

@@ -17,6 +17,23 @@ import (
 	realexec "github.com/sockerless/simulator-realexec"
 )
 
+// returnRedirectsToClient stops a forwarding client following a backend's
+// redirect. A gateway hands the 3xx back to the caller; it never chases one
+// itself. Following it fetches the redirect TARGET and answers with that
+// instead, and because the forwarding client keeps no cookie jar, any
+// Set-Cookie the redirect carried is discarded on the way. That silently breaks
+// every OpenID Connect sign-in behind the data plane: the browser gets a 200 at
+// the callback URL with no session and no error to explain it.
+//
+// Go replays a redirected request only when it can rewind the body. A request
+// forwarded from a server has no rewindable body, so in production 307 and 308
+// happen to survive while 301, 302 and 303 — the set every OpenID Connect
+// library uses — are followed. That accident is why the live symptom looked
+// selective; the defect itself is not status-specific.
+func returnRedirectsToClient(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 // The application gateway data plane. A client reaches an application gateway
 // at the address of one of its frontend IP configurations — the address of the
 // public IP the frontend references, or the private address the frontend took
@@ -632,7 +649,11 @@ func applicationGatewayHTTPProbe(ctx context.Context, spec applicationGatewayRes
 	if spec.host != "" {
 		req.Host = spec.host
 	}
-	client := http.Client{Timeout: spec.timeout}
+	// A health probe evaluates the status code the backend actually returned
+	// against its match rules. Following a redirect would score the redirect
+	// TARGET instead, so a backend answering 302 could be marked Down because
+	// something else behind it failed.
+	client := http.Client{Timeout: spec.timeout, CheckRedirect: returnRedirectsToClient}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "Down", fmt.Sprintf("Received %v while probing %s", err, probeURL.String())
@@ -727,7 +748,7 @@ func applicationGatewayForward(w http.ResponseWriter, r *http.Request, settings 
 	}
 	req.Header = headers
 	req.Host = host
-	client := http.Client{Timeout: timeout}
+	client := http.Client{Timeout: timeout, CheckRedirect: returnRedirectsToClient}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("forward to backend %s: %w", upstream.Host, err)

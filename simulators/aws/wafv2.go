@@ -166,7 +166,12 @@ type wafAssociation struct {
 }
 
 var (
-	wafWebACLs         sim.Store[wafStoredWebACL]
+	// The data plane consults this store on every forwarded request, and a
+	// forwarded request can arrive before this service is registered — a
+	// simulator assembled without it, or a test that mounts one data plane.
+	// An empty store answers the question truthfully (nothing is registered,
+	// so nothing is associated); a nil one panicked in the middle of serving.
+	wafWebACLs         sim.Store[wafStoredWebACL] = sim.NewStateStore[wafStoredWebACL]()
 	wafIPSets          sim.Store[wafStoredIPSet]
 	wafRuleGroups      sim.Store[wafStoredRuleGroup]
 	wafRegexSets       sim.Store[wafStoredRegex]
@@ -180,7 +185,7 @@ var (
 	// wafAssociations maps a real cloud resource ARN to its WebACL ARN.
 	// CloudFront distributions and Amplify apps share this authoritative
 	// association state, just as both services are protected through WAFv2.
-	wafAssociations sim.Store[wafAssociation]
+	wafAssociations sim.Store[wafAssociation] = sim.NewStateStore[wafAssociation]()
 )
 
 // ---------- Helpers ----------

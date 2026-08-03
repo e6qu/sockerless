@@ -98,7 +98,7 @@ func proxyACAIngress(w http.ResponseWriter, r *http.Request, app ContainerApp) {
 	target := fmt.Sprintf("http://%s:%d%s", ip, acaIngressTargetPort(app), r.URL.RequestURI())
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
-	client := &http.Client{Timeout: 10 * time.Minute}
+	client := &http.Client{Timeout: 10 * time.Minute, CheckRedirect: returnRedirectsToClient}
 
 	// The replica's HTTP listener binds a moment after the container starts;
 	// retry the connection briefly so an invoke racing replica startup doesn't
