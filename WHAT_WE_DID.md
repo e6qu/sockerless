@@ -4,6 +4,53 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-03 — The eight operations that happen inside the machine
+
+Microsoft.Compute virtual machines are complete at 29 of 29. The eight that
+were left are the ones defined by what happens *in* the guest, and each now
+does it.
+
+A Custom Script extension runs its commandToExecute inside the machine and
+reports the output and exit status it produced. That is the whole difference
+between this and a record: a command that exits non-zero leaves the extension
+Failed rather than provisioned, and the instance view carries what the command
+wrote, which is what an operator reads to find out what an extension actually
+did. A handler this simulator does not implement is refused rather than
+reported succeeded — a caller cannot tell a handler that did nothing from one
+that ran. Protected settings are accepted, stored so the handler can read them
+exactly as the guest agent does, and never returned; returning them would hand
+back a secret the caller entrusted to the machine.
+
+Patch assessment reads the guest's own package manager. `apt-get --simulate
+upgrade` reports what it would do without doing it, and every field comes out
+of that: the package name, the version it would move to, and the archive the
+version comes from — which is the only honest source for whether an update is a
+security update, since apt has no Windows-style classification. The
+pending-restart flag is `/var/run/reboot-required`, the signal Debian and Ubuntu
+actually use. A guest with nothing upgradable reports nothing, and that is a
+truthful assessment rather than an empty one waiting to be filled in.
+Installation runs the same package manager under the caller's include and
+exclude masks and honours the reboot setting.
+
+Capture copies the disk the machine is running on. The guest is asked to flush
+its buffers first, because a disk copied mid-write produces an image that boots
+into a repair, and the copy goes into the named container through the same Blob
+data plane a client reads it back from. It is refused unless the machine was
+generalized — which the previous pass implemented — because an image of a
+specialized machine carries its host name, its keys and its logs into every
+machine created from it.
+
+What can be asserted without nested KVM is asserted where anyone can run it:
+reading a real apt plan and classifying by archive, matching package masks,
+which settings the command is taken from, and every refusal — an unknown
+handler, a machine that is not running, an extension with no command, a capture
+of a machine that was not generalized or that names no destination. Both
+decisions most likely to rot quietly were negative-controlled: breaking the
+security classification and letting protected settings through each fail their
+test. The paths that need a booted guest are driven by the official SDK and the
+real az CLI on a capable host, asserting on the marker the command printed
+rather than on the operation returning.
+
 ## 2026-08-03 — A way to run a command inside a guest
 
 The eight Azure virtual machine operations left unserved all needed the same

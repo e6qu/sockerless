@@ -214,6 +214,8 @@ func registerCompute(srv *sim.Server) {
 	registerNetworkInterfaces(srv)
 	registerVirtualMachines(srv)
 	registerVirtualMachineOperations(srv)
+	registerVirtualMachineExtensions(srv)
+	registerVirtualMachinePatchesAndCapture(srv)
 }
 
 func registerComputeCatalog(srv *sim.Server) {

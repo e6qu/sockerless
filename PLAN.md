@@ -322,25 +322,14 @@ this order.
    through the console's server-side broker with faithful ARM/Graph CORS, the
    harness running the Azure console and cloud as separate processes.
 
-## Staged: Virtual Machines and the Compute/Console Tails
+## Staged: the Compute and Console Tails
 
-These three are sized and designed, not started. Each is staged rather than
-folded into an unrelated branch because each is Linux-only real-execution work
-or a long tail that would swamp a review.
+These two are sized and designed, not started. Both are breadth work that needs
+no special host — what made the earlier entries here Linux-only was the guest
+execution they waited on, and that landed. Each is staged rather than folded
+into an unrelated branch because each is a long tail that would swamp a review.
 
-1. **The eight Azure virtual machine operations that run inside the guest.**
-   Virtual machines stand at 21 of 29, and the execution path the remaining
-   eight needed now exists: `FirecrackerVM.Exec` runs a command in a booted
-   guest over the machine's own SSH service, with a per-machine key authorized
-   in the root filesystem before the image is packed. What is left is the
-   operations on top of it — the five `VirtualMachineExtensions_*` (an
-   extension is a script the guest executes), `AssessPatches` and
-   `InstallPatches` (which query and drive the guest's package manager), and
-   `Capture` (which quiesces the guest's disk and copies it into an image).
-   Booting a guest needs nested KVM, so this is a capable-Linux gate — see
-   BUG-2764.
-
-2. **Google Compute Engine's long tail**: 910 unserved method spellings
+1. **Google Compute Engine's long tail**: 910 unserved method spellings
    (~455 methods). The weight sits in `instanceGroupManagers` (80 spellings),
    `instances` (74), `disks` (38), `securityPolicies` (30), `reservations`
    (28) and `snapshots` (20); the remainder is a genuine tail —
@@ -348,7 +337,7 @@ or a long tail that would swamp a review.
    value per operation. Stage by resource family, highest-weight first, so
    each pass is reviewable.
 
-3. **The Azure console's service surface**: the portal exposes 7 blades
+2. **The Azure console's service surface**: the portal exposes 7 blades
    (Container Registry, Container Apps jobs, Entra app registrations, Function
    Apps, Monitor, Storage, Subscriptions) while the simulator serves roughly
    35 resource providers. The seven entries currently marked not-supported are
