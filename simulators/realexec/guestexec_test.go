@@ -117,8 +117,12 @@ func TestGuestSSHInvocation(t *testing.T) {
 			t.Errorf("invocation %q is missing %q", args, want)
 		}
 	}
-	if !strings.HasSuffix(args, "--") {
-		t.Errorf("invocation %q must end with -- so a command cannot be read as an option", args)
+	// -- terminates ssh's own options and must precede the destination. After
+	// the destination ssh is already reading the remote command, so a trailing
+	// -- becomes the first word the guest tries to run — which is a command
+	// that silently produces nothing rather than the one that was asked for.
+	if !strings.HasSuffix(args, "-- root@10.0.0.7") {
+		t.Errorf("invocation %q must end with the destination, with -- before it", args)
 	}
 }
 
@@ -143,5 +147,50 @@ func requireKeyGenerator(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("ssh-keygen"); err != nil {
 		t.Fatalf("ssh-keygen is required to authorize a guest and ships with every supported host: %v", err)
+	}
+}
+
+// ssh joins the remaining arguments with spaces and hands the result to the
+// guest's login shell, so an argv passed as separate words is reassembled by
+// that shell instead of preserved. Quoting is what makes the shell rebuild the
+// argv that was asked for.
+//
+// Getting this wrong is silent: Exec("/bin/sh", "-c", "echo hello") arriving as
+// `/bin/sh -c echo hello` runs echo with no arguments and exits 0, so the
+// command appears to have succeeded while producing nothing. Verified against a
+// real sshd — the unquoted form printed an empty line and exited 0, the quoted
+// form printed the output and carried the exit status back.
+func TestGuestCommandSurvivesSSHRejoiningIt(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command []string
+		want    string
+	}{
+		{
+			"a command with arguments stays one word each",
+			[]string{"/bin/sh", "-c", "echo hello"},
+			`'/bin/sh' '-c' 'echo hello'`,
+		},
+		{
+			"a word carrying spaces is not split",
+			[]string{"echo", "two words"},
+			`'echo' 'two words'`,
+		},
+		{
+			"a single quote inside a word does not end the quoting",
+			[]string{"echo", "it's"},
+			`'echo' 'it'\''s'`,
+		},
+		{
+			"a word that looks like an option is not read as one",
+			[]string{"echo", "--help"},
+			`'echo' '--help'`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shellQuoteAll(tc.command); got != tc.want {
+				t.Errorf("shellQuoteAll(%q) = %s, want %s", tc.command, got, tc.want)
+			}
+		})
 	}
 }
