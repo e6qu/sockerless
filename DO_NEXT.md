@@ -14,19 +14,19 @@ identifier out of its requests, and raise `iamDerivationCoverageFloor`. The
 vendored AWS Service Reference already carries every resource type and ARN
 format needed, so no new fidelity question has to be settled first.
 
-Two pieces remain sized, designed and staged in [PLAN.md](PLAN.md) § "Staged:
-Virtual Machines and the Compute/Console Tails" alongside the Azure virtual
-machines: Google Compute Engine's ~455-method tail and the Azure console's
-service surface, both breadth work that needs no special host. Google Compute
-Engine `packetMirrorings` left that list — it forwards real traffic now, and
-the send half it needed (`realexec.StartMirror`) is available to anything else
-that has to deliver frames somewhere.
+Three pieces remain sized, designed and staged in [PLAN.md](PLAN.md) §
+"Staged: Virtual Machines and the Compute/Console Tails". The one with a named
+blocker is an execution path inside a Firecracker guest: Azure virtual machines
+reached 21 of 29, and the eight left — the five extension operations,
+`AssessPatches`, `InstallPatches` and `Capture` — all describe something
+happening *inside* the machine, which nothing can currently do.
+`realexec.FirecrackerVM` exposes no exec and the guest is reachable only over
+its network interface, so the work is a guest-side agent plus a host-side
+transport (vsock, or the serial console already wired for the boot log), after
+which all eight follow from it. That is BUG-2914.
 
-Azure virtual machines, at 11 of 29, remain the Linux-only piece: booting a
-guest needs nested KVM. Two of the causes previously folded into BUG-2764 were
-separate defects and are now fixed — a poisoned asset cache and a kernel check
-that rejected every valid arm64 image — so an arm64 host boots the kernel and
-the remaining failure is the boot itself rather than a misreported format.
+The other two are breadth work needing no special host: Google Compute Engine's
+~455-method tail, and the Azure console's service surface.
 
 An operator-side step is outstanding and is not a code change: deployments
 pinned to a simulator image built before live workload log streaming landed

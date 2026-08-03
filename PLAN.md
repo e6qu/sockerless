@@ -328,19 +328,21 @@ These three are sized and designed, not started. Each is staged rather than
 folded into an unrelated branch because each is Linux-only real-execution work
 or a long tail that would swamp a review.
 
-1. **Azure virtual machines, 11 of 29 to complete.** Served today: create,
-   patch, get, instance view, both lists, delete, and the
-   start/powerOff/restart/deallocate actions. The rest divide by what they
-   need. Straight off existing state: `ListAvailableSizes` (the Compute
-   catalogue is already modelled), `ListByLocation`, `SimulateEviction`,
-   `Generalize`. Off the real Firecracker guest: `Redeploy`, `Reimage`,
-   `Reapply`, `PerformMaintenance` operate on the guest process, and
-   `RetrieveBootDiagnosticsData` returns the guest's real console output.
-   Needing new substrate: `Capture` (an image captured from a running guest),
-   the five `VirtualMachineExtensions_*` operations (an extension that runs
-   for real inside the guest), and `AssessPatches` / `InstallPatches` (which
-   need an in-guest agent to be anything other than invented). Booting a guest
-   needs nested KVM, so this is a capable-Linux gate — see BUG-2764.
+1. **An execution path inside a Firecracker guest, and the eight Azure virtual
+   machine operations that need one.** Virtual machines reached 21 of 29:
+   everything answerable from the machine's own state or by moving the guest
+   process is served. The remaining eight all need the same missing thing — a
+   way to run a command inside the running guest. `VirtualMachineExtensions_*`
+   (five operations) is an extension executing for real in the guest;
+   `AssessPatches` and `InstallPatches` need a package manager queried inside
+   it; `Capture` needs the guest's disk quiesced and copied into an image. The
+   guest today is reachable only over its network interface, and
+   `realexec.FirecrackerVM` exposes no exec at all, so any of the eight
+   implemented now would be a record of something that did not happen. The work
+   is a guest-side agent plus a host-side transport (vsock, or the serial
+   console already wired for the boot log), after which all eight follow from
+   it. Booting a guest needs nested KVM, so this is a capable-Linux gate — see
+   BUG-2764.
 
 2. **Google Compute Engine's long tail**: 910 unserved method spellings
    (~455 methods). The weight sits in `instanceGroupManagers` (80 spellings),

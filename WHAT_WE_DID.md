@@ -4,6 +4,62 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-03 — Azure virtual machines, ten more operations against the real guest
+
+Microsoft.Compute virtual machines served 11 of 29 operations. Ten more are
+served now, and they divide by what they actually needed rather than by how
+much work they looked like.
+
+Four answer off the machine's own state. `ListAvailableSizes` and
+`ListByLocation` are reads, though the second is a filter that had to be a
+filter — a listing that returned every machine regardless of location would
+pass a test that only checks the machine it created is present, which is why
+the assertion checks the other location too. `Generalize` is refused while the
+machine runs, because generalizing a running system would capture it mid-write,
+and once it succeeds the instance view reports `OSState/generalized`, which is
+where a caller reads it back. `ConvertToManagedDisks` really rewrites the
+storage profile — the `vhd` reference goes, a `managedDisk` reference arrives —
+and leaves a machine already on managed disks untouched, exactly as the real
+conversion does.
+
+Six move the real guest. `Redeploy`, `Reimage`, `Reapply` and
+`PerformMaintenance` mean different things on Azure's hardware but the same
+thing to a Firecracker process: stop it and bring it back, leaving the machine
+running. A machine that was deliberately stopped stays stopped, because these
+operations restore a machine to the state it was in rather than start one.
+`SimulateEviction` applies only to a Spot machine — a regular machine is never
+evicted, so asking is refused — and the eviction policy decides what is left
+behind, deallocated or deleted.
+
+`RetrieveBootDiagnosticsData` returns the console output the guest really
+wrote, read out of the Firecracker console log, stored into the storage account
+the machine's diagnostics profile names, and served back through the same Blob
+data plane a client downloads it from. It returns no console screenshot: the
+guest is a serial-console machine with no framebuffer, the member is optional
+in the response, and a URI pointing at an image that does not exist would be
+worse than its absence.
+
+Two members the model had been dropping are now carried. `diagnosticsProfile`
+is what boot diagnostics reads, and a member the model drops reads back missing
+— perpetual drift for any client that sent it, which the Terraform machine now
+sends. `priority` and `evictionPolicy` are what make a machine a Spot machine;
+without them every machine looked regular and eviction could not have meant
+anything.
+
+The logic is asserted in-process against a machine put straight into the store,
+because booting a guest needs nested KVM and a host without it would otherwise
+leave routing, state transitions, disk conversion and diagnostics resolution
+untested rather than merely unbooted. The guest-moving half is driven by the
+official SDK and the real `az` CLI on a capable host.
+
+The eight operations still unserved share one blocker, and it is worth naming
+precisely rather than calling them hard: an extension is a script executed
+inside the guest, patch assessment reads the guest's package manager, and a
+capture quiesces and copies the guest's disk. `realexec.FirecrackerVM` exposes
+no exec and the guest is reachable only over its network interface, so each of
+the eight served today would record something that did not happen. A guest-side
+agent and a host-side transport unlock all eight at once; that is BUG-2914.
+
 ## 2026-08-03 — Packet mirroring forwards real traffic
 
 Google Compute Engine's `packetMirrorings` was already served, and that was the

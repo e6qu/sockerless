@@ -259,6 +259,14 @@ resource "azurerm_linux_virtual_machine" "az_vm" {
     sku       = "22_04-lts"
     version   = "latest"
   }
+
+  # Boot diagnostics names the storage account the machine's console log is
+  # written to, which is what RetrieveBootDiagnosticsData reads it back from.
+  # It is applied here because a member the model drops reads back missing and
+  # shows up as perpetual drift in the follow-up plan.
+  boot_diagnostics {
+    storage_account_uri = azurerm_storage_account.main.primary_blob_endpoint
+  }
 }
 
 # Private DNS zone — sockerless's Azure DNS driver creates one of these
