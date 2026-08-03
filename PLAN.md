@@ -328,21 +328,20 @@ These four are sized and designed, not started. Each is staged rather than
 folded into an unrelated branch because each is Linux-only real-execution work
 or a long tail that would swamp a review.
 
-1. **Real traffic capture** (closes BUG-2888, and Google Compute Engine
-   `packetMirrorings`). A capture's content is genuine traffic recorded off a
-   workload's interface, so the mechanism has to be real: bind an `AF_PACKET`
-   raw socket inside the target's network namespace, write real pcap, and land
-   it where the cloud says it lands — for Azure that is the storage account
-   named by `PacketCaptureStorageLocation.storageId` / `storagePath`, which the
-   simulator's own Blob data plane already serves, so the round trip is real
-   end to end. The six `PacketCaptures_*` operations then sit on top of that:
-   `Create` starts a capture bounded by `timeLimitInSeconds`,
-   `totalBytesPerSession` and `bytesToCapturePerPacket`, `GetStatus` reports
-   the real session state, `Stop` finalises the file. A session reported
-   `Running` with no packets behind it would be fiction, which is why the
-   operations cannot land before the mechanism. Requires a Linux host with
-   network namespaces; verifiable in the repository's real-network container
-   harness.
+1. **Google Compute Engine `packetMirrorings`** — seven methods, and NOT the
+   same mechanism as a packet capture, which is why it did not land with one.
+   A capture records frames into a file; a mirroring policy continuously
+   forwards duplicated frames to a collector internal load balancer, so its
+   backends receive the mirrored traffic. The capture engine in
+   `simulators/realexec` supplies the read half — a packet socket on the
+   mirrored resource's interface, and the five-tuple filter the policy's
+   `filter` field needs — but the send half does not exist: nothing in the
+   substrate injects frames toward another address, and `loadbalancer.go`
+   offers only a TCP proxy. The work is that forwarder plus resolving
+   `collectorIlb` to the interface its backends sit behind. Implementing the
+   resource without it would be the same fiction packet captures were before
+   the mechanism existed: a policy that records `enable: true` and mirrors
+   nothing.
 
 2. **Azure virtual machines, 11 of 29 to complete.** Served today: create,
    patch, get, instance view, both lists, delete, and the

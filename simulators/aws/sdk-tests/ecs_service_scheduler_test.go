@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/servicediscovery"
@@ -283,4 +284,113 @@ func containsString(values []string, wanted string) bool {
 		}
 	}
 	return false
+}
+
+// TestECS_ServiceTaskStreamsLogsLive proves the awslogs contract for the tasks
+// an Amazon ECS service owns. A service task never exits, so its stdout is only
+// diagnosable if the log driver forwards each line while the task is RUNNING —
+// the post-exit drain that covers one-shot RunTask workloads never runs for it.
+// Regression: service tasks reached CloudWatch with nothing but the synthetic
+// "container started" event, which made every service in the simulator opaque.
+func TestECS_ServiceTaskStreamsLogsLive(t *testing.T) {
+	client := ecsClient()
+	const (
+		cluster     = "svc-live-logs-cluster"
+		serviceName = "svc-live-logs-svc"
+		logGroup    = "/ecs/svc-live-logs"
+		marker      = "service-line-from-running-task"
+	)
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = client.UpdateService(ctx, &ecs.UpdateServiceInput{
+			Cluster: aws.String(cluster), Service: aws.String(serviceName), DesiredCount: aws.Int32(0),
+		})
+		_, _ = client.DeleteService(ctx, &ecs.DeleteServiceInput{
+			Cluster: aws.String(cluster), Service: aws.String(serviceName), Force: aws.Bool(true),
+		})
+		_, _ = client.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)})
+	})
+
+	registered, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family: aws.String("svc-live-logs-task"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:      aws.String("app"),
+			Image:     aws.String(containerCommandImage),
+			Command:   []string{"log", marker, "600"},
+			Essential: aws.Bool(true),
+			LogConfiguration: &ecstypes.LogConfiguration{
+				LogDriver: ecstypes.LogDriverAwslogs,
+				Options: map[string]string{
+					"awslogs-group":         logGroup,
+					"awslogs-stream-prefix": "ecs",
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+	_, err = client.CreateService(ctx, &ecs.CreateServiceInput{
+		Cluster:        aws.String(cluster),
+		ServiceName:    aws.String(serviceName),
+		TaskDefinition: registered.TaskDefinition.TaskDefinitionArn,
+		DesiredCount:   aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	cw := cwLogsClient()
+	markerEvents := func() int {
+		streams, streamErr := cw.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
+			LogGroupName: aws.String(logGroup),
+		})
+		if streamErr != nil {
+			return 0
+		}
+		count := 0
+		for _, stream := range streams.LogStreams {
+			events, eventErr := cw.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
+				LogGroupName:  aws.String(logGroup),
+				LogStreamName: stream.LogStreamName,
+			})
+			if eventErr != nil {
+				continue
+			}
+			for _, event := range events.Events {
+				if aws.ToString(event.Message) == marker {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	require.Eventually(t, func() bool { return markerEvents() >= 1 },
+		60*time.Second, 250*time.Millisecond,
+		"a service task's stdout must stream to CloudWatch while the task is RUNNING")
+
+	// The line is observable while the service is still holding the task, so
+	// an operator can diagnose a running service without stopping it.
+	described, err := client.DescribeServices(ctx, &ecs.DescribeServicesInput{
+		Cluster: aws.String(cluster), Services: []string{serviceName},
+	})
+	require.NoError(t, err)
+	require.Len(t, described.Services, 1)
+	require.EqualValues(t, 1, described.Services[0].RunningCount,
+		"the log line must be visible while the service task is still RUNNING")
+	assert.Never(t, func() bool { return markerEvents() > 1 },
+		3*time.Second, 250*time.Millisecond,
+		"the live stream must not deliver a line more than once")
+
+	// DescribeLogStreams must report the ingestion, not just the creation, of
+	// the stream: ordering a service's streams by LastEventTime is how an
+	// operator finds the task that is still writing.
+	streams, err := cw.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
+		LogGroupName: aws.String(logGroup),
+	})
+	require.NoError(t, err)
+	require.Len(t, streams.LogStreams, 1)
+	stream := streams.LogStreams[0]
+	require.Greater(t, aws.ToInt64(stream.LastEventTimestamp), aws.ToInt64(stream.CreationTime),
+		"the service task's stream must report the workload's own output as its last event")
+	require.GreaterOrEqual(t, aws.ToInt64(stream.LastIngestionTime), aws.ToInt64(stream.LastEventTimestamp),
+		"the service task's stream must report when its workload output was ingested")
 }

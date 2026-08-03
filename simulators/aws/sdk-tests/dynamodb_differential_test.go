@@ -462,7 +462,11 @@ func startDynamoDBLocal(t *testing.T) (endpoint string, stop func()) {
 		t.Fatalf("docker is required for DynamoDB Local differential test: %v", err)
 	}
 
-	const image = "amazon/dynamodb-local:latest"
+	// Amazon publishes DynamoDB Local on its own public registry as well as on
+	// Docker Hub. Pulling it from Amazon avoids Docker Hub's anonymous rate
+	// limit, which times the pull out on a shared CI runner and fails this
+	// oracle-backed test for a reason that has nothing to do with DynamoDB.
+	const image = "public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest"
 	if !diffDockerPull(image) {
 		t.Fatalf("docker is present but %s could not be pulled after retries", image)
 	}

@@ -108,6 +108,17 @@ func DetectExternalNamespaceCapabilities() CapabilityReport {
 	return DetectCapabilities("ip", "nft", "sysctl", "nsenter")
 }
 
+// DetectCaptureCapabilities reports what traffic capture needs, which is less
+// than the network substrate needs. Capturing opens a packet socket on an
+// interface inside a network namespace: that wants `ip` to reach the namespace
+// and the Linux capabilities to enter it and open a raw socket. It does NOT
+// want nftables or sysctl, which the fabric uses to program filtering and
+// forwarding — demanding those would make a host that can capture perfectly
+// well report that it cannot.
+func DetectCaptureCapabilities() CapabilityReport {
+	return DetectCapabilities("ip")
+}
+
 func commandsRequireKVM(requiredCommands []string) bool {
 	for _, name := range requiredCommands {
 		if name == "firecracker" || name == "jailer" {

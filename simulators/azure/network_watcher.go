@@ -135,6 +135,7 @@ func registerNetworkWatchers(srv *sim.Server) {
 	registerNetworkWatcherFlowLogs(srv)
 	registerNetworkWatcherConnectionMonitors(srv)
 	registerNetworkWatcherDiagnostics(srv)
+	registerNetworkWatcherPacketCaptures(srv)
 }
 
 // deleteNetworkWatcherChildren removes the flow logs and connection monitors a

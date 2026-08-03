@@ -60,6 +60,36 @@ func cwEventsKey(group, stream string) string {
 	return group + ":" + stream
 }
 
+// cwIngestWorkloadLogLine records one line a workload wrote to stdout/stderr
+// through the same ingestion path PutLogEvents uses. In real AWS a container
+// log driver is an ordinary CloudWatch producer: the stream's event timestamps
+// advance, embedded-metric documents are extracted, and the group's metric
+// filters fire. Appending straight into the event slice left an actively
+// logging stream reporting the instant it was created, so an operator ordering
+// a service's streams by LastEventTime could not tell a task that is still
+// writing from one that has said nothing since it started.
+func cwIngestWorkloadLogLine(logGroup, logStream, message string) {
+	key := cwEventsKey(logGroup, logStream)
+	nowMs := time.Now().UnixMilli()
+	event := CWLogEvent{Timestamp: nowMs, Message: message, IngestionTime: nowMs}
+	cwLogEvents.Update(key, func(events *[]CWLogEvent) {
+		*events = append(*events, event)
+	})
+	for _, datum := range extractEMFMetrics(message, nowMs) {
+		cwStoreDatum(datum)
+	}
+	cwEvaluateMetricFilters(logGroup, []CWLogEvent{event})
+	nextSequenceToken := cwNextSequenceToken()
+	cwLogStreams.Update(key, func(stream *CWLogStream) {
+		stream.LastIngestionTime = nowMs
+		stream.UploadSequenceToken = nextSequenceToken
+		if stream.FirstEventTimestamp == 0 {
+			stream.FirstEventTimestamp = nowMs
+		}
+		stream.LastEventTimestamp = nowMs
+	})
+}
+
 func registerCloudWatchLogs(r *sim.AWSRouter, srv *sim.Server) {
 	cwLogGroups = sim.MakeStore[CWLogGroup](srv.DB(), "cw_log_groups")
 	cwLogStreams = sim.MakeStore[CWLogStream](srv.DB(), "cw_log_streams")
@@ -385,7 +415,7 @@ func handleCWPutLogEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cwEvaluateMetricFilters(req.LogGroupName, req.LogEvents)
+	cwEvaluateMetricFilters(req.LogGroupName, newEvents)
 
 	// Update stream timestamps
 	nextSequenceToken := cwNextSequenceToken()

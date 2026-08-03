@@ -13,6 +13,14 @@ network namespaces for capture, nested KVM for guests — so they belong on a
 branch that can be driven through the real-network container harness and the
 capable-Linux CI gate rather than folded into unrelated work.
 
+An operator-side step is outstanding and is not a code change: deployments
+pinned to a simulator image built before live workload log streaming landed
+serve an Amazon ECS service task's stream with nothing but the synthetic
+"container started" event, because that build reached CloudWatch only through
+the post-exit drain and a service task never exits. Any deployment showing that
+symptom needs its `sockerless-simulator-aws` digest repinned to a current
+build; no simulator change makes an already-published older image stream.
+
 ## Completed Baseline
 
 Google Cloud Resource Manager reached complete coverage on all three API
