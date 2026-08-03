@@ -1,5 +1,5 @@
-cloud.google.com/go/bigtable v1.51.0 h1:AZh/vDoRdn8cz+CbdUjx/ajQGqit831Wo8dtIWsfNTY=
-cloud.google.com/go/bigtable v1.51.0/go.mod h1:PL9WVm/o2ET/MDj6i1Zt7eNW7YNY0iFOmSHTVvLdPmo=
+cloud.google.com/go/bigtable v1.52.0 h1:8DS8rq5Mn3XmPqXD/vk+1lyqcWJ4hs+0Hh8Ruqroj+U=
+cloud.google.com/go/bigtable v1.52.0/go.mod h1:51/CYIIpOoGrZ6koxZ9F5MFMwhtluPPeh0BvCJjl5RQ=
 cloud.google.com/go/firestore v1.24.0 h1:x0Z3hrgjYgo2wI9whuBRQcNc2hYwzZDQy/7pkUXbXcs=
 cloud.google.com/go/firestore v1.24.0/go.mod h1:5aojyjN4olKUnBZDCRWwM+NsdrrCX3t1qfyERZGOonM=
 cloud.google.com/go/iam v1.12.0 h1:Aki3bX9aHUDKPHfnRJfDcTdVedvy6quGBQcTqx3DRXk=

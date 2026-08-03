@@ -3,7 +3,7 @@ module github.com/sockerless/simulator-gcp
 go 1.25.8
 
 require (
-	cloud.google.com/go/bigtable v1.51.0
+	cloud.google.com/go/bigtable v1.52.0
 	cloud.google.com/go/firestore v1.24.0
 	cloud.google.com/go/iam v1.12.0
 	cloud.google.com/go/kms v1.33.0
