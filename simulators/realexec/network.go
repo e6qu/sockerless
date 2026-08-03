@@ -73,6 +73,23 @@ type Network struct {
 // first time for a given table name — a shared per-VPC table is reconfigured
 // once per instance/task, but its single teardown must be registered once, not
 // N times (which would grow the cleanup stack unboundedly).
+// removeStaleVethPair deletes a veth whose name is already taken before a new
+// one is created under it. The names are derived deterministically from the
+// resource they serve, which is what lets the simulator find them again — and
+// also what makes a link left behind by a previous simulator process collide
+// with the one a restarted process needs, failing with "RTNETLINK answers: File
+// exists". A link with that name belongs to a process that is gone, so removing
+// it reclaims the name rather than destroying anything live. Both ends go with
+// either end, and a name that is not taken makes this a no-op.
+func removeStaleVethPair(ctx context.Context, runner Runner, namespaceName, hostName string) {
+	if namespaceName != "" {
+		if err := runner.Run(ctx, "ip", "netns", "exec", namespaceName, "ip", "link", "del", hostName); err == nil {
+			return
+		}
+	}
+	_ = runner.Run(ctx, "ip", "link", "del", hostName)
+}
+
 func (n *Network) registerTableCleanupOnce(tableName string, fn func(context.Context) error) {
 	if _, loaded := n.cleanupOnce.LoadOrStore(tableName, struct{}{}); loaded {
 		return
@@ -201,6 +218,7 @@ func (n *Network) EnsureEgress(ctx context.Context) (*EgressLink, error) {
 	hostIP, netIP, prefixBits := egressIPs(n.NamespaceName)
 
 	rollback := &CleanupStack{}
+	removeStaleVethPair(ctx, n.runner, n.NamespaceName, hostName)
 	if err := n.runner.Run(ctx, "ip", "link", "add", hostName, "type", "veth", "peer", "name", netName); err != nil {
 		return nil, err
 	}
@@ -676,6 +694,7 @@ func (s *Subnet) AttachNamespaceNIC(ctx context.Context, spec NamespaceNICSpec) 
 		return s.network.runner.Run(cleanupCtx, "ip", "netns", "del", spec.NamespaceName)
 	})
 
+	removeStaleVethPair(ctx, s.network.runner, s.network.NamespaceName, spec.HostVethName)
 	if err := s.network.runner.Run(ctx, "ip", "link", "add", spec.HostVethName, "type", "veth", "peer", "name", spec.GuestVethName); err != nil {
 		_ = rollback.Close(context.Background())
 		return nil, err
@@ -782,6 +801,7 @@ func (s *Subnet) AttachExternalNamespaceNIC(ctx context.Context, spec ExternalNa
 	rollback := &CleanupStack{}
 	rollback.Add(func(context.Context) error { s.ipam.Release(ip); return nil })
 
+	removeStaleVethPair(ctx, s.network.runner, s.network.NamespaceName, spec.HostVethName)
 	if err := s.network.runner.Run(ctx, "ip", "link", "add", spec.HostVethName, "type", "veth", "peer", "name", spec.GuestVethName); err != nil {
 		_ = rollback.Close(context.Background())
 		return nil, err

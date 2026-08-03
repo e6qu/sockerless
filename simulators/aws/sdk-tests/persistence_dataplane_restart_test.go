@@ -3,9 +3,11 @@ package aws_sdk_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -255,7 +258,36 @@ func connectPersistentPostgreSQL(
 		"postgres://%s:%s@%s/%s?sslmode=require", username, password, endpoint, database,
 	))
 	require.NoError(t, err)
-	connection, err := pgx.ConnectConfig(testCtx, config)
-	require.NoError(t, err)
+
+	// A database that has just come back is still replaying its write-ahead log
+	// and answers "the database system is starting up" (SQLSTATE 57P03) until it
+	// finishes. That is the server reporting a transient state, not a failure,
+	// and it is exactly what a client — or pg_isready — waits through. Connecting
+	// once and giving up turns a restart into a flake.
+	deadline := time.Now().Add(30 * time.Second)
+	var connection *pgx.Conn
+	var lastErr error
+	for time.Now().Before(deadline) {
+		connection, lastErr = pgx.ConnectConfig(testCtx, config)
+		if lastErr == nil {
+			return connection
+		}
+		if !postgreSQLIsStartingUp(lastErr) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	require.NoError(t, lastErr, "PostgreSQL at %s never became ready", endpoint)
 	return connection
+}
+
+// postgreSQLIsStartingUp reports whether an error is the server saying it is not
+// accepting connections yet, either because it is recovering (57P03) or because
+// its listener is not up at all.
+func postgreSQLIsStartingUp(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "57P03"
+	}
+	return errors.Is(err, syscall.ECONNREFUSED)
 }
