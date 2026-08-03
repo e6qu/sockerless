@@ -51,6 +51,12 @@ type computeMetaResource struct {
 	patch      bool
 	setLabels  bool
 	aggregated bool
+	// reconcile, when set, runs after a verb has changed the store, with the
+	// resource's key. A collection whose resource does something in the world
+	// — a packet mirroring policy really mirroring traffic — brings the world
+	// in line with the record here, so the record and the behaviour cannot
+	// drift apart.
+	reconcile func(key string)
 }
 
 // computeScopeSegment renders the scope path segment(s) for a request's
@@ -137,6 +143,9 @@ func (res computeMetaResource) register(srv *sim.Server) {
 		}
 		stampComputeScopeURL(body, res.scope, project, r)
 		res.store.Put(key, body)
+		if res.reconcile != nil {
+			res.reconcile(key)
+		}
 		sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, computeScopeSegment(res.scope, r), computeSelfLink(key), "insert"))
 	})
 
@@ -188,6 +197,9 @@ func (res computeMetaResource) register(srv *sim.Server) {
 			if computeNotFound(w, res.store.Delete(key), res.collection, sim.PathParam(r, "name")) {
 				return
 			}
+			if res.reconcile != nil {
+				res.reconcile(key)
+			}
 			sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, computeScopeSegment(res.scope, r), computeSelfLink(key), "delete"))
 		})
 	}
@@ -215,6 +227,9 @@ func (res computeMetaResource) register(srv *sim.Server) {
 			if !ok {
 				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "%s %q not found", res.collection, sim.PathParam(r, "name"))
 				return
+			}
+			if res.reconcile != nil {
+				res.reconcile(key)
 			}
 			sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, computeScopeSegment(res.scope, r), computeSelfLink(key), "patch"))
 		})
@@ -305,6 +320,9 @@ func registerComputeMore(srv *sim.Server) {
 	}
 
 	gcpComputeImages = mk("compute_images")
+	// A packet mirroring policy's collectorIlb resolves through the regional
+	// backend services to the instances behind it, so the resolver reads them.
+	gcpRegionBackendServices = mk("compute_region_backend_services")
 
 	resources := []computeMetaResource{
 		// Storage resources.
@@ -317,7 +335,7 @@ func registerComputeMore(srv *sim.Server) {
 		{collection: "routes", kind: "compute#route", scope: cScopeGlobal, store: mk("compute_routes")},
 		// Load-balancing resources.
 		{collection: "targetPools", kind: "compute#targetPool", scope: cScopeRegion, store: mk("compute_target_pools"), aggregated: true},
-		{collection: "backendServices", kind: "compute#backendService", scope: cScopeRegion, store: mk("compute_region_backend_services"), patch: true},
+		{collection: "backendServices", kind: "compute#backendService", scope: cScopeRegion, store: gcpRegionBackendServices, patch: true},
 		{collection: "healthChecks", kind: "compute#healthCheck", scope: cScopeRegion, store: mk("compute_region_health_checks"), patch: true},
 		{collection: "httpHealthChecks", kind: "compute#httpHealthCheck", scope: cScopeGlobal, store: mk("compute_http_health_checks"), patch: true},
 		{collection: "httpsHealthChecks", kind: "compute#httpsHealthCheck", scope: cScopeGlobal, store: mk("compute_https_health_checks"), patch: true},

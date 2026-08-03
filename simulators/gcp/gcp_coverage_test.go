@@ -55,7 +55,7 @@ import (
 // probed the same way, so a served method contributes both of its spellings and
 // an unserved one contributes neither.
 var gcpMethodFloor = map[string]int{
-	"compute-v1":              1116,
+	"compute-v1":              1118,
 	"cloudresourcemanager-v3": 126,
 
 	// Cloud Resource Manager v2: every documented method is served. v2's only

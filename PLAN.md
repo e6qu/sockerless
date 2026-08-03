@@ -322,28 +322,13 @@ this order.
    through the console's server-side broker with faithful ARM/Graph CORS, the
    harness running the Azure console and cloud as separate processes.
 
-## Staged: Traffic Capture, Virtual Machines, and the Compute/Console Tails
+## Staged: Virtual Machines and the Compute/Console Tails
 
-These four are sized and designed, not started. Each is staged rather than
+These three are sized and designed, not started. Each is staged rather than
 folded into an unrelated branch because each is Linux-only real-execution work
 or a long tail that would swamp a review.
 
-1. **Google Compute Engine `packetMirrorings`** — seven methods, and NOT the
-   same mechanism as a packet capture, which is why it did not land with one.
-   A capture records frames into a file; a mirroring policy continuously
-   forwards duplicated frames to a collector internal load balancer, so its
-   backends receive the mirrored traffic. The capture engine in
-   `simulators/realexec` supplies the read half — a packet socket on the
-   mirrored resource's interface, and the five-tuple filter the policy's
-   `filter` field needs — but the send half does not exist: nothing in the
-   substrate injects frames toward another address, and `loadbalancer.go`
-   offers only a TCP proxy. The work is that forwarder plus resolving
-   `collectorIlb` to the interface its backends sit behind. Implementing the
-   resource without it would be the same fiction packet captures were before
-   the mechanism existed: a policy that records `enable: true` and mirrors
-   nothing.
-
-2. **Azure virtual machines, 11 of 29 to complete.** Served today: create,
+1. **Azure virtual machines, 11 of 29 to complete.** Served today: create,
    patch, get, instance view, both lists, delete, and the
    start/powerOff/restart/deallocate actions. The rest divide by what they
    need. Straight off existing state: `ListAvailableSizes` (the Compute
@@ -357,7 +342,7 @@ or a long tail that would swamp a review.
    need an in-guest agent to be anything other than invented). Booting a guest
    needs nested KVM, so this is a capable-Linux gate — see BUG-2764.
 
-3. **Google Compute Engine's long tail**: 910 unserved method spellings
+2. **Google Compute Engine's long tail**: 910 unserved method spellings
    (~455 methods). The weight sits in `instanceGroupManagers` (80 spellings),
    `instances` (74), `disks` (38), `securityPolicies` (30), `reservations`
    (28) and `snapshots` (20); the remainder is a genuine tail —
@@ -365,7 +350,7 @@ or a long tail that would swamp a review.
    value per operation. Stage by resource family, highest-weight first, so
    each pass is reviewable.
 
-4. **The Azure console's service surface**: the portal exposes 7 blades
+3. **The Azure console's service surface**: the portal exposes 7 blades
    (Container Registry, Container Apps jobs, Entra app registrations, Function
    Apps, Monitor, Storage, Subscriptions) while the simulator serves roughly
    35 resource providers. The seven entries currently marked not-supported are

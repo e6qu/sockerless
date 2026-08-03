@@ -39,6 +39,9 @@ func registerComputeMore3(srv *sim.Server) {
 	negZone := mk("compute_network_endpoint_groups")
 	fwdRegion := mk("compute_region_forwarding_rules")
 	tcpRegion := mk("compute_region_target_tcp_proxies")
+	// The regional forwarding rules are the collector end of a packet
+	// mirroring policy's collectorIlb, so the resolver reads them.
+	gcpRegionForwardingRules = fwdRegion
 
 	// Commitments ride the shared CRUD helper directly (no custom verbs).
 	// The Discovery document does not expose a DELETE for commitments.

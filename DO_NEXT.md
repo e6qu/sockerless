@@ -14,19 +14,19 @@ identifier out of its requests, and raise `iamDerivationCoverageFloor`. The
 vendored AWS Service Reference already carries every resource type and ARN
 format needed, so no new fidelity question has to be settled first.
 
-Three pieces remain sized, designed and staged in [PLAN.md](PLAN.md) §
-"Staged: Traffic Capture, Virtual Machines, and the Compute/Console Tails" —
-real traffic capture, the fourth, shipped with BUG-2888. Google Compute Engine
-`packetMirrorings` is the natural continuation of it: the capture engine
-supplies the read half and the five-tuple filter, and what it does not supply
-is a forwarder that duplicates frames toward a collector load balancer, which
-is the whole of the remaining work alongside resolving `collectorIlb`. Azure
-virtual machines stand at 11 of 29, Google Compute Engine's ~455-method tail
-and the Azure console's service surface are the breadth items. Mirroring and
-the virtual machines are Linux-only real-execution work — network namespaces
-for the forwarder, nested KVM for guests — so they belong on a branch driven
-through the real-network container harness and the capable-Linux CI gate
-rather than folded into unrelated work.
+Two pieces remain sized, designed and staged in [PLAN.md](PLAN.md) § "Staged:
+Virtual Machines and the Compute/Console Tails" alongside the Azure virtual
+machines: Google Compute Engine's ~455-method tail and the Azure console's
+service surface, both breadth work that needs no special host. Google Compute
+Engine `packetMirrorings` left that list — it forwards real traffic now, and
+the send half it needed (`realexec.StartMirror`) is available to anything else
+that has to deliver frames somewhere.
+
+Azure virtual machines, at 11 of 29, remain the Linux-only piece: booting a
+guest needs nested KVM. Two of the causes previously folded into BUG-2764 were
+separate defects and are now fixed — a poisoned asset cache and a kernel check
+that rejected every valid arm64 image — so an arm64 host boots the kernel and
+the remaining failure is the boot itself rather than a misreported format.
 
 An operator-side step is outstanding and is not a code change: deployments
 pinned to a simulator image built before live workload log streaming landed
