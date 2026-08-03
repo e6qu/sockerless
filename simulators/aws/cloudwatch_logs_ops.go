@@ -709,11 +709,10 @@ func cwResolveLogGroupIdentifier(id string) (string, bool) {
 // filter-pattern match turns into a queryable CloudWatch metric and a fired
 // alarm. Real CloudWatch evaluates filters asynchronously after PutLogEvents;
 // the simulator evaluates inline so a follow-up GetMetricStatistics observes
-// the new datapoints deterministically.
-func cwEvaluateMetricFilters(logGroupName string, events []struct {
-	Timestamp int64  `json:"timestamp"`
-	Message   string `json:"message"`
-}) {
+// the new datapoints deterministically. It takes stored events so every
+// producer — PutLogEvents and the container log drivers alike — reaches the
+// filters through one signature.
+func cwEvaluateMetricFilters(logGroupName string, events []CWLogEvent) {
 	filters := cwMetricFilters.Filter(func(f CWMetricFilter) bool {
 		return f.LogGroupName == logGroupName
 	})

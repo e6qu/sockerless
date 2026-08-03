@@ -39,6 +39,26 @@ client downloads it from. A target with no live interface is refused with the
 reason, because a caller cannot distinguish a fabricated empty capture from a
 real one that saw no traffic.
 
+A container's stdout became a first-class CloudWatch ingestion alongside it.
+The Amazon ECS and AWS Lambda log sinks had appended into the event slice and
+stopped there, so the stream record itself never moved: an Amazon ECS service
+task that had been writing for hours still reported the instant its stream was
+created, ordering a service's streams by `LastEventTime` ranked the live task
+as the stale one, and the log group's metric filters and embedded-metric
+documents never saw a line the workload wrote — so an alarm on a running
+service's error output could not fire. One ingestion helper now carries a
+workload line the whole way, exactly as `PutLogEvents` carries an API caller's.
+
+The live-streaming guard was incomplete in the same shape. BUG-872's regression
+drove a one-shot `RunTask`, whose output also reaches CloudWatch through the
+post-exit drain — so it passes with the live follow removed, which is the half
+a service task depends on and never gets, because a service task does not exit.
+The suite now drives a real Amazon ECS service and requires the container's
+stdout in CloudWatch while the task is still RUNNING. Without the follow that
+regression fails on a stream holding nothing but the synthetic "container
+started" event, which is exactly what a deployment pinned to a build older than
+that fix serves.
+
 Google Compute Engine's `packetMirrorings` did not land with it. Capture and
 mirroring share only half a mechanism: a capture records frames into a file,
 while a mirroring policy continuously forwards duplicated frames to a collector

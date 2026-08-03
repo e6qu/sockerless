@@ -1251,15 +1251,7 @@ type lambdaLogSink struct {
 }
 
 func (s *lambdaLogSink) WriteLog(line sim.LogLine) {
-	key := cwEventsKey(s.logGroup, s.logStream)
-	nowMs := time.Now().UnixMilli()
-	cwLogEvents.Update(key, func(events *[]CWLogEvent) {
-		*events = append(*events, CWLogEvent{
-			Timestamp:     nowMs,
-			Message:       line.Text,
-			IngestionTime: nowMs,
-		})
-	})
+	cwIngestWorkloadLogLine(s.logGroup, s.logStream, line.Text)
 }
 
 // handleLambdaUntagResource implements DELETE /2017-03-31/tags/{arn}?tagKeys=a&tagKeys=b.

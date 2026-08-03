@@ -3369,15 +3369,7 @@ type cwLogSink struct {
 }
 
 func (s *cwLogSink) WriteLog(line sim.LogLine) {
-	key := cwEventsKey(s.logGroup, s.logStream)
-	nowMs := time.Now().UnixMilli()
-	cwLogEvents.Update(key, func(events *[]CWLogEvent) {
-		*events = append(*events, CWLogEvent{
-			Timestamp:     nowMs,
-			Message:       line.Text,
-			IngestionTime: nowMs,
-		})
-	})
+	cwIngestWorkloadLogLine(s.logGroup, s.logStream, line.Text)
 }
 
 // Fargate CPU/memory validation. Valid combinations per AWS docs.
