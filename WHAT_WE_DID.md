@@ -4,6 +4,50 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-03 — A way to run a command inside a guest
+
+The eight Azure virtual machine operations left unserved all needed the same
+thing: a way to run something inside the machine. That was staged as a
+guest-side agent plus a host-side transport — vsock, or the serial console.
+Building it started with reading the root filesystem Firecracker actually
+publishes, and the design collapsed: it already runs OpenSSH, socket-activated
+at boot, with host keys generated and a /root/.ssh directory waiting. The guest
+is already reachable over its network interface — the boot wait proves exactly
+that on every start.
+
+So there is no agent and no new transport. The host authorizes itself the way an
+operator does: an ed25519 key generated per machine, its public half written
+into the guest's authorized_keys before the root filesystem is packed, which is
+what a cloud does with the public keys in a machine's OS profile. `Exec` then
+runs the command over SSH, from inside the network namespace the guest's address
+lives in — the same namespace the boot wait pings from.
+
+The mechanism turned out not to be new to this repository at all, only newly
+reusable. The Firecracker arithmetic harness has always reached its guest this
+way, with the same ssh-keygen call, the same authorized_keys placement and modes,
+and the same client options — and it runs on real hardware in CI, which is what
+establishes the approach rather than any argument here. What was missing was any
+way for the simulators to do it, so every operation that needed to run something
+in a guest had nothing to build on. Writing a private channel alongside that
+would have invented a second mechanism where the machine already had a real one.
+
+A command that runs and fails is a result with a non-zero exit code, not an
+error. Error is reserved for not being able to run it at all, so a caller can
+tell "the guest said no" from "the guest could not be reached" — a distinction
+the SSH client makes for us by reporting its own failures as 255, which a
+command could only return by having run first.
+
+The half that needs no booted machine is asserted where anyone can run it:
+the key is installed in the format sshd reads, at modes sshd will accept —
+asserted rather than assumed, because sshd answers a group-writable
+authorized_keys with a bare authentication failure — a fresh key per machine so
+the host cannot reach a later machine with an earlier one's credential, and the
+invocation carrying the namespace, the key, no prompt, and a terminating `--`.
+Those requirements deliberately ask only for a key generator, not for Linux:
+authorizing a root filesystem is portable, and only reaching the guest afterwards
+needs the namespace. Gating both behind Linux would have left the portable half
+untested everywhere except CI.
+
 ## 2026-08-03 — Azure virtual machines, ten more operations against the real guest
 
 Microsoft.Compute virtual machines served 11 of 29 operations. Ten more are

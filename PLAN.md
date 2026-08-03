@@ -328,20 +328,16 @@ These three are sized and designed, not started. Each is staged rather than
 folded into an unrelated branch because each is Linux-only real-execution work
 or a long tail that would swamp a review.
 
-1. **An execution path inside a Firecracker guest, and the eight Azure virtual
-   machine operations that need one.** Virtual machines reached 21 of 29:
-   everything answerable from the machine's own state or by moving the guest
-   process is served. The remaining eight all need the same missing thing — a
-   way to run a command inside the running guest. `VirtualMachineExtensions_*`
-   (five operations) is an extension executing for real in the guest;
-   `AssessPatches` and `InstallPatches` need a package manager queried inside
-   it; `Capture` needs the guest's disk quiesced and copied into an image. The
-   guest today is reachable only over its network interface, and
-   `realexec.FirecrackerVM` exposes no exec at all, so any of the eight
-   implemented now would be a record of something that did not happen. The work
-   is a guest-side agent plus a host-side transport (vsock, or the serial
-   console already wired for the boot log), after which all eight follow from
-   it. Booting a guest needs nested KVM, so this is a capable-Linux gate — see
+1. **The eight Azure virtual machine operations that run inside the guest.**
+   Virtual machines stand at 21 of 29, and the execution path the remaining
+   eight needed now exists: `FirecrackerVM.Exec` runs a command in a booted
+   guest over the machine's own SSH service, with a per-machine key authorized
+   in the root filesystem before the image is packed. What is left is the
+   operations on top of it — the five `VirtualMachineExtensions_*` (an
+   extension is a script the guest executes), `AssessPatches` and
+   `InstallPatches` (which query and drive the guest's package manager), and
+   `Capture` (which quiesces the guest's disk and copies it into an image).
+   Booting a guest needs nested KVM, so this is a capable-Linux gate — see
    BUG-2764.
 
 2. **Google Compute Engine's long tail**: 910 unserved method spellings

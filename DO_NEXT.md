@@ -14,16 +14,13 @@ identifier out of its requests, and raise `iamDerivationCoverageFloor`. The
 vendored AWS Service Reference already carries every resource type and ARN
 format needed, so no new fidelity question has to be settled first.
 
-Three pieces remain sized, designed and staged in [PLAN.md](PLAN.md) §
-"Staged: Virtual Machines and the Compute/Console Tails". The one with a named
-blocker is an execution path inside a Firecracker guest: Azure virtual machines
-reached 21 of 29, and the eight left — the five extension operations,
-`AssessPatches`, `InstallPatches` and `Capture` — all describe something
-happening *inside* the machine, which nothing can currently do.
-`realexec.FirecrackerVM` exposes no exec and the guest is reachable only over
-its network interface, so the work is a guest-side agent plus a host-side
-transport (vsock, or the serial console already wired for the boot log), after
-which all eight follow from it. That is BUG-2914.
+Three pieces remain staged in [PLAN.md](PLAN.md) § "Staged: Virtual Machines
+and the Compute/Console Tails". The nearest is the eight Azure virtual machine
+operations that run inside the guest: the path they were waiting on now exists,
+so each is the operation on top of `FirecrackerVM.Exec` rather than a blocked
+design. An extension is a script the guest executes, patch assessment queries
+its package manager, and a capture quiesces and copies its disk. That is
+BUG-2914, and it needs nested KVM.
 
 The other two are breadth work needing no special host: Google Compute Engine's
 ~455-method tail, and the Azure console's service surface.
