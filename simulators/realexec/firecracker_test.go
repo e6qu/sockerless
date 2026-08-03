@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,14 +50,37 @@ func TestFirecrackerKernelAssetSelectionIgnoresSidecars(t *testing.T) {
 	}
 }
 
-func TestVerifyELFKernelRejectsConfigFiles(t *testing.T) {
+// The kernel image format Firecracker boots is architecture-specific: an
+// uncompressed ELF vmlinux on x86_64, and the arm64 Linux Image — a PE file
+// beginning "MZ" — on aarch64. The magic each host must accept is therefore
+// the one its own Firecracker takes, and the other must be rejected: accepting
+// both would let a kernel for the wrong architecture through, and accepting
+// only ELF is what made every arm64 host report Firecracker's own published
+// kernel as a corrupted download.
+func TestVerifyKernelAcceptsThisArchitecturesImageFormat(t *testing.T) {
+	elf := []byte{0x7f, 'E', 'L', 'F', 0x02, 0x01}
+	pe := []byte{'M', 'Z', 0x40, 0xfa, 0x26, 0x99}
+
+	valid, foreign := elf, pe
+	if runtime.GOARCH == "arm64" {
+		valid, foreign = pe, elf
+	}
+
 	dir := t.TempDir()
 	kernelPath := filepath.Join(dir, "vmlinux-6.1.155")
-	if err := os.WriteFile(kernelPath, []byte{0x7f, 'E', 'L', 'F', 0x02, 0x01}, 0o644); err != nil {
+	if err := os.WriteFile(kernelPath, valid, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyELFKernel(kernelPath); err != nil {
-		t.Fatalf("valid ELF kernel rejected: %v", err)
+		t.Fatalf("the kernel format this architecture boots was rejected: %v", err)
+	}
+
+	foreignPath := filepath.Join(dir, "vmlinux-foreign")
+	if err := os.WriteFile(foreignPath, foreign, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyELFKernel(foreignPath); err == nil {
+		t.Fatal("a kernel for another architecture was accepted")
 	}
 
 	configPath := filepath.Join(dir, "vmlinux-6.1.155.config")

@@ -60,7 +60,6 @@ func registerComputeMore2(srv *sim.Server) {
 		{collection: "vpnGateways", kind: "compute#vpnGateway", scope: cScopeRegion, store: mk("compute_vpn_gateways"), setLabels: true, aggregated: true},
 		{collection: "vpnTunnels", kind: "compute#vpnTunnel", scope: cScopeRegion, store: mk("compute_vpn_tunnels"), setLabels: true, aggregated: true},
 		{collection: "serviceAttachments", kind: "compute#serviceAttachment", scope: cScopeRegion, store: mk("compute_service_attachments"), patch: true, aggregated: true},
-		{collection: "packetMirrorings", kind: "compute#packetMirroring", scope: cScopeRegion, store: mk("compute_packet_mirrorings"), patch: true, aggregated: true},
 		{collection: "networkAttachments", kind: "compute#networkAttachment", scope: cScopeRegion, store: mk("compute_network_attachments"), patch: true, aggregated: true},
 		{collection: "securityPolicies", kind: "compute#securityPolicy", scope: cScopeRegion, store: mk("compute_region_security_policies"), patch: true, setLabels: true, aggregated: true},
 		{collection: "autoscalers", kind: "compute#autoscaler", scope: cScopeRegion, store: regionAutoscalers, aggregated: true},

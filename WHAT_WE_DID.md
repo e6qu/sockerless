@@ -4,6 +4,60 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-03 — Packet mirroring forwards real traffic
+
+Google Compute Engine's `packetMirrorings` was already served, and that was the
+problem. All seven methods stored and returned the resource faithfully — a
+policy carried `enable: TRUE`, a `collectorIlb`, a set of mirrored resources and
+a filter, and read back correctly through the SDK, the CLI and the Terraform
+provider — while forwarding not one frame. Nothing in the simulator could have:
+the packet capture that landed with BUG-2888 supplied the read half, a packet
+socket on an interface plus the five-tuple filter, and there was no send half
+anywhere in the substrate.
+
+So the send half is the work. `realexec.StartMirror` reads the mirrored
+interface and transmits every frame that passes the filter out of each
+collector's interface, which for the TAP backing a guest is that guest
+receiving it. Frames go verbatim, headers intact and still addressed to
+whoever the original packet was for, because that is what the clouds do and
+what makes a collector useful — a collector consequently sees frames whose
+destination is not its own, exactly as a real one must. Direction needed the
+inversion stated plainly: a policy's INGRESS is traffic arriving at the
+mirrored workload, which on the host side of that workload's interface is the
+host *transmitting*.
+
+The policy resolves its collector the way the resource defines it — forwarding
+rule, regional backend service, instance group, instances — so pointing it at a
+real internal load balancer delivers to the instances really behind it. Named
+instances, every instance in a subnetwork, and every instance carrying a
+network tag all select correctly, and insert, patch and delete reconcile the
+running sessions, so disabling a policy stops it mirroring rather than leaving
+a session behind.
+
+Proving it took assertions at the collector rather than at the mirror, because
+a session's whole claim is that a copy arrives somewhere else. Traffic
+generated on one link is observed arriving on an entirely unrelated one; a
+stopped mirror delivers nothing; a protocol the filter excludes reaches no
+collector. The first draft of that fixture gave two false failures by
+addressing the collector link, whose own IPv6 autoconfiguration and ARP chatter
+is indistinguishable from a delivery at the point the assertion reads — so the
+link carries no addresses and the observation is filtered to the mirrored
+link's addressing, which nothing native to the collector can produce.
+
+Two Firecracker defects surfaced while running the Terraform suite and were
+fixed rather than noted. A kernel was verified and evicted only when the
+root-filesystem marker was also present, and `downloadFile` returns success for
+a path that already exists — so one interrupted fetch left a partial kernel
+that was never re-downloaded, and every later run on that host failed with "is
+not an ELF image" until someone deleted the cache by hand. And the check itself
+was architecture-blind: Firecracker takes an ELF `vmlinux` on x86_64 but the
+arm64 Linux `Image`, a PE file beginning `MZ`, on aarch64. Firecracker's own
+published assets confirm it — the aarch64 kernel begins `4d 5a`, the x86_64 one
+`7f 45 4c 46` — so every arm64 host reported a perfectly good kernel as a
+corrupted download. With both fixed an arm64 host boots the kernel, and what
+remains there is the boot itself rather than a format complaint that was never
+the problem.
+
 ## 2026-08-03 — Resource-scoped IAM grants authorize the resources they name
 
 The call-time IAM gate decides an Amazon Elastic Container Registry call

@@ -276,6 +276,82 @@ func TestCompute2_PacketMirrorings_CRUD(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// A packet mirroring policy is only meaningful if the members that decide what
+// is mirrored and where it goes survive the round trip: the resolver reads
+// mirroredResources, collectorIlb and filter to start the sessions, so a
+// dropped member is a policy that mirrors the wrong traffic or none.
+func TestCompute2_PacketMirrorings_PolicyShapeRoundTrips(t *testing.T) {
+	svc := computeService(t)
+	const name = "sdk-pm-policy"
+	base := "https://www.googleapis.com/compute/v1/projects/" + more2Project
+	policy := &compute.PacketMirroring{
+		Name:    name,
+		Enable:  "TRUE",
+		Network: &compute.PacketMirroringNetworkInfo{Url: base + "/global/networks/sdk-pm-net"},
+		CollectorIlb: &compute.PacketMirroringForwardingRuleInfo{
+			Url: base + "/regions/" + more2Region + "/forwardingRules/sdk-pm-ilb",
+		},
+		MirroredResources: &compute.PacketMirroringMirroredResourceInfo{
+			Instances: []*compute.PacketMirroringMirroredResourceInfoInstanceInfo{
+				{Url: base + "/zones/" + more2Region + "-a/instances/sdk-pm-vm"},
+			},
+			Subnetworks: []*compute.PacketMirroringMirroredResourceInfoSubnetInfo{
+				{Url: base + "/regions/" + more2Region + "/subnetworks/sdk-pm-subnet"},
+			},
+			Tags: []string{"mirrored"},
+		},
+		Filter: &compute.PacketMirroringFilter{
+			Direction:   "INGRESS",
+			IPProtocols: []string{"tcp"},
+			CidrRanges:  []string{"10.0.0.0/8"},
+		},
+		Priority: 1200,
+	}
+	_, err := svc.PacketMirrorings.Insert(more2Project, more2Region, policy).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = svc.PacketMirrorings.Delete(more2Project, more2Region, name).Do()
+	})
+
+	got, err := svc.PacketMirrorings.Get(more2Project, more2Region, name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "TRUE", got.Enable)
+	assert.Equal(t, int64(1200), got.Priority)
+	require.NotNil(t, got.CollectorIlb)
+	assert.Equal(t, policy.CollectorIlb.Url, got.CollectorIlb.Url)
+	require.NotNil(t, got.Network)
+	assert.Equal(t, policy.Network.Url, got.Network.Url)
+	require.NotNil(t, got.MirroredResources)
+	require.Len(t, got.MirroredResources.Instances, 1)
+	assert.Equal(t, policy.MirroredResources.Instances[0].Url, got.MirroredResources.Instances[0].Url)
+	require.Len(t, got.MirroredResources.Subnetworks, 1)
+	assert.Equal(t, []string{"mirrored"}, got.MirroredResources.Tags)
+	require.NotNil(t, got.Filter)
+	assert.Equal(t, "INGRESS", got.Filter.Direction)
+	assert.Equal(t, []string{"tcp"}, got.Filter.IPProtocols)
+	assert.Equal(t, []string{"10.0.0.0/8"}, got.Filter.CidrRanges)
+	assert.Equal(t, "compute#packetMirroring", got.Kind)
+	assert.Contains(t, got.SelfLink, "/regions/"+more2Region+"/packetMirrorings/"+name)
+
+	// Disabling is how an operator stops a policy mirroring without deleting
+	// it, so the member the resolver reads has to change on a patch.
+	_, err = svc.PacketMirrorings.Patch(more2Project, more2Region, name,
+		&compute.PacketMirroring{Enable: "FALSE"}).Do()
+	require.NoError(t, err)
+	got, err = svc.PacketMirrorings.Get(more2Project, more2Region, name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "FALSE", got.Enable)
+
+	agg, err := svc.PacketMirrorings.AggregatedList(more2Project).Do()
+	require.NoError(t, err)
+	assert.Contains(t, agg.Items, "regions/"+more2Region)
+
+	perms, err := svc.PacketMirrorings.TestIamPermissions(more2Project, more2Region, name,
+		&compute.TestPermissionsRequest{Permissions: []string{"compute.packetMirrorings.get"}}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"compute.packetMirrorings.get"}, perms.Permissions)
+}
+
 func TestCompute2_NetworkAttachments_CRUD(t *testing.T) {
 	svc := computeService(t)
 	_, err := svc.NetworkAttachments.Insert(more2Project, more2Region, &compute.NetworkAttachment{Name: "sdk-na-1"}).Do()

@@ -272,12 +272,18 @@ func ensureFirecrackerAssets(ctx context.Context, version string) (firecrackerAs
 	if kernel, err := os.ReadFile(kernelMarker); err == nil {
 		rootfsDir := filepath.Join(dir, "rootfs")
 		kernelPath := strings.TrimSpace(string(kernel))
-		if _, statErr := os.Stat(rootfsMarker); statErr == nil {
-			if err := verifyELFKernel(kernelPath); err == nil {
-				return firecrackerAssets{KernelPath: kernelPath, RootFSDir: rootfsDir}, nil
-			}
+		// A cached file that is not a kernel is evicted whether or not the root
+		// filesystem finished unpacking. Evicting it only when both markers
+		// were present left a truncated download in place after an interrupted
+		// fetch, and downloadFile treats an existing path as already
+		// downloaded — so one interrupted fetch poisoned the cache for every
+		// later run with "is not an ELF image", recoverable only by deleting
+		// the cache by hand.
+		if err := verifyELFKernel(kernelPath); err != nil {
 			_ = os.Remove(kernelMarker)
 			_ = os.Remove(kernelPath)
+		} else if _, statErr := os.Stat(rootfsMarker); statErr == nil {
+			return firecrackerAssets{KernelPath: kernelPath, RootFSDir: rootfsDir}, nil
 		}
 	}
 
@@ -290,6 +296,14 @@ func ensureFirecrackerAssets(ctx context.Context, version string) (firecrackerAs
 	}
 	kernelPath := filepath.Join(dir, filepath.Base(kernelKey))
 	rootfsSquash := filepath.Join(dir, filepath.Base(rootfsKey))
+	// The same eviction for a kernel left behind without a marker to find it
+	// by: downloadFile would otherwise skip the fetch and hand back the
+	// unusable file.
+	if _, err := os.Stat(kernelPath); err == nil {
+		if err := verifyELFKernel(kernelPath); err != nil {
+			_ = os.Remove(kernelPath)
+		}
+	}
 	if err := downloadFile(ctx, "https://s3.amazonaws.com/spec.ccfc.min/"+kernelKey, kernelPath); err != nil {
 		return firecrackerAssets{}, err
 	}
@@ -449,6 +463,14 @@ func downloadFile(ctx context.Context, url, path string) error {
 	return os.Rename(tmp, path)
 }
 
+// verifyELFKernel checks that a downloaded file is the kernel image format
+// Firecracker boots on this architecture. The format is architecture-specific
+// and not a matter of preference: on x86_64 Firecracker takes an uncompressed
+// ELF vmlinux, while on aarch64 it takes the arm64 Linux `Image`, which is a
+// PE/COFF file beginning "MZ". Demanding ELF everywhere rejected the aarch64
+// asset that Firecracker's own CI publishes — a valid kernel reported as "not
+// an ELF image", which reads like a corrupted download and sends the reader
+// looking for a network fault that is not there.
 func verifyELFKernel(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -460,8 +482,15 @@ func verifyELFKernel(path string) error {
 	if _, err := io.ReadFull(f, magic[:]); err != nil {
 		return fmt.Errorf("read Firecracker kernel magic %s: %w", path, err)
 	}
-	if magic != [4]byte{0x7f, 'E', 'L', 'F'} {
-		return fmt.Errorf("firecracker kernel %s is not an ELF image", path)
+	switch runtime.GOARCH {
+	case "arm64":
+		if magic[0] != 'M' || magic[1] != 'Z' {
+			return fmt.Errorf("firecracker kernel %s is not an arm64 PE image", path)
+		}
+	default:
+		if magic != [4]byte{0x7f, 'E', 'L', 'F'} {
+			return fmt.Errorf("firecracker kernel %s is not an ELF image", path)
+		}
 	}
 	return nil
 }
