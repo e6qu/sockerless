@@ -53,6 +53,12 @@ type FirecrackerVM struct {
 
 	cmd     *exec.Cmd
 	cleanup *CleanupStack
+
+	// namespace and accessKeyPath are what running a command in this machine
+	// needs: the network namespace its address is reachable from, and the
+	// private key whose public half was authorized in its root filesystem.
+	namespace     string
+	accessKeyPath string
 }
 
 type firecrackerAssets struct {
@@ -135,6 +141,15 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 		return nil, err
 	}
 
+	// Authorize the host to run commands in this machine before its root
+	// filesystem is packed. It is done here because once the filesystem becomes
+	// an image there is no way in without one.
+	accessKeyPath, err := authorizeGuestAccess(ctx, rootfsDir, cfg.WorkDir)
+	if err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+
 	rootfsPath := filepath.Join(cfg.WorkDir, "rootfs.ext4")
 	if err := createExt4RootFS(ctx, rootfsDir, rootfsPath); err != nil {
 		_ = rollback.Close(context.Background())
@@ -198,12 +213,14 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 	}
 
 	vm := &FirecrackerVM{
-		ID:        cfg.ID,
-		WorkDir:   cfg.WorkDir,
-		APISocket: apiSocket,
-		PrivateIP: append(net.IP(nil), cfg.Tap.PrivateIP...),
-		cmd:       cmd,
-		cleanup:   rollback,
+		ID:            cfg.ID,
+		WorkDir:       cfg.WorkDir,
+		APISocket:     apiSocket,
+		PrivateIP:     append(net.IP(nil), cfg.Tap.PrivateIP...),
+		cmd:           cmd,
+		cleanup:       rollback,
+		namespace:     cfg.Tap.NetworkNamespace(),
+		accessKeyPath: accessKeyPath,
 	}
 	return vm, nil
 }
