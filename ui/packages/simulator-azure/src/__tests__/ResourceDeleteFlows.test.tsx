@@ -169,7 +169,14 @@ describe("ACRRegistriesPage delete", () => {
     fireEvent.click(screen.getByTestId("acr-delete"));
     fireEvent.click(within(await liveDialog()).getByTestId("acr-delete-confirm"));
 
-    expect((await within(await liveDialog()).findByRole("alert")).textContent).toContain("active replications");
+    // The alert is looked for in the document rather than inside a dialog
+    // element resolved a moment earlier. Fluent replaces the dialog surface on
+    // re-render, so a scope captured before the error arrives can be the
+    // retiring instance — which `*ByRole` then skips as `aria-hidden`, leaving
+    // "Unable to find role=alert" while the alert is plainly in the DOM. That
+    // the dialog stayed open is a separate assertion, made separately.
+    expect((await screen.findByRole("alert")).textContent).toContain("active replications");
+    expect(await liveDialog()).not.toBeNull();
 
     // A backdrop click that races with the immediate error response must not
     // discard Azure Resource Manager's actionable failure. Explicit Cancel
@@ -182,7 +189,8 @@ describe("ACRRegistriesPage delete", () => {
     // the click schedules a re-render, and the dialog never legitimately
     // disappears here, so retrying cannot mask a regression — a suppressed
     // dismissal that actually closed would keep failing until the timeout.
-    expect((await within(await liveDialog()).findByRole("alert")).textContent).toContain("active replications");
+    expect((await screen.findByRole("alert")).textContent).toContain("active replications");
+    expect(await liveDialog()).not.toBeNull();
     fireEvent.click(within(await liveDialog()).getByTestId("acr-delete-cancel"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });

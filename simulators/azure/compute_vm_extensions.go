@@ -284,6 +284,7 @@ func azureRunVMExtension(
 		DisplayStatus: "Provisioning succeeded",
 		Time:          now,
 	}
+	outcome := "Enable succeeded"
 	if result.ExitCode != 0 {
 		status = VMStatus{
 			Code:          "ProvisioningState/failed",
@@ -291,11 +292,14 @@ func azureRunVMExtension(
 			DisplayStatus: "Provisioning failed",
 			Time:          now,
 		}
+		// The message says what happened. Reporting "Enable succeeded" on a
+		// command that exited non-zero would contradict the status beside it.
+		outcome = fmt.Sprintf("Enable failed: the command exited %d", result.ExitCode)
 	}
 	// The handler reports what the command wrote, which is what an operator
 	// reads to find out what an extension actually did.
-	status.Message = fmt.Sprintf("Enable succeeded: \n[stdout]\n%s\n[stderr]\n%s",
-		string(result.Stdout), string(result.Stderr))
+	status.Message = fmt.Sprintf("%s: \n[stdout]\n%s\n[stderr]\n%s",
+		outcome, string(result.Stdout), string(result.Stderr))
 	view.Statuses = []VMStatus{status}
 	return view, nil
 }

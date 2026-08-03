@@ -63,7 +63,14 @@ func TestCompute_VirtualMachineExtensionRunsInTheGuest(t *testing.T) {
 		},
 	}, nil)
 	require.NoError(t, err)
-	failed, err := failPoller.PollUntilDone(ctx, nil)
+	// A resource that lands in a Failed provisioning state is a failed
+	// long-running operation, and the SDK's poller reports it as an error —
+	// which is what a real client sees when a Custom Script extension's script
+	// exits non-zero. The state itself is then read back from the resource.
+	_, err = failPoller.PollUntilDone(ctx, nil)
+	require.Error(t, err, "a command that exited non-zero must not be reported as a successful operation")
+
+	failed, err := extClient.Get(ctx, rg, vmName, "failing", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Failed", derefString(failed.Properties.ProvisioningState),
 		"a command that exited non-zero must not be reported as provisioned")
