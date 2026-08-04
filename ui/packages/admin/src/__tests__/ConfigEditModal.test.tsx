@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import {
   render,
   cleanup,
@@ -46,12 +46,20 @@ const instance: TopologyInstance = {
   },
 };
 
+// The modal's callbacks are typed, and so are their doubles. `ReturnType<typeof
+// vi.fn>` widened to a mock of any callable in Vitest 4, which no longer
+// satisfies a specific signature — and a double whose shape is not checked
+// against the thing it stands in for is a double that can drift from it.
+type ConfigActionMock = Mock<(project: string, name: string) => Promise<void>>;
+
 function renderModal(overrides: Partial<{
-  onReload: ReturnType<typeof vi.fn>;
-  onRestart: ReturnType<typeof vi.fn>;
+  onReload: ConfigActionMock;
+  onRestart: ConfigActionMock;
 }> = {}) {
-  const onReload = overrides.onReload ?? vi.fn().mockResolvedValue(undefined);
-  const onRestart = overrides.onRestart ?? vi.fn().mockResolvedValue(undefined);
+  const onReload: ConfigActionMock =
+    overrides.onReload ?? vi.fn<(project: string, name: string) => Promise<void>>().mockResolvedValue(undefined);
+  const onRestart: ConfigActionMock =
+    overrides.onRestart ?? vi.fn<(project: string, name: string) => Promise<void>>().mockResolvedValue(undefined);
   const onClose = vi.fn();
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return {
