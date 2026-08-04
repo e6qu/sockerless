@@ -112,15 +112,11 @@ cmd/sockerless-admin/sockerless-admin
 cmd/sockerless-admin/admin
 /admin
 
-# Playwright
-ui/packages/admin/test-results/
-ui/packages/admin/playwright-report/
-ui/packages/backend-*/test-results/
-ui/packages/backend-*/playwright-report/
-ui/packages/simulator-*/test-results/
-ui/packages/simulator-*/playwright-report/
-ui/packages/frontend-docker/test-results/
-ui/packages/frontend-docker/playwright-report/
+# Playwright. Every workspace package, not an enumerated few: core carries an
+# e2e suite too and was not covered, so running it left an artifact the
+# end-of-file hook then tried to commit.
+ui/packages/*/test-results/
+ui/packages/*/playwright-report/
 
 # Misc
 *.log
