@@ -14,16 +14,10 @@ identifier out of its requests, and raise `iamDerivationCoverageFloor`. The
 vendored AWS Service Reference already carries every resource type and ARN
 format needed, so no new fidelity question has to be settled first.
 
-Three pieces remain staged in [PLAN.md](PLAN.md) § "Staged: Virtual Machines
-and the Compute/Console Tails". The nearest is the eight Azure virtual machine
-operations that run inside the guest: the path they were waiting on now exists,
-so each is the operation on top of `FirecrackerVM.Exec` rather than a blocked
-design. An extension is a script the guest executes, patch assessment queries
-its package manager, and a capture quiesces and copies its disk. That is
-BUG-2914, and it needs nested KVM.
-
-The other two are breadth work needing no special host: Google Compute Engine's
-~455-method tail, and the Azure console's service surface.
+Two pieces remain staged in [PLAN.md](PLAN.md) § "Staged: the Compute and
+Console Tails", and both are breadth work needing no special host: Google
+Compute Engine's ~455-method tail, and the Azure console's service surface.
+Stage each by resource family or service so a pass stays reviewable.
 
 An operator-side step is outstanding and is not a code change: deployments
 pinned to a simulator image built before live workload log streaming landed

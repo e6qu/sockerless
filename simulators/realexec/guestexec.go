@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -117,7 +118,14 @@ func (v *FirecrackerVM) Exec(ctx context.Context, command ...string) (GuestExecR
 			"guest %s was started without host access authorized, so no command can run in it", v.ID)
 	}
 
-	args := append(v.guestSSHArgs(), command...)
+	// ssh joins the remaining arguments with spaces and hands the result to the
+	// guest's login shell, so an argv passed through as separate words is
+	// reassembled by that shell rather than preserved. Quoting each word makes
+	// the shell rebuild the argv that was asked for: without it, Exec("/bin/sh",
+	// "-c", "echo hello") arrives as `/bin/sh -c echo hello`, which runs echo
+	// with no arguments and exits 0 — a command that appears to have succeeded
+	// while doing nothing.
+	args := append(v.guestSSHArgs(), shellQuoteAll(command))
 	cmd := exec.CommandContext(ctx, "ip", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -160,8 +168,12 @@ func (v *FirecrackerVM) guestSSHArgs() []string {
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "ConnectTimeout=5",
 		"-o", "LogLevel=ERROR",
-		guestExecUser + "@" + v.PrivateIP.String(),
+		// -- terminates ssh's own options and must come BEFORE the destination.
+		// After it, ssh has already taken the destination and everything left is
+		// the remote command, so a trailing -- becomes the first word the guest
+		// tries to run instead of protecting the command from option parsing.
 		"--",
+		guestExecUser + "@" + v.PrivateIP.String(),
 	}
 }
 
@@ -191,4 +203,14 @@ func (v *FirecrackerVM) WaitForGuestExec(ctx context.Context, within time.Durati
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+// shellQuoteAll renders an argv as one command string the guest's shell will
+// split back into exactly those words.
+func shellQuoteAll(command []string) string {
+	quoted := make([]string, 0, len(command))
+	for _, word := range command {
+		quoted = append(quoted, "'"+strings.ReplaceAll(word, "'", `'\''`)+"'")
+	}
+	return strings.Join(quoted, " ")
 }

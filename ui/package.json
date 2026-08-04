@@ -4,7 +4,7 @@
   "packageManager": "bun@1.2.19",
   "workspaces": ["packages/*"],
   "devDependencies": {
-    "turbo": "^2.5.0",
-    "typescript": "^5.8.0"
+    "turbo": "^2.10.8",
+    "typescript": "^7.0.2"
   }
 }

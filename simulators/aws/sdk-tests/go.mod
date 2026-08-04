@@ -39,7 +39,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.53.3
 	github.com/aws/aws-sdk-go-v2/service/rds v1.124.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.65.5
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.3
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.4
 	github.com/aws/aws-sdk-go-v2/service/scheduler v1.20.3
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.44.3
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.43.3
@@ -48,7 +48,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.46.3
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.3
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.3
-	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.77.1
+	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.77.2
 	github.com/aws/smithy-go v1.27.6
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-sql-driver/mysql v1.10.0

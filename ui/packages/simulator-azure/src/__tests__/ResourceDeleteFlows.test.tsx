@@ -50,8 +50,15 @@ function jsonResponse(data: unknown, status = 200): Response {
  * scope on the live surface, and asserts nothing weaker: an accessible dialog
  * must still exist, and it must still contain the accessible alert.
  */
-async function liveDialog(): Promise<HTMLElement> {
-  return screen.findByRole("dialog");
+// The dialog is found by the surface's own test id rather than by role.
+// Fluent replaces the surface on re-render and momentarily hides the retiring
+// one from the accessibility tree, so a `*ByRole` lookup racing that swap
+// reports the dialog — or an alert inside it — as absent while it is plainly in
+// the DOM. A test id is not filtered by accessibility state, and the surface is
+// only rendered while the dialog is open, so its presence is exactly the claim
+// these tests want to make.
+async function liveDialog(testid = "acr-delete"): Promise<HTMLElement> {
+  return screen.findByTestId(`${testid}-dialog`);
 }
 
 function armError(code: string, message: string, status: number): Response {
@@ -123,7 +130,7 @@ describe("ACRRegistriesPage delete", () => {
     expect(dialog.textContent).toContain("removes every repository and image it holds");
     expect(dialog.textContent).toContain("myregistry1");
 
-    fireEvent.click(within(dialog).getByTestId("acr-delete-confirm"));
+    fireEvent.click(within(dialog).getByTestId("acr-delete-dialog-confirm"));
 
     await waitFor(() => expect(deleteCalled).not.toBeNull());
     expect(deleteCalled!.init?.method).toBe("DELETE");
@@ -167,14 +174,21 @@ describe("ACRRegistriesPage delete", () => {
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Select ${id}` }));
     fireEvent.click(screen.getByTestId("acr-delete"));
-    fireEvent.click(within(await liveDialog()).getByTestId("acr-delete-confirm"));
+    fireEvent.click(within(await liveDialog()).getByTestId("acr-delete-dialog-confirm"));
 
-    expect((await within(await liveDialog()).findByRole("alert")).textContent).toContain("active replications");
+    // The alert is looked for in the document rather than inside a dialog
+    // element resolved a moment earlier. Fluent replaces the dialog surface on
+    // re-render, so a scope captured before the error arrives can be the
+    // retiring instance — which `*ByRole` then skips as `aria-hidden`, leaving
+    // "Unable to find role=alert" while the alert is plainly in the DOM. That
+    // the dialog stayed open is a separate assertion, made separately.
+    expect((await within(await liveDialog()).findByTestId("acr-delete-dialog-error")).textContent)
+      .toContain("active replications");
 
     // A backdrop click that races with the immediate error response must not
     // discard Azure Resource Manager's actionable failure. Explicit Cancel
     // remains available and closes the surface normally.
-    const backdrop = document.getElementById("acr-delete-backdrop");
+    const backdrop = document.getElementById("acr-delete-dialog-backdrop");
     expect(backdrop).not.toBeNull();
     fireEvent.click(backdrop!);
     // The dialog stays open and keeps the failure on screen. Query for it
@@ -182,8 +196,9 @@ describe("ACRRegistriesPage delete", () => {
     // the click schedules a re-render, and the dialog never legitimately
     // disappears here, so retrying cannot mask a regression — a suppressed
     // dismissal that actually closed would keep failing until the timeout.
-    expect((await within(await liveDialog()).findByRole("alert")).textContent).toContain("active replications");
-    fireEvent.click(within(await liveDialog()).getByTestId("acr-delete-cancel"));
+    expect((await within(await liveDialog()).findByTestId("acr-delete-dialog-error")).textContent)
+      .toContain("active replications");
+    fireEvent.click(within(await liveDialog()).getByTestId("acr-delete-dialog-cancel"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });
@@ -215,7 +230,7 @@ describe("StorageAccountsPage delete", () => {
     fireEvent.click(screen.getByTestId("storage-delete"));
     const dialog = await screen.findByRole("dialog", { name: "Delete mystorageacct1?" });
     expect(dialog.textContent).toContain("removes every container, blob, file share, table, and queue it holds");
-    fireEvent.click(within(dialog).getByTestId("storage-delete-confirm"));
+    fireEvent.click(within(dialog).getByTestId("storage-delete-dialog-confirm"));
 
     await waitFor(() => expect(deleteCalled).toBe("DELETE"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -249,7 +264,7 @@ describe("ContainerAppsPage delete", () => {
     fireEvent.click(screen.getByTestId("ca-delete"));
     const dialog = await screen.findByRole("dialog", { name: "Delete myjob1?" });
     expect(dialog.textContent).toContain("removes its execution history");
-    fireEvent.click(within(dialog).getByTestId("ca-delete-confirm"));
+    fireEvent.click(within(dialog).getByTestId("ca-delete-dialog-confirm"));
 
     await waitFor(() => expect(deleteCalled).toBe("DELETE"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -283,7 +298,7 @@ describe("AzureFunctionsPage delete", () => {
     fireEvent.click(screen.getByTestId("fn-delete"));
     const dialog = await screen.findByRole("dialog", { name: "Delete mysite1?" });
     expect(dialog.textContent).toContain("removes every function deployed to it");
-    fireEvent.click(within(dialog).getByTestId("fn-delete-confirm"));
+    fireEvent.click(within(dialog).getByTestId("fn-delete-dialog-confirm"));
 
     await waitFor(() => expect(deleteCalled).toBe("DELETE"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

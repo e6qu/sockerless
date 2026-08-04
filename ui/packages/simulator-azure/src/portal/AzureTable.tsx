@@ -366,6 +366,12 @@ export function AzureResourceTable<T>({
       </div>
       {onDelete && deleteTestId ? (
         <AzureConfirmDialog
+          // The surface gets its own id rather than the trigger's: two elements
+          // answering to one test id leaves a test unable to say which it
+          // meant, which is what pushed these assertions onto `*ByRole`
+          // lookups that Fluent's re-render makes flaky by momentarily hiding
+          // the retiring surface from the accessibility tree. The detail pages
+          // already name their dialogs this way.
           open={deleting}
           title={
             selectedRows.length === 1
@@ -373,7 +379,7 @@ export function AzureResourceTable<T>({
               : `Delete ${selectedRows.length} ${resourceNoun}?`
           }
           busy={remove.isPending}
-          testid={deleteTestId}
+          testid={`${deleteTestId}-dialog`}
           error={
             remove.isError ? (
               <>

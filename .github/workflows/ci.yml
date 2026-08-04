@@ -533,8 +533,24 @@ jobs:
       - name: Pull DynamoDB Local (differential oracle)
         # TestDynamoDB_DifferentialVsLocal lives in the data shard.
         if: matrix.suite == 'data'
-        run: docker pull public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest
-        timeout-minutes: 4
+        # A registry answering "toomanyrequests" is telling us to wait, not that
+        # the image is unavailable — the same signal a client is expected to
+        # back off on. Anonymous pulls share a per-address budget with every
+        # other runner on the same egress, so one throttled attempt is not a
+        # verdict. Retry with widening backoff and fail loudly if the budget
+        # never frees up.
+        run: |
+          set -o pipefail
+          image=public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest
+          for attempt in 1 2 3 4 5; do
+            if docker pull "$image"; then exit 0; fi
+            delay=$((attempt * 15))
+            echo "pull attempt $attempt failed; retrying in ${delay}s" >&2
+            sleep "$delay"
+          done
+          echo "could not pull $image after 5 attempts" >&2
+          exit 1
+        timeout-minutes: 6
       - name: Run AWS SDK tests
         # The suite has exhausted the runner volume from a 89 GB starting
         # margin, killing the runner process as it wrote its own diagnostic log
