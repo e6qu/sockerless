@@ -51,6 +51,18 @@ purpose is what exposed it; the test now names a case where nothing else can
 account for the absence, and it fails with exactly the malformed ARN it exists
 to prevent.
 
+One defect came out of watching this branch's CI rather than out of the branch.
+An Amazon EBS volume could report a successful detach and still be holding the
+attachment a moment later, so the DeleteVolume that followed was refused as
+`VolumeInUse`. Restamping the volumes an instance holds walked a listing and
+wrote each row back from the copy it had listed, so a detach that landed
+in between was undone. Both that walk and the one that releases a terminating
+instance's volumes now decide from the value under the store's write lock, and
+the listing only chooses which rows to visit. It took a slow instance
+transition to be visible, which is why the hosted runners saw it once and no
+local run ever did — and why the fix is pinned by two concurrency regressions
+that reproduce it deterministically rather than by a green run (BUG-2926).
+
 ## 2026-08-04 — Amazon EC2 authorizes against the resource the request names
 
 Amazon EC2 was the largest single hole in resource-scoped authorization: 515 of
