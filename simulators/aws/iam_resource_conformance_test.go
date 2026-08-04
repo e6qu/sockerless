@@ -194,22 +194,96 @@ func iamServiceForServedOperation(t *testing.T, refs map[string]*awsServiceRefer
 	return "", "", false
 }
 
-// loadEC2RequestParameters returns, per Amazon EC2 operation, the request
-// parameters the vendored model says the operation takes, spelled as they
-// arrive on the wire and lower-cased for comparison.
-//
-// The ec2Query protocol does not send a member under its member name. The
-// aws.protocols#ec2QueryName trait wins where present; otherwise the
-// smithy.api#xmlName trait does, with its first letter upper-cased; otherwise
-// the member name stands. That is why a list arrives singular — TerminateInstances
-// takes InstanceIds and sends InstanceId.1 — and reading the member names
-// instead would look for parameters no request ever carries.
-func loadEC2RequestParameters(t *testing.T) map[string]map[string]bool {
+func slicesIntersect(a, b []string) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// assertAliasesAreRealFields holds a service's alias table to the fields the
+// vendored model declares on operations that authorize against the aliased
+// resource type. The aliases are the one hand-written part of a derivation —
+// the renamings the Service Reference did not follow — so an alias that is a
+// guess, a typo, or one the API has since dropped derives nothing, and nothing
+// about that is visible to a caller whose policy says Resource "*". Both AWS
+// Glue guesses this rejected were of that kind, and one of them named a
+// resource type no action authorizes against at all.
+func assertAliasesAreRealFields(t *testing.T, service string, aliases map[string][]string,
+	byOperation map[string]map[string]bool) {
 	t.Helper()
-	path := filepath.Join("..", "..", "specs", "cloud-api", "aws", "ec2.smithy.json.gz")
+
+	typesByVariable := map[string][]string{}
+	for key, format := range iamResourceARNFormats {
+		svc, resourceType, _ := strings.Cut(key, ":")
+		if svc != service {
+			continue
+		}
+		for _, variable := range iamARNFormatVariables(format) {
+			typesByVariable[variable] = append(typesByVariable[variable], resourceType)
+		}
+	}
+
+	var problems []string
+	for variable, spellings := range aliases {
+		resourceTypes := typesByVariable[variable]
+		if len(resourceTypes) == 0 {
+			problems = append(problems, fmt.Sprintf(
+				"%s: no %s resource type is identified by this variable — the alias is dead", variable, service))
+			continue
+		}
+		for _, alias := range spellings {
+			used := false
+			for action, declared := range iamActionResourceTypes {
+				svc, operation, _ := strings.Cut(action, ":")
+				if svc != service || !slicesIntersect(declared, resourceTypes) {
+					continue
+				}
+				if byOperation[operation][strings.ToLower(alias)] {
+					used = true
+					break
+				}
+			}
+			if !used {
+				problems = append(problems, fmt.Sprintf(
+					"%s -> %s: no %s operation authorizing against %s takes a %s field",
+					variable, alias, service, strings.Join(resourceTypes, "/"), alias))
+			}
+		}
+	}
+	sort.Strings(problems)
+	if len(problems) > 0 {
+		t.Fatalf("the %s alias table does not match the vendored model:\n  %s",
+			service, strings.Join(problems, "\n  "))
+	}
+}
+
+func TestIAMEC2ParameterAliasesAreRealRequestParameters(t *testing.T) {
+	assertAliasesAreRealFields(t, "ec2", iamEC2ParameterAliases, loadEC2RequestParameters(t))
+}
+
+func TestIAMGlueFieldAliasesAreRealRequestMembers(t *testing.T) {
+	assertAliasesAreRealFields(t, "glue", iamGlueFieldAliases, loadGlueRequestMembers(t))
+}
+
+// loadRequestFields returns, per operation of a vendored model, the fields its
+// request carries, spelled as they arrive on the wire and lower-cased.
+//
+// How a member is spelled on the wire is the protocol's business, so each
+// caller supplies that rule. It is not cosmetic: Amazon EC2 sends a list under
+// the member's singular xmlName — TerminateInstances takes InstanceIds and
+// sends InstanceId.1 — so reading member names there would look for parameters
+// no request ever carries.
+func loadRequestFields(t *testing.T, service string, wireName func(member string, traits map[string]string) string) map[string]map[string]bool {
+	t.Helper()
+	path := filepath.Join("..", "..", "specs", "cloud-api", "aws", service+".smithy.json.gz")
 	f, err := os.Open(path)
 	if err != nil {
-		t.Fatalf("open %s: %v — run scripts/fetch-aws-spec.sh ec2", path, err)
+		t.Fatalf("open %s: %v — run scripts/fetch-aws-spec.sh %s", path, err, service)
 	}
 	defer f.Close()
 	gz, err := gzip.NewReader(f)
@@ -223,10 +297,7 @@ func loadEC2RequestParameters(t *testing.T) map[string]map[string]bool {
 			Type    string                  `json:"type"`
 			Input   struct{ Target string } `json:"input"`
 			Members map[string]struct {
-				Traits struct {
-					EC2QueryName string `json:"aws.protocols#ec2QueryName"`
-					XMLName      string `json:"smithy.api#xmlName"`
-				} `json:"traits"`
+				Traits map[string]json.RawMessage `json:"traits"`
 			} `json:"members"`
 		} `json:"shapes"`
 	}
@@ -239,23 +310,51 @@ func loadEC2RequestParameters(t *testing.T) map[string]map[string]bool {
 		if shape.Type != "operation" || shape.Input.Target == "" {
 			continue
 		}
-		params := map[string]bool{}
+		fields := map[string]bool{}
 		for member, m := range doc.Shapes[shape.Input.Target].Members {
-			name := member
-			switch {
-			case m.Traits.EC2QueryName != "":
-				name = m.Traits.EC2QueryName
-			case m.Traits.XMLName != "":
-				name = strings.ToUpper(m.Traits.XMLName[:1]) + m.Traits.XMLName[1:]
+			traits := map[string]string{}
+			for name, raw := range m.Traits {
+				var v string
+				if json.Unmarshal(raw, &v) == nil {
+					traits[name] = v
+				}
 			}
-			params[strings.ToLower(name)] = true
+			fields[strings.ToLower(wireName(member, traits))] = true
 		}
-		out[id[strings.Index(id, "#")+1:]] = params
+		out[id[strings.Index(id, "#")+1:]] = fields
 	}
 	if len(out) == 0 {
 		t.Fatalf("%s declares no operations", path)
 	}
 	return out
+}
+
+// The ec2Query protocol does not send a member under its member name: the
+// aws.protocols#ec2QueryName trait wins where present, otherwise the
+// smithy.api#xmlName trait with its first letter upper-cased.
+func ec2WireName(member string, traits map[string]string) string {
+	if n := traits["aws.protocols#ec2QueryName"]; n != "" {
+		return n
+	}
+	if n := traits["smithy.api#xmlName"]; n != "" {
+		return strings.ToUpper(n[:1]) + n[1:]
+	}
+	return member
+}
+
+// awsJson and awsQuery both send a member under its own name.
+func memberWireName(member string, _ map[string]string) string { return member }
+
+func loadEC2RequestParameters(t *testing.T) map[string]map[string]bool {
+	return loadRequestFields(t, "ec2", ec2WireName)
+}
+
+func loadGlueRequestMembers(t *testing.T) map[string]map[string]bool {
+	return loadRequestFields(t, "glue", memberWireName)
+}
+
+func loadRDSRequestParameters(t *testing.T) map[string]map[string]bool {
+	return loadRequestFields(t, "rds", memberWireName)
 }
 
 // iamEC2DerivesItsResource reports whether the derivation produces an ARN for
@@ -280,51 +379,8 @@ func iamEC2DerivesItsResource(operation string, params map[string]bool) bool {
 		}
 		values[name] = "probe"
 	}
-	return len(iamEC2ResourceARNs(iamEC2Request(operation, values), types,
+	return len(iamDerivedResourceARNs(iamEC2Request(operation, values), "ec2", operation,
 		"us-east-1", "123456789012")) > 0
-}
-
-// loadGlueRequestMembers returns, per AWS Glue operation, the top-level members
-// its request carries. Glue speaks awsJson, so a member arrives under its own
-// name and no protocol trait renames it.
-func loadGlueRequestMembers(t *testing.T) map[string]map[string]bool {
-	t.Helper()
-	path := filepath.Join("..", "..", "specs", "cloud-api", "aws", "glue.smithy.json.gz")
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open %s: %v — run scripts/fetch-aws-spec.sh glue", path, err)
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		t.Fatalf("gunzip %s: %v", path, err)
-	}
-	defer gz.Close()
-	var doc struct {
-		Shapes map[string]struct {
-			Type    string                  `json:"type"`
-			Input   struct{ Target string } `json:"input"`
-			Members map[string]struct{}     `json:"members"`
-		} `json:"shapes"`
-	}
-	if err := json.NewDecoder(gz).Decode(&doc); err != nil {
-		t.Fatalf("decode %s: %v", path, err)
-	}
-	out := map[string]map[string]bool{}
-	for id, shape := range doc.Shapes {
-		if shape.Type != "operation" || shape.Input.Target == "" {
-			continue
-		}
-		members := map[string]bool{}
-		for name := range doc.Shapes[shape.Input.Target].Members {
-			members[name] = true
-		}
-		out[id[strings.Index(id, "#")+1:]] = members
-	}
-	if len(out) == 0 {
-		t.Fatalf("%s declares no operations", path)
-	}
-	return out
 }
 
 // iamGlueDerivesItsResource runs the production derivation against a request
@@ -346,131 +402,36 @@ func iamGlueDerivesItsResource(operation string, members map[string]bool) bool {
 	}
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
 	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
-	return len(iamGlueResourceARNs(r, types, "us-east-1", "123456789012")) > 0
+	return len(iamDerivedResourceARNs(r, "glue", operation, "us-east-1", "123456789012")) > 0
 }
 
-// TestIAMGlueFieldAliasesAreRealRequestMembers holds every AWS Glue alias to a
-// member the vendored model declares on an operation that authorizes against
-// the aliased resource type, for the same reason the Amazon EC2 aliases are
-// held: an alias that is a guess derives nothing, and nothing about that is
-// visible to a caller whose policy says Resource "*".
-func TestIAMGlueFieldAliasesAreRealRequestMembers(t *testing.T) {
-	byOperation := loadGlueRequestMembers(t)
-
-	typesByVariable := map[string][]string{}
-	for key, format := range iamResourceARNFormats {
-		service, resourceType, _ := strings.Cut(key, ":")
-		if service != "glue" {
+// iamRDSDerivesItsResource runs the production derivation against a request
+// carrying every parameter the model declares for the operation.
+func iamRDSDerivesItsResource(operation string, params map[string]bool) bool {
+	types := iamActionResourceTypes["rds:"+operation]
+	if len(types) == 0 {
+		return false
+	}
+	form := "Action=" + operation + "&Version=2014-10-31"
+	for name := range params {
+		if name == "action" || name == "version" {
 			continue
 		}
-		for _, variable := range iamARNFormatVariables(format) {
-			typesByVariable[variable] = append(typesByVariable[variable], resourceType)
-		}
+		form += "&" + name + "=probe"
 	}
-
-	var problems []string
-	for variable, aliases := range iamGlueFieldAliases {
-		resourceTypes := typesByVariable[variable]
-		if len(resourceTypes) == 0 {
-			problems = append(problems, fmt.Sprintf(
-				"%s: no AWS Glue resource type is identified by this variable — the alias is dead", variable))
-			continue
-		}
-		for _, alias := range aliases {
-			used := false
-			for action, declared := range iamActionResourceTypes {
-				service, operation, _ := strings.Cut(action, ":")
-				if service != "glue" || !slicesIntersect(declared, resourceTypes) {
-					continue
-				}
-				if byOperation[operation][alias] {
-					used = true
-					break
-				}
-			}
-			if !used {
-				problems = append(problems, fmt.Sprintf(
-					"%s -> %s: no AWS Glue operation authorizing against %s takes a %s member",
-					variable, alias, strings.Join(resourceTypes, "/"), alias))
-			}
-		}
-	}
-	sort.Strings(problems)
-	if len(problems) > 0 {
-		t.Fatalf("iamGlueFieldAliases does not match the vendored AWS Glue model:\n  %s",
-			strings.Join(problems, "\n  "))
-	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return len(iamDerivedResourceARNs(r, "rds", operation, "us-east-1", "123456789012")) > 0
 }
 
-// TestIAMEC2ParameterAliasesAreRealRequestParameters holds every alias to a
-// parameter the vendored model declares on an operation that authorizes
-// against the aliased resource type. The aliases are the one hand-written part
-// of Amazon EC2's derivation — the renamings the Service Reference did not
-// follow — so an alias that is a guess, a typo, or one the API has since
-// dropped derives nothing and would be invisible: the request still succeeds
-// for a caller whose policy says Resource "*".
-func TestIAMEC2ParameterAliasesAreRealRequestParameters(t *testing.T) {
-	byOperation := loadEC2RequestParameters(t)
-
-	// The resource types each variable identifies, and the operations that
-	// authorize against them.
-	typesByVariable := map[string][]string{}
-	for key, format := range iamResourceARNFormats {
-		service, resourceType, _ := strings.Cut(key, ":")
-		if service != "ec2" {
-			continue
-		}
-		for _, variable := range iamARNFormatVariables(format) {
-			typesByVariable[variable] = append(typesByVariable[variable], resourceType)
-		}
-	}
-
-	var problems []string
-	for variable, aliases := range iamEC2ParameterAliases {
-		resourceTypes := typesByVariable[variable]
-		if len(resourceTypes) == 0 {
-			problems = append(problems, fmt.Sprintf(
-				"%s: no Amazon EC2 resource type is identified by this variable — the alias is dead", variable))
-			continue
-		}
-		for _, alias := range aliases {
-			used := false
-			for action, declared := range iamActionResourceTypes {
-				service, operation, _ := strings.Cut(action, ":")
-				if service != "ec2" {
-					continue
-				}
-				if !slicesIntersect(declared, resourceTypes) {
-					continue
-				}
-				if byOperation[operation][strings.ToLower(alias)] {
-					used = true
-					break
-				}
-			}
-			if !used {
-				problems = append(problems, fmt.Sprintf(
-					"%s -> %s: no Amazon EC2 operation authorizing against %s takes a %s parameter",
-					variable, alias, strings.Join(resourceTypes, "/"), alias))
-			}
-		}
-	}
-	sort.Strings(problems)
-	if len(problems) > 0 {
-		t.Fatalf("iamEC2ParameterAliases does not match the vendored Amazon EC2 model:\n  %s",
-			strings.Join(problems, "\n  "))
-	}
-}
-
-func slicesIntersect(a, b []string) bool {
-	for _, x := range a {
-		for _, y := range b {
-			if x == y {
-				return true
-			}
-		}
-	}
-	return false
+// TestIAMRDSFieldAliasesAreRealRequestParameters holds every Amazon RDS alias
+// to a parameter the vendored model declares on an operation that authorizes
+// against the aliased resource type. RDS needs an alias for almost every one of
+// its resource types — the reference says ${DbInstanceName} where the API sends
+// DBInstanceIdentifier — so this table is the largest of the three and the one
+// most in need of holding to something.
+func TestIAMRDSFieldAliasesAreRealRequestParameters(t *testing.T) {
+	assertAliasesAreRealFields(t, "rds", iamRDSFieldAliases, loadRDSRequestParameters(t))
 }
 
 // iamHandwrittenDerivationServices are the services whose target resource is
@@ -491,17 +452,29 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // Resource is itself "*", so every resource-scoped grant written for it is
 // denied. Raising this number is how that defect class is burned down; the test
 // prints what is left.
-// What remains for the two services measured against their own requests is the
-// part the request genuinely does not name. Amazon EC2's 55: an operation that
-// creates its resource has no identifier for it yet, the Disassociate/Detach
-// family names an association rather than either end of it, CreateTags carries
-// identifiers of mixed types with nothing published to map an id back to its
-// type, and CancelImportTask's one identifier could belong to either type it
-// authorizes against. AWS Glue's 55: the registry and schema operations name
-// their resource inside a nested RegistryId/SchemaId member rather than at the
-// top level, and the data-quality operations name a result rather than the
-// ruleset they authorize against.
-const iamDerivationCoverageFloor = 967
+// What remains for the three services measured against their own requests is
+// the part the request genuinely does not name.
+//
+// Amazon EC2's 55: an operation that creates its resource has no identifier for
+// it yet, the Disassociate/Detach family names an association rather than
+// either end of it, CreateTags carries identifiers of mixed types with nothing
+// published to map an id back to its type, and CancelImportTask's one
+// identifier could belong to either type it authorizes against.
+//
+// AWS Glue's 55: the registry and schema operations name their resource inside
+// a nested RegistryId/SchemaId member rather than at the top level, and the
+// data-quality operations name a result rather than the ruleset they authorize
+// against.
+//
+// Amazon RDS's 27: the copy operations name a source and a target that does not
+// exist yet, and the custom-engine-version operations need an identifier the
+// request does not carry. The tagging and maintenance operations are counted
+// here too, but only because the probe fills every field with a placeholder:
+// they name their resource by ARN outright, which a real caller supplies and
+// the gate does read — TestIAMResourceARNs_RDSTakesTheARNTheRequestNames pins
+// that. Counting them as derived here would mean filling a field with an ARN
+// because the metric wanted one, which is measuring the measurement.
+const iamDerivationCoverageFloor = 1086
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -535,6 +508,7 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	// only statement available.
 	ec2Parameters := loadEC2RequestParameters(t)
 	glueMembers := loadGlueRequestMembers(t)
+	rdsParameters := loadRDSRequestParameters(t)
 
 	covered := 0
 	missingByService := map[string][]string{}
@@ -553,6 +527,8 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamEC2DerivesItsResource(o.name, ec2Parameters[o.name])
 		case "glue":
 			derived = iamGlueDerivesItsResource(o.name, glueMembers[o.name])
+		case "rds":
+			derived = iamRDSDerivesItsResource(o.name, rdsParameters[o.name])
 		}
 		if derived {
 			covered++

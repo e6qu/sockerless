@@ -4,6 +4,52 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-04 — Amazon RDS, and an alias table read off the model
+
+Amazon RDS is the service where the reference and the API disagree about
+spelling almost everywhere. The Service Reference calls a database instance
+`${DbInstanceName}`, a cluster `${DbClusterInstanceName}`, a parameter group
+`${ParameterGroupName}`; the API sends `DBInstanceIdentifier`,
+`DBClusterIdentifier` and `DBParameterGroupName`. No rule about spelling
+bridges that, so fourteen of the twenty-four resource types need an alias — the
+largest of the three tables, and the one most in need of being right.
+
+It was read off the model rather than guessed. For each resource type, the
+operations that authorize against it were collected and their identifier-shaped
+members ranked by how many of those operations carry them; the winner was the
+alias. `DBClusterIdentifier` appears in 24 of the cluster's 43 actions,
+`DBInstanceIdentifier` in 25 of the instance's 42, `DBSubnetGroupName` in 14 of
+17. That is evidence rather than pattern-matching, which matters here because
+the guard had already rejected two AWS Glue guesses and one of them was for a
+resource type no action authorizes against at all. Every RDS alias passed the
+guard first time, which is what reading them off the model buys.
+
+The derivation itself needed one addition. RDS speaks awsQuery, which boxes a
+list as `Names.member.1` where Amazon EC2's protocol flattens it to
+`InstanceId.1`, so the parameter indexer now collapses both encodings and is
+shared by the two.
+
+RDS also names some resources by ARN outright, under three different parameters
+— tagging sends `ResourceName`, an activity stream `ResourceArn`, a maintenance
+action `ResourceIdentifier`. The gate already read an ARN a request names, but
+only from a JSON body, so a query-protocol service naming one was authorized
+against `"*"`. It reads the form parameters too now, taking only a value that
+is actually an ARN.
+
+Coverage went from 967 to 1,086 of 1,973 served operations. The three coverage
+probes now run through the same entry point production uses rather than calling
+each service's extractor directly — the numbers were unchanged by that, which is
+the point of checking.
+
+Two Amazon RDS resource types are left underived on purpose. The simulator
+builds a custom engine version's ARN as `cev:<engine>/<version>`, dropping the
+identifier AWS publishes as its third part, and a proxy target group's as
+`target-group:<proxy>/<group>` where AWS publishes a single identifier. Every
+other RDS type agrees with the published shape, including the region-less global
+cluster. Deriving those two would have meant the gate building one shape while
+the handlers build another, so they are recorded as the ARN defect they are
+(BUG-2927) instead.
+
 ## 2026-08-04 — AWS Glue, and one derivation for any published ARN format
 
 Amazon EC2's derivation was written against Amazon EC2. AWS Glue is the service

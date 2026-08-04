@@ -5,24 +5,28 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 ## Next
 
 Resource-scoped IAM authorization is spec-driven now, and the remainder is
-measured rather than unknown: BUG-2909 records the 1,006 served operations that
-still authorize against a literal `"*"`, largest first — Amazon RDS (146), AWS
-Systems Manager (101), Amazon ElastiCache (70), Amazon DynamoDB (46), Amazon EC2
-Auto Scaling (44).
+measured rather than unknown: BUG-2909 records the 887 served operations that
+still authorize against a literal `"*"`, largest first — AWS Systems Manager
+(101), Amazon ElastiCache (70), Amazon DynamoDB (46), Amazon EC2 Auto Scaling
+(44), AWS CloudTrail (44).
 
-Adding a service is now small. `iamTableDrivenARNs` fills any published ARN
-format — one identifier, several nested, or none — so a service needs its entry
-in `scripts/gen-aws-iam-resource-types.sh`, a lookup that reads a field in its
-protocol, and, where the API renamed an identifier, an alias table held to the
-vendored model by a test.
+Adding a service is small now. `iamTableDrivenARNs` fills any published ARN
+format, so a service needs its entry in
+`scripts/gen-aws-iam-resource-types.sh`, a lookup that reads a field in its
+protocol — `iamQueryRequestParameters` already serves both query encodings, and
+an awsJson service reads its body members — and, where the API renamed an
+identifier, an alias table. Write that table off the model rather than from the
+name: the guard rejected two AWS Glue guesses, one of them for a resource type
+no action authorizes against at all.
 
-Amazon RDS is next by size, and one thing about it is already known: it speaks
-awsQuery, not awsJson, and it needs an alias for nearly every one of its 24
-resource types, because the reference names them `${DbInstanceName}` and
-`${ClusterParameterGroupName}` where the API sends `DBInstanceIdentifier` and
-`DBParameterGroupName`. That table is worth writing against the model rather
-than by pattern — the alias guard rejected two plausible AWS Glue guesses, and
-one of them was for a resource type no action authorizes against at all.
+Eight services still carry an older per-service case that fires only when the
+request happens to name the field it reads; replacing each with a table-driven
+extractor is what retires `iamHandwrittenDerivationServices` entirely.
+
+BUG-2927 came out of the Amazon RDS pass and is worth doing alongside whichever
+service comes next: two Amazon RDS ARNs the simulator assigns do not match the
+shape AWS publishes, which is why those two resource types are left underived
+rather than have the gate build one shape and the handlers another.
 
 Two pieces remain staged in [PLAN.md](PLAN.md) § "Staged: the Compute and
 Console Tails", and both are breadth work needing no special host: Google

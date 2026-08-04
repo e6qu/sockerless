@@ -56,6 +56,8 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamGlueResourceARNs(r, types, region, account)
 	case "logs":
 		return iamLogsResourceARNs(r, types, arn)
+	case "rds":
+		return iamRDSResourceARNs(r, types, region, account)
 	case "codebuild":
 		return iamCodeBuildResourceARNs(r, types, arn)
 	case "wafv2":
@@ -128,6 +130,17 @@ func iamIAMResourceARNs(r *http.Request, types []string) []string {
 func iamRequestARNField(r *http.Request) string {
 	for _, field := range []string{"resourceArn", "ResourceARN", "ResourceArn", "resourceARN"} {
 		if v := iamJSONBodyField(r, field); strings.HasPrefix(v, "arn:") {
+			return v
+		}
+	}
+	// The query-protocol services name it as a form parameter instead. Amazon
+	// RDS is the one that does so under three spellings: its tagging operations
+	// send the ARN as ResourceName, its activity streams as ResourceArn, and its
+	// maintenance operations as ResourceIdentifier. Only a value that is an ARN
+	// is taken, so a parameter of the same name carrying a bare name elsewhere
+	// is left to that service's own derivation.
+	for _, field := range []string{"ResourceName", "ResourceArn", "ResourceARN", "ResourceIdentifier"} {
+		if v := r.FormValue(field); strings.HasPrefix(v, "arn:") {
 			return v
 		}
 	}
@@ -229,7 +242,7 @@ func iamHasType(types []string, resourceType string) bool {
 // host's ${DedicatedHostId} as HostId — which is mechanical. The rest are
 // genuine renamings, listed in iamEC2ParameterAliases.
 func iamEC2ResourceARNs(r *http.Request, types []string, region, account string) []string {
-	params := iamEC2RequestParameters(r)
+	params := iamQueryRequestParameters(r)
 	return iamTableDrivenARNs("ec2", types, region, account, iamEC2ParameterAliases,
 		func(field string) []string { return params[strings.ToLower(field)] })
 }
@@ -268,14 +281,17 @@ var iamEC2ParameterAliases = map[string][]string{
 	"VpcEndpointServiceId":            {"ServiceId"},
 }
 
-// iamEC2RequestParameters indexes a query-protocol request's flat parameters by
-// lower-cased name. EC2 serializes a list by repeating the member's singular
-// name with a 1-based index (InstanceId.1, InstanceId.2), so the indices are
-// collapsed back into one ordered slice and every element authorizes
-// separately — terminating three instances must be allowed for all three, not
-// only the first. Members of a nested structure (Filter.1.Name,
-// TagSpecification.1.Tag.1.Key) name no resource and are left out.
-func iamEC2RequestParameters(r *http.Request) map[string][]string {
+// iamQueryRequestParameters indexes a query-protocol request's flat parameters
+// by lower-cased name, collapsing both encodings a list arrives in so every
+// element authorizes separately — terminating three instances must be allowed
+// for all three, not only the first.
+//
+// Amazon EC2's protocol flattens a list to the member's singular name with a
+// 1-based index (InstanceId.1, InstanceId.2). The awsQuery protocol Amazon RDS
+// speaks boxes it instead (Names.member.1) unless the member is flattened.
+// Members of a nested structure (Filters.Filter.1.Name) name no resource and
+// are left out.
+func iamQueryRequestParameters(r *http.Request) map[string][]string {
 	_ = r.ParseForm()
 	byIndex := map[string]map[int]string{}
 	for key, values := range r.Form {
@@ -290,6 +306,7 @@ func iamEC2RequestParameters(r *http.Request) map[string][]string {
 			}
 			name, index = key[:dot], n
 		}
+		name = strings.TrimSuffix(name, ".member")
 		if strings.ContainsRune(name, '.') {
 			continue
 		}
@@ -595,6 +612,53 @@ func iamGlueRequestFields(r *http.Request) map[string][]string {
 		}
 	}
 	return fields
+}
+
+// ===== Amazon Relational Database Service =====
+
+// iamRDSResourceARNs derives the ARNs an Amazon RDS request names. RDS speaks
+// the awsQuery protocol, so the identifiers are form parameters, and it is the
+// service where the reference and the API disagree about spelling on almost
+// every resource: the reference calls a database instance ${DbInstanceName} and
+// a cluster parameter group ${ClusterParameterGroupName} where the API sends
+// DBInstanceIdentifier and DBClusterParameterGroupName. Those renamings are the
+// whole of iamRDSFieldAliases, and each was read off the vendored model — the
+// parameter the operations authorizing against that type actually take —
+// rather than derived from the name by a pattern.
+//
+// Two of the twenty-four types derive nothing, and deliberately. A custom
+// engine version's ARN carries an engine, a version and the version's own
+// identifier, and a request names only the first two; a proxy target group's
+// carries an identifier no request supplies. The simulator's own builders for
+// both disagree with the published shape, which is a defect in the ARNs it
+// assigns rather than something to paper over here.
+func iamRDSResourceARNs(r *http.Request, types []string, region, account string) []string {
+	params := iamQueryRequestParameters(r)
+	return iamTableDrivenARNs("rds", types, region, account, iamRDSFieldAliases,
+		func(field string) []string { return params[strings.ToLower(field)] })
+}
+
+// iamRDSFieldAliases maps an ARN format's identifier variable to the request
+// parameter Amazon RDS spells it as.
+//
+// TestIAMRDSFieldAliasesAreRealRequestParameters holds every entry to a
+// parameter the vendored model declares on an operation that authorizes
+// against that resource type.
+var iamRDSFieldAliases = map[string][]string{
+	"ClusterParameterGroupName": {"DBClusterParameterGroupName"},
+	"ClusterSnapshotName":       {"DBClusterSnapshotIdentifier"},
+	"DbClusterEndpoint":         {"DBClusterEndpointIdentifier"},
+	"DbClusterInstanceName":     {"DBClusterIdentifier"},
+	"DbInstanceName":            {"DBInstanceIdentifier"},
+	"DbProxyEndpointId":         {"DBProxyEndpointName"},
+	"DbProxyId":                 {"DBProxyName"},
+	"DbShardGroupResourceId":    {"DBShardGroupIdentifier"},
+	"GlobalCluster":             {"GlobalClusterIdentifier"},
+	"ParameterGroupName":        {"DBParameterGroupName"},
+	"ReservedDbInstanceName":    {"ReservedDBInstanceId"},
+	"SecurityGroupName":         {"DBSecurityGroupName"},
+	"SnapshotName":              {"DBSnapshotIdentifier"},
+	"SubnetGroupName":           {"DBSubnetGroupName"},
 }
 
 // ===== Amazon Elastic Container Service =====
