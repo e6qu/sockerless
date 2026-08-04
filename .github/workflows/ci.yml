@@ -825,15 +825,28 @@ jobs:
   ui:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    # A one-shot run on a fresh checkout has no use for turbo's background
+    # daemon, and a build step has no business making a telemetry request: both
+    # are work that can block without producing output, on a job whose real
+    # work takes about two minutes. Each turbo step also carries its own
+    # timeout, so a step that stops making progress is reported as the step it
+    # stopped in rather than as the whole job running out of time.
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+      DO_NOT_TRACK: '1'
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: '1.3'
       - run: cd ui && bun install --frozen-lockfile
-      - run: cd ui && bunx turbo run build
-      - run: cd ui && bunx turbo run typecheck
-      - run: cd ui && bunx turbo run test
+        timeout-minutes: 3
+      - run: cd ui && bunx turbo run build --no-daemon
+        timeout-minutes: 4
+      - run: cd ui && bunx turbo run typecheck --no-daemon
+        timeout-minutes: 4
+      - run: cd ui && bunx turbo run test --no-daemon
+        timeout-minutes: 6
 
   ui-browser:
     name: browser (${{ matrix.package }})

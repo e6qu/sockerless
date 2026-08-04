@@ -75,6 +75,19 @@ where it reaches the secondary only through the prefix-drop rule, so the exact
 spelling takes it. Where the claims are equally strong neither is derived, and
 the request's other parameters still are.
 
+Three things surfaced while verifying this branch and are fixed or filed with
+it. The vendored Cloud Functions v2 Discovery document was refreshed to revision
+20260730 — the local fetch kept returning 20260723 because Google's edges serve
+different revisions, so the newer document came from the artifact the freshness
+job captures for exactly that reason; nothing in it changed but the revision, no
+method, schema or field. BUG-2924 records a VPC network left behind by a dead
+simulator holding its CIDR under a name no later run looks for, which is what
+made an Amazon ECS awsvpc test fail once the runs that created the orphans were
+killed. BUG-2925 records the user-interface job stalling for twelve minutes with
+no output on a package that builds in 398 ms; its turbo invocation lost the
+daemon and the telemetry request, and each step gained its own timeout so a
+recurrence names the step it stalled in — hardening, not a proven cause.
+
 ## 2026-08-03 — The eight operations that happen inside the machine
 
 Microsoft.Compute virtual machines are complete at 29 of 29. The eight that
