@@ -469,3 +469,111 @@ func TestIAMResourceARNs_EC2DerivesEveryResourceAnActionNames(t *testing.T) {
 		"arn:aws:ec2:us-east-1:123456789012:instance/i-0abc",
 		"arn:aws:ec2:us-east-1:123456789012:volume/vol-0abc")
 }
+
+// ===== AWS Glue =====
+
+func iamGlueRequest(operation, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	r.Header.Set("X-Amz-Target", "AWSGlue."+operation)
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/glue/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// AWS Glue nests its ARNs, and GetTable is where every part of the derivation
+// shows at once: the database it names, the table underneath it (whose ARN
+// carries the database), the catalog the request addresses by an identifier the
+// reference calls a name, and the root catalog, whose format names nothing
+// because a request authorizes against it by existing.
+func TestIAMResourceARNs_GlueNestsAnARNUnderItsParents(t *testing.T) {
+	const p = "arn:aws:glue:us-east-1:123456789012:"
+	assertDerivedARNs(t,
+		iamGlueRequest("GetTable", `{"CatalogId":"123456789012","DatabaseName":"sales","Name":"orders"}`),
+		"glue:GetTable",
+		p+"catalog/123456789012",
+		p+"database/sales",
+		p+"table/sales/orders",
+		p+"catalog")
+}
+
+// A batch operation names its resources in a list and every one is authorized,
+// under the plural of whichever spelling the singular uses.
+func TestIAMResourceARNs_GlueAuthorizesEveryJobOfABatch(t *testing.T) {
+	const p = "arn:aws:glue:us-east-1:123456789012:job/"
+	assertDerivedARNs(t,
+		iamGlueRequest("BatchGetJobs", `{"JobNames":["ingest","transform","publish"]}`),
+		"glue:BatchGetJobs", p+"ingest", p+"transform", p+"publish")
+}
+
+// Most of AWS Glue abbreviates the identifier the reference publishes: a
+// crawler's ${CrawlerName} arrives as Name, which the prefix drop resolves
+// without a per-resource case.
+func TestIAMResourceARNs_GlueResolvesTheAbbreviatedIdentifier(t *testing.T) {
+	assertDerivedARNs(t,
+		iamGlueRequest("GetCrawler", `{"Name":"nightly"}`),
+		"glue:GetCrawler", "arn:aws:glue:us-east-1:123456789012:crawler/nightly")
+}
+
+// A user-defined function's ARN carries its database and its own name, and the
+// name arrives under a spelling the prefix drop does not reach — the one case
+// AWS Glue needs an alias for.
+func TestIAMResourceARNs_GlueUserDefinedFunctionCarriesItsDatabase(t *testing.T) {
+	const p = "arn:aws:glue:us-east-1:123456789012:"
+	assertDerivedARNs(t,
+		iamGlueRequest("GetUserDefinedFunction",
+			`{"CatalogId":"123456789012","DatabaseName":"sales","FunctionName":"to_cents"}`),
+		"glue:GetUserDefinedFunction",
+		p+"catalog/123456789012",
+		p+"database/sales",
+		p+"userDefinedFunction/sales/to_cents",
+		p+"catalog")
+}
+
+// A request that names no part of a nested ARN derives nothing for it rather
+// than a half-filled one: an ARN carrying a literal ${DatabaseName} matches no
+// policy, and emitting it would deny a grant that named the real table.
+// GetUserDefinedFunction names the function but not the database its ARN needs.
+// The function is the only thing any type here claims, so nothing else can
+// account for the absence: either the parent is required or the identifier
+// slides into the database's place and the ARN names a function that does not
+// exist, under a database that does not either.
+func TestIAMResourceARNs_GlueNeverEmitsAHalfFilledARN(t *testing.T) {
+	r := iamGlueRequest("GetUserDefinedFunction", `{"FunctionName":"to_cents"}`)
+	for _, a := range iamResourceARNsForRequest(r, "glue:GetUserDefinedFunction") {
+		if strings.Contains(a, "${") {
+			t.Fatalf("derived %q, which carries an unfilled variable", a)
+		}
+		if strings.Contains(a, "userDefinedFunction/") {
+			t.Fatalf("derived %q for a request that never named the database its ARN nests under", a)
+		}
+	}
+}
+
+// The whole point, end to end: a policy scoped to one AWS Glue job allows that
+// job and denies another.
+func TestIAMEnforce_GlueJobScopedGrant(t *testing.T) {
+	doc := mustDoc(t, `{"Version":"2012-10-17","Statement":[{
+		"Effect":"Allow",
+		"Action":["glue:GetJob","glue:StartJobRun"],
+		"Resource":"arn:aws:glue:us-east-1:123456789012:job/ingest"}]}`)
+	for _, tc := range []struct{ name, job, want string }{
+		{"the granted job", "ingest", "allowed"},
+		{"any other job", "exfiltrate", "implicitDeny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := iamGlueRequest("GetJob", `{"JobName":"`+tc.job+`"}`)
+			action, ok := iamActionForRequest(r)
+			if !ok {
+				t.Fatal("request was not classified as an IAM action")
+			}
+			resources := iamResourceARNsForRequest(r, action)
+			if len(resources) != 1 {
+				t.Fatalf("derived %v, want exactly one job ARN", resources)
+			}
+			got, _ := iamEvalDecision([]iamPolicyDoc{doc}, action, resources[0], nil)
+			if got != tc.want {
+				t.Fatalf("%s on %s (resource %s) = %s, want %s", action, tc.job, resources[0], got, tc.want)
+			}
+		})
+	}
+}

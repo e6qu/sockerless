@@ -4028,49 +4028,72 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
 </%sResponse>`, action, ec2Xmlns(), generateUUID(), items.String(), action)
 }
 
+// ec2UpdateVolumeAttachmentsForInstance restamps every volume attached to an
+// instance when that instance reaches a new state.
+//
+// The listing only chooses which rows to visit; whether a row is attached to
+// this instance is decided inside Update, under the store's write lock, against
+// the value as it is then. Deciding from the listed copy instead would let a
+// volume detached in the meantime be written back with its attachment intact —
+// the API having already reported the detach — and the DeleteVolume that
+// follows is then refused as VolumeInUse.
 func ec2UpdateVolumeAttachmentsForInstance(instanceID, attachmentState, volumeState string) {
-	for _, vol := range ec2Volumes.List() {
-		changed := false
-		for i := range vol.Attachments {
-			if vol.Attachments[i].InstanceId == instanceID {
-				vol.Attachments[i].State = attachmentState
-				changed = true
+	for _, listed := range ec2Volumes.List() {
+		ec2Volumes.Update(listed.VolumeId, func(vol *EC2Volume) {
+			changed := false
+			for i := range vol.Attachments {
+				if vol.Attachments[i].InstanceId == instanceID {
+					vol.Attachments[i].State = attachmentState
+					changed = true
+				}
 			}
-		}
-		if changed {
-			vol.State = volumeState
-			ec2Volumes.Put(vol.VolumeId, vol)
-		}
+			if changed {
+				vol.State = volumeState
+			}
+		})
 	}
 }
 
+// ec2DeleteOnTerminationVolumes releases the volumes a terminating instance
+// held, deleting the ones it was told to delete with it and detaching the rest.
+//
+// Which attachments a volume has is read inside Update, for the same reason the
+// attachment restamp reads it there: a listed copy can already be out of date by
+// the time it is written back. The backing store is removed outside the lock,
+// since it is filesystem work and the row is gone by then either way.
 func ec2DeleteOnTerminationVolumes(instanceID string) {
-	for _, vol := range ec2Volumes.List() {
-		keep := vol.Attachments[:0]
+	for _, listed := range ec2Volumes.List() {
+		var dockerVolume, hostPath string
 		deleteVolume := false
-		for _, att := range vol.Attachments {
-			if att.InstanceId == instanceID && att.DeleteOnTermination {
-				deleteVolume = true
-				continue
+		ec2Volumes.Update(listed.VolumeId, func(vol *EC2Volume) {
+			keep := make([]EC2VolumeAttachment, 0, len(vol.Attachments))
+			for _, att := range vol.Attachments {
+				if att.InstanceId == instanceID && att.DeleteOnTermination {
+					deleteVolume = true
+					continue
+				}
+				keep = append(keep, att)
 			}
-			keep = append(keep, att)
-		}
-		if deleteVolume {
-			if vol.DockerVolumeName != "" {
-				ebsRemoveDockerVolume(vol.DockerVolumeName)
-			} else {
-				_ = os.RemoveAll(vol.HostPath)
+			if deleteVolume {
+				dockerVolume, hostPath = vol.DockerVolumeName, vol.HostPath
+				return
 			}
-			ec2Volumes.Delete(vol.VolumeId)
+			if len(keep) != len(vol.Attachments) {
+				vol.Attachments = keep
+				if len(vol.Attachments) == 0 {
+					vol.State = "available"
+				}
+			}
+		})
+		if !deleteVolume {
 			continue
 		}
-		if len(keep) != len(vol.Attachments) {
-			vol.Attachments = keep
-			if len(vol.Attachments) == 0 {
-				vol.State = "available"
-			}
-			ec2Volumes.Put(vol.VolumeId, vol)
+		if dockerVolume != "" {
+			ebsRemoveDockerVolume(dockerVolume)
+		} else {
+			_ = os.RemoveAll(hostPath)
 		}
+		ec2Volumes.Delete(listed.VolumeId)
 	}
 }
 

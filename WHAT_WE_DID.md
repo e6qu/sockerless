@@ -4,6 +4,65 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-04 — AWS Glue, and one derivation for any published ARN format
+
+Amazon EC2's derivation was written against Amazon EC2. AWS Glue is the service
+that shows what was actually general about it and what was not.
+
+What was general is the idea: the Service Reference publishes an ARN format per
+resource type, and that format says both what to build and what identifier to
+look for. What was specific is everything else. EC2's formats all end in exactly
+one identifier; Glue's nest — a table is `table/${DatabaseName}/${TableName}`
+and a user-defined function carries its database too — and its root catalog
+names no identifier at all, because a request authorizes against the catalog by
+existing. So the filler takes a list of variables rather than a trailing one,
+builds an ARN only when the request names every part, and emits a format with no
+variables as the constant it is. A half-filled ARN would carry a literal
+`${DatabaseName}` and match no policy, which would deny a grant that named the
+real table.
+
+The other thing EC2 did not need was a way to read a field. Glue speaks awsJson,
+where an identifier is a member of the request body; EC2 speaks its own query
+protocol, where it is a form parameter. That is the whole difference between
+them, so it became the argument — one derivation, one lookup per service — and
+the EC2 extractor is now four lines over the same core.
+
+Glue also settled an ordering that was wrong and had not yet been caught. The
+candidate spellings for an identifier ran exact, then the mechanical prefix drop,
+then the service's declared renamings. On GetTable that ranked a catalog's
+`${CatalogName}` dropping to `Name` above its declared `CatalogId` — and `Name`
+on GetTable is the *table's* name, so the catalog and the table claimed one
+field and the ambiguity rule discarded both. A declared alias is evidence, held
+to the vendored model by a test; the prefix drop is a guess about spelling. The
+evidence now outranks the guess.
+
+Coverage went from 818 to 967 of 1,973 served operations. Glue's 55 remaining
+are the registry and schema operations, which name their resource inside a
+nested member rather than at the top level, and the data-quality operations,
+which name a result rather than the ruleset they authorize against.
+
+Two of the five aliases first written for Glue were wrong, and the guard that
+holds each one to the model caught both before anything ran: one named a member
+the API does not have, and one was for a resource type no Glue action authorizes
+against at all. A third test was worse than wrong — it passed for a reason that
+had nothing to do with what it claimed to check, because the ambiguity rule
+discarded the type before the nesting rule could matter. Breaking the rule on
+purpose is what exposed it; the test now names a case where nothing else can
+account for the absence, and it fails with exactly the malformed ARN it exists
+to prevent.
+
+One defect came out of watching this branch's CI rather than out of the branch.
+An Amazon EBS volume could report a successful detach and still be holding the
+attachment a moment later, so the DeleteVolume that followed was refused as
+`VolumeInUse`. Restamping the volumes an instance holds walked a listing and
+wrote each row back from the copy it had listed, so a detach that landed
+in between was undone. Both that walk and the one that releases a terminating
+instance's volumes now decide from the value under the store's write lock, and
+the listing only chooses which rows to visit. It took a slow instance
+transition to be visible, which is why the hosted runners saw it once and no
+local run ever did — and why the fix is pinned by two concurrency regressions
+that reproduce it deterministically rather than by a green run (BUG-2926).
+
 ## 2026-08-04 — Amazon EC2 authorizes against the resource the request names
 
 Amazon EC2 was the largest single hole in resource-scoped authorization: 515 of

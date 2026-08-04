@@ -52,6 +52,8 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamEC2ResourceARNs(r, types, region, account)
 	case "ecs":
 		return iamECSResourceARNs(r, op, types, arn)
+	case "glue":
+		return iamGlueResourceARNs(r, types, region, account)
 	case "logs":
 		return iamLogsResourceARNs(r, types, arn)
 	case "codebuild":
@@ -228,74 +230,8 @@ func iamHasType(types []string, resourceType string) bool {
 // genuine renamings, listed in iamEC2ParameterAliases.
 func iamEC2ResourceARNs(r *http.Request, types []string, region, account string) []string {
 	params := iamEC2RequestParameters(r)
-
-	// Resolve each declared type to the parameter naming it before building
-	// anything, because two types can resolve to the same one and the
-	// identifier belongs to only one of them.
-	//
-	// Which one is sometimes answerable. RunInstances authorizes against a
-	// subnet and a secondary subnet, and a SubnetId is the subnet's published
-	// variable outright where it reaches the secondary only through the
-	// prefix-drop rule — the exact spelling is the stronger claim and takes it.
-	// Where the claims are equally strong the request genuinely does not say:
-	// AssociateRouteTable authorizes against an internet gateway and a virtual
-	// private gateway and takes a single GatewayId, and CancelImportTask against
-	// an image-import and a snapshot-import task, both under ImportTaskId.
-	// Building both would invent an ARN for a resource that does not exist and
-	// then require it to be allowed, denying a policy that named the real one,
-	// so neither is derived — and the request's other parameters still are.
-	type resolved struct {
-		format, parameter string
-		rank              int
-	}
-	best := map[string]int{}
-	found := make([]resolved, 0, len(types))
-	for _, resourceType := range types {
-		format, declared := iamResourceARNFormats["ec2:"+resourceType]
-		if !declared {
-			continue
-		}
-		variable := iamARNFormatVariable(format)
-		if variable == "" {
-			continue
-		}
-		parameter, rank, named := iamEC2Parameter(params, variable)
-		if !named {
-			continue
-		}
-		if seen, ok := best[parameter]; !ok || rank < seen {
-			best[parameter] = rank
-		}
-		found = append(found, resolved{format, parameter, rank})
-	}
-	contested := map[string]int{}
-	for _, f := range found {
-		if f.rank == best[f.parameter] {
-			contested[f.parameter]++
-		}
-	}
-
-	var out []string
-	seen := map[string]struct{}{}
-	for _, f := range found {
-		if f.rank != best[f.parameter] || contested[f.parameter] > 1 {
-			continue
-		}
-		for _, id := range params[f.parameter] {
-			// A few types are named by another service's ARN outright
-			// (CertificateArn, RoleArn), which needs no assembly.
-			resource := id
-			if !strings.HasPrefix(resource, "arn:") {
-				resource = iamFillARNFormat(f.format, region, account, id)
-			}
-			if _, dup := seen[resource]; dup {
-				continue
-			}
-			seen[resource] = struct{}{}
-			out = append(out, resource)
-		}
-	}
-	return out
+	return iamTableDrivenARNs("ec2", types, region, account, iamEC2ParameterAliases,
+		func(field string) []string { return params[strings.ToLower(field)] })
 }
 
 // iamEC2ParameterAliases maps an ARN format's identifier variable to the
@@ -330,43 +266,6 @@ var iamEC2ParameterAliases = map[string][]string{
 	"VolumeId":                        {"SourceVolumeId"},
 	"VpcBlockPublicAccessExclusionId": {"ExclusionId"},
 	"VpcEndpointServiceId":            {"ServiceId"},
-}
-
-// iamEC2Parameter returns the request parameter that names an ARN format's
-// variable, trying each spelling it goes by and taking the first the request
-// supplies. The rank is that spelling's position in the list, which runs most
-// specific first, so a lower rank is the stronger claim on a parameter two
-// resource types both resolve to.
-func iamEC2Parameter(params map[string][]string, variable string) (string, int, bool) {
-	for rank, name := range iamEC2ParameterNames(variable) {
-		key := strings.ToLower(name)
-		if len(params[key]) > 0 {
-			return key, rank, true
-		}
-	}
-	return "", 0, false
-}
-
-// iamEC2ParameterNames returns the request-parameter spellings an ARN format
-// variable can arrive under, most specific first.
-func iamEC2ParameterNames(variable string) []string {
-	names := []string{variable}
-	if unprefixed := iamEC2UnprefixedParameter(variable); unprefixed != "" {
-		names = append(names, unprefixed)
-	}
-	return append(names, iamEC2ParameterAliases[variable]...)
-}
-
-// iamEC2PrefixedVariable matches a variable whose leading word names the
-// resource itself, capturing the rest — the form EC2 abbreviates to
-// (SecurityGroupId → GroupId, PlacementGroupName → GroupName).
-var iamEC2PrefixedVariable = regexp.MustCompile(`^[A-Z][a-z]+([A-Z].*(?:Id|Name))$`)
-
-func iamEC2UnprefixedParameter(variable string) string {
-	if m := iamEC2PrefixedVariable.FindStringSubmatch(variable); m != nil {
-		return m[1]
-	}
-	return ""
 }
 
 // iamEC2RequestParameters indexes a query-protocol request's flat parameters by
@@ -414,27 +313,288 @@ func iamEC2RequestParameters(r *http.Request) map[string][]string {
 	return params
 }
 
-// iamARNTrailingVariable matches the variable a published ARN format ends in,
-// which names the resource's own identifier.
-var iamARNTrailingVariable = regexp.MustCompile(`\$\{([A-Za-z0-9]+)\}$`)
+// ===== Deriving an ARN from the format the reference publishes =====
 
-func iamARNFormatVariable(format string) string {
-	if m := iamARNTrailingVariable.FindStringSubmatch(format); m != nil {
+// iamTableDrivenARNs derives the ARNs a request names for a service whose
+// resource types are in the generated table, by filling each type's published
+// ARN format from the identifiers the request supplies. Everything that differs
+// between services lives in the two arguments: aliases carries the renamings
+// that service made and the reference did not follow, and lookup reads a field,
+// which is the only thing the protocols disagree about — Amazon EC2 and Amazon
+// RDS name their identifiers as query parameters, AWS Glue as JSON members.
+//
+// A format naming no identifier is a constant ARN — AWS Glue's root catalog is
+// "arn:aws:glue:<region>:<account>:catalog" and every request that authorizes
+// against it names it by existing — and is emitted as it stands.
+//
+// Two resource types can resolve to the same field, and then the identifier
+// belongs to one of them without the request saying which. Sometimes that is
+// answerable: RunInstances authorizes against a subnet and a secondary subnet,
+// and a SubnetId is the subnet's published variable outright where it reaches
+// the secondary only through the prefix-drop rule, so the exact spelling takes
+// it. Where the claims are equally strong neither is derived — building both
+// would invent an ARN for a resource that does not exist and then require it to
+// be allowed, denying a policy that named the real one — and the request's
+// other fields still are.
+func iamTableDrivenARNs(service string, types []string, region, account string,
+	aliases map[string][]string, lookup func(field string) []string) []string {
+
+	type resolved struct {
+		format string
+		// parents are the values filling every variable but the last: a Glue
+		// table's ARN carries its database, which the request names once.
+		parents []string
+		// field and rank identify the last variable's source, which is the
+		// resource's own identifier and the only one that may name several.
+		field string
+		rank  int
+	}
+	best := map[string]int{}
+	var found []resolved
+	var constants []string
+
+	for _, resourceType := range types {
+		format, declared := iamResourceARNFormats[service+":"+resourceType]
+		if !declared {
+			continue
+		}
+		variables := iamARNFormatVariables(format)
+		if len(variables) == 0 {
+			constants = append(constants, iamFillARNFormat(format, region, account, nil))
+			continue
+		}
+		// Every variable has to be named. A partially filled ARN would carry a
+		// literal "${DatabaseName}" and match nothing.
+		parents := make([]string, 0, len(variables)-1)
+		complete := true
+		for _, variable := range variables[:len(variables)-1] {
+			values := iamFirstNamed(lookup, aliases, variable)
+			if len(values) == 0 {
+				complete = false
+				break
+			}
+			parents = append(parents, values[0])
+		}
+		if !complete {
+			continue
+		}
+		field, rank, named := iamNamingField(lookup, aliases, variables[len(variables)-1])
+		if !named {
+			continue
+		}
+		if seen, ok := best[field]; !ok || rank < seen {
+			best[field] = rank
+		}
+		found = append(found, resolved{format, parents, field, rank})
+	}
+
+	contested := map[string]int{}
+	for _, f := range found {
+		if f.rank == best[f.field] {
+			contested[f.field]++
+		}
+	}
+
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(resource string) {
+		if _, dup := seen[resource]; dup {
+			return
+		}
+		seen[resource] = struct{}{}
+		out = append(out, resource)
+	}
+	for _, f := range found {
+		if f.rank != best[f.field] || contested[f.field] > 1 {
+			continue
+		}
+		for _, id := range lookup(f.field) {
+			// Some types are named by another service's ARN outright (Amazon
+			// EC2's CertificateArn and RoleArn), which needs no assembly.
+			if strings.HasPrefix(id, "arn:") {
+				add(id)
+				continue
+			}
+			add(iamFillARNFormat(f.format, region, account, append(append([]string{}, f.parents...), id)))
+		}
+	}
+	for _, c := range constants {
+		add(c)
+	}
+	return out
+}
+
+// iamFirstNamed returns the values a request carries for one ARN format
+// variable, under whichever spelling it supplies.
+func iamFirstNamed(lookup func(string) []string, aliases map[string][]string, variable string) []string {
+	if field, _, ok := iamNamingField(lookup, aliases, variable); ok {
+		return lookup(field)
+	}
+	return nil
+}
+
+// iamNamingField returns the field a request names an ARN format variable
+// under. The rank is that spelling's position in the candidate list, which runs
+// most specific first, so a lower rank is the stronger claim on a field two
+// resource types both resolve to.
+func iamNamingField(lookup func(string) []string, aliases map[string][]string, variable string) (string, int, bool) {
+	for rank, name := range iamVariableFieldNames(variable, aliases) {
+		if len(lookup(name)) > 0 {
+			return name, rank, true
+		}
+	}
+	return "", 0, false
+}
+
+// iamVariableFieldNames returns the field spellings an ARN format variable can
+// arrive under, most specific first: the variable itself, then that service's
+// declared renamings, then the form with the resource's own leading word
+// dropped, and finally the plural of each — a batch operation names the same
+// resource in a list (AWS Glue's BatchGetJobs sends JobNames).
+//
+// A declared renaming outranks the prefix drop because it is evidence and the
+// drop is a guess: every alias is held to the vendored model by a test, where
+// the drop is a rule about spelling that can land on a field meaning something
+// else. AWS Glue is where the order shows. A catalog's ${CatalogName} drops to
+// Name, which on GetTable is the *table's* name, so ranking the drop first made
+// the catalog and the table claim one field and the ambiguity rule then
+// discarded both. The catalog's declared CatalogId settles it.
+func iamVariableFieldNames(variable string, aliases map[string][]string) []string {
+	names := []string{variable}
+	names = append(names, aliases[variable]...)
+	if unprefixed := iamUnprefixedVariable(variable); unprefixed != "" {
+		names = append(names, unprefixed)
+	}
+	for _, n := range append([]string{}, names...) {
+		names = append(names, n+"s")
+	}
+	return names
+}
+
+// iamPrefixedVariable matches a variable whose leading word names the resource
+// itself, capturing the rest — the form the APIs abbreviate to
+// (SecurityGroupId → GroupId, PlacementGroupName → GroupName, and AWS Glue's
+// BlueprintName → Name).
+var iamPrefixedVariable = regexp.MustCompile(`^[A-Z][a-z]+((?:[A-Z][a-z]*)*(?:Id|Name))$`)
+
+func iamUnprefixedVariable(variable string) string {
+	if m := iamPrefixedVariable.FindStringSubmatch(variable); m != nil && m[1] != "" {
 		return m[1]
 	}
 	return ""
 }
 
-// iamFillARNFormat completes a published ARN format for one identifier. The
-// simulator supplies the partition, region and account; a format that carries
-// no account or no region has none to supply, and is left as AWS publishes it.
-func iamFillARNFormat(format, region, account, id string) string {
+// iamARNVariable matches one ${...} placeholder in a published ARN format.
+var iamARNVariable = regexp.MustCompile(`\$\{([A-Za-z0-9]+)\}`)
+
+// iamARNFormatVariables returns the identifiers a published ARN format needs,
+// in the order they appear. The partition, region and account are the
+// simulator's own and are not among them.
+func iamARNFormatVariables(format string) []string {
+	var out []string
+	for _, m := range iamARNVariable.FindAllStringSubmatch(format, -1) {
+		switch m[1] {
+		case "Partition", "Region", "Account":
+			continue
+		}
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// iamFillARNFormat completes a published ARN format. The simulator supplies the
+// partition, region and account; the values fill the identifier variables in
+// order. A format that carries no account or no region has none to supply and
+// is left as AWS publishes it.
+func iamFillARNFormat(format, region, account string, values []string) string {
 	filled := strings.NewReplacer(
 		"${Partition}", "aws",
 		"${Region}", region,
 		"${Account}", account,
 	).Replace(format)
-	return iamARNTrailingVariable.ReplaceAllLiteralString(filled, id)
+	i := 0
+	return iamARNVariable.ReplaceAllStringFunc(filled, func(string) string {
+		if i >= len(values) {
+			return ""
+		}
+		v := values[i]
+		i++
+		return v
+	})
+}
+
+// ===== AWS Glue =====
+
+// iamGlueResourceARNs derives the ARNs an AWS Glue request names. Glue speaks
+// awsJson, so the identifiers are members of the request body rather than query
+// parameters, and it is the service that makes the two general shapes of the
+// derivation earn their keep.
+//
+// Its ARN formats nest: a table is "table/${DatabaseName}/${TableName}" and a
+// table version adds a third part, so an ARN is only built when the request
+// names every part — a half-filled ARN would carry a literal ${DatabaseName}
+// and match no policy. Its root catalog is the other extreme, a format naming
+// no identifier at all, so every request that authorizes against the catalog
+// names it by existing.
+//
+// Glue also abbreviates almost every identifier the same way: the reference
+// calls a blueprint's identifier ${BlueprintName} and the request member is
+// Name, which the prefix drop resolves, and a batch operation sends the plural
+// of whichever spelling it uses.
+func iamGlueResourceARNs(r *http.Request, types []string, region, account string) []string {
+	fields := iamGlueRequestFields(r)
+	return iamTableDrivenARNs("glue", types, region, account, iamGlueFieldAliases,
+		func(field string) []string { return fields[strings.ToLower(field)] })
+}
+
+// iamGlueFieldAliases maps an ARN format's identifier variable to the request
+// members AWS Glue spells it as, where the two differ by more than the
+// mechanical prefix drop.
+//
+// TestIAMGlueFieldAliasesAreRealRequestMembers holds every entry to a member
+// the vendored AWS Glue model declares on an operation authorizing against that
+// resource type.
+var iamGlueFieldAliases = map[string][]string{
+	"CatalogName":             {"CatalogId"},
+	"UserDefinedFunctionName": {"FunctionName"},
+}
+
+// iamGlueRequestFields indexes an awsJson request body's top-level members by
+// lower-cased name, reading a member that carries one identifier and one that
+// carries a list the same way, since a batch operation authorizes every entry.
+// Members holding anything else name no resource and are left out.
+func iamGlueRequestFields(r *http.Request) map[string][]string {
+	body := iamRequestBody(r)
+	if len(body) == 0 {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(body, &raw) != nil {
+		return nil
+	}
+	fields := make(map[string][]string, len(raw))
+	for name, value := range raw {
+		var one string
+		if json.Unmarshal(value, &one) == nil {
+			if one != "" {
+				fields[strings.ToLower(name)] = []string{one}
+			}
+			continue
+		}
+		var many []string
+		if json.Unmarshal(value, &many) == nil {
+			var kept []string
+			for _, v := range many {
+				if v != "" {
+					kept = append(kept, v)
+				}
+			}
+			if len(kept) > 0 {
+				fields[strings.ToLower(name)] = kept
+			}
+		}
+	}
+	return fields
 }
 
 // ===== Amazon Elastic Container Service =====
