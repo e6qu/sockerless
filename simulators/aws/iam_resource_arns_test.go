@@ -577,3 +577,104 @@ func TestIAMEnforce_GlueJobScopedGrant(t *testing.T) {
 		})
 	}
 }
+
+// ===== Amazon Relational Database Service =====
+
+func iamRDSRequest(action string, params map[string]string) *http.Request {
+	form := "Action=" + action + "&Version=2014-10-31"
+	for k, v := range params {
+		form += "&" + k + "=" + v
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/rds/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// Amazon RDS is where the reference and the API disagree about spelling on
+// almost every resource, so each of these is an alias doing the work: the
+// reference publishes ${DbInstanceName}, ${ClusterParameterGroupName} and
+// ${SnapshotName} where the API sends DBInstanceIdentifier,
+// DBClusterParameterGroupName and DBSnapshotIdentifier.
+func TestIAMResourceARNs_RDSResolvesTheAPIsOwnSpelling(t *testing.T) {
+	const p = "arn:aws:rds:us-east-1:123456789012:"
+	for _, tc := range []struct {
+		name, action string
+		params       map[string]string
+		want         string
+	}{
+		{"a database instance", "DeleteDBInstance",
+			map[string]string{"DBInstanceIdentifier": "orders-1"}, p + "db:orders-1"},
+		{"a cluster", "DeleteDBCluster",
+			map[string]string{"DBClusterIdentifier": "orders"}, p + "cluster:orders"},
+		{"a snapshot", "DeleteDBSnapshot",
+			map[string]string{"DBSnapshotIdentifier": "orders-nightly"}, p + "snapshot:orders-nightly"},
+		{"a cluster parameter group", "DeleteDBClusterParameterGroup",
+			map[string]string{"DBClusterParameterGroupName": "pg16"}, p + "cluster-pg:pg16"},
+		{"a subnet group", "DeleteDBSubnetGroup",
+			map[string]string{"DBSubnetGroupName": "private"}, p + "subgrp:private"},
+		{"a proxy", "DeleteDBProxy",
+			map[string]string{"DBProxyName": "orders-proxy"}, p + "db-proxy:orders-proxy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertDerivedARNs(t, iamRDSRequest(tc.action, tc.params), "rds:"+tc.action, tc.want)
+		})
+	}
+}
+
+// A global cluster's ARN carries no region, exactly as the reference publishes
+// it, which is the sort of thing filling the published format gets right and
+// assembling a path by hand does not.
+func TestIAMResourceARNs_RDSGlobalClusterCarriesNoRegion(t *testing.T) {
+	assertDerivedARNs(t,
+		iamRDSRequest("DeleteGlobalCluster", map[string]string{"GlobalClusterIdentifier": "worldwide"}),
+		"rds:DeleteGlobalCluster", "arn:aws:rds::123456789012:global-cluster:worldwide")
+}
+
+// The tagging, activity-stream and maintenance operations name their resource
+// by ARN rather than by identifier, under three different parameters. The ARN
+// needs no assembly, and reading it is what lets a tag call be authorized
+// against the database it tags rather than against "*".
+func TestIAMResourceARNs_RDSTakesTheARNTheRequestNames(t *testing.T) {
+	const db = "arn:aws:rds:us-east-1:123456789012:db:orders-1"
+	for _, tc := range []struct{ name, action, param string }{
+		{"tagging sends ResourceName", "AddTagsToResource", "ResourceName"},
+		{"listing tags sends ResourceName", "ListTagsForResource", "ResourceName"},
+		{"an activity stream sends ResourceArn", "StartActivityStream", "ResourceArn"},
+		{"a maintenance action sends ResourceIdentifier", "ApplyPendingMaintenanceAction", "ResourceIdentifier"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertDerivedARNs(t, iamRDSRequest(tc.action, map[string]string{tc.param: db}),
+				"rds:"+tc.action, db)
+		})
+	}
+}
+
+// The whole point, end to end: a policy scoped to one database instance allows
+// that instance and denies another.
+func TestIAMEnforce_RDSInstanceScopedGrant(t *testing.T) {
+	doc := mustDoc(t, `{"Version":"2012-10-17","Statement":[{
+		"Effect":"Allow",
+		"Action":["rds:DeleteDBInstance","rds:ModifyDBInstance"],
+		"Resource":"arn:aws:rds:us-east-1:123456789012:db:orders-1"}]}`)
+	for _, tc := range []struct{ name, instance, want string }{
+		{"the granted instance", "orders-1", "allowed"},
+		{"any other instance", "billing-1", "implicitDeny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := iamRDSRequest("DeleteDBInstance", map[string]string{"DBInstanceIdentifier": tc.instance})
+			action, ok := iamActionForRequest(r)
+			if !ok {
+				t.Fatal("request was not classified as an IAM action")
+			}
+			resources := iamResourceARNsForRequest(r, action)
+			if len(resources) != 1 {
+				t.Fatalf("derived %v, want exactly one instance ARN", resources)
+			}
+			got, _ := iamEvalDecision([]iamPolicyDoc{doc}, action, resources[0], nil)
+			if got != tc.want {
+				t.Fatalf("%s on %s (resource %s) = %s, want %s", action, tc.instance, resources[0], got, tc.want)
+			}
+		})
+	}
+}
