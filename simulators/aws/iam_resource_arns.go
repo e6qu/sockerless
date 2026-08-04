@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -30,10 +32,13 @@ import (
 //
 // arn builds "arn:aws:<svc>:<region>:<account>:<resource>" for the request's
 // region and the simulator's account.
-func iamDerivedResourceARNs(r *http.Request, service, op string, arn func(svc, resource string) string) []string {
+func iamDerivedResourceARNs(r *http.Request, service, op, region, account string) []string {
 	types := iamActionResourceTypes[service+":"+op]
 	if len(types) == 0 {
 		return nil
+	}
+	arn := func(svc, resource string) string {
+		return "arn:aws:" + svc + ":" + region + ":" + account + ":" + resource
 	}
 	// Every service here spells its tagging operations the same way: the
 	// resource is named by its own ARN, which needs no assembly. This is also
@@ -43,6 +48,8 @@ func iamDerivedResourceARNs(r *http.Request, service, op string, arn func(svc, r
 		return []string{a}
 	}
 	switch service {
+	case "ec2":
+		return iamEC2ResourceARNs(r, types, region, account)
 	case "ecs":
 		return iamECSResourceARNs(r, op, types, arn)
 	case "logs":
@@ -196,6 +203,238 @@ func iamHasType(types []string, resourceType string) bool {
 		}
 	}
 	return false
+}
+
+// ===== Amazon Elastic Compute Cloud =====
+
+// iamEC2ResourceARNs derives the ARNs an Amazon EC2 request names. EC2 declares
+// 112 resource types across 515 actions — too many to transcribe, and a
+// transcription would rot — so the derivation is driven by the reference
+// itself. Each type's published ARN format ends in the variable naming its
+// identifier ("...:volume/${VolumeId}"), and EC2's query protocol carries that
+// identifier in a request parameter of the same name.
+//
+// Filling the published format, rather than assembling a resource path, is what
+// keeps the irregular shapes right: an Amazon Machine Image and a snapshot
+// carry no account, the Amazon VPC IP Address Manager types carry no region,
+// and five of EC2's types name a resource belonging to another service outright
+// — a certificate is an AWS Certificate Manager ARN and a role an AWS Identity
+// and Access Management one.
+//
+// Where a parameter is spelled differently from the variable the difference is
+// one of two kinds. EC2 drops the resource's own leading word from some of them
+// — a security group's ${SecurityGroupId} arrives as GroupId, a dedicated
+// host's ${DedicatedHostId} as HostId — which is mechanical. The rest are
+// genuine renamings, listed in iamEC2ParameterAliases.
+func iamEC2ResourceARNs(r *http.Request, types []string, region, account string) []string {
+	params := iamEC2RequestParameters(r)
+
+	// Resolve each declared type to the parameter naming it before building
+	// anything, because two types can resolve to the same one and the
+	// identifier belongs to only one of them.
+	//
+	// Which one is sometimes answerable. RunInstances authorizes against a
+	// subnet and a secondary subnet, and a SubnetId is the subnet's published
+	// variable outright where it reaches the secondary only through the
+	// prefix-drop rule — the exact spelling is the stronger claim and takes it.
+	// Where the claims are equally strong the request genuinely does not say:
+	// AssociateRouteTable authorizes against an internet gateway and a virtual
+	// private gateway and takes a single GatewayId, and CancelImportTask against
+	// an image-import and a snapshot-import task, both under ImportTaskId.
+	// Building both would invent an ARN for a resource that does not exist and
+	// then require it to be allowed, denying a policy that named the real one,
+	// so neither is derived — and the request's other parameters still are.
+	type resolved struct {
+		format, parameter string
+		rank              int
+	}
+	best := map[string]int{}
+	found := make([]resolved, 0, len(types))
+	for _, resourceType := range types {
+		format, declared := iamResourceARNFormats["ec2:"+resourceType]
+		if !declared {
+			continue
+		}
+		variable := iamARNFormatVariable(format)
+		if variable == "" {
+			continue
+		}
+		parameter, rank, named := iamEC2Parameter(params, variable)
+		if !named {
+			continue
+		}
+		if seen, ok := best[parameter]; !ok || rank < seen {
+			best[parameter] = rank
+		}
+		found = append(found, resolved{format, parameter, rank})
+	}
+	contested := map[string]int{}
+	for _, f := range found {
+		if f.rank == best[f.parameter] {
+			contested[f.parameter]++
+		}
+	}
+
+	var out []string
+	seen := map[string]struct{}{}
+	for _, f := range found {
+		if f.rank != best[f.parameter] || contested[f.parameter] > 1 {
+			continue
+		}
+		for _, id := range params[f.parameter] {
+			// A few types are named by another service's ARN outright
+			// (CertificateArn, RoleArn), which needs no assembly.
+			resource := id
+			if !strings.HasPrefix(resource, "arn:") {
+				resource = iamFillARNFormat(f.format, region, account, id)
+			}
+			if _, dup := seen[resource]; dup {
+				continue
+			}
+			seen[resource] = struct{}{}
+			out = append(out, resource)
+		}
+	}
+	return out
+}
+
+// iamEC2ParameterAliases maps an ARN format's identifier variable to the
+// request parameters EC2 actually spells it as, where the two differ by more
+// than the mechanical prefix drop. Every entry is a rename the API made and
+// the reference did not follow: an endpoint service is addressed as ServiceId,
+// a network ACL's ${NaclId} arrives as NetworkAclId, a key pair is named by
+// KeyName, and the copy operations name their *source* resource.
+//
+// TestIAMEC2ParameterAliasesAreRealRequestParameters holds every entry to a
+// parameter the vendored Amazon EC2 model declares on an operation that
+// authorizes against that resource type, so a guess or a stale rename fails
+// rather than silently deriving nothing.
+var iamEC2ParameterAliases = map[string][]string{
+	"CapacityReservationId":           {"SourceCapacityReservationId"},
+	"CertificateId":                   {"CertificateArn"},
+	"DeclarativePoliciesReportId":     {"ReportId"},
+	"FpgaImageId":                     {"SourceFpgaImageId"},
+	"ImageUsageReportId":              {"ReportId"},
+	"ImportImageTaskId":               {"ImportTaskId"},
+	"ImportSnapshotTaskId":            {"ImportTaskId"},
+	"IpamScopeId":                     {"DestinationIpamScopeId"},
+	"Ipv4PoolCoipId":                  {"CoipPoolId", "PoolId"},
+	"Ipv4PoolEc2Id":                   {"PoolId"},
+	"Ipv6PoolEc2Id":                   {"PoolId"},
+	"KeyPairName":                     {"KeyName"},
+	"NaclId":                          {"NetworkAclId"},
+	"PrefixListId":                    {"DestinationPrefixListId"},
+	"ReservationId":                   {"ReservedInstancesId", "ReservedInstanceId"},
+	"RoleNameWithPath":                {"RoleArn"},
+	"SnapshotId":                      {"SourceSnapshotId"},
+	"VolumeId":                        {"SourceVolumeId"},
+	"VpcBlockPublicAccessExclusionId": {"ExclusionId"},
+	"VpcEndpointServiceId":            {"ServiceId"},
+}
+
+// iamEC2Parameter returns the request parameter that names an ARN format's
+// variable, trying each spelling it goes by and taking the first the request
+// supplies. The rank is that spelling's position in the list, which runs most
+// specific first, so a lower rank is the stronger claim on a parameter two
+// resource types both resolve to.
+func iamEC2Parameter(params map[string][]string, variable string) (string, int, bool) {
+	for rank, name := range iamEC2ParameterNames(variable) {
+		key := strings.ToLower(name)
+		if len(params[key]) > 0 {
+			return key, rank, true
+		}
+	}
+	return "", 0, false
+}
+
+// iamEC2ParameterNames returns the request-parameter spellings an ARN format
+// variable can arrive under, most specific first.
+func iamEC2ParameterNames(variable string) []string {
+	names := []string{variable}
+	if unprefixed := iamEC2UnprefixedParameter(variable); unprefixed != "" {
+		names = append(names, unprefixed)
+	}
+	return append(names, iamEC2ParameterAliases[variable]...)
+}
+
+// iamEC2PrefixedVariable matches a variable whose leading word names the
+// resource itself, capturing the rest — the form EC2 abbreviates to
+// (SecurityGroupId → GroupId, PlacementGroupName → GroupName).
+var iamEC2PrefixedVariable = regexp.MustCompile(`^[A-Z][a-z]+([A-Z].*(?:Id|Name))$`)
+
+func iamEC2UnprefixedParameter(variable string) string {
+	if m := iamEC2PrefixedVariable.FindStringSubmatch(variable); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// iamEC2RequestParameters indexes a query-protocol request's flat parameters by
+// lower-cased name. EC2 serializes a list by repeating the member's singular
+// name with a 1-based index (InstanceId.1, InstanceId.2), so the indices are
+// collapsed back into one ordered slice and every element authorizes
+// separately — terminating three instances must be allowed for all three, not
+// only the first. Members of a nested structure (Filter.1.Name,
+// TagSpecification.1.Tag.1.Key) name no resource and are left out.
+func iamEC2RequestParameters(r *http.Request) map[string][]string {
+	_ = r.ParseForm()
+	byIndex := map[string]map[int]string{}
+	for key, values := range r.Form {
+		if len(values) == 0 || values[0] == "" {
+			continue
+		}
+		name, index := key, 0
+		if dot := strings.LastIndexByte(key, '.'); dot >= 0 {
+			n, err := strconv.Atoi(key[dot+1:])
+			if err != nil {
+				continue
+			}
+			name, index = key[:dot], n
+		}
+		if strings.ContainsRune(name, '.') {
+			continue
+		}
+		name = strings.ToLower(name)
+		if byIndex[name] == nil {
+			byIndex[name] = map[int]string{}
+		}
+		byIndex[name][index] = values[0]
+	}
+	params := make(map[string][]string, len(byIndex))
+	for name, indexed := range byIndex {
+		indices := make([]int, 0, len(indexed))
+		for i := range indexed {
+			indices = append(indices, i)
+		}
+		sort.Ints(indices)
+		for _, i := range indices {
+			params[name] = append(params[name], indexed[i])
+		}
+	}
+	return params
+}
+
+// iamARNTrailingVariable matches the variable a published ARN format ends in,
+// which names the resource's own identifier.
+var iamARNTrailingVariable = regexp.MustCompile(`\$\{([A-Za-z0-9]+)\}$`)
+
+func iamARNFormatVariable(format string) string {
+	if m := iamARNTrailingVariable.FindStringSubmatch(format); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// iamFillARNFormat completes a published ARN format for one identifier. The
+// simulator supplies the partition, region and account; a format that carries
+// no account or no region has none to supply, and is left as AWS publishes it.
+func iamFillARNFormat(format, region, account, id string) string {
+	filled := strings.NewReplacer(
+		"${Partition}", "aws",
+		"${Region}", region,
+		"${Account}", account,
+	).Replace(format)
+	return iamARNTrailingVariable.ReplaceAllLiteralString(filled, id)
 }
 
 // ===== Amazon Elastic Container Service =====

@@ -263,3 +263,209 @@ func TestIAMPassRoleOperationsCarryTheServicePrincipal(t *testing.T) {
 		t.Error("a read operation passes no role and must not require iam:PassRole")
 	}
 }
+
+// ===== Amazon Elastic Compute Cloud =====
+
+func iamEC2Request(action string, params map[string]string) *http.Request {
+	form := "Action=" + action + "&Version=2016-11-15"
+	for k, v := range params {
+		form += "&" + k + "=" + v
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/ec2/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// Amazon EC2's derivation is driven by the ARN format the Service Reference
+// publishes for each of its 112 resource types, so the assertions here are
+// about the published shapes rather than one hand-written path per type. The
+// three that differ from the ordinary regional form are the ones a hand-written
+// assembler gets wrong: an image and a snapshot carry no account, the IP
+// Address Manager types carry no region, and a certificate or a role is another
+// service's ARN entirely.
+func TestIAMResourceARNs_EC2FollowsThePublishedARNFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name, action string
+		params       map[string]string
+		want         []string
+	}{
+		{
+			name:   "the ordinary regional form",
+			action: "DeleteVolume", params: map[string]string{"VolumeId": "vol-0abc"},
+			want: []string{"arn:aws:ec2:us-east-1:123456789012:volume/vol-0abc"},
+		},
+		{
+			name:   "an image carries no account",
+			action: "DeregisterImage", params: map[string]string{"ImageId": "ami-0abc"},
+			want: []string{"arn:aws:ec2:us-east-1::image/ami-0abc"},
+		},
+		{
+			name:   "a snapshot carries no account",
+			action: "DeleteSnapshot", params: map[string]string{"SnapshotId": "snap-0abc"},
+			want: []string{"arn:aws:ec2:us-east-1::snapshot/snap-0abc"},
+		},
+		{
+			name:   "an IP Address Manager pool carries no region",
+			action: "DeleteIpamPool", params: map[string]string{"IpamPoolId": "ipam-pool-0abc"},
+			want: []string{"arn:aws:ec2::123456789012:ipam-pool/ipam-pool-0abc"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertDerivedARNs(t, iamEC2Request(tc.action, tc.params), "ec2:"+tc.action, tc.want...)
+		})
+	}
+}
+
+// Amazon EC2 serializes a list by repeating the member's singular name with a
+// 1-based index, and AWS authorizes every element. Terminating three instances
+// under a policy naming only the first must not be allowed by deriving only
+// the first.
+func TestIAMResourceARNs_EC2AuthorizesEveryElementOfAList(t *testing.T) {
+	const p = "arn:aws:ec2:us-east-1:123456789012:instance/"
+	assertDerivedARNs(t,
+		iamEC2Request("TerminateInstances", map[string]string{
+			"InstanceId.1": "i-aaa", "InstanceId.2": "i-bbb", "InstanceId.3": "i-ccc",
+		}),
+		"ec2:TerminateInstances", p+"i-aaa", p+"i-bbb", p+"i-ccc")
+}
+
+// Where the request parameter is spelled differently from the ARN format's
+// variable, both kinds of difference resolve: the mechanical prefix drop
+// (${SecurityGroupId} arriving as GroupId) and the genuine renamings the
+// reference did not follow.
+func TestIAMResourceARNs_EC2ResolvesTheParameterRenamings(t *testing.T) {
+	for _, tc := range []struct {
+		name, action string
+		params       map[string]string
+		want         string
+	}{
+		{
+			"a security group's id arrives as GroupId", "DeleteSecurityGroup",
+			map[string]string{"GroupId": "sg-0abc"},
+			"arn:aws:ec2:us-east-1:123456789012:security-group/sg-0abc",
+		},
+		{
+			"a dedicated host's id arrives as HostId", "ReleaseHosts",
+			map[string]string{"HostId.1": "h-0abc"},
+			"arn:aws:ec2:us-east-1:123456789012:dedicated-host/h-0abc",
+		},
+		{
+			"an endpoint service is addressed as ServiceId", "DescribeVpcEndpointServicePermissions",
+			map[string]string{"ServiceId": "vpce-svc-0abc"},
+			"arn:aws:ec2:us-east-1:123456789012:vpc-endpoint-service/vpce-svc-0abc",
+		},
+		{
+			"a network ACL's ${NaclId} arrives as NetworkAclId", "DeleteNetworkAcl",
+			map[string]string{"NetworkAclId": "acl-0abc"},
+			"arn:aws:ec2:us-east-1:123456789012:network-acl/acl-0abc",
+		},
+		{
+			"a key pair is named by KeyName", "DeleteKeyPair",
+			map[string]string{"KeyName": "deploy"},
+			"arn:aws:ec2:us-east-1:123456789012:key-pair/deploy",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertDerivedARNs(t, iamEC2Request(tc.action, tc.params), "ec2:"+tc.action, tc.want)
+		})
+	}
+}
+
+// A resource named by another service's ARN is that ARN, not an Amazon EC2 one
+// wrapped around it.
+func TestIAMResourceARNs_EC2PassesThroughAnotherServicesARN(t *testing.T) {
+	const cert = "arn:aws:acm:us-east-1:123456789012:certificate/9a1e-4f2b"
+	assertDerivedARNs(t,
+		iamEC2Request("GetAssociatedEnclaveCertificateIamRoles", map[string]string{"CertificateArn": cert}),
+		"ec2:GetAssociatedEnclaveCertificateIamRoles", cert)
+}
+
+// A filter names no resource. Reading the members of a nested structure would
+// authorize against whatever a filter happened to be matching on, which is the
+// caller's search, not the caller's target.
+func TestIAMResourceARNs_EC2IgnoresNestedStructureMembers(t *testing.T) {
+	assertDerivedARNs(t,
+		iamEC2Request("DescribeVolumes", map[string]string{
+			"Filter.1.Name": "status", "Filter.1.Value.1": "available",
+		}),
+		"ec2:DescribeVolumes", "*")
+}
+
+// An operation that creates its resource carries no identifier for it, so there
+// is nothing to derive and the request falls back to "*". This is the honest
+// answer rather than a guessed ARN — but it is also why a policy scoping
+// CreateVpc to a resource is not yet evaluated against one.
+func TestIAMResourceARNs_EC2CreateNamesNoResourceYet(t *testing.T) {
+	assertDerivedARNs(t,
+		iamEC2Request("CreateVpc", map[string]string{"CidrBlock": "10.0.0.0/16"}),
+		"ec2:CreateVpc", "*")
+}
+
+// The whole point of deriving the resource: a policy scoped to one volume
+// allows that volume and denies another, end to end — request, derived ARN,
+// policy decision. Before the derivation existed both were denied, because a
+// request authorized against a literal "*" matches only a policy whose Resource
+// is itself "*".
+func TestIAMEnforce_EC2VolumeScopedGrant(t *testing.T) {
+	doc := mustDoc(t, `{"Version":"2012-10-17","Statement":[{
+		"Effect":"Allow",
+		"Action":["ec2:DeleteVolume","ec2:AttachVolume"],
+		"Resource":"arn:aws:ec2:us-east-1:123456789012:volume/vol-granted"}]}`)
+	for _, tc := range []struct{ name, volume, want string }{
+		{"the granted volume", "vol-granted", "allowed"},
+		{"any other volume", "vol-other", "implicitDeny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := iamEC2Request("DeleteVolume", map[string]string{"VolumeId": tc.volume})
+			action, ok := iamActionForRequest(r)
+			if !ok {
+				t.Fatal("request was not classified as an IAM action")
+			}
+			resources := iamResourceARNsForRequest(r, action)
+			if len(resources) != 1 {
+				t.Fatalf("derived %v, want exactly one volume ARN", resources)
+			}
+			got, _ := iamEvalDecision([]iamPolicyDoc{doc}, action, resources[0], nil)
+			if got != tc.want {
+				t.Fatalf("%s on %s (resource %s) = %s, want %s", action, tc.volume, resources[0], got, tc.want)
+			}
+		})
+	}
+}
+
+// Two resource types can resolve to the same request parameter, and then the
+// identifier belongs to one of them without the request saying which.
+// AssociateRouteTable authorizes against an internet gateway and a virtual
+// private gateway and takes a single GatewayId; building both would invent an
+// ARN for a gateway that does not exist and then require it to be allowed,
+// denying a policy that named the real one. Neither is derived — and the
+// parameters that are unambiguous still are.
+func TestIAMResourceARNs_EC2SkipsAnIdentifierTwoTypesBothClaim(t *testing.T) {
+	assertDerivedARNs(t,
+		iamEC2Request("AssociateRouteTable", map[string]string{
+			"GatewayId": "igw-0abc", "RouteTableId": "rtb-0abc", "SubnetId": "subnet-0abc",
+		}),
+		"ec2:AssociateRouteTable",
+		"arn:aws:ec2:us-east-1:123456789012:route-table/rtb-0abc",
+		"arn:aws:ec2:us-east-1:123456789012:subnet/subnet-0abc")
+
+	// CancelImportTask has only the ambiguous one — an ImportTaskId that is
+	// either an image-import or a snapshot-import task — so it derives nothing.
+	assertDerivedARNs(t,
+		iamEC2Request("CancelImportTask", map[string]string{"ImportTaskId": "import-i-0abc"}),
+		"ec2:CancelImportTask", "*")
+}
+
+// An action authorizing against several resources requires every one of them,
+// which is how AWS evaluates it: attaching a volume to an instance is allowed
+// only by a policy covering both.
+func TestIAMResourceARNs_EC2DerivesEveryResourceAnActionNames(t *testing.T) {
+	assertDerivedARNs(t,
+		iamEC2Request("AttachVolume", map[string]string{
+			"InstanceId": "i-0abc", "VolumeId": "vol-0abc", "Device": "/dev/sdf",
+		}),
+		"ec2:AttachVolume",
+		"arn:aws:ec2:us-east-1:123456789012:instance/i-0abc",
+		"arn:aws:ec2:us-east-1:123456789012:volume/vol-0abc")
+}
