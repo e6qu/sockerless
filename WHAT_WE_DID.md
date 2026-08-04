@@ -4,6 +4,90 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-04 — Amazon EC2 authorizes against the resource the request names
+
+Amazon EC2 was the largest single hole in resource-scoped authorization: 515 of
+the simulator's served operations declare a resource type and every one of them
+was authorized against a literal `"*"`, which matches only a policy whose
+Resource is itself `"*"`. Any least-privilege policy written against an EC2
+resource was denied. Four parameters were read before this — VolumeId,
+SnapshotId, InstanceId, NetworkInterfaceId — against the 112 resource types EC2
+declares.
+
+Transcribing 112 types was never the answer; a transcription rots the first
+time AWS adds one. The Service Reference already publishes an ARN format per
+type, and that format carries both halves of the problem: the shape to build
+and the name of the identifier to look for. `arn:${Partition}:ec2:${Region}:${Account}:volume/${VolumeId}`
+says a volume ARN is regional and account-scoped, and says the request supplies
+it as VolumeId. So the generator emits the formats, and the derivation fills
+them.
+
+Filling the published format rather than assembling a path is what keeps the
+irregular shapes right, and they are irregular in ways a hand-written assembler
+gets wrong. An Amazon Machine Image and a snapshot carry no account. The Amazon
+VPC IP Address Manager types carry no region. Five of EC2's resource types are
+not EC2 ARNs at all — a certificate is an AWS Certificate Manager ARN, a role an
+AWS Identity and Access Management one — and those arrive as ARNs already and
+are passed through rather than wrapped.
+
+Where the request parameter is spelled differently from the format's variable,
+the difference is one of two kinds. EC2 drops the resource's own leading word
+from some of them: a security group's `${SecurityGroupId}` arrives as GroupId, a
+dedicated host's `${DedicatedHostId}` as HostId. That is mechanical and is
+derived. The rest are genuine renamings the reference did not follow — an
+endpoint service is addressed as ServiceId, a key pair by KeyName, a network
+ACL's `${NaclId}` as NetworkAclId — and those are the one hand-written part,
+twenty entries held to the vendored EC2 model by a test that fails on a guess, a
+typo, or a rename AWS has since made. A rule that looked plausible and gained
+two operations was dropped after checking what it matched: both were structures
+named like identifiers, not identifiers.
+
+A list authorizes every element. EC2 serializes a list by repeating the member's
+singular name with a 1-based index — TerminateInstances takes InstanceIds and
+sends InstanceId.1, InstanceId.2 — and the previous code read only the first.
+Terminating three instances under a policy naming one was allowed. Members of a
+nested structure are left out: a filter names what the caller is searching for,
+not what it is targeting.
+
+Coverage went from 358 to 818 of 1,973 served operations. The measurement moved
+too, and had to: the table is generated for all 112 types at once, so counting
+table membership would have marked all 515 EC2 operations covered when 460
+actually derive. The coverage test measures EC2 against the vendored model's own
+request parameters instead, which is why the number reported is 818 and not 873.
+The 55 that derive nothing are the ones the request genuinely does not name — an
+operation that creates its resource has no identifier for it yet, the
+Disassociate and Detach family names an association rather than either end of
+it, and CreateTags carries identifiers of mixed types with nothing published to
+map an id back to its type. Those are recorded rather than guessed at, because a
+guessed ARN denies a policy that should have been allowed and nobody would see
+why.
+
+One more joined them on review, from auditing every action that derives more
+than one ARN. Two resource types can resolve to the same request parameter, and
+then the identifier belongs to one of them without the request saying which:
+AssociateRouteTable authorizes against an internet gateway and a virtual private
+gateway and takes a single GatewayId. Building both would invent an ARN for a
+gateway that does not exist and then require it to be allowed — denying a policy
+that named the real one. Only three such collisions exist across the whole
+surface, and one of them is answerable: RunInstances authorizes against a subnet
+and a secondary subnet, and SubnetId is the subnet's published variable outright
+where it reaches the secondary only through the prefix-drop rule, so the exact
+spelling takes it. Where the claims are equally strong neither is derived, and
+the request's other parameters still are.
+
+Three things surfaced while verifying this branch and are fixed or filed with
+it. The vendored Cloud Functions v2 Discovery document was refreshed to revision
+20260730 — the local fetch kept returning 20260723 because Google's edges serve
+different revisions, so the newer document came from the artifact the freshness
+job captures for exactly that reason; nothing in it changed but the revision, no
+method, schema or field. BUG-2924 records a VPC network left behind by a dead
+simulator holding its CIDR under a name no later run looks for, which is what
+made an Amazon ECS awsvpc test fail once the runs that created the orphans were
+killed. BUG-2925 records the user-interface job stalling for twelve minutes with
+no output on a package that builds in 398 ms; its turbo invocation lost the
+daemon and the telemetry request, and each step gained its own timeout so a
+recurrence names the step it stalled in — hardening, not a proven cause.
+
 ## 2026-08-03 — The eight operations that happen inside the machine
 
 Microsoft.Compute virtual machines are complete at 29 of 29. The eight that

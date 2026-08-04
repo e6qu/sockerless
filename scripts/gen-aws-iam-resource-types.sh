@@ -23,7 +23,7 @@ SRC_DIR="$ROOT/specs/cloud-api/aws/service-reference"
 DEST="$ROOT/simulators/aws/iam_resource_types_gen.go"
 
 # The IAM service prefixes iamResourceARNsForRequest can build an ARN for.
-SERVICES=(codebuild ecs iam logs wafv2)
+SERVICES=(codebuild ec2 ecs iam logs wafv2)
 
 for service in "${SERVICES[@]}"; do
   if [ ! -f "$SRC_DIR/${service}.servicereference.json.gz" ]; then
@@ -60,6 +60,29 @@ EOF
       | "\t\"" + $svc + ":" + .Name + "\": {"
         + ([.Resources[].Name] | sort | map("\"" + . + "\"") | join(", "))
         + "},"
+    ' | sort
+  done
+
+  echo "}"
+
+  cat <<'EOF'
+
+// iamResourceARNFormats maps "<service>:<resourceType>" to the ARN format AWS
+// publishes for that type, verbatim from the Service Reference. The gate fills
+// ${Partition}, ${Region} and ${Account} and substitutes the trailing variable
+// with the identifier the request carries, which is why the whole format is
+// kept rather than just the resource path: the shapes differ in ways that
+// change the ARN. An Amazon Machine Image and a snapshot carry no account, the
+// IPAM types carry no region, and five of Amazon EC2's types name a resource
+// belonging to another service entirely (a certificate is an AWS Certificate
+// Manager ARN, a role an AWS IAM one).
+var iamResourceARNFormats = map[string]string{
+EOF
+
+  for service in "${SERVICES[@]}"; do
+    gzip -dc "$SRC_DIR/${service}.servicereference.json.gz" | jq -r --arg svc "$service" '
+      .Resources[]
+      | "\t\"" + $svc + ":" + .Name + "\": \"" + .ARNFormats[0] + "\","
     ' | sort
   done
 

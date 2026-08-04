@@ -360,13 +360,6 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 				return one(arn("sqs", u[i+1:]))
 			}
 		}
-	case "ec2":
-		// EC2 resource ids come as request parameters (query protocol).
-		for param, kind := range map[string]string{"VolumeId": "volume", "SnapshotId": "snapshot", "InstanceId": "instance", "NetworkInterfaceId": "network-interface"} {
-			if id := iamFirstFormValue(r, param); id != "" {
-				return one(arn("ec2", kind+"/"+id))
-			}
-		}
 	case "dynamodb":
 		if name := iamJSONBodyField(r, "TableName"); name != "" {
 			return one(arn("dynamodb", "table/"+name))
@@ -420,7 +413,7 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 	// Services whose target resource is derived from the resource types AWS
 	// declares for the action rather than from a hand-written case above; see
 	// iam_resource_arns.go.
-	if arns := iamDerivedResourceARNs(r, service, strings.TrimPrefix(action, service+":"), arn); len(arns) > 0 {
+	if arns := iamDerivedResourceARNs(r, service, strings.TrimPrefix(action, service+":"), region, acct); len(arns) > 0 {
 		return arns
 	}
 	return one("*")
@@ -506,15 +499,6 @@ func iamDynamoDBRequestTables(r *http.Request) []string {
 	}
 	sort.Strings(tables)
 	return tables
-}
-
-// iamFirstFormValue returns a request parameter, also trying the `.1`-indexed
-// form EC2 uses for list parameters (InstanceId.1).
-func iamFirstFormValue(r *http.Request, param string) string {
-	if v := r.FormValue(param); v != "" {
-		return v
-	}
-	return r.FormValue(param + ".1")
 }
 
 // iamLambdaResourceName extracts the Lambda function name/ARN from the REST path

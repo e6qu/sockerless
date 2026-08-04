@@ -5,14 +5,25 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 ## Next
 
 Resource-scoped IAM authorization is spec-driven now, and the remainder is
-measured rather than unknown: BUG-2909 records the 1,614 served operations that
-still authorize against a literal `"*"`, largest first — Amazon EC2 (515), AWS
-Glue (204), Amazon RDS (146), AWS Systems Manager (101), Amazon ElastiCache
-(70). Closing one is mechanical: add the service to
+measured rather than unknown: BUG-2909 records the 1,155 served operations that
+still authorize against a literal `"*"`, largest first — AWS Glue (204), Amazon
+RDS (146), AWS Systems Manager (101), Amazon ElastiCache (70), Amazon DynamoDB
+(46). Closing one is mechanical: add the service to
 `scripts/gen-aws-iam-resource-types.sh`, write the extractor that reads the
 identifier out of its requests, and raise `iamDerivationCoverageFloor`. The
 vendored AWS Service Reference already carries every resource type and ARN
 format needed, so no new fidelity question has to be settled first.
+
+Amazon EC2 is the worked example of the shape this takes when a service is too
+large to transcribe: its 112 resource types are derived from the ARN formats the
+reference publishes, with only the genuine parameter renamings written by hand
+and held to the vendored model by a test. AWS Glue and Amazon RDS are the next
+two by size and both speak awsJson, so the identifier is a body field rather
+than a query parameter — the ECS and CloudWatch Logs extractors are the closer
+precedent for them than EC2 is. Nine services still carry an older per-service
+case that fires only when the request happens to name the field it reads;
+replacing each with a table-driven extractor is what retires
+`iamHandwrittenDerivationServices` entirely.
 
 Two pieces remain staged in [PLAN.md](PLAN.md) § "Staged: the Compute and
 Console Tails", and both are breadth work needing no special host: Google

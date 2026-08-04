@@ -194,6 +194,167 @@ func iamServiceForServedOperation(t *testing.T, refs map[string]*awsServiceRefer
 	return "", "", false
 }
 
+// loadEC2RequestParameters returns, per Amazon EC2 operation, the request
+// parameters the vendored model says the operation takes, spelled as they
+// arrive on the wire and lower-cased for comparison.
+//
+// The ec2Query protocol does not send a member under its member name. The
+// aws.protocols#ec2QueryName trait wins where present; otherwise the
+// smithy.api#xmlName trait does, with its first letter upper-cased; otherwise
+// the member name stands. That is why a list arrives singular — TerminateInstances
+// takes InstanceIds and sends InstanceId.1 — and reading the member names
+// instead would look for parameters no request ever carries.
+func loadEC2RequestParameters(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	path := filepath.Join("..", "..", "specs", "cloud-api", "aws", "ec2.smithy.json.gz")
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v — run scripts/fetch-aws-spec.sh ec2", path, err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("gunzip %s: %v", path, err)
+	}
+	defer gz.Close()
+
+	var doc struct {
+		Shapes map[string]struct {
+			Type    string                  `json:"type"`
+			Input   struct{ Target string } `json:"input"`
+			Members map[string]struct {
+				Traits struct {
+					EC2QueryName string `json:"aws.protocols#ec2QueryName"`
+					XMLName      string `json:"smithy.api#xmlName"`
+				} `json:"traits"`
+			} `json:"members"`
+		} `json:"shapes"`
+	}
+	if err := json.NewDecoder(gz).Decode(&doc); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+
+	out := map[string]map[string]bool{}
+	for id, shape := range doc.Shapes {
+		if shape.Type != "operation" || shape.Input.Target == "" {
+			continue
+		}
+		params := map[string]bool{}
+		for member, m := range doc.Shapes[shape.Input.Target].Members {
+			name := member
+			switch {
+			case m.Traits.EC2QueryName != "":
+				name = m.Traits.EC2QueryName
+			case m.Traits.XMLName != "":
+				name = strings.ToUpper(m.Traits.XMLName[:1]) + m.Traits.XMLName[1:]
+			}
+			params[strings.ToLower(name)] = true
+		}
+		out[id[strings.Index(id, "#")+1:]] = params
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s declares no operations", path)
+	}
+	return out
+}
+
+// iamEC2DerivesItsResource reports whether the derivation produces an ARN for
+// an operation — not whether the table knows which type it would build. It runs
+// the production path against a request carrying every parameter the model
+// declares for the operation: if nothing is derived from all of them, no real
+// request derives anything either. Measuring it this way rather than
+// re-deciding the rules here is what makes the count reflect the code, so a
+// rule that stops firing shows up as coverage falling.
+//
+// An operation that creates its resource (CreateInternetGateway) carries no
+// identifier for it and correctly derives nothing.
+func iamEC2DerivesItsResource(operation string, params map[string]bool) bool {
+	types := iamActionResourceTypes["ec2:"+operation]
+	if len(types) == 0 {
+		return false
+	}
+	values := make(map[string]string, len(params))
+	for name := range params {
+		if name == "action" || name == "version" {
+			continue // the request already carries these
+		}
+		values[name] = "probe"
+	}
+	return len(iamEC2ResourceARNs(iamEC2Request(operation, values), types,
+		"us-east-1", "123456789012")) > 0
+}
+
+// TestIAMEC2ParameterAliasesAreRealRequestParameters holds every alias to a
+// parameter the vendored model declares on an operation that authorizes
+// against the aliased resource type. The aliases are the one hand-written part
+// of Amazon EC2's derivation — the renamings the Service Reference did not
+// follow — so an alias that is a guess, a typo, or one the API has since
+// dropped derives nothing and would be invisible: the request still succeeds
+// for a caller whose policy says Resource "*".
+func TestIAMEC2ParameterAliasesAreRealRequestParameters(t *testing.T) {
+	byOperation := loadEC2RequestParameters(t)
+
+	// The resource types each variable identifies, and the operations that
+	// authorize against them.
+	typesByVariable := map[string][]string{}
+	for key, format := range iamResourceARNFormats {
+		service, resourceType, _ := strings.Cut(key, ":")
+		if service != "ec2" {
+			continue
+		}
+		if variable := iamARNFormatVariable(format); variable != "" {
+			typesByVariable[variable] = append(typesByVariable[variable], resourceType)
+		}
+	}
+
+	var problems []string
+	for variable, aliases := range iamEC2ParameterAliases {
+		resourceTypes := typesByVariable[variable]
+		if len(resourceTypes) == 0 {
+			problems = append(problems, fmt.Sprintf(
+				"%s: no Amazon EC2 resource type is identified by this variable — the alias is dead", variable))
+			continue
+		}
+		for _, alias := range aliases {
+			used := false
+			for action, declared := range iamActionResourceTypes {
+				service, operation, _ := strings.Cut(action, ":")
+				if service != "ec2" {
+					continue
+				}
+				if !slicesIntersect(declared, resourceTypes) {
+					continue
+				}
+				if byOperation[operation][strings.ToLower(alias)] {
+					used = true
+					break
+				}
+			}
+			if !used {
+				problems = append(problems, fmt.Sprintf(
+					"%s -> %s: no Amazon EC2 operation authorizing against %s takes a %s parameter",
+					variable, alias, strings.Join(resourceTypes, "/"), alias))
+			}
+		}
+	}
+	sort.Strings(problems)
+	if len(problems) > 0 {
+		t.Fatalf("iamEC2ParameterAliases does not match the vendored Amazon EC2 model:\n  %s",
+			strings.Join(problems, "\n  "))
+	}
+}
+
+func slicesIntersect(a, b []string) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // iamHandwrittenDerivationServices are the services whose target resource is
 // read by a per-service case in iamResourceARNsForRequest rather than from the
 // generated resource-type table. They predate the table and are listed here so
@@ -201,7 +362,7 @@ func iamServiceForServedOperation(t *testing.T, refs map[string]*awsServiceRefer
 // coverage is per-request (the case fires only when the request carries the
 // field it reads), which is precisely why the table-driven form replaced it.
 var iamHandwrittenDerivationServices = map[string]bool{
-	"sns": true, "sqs": true, "ec2": true, "dynamodb": true, "lambda": true,
+	"sns": true, "sqs": true, "dynamodb": true, "lambda": true,
 	"kms": true, "secretsmanager": true, "states": true, "kinesis": true, "ecr": true,
 }
 
@@ -212,7 +373,13 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // Resource is itself "*", so every resource-scoped grant written for it is
 // denied. Raising this number is how that defect class is burned down; the test
 // prints what is left.
-const iamDerivationCoverageFloor = 358
+// Amazon EC2's 55 remaining operations are the ones whose resource the request
+// genuinely does not name: an operation that creates its resource has no
+// identifier for it yet, the Disassociate/Detach family names an association
+// rather than either end of it, CreateTags carries identifiers of mixed types
+// with nothing published to map an id back to its type, and CancelImportTask's
+// one identifier could belong to either resource type it authorizes against.
+const iamDerivationCoverageFloor = 818
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -238,6 +405,14 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 		}
 	}
 
+	// Amazon EC2 is measured against the request rather than the table. Its
+	// derivation is generated for all 112 resource types at once, so table
+	// membership would count an operation that creates its resource — and so
+	// carries no identifier for it — as covered. The other table-driven
+	// services read hand-listed field spellings, for which membership is the
+	// only statement available.
+	ec2Parameters := loadEC2RequestParameters(t)
+
 	covered := 0
 	missingByService := map[string][]string{}
 	for o := range served {
@@ -249,7 +424,11 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 		if !defined || len(types) == 0 {
 			continue // AWS declares no resource type: "*" is the correct request
 		}
-		if _, derived := iamActionResourceTypes[o.service+":"+o.name]; derived {
+		_, derived := iamActionResourceTypes[o.service+":"+o.name]
+		if o.service == "ec2" {
+			derived = iamEC2DerivesItsResource(o.name, ec2Parameters[o.name])
+		}
+		if derived {
 			covered++
 			continue
 		}
