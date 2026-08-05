@@ -4,6 +4,20 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-05 — CreateSecret names its secret in Name, not SecretId
+
+Reported as GitHub issue #889 and consolidated into the same branch as the
+Amazon RDS ARN work, because only one pull request is open at a time.
+
+The gate read an AWS Secrets Manager request's resource from `SecretId`.
+`CreateSecret` does not send one — it names the secret it is about to create in
+`Name` — so the lookup missed, the request fell through to a literal `"*"`, and
+a role holding exactly the grant it needed was denied against a policy that
+plainly granted it. It is the same shape as the defect that started this work:
+an action whose resource the gate cannot read is authorized against `"*"`, which
+matches only a policy whose Resource is itself `"*"`, so the scoped grant is the
+one that fails.
+
 ## 2026-08-05 — Two Amazon RDS ARNs that named nothing real
 
 Deriving Amazon RDS left two of its twenty-four resource types alone, and the
