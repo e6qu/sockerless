@@ -520,6 +520,33 @@ func TestIAMCloudTrailFieldAliasesAreRealRequestMembers(t *testing.T) {
 	assertAliasesAreRealFields(t, "cloudtrail", iamCloudTrailFieldAliases, loadCloudTrailRequestMembers(t))
 }
 
+// iamAutoScalingDerivesItsResource runs the production derivation against a
+// request naming a group and a launch configuration that exist.
+//
+// Amazon EC2 Auto Scaling resolves its ARNs from the simulator's state rather
+// than from request fields, because both carry an identifier AWS assigns that no
+// request supplies. A probe that only fills fields would therefore measure zero
+// however well the derivation works, so it seeds the two resources first — which
+// is the state any real caller acting on a group is in.
+func iamAutoScalingDerivesItsResource(operation string, params map[string]bool) bool {
+	if len(iamActionResourceTypes["autoscaling:"+operation]) == 0 {
+		return false
+	}
+	autoScalingGroups.Put("probe", AutoScalingGroup{Name: "probe", ARN: autoScalingGroupARN("probe")})
+	asLaunchConfigurations.Put("probe", ASLaunchConfiguration{Name: "probe", ARN: launchConfigurationARN("probe")})
+
+	form := "Action=" + operation + "&Version=2011-01-01"
+	for name := range params {
+		if name == "action" || name == "version" {
+			continue
+		}
+		form += "&" + name + "=probe"
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return len(iamDerivedResourceARNs(r, "autoscaling", operation, "us-east-1", "123456789012")) > 0
+}
+
 // iamCloudTrailDerivesItsResource runs the production derivation against a
 // request carrying every member the model declares for the operation.
 func iamCloudTrailDerivesItsResource(operation string, members map[string]bool) bool {
@@ -663,7 +690,7 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // the gate does read — TestIAMResourceARNs_RDSTakesTheARNTheRequestNames pins
 // that. Counting them as derived here would mean filling a field with an ARN
 // because the metric wanted one, which is measuring the measurement.
-const iamDerivationCoverageFloor = 1340
+const iamDerivationCoverageFloor = 1380
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -702,6 +729,7 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	elastiCacheParameters := loadElastiCacheRequestParameters(t)
 	dynamoDBMembers := loadDynamoDBRequestMembers(t)
 	cloudTrailMembers := loadCloudTrailRequestMembers(t)
+	autoScalingParameters := loadRequestFields(t, "auto-scaling", memberWireName)
 	eventBridgeMembers := loadEventBridgeRequestMembers(t)
 
 	covered := 0
@@ -731,6 +759,8 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamDynamoDBDerivesItsResource(o.name, dynamoDBMembers[o.name])
 		case "cloudtrail":
 			derived = iamCloudTrailDerivesItsResource(o.name, cloudTrailMembers[o.name])
+		case "autoscaling":
+			derived = iamAutoScalingDerivesItsResource(o.name, autoScalingParameters[o.name])
 		case "events":
 			derived = iamEventBridgeDerivesItsResource(o.name, eventBridgeMembers[o.name])
 		}

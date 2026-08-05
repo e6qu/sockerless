@@ -39,6 +39,33 @@ had no reason to do, and it passed with the retry removed. The single attempt is
 now injectable and the retry driven directly, so removing the retry fails the
 test.
 
+## 2026-08-05 — Amazon EC2 Auto Scaling, and an ARN that restated a name
+
+Both Amazon EC2 Auto Scaling ARNs carry two identifiers — one AWS assigns and
+one the caller chose:
+`autoScalingGroup:${GroupId}:autoScalingGroupName/${GroupFriendlyName}`. A
+request supplies only the second, so neither ARN can be assembled from what the
+request carries, and both are read from the simulator's own state instead. That
+is the resolution Amazon RDS uses for a custom engine version, for the same
+reason: the ARN the gate requests has to be the one the resource actually has.
+
+Reading it required the simulator to have one worth reading. A group did — an
+assigned identifier, generated at create and stored. A launch configuration did
+not: its ARN put the *name* in the identifier slot, so it read
+`launchConfiguration:<name>:launchConfigurationName/<name>` — a restatement of
+the name rather than the resource's own ARN, and a policy written against the
+real one matched nothing. It was also built inline in the describe response
+rather than stored, which is how it stayed unnoticed. It has an assigned
+identifier now, generated at create and rendered from the record.
+
+The measurement needed the same care. Auto Scaling resolves from state, so a
+probe that only fills request fields would have measured zero however well the
+derivation worked — and counting table membership instead would have claimed all
+44 of its operations. The probe seeds the two resources first, which is the
+state any caller acting on a group is in, and the honest answer is 40 of 44.
+That is why coverage reads 1,380 rather than the 1,384 membership would have
+given.
+
 ## 2026-08-05 — An identifier inside a structure, and a probe that could not see it
 
 AWS Glue was the largest single remainder, and its shape was known: the registry

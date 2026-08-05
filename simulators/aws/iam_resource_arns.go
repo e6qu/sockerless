@@ -48,6 +48,8 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return []string{a}
 	}
 	switch service {
+	case "autoscaling":
+		return iamAutoScalingResourceARNs(r, types)
 	case "cloudtrail":
 		return iamCloudTrailResourceARNs(r, types, region, account)
 	case "dynamodb":
@@ -228,6 +230,42 @@ func iamHasType(types []string, resourceType string) bool {
 		}
 	}
 	return false
+}
+
+// ===== Amazon EC2 Auto Scaling =====
+
+// iamAutoScalingResourceARNs derives the ARNs an Amazon EC2 Auto Scaling
+// request names. Both of its resource types carry two identifiers: one AWS
+// assigns and one the caller chose —
+// "autoScalingGroup:${GroupId}:autoScalingGroupName/${GroupFriendlyName}" — and
+// a request supplies only the second. So neither can be assembled from the
+// request, and both are read from the simulator's own state, where the ARN each
+// resource was given is stored.
+//
+// That is the same resolution Amazon RDS uses for a custom engine version, and
+// for the same reason: the ARN the gate requests has to be the ARN the resource
+// actually has, and an ARN built from the parts a request happens to carry
+// would not be.
+func iamAutoScalingResourceARNs(r *http.Request, types []string) []string {
+	params := iamQueryRequestParameters(r)
+	first := func(field string) string {
+		return iamFirstValue(func(f string) []string { return params[strings.ToLower(f)] }, field)
+	}
+
+	var out []string
+	for _, resourceType := range types {
+		switch resourceType {
+		case "autoScalingGroup":
+			if group, ok := autoScalingGroups.Get(first("AutoScalingGroupName")); ok && group.ARN != "" {
+				out = append(out, group.ARN)
+			}
+		case "launchConfiguration":
+			if config, ok := asLaunchConfigurations.Get(first("LaunchConfigurationName")); ok && config.ARN != "" {
+				out = append(out, config.ARN)
+			}
+		}
+	}
+	return out
 }
 
 // ===== AWS CloudTrail =====

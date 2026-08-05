@@ -1034,3 +1034,69 @@ func slicesContain(haystack []string, want string) bool {
 	}
 	return false
 }
+
+// ===== Amazon EC2 Auto Scaling =====
+
+func iamAutoScalingRequest(action string, params map[string]string) *http.Request {
+	form := "Action=" + action + "&Version=2011-01-01"
+	for k, v := range params {
+		form += "&" + k + "=" + v
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/autoscaling/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// Both Amazon EC2 Auto Scaling ARNs carry two identifiers — one AWS assigns and
+// one the caller chose — and a request supplies only the second, so neither can
+// be assembled from the request. The gate reads the ARN the resource was
+// actually given, which is the only thing a policy written against that resource
+// can match.
+func TestIAMResourceARNs_AutoScalingResolvesTheARNTheResourceHas(t *testing.T) {
+	autoScalingGroups = sim.MakeStore[AutoScalingGroup](nil, "autoscaling_groups")
+	asLaunchConfigurations = sim.MakeStore[ASLaunchConfiguration](nil, "autoscaling_launch_configurations")
+
+	groupARN := autoScalingGroupARN("orders")
+	autoScalingGroups.Put("orders", AutoScalingGroup{Name: "orders", ARN: groupARN})
+	configARN := launchConfigurationARN("orders-lc")
+	asLaunchConfigurations.Put("orders-lc", ASLaunchConfiguration{Name: "orders-lc", ARN: configARN})
+
+	t.Run("a group", func(t *testing.T) {
+		assertDerivedARNs(t,
+			iamAutoScalingRequest("DeleteAutoScalingGroup", map[string]string{"AutoScalingGroupName": "orders"}),
+			"autoscaling:DeleteAutoScalingGroup", groupARN)
+	})
+	t.Run("a launch configuration", func(t *testing.T) {
+		assertDerivedARNs(t,
+			iamAutoScalingRequest("DeleteLaunchConfiguration", map[string]string{"LaunchConfigurationName": "orders-lc"}),
+			"autoscaling:DeleteLaunchConfiguration", configARN)
+	})
+	t.Run("a group that does not exist derives nothing rather than a guess", func(t *testing.T) {
+		assertDerivedARNs(t,
+			iamAutoScalingRequest("DeleteAutoScalingGroup", map[string]string{"AutoScalingGroupName": "absent"}),
+			"autoscaling:DeleteAutoScalingGroup", "*")
+	})
+}
+
+// The published shape carries an assigned identifier and then the name the
+// resource is addressed by. A launch configuration's identifier slot held the
+// name itself, which made its ARN a restatement of the name rather than the
+// resource's own — so a policy written against the real ARN matched nothing.
+func TestIAMResourceARNs_AutoScalingARNsTakeTheirPublishedShape(t *testing.T) {
+	group := autoScalingGroupARN("orders")
+	if !strings.HasSuffix(group, ":autoScalingGroupName/orders") {
+		t.Errorf("group ARN = %q, want it to end in the name it is addressed by", group)
+	}
+	config := launchConfigurationARN("orders-lc")
+	if !strings.HasSuffix(config, ":launchConfigurationName/orders-lc") {
+		t.Errorf("launch configuration ARN = %q, want it to end in the name", config)
+	}
+	// The identifier slot is an assigned one, not the name repeated.
+	if strings.Contains(config, ":launchConfiguration:orders-lc:") {
+		t.Errorf("launch configuration ARN = %q, want an assigned identifier where the name is repeated", config)
+	}
+	if a, b := launchConfigurationARN("same"), launchConfigurationARN("same"); a == b {
+		t.Error("two launch configurations of the same name got the same assigned identifier")
+	}
+}
