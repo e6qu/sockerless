@@ -4,6 +4,37 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-05 — AWS Systems Manager, where a variable name carries meaning
+
+AWS Systems Manager took the derivation past what a spelling table can express,
+in two ways, and both were the reference telling us something rather than an
+inconsistency to work around.
+
+Four of its resource types — a maintenance window, an OpsItem, that item's
+metadata and a service setting — are all published under one variable,
+${ResourceId}, and the request names each of them differently: WindowId,
+OpsItemId, OpsMetadataArn, SettingId. A table keyed by variable alone cannot
+hold that, and worse than failing it would have made all four resolve to
+whichever field the request happened to carry, so the ambiguity rule would
+discard them as competing claims on one field. An alias may now be keyed
+"<resourceType>.<variable>" and answers for that type alone.
+
+A parameter is published as ${ParameterNameWithoutLeadingSlash} and named
+"/db/password" in every request, so its ARN is "…:parameter/db/password". The
+variable's own name states the transformation, and applying it is what stops the
+gate building an ARN with an empty first path segment that matches no policy.
+A parameter without a leading slash keeps its name exactly.
+
+Four more of its types are another service's resource outright — an instance is
+an Amazon EC2 ARN, a task an Amazon ECS one, a role an IAM one, and a bucket an
+Amazon S3 ARN carrying neither region nor account — which the published format
+already gets right and a hand-written assembler would not.
+
+Coverage went from 1,086 to 1,170 of 1,973 served operations. The 17 that
+remain name a resource by a bare identifier and a separate ResourceType member
+rather than by ARN, create something that has no identifier yet, or are scoped
+by a path or an operating system rather than by a resource.
+
 ## 2026-08-04 — Amazon RDS, and an alias table read off the model
 
 Amazon RDS is the service where the reference and the API disagree about

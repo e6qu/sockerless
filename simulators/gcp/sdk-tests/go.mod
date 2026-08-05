@@ -18,7 +18,7 @@ require (
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/sockerless/simulator-testutil v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
-	google.golang.org/api v0.291.0
+	google.golang.org/api v0.292.0
 	google.golang.org/genproto v0.0.0-20260803160001-6ac0973c030d
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d
 	google.golang.org/grpc v1.83.0

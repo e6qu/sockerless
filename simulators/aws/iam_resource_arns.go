@@ -58,6 +58,8 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamLogsResourceARNs(r, types, arn)
 	case "rds":
 		return iamRDSResourceARNs(r, types, region, account)
+	case "ssm":
+		return iamSSMResourceARNs(r, types, region, account)
 	case "codebuild":
 		return iamCodeBuildResourceARNs(r, types, arn)
 	case "wafv2":
@@ -358,6 +360,9 @@ func iamTableDrivenARNs(service string, types []string, region, account string,
 
 	type resolved struct {
 		format string
+		// variable is the last one the format declares, kept so the value that
+		// fills it gets the transformation its name states.
+		variable string
 		// parents are the values filling every variable but the last: a Glue
 		// table's ARN carries its database, which the request names once.
 		parents []string
@@ -385,24 +390,24 @@ func iamTableDrivenARNs(service string, types []string, region, account string,
 		parents := make([]string, 0, len(variables)-1)
 		complete := true
 		for _, variable := range variables[:len(variables)-1] {
-			values := iamFirstNamed(lookup, aliases, variable)
+			values := iamFirstNamed(lookup, aliases, resourceType, variable)
 			if len(values) == 0 {
 				complete = false
 				break
 			}
-			parents = append(parents, values[0])
+			parents = append(parents, iamARNValueForVariable(variable, values[0]))
 		}
 		if !complete {
 			continue
 		}
-		field, rank, named := iamNamingField(lookup, aliases, variables[len(variables)-1])
+		field, rank, named := iamNamingField(lookup, aliases, resourceType, variables[len(variables)-1])
 		if !named {
 			continue
 		}
 		if seen, ok := best[field]; !ok || rank < seen {
 			best[field] = rank
 		}
-		found = append(found, resolved{format, parents, field, rank})
+		found = append(found, resolved{format, variables[len(variables)-1], parents, field, rank})
 	}
 
 	contested := map[string]int{}
@@ -432,7 +437,8 @@ func iamTableDrivenARNs(service string, types []string, region, account string,
 				add(id)
 				continue
 			}
-			add(iamFillARNFormat(f.format, region, account, append(append([]string{}, f.parents...), id)))
+			add(iamFillARNFormat(f.format, region, account,
+				append(append([]string{}, f.parents...), iamARNValueForVariable(f.variable, id))))
 		}
 	}
 	for _, c := range constants {
@@ -443,8 +449,8 @@ func iamTableDrivenARNs(service string, types []string, region, account string,
 
 // iamFirstNamed returns the values a request carries for one ARN format
 // variable, under whichever spelling it supplies.
-func iamFirstNamed(lookup func(string) []string, aliases map[string][]string, variable string) []string {
-	if field, _, ok := iamNamingField(lookup, aliases, variable); ok {
+func iamFirstNamed(lookup func(string) []string, aliases map[string][]string, resourceType, variable string) []string {
+	if field, _, ok := iamNamingField(lookup, aliases, resourceType, variable); ok {
 		return lookup(field)
 	}
 	return nil
@@ -454,8 +460,8 @@ func iamFirstNamed(lookup func(string) []string, aliases map[string][]string, va
 // under. The rank is that spelling's position in the candidate list, which runs
 // most specific first, so a lower rank is the stronger claim on a field two
 // resource types both resolve to.
-func iamNamingField(lookup func(string) []string, aliases map[string][]string, variable string) (string, int, bool) {
-	for rank, name := range iamVariableFieldNames(variable, aliases) {
+func iamNamingField(lookup func(string) []string, aliases map[string][]string, resourceType, variable string) (string, int, bool) {
+	for rank, name := range iamVariableFieldNames(resourceType, variable, aliases) {
 		if len(lookup(name)) > 0 {
 			return name, rank, true
 		}
@@ -476,8 +482,15 @@ func iamNamingField(lookup func(string) []string, aliases map[string][]string, v
 // Name, which on GetTable is the *table's* name, so ranking the drop first made
 // the catalog and the table claim one field and the ambiguity rule then
 // discarded both. The catalog's declared CatalogId settles it.
-func iamVariableFieldNames(variable string, aliases map[string][]string) []string {
+func iamVariableFieldNames(resourceType, variable string, aliases map[string][]string) []string {
 	names := []string{variable}
+	// A variable name is only unique within a resource type: AWS Systems
+	// Manager calls the identifier of a maintenance window, an OpsItem, its
+	// metadata and a service setting all ${ResourceId}, and the request names
+	// each of them differently. An entry keyed "<type>.<variable>" answers for
+	// that type alone, so the four do not resolve to one another's field and
+	// cancel each other out as an ambiguity.
+	names = append(names, aliases[resourceType+"."+variable]...)
 	names = append(names, aliases[variable]...)
 	if unprefixed := iamUnprefixedVariable(variable); unprefixed != "" {
 		names = append(names, unprefixed)
@@ -517,6 +530,19 @@ func iamARNFormatVariables(format string) []string {
 		out = append(out, m[1])
 	}
 	return out
+}
+
+// iamARNValueForVariable applies the transformation a variable's own name
+// states. AWS Systems Manager publishes a parameter's ARN as
+// "parameter/${ParameterNameWithoutLeadingSlash}", and a parameter is named
+// "/db/password" in every request, so the ARN of that parameter is
+// "…:parameter/db/password". Keeping the slash would build an ARN with an empty
+// first path segment, matching no policy.
+func iamARNValueForVariable(variable, value string) string {
+	if strings.HasSuffix(variable, "WithoutLeadingSlash") {
+		return strings.TrimPrefix(value, "/")
+	}
+	return value
 }
 
 // iamFillARNFormat completes a published ARN format. The simulator supplies the
@@ -559,7 +585,7 @@ func iamFillARNFormat(format, region, account string, values []string) string {
 // Name, which the prefix drop resolves, and a batch operation sends the plural
 // of whichever spelling it uses.
 func iamGlueResourceARNs(r *http.Request, types []string, region, account string) []string {
-	fields := iamGlueRequestFields(r)
+	fields := iamJSONRequestFields(r)
 	return iamTableDrivenARNs("glue", types, region, account, iamGlueFieldAliases,
 		func(field string) []string { return fields[strings.ToLower(field)] })
 }
@@ -576,11 +602,11 @@ var iamGlueFieldAliases = map[string][]string{
 	"UserDefinedFunctionName": {"FunctionName"},
 }
 
-// iamGlueRequestFields indexes an awsJson request body's top-level members by
+// iamJSONRequestFields indexes an awsJson request body's top-level members by
 // lower-cased name, reading a member that carries one identifier and one that
 // carries a list the same way, since a batch operation authorizes every entry.
 // Members holding anything else name no resource and are left out.
-func iamGlueRequestFields(r *http.Request) map[string][]string {
+func iamJSONRequestFields(r *http.Request) map[string][]string {
 	body := iamRequestBody(r)
 	if len(body) == 0 {
 		return nil
@@ -659,6 +685,45 @@ var iamRDSFieldAliases = map[string][]string{
 	"SecurityGroupName":         {"DBSecurityGroupName"},
 	"SnapshotName":              {"DBSnapshotIdentifier"},
 	"SubnetGroupName":           {"DBSubnetGroupName"},
+}
+
+// ===== AWS Systems Manager =====
+
+// iamSSMResourceARNs derives the ARNs an AWS Systems Manager request names.
+// Systems Manager speaks awsJson, so the identifiers are request members, and
+// it is the service that makes a variable's *name* carry more than a spelling.
+//
+// Four of its resource types — a maintenance window, an OpsItem, that item's
+// metadata and a service setting — are all published as ${ResourceId}, and the
+// request names each differently, so their aliases are keyed by resource type
+// rather than by variable. A parameter is published as
+// ${ParameterNameWithoutLeadingSlash} and named "/db/password" in every
+// request, so the value loses its leading slash on the way into the ARN, which
+// is the transformation the variable's own name states.
+//
+// Four more of its types are another service's resource outright: an instance
+// is an Amazon EC2 ARN, a task an Amazon ECS one, a role an IAM one, and a
+// bucket an Amazon S3 ARN carrying neither region nor account. Filling the
+// published format is what keeps each of those right.
+func iamSSMResourceARNs(r *http.Request, types []string, region, account string) []string {
+	fields := iamJSONRequestFields(r)
+	return iamTableDrivenARNs("ssm", types, region, account, iamSSMFieldAliases,
+		func(field string) []string { return fields[strings.ToLower(field)] })
+}
+
+// iamSSMFieldAliases maps an ARN format's identifier variable to the request
+// members AWS Systems Manager spells it as. An entry keyed "<type>.<variable>"
+// answers for that resource type alone.
+//
+// TestIAMSSMFieldAliasesAreRealRequestMembers holds every entry to a member the
+// vendored model declares on an operation authorizing against that type.
+var iamSSMFieldAliases = map[string][]string{
+	"maintenancewindow.ResourceId":               {"WindowId"},
+	"opsitem.ResourceId":                         {"OpsItemId", "OpsItemArn"},
+	"opsmetadata.ResourceId":                     {"OpsMetadataArn"},
+	"servicesetting.ResourceId":                  {"SettingId"},
+	"patchbaseline.PatchBaselineIdResourceId":    {"BaselineId"},
+	"parameter.ParameterNameWithoutLeadingSlash": {"Name"},
 }
 
 // ===== Amazon Elastic Container Service =====

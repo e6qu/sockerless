@@ -22,8 +22,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.2
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.81.0
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.3
-	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.62.3
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.318.1
+	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.63.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.319.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.3
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.89.3
 	github.com/aws/aws-sdk-go-v2/service/efs v1.44.3
@@ -32,11 +32,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.48.3
 	github.com/aws/aws-sdk-go-v2/service/firehose v1.46.3
 	github.com/aws/aws-sdk-go-v2/service/glue v1.151.1
-	github.com/aws/aws-sdk-go-v2/service/iam v1.57.1
+	github.com/aws/aws-sdk-go-v2/service/iam v1.58.0
 	github.com/aws/aws-sdk-go-v2/service/kinesis v1.46.3
 	github.com/aws/aws-sdk-go-v2/service/kms v1.55.3
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.101.1
-	github.com/aws/aws-sdk-go-v2/service/organizations v1.53.3
+	github.com/aws/aws-sdk-go-v2/service/organizations v1.53.4
 	github.com/aws/aws-sdk-go-v2/service/rds v1.124.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.65.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.4

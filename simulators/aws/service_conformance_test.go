@@ -140,7 +140,15 @@ var serviceConformanceCatalog = map[string][]string{
 	// SNS / EventBridge / DynamoDB: all remaining operations are implemented.
 	"AmazonSimpleNotificationService": {},
 	"AWSEvents":                       {},
-	"DynamoDB_20120810":               {},
+	// Amazon DynamoDB: every operation implemented except SearchVectors, which
+	// arrived with the vector-search surface and is a feature rather than an
+	// operation — it needs a vector index to exist (created and dropped through
+	// UpdateTable's CreateVectorIndexAction/DeleteVectorIndexAction, reported by
+	// DescribeTable), a distance function, and a top-K search honouring
+	// SearchConditionExpression. Serving it as anything less would return
+	// neighbours that are not the nearest ones, which a caller cannot tell from
+	// the real answer. Tracked as BUG-2929.
+	"DynamoDB_20120810": {"SearchVectors"},
 	// ECS: all real operations are implemented.
 	"AmazonEC2ContainerServiceV20141113": {},
 }
