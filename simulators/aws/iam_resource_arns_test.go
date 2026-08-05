@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // These pin the ARN the gate requests for the services BUG-2907 named. The
@@ -761,5 +763,71 @@ func TestIAMEnforce_SSMParameterScopedGrant(t *testing.T) {
 				t.Fatalf("%s on %s (resource %s) = %s, want %s", action, tc.parameter, resources[0], got, tc.want)
 			}
 		})
+	}
+}
+
+// Two Amazon RDS ARNs carry an identifier no request names: a custom engine
+// version's own id, published as the third part of "cev:<engine>/<version>/<id>",
+// and a proxy target group's, which is the whole of "target-group:<id>". A
+// caller addresses the first by engine and version and the second by proxy and
+// group name, so the gate resolves both through the simulator's own state.
+//
+// What both assert is the same thing, and it is the only thing that matters:
+// the ARN the gate requests is the ARN the resource actually has. An ARN that
+// is merely well-shaped would still deny every policy written against the real
+// one.
+func TestIAMResourceARNs_RDSResolvesTheIdentifiersNoRequestNames(t *testing.T) {
+	rdsCustomEngineVersions = sim.MakeStore[RDSCustomEngineVersion](nil, "rds_custom_engine_versions")
+	rdsProxyTargetGroups = sim.MakeStore[RDSProxyTargetGroup](nil, "rds_proxy_target_groups")
+
+	const engine, version = "custom-oracle-ee", "19.cdb_cev1"
+	cevARN := rdsCustomEngineVersionARN(engine, version, "9a1e4f2b-0c37-4d55-8b21-6e0f7a2c9d84")
+	rdsCustomEngineVersions.Put(rdsCEVKey(engine, version), RDSCustomEngineVersion{
+		Engine: engine, EngineVersion: version,
+		CustomDBEngineVersionId: "9a1e4f2b-0c37-4d55-8b21-6e0f7a2c9d84", ARN: cevARN,
+	})
+	groupARN := rdsTargetGroupARN("prx-tg-0a1b2c3d4e5f60718")
+	rdsProxyTargetGroups.Put("orders-proxy/default", RDSProxyTargetGroup{
+		TargetGroupId: "prx-tg-0a1b2c3d4e5f60718", TargetGroupName: "default",
+		DBProxyName: "orders-proxy", ARN: groupARN,
+	})
+
+	t.Run("a custom engine version", func(t *testing.T) {
+		assertDerivedARNs(t,
+			iamRDSRequest("DeleteCustomDBEngineVersion",
+				map[string]string{"Engine": engine, "EngineVersion": version}),
+			"rds:DeleteCustomDBEngineVersion", cevARN)
+	})
+	t.Run("a proxy target group", func(t *testing.T) {
+		got := iamResourceARNsForRequest(
+			iamRDSRequest("ModifyDBProxyTargetGroup",
+				map[string]string{"DBProxyName": "orders-proxy", "TargetGroupName": "default"}),
+			"rds:ModifyDBProxyTargetGroup")
+		found := false
+		for _, a := range got {
+			if a == groupARN {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("derived %v, none of which is the target group's own ARN %s", got, groupARN)
+		}
+	})
+}
+
+// The published shapes, pinned. A custom engine version's ARN carries three
+// parts and a proxy target group's carries one; the simulator built two and two
+// before, so a policy written against either real resource matched nothing.
+func TestIAMResourceARNs_RDSARNsTakeTheirPublishedShape(t *testing.T) {
+	const cev = "arn:aws:rds:us-east-1:123456789012:cev:custom-oracle-ee/19.cdb_cev1/9a1e-4f2b"
+	if got := rdsCustomEngineVersionARN("custom-oracle-ee", "19.cdb_cev1", "9a1e-4f2b"); got != cev {
+		t.Errorf("custom engine version ARN = %q, want %q", got, cev)
+	}
+	const group = "arn:aws:rds:us-east-1:123456789012:target-group:prx-tg-0a1b2c3d4e5f60718"
+	if got := rdsTargetGroupARN("prx-tg-0a1b2c3d4e5f60718"); got != group {
+		t.Errorf("proxy target group ARN = %q, want %q", got, group)
+	}
+	if id := rdsTargetGroupID(); !strings.HasPrefix(id, "prx-tg-") || len(id) != len("prx-tg-")+17 {
+		t.Errorf("minted target group id %q does not take the shape AWS assigns", id)
 	}
 }

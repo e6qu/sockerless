@@ -4,6 +4,37 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-05 — Two Amazon RDS ARNs that named nothing real
+
+Deriving Amazon RDS left two of its twenty-four resource types alone, and the
+reason was not that the request withheld something. The simulator was building
+both ARNs in a shape AWS does not publish: a custom engine version as
+`cev:<engine>/<version>`, dropping the identifier that is its third part, and a
+proxy target group as `target-group:<proxy>/<group>` where AWS publishes a
+single identifier. Both named nothing real, so a resource-scoped grant written
+against either was evaluated against an ARN for something else — and deriving
+them then would have had the gate build one shape while the handlers built
+another.
+
+Each type gained the identifier its ARN needs. Neither is a member of AWS's own
+wire shapes — checked against the vendored model before adding them — so both
+are internal state that exists to build the ARN, and neither is rendered;
+returning a member AWS does not have would be the same defect facing the other
+way.
+
+With the shapes right, both derive. They are the first types whose identifier no
+request carries at all: a caller names a custom engine version by its engine and
+version, and a target group by its proxy and group name. So the gate resolves
+both through the simulator's own state and requests the ARN the resource
+actually has, which is the only property that matters — an ARN that is merely
+well-shaped still denies every policy written against the real one.
+
+The coverage number did not move, and that is honest. The probe that measures it
+fills every field with a placeholder and cannot create state, so these two
+operations still count as underived even though the derivation works. Filling a
+field with an ARN because the metric wanted one would be measuring the
+measurement.
+
 ## 2026-08-05 — AWS Systems Manager, where a variable name carries meaning
 
 AWS Systems Manager took the derivation past what a spelling table can express,
