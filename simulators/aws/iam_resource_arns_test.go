@@ -831,3 +831,92 @@ func TestIAMResourceARNs_RDSARNsTakeTheirPublishedShape(t *testing.T) {
 		t.Errorf("minted target group id %q does not take the shape AWS assigns", id)
 	}
 }
+
+// ===== Amazon ElastiCache and Amazon DynamoDB =====
+
+func iamElastiCacheRequest(action string, params map[string]string) *http.Request {
+	form := "Action=" + action + "&Version=2015-02-02"
+	for k, v := range params {
+		form += "&" + k + "=" + v
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/elasticache/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// Amazon ElastiCache is the service that needed no renamings: every one of its
+// twelve resource types is published under the parameter the API sends, so
+// these pass through the published format with nothing hand-written between
+// the request and the ARN.
+func TestIAMResourceARNs_ElastiCacheNeedsNoRenamings(t *testing.T) {
+	const p = "arn:aws:elasticache:us-east-1:123456789012:"
+	for _, tc := range []struct {
+		name, action string
+		params       map[string]string
+		want         string
+	}{
+		{"a cache cluster", "DeleteCacheCluster",
+			map[string]string{"CacheClusterId": "orders"}, p + "cluster:orders"},
+		{"a replication group", "DeleteReplicationGroup",
+			map[string]string{"ReplicationGroupId": "orders-rg"}, p + "replicationgroup:orders-rg"},
+		{"a parameter group", "DeleteCacheParameterGroup",
+			map[string]string{"CacheParameterGroupName": "redis7"}, p + "parametergroup:redis7"},
+		{"a subnet group", "DeleteCacheSubnetGroup",
+			map[string]string{"CacheSubnetGroupName": "private"}, p + "subnetgroup:private"},
+		{"a user", "DeleteUser",
+			map[string]string{"UserId": "app-reader"}, p + "user:app-reader"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertDerivedARNs(t, iamElastiCacheRequest(tc.action, tc.params), "elasticache:"+tc.action, tc.want)
+		})
+	}
+}
+
+func iamDynamoDBRequest(operation, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	r.Header.Set("X-Amz-Target", "DynamoDB_20120810."+operation)
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/dynamodb/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// An Amazon DynamoDB index nests under its table, which the published format
+// says and the request supplies both halves of. A table stands alone. Both are
+// requested for a query against an index, because AWS authorizes it against
+// both, and they arrive in the order the reference declares its types.
+func TestIAMResourceARNs_DynamoDBIndexNestsUnderItsTable(t *testing.T) {
+	const p = "arn:aws:dynamodb:us-east-1:123456789012:"
+	assertDerivedARNs(t,
+		iamDynamoDBRequest("Query", `{"TableName":"orders","IndexName":"by-customer"}`),
+		"dynamodb:Query", p+"table/orders/index/by-customer", p+"table/orders")
+	assertDerivedARNs(t,
+		iamDynamoDBRequest("PutItem", `{"TableName":"orders"}`),
+		"dynamodb:PutItem", p+"table/orders")
+}
+
+// A backup, an export and an import are named by their own ARN rather than by
+// a table and a name, so the ARN is taken as it stands.
+func TestIAMResourceARNs_DynamoDBTakesTheARNTheRequestNames(t *testing.T) {
+	const backup = "arn:aws:dynamodb:us-east-1:123456789012:table/orders/backup/01700000000000-a1b2c3d4"
+	assertDerivedARNs(t,
+		iamDynamoDBRequest("DeleteBackup", `{"BackupArn":"`+backup+`"}`),
+		"dynamodb:DeleteBackup", backup)
+}
+
+// A transaction names its tables per item, and the AWS Service Reference lists
+// neither TransactWriteItems nor TransactGetItems — it declares no resource
+// type for either — so nothing table-driven can reach them. Every table a
+// transaction touches is still authorized, because deriving none would deny a
+// single-table transaction its own table.
+func TestIAMResourceARNs_DynamoDBTransactionNamesEveryTableItTouches(t *testing.T) {
+	const p = "arn:aws:dynamodb:us-east-1:123456789012:table/"
+	if _, declared := iamActionResourceTypes["dynamodb:TransactWriteItems"]; declared {
+		t.Fatal("the reference now declares a type for TransactWriteItems — the derivation can move to the table-driven path")
+	}
+	assertDerivedARNs(t,
+		iamDynamoDBRequest("TransactWriteItems", `{"TransactItems":[
+			{"Put":{"TableName":"orders","Item":{}}},
+			{"Update":{"TableName":"customers","Key":{}}}]}`),
+		"dynamodb:TransactWriteItems", p+"customers", p+"orders")
+}

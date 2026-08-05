@@ -361,15 +361,17 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 			}
 		}
 	case "dynamodb":
-		if name := iamJSONBodyField(r, "TableName"); name != "" {
-			return one(arn("dynamodb", "table/"+name))
-		}
-		// TransactWriteItems / TransactGetItems / BatchGetItem / BatchWriteItem
-		// carry their table references per item, not top-level.
+		// A transaction carries its table references per item rather than at
+		// the top level, and the AWS Service Reference declares no resource
+		// type for TransactWriteItems or TransactGetItems at all — it lists
+		// neither action — so the table-driven derivation never sees them.
+		// AWS authorizes every table a transaction touches, and deriving none
+		// would deny a single-table transaction its own table (GitHub issue
+		// #870), so they are read here, before the reference is consulted.
 		if tables := iamDynamoDBRequestTables(r); len(tables) > 0 {
 			arns := make([]string, len(tables))
-			for i, t := range tables {
-				arns[i] = arn("dynamodb", "table/"+t)
+			for i, name := range tables {
+				arns[i] = arn("dynamodb", "table/"+name)
 			}
 			return arns
 		}

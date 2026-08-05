@@ -48,10 +48,14 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return []string{a}
 	}
 	switch service {
+	case "dynamodb":
+		return iamDynamoDBResourceARNs(r, types, region, account)
 	case "ec2":
 		return iamEC2ResourceARNs(r, types, region, account)
 	case "ecs":
 		return iamECSResourceARNs(r, op, types, arn)
+	case "elasticache":
+		return iamElastiCacheResourceARNs(r, types, region, account)
 	case "glue":
 		return iamGlueResourceARNs(r, types, region, account)
 	case "logs":
@@ -220,6 +224,33 @@ func iamHasType(types []string, resourceType string) bool {
 		}
 	}
 	return false
+}
+
+// ===== Amazon DynamoDB =====
+
+// iamDynamoDBResourceARNs derives the ARNs an Amazon DynamoDB request names.
+//
+// Three of its resource types nest under a table — an index is
+// "table/<name>/index/<index>" — and the table-driven derivation fills those
+// from the request. Four more are named by their own ARN rather than by a
+// table and a name: a backup, an export, an import and a stream, each under a
+// member of its own, which needs no assembly.
+//
+// A transaction or a batch names no table at the top level at all: it carries
+// one per item. Those are read in iamResourceARNsForRequest instead, before the
+// reference is consulted, because the Service Reference lists neither
+// TransactWriteItems nor TransactGetItems and so declares no type to drive them.
+func iamDynamoDBResourceARNs(r *http.Request, types []string, region, account string) []string {
+	// The operations that act on a backup, an export, an import or a stream
+	// name it by ARN outright.
+	for _, field := range []string{"BackupArn", "ExportArn", "ImportArn"} {
+		if a := iamJSONBodyField(r, field); strings.HasPrefix(a, "arn:") {
+			return []string{a}
+		}
+	}
+	fields := iamJSONRequestFields(r)
+	return iamTableDrivenARNs("dynamodb", types, region, account, nil,
+		func(field string) []string { return fields[strings.ToLower(field)] })
 }
 
 // ===== Amazon Elastic Compute Cloud =====
@@ -757,6 +788,19 @@ var iamSSMFieldAliases = map[string][]string{
 	"servicesetting.ResourceId":                  {"SettingId"},
 	"patchbaseline.PatchBaselineIdResourceId":    {"BaselineId"},
 	"parameter.ParameterNameWithoutLeadingSlash": {"Name"},
+}
+
+// ===== Amazon ElastiCache =====
+
+// iamElastiCacheResourceARNs derives the ARNs an Amazon ElastiCache request
+// names. ElastiCache is the service that needed no renamings at all: every one
+// of its twelve resource types is published under the parameter the API sends,
+// so the derivation is the published ARN format and the request, with nothing
+// hand-written in between.
+func iamElastiCacheResourceARNs(r *http.Request, types []string, region, account string) []string {
+	params := iamQueryRequestParameters(r)
+	return iamTableDrivenARNs("elasticache", types, region, account, nil,
+		func(field string) []string { return params[strings.ToLower(field)] })
 }
 
 // ===== Amazon Elastic Container Service =====

@@ -377,6 +377,14 @@ func loadSSMRequestMembers(t *testing.T) map[string]map[string]bool {
 	return loadRequestFields(t, "ssm", memberWireName)
 }
 
+func loadElastiCacheRequestParameters(t *testing.T) map[string]map[string]bool {
+	return loadRequestFields(t, "elasticache", memberWireName)
+}
+
+func loadDynamoDBRequestMembers(t *testing.T) map[string]map[string]bool {
+	return loadRequestFields(t, "dynamodb", memberWireName)
+}
+
 // iamEC2DerivesItsResource reports whether the derivation produces an ARN for
 // an operation — not whether the table knows which type it would build. It runs
 // the production path against a request carrying every parameter the model
@@ -458,6 +466,43 @@ func TestIAMSSMFieldAliasesAreRealRequestMembers(t *testing.T) {
 	assertAliasesAreRealFields(t, "ssm", iamSSMFieldAliases, loadSSMRequestMembers(t))
 }
 
+// iamDynamoDBDerivesItsResource runs the production derivation against a request
+// carrying every member the model declares for the operation.
+func iamDynamoDBDerivesItsResource(operation string, members map[string]bool) bool {
+	if len(iamActionResourceTypes["dynamodb:"+operation]) == 0 {
+		return false
+	}
+	body := make(map[string]string, len(members))
+	for name := range members {
+		body[name] = "probe"
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	return len(iamDerivedResourceARNs(r, "dynamodb", operation, "us-east-1", "123456789012")) > 0
+}
+
+// iamElastiCacheDerivesItsResource runs the production derivation against a
+// request carrying every parameter the model declares for the operation.
+func iamElastiCacheDerivesItsResource(operation string, params map[string]bool) bool {
+	if len(iamActionResourceTypes["elasticache:"+operation]) == 0 {
+		return false
+	}
+	form := "Action=" + operation + "&Version=2015-02-02"
+	for name := range params {
+		if name == "action" || name == "version" {
+			continue
+		}
+		form += "&" + name + "=probe"
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return len(iamDerivedResourceARNs(r, "elasticache", operation, "us-east-1", "123456789012")) > 0
+}
+
 // iamSSMDerivesItsResource runs the production derivation against a request
 // carrying every member the model declares for the operation.
 func iamSSMDerivesItsResource(operation string, members map[string]bool) bool {
@@ -484,7 +529,7 @@ func iamSSMDerivesItsResource(operation string, members map[string]bool) bool {
 // coverage is per-request (the case fires only when the request carries the
 // field it reads), which is precisely why the table-driven form replaced it.
 var iamHandwrittenDerivationServices = map[string]bool{
-	"sns": true, "sqs": true, "dynamodb": true, "lambda": true,
+	"sns": true, "sqs": true, "lambda": true,
 	"kms": true, "secretsmanager": true, "states": true, "kinesis": true, "ecr": true,
 }
 
@@ -522,7 +567,7 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // the gate does read — TestIAMResourceARNs_RDSTakesTheARNTheRequestNames pins
 // that. Counting them as derived here would mean filling a field with an ARN
 // because the metric wanted one, which is measuring the measurement.
-const iamDerivationCoverageFloor = 1170
+const iamDerivationCoverageFloor = 1262
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -558,6 +603,8 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	glueMembers := loadGlueRequestMembers(t)
 	rdsParameters := loadRDSRequestParameters(t)
 	ssmMembers := loadSSMRequestMembers(t)
+	elastiCacheParameters := loadElastiCacheRequestParameters(t)
+	dynamoDBMembers := loadDynamoDBRequestMembers(t)
 
 	covered := 0
 	missingByService := map[string][]string{}
@@ -580,6 +627,10 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamRDSDerivesItsResource(o.name, rdsParameters[o.name])
 		case "ssm":
 			derived = iamSSMDerivesItsResource(o.name, ssmMembers[o.name])
+		case "elasticache":
+			derived = iamElastiCacheDerivesItsResource(o.name, elastiCacheParameters[o.name])
+		case "dynamodb":
+			derived = iamDynamoDBDerivesItsResource(o.name, dynamoDBMembers[o.name])
 		}
 		if derived {
 			covered++
