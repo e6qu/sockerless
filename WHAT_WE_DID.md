@@ -18,6 +18,45 @@ an action whose resource the gate cannot read is authorized against `"*"`, which
 matches only a policy whose Resource is itself `"*"`, so the scoped grant is the
 one that fails.
 
+## 2026-08-05 — Amazon DynamoDB vector search, and a Compute member that was missing
+
+Two gaps that had been filed rather than closed are closed.
+
+Refreshing the vendored Amazon DynamoDB model brought `SearchVectors`, and with
+it nineteen shapes describing a surface rather than a call. It is served now,
+lifecycle and all: a vector index is declared with the table or added through
+`UpdateTable`, reported by `DescribeTable`, and dropped the same way, carrying
+the attribute holding the vector, the number of dimensions, and the distance
+function to compare under.
+
+The search reads each item's own vector attribute — the list of numbers a Put
+already wrote, rather than a parallel copy that could drift from it — scores it,
+and answers with the nearest TopK in order, each result carrying the score the
+comparison produced. Which way a score sorts is the difference between the
+nearest neighbours and the furthest: COSINE and DOT_PRODUCT rank larger-first,
+EUCLIDEAN smaller-first. A zero vector has no direction, so it is refused a
+cosine rather than scored 0, which would rank it as merely orthogonal — a claim
+the geometry does not support. Mismatched dimensions and an unmodelled distance
+function are refused rather than defaulted, because defaulting scores by a
+measure the caller did not ask for and the answer still looks valid.
+
+The end-to-end tests place their documents so the correct answer differs from
+the order they were written in, which means storage order cannot produce the
+result; removing the sort fails them, as a negative control confirmed. Amazon
+DynamoDB is complete at 58 of 58. The installed AWS command-line client does not
+yet expose the operation, so the official SDK carries the client-surface
+coverage.
+
+The Compute Engine gap was smaller and the same in kind. Discovery revision
+20260729 added a standardized `resourceMetadata` beside an accelerator type, a
+reservation and a future reservation, and the simulator answered without it. It
+is stamped on exactly those three, carrying the canonical AIP-123 type name
+derived from the resource's own kind so it cannot drift from it. Stamping it
+more widely would invent a member those schemas do not declare, which is the
+same defect as omitting a real one. The schema's other member, `apiVersion`, is
+left absent rather than guessed: the document gives its shape by example without
+stating what Compute v1 answers with.
+
 ## 2026-08-05 — Two Amazon RDS ARNs that named nothing real
 
 Deriving Amazon RDS left two of its twenty-four resource types alone, and the

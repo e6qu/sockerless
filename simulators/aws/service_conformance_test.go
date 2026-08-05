@@ -140,15 +140,8 @@ var serviceConformanceCatalog = map[string][]string{
 	// SNS / EventBridge / DynamoDB: all remaining operations are implemented.
 	"AmazonSimpleNotificationService": {},
 	"AWSEvents":                       {},
-	// Amazon DynamoDB: every operation implemented except SearchVectors, which
-	// arrived with the vector-search surface and is a feature rather than an
-	// operation — it needs a vector index to exist (created and dropped through
-	// UpdateTable's CreateVectorIndexAction/DeleteVectorIndexAction, reported by
-	// DescribeTable), a distance function, and a top-K search honouring
-	// SearchConditionExpression. Serving it as anything less would return
-	// neighbours that are not the nearest ones, which a caller cannot tell from
-	// the real answer. Tracked as BUG-2929.
-	"DynamoDB_20120810": {"SearchVectors"},
+	// Amazon DynamoDB: all operations implemented, vector search included.
+	"DynamoDB_20120810": {},
 	// ECS: all real operations are implemented.
 	"AmazonEC2ContainerServiceV20141113": {},
 }
@@ -422,7 +415,7 @@ var serviceCoverageFloor = map[string]int{
 	"AWSChronosService":       12,  // EventBridge Scheduler
 	"ApiGatewayV2":            103, // Amazon API Gateway v2
 	"Cloudfront2020_05_31":    167, // Amazon CloudFront (restXml)
-	"DynamoDB_20120810":       57,  // Amazon DynamoDB (awsJson1.0, already complete)
+	"DynamoDB_20120810":       58,  // Amazon DynamoDB (awsJson1.0, vector search included)
 }
 
 // TestServiceConformance_CoverageFloor locks the implemented-op count for the

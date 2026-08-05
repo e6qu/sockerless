@@ -21,6 +21,7 @@ var ddbRequiredMembers = map[string][]string{
 	"CreateTable":               {"TableName"},
 	"DescribeTable":             {"TableName"},
 	"UpdateTable":               {"TableName"},
+	"SearchVectors":             {"IndexName", "SearchVector", "TableName", "TopK"},
 	"DeleteTable":               {"TableName"},
 	"PutItem":                   {"TableName", "Item"},
 	"GetItem":                   {"TableName", "Key"},
