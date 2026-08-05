@@ -192,6 +192,27 @@ func TestOrganizations_Policies(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, lp.Policies)
 
+	// A policy's ARN says who owns it, and the two owners take different
+	// shapes: a customer policy is scoped to the account and the organization,
+	// while an AWS-managed one belongs to neither and carries the literal
+	// "aws" in the account position.
+	org, err := c.DescribeOrganization(ctx, &organizations.DescribeOrganizationInput{})
+	require.NoError(t, err)
+	var managed *orgtypes.PolicySummary
+	for i, summary := range lp.Policies {
+		if summary.AwsManaged {
+			managed = &lp.Policies[i]
+		}
+		if aws.ToString(summary.Id) == pid {
+			assert.Contains(t, aws.ToString(summary.Arn),
+				":policy/"+aws.ToString(org.Organization.Id)+"/service_control_policy/"+pid)
+		}
+	}
+	require.NotNil(t, managed, "the organization carries no AWS-managed policy")
+	assert.True(t, strings.HasPrefix(aws.ToString(managed.Arn), "arn:aws:organizations::aws:policy/"),
+		"AWS-managed policy ARN %q is scoped to an account and an organization",
+		aws.ToString(managed.Arn))
+
 	_, err = c.AttachPolicy(ctx, &organizations.AttachPolicyInput{PolicyId: aws.String(pid), TargetId: aws.String(root)})
 	require.NoError(t, err)
 
@@ -246,6 +267,9 @@ func TestOrganizations_Handshakes(t *testing.T) {
 	hid := aws.ToString(inv.Handshake.Id)
 	assert.True(t, strings.HasPrefix(hid, "h-"))
 	assert.Equal(t, orgtypes.HandshakeStateOpen, inv.Handshake.State)
+	// The ARN is the only place a handshake's purpose appears, so an
+	// invitation and an enable-all-features handshake must not read alike.
+	assert.Contains(t, aws.ToString(inv.Handshake.Arn), "/invite/")
 
 	dh, err := c.DescribeHandshake(ctx, &organizations.DescribeHandshakeInput{HandshakeId: aws.String(hid)})
 	require.NoError(t, err)
@@ -403,6 +427,7 @@ func TestOrganizations_EnableAllFeatures(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out.Handshake)
 	assert.Equal(t, orgtypes.ActionTypeEnableAllFeatures, out.Handshake.Action)
+	assert.Contains(t, aws.ToString(out.Handshake.Arn), "/enable_all_features/")
 }
 
 // TestOrganizations_CreateDeleteOrganization deletes the default org then

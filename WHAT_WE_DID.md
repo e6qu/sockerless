@@ -4,6 +4,61 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-06 — AWS Organizations reads the resource type off the identifier
+
+AWS Organizations is the service whose identifiers say what they identify. Every
+id the model declares carries a literal prefix — `r-` a root, `ou-` an
+organizational unit, `p-` a policy, `h-` a handshake, `rp-` a resource policy,
+`rt-` a responsibility transfer, and a bare twelve digits an account — and the
+members that accept more than one kind are alternations over exactly those
+prefixes: `TaggableResourceId` admits six, `PolicyTargetId` three, `ParentId`
+two. Ten of its operations name their resource under a member whose own name
+says nothing about the type — `TargetId`, `ParentId`, `ChildId`, `ResourceId` —
+so a derivation keyed on field spellings could only guess. The gate reads the
+type off the identifier, because that is the only way a caller can state it and
+therefore the way AWS reads it too.
+
+The ARN is then the resource's own. Four types carry an attribute no request
+supplies — a policy's type and whether AWS manages it, what a handshake is for,
+what a transfer moves and which way, and a resource policy's assigned id — and
+those are resolved through the simulator's state, as Amazon RDS resolves a
+custom engine version. The rest are a function of the identifier alone and are
+built from it, so a request naming a resource that does not exist is still
+authorized against the ARN it names and then reported missing, rather than
+refused as unauthorized.
+
+Thirty-eight of the forty operations derive. `CreatePolicy` names a policy that
+does not exist yet, and `DescribeEffectivePolicy` takes a target that may be a
+root, an organizational unit or an account while the reference declares only the
+account — so its two other spellings have no declared type to authorize against.
+Coverage went from 1,423 to 1,461 of 1,974 served operations.
+
+Six defects in the service itself came out with it, each a shape the model
+constrains with a `smithy.api#pattern` and nothing checked. The organization id
+was one character short of `OrganizationId`, which made every ARN Organizations
+emits malformed. `p-FullAWSAccess` was built the customer way, though only the
+AWS-managed arm of `PolicyArn` admits its uppercase letters. Every handshake
+claimed to be an invitation, so an enable-all-features handshake and a
+responsibility-transfer handshake — which was also labelled `INVITE` rather than
+`TRANSFER_RESPONSIBILITY` — were indistinguishable from one. A transfer's ARN
+used the resource-type name `responsibilitytransfer` where the ARN segment is
+`transfer`, and omitted what moves and which way. A hierarchy path was reported
+from the node upwards without the organization or the trailing slash, inverting
+what a path means. And an organization id was placed in a member modeled as an
+account id, where inviting an organization names no account at all.
+
+The tests hold each ARN to the pattern the vendored model declares rather than
+to a spelling chosen here, drive the simulator's own API end to end, and assert
+the ARN contract at the official-SDK surface too, which had checked id prefixes
+and never ARNs. Every fix was confirmed by a negative control that fails with it
+reverted.
+
+What found them is filed as BUG-2931: the runtime spec validator checks a
+response member's type and not its `smithy.api#pattern`, so a value that
+deserializes as a string passes however it is spelled. Arming that check reports
+185 divergences over 87 keys across seven more services, which is a burn-down of
+its own rather than this change's subject.
+
 ## 2026-08-05 — CreateSecret names its secret in Name, not SecretId
 
 Reported as GitHub issue #889 and consolidated into the same branch as the
