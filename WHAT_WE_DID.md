@@ -18,6 +18,32 @@ an action whose resource the gate cannot read is authorized against `"*"`, which
 matches only a policy whose Resource is itself `"*"`, so the scoped grant is the
 one that fails.
 
+## 2026-08-05 — Two more services, and an action the reference does not list
+
+Amazon ElastiCache and Amazon DynamoDB derive their resources now, taking the
+gate to 1,262 of 1,973 served operations.
+
+ElastiCache is the one service so far that needed nothing hand-written. Every
+one of its twelve resource types is published under the parameter the API
+actually sends, so its extractor is the shared derivation and a lookup, with no
+alias table at all — which is what the machinery was meant to make possible.
+
+Amazon DynamoDB retired its per-service case, and in doing so found something
+the reference does not say. Most of its types are ordinary: a table stands
+alone, an index nests under one, a backup and an export and an import are named
+by their own ARN. But a transaction carries its table references per item, and
+the AWS Service Reference lists neither `TransactWriteItems` nor
+`TransactGetItems` — not with an empty resource list, but absent entirely. A
+derivation driven by the reference therefore cannot reach them at all.
+
+That surfaced as a real regression rather than an observation: moving DynamoDB
+to the table-driven path made a single-table transaction fail against its own
+table, because the gate had stopped deriving any resource for it and fell back
+to a literal `"*"`. The behaviour is kept ahead of the reference, where it does
+not depend on AWS having listed the action, and a test asserts the reference
+still does not list it — so if AWS adds it, the note stops being true out loud
+rather than quietly.
+
 ## 2026-08-05 — Amazon DynamoDB vector search, and a Compute member that was missing
 
 Two gaps that had been filed rather than closed are closed.
