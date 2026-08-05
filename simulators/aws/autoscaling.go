@@ -13,7 +13,10 @@ import (
 )
 
 type ASLaunchConfiguration struct {
-	Name                     string
+	Name string
+	// ARN carries the identifier AWS assigns beside the name, which is what
+	// makes it the resource's own ARN rather than a restatement of the name.
+	ARN                      string
 	ImageId                  string
 	InstanceType             string
 	KeyName                  string
@@ -149,6 +152,7 @@ func handleASCreateLaunchConfiguration(w http.ResponseWriter, r *http.Request) {
 	}
 	lc := ASLaunchConfiguration{
 		Name:                     name,
+		ARN:                      launchConfigurationARN(name),
 		ImageId:                  firstNonEmpty(r.FormValue("ImageId"), "ami-simulated"),
 		InstanceType:             firstNonEmpty(r.FormValue("InstanceType"), "t3.micro"),
 		KeyName:                  r.FormValue("KeyName"),
@@ -180,8 +184,8 @@ func handleASDescribeLaunchConfigurations(w http.ResponseWriter, r *http.Request
 		for _, group := range lc.SecurityGroups {
 			fmt.Fprintf(&groups, "<member>%s</member>", xmlEscape(group))
 		}
-		fmt.Fprintf(&items, `<member><LaunchConfigurationName>%s</LaunchConfigurationName><LaunchConfigurationARN>arn:aws:autoscaling:%s:%s:launchConfiguration:%s:launchConfigurationName/%s</LaunchConfigurationARN><ImageId>%s</ImageId><InstanceType>%s</InstanceType><KeyName>%s</KeyName><AssociatePublicIpAddress>%t</AssociatePublicIpAddress><EbsOptimized>%t</EbsOptimized><InstanceMonitoring><Enabled>%t</Enabled></InstanceMonitoring><SecurityGroups>%s</SecurityGroups><BlockDeviceMappings></BlockDeviceMappings><UserData>%s</UserData></member>`,
-			xmlEscape(lc.Name), awsRegion(), awsAccountID(), xmlEscape(lc.Name), xmlEscape(lc.Name), xmlEscape(lc.ImageId), xmlEscape(lc.InstanceType), xmlEscape(lc.KeyName), lc.AssociatePublicIPAddress, lc.EbsOptimized, lc.InstanceMonitoring, groups.String(), xmlEscape(lc.UserData))
+		fmt.Fprintf(&items, `<member><LaunchConfigurationName>%s</LaunchConfigurationName><LaunchConfigurationARN>%s</LaunchConfigurationARN><ImageId>%s</ImageId><InstanceType>%s</InstanceType><KeyName>%s</KeyName><AssociatePublicIpAddress>%t</AssociatePublicIpAddress><EbsOptimized>%t</EbsOptimized><InstanceMonitoring><Enabled>%t</Enabled></InstanceMonitoring><SecurityGroups>%s</SecurityGroups><BlockDeviceMappings></BlockDeviceMappings><UserData>%s</UserData></member>`,
+			xmlEscape(lc.Name), xmlEscape(lc.ARN), xmlEscape(lc.ImageId), xmlEscape(lc.InstanceType), xmlEscape(lc.KeyName), lc.AssociatePublicIPAddress, lc.EbsOptimized, lc.InstanceMonitoring, groups.String(), xmlEscape(lc.UserData))
 	}
 	asResponse(w, "DescribeLaunchConfigurations", fmt.Sprintf("<LaunchConfigurations>%s</LaunchConfigurations>", items.String()))
 }
@@ -1024,6 +1028,16 @@ func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {
 	}
 	scalingActivities.Put(activity.ActivityId, activity)
 	return nil
+}
+
+// launchConfigurationARN builds the ARN AWS publishes for a launch
+// configuration: an assigned identifier and then the name it is addressed by.
+// The identifier slot held the name before, which made the ARN a restatement of
+// the name rather than the resource's own — and a policy written against the
+// real ARN matched nothing.
+func launchConfigurationARN(name string) string {
+	return fmt.Sprintf("arn:aws:autoscaling:%s:%s:launchConfiguration:%s:launchConfigurationName/%s",
+		awsRegion(), awsAccountID(), generateUUID(), name)
 }
 
 func autoScalingGroupARN(name string) string {
