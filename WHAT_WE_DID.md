@@ -39,6 +39,14 @@ had no reason to do, and it passed with the retry removed. The single attempt is
 now injectable and the retry driven directly, so removing the retry fails the
 test.
 
+AWS published `SearchVectors` into the Amazon DynamoDB Service Reference while
+this branch was in flight, a few hours after the operation was implemented here.
+It declares the index and the table, which the request names both of, so it
+derives the moment the reference is refreshed — a service gaining an action
+needs no code when the derivation is driven by what AWS publishes. The
+assertion that the reference still lists neither `TransactWriteItems` nor
+`TransactGetItems` was checked against the new document and holds.
+
 ## 2026-08-05 — Amazon EC2 Auto Scaling, and an ARN that restated a name
 
 Both Amazon EC2 Auto Scaling ARNs carry two identifiers — one AWS assigns and

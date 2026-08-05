@@ -207,6 +207,7 @@ var iamActionResourceTypes = map[string][]string{
 	"dynamodb:RestoreTableFromBackup":                                  {"backup", "table"},
 	"dynamodb:RestoreTableToPointInTime":                               {"table"},
 	"dynamodb:Scan":                                                    {"index", "table"},
+	"dynamodb:SearchVectors":                                           {"index", "table"},
 	"dynamodb:StartAwsBackupJob":                                       {"table"},
 	"dynamodb:TagResource":                                             {"stream", "table"},
 	"dynamodb:UntagResource":                                           {"stream", "table"},
