@@ -48,6 +48,8 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return []string{a}
 	}
 	switch service {
+	case "cloudtrail":
+		return iamCloudTrailResourceARNs(r, types, region, account)
 	case "dynamodb":
 		return iamDynamoDBResourceARNs(r, types, region, account)
 	case "ec2":
@@ -56,6 +58,8 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamECSResourceARNs(r, op, types, arn)
 	case "elasticache":
 		return iamElastiCacheResourceARNs(r, types, region, account)
+	case "events":
+		return iamEventBridgeResourceARNs(r, types, region, account)
 	case "glue":
 		return iamGlueResourceARNs(r, types, region, account)
 	case "logs":
@@ -224,6 +228,35 @@ func iamHasType(types []string, resourceType string) bool {
 		}
 	}
 	return false
+}
+
+// ===== AWS CloudTrail =====
+
+// iamCloudTrailResourceARNs derives the ARNs an AWS CloudTrail request names.
+// CloudTrail publishes three of its four identifiers under names the API does
+// not use — a channel is addressed as Channel, an event data store as
+// EventDataStore, a dashboard as DashboardId — so those are aliases. A trail is
+// the exception: its ${TrailName} arrives as Name, which the prefix drop
+// resolves.
+//
+// The channel and event-data-store members carry an ARN as often as an
+// identifier, and an ARN needs no assembly, so it is taken as it stands.
+func iamCloudTrailResourceARNs(r *http.Request, types []string, region, account string) []string {
+	fields := iamJSONRequestFields(r)
+	return iamTableDrivenARNs("cloudtrail", types, region, account, iamCloudTrailFieldAliases,
+		func(field string) []string { return fields[strings.ToLower(field)] })
+}
+
+// iamCloudTrailFieldAliases maps an ARN format's identifier variable to the
+// request member AWS CloudTrail spells it as.
+//
+// TestIAMCloudTrailFieldAliasesAreRealRequestMembers holds every entry to a
+// member the vendored model declares on an operation authorizing against that
+// resource type.
+var iamCloudTrailFieldAliases = map[string][]string{
+	"ChannelId":        {"Channel"},
+	"EventDataStoreId": {"EventDataStore"},
+	"DashboardName":    {"DashboardId"},
 }
 
 // ===== Amazon DynamoDB =====
@@ -595,6 +628,43 @@ func iamFillARNFormat(format, region, account string, values []string) string {
 		i++
 		return v
 	})
+}
+
+// ===== Amazon EventBridge =====
+
+// iamEventBridgeResourceARNs derives the ARNs an Amazon EventBridge request
+// names. Its identifiers are ordinary — a connection's ${ConnectionName}
+// arrives as Name, which the prefix drop resolves — but two of its resource
+// types are one resource seen two ways, and the reference cannot say which.
+//
+// A rule on the default event bus is "rule/${RuleName}"; a rule on a custom bus
+// is "rule/${EventBusName}/${RuleName}". Both end in the same variable, so both
+// claim the same request member and the ambiguity rule would discard the pair.
+// Which applies is decidable, and not by spelling: a request that names a
+// custom bus means the nested form, and one that names none, or names the
+// default bus, means the flat one. So the type that cannot apply is dropped
+// before the derivation runs, leaving one claim on the member.
+//
+// Four more types are constants — the built-in targets EventBridge invokes on
+// an instance, published as "target/reboot-instance" and its three siblings —
+// and two belong to AWS KMS, which filling the published format gets right.
+func iamEventBridgeResourceARNs(r *http.Request, types []string, region, account string) []string {
+	fields := iamJSONRequestFields(r)
+	lookup := func(field string) []string { return fields[strings.ToLower(field)] }
+
+	bus := iamFirstValue(lookup, "EventBusName")
+	onDefaultBus := bus == "" || bus == "default"
+	applicable := make([]string, 0, len(types))
+	for _, resourceType := range types {
+		if resourceType == "rule-on-custom-event-bus" && onDefaultBus {
+			continue
+		}
+		if resourceType == "rule-on-default-event-bus" && !onDefaultBus {
+			continue
+		}
+		applicable = append(applicable, resourceType)
+	}
+	return iamTableDrivenARNs("events", applicable, region, account, nil, lookup)
 }
 
 // ===== AWS Glue =====

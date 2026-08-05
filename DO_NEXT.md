@@ -4,31 +4,29 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Next
 
-Resource-scoped IAM authorization is spec-driven now, and the remainder is
-measured rather than unknown: BUG-2909 records the 803 served operations that
-still authorize against a literal `"*"`, largest first — Amazon ElastiCache
-(70), Amazon DynamoDB (46), Amazon EC2 Auto Scaling (44), AWS CloudTrail (44),
-Amazon EventBridge (43).
+Resource-scoped IAM authorization covers thirteen services, and the remainder
+is measured rather than unknown: BUG-2909 records the 653 served operations that
+still authorize against a literal `"*"`, largest first — AWS Glue (55), Amazon
+EC2 Auto Scaling (44), AWS KMS (42), AWS Organizations (40), Elastic Load
+Balancing (35).
 
-Adding a service is small now. `iamTableDrivenARNs` fills any published ARN
-format, so a service needs its entry in
-`scripts/gen-aws-iam-resource-types.sh`, a lookup that reads a field in its
-protocol — `iamQueryRequestParameters` serves both query encodings and
-`iamJSONRequestFields` serves awsJson — and, where the API renamed an
-identifier, an alias table. Write that table off the model rather than from the
-name: rank each type's identifier-shaped members by how many of the operations
-authorizing against it carry them, which is how the Amazon RDS table was built
-and why every entry passed the guard first time.
+Adding a service is small. `iamTableDrivenARNs` fills any published ARN format,
+so a service needs its entry in `scripts/gen-aws-iam-resource-types.sh`, a
+lookup that reads a field in its protocol, and, where the API renamed an
+identifier, an alias table written off the model rather than from the name.
 
-Eight services still carry an older per-service case that fires only when the
-request happens to name the field it reads; replacing each with a table-driven
-extractor is what retires `iamHandwrittenDerivationServices` entirely.
+Two shapes now have precedent for the harder cases. Where an ARN carries an
+identifier no request supplies, the gate resolves it through the simulator's own
+state, as Amazon RDS does for a custom engine version and a proxy target group —
+which is what Amazon EC2 Auto Scaling needs, its ARNs carrying an assigned group
+id beside the friendly name. Where the reference publishes one resource two
+ways, the request decides which applies before the derivation runs, as Amazon
+EventBridge does for a rule on the default bus versus a custom one.
 
-BUG-2929 is the newest fidelity gap and the one with a clear shape: Amazon
-DynamoDB vector search. The search itself is arithmetic — a distance per item, a
-sort, a cut at K — and what makes it a feature is the index lifecycle
-underneath, created and dropped through `UpdateTable` and reported by
-`DescribeTable`.
+AWS Glue's 55 are the largest single remainder and have a known shape: its
+registry and schema operations name their resource inside a nested
+`RegistryId`/`SchemaId` member rather than at the top level, which the JSON
+field reader does not descend into.
 
 Two pieces remain staged in [PLAN.md](PLAN.md) § "Staged: the Compute and
 Console Tails", and both are breadth work needing no special host: Google

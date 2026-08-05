@@ -18,6 +18,57 @@ an action whose resource the gate cannot read is authorized against `"*"`, which
 matches only a policy whose Resource is itself `"*"`, so the scoped grant is the
 one that fails.
 
+A crash found on the way, and it was not the branch's doing but the branch's
+CI run is what surfaced it. The simulator could panic at startup with
+`route53 dns: bind ... address already in use`, taking every test in the shard
+with it — they waited on a server that never came up.
+
+Route 53 answers DNS on UDP and TCP, and a resolver that gets a truncated UDP
+answer retries the query over TCP on the same port, so the server needs one port
+on both. Asking the kernel for a free port asks it about one protocol: the two
+spaces are independent, so the UDP port it hands out says nothing about whether
+that TCP port is free, and on a busy host it often is not. An ephemeral port is
+retried now until both protocols answer to the same number, bounded so a host
+where none is ever free is reported rather than asked forever; a port the
+operator configured still fails on the first attempt, because then the address
+is the request and serving DNS somewhere else would be worse than not starting.
+
+The first test written for it was worthless and the negative control said so: it
+held a TCP port and hoped the kernel would hand out that same UDP port, which it
+had no reason to do, and it passed with the retry removed. The single attempt is
+now injectable and the retry driven directly, so removing the retry fails the
+test.
+
+## 2026-08-05 — AWS CloudTrail, Amazon EventBridge, and one resource published twice
+
+Coverage reaches 1,320 of 1,973 served operations across thirteen services.
+
+AWS CloudTrail publishes three of its four identifiers under names the API does
+not use: a channel is addressed as `Channel`, an event data store as
+`EventDataStore`, a dashboard as `DashboardId`. A trail is the exception, and
+the prefix drop resolves it. Three aliases, each held to the vendored model.
+
+Amazon EventBridge needed no renamings but posed a question the machinery had
+not met: the reference publishes a *rule* twice. On the default event bus its
+ARN is `rule/${RuleName}`; on a custom bus it is
+`rule/${EventBusName}/${RuleName}`. Both end in the same variable, so both claim
+the same request member, and the ambiguity rule — which exists to stop the gate
+inventing an ARN — would have discarded the pair and derived nothing.
+
+The two are not really ambiguous, though, and what settles them is not spelling
+but the request: naming a custom bus means the nested ARN, naming none or naming
+"default" means the flat one. So the type that cannot apply is dropped before
+the derivation runs, leaving one claim on the member. A negative control
+confirms it is load-bearing — forcing the wrong branch makes a rule on the
+default bus derive nothing at all.
+
+Amazon EC2 Auto Scaling's model is vendored now but its derivation is not
+written: its ARNs carry an AWS-assigned group id beside the friendly name the
+request supplies, so it needs the state-resolved treatment Amazon RDS's custom
+engine version has rather than a field lookup. Vendoring the model is the half
+that had to come first, since without one there is nothing to hold an alias
+table to.
+
 ## 2026-08-05 — Two more services, and an action the reference does not list
 
 Amazon ElastiCache and Amazon DynamoDB derive their resources now, taking the
