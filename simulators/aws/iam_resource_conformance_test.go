@@ -296,6 +296,21 @@ func TestIAMGlueFieldAliasesAreRealRequestMembers(t *testing.T) {
 // no request ever carries.
 func loadRequestFields(t *testing.T, service string, wireName func(member string, traits map[string]string) string) map[string]map[string]bool {
 	t.Helper()
+	fields, _ := loadRequestShapes(t, service, wireName)
+	return fields
+}
+
+// loadRequestShapes returns, per operation, the request fields the model
+// declares and — for a member that is a structure rather than a scalar — the
+// fields nested inside it.
+//
+// The nesting matters to the measurement, not just to the derivation. A probe
+// that sends a string for every member never puts an object where the API puts
+// one, so it cannot exercise a derivation that reads inside a structure, and an
+// operation whose resource is only named there would be counted as underived
+// while a real request derives it perfectly well.
+func loadRequestShapes(t *testing.T, service string, wireName func(member string, traits map[string]string) string) (map[string]map[string]bool, map[string]map[string][]string) {
+	t.Helper()
 	path := filepath.Join("..", "..", "specs", "cloud-api", "aws", service+".smithy.json.gz")
 	f, err := os.Open(path)
 	if err != nil {
@@ -308,41 +323,74 @@ func loadRequestFields(t *testing.T, service string, wireName func(member string
 	}
 	defer gz.Close()
 
+	type member struct {
+		Target string                     `json:"target"`
+		Traits map[string]json.RawMessage `json:"traits"`
+	}
 	var doc struct {
 		Shapes map[string]struct {
 			Type    string                  `json:"type"`
 			Input   struct{ Target string } `json:"input"`
-			Members map[string]struct {
-				Traits map[string]json.RawMessage `json:"traits"`
-			} `json:"members"`
+			Members map[string]member       `json:"members"`
 		} `json:"shapes"`
 	}
 	if err := json.NewDecoder(gz).Decode(&doc); err != nil {
 		t.Fatalf("decode %s: %v", path, err)
 	}
 
-	out := map[string]map[string]bool{}
+	fields := map[string]map[string]bool{}
+	nested := map[string]map[string][]string{}
 	for id, shape := range doc.Shapes {
 		if shape.Type != "operation" || shape.Input.Target == "" {
 			continue
 		}
-		fields := map[string]bool{}
-		for member, m := range doc.Shapes[shape.Input.Target].Members {
+		operation := id[strings.Index(id, "#")+1:]
+		named := map[string]bool{}
+		inner := map[string][]string{}
+		for name, m := range doc.Shapes[shape.Input.Target].Members {
 			traits := map[string]string{}
-			for name, raw := range m.Traits {
+			for trait, raw := range m.Traits {
 				var v string
 				if json.Unmarshal(raw, &v) == nil {
-					traits[name] = v
+					traits[trait] = v
 				}
 			}
-			fields[strings.ToLower(wireName(member, traits))] = true
+			wire := wireName(name, traits)
+			named[strings.ToLower(wire)] = true
+			if target, ok := doc.Shapes[m.Target]; ok && target.Type == "structure" {
+				for innerName := range target.Members {
+					inner[wire] = append(inner[wire], innerName)
+				}
+			}
 		}
-		out[id[strings.Index(id, "#")+1:]] = fields
+		fields[operation] = named
+		nested[operation] = inner
 	}
-	if len(out) == 0 {
+	if len(fields) == 0 {
 		t.Fatalf("%s declares no operations", path)
 	}
-	return out
+	return fields, nested
+}
+
+// iamProbeBody builds the request body a coverage probe sends: a placeholder for
+// every field the operation declares, and an object for a member the model says
+// is a structure, so a derivation that reads inside one is exercised rather
+// than counted as absent.
+func iamProbeBody(members map[string]bool, nested map[string][]string) map[string]any {
+	body := make(map[string]any, len(members))
+	for name := range members {
+		body[name] = "probe"
+	}
+	for member, inner := range nested {
+		object := make(map[string]any, len(inner))
+		for _, name := range inner {
+			object[name] = "probe"
+		}
+		if len(object) > 0 {
+			body[member] = object
+		}
+	}
+	return body
 }
 
 // The ec2Query protocol does not send a member under its member name: the
@@ -425,16 +473,12 @@ func iamEC2DerivesItsResource(operation string, params map[string]bool) bool {
 // carrying every member the model declares for the operation, the same way
 // iamEC2DerivesItsResource does: if nothing is derived from all of them, no
 // real request derives anything.
-func iamGlueDerivesItsResource(operation string, members map[string]bool) bool {
+func iamGlueDerivesItsResource(operation string, members map[string]bool, nested map[string][]string) bool {
 	types := iamActionResourceTypes["glue:"+operation]
 	if len(types) == 0 {
 		return false
 	}
-	body := make(map[string]string, len(members))
-	for name := range members {
-		body[name] = "probe"
-	}
-	encoded, err := json.Marshal(body)
+	encoded, err := json.Marshal(iamProbeBody(members, nested))
 	if err != nil {
 		return false
 	}
@@ -601,10 +645,10 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // published to map an id back to its type, and CancelImportTask's one
 // identifier could belong to either type it authorizes against.
 //
-// AWS Glue's 55: the registry and schema operations name their resource inside
-// a nested RegistryId/SchemaId member rather than at the top level, and the
-// data-quality operations name a result rather than the ruleset they authorize
-// against.
+// AWS Glue's 35: the data-quality operations name a result rather than the
+// ruleset they authorize against, and the rest create something that has no
+// identifier yet. Its registry and schema operations, which name their resource
+// inside a nested RegistryId/SchemaId member, derive now.
 //
 // AWS Systems Manager's 17: the tagging operations name a resource by a bare
 // identifier plus a separate ResourceType member rather than by ARN, the
@@ -619,7 +663,7 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // the gate does read — TestIAMResourceARNs_RDSTakesTheARNTheRequestNames pins
 // that. Counting them as derived here would mean filling a field with an ARN
 // because the metric wanted one, which is measuring the measurement.
-const iamDerivationCoverageFloor = 1320
+const iamDerivationCoverageFloor = 1340
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -652,7 +696,7 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	// services read hand-listed field spellings, for which membership is the
 	// only statement available.
 	ec2Parameters := loadEC2RequestParameters(t)
-	glueMembers := loadGlueRequestMembers(t)
+	glueMembers, glueNested := loadRequestShapes(t, "glue", memberWireName)
 	rdsParameters := loadRDSRequestParameters(t)
 	ssmMembers := loadSSMRequestMembers(t)
 	elastiCacheParameters := loadElastiCacheRequestParameters(t)
@@ -676,7 +720,7 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 		case "ec2":
 			derived = iamEC2DerivesItsResource(o.name, ec2Parameters[o.name])
 		case "glue":
-			derived = iamGlueDerivesItsResource(o.name, glueMembers[o.name])
+			derived = iamGlueDerivesItsResource(o.name, glueMembers[o.name], glueNested[o.name])
 		case "rds":
 			derived = iamRDSDerivesItsResource(o.name, rdsParameters[o.name])
 		case "ssm":

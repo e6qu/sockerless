@@ -717,28 +717,59 @@ func iamJSONRequestFields(r *http.Request) map[string][]string {
 		return nil
 	}
 	fields := make(map[string][]string, len(raw))
+	nested := map[string][]string{}
 	for name, value := range raw {
-		var one string
-		if json.Unmarshal(value, &one) == nil {
-			if one != "" {
-				fields[strings.ToLower(name)] = []string{one}
-			}
+		if values, ok := iamJSONStrings(value); ok {
+			fields[strings.ToLower(name)] = values
 			continue
 		}
-		var many []string
-		if json.Unmarshal(value, &many) == nil {
-			var kept []string
-			for _, v := range many {
-				if v != "" {
-					kept = append(kept, v)
-				}
-			}
-			if len(kept) > 0 {
-				fields[strings.ToLower(name)] = kept
+		// One level down. An API may group an identifier into a structure of
+		// its own rather than name it at the top level — AWS Glue addresses a
+		// registry as RegistryId{RegistryName} and a schema as
+		// SchemaId{SchemaName, RegistryName} — and the member inside is the
+		// resource's name however it is wrapped.
+		var inner map[string]json.RawMessage
+		if json.Unmarshal(value, &inner) != nil {
+			continue
+		}
+		for innerName, innerValue := range inner {
+			if values, ok := iamJSONStrings(innerValue); ok {
+				nested[strings.ToLower(innerName)] = values
 			}
 		}
 	}
+	// A top-level member wins over one found inside a structure: it is the more
+	// direct statement of what the request names, and letting a nested member
+	// shadow it would derive from whichever the JSON happened to carry.
+	for name, values := range nested {
+		if _, taken := fields[name]; !taken {
+			fields[name] = values
+		}
+	}
 	return fields
+}
+
+// iamJSONStrings reads a JSON value that is a non-empty string, or a list of
+// them, which is the shape an identifier arrives in.
+func iamJSONStrings(value json.RawMessage) ([]string, bool) {
+	var one string
+	if json.Unmarshal(value, &one) == nil {
+		if one == "" {
+			return nil, false
+		}
+		return []string{one}, true
+	}
+	var many []string
+	if json.Unmarshal(value, &many) == nil {
+		var kept []string
+		for _, v := range many {
+			if v != "" {
+				kept = append(kept, v)
+			}
+		}
+		return kept, len(kept) > 0
+	}
+	return nil, false
 }
 
 // ===== Amazon Relational Database Service =====

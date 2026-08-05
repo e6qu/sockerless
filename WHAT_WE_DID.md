@@ -39,6 +39,40 @@ had no reason to do, and it passed with the retry removed. The single attempt is
 now injectable and the retry driven directly, so removing the retry fails the
 test.
 
+## 2026-08-05 — An identifier inside a structure, and a probe that could not see it
+
+AWS Glue was the largest single remainder, and its shape was known: the registry
+and schema operations name their resource inside a structure of its own —
+`RegistryId{RegistryName}`, `SchemaId{SchemaName}` — rather than at the top
+level, and the JSON reader did not descend into one.
+
+It does now, one level, and a member found at the top level still wins over one
+found inside a structure: the top level is the more direct statement of what the
+request names, and letting a nested member shadow it would derive from whichever
+the JSON happened to carry.
+
+The measurement had to be fixed alongside it, and that turned out to be the more
+interesting half. The coverage probe sends a placeholder for every member the
+model declares — and it sent a *string* for every one of them, including members
+the model says are structures. So it never put an object where the API puts one,
+could not exercise a derivation that reads inside a structure, and would have
+counted these operations as underived while a real request derived them
+perfectly well. The probe now builds an object for a structure member.
+
+Those two changes could have flattered each other, so they were separated:
+with the honest probe and the descent removed, AWS Glue is back to 55 and the
+total to 1,320. The whole gain is the derivation reading nested identifiers, not
+the metric loosening. Coverage is 1,340 of 1,973.
+
+Two loose ends of the console's removed `/sim/v1` surface went with it (GitHub
+issue #879). The hooks and the Go routes were already gone, but
+`ui/packages/core/README.md` still advertised `useSimHealth` and `useSimSummary`
+— the same trap the issue describes, relocated to the documentation — and the
+Azure spec validator still carried a `/sim/v1/` skip prefix, along with the
+conformance test's allowance for it, that no route could match. GitHub issue
+#889 needed nothing: `CreateSecret` was fixed when the branch that reported it
+was consolidated, and its regression passes.
+
 ## 2026-08-05 — AWS CloudTrail, Amazon EventBridge, and one resource published twice
 
 Coverage reaches 1,320 of 1,973 served operations across thirteen services.

@@ -21,7 +21,6 @@ names, semantic elements, or application-local authorization checks.
 
 ### Hooks
 - **API** — `ApiClientProvider`, `useApiClient`, `useHealth`, `useStatus`, `useContainers`, `useMetrics`, `useResources`, `useCheck`, `useInfo` (TanStack Query wrappers; auto-poll 5–10s).
-- **Simulator** — `useSimHealth`, `useSimSummary`.
 - **Theme** — `useTheme` (localStorage + prefers-color-scheme + dark default).
 
 ### Styles

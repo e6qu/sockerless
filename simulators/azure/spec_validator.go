@@ -24,7 +24,7 @@ import (
 // member-by-member against the operation's response schema: members the
 // spec doesn't define and primitive type mismatches are violations.
 // Exchanges with no matching swagger path (allowlisted non-spec
-// surfaces, /sim/v1/, Graph, Cosmos SQL, ...), error responses
+// surfaces, Graph, Cosmos SQL, ...), error responses
 // (status >= 400), empty bodies, and non-JSON bodies are not validated
 // — the static conformance gate owns the route-table surface.
 
@@ -659,7 +659,6 @@ func (idx *azureSpecIndex) match(method, reqPath string) []*azureSpecOp {
 // /metadata/identity/ is deliberately NOT here: the vendored IMDS
 // swagger describes it, so it validates like any other surface.
 var azureNonSpecRequestPrefixes = []string{
-	"/sim/v1/",            // simulator control + dashboard surface (sockerless-specific)
 	"/dbs",                // Cosmos DB SQL data plane (documented REST API, no upstream swagger)
 	"/v1.0/",              // Microsoft Graph v1.0 surface (spec lives in msgraph-metadata)
 	"/api/function",       // Functions host invoke endpoint (body is workload output)
