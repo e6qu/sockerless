@@ -229,11 +229,27 @@ func assertAliasesAreRealFields(t *testing.T, service string, aliases map[string
 	}
 
 	var problems []string
-	for variable, spellings := range aliases {
-		resourceTypes := typesByVariable[variable]
+	for key, spellings := range aliases {
+		// An entry may be keyed "<resourceType>.<variable>" to answer for one
+		// type alone, which is how AWS Systems Manager's four ${ResourceId}
+		// types are told apart.
+		resourceTypes := typesByVariable[key]
+		if scopedType, scopedVariable, scoped := strings.Cut(key, "."); scoped {
+			resourceTypes = nil
+			for _, t := range typesByVariable[scopedVariable] {
+				if t == scopedType {
+					resourceTypes = []string{t}
+				}
+			}
+			if resourceTypes == nil {
+				problems = append(problems, fmt.Sprintf(
+					"%s: %s does not identify %s by that variable — the alias is dead", key, service, scopedType))
+				continue
+			}
+		}
 		if len(resourceTypes) == 0 {
 			problems = append(problems, fmt.Sprintf(
-				"%s: no %s resource type is identified by this variable — the alias is dead", variable, service))
+				"%s: no %s resource type is identified by this variable — the alias is dead", key, service))
 			continue
 		}
 		for _, alias := range spellings {
@@ -251,7 +267,7 @@ func assertAliasesAreRealFields(t *testing.T, service string, aliases map[string
 			if !used {
 				problems = append(problems, fmt.Sprintf(
 					"%s -> %s: no %s operation authorizing against %s takes a %s field",
-					variable, alias, service, strings.Join(resourceTypes, "/"), alias))
+					key, alias, service, strings.Join(resourceTypes, "/"), alias))
 			}
 		}
 	}
@@ -357,6 +373,10 @@ func loadRDSRequestParameters(t *testing.T) map[string]map[string]bool {
 	return loadRequestFields(t, "rds", memberWireName)
 }
 
+func loadSSMRequestMembers(t *testing.T) map[string]map[string]bool {
+	return loadRequestFields(t, "ssm", memberWireName)
+}
+
 // iamEC2DerivesItsResource reports whether the derivation produces an ARN for
 // an operation — not whether the table knows which type it would build. It runs
 // the production path against a request carrying every parameter the model
@@ -434,6 +454,29 @@ func TestIAMRDSFieldAliasesAreRealRequestParameters(t *testing.T) {
 	assertAliasesAreRealFields(t, "rds", iamRDSFieldAliases, loadRDSRequestParameters(t))
 }
 
+func TestIAMSSMFieldAliasesAreRealRequestMembers(t *testing.T) {
+	assertAliasesAreRealFields(t, "ssm", iamSSMFieldAliases, loadSSMRequestMembers(t))
+}
+
+// iamSSMDerivesItsResource runs the production derivation against a request
+// carrying every member the model declares for the operation.
+func iamSSMDerivesItsResource(operation string, members map[string]bool) bool {
+	if len(iamActionResourceTypes["ssm:"+operation]) == 0 {
+		return false
+	}
+	body := make(map[string]string, len(members))
+	for name := range members {
+		body[name] = "probe"
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	return len(iamDerivedResourceARNs(r, "ssm", operation, "us-east-1", "123456789012")) > 0
+}
+
 // iamHandwrittenDerivationServices are the services whose target resource is
 // read by a per-service case in iamResourceARNsForRequest rather than from the
 // generated resource-type table. They predate the table and are listed here so
@@ -466,6 +509,11 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // data-quality operations name a result rather than the ruleset they authorize
 // against.
 //
+// AWS Systems Manager's 17: the tagging operations name a resource by a bare
+// identifier plus a separate ResourceType member rather than by ARN, the
+// creates have no identifier yet, and the remainder are scoped by a path or an
+// operating system rather than by a resource.
+//
 // Amazon RDS's 27: the copy operations name a source and a target that does not
 // exist yet, and the custom-engine-version operations need an identifier the
 // request does not carry. The tagging and maintenance operations are counted
@@ -474,7 +522,7 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // the gate does read — TestIAMResourceARNs_RDSTakesTheARNTheRequestNames pins
 // that. Counting them as derived here would mean filling a field with an ARN
 // because the metric wanted one, which is measuring the measurement.
-const iamDerivationCoverageFloor = 1086
+const iamDerivationCoverageFloor = 1170
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -509,6 +557,7 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	ec2Parameters := loadEC2RequestParameters(t)
 	glueMembers := loadGlueRequestMembers(t)
 	rdsParameters := loadRDSRequestParameters(t)
+	ssmMembers := loadSSMRequestMembers(t)
 
 	covered := 0
 	missingByService := map[string][]string{}
@@ -529,6 +578,8 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamGlueDerivesItsResource(o.name, glueMembers[o.name])
 		case "rds":
 			derived = iamRDSDerivesItsResource(o.name, rdsParameters[o.name])
+		case "ssm":
+			derived = iamSSMDerivesItsResource(o.name, ssmMembers[o.name])
 		}
 		if derived {
 			covered++

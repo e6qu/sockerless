@@ -678,3 +678,88 @@ func TestIAMEnforce_RDSInstanceScopedGrant(t *testing.T) {
 		})
 	}
 }
+
+// ===== AWS Systems Manager =====
+
+func iamSSMRequest(operation, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	r.Header.Set("X-Amz-Target", "AmazonSSM."+operation)
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/ssm/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// A parameter is named "/db/password" in every request and its ARN is
+// "…:parameter/db/password". Keeping the slash would build an ARN with an empty
+// first path segment, which is what the variable AWS publishes it under —
+// ${ParameterNameWithoutLeadingSlash} — is telling the reader.
+func TestIAMResourceARNs_SSMParameterLosesItsLeadingSlash(t *testing.T) {
+	assertDerivedARNs(t,
+		iamSSMRequest("GetParameter", `{"Name":"/db/password"}`),
+		"ssm:GetParameter", "arn:aws:ssm:us-east-1:123456789012:parameter/db/password")
+}
+
+// A parameter without a leading slash is a top-level parameter and keeps its
+// name exactly.
+func TestIAMResourceARNs_SSMTopLevelParameterKeepsItsName(t *testing.T) {
+	assertDerivedARNs(t,
+		iamSSMRequest("GetParameter", `{"Name":"region"}`),
+		"ssm:GetParameter", "arn:aws:ssm:us-east-1:123456789012:parameter/region")
+}
+
+// Four AWS Systems Manager resource types are published under one variable
+// name, ${ResourceId}, and the request names each of them differently. Keying
+// their aliases by resource type is what stops them resolving to one another's
+// member and cancelling out as an ambiguity.
+func TestIAMResourceARNs_SSMTellsItsResourceIdTypesApart(t *testing.T) {
+	const p = "arn:aws:ssm:us-east-1:123456789012:"
+	for _, tc := range []struct{ name, operation, body, want string }{
+		{"a maintenance window", "GetMaintenanceWindow", `{"WindowId":"mw-0abc"}`, p + "maintenancewindow/mw-0abc"},
+		{"an OpsItem", "GetOpsItem", `{"OpsItemId":"oi-0abc"}`, p + "opsitem/oi-0abc"},
+		{"a service setting", "GetServiceSetting", `{"SettingId":"/ssm/parameter-store/high-throughput-enabled"}`,
+			p + "servicesetting//ssm/parameter-store/high-throughput-enabled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertDerivedARNs(t, iamSSMRequest(tc.operation, tc.body), "ssm:"+tc.operation, tc.want)
+		})
+	}
+}
+
+// A document's ${DocumentName} arrives as Name, which the prefix drop resolves
+// without a per-resource case.
+func TestIAMResourceARNs_SSMDocumentIsNamedByName(t *testing.T) {
+	assertDerivedARNs(t,
+		iamSSMRequest("DeleteDocument", `{"Name":"AWS-RunShellScript"}`),
+		"ssm:DeleteDocument", "arn:aws:ssm:us-east-1:123456789012:document/AWS-RunShellScript")
+}
+
+// The whole point, end to end: a policy scoped to one parameter prefix allows
+// the parameters under it and denies the rest.
+func TestIAMEnforce_SSMParameterScopedGrant(t *testing.T) {
+	doc := mustDoc(t, `{"Version":"2012-10-17","Statement":[{
+		"Effect":"Allow",
+		"Action":["ssm:GetParameter","ssm:GetParameters"],
+		"Resource":"arn:aws:ssm:us-east-1:123456789012:parameter/app/*"}]}`)
+	for _, tc := range []struct{ name, parameter, want string }{
+		{"a parameter under the granted prefix", "/app/db-password", "allowed"},
+		{"a nested parameter under the granted prefix", "/app/tier/secret", "allowed"},
+		{"a parameter outside the prefix", "/other/db-password", "implicitDeny"},
+		{"the prefix is not a bare substring match", "/app-staging/db-password", "implicitDeny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := iamSSMRequest("GetParameter", `{"Name":"`+tc.parameter+`"}`)
+			action, ok := iamActionForRequest(r)
+			if !ok {
+				t.Fatal("request was not classified as an IAM action")
+			}
+			resources := iamResourceARNsForRequest(r, action)
+			if len(resources) != 1 {
+				t.Fatalf("derived %v, want exactly one parameter ARN", resources)
+			}
+			got, _ := iamEvalDecision([]iamPolicyDoc{doc}, action, resources[0], nil)
+			if got != tc.want {
+				t.Fatalf("%s on %s (resource %s) = %s, want %s", action, tc.parameter, resources[0], got, tc.want)
+			}
+		})
+	}
+}
