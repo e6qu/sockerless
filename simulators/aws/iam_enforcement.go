@@ -382,13 +382,6 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 			}
 			return one(arn("lambda", "function:"+name))
 		}
-	case "kms":
-		if id := iamJSONBodyField(r, "KeyId"); id != "" {
-			if strings.HasPrefix(id, "arn:") {
-				return one(id)
-			}
-			return one(arn("kms", "key/"+id))
-		}
 	case "secretsmanager":
 		if id := iamJSONBodyField(r, "SecretId"); id != "" {
 			if strings.HasPrefix(id, "arn:") {

@@ -47,6 +47,30 @@ needs no code when the derivation is driven by what AWS publishes. The
 assertion that the reference still lists neither `TransactWriteItems` nor
 `TransactGetItems` was checked against the new document and holds.
 
+## 2026-08-05 — AWS KMS, and a prefix carried once
+
+AWS KMS derives its two resource types and gives up its per-service case, taking
+the gate to 1,423 of 1,973 served operations across fifteen services.
+
+A key needed nothing: it is named by KeyId, bare or already an ARN, and the
+shared derivation passes an ARN through as it stands.
+
+An alias needed one thing said out loud. Its ARN is `alias/${Alias}`, and the
+API's AliasName already carries that prefix — an alias is created and deleted as
+"alias/my-key", not "my-key". Filling the published format with the name
+unchanged would have produced `alias/alias/my-key`, which names nothing, and the
+gate would have denied every policy written against the real alias while looking
+like it was deriving properly. The prefix is stripped once so the ARN carries it
+once, and a name given without it still yields the same single ARN, so the two
+spellings a caller might use do not become two resources.
+
+That hazard is why AWS Organizations is not in this change despite being the
+next by size. Its ARNs embed literal prefixes the same way —
+`policy/o-${OrganizationId}/${PolicyType}/p-${PolicyId}` — where the API's
+PolicyId already carries the `p-`, and the organization id is not in the request
+at all. It needs the prefix handling and state resolution together, which is its
+own pass rather than a tail on this one.
+
 ## 2026-08-05 — Amazon EC2 Auto Scaling, and an ARN that restated a name
 
 Both Amazon EC2 Auto Scaling ARNs carry two identifiers — one AWS assigns and
