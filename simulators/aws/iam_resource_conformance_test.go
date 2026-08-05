@@ -437,6 +437,10 @@ func loadCloudTrailRequestMembers(t *testing.T) map[string]map[string]bool {
 	return loadRequestFields(t, "cloudtrail", memberWireName)
 }
 
+func loadKMSRequestMembers(t *testing.T) map[string]map[string]bool {
+	return loadRequestFields(t, "kms", memberWireName)
+}
+
 // Amazon EventBridge's IAM service prefix is "events" while its vendored model
 // carries the service's own name, so the two are named separately here.
 func loadEventBridgeRequestMembers(t *testing.T) map[string]map[string]bool {
@@ -518,6 +522,29 @@ func TestIAMRDSFieldAliasesAreRealRequestParameters(t *testing.T) {
 
 func TestIAMCloudTrailFieldAliasesAreRealRequestMembers(t *testing.T) {
 	assertAliasesAreRealFields(t, "cloudtrail", iamCloudTrailFieldAliases, loadCloudTrailRequestMembers(t))
+}
+
+func TestIAMKMSFieldAliasesAreRealRequestMembers(t *testing.T) {
+	assertAliasesAreRealFields(t, "kms", iamKMSFieldAliases, loadKMSRequestMembers(t))
+}
+
+// iamKMSDerivesItsResource runs the production derivation against a request
+// carrying every member the model declares for the operation.
+func iamKMSDerivesItsResource(operation string, members map[string]bool) bool {
+	if len(iamActionResourceTypes["kms:"+operation]) == 0 {
+		return false
+	}
+	body := make(map[string]string, len(members))
+	for name := range members {
+		body[name] = "probe"
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	return len(iamDerivedResourceARNs(r, "kms", operation, "us-east-1", "123456789012")) > 0
 }
 
 // iamAutoScalingDerivesItsResource runs the production derivation against a
@@ -653,7 +680,7 @@ func iamSSMDerivesItsResource(operation string, members map[string]bool) bool {
 // field it reads), which is precisely why the table-driven form replaced it.
 var iamHandwrittenDerivationServices = map[string]bool{
 	"sns": true, "sqs": true, "lambda": true,
-	"kms": true, "secretsmanager": true, "states": true, "kinesis": true, "ecr": true,
+	"secretsmanager": true, "states": true, "kinesis": true, "ecr": true,
 }
 
 // iamDerivationCoverageFloor is the number of served operations that both
@@ -690,7 +717,7 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // the gate does read — TestIAMResourceARNs_RDSTakesTheARNTheRequestNames pins
 // that. Counting them as derived here would mean filling a field with an ARN
 // because the metric wanted one, which is measuring the measurement.
-const iamDerivationCoverageFloor = 1381
+const iamDerivationCoverageFloor = 1423
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -730,6 +757,7 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	dynamoDBMembers := loadDynamoDBRequestMembers(t)
 	cloudTrailMembers := loadCloudTrailRequestMembers(t)
 	autoScalingParameters := loadRequestFields(t, "auto-scaling", memberWireName)
+	kmsMembers := loadKMSRequestMembers(t)
 	eventBridgeMembers := loadEventBridgeRequestMembers(t)
 
 	covered := 0
@@ -761,6 +789,8 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamCloudTrailDerivesItsResource(o.name, cloudTrailMembers[o.name])
 		case "autoscaling":
 			derived = iamAutoScalingDerivesItsResource(o.name, autoScalingParameters[o.name])
+		case "kms":
+			derived = iamKMSDerivesItsResource(o.name, kmsMembers[o.name])
 		case "events":
 			derived = iamEventBridgeDerivesItsResource(o.name, eventBridgeMembers[o.name])
 		}

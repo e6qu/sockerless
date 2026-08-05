@@ -64,6 +64,8 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamEventBridgeResourceARNs(r, types, region, account)
 	case "glue":
 		return iamGlueResourceARNs(r, types, region, account)
+	case "kms":
+		return iamKMSResourceARNs(r, types, region, account)
 	case "logs":
 		return iamLogsResourceARNs(r, types, arn)
 	case "rds":
@@ -1036,6 +1038,40 @@ func iamECSTaskDefinitionIDs(r *http.Request) []string {
 	next := ecsRevisions[family] + 1
 	ecsRevisionMu.Unlock()
 	return []string{family + ":" + strconv.Itoa(next)}
+}
+
+// ===== AWS Key Management Service =====
+
+// iamKMSResourceARNs derives the ARNs an AWS KMS request names. A key is named
+// by KeyId, which may already be an ARN and is passed through when it is.
+//
+// An alias needs one thing said explicitly. Its ARN is "alias/${Alias}", and the
+// API's AliasName already carries that prefix — an alias is created and deleted
+// as "alias/my-key", not "my-key" — so filling the format with it unchanged
+// would produce "alias/alias/my-key", which names nothing. The prefix is
+// stripped once so the ARN carries it once.
+func iamKMSResourceARNs(r *http.Request, types []string, region, account string) []string {
+	fields := iamJSONRequestFields(r)
+	return iamTableDrivenARNs("kms", types, region, account, iamKMSFieldAliases, func(field string) []string {
+		values := fields[strings.ToLower(field)]
+		if !strings.EqualFold(field, "AliasName") {
+			return values
+		}
+		stripped := make([]string, 0, len(values))
+		for _, v := range values {
+			stripped = append(stripped, strings.TrimPrefix(v, "alias/"))
+		}
+		return stripped
+	})
+}
+
+// iamKMSFieldAliases maps an ARN format's identifier variable to the request
+// member AWS KMS spells it as.
+//
+// TestIAMKMSFieldAliasesAreRealRequestMembers holds the entry to a member the
+// vendored model declares on an operation authorizing against that type.
+var iamKMSFieldAliases = map[string][]string{
+	"Alias": {"AliasName"},
 }
 
 // ===== Amazon CloudWatch Logs =====

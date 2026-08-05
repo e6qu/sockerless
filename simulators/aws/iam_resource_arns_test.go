@@ -1100,3 +1100,71 @@ func TestIAMResourceARNs_AutoScalingARNsTakeTheirPublishedShape(t *testing.T) {
 		t.Error("two launch configurations of the same name got the same assigned identifier")
 	}
 }
+
+// ===== AWS Key Management Service =====
+
+func iamKMSRequest(operation, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	r.Header.Set("X-Amz-Target", "TrentService."+operation)
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/kms/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// An AWS KMS alias is created and deleted as "alias/my-key" — the prefix is
+// part of the name a caller passes — and its ARN is
+// "…:alias/my-key". Filling the published format with the name unchanged would
+// produce "alias/alias/my-key", which names nothing, so the prefix is carried
+// once rather than twice.
+func TestIAMResourceARNs_KMSAliasCarriesItsPrefixOnce(t *testing.T) {
+	const want = "arn:aws:kms:us-east-1:123456789012:alias/orders"
+	assertDerivedARNs(t,
+		iamKMSRequest("DeleteAlias", `{"AliasName":"alias/orders"}`),
+		"kms:DeleteAlias", want)
+
+	// A name given without the prefix still yields one ARN with it, so the two
+	// spellings a caller might use do not produce two different resources.
+	assertDerivedARNs(t,
+		iamKMSRequest("DeleteAlias", `{"AliasName":"orders"}`),
+		"kms:DeleteAlias", want)
+}
+
+// A key is named by KeyId, which may be a bare identifier or an ARN already.
+func TestIAMResourceARNs_KMSKeyTakesEitherSpelling(t *testing.T) {
+	const arn = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+	assertDerivedARNs(t,
+		iamKMSRequest("DescribeKey", `{"KeyId":"1234abcd-12ab-34cd-56ef-1234567890ab"}`),
+		"kms:DescribeKey", arn)
+	assertDerivedARNs(t,
+		iamKMSRequest("DescribeKey", `{"KeyId":"`+arn+`"}`),
+		"kms:DescribeKey", arn)
+}
+
+// The whole point, end to end: a policy scoped to one key allows that key and
+// denies another.
+func TestIAMEnforce_KMSKeyScopedGrant(t *testing.T) {
+	const granted = "arn:aws:kms:us-east-1:123456789012:key/granted-key"
+	doc := mustDoc(t, `{"Version":"2012-10-17","Statement":[{
+		"Effect":"Allow","Action":["kms:DescribeKey","kms:Decrypt"],
+		"Resource":"`+granted+`"}]}`)
+	for _, tc := range []struct{ name, key, want string }{
+		{"the granted key", "granted-key", "allowed"},
+		{"any other key", "other-key", "implicitDeny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := iamKMSRequest("DescribeKey", `{"KeyId":"`+tc.key+`"}`)
+			action, ok := iamActionForRequest(r)
+			if !ok {
+				t.Fatal("request was not classified as an IAM action")
+			}
+			resources := iamResourceARNsForRequest(r, action)
+			if len(resources) != 1 {
+				t.Fatalf("derived %v, want exactly one key ARN", resources)
+			}
+			got, _ := iamEvalDecision([]iamPolicyDoc{doc}, action, resources[0], nil)
+			if got != tc.want {
+				t.Fatalf("%s on %s (resource %s) = %s, want %s", action, tc.key, resources[0], got, tc.want)
+			}
+		})
+	}
+}
