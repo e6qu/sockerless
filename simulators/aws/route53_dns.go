@@ -25,21 +25,67 @@ var (
 
 func startRoute53DNSServer() {
 	r53DNSOnce.Do(func() {
-		addr := ":" + envOr("SIM_DNS_PORT", "5353")
-		udpConn, err := net.ListenPacket("udp", addr)
-		if err != nil {
-			panic("route53 dns: bind configured UDP endpoint " + addr + ": " + err.Error())
-		}
+		udpConn, tcpLn := bindRoute53DNS(envOr("SIM_DNS_PORT", "5353"))
 		r53DNSAddr = udpConn.LocalAddr().String()
-		tcpLn, err := net.Listen("tcp", r53DNSAddr)
-		if err != nil {
-			_ = udpConn.Close()
-			panic("route53 dns: bind configured TCP endpoint " + r53DNSAddr + ": " + err.Error())
-		}
 		log.Printf("route53 dns: serving on UDP and TCP %s", r53DNSAddr)
 		go serveRoute53DNSUDP(udpConn)
 		go serveRoute53DNSTCP(tcpLn)
 	})
+}
+
+// r53DNSEphemeralAttempts bounds the search for a port free on both protocols.
+// Twenty is far past what contention explains and short of hanging: if that
+// many kernel-chosen ports are all taken on TCP, the host has a problem the
+// simulator should report rather than keep asking about.
+const r53DNSEphemeralAttempts = 20
+
+// bindRoute53DNS acquires the same port on UDP and TCP, which is what a DNS
+// server needs: a resolver that gets a truncated UDP answer retries the query
+// over TCP on the same port.
+//
+// Asking the kernel for a free port ("0") asks it about *one* protocol. The two
+// port spaces are independent, so a UDP port it hands out says nothing about
+// whether that TCP port is free, and on a busy host it often is not — which
+// crashed the simulator at startup and left everything waiting on a server that
+// never came up. An ephemeral port is therefore retried until both protocols
+// answer to the same number; a port the operator configured is not, because
+// then the address is the request and failing to honour it is a real error.
+func bindRoute53DNS(port string) (net.PacketConn, net.Listener) {
+	ephemeral := port == "0"
+	attempts := 1
+	if ephemeral {
+		attempts = r53DNSEphemeralAttempts
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		udpConn, tcpLn, err := r53DNSBindPair(port)
+		if err == nil {
+			return udpConn, tcpLn
+		}
+		if !ephemeral {
+			panic("route53 dns: bind configured endpoint :" + port + ": " + err.Error())
+		}
+		lastErr = err
+	}
+	panic("route53 dns: no kernel-chosen port was free on both UDP and TCP after " +
+		strconv.Itoa(attempts) + " attempts: " + lastErr.Error())
+}
+
+// r53DNSBindPair takes one port on both protocols, or neither. It is a variable
+// so a test can drive the retry above deterministically: whether the kernel
+// hands out a port whose TCP twin is taken is not something a test can arrange
+// by holding ports and hoping.
+var r53DNSBindPair = func(port string) (net.PacketConn, net.Listener, error) {
+	udpConn, err := net.ListenPacket("udp", ":"+port)
+	if err != nil {
+		return nil, nil, err
+	}
+	tcpLn, err := net.Listen("tcp", udpConn.LocalAddr().String())
+	if err != nil {
+		_ = udpConn.Close()
+		return nil, nil, err
+	}
+	return udpConn, tcpLn, nil
 }
 
 func envOr(key, def string) string {

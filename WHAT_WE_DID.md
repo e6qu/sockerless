@@ -18,6 +18,27 @@ an action whose resource the gate cannot read is authorized against `"*"`, which
 matches only a policy whose Resource is itself `"*"`, so the scoped grant is the
 one that fails.
 
+A crash found on the way, and it was not the branch's doing but the branch's
+CI run is what surfaced it. The simulator could panic at startup with
+`route53 dns: bind ... address already in use`, taking every test in the shard
+with it — they waited on a server that never came up.
+
+Route 53 answers DNS on UDP and TCP, and a resolver that gets a truncated UDP
+answer retries the query over TCP on the same port, so the server needs one port
+on both. Asking the kernel for a free port asks it about one protocol: the two
+spaces are independent, so the UDP port it hands out says nothing about whether
+that TCP port is free, and on a busy host it often is not. An ephemeral port is
+retried now until both protocols answer to the same number, bounded so a host
+where none is ever free is reported rather than asked forever; a port the
+operator configured still fails on the first attempt, because then the address
+is the request and serving DNS somewhere else would be worse than not starting.
+
+The first test written for it was worthless and the negative control said so: it
+held a TCP port and hoped the kernel would hand out that same UDP port, which it
+had no reason to do, and it passed with the retry removed. The single attempt is
+now injectable and the retry driven directly, so removing the retry fails the
+test.
+
 ## 2026-08-05 — AWS CloudTrail, Amazon EventBridge, and one resource published twice
 
 Coverage reaches 1,320 of 1,973 served operations across thirteen services.
