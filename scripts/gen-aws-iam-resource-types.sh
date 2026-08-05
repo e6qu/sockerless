@@ -23,7 +23,7 @@ SRC_DIR="$ROOT/specs/cloud-api/aws/service-reference"
 DEST="$ROOT/simulators/aws/iam_resource_types_gen.go"
 
 # The IAM service prefixes iamResourceARNsForRequest can build an ARN for.
-SERVICES=(codebuild dynamodb ec2 ecs elasticache glue iam logs rds ssm wafv2)
+SERVICES=(cloudtrail codebuild dynamodb ec2 ecs elasticache events glue iam logs rds ssm wafv2)
 
 for service in "${SERVICES[@]}"; do
   if [ ! -f "$SRC_DIR/${service}.servicereference.json.gz" ]; then

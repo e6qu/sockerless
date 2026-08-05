@@ -920,3 +920,67 @@ func TestIAMResourceARNs_DynamoDBTransactionNamesEveryTableItTouches(t *testing.
 			{"Update":{"TableName":"customers","Key":{}}}]}`),
 		"dynamodb:TransactWriteItems", p+"customers", p+"orders")
 }
+
+// ===== AWS CloudTrail and Amazon EventBridge =====
+
+func iamCloudTrailRequest(operation, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	r.Header.Set("X-Amz-Target", "CloudTrail_20131101."+operation)
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/cloudtrail/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// AWS CloudTrail publishes three of its four identifiers under names the API
+// does not use. A trail is the exception, and the prefix drop resolves it.
+func TestIAMResourceARNs_CloudTrailResolvesItsRenamings(t *testing.T) {
+	const p = "arn:aws:cloudtrail:us-east-1:123456789012:"
+	for _, tc := range []struct{ name, operation, body, want string }{
+		{"a trail arrives as Name", "DeleteTrail", `{"Name":"org-audit"}`, p + "trail/org-audit"},
+		{"a channel is addressed as Channel", "DeleteChannel", `{"Channel":"ch-0abc"}`, p + "channel/ch-0abc"},
+		{"an event data store as EventDataStore", "DeleteEventDataStore", `{"EventDataStore":"eds-0abc"}`, p + "eventdatastore/eds-0abc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertDerivedARNs(t, iamCloudTrailRequest(tc.operation, tc.body), "cloudtrail:"+tc.operation, tc.want)
+		})
+	}
+}
+
+func iamEventBridgeRequest(operation, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	r.Header.Set("X-Amz-Target", "AWSEvents."+operation)
+	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLECREDENTIAL/20260801/us-east-1/events/aws4_request, SignedHeaders=host, Signature=00")
+	return r
+}
+
+// Amazon EventBridge publishes a rule twice — once on the default event bus and
+// once on a custom one — and both end in the same variable, so both would claim
+// the same request member and the ambiguity rule would discard the pair. Which
+// applies is decidable from the request rather than from spelling: naming a
+// custom bus means the nested ARN, naming none or naming "default" means the
+// flat one. DeleteRule authorizes against the rule alone, so the bus it names
+// steers the ARN's shape without becoming a resource of its own.
+func TestIAMResourceARNs_EventBridgeTellsApartTheTwoRuleARNs(t *testing.T) {
+	const p = "arn:aws:events:us-east-1:123456789012:"
+	t.Run("no event bus named is the default bus", func(t *testing.T) {
+		assertDerivedARNs(t, iamEventBridgeRequest("DeleteRule", `{"Name":"nightly"}`),
+			"events:DeleteRule", p+"rule/nightly")
+	})
+	t.Run("the default bus named explicitly is still the flat ARN", func(t *testing.T) {
+		assertDerivedARNs(t, iamEventBridgeRequest("DeleteRule", `{"Name":"nightly","EventBusName":"default"}`),
+			"events:DeleteRule", p+"rule/nightly")
+	})
+	t.Run("a custom bus nests the rule under it", func(t *testing.T) {
+		assertDerivedARNs(t, iamEventBridgeRequest("DeleteRule", `{"Name":"nightly","EventBusName":"orders"}`),
+			"events:DeleteRule", p+"rule/orders/nightly")
+	})
+}
+
+// A connection's ${ConnectionName} arrives as Name, which the prefix drop
+// resolves without a per-resource case.
+func TestIAMResourceARNs_EventBridgeResolvesTheAbbreviatedIdentifier(t *testing.T) {
+	assertDerivedARNs(t,
+		iamEventBridgeRequest("DeleteConnection", `{"Name":"github"}`),
+		"events:DeleteConnection", "arn:aws:events:us-east-1:123456789012:connection/github")
+}

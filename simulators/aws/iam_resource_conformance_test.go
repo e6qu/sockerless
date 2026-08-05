@@ -385,6 +385,16 @@ func loadDynamoDBRequestMembers(t *testing.T) map[string]map[string]bool {
 	return loadRequestFields(t, "dynamodb", memberWireName)
 }
 
+func loadCloudTrailRequestMembers(t *testing.T) map[string]map[string]bool {
+	return loadRequestFields(t, "cloudtrail", memberWireName)
+}
+
+// Amazon EventBridge's IAM service prefix is "events" while its vendored model
+// carries the service's own name, so the two are named separately here.
+func loadEventBridgeRequestMembers(t *testing.T) map[string]map[string]bool {
+	return loadRequestFields(t, "eventbridge", memberWireName)
+}
+
 // iamEC2DerivesItsResource reports whether the derivation produces an ARN for
 // an operation — not whether the table knows which type it would build. It runs
 // the production path against a request carrying every parameter the model
@@ -460,6 +470,48 @@ func iamRDSDerivesItsResource(operation string, params map[string]bool) bool {
 // most in need of holding to something.
 func TestIAMRDSFieldAliasesAreRealRequestParameters(t *testing.T) {
 	assertAliasesAreRealFields(t, "rds", iamRDSFieldAliases, loadRDSRequestParameters(t))
+}
+
+func TestIAMCloudTrailFieldAliasesAreRealRequestMembers(t *testing.T) {
+	assertAliasesAreRealFields(t, "cloudtrail", iamCloudTrailFieldAliases, loadCloudTrailRequestMembers(t))
+}
+
+// iamCloudTrailDerivesItsResource runs the production derivation against a
+// request carrying every member the model declares for the operation.
+func iamCloudTrailDerivesItsResource(operation string, members map[string]bool) bool {
+	if len(iamActionResourceTypes["cloudtrail:"+operation]) == 0 {
+		return false
+	}
+	body := make(map[string]string, len(members))
+	for name := range members {
+		body[name] = "probe"
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	return len(iamDerivedResourceARNs(r, "cloudtrail", operation, "us-east-1", "123456789012")) > 0
+}
+
+// iamEventBridgeDerivesItsResource runs the production derivation against a
+// request carrying every member the model declares for the operation.
+func iamEventBridgeDerivesItsResource(operation string, members map[string]bool) bool {
+	if len(iamActionResourceTypes["events:"+operation]) == 0 {
+		return false
+	}
+	body := make(map[string]string, len(members))
+	for name := range members {
+		body[name] = "probe"
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	return len(iamDerivedResourceARNs(r, "events", operation, "us-east-1", "123456789012")) > 0
 }
 
 func TestIAMSSMFieldAliasesAreRealRequestMembers(t *testing.T) {
@@ -567,7 +619,7 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // the gate does read — TestIAMResourceARNs_RDSTakesTheARNTheRequestNames pins
 // that. Counting them as derived here would mean filling a field with an ARN
 // because the metric wanted one, which is measuring the measurement.
-const iamDerivationCoverageFloor = 1262
+const iamDerivationCoverageFloor = 1320
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -605,6 +657,8 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	ssmMembers := loadSSMRequestMembers(t)
 	elastiCacheParameters := loadElastiCacheRequestParameters(t)
 	dynamoDBMembers := loadDynamoDBRequestMembers(t)
+	cloudTrailMembers := loadCloudTrailRequestMembers(t)
+	eventBridgeMembers := loadEventBridgeRequestMembers(t)
 
 	covered := 0
 	missingByService := map[string][]string{}
@@ -631,6 +685,10 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamElastiCacheDerivesItsResource(o.name, elastiCacheParameters[o.name])
 		case "dynamodb":
 			derived = iamDynamoDBDerivesItsResource(o.name, dynamoDBMembers[o.name])
+		case "cloudtrail":
+			derived = iamCloudTrailDerivesItsResource(o.name, cloudTrailMembers[o.name])
+		case "events":
+			derived = iamEventBridgeDerivesItsResource(o.name, eventBridgeMembers[o.name])
 		}
 		if derived {
 			covered++
