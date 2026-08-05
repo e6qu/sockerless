@@ -27,16 +27,21 @@ import (
 // manifest. The build is not simulated; Status settles to "available"
 // inline on Create, matching the sim's instance/cluster convention.
 type RDSCustomEngineVersion struct {
-	Engine                 string
-	EngineVersion          string
-	DBParameterGroupFamily string
-	Description            string
-	Status                 string // pending-validation | available | failed | inactive
-	KMSKeyId               string
-	ImageId                string
-	CreateTime             string
-	ARN                    string
-	Tags                   map[string]string
+	Engine string
+	// CustomDBEngineVersionId is the identifier AWS assigns and carries as the
+	// third part of the version's ARN. It has no request parameter — a caller
+	// names a custom engine version by its engine and version — so it exists
+	// only to make the ARN the one AWS publishes.
+	CustomDBEngineVersionId string
+	EngineVersion           string
+	DBParameterGroupFamily  string
+	Description             string
+	Status                  string // pending-validation | available | failed | inactive
+	KMSKeyId                string
+	ImageId                 string
+	CreateTime              string
+	ARN                     string
+	Tags                    map[string]string
 }
 
 // RDSRecommendation models an Amazon RDS recommendation against a
@@ -260,8 +265,12 @@ func handleRDSDescribeAccountAttributes(w http.ResponseWriter, r *http.Request) 
 // Custom DB engine versions
 // ---------------------------------------------------------------------------
 
-func rdsCustomEngineVersionARN(engine, version string) string {
-	return fmt.Sprintf("arn:aws:rds:%s:%s:cev:%s/%s", awsRegion(), awsAccountID(), engine, version)
+// rdsCustomEngineVersionARN builds the ARN AWS publishes for a custom engine
+// version: "cev:<engine>/<version>/<id>". The identifier is the third part and
+// is not optional — an ARN missing it names nothing, so a policy written
+// against the real resource would not match it.
+func rdsCustomEngineVersionARN(engine, version, id string) string {
+	return fmt.Sprintf("arn:aws:rds:%s:%s:cev:%s/%s/%s", awsRegion(), awsAccountID(), engine, version, id)
 }
 
 func rdsCEVKey(engine, version string) string { return engine + "/" + version }
@@ -303,11 +312,13 @@ func handleRDSCreateCustomEngineVersion(w http.ResponseWriter, r *http.Request) 
 			http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
+	cevID := generateUUID()
 	cev := RDSCustomEngineVersion{
-		Engine:                 engine,
-		EngineVersion:          version,
-		DBParameterGroupFamily: engine + strings.SplitN(version, ".", 2)[0],
-		Description:            r.FormValue("Description"),
+		Engine:                  engine,
+		CustomDBEngineVersionId: cevID,
+		EngineVersion:           version,
+		DBParameterGroupFamily:  engine + strings.SplitN(version, ".", 2)[0],
+		Description:             r.FormValue("Description"),
 		// Inline-settle: real RDS goes through "pending-validation" while
 		// it builds the image; the sim has no build to gate on and emits
 		// the steady-state "available".
@@ -315,7 +326,7 @@ func handleRDSCreateCustomEngineVersion(w http.ResponseWriter, r *http.Request) 
 		KMSKeyId:   r.FormValue("KMSKeyId"),
 		ImageId:    r.FormValue("ImageId"),
 		CreateTime: time.Now().UTC().Format(time.RFC3339),
-		ARN:        rdsCustomEngineVersionARN(engine, version),
+		ARN:        rdsCustomEngineVersionARN(engine, version, cevID),
 		Tags:       parseAWSQueryTagMap(r, "Tags.Tag"),
 	}
 	rdsCustomEngineVersions.Put(key, cev)

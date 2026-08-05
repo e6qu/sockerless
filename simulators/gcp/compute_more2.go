@@ -69,10 +69,10 @@ func registerComputeMore2(srv *sim.Server) {
 		// Zonal resources.
 		{collection: "autoscalers", kind: "compute#autoscaler", scope: cScopeZone, store: zoneAutoscalers},
 		{collection: "nodeGroups", kind: "compute#nodeGroup", scope: cScopeZone, store: mk("compute_node_groups"), patch: true, aggregated: true},
-		{collection: "reservations", kind: "compute#reservation", scope: cScopeZone, store: mk("compute_reservations"), patch: true, aggregated: true},
+		{collection: "reservations", kind: "compute#reservation", scope: cScopeZone, store: mk("compute_reservations"), patch: true, aggregated: true, resourceMetadata: true},
 		{collection: "storagePools", kind: "compute#storagePool", scope: cScopeZone, store: mk("compute_storage_pools"), patch: true, aggregated: true},
 		{collection: "targetInstances", kind: "compute#targetInstance", scope: cScopeZone, store: mk("compute_target_instances"), aggregated: true},
-		{collection: "futureReservations", kind: "compute#futureReservation", scope: cScopeZone, store: mk("compute_future_reservations"), patch: true, aggregated: true},
+		{collection: "futureReservations", kind: "compute#futureReservation", scope: cScopeZone, store: mk("compute_future_reservations"), patch: true, aggregated: true, resourceMetadata: true},
 		{collection: "instantSnapshots", kind: "compute#instantSnapshot", scope: cScopeZone, store: mk("compute_zone_instant_snapshots"), setLabels: true, aggregated: true},
 	}
 	for _, res := range families {

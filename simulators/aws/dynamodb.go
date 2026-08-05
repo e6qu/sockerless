@@ -65,6 +65,9 @@ type DDBTable struct {
 	TableClassSummary         *DDBTableClassSummary     `json:"TableClassSummary,omitempty"`
 	WarmThroughput            *DDBWarmThroughput        `json:"WarmThroughput,omitempty"`
 	SSEDescription            *DDBSSEDescription        `json:"SSEDescription,omitempty"`
+	// VectorIndexes are the table's vector indexes, which DescribeTable
+	// reports and SearchVectors searches.
+	VectorIndexes []DDBVectorIndexDescription `json:"VectorIndexes,omitempty"`
 }
 
 // DDBTableSettings holds table state that DynamoDB exposes through APIs other
@@ -256,6 +259,7 @@ func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 	reg("DynamoDB_20120810.CreateTable", handleDDBCreateTable)
 	reg("DynamoDB_20120810.DescribeTable", handleDDBDescribeTable)
 	reg("DynamoDB_20120810.UpdateTable", handleDDBUpdateTable)
+	reg("DynamoDB_20120810.SearchVectors", handleDDBSearchVectors)
 	reg("DynamoDB_20120810.DeleteTable", handleDDBDeleteTable)
 	reg("DynamoDB_20120810.ListTables", handleDDBListTables)
 	reg("DynamoDB_20120810.PutItem", handleDDBPutItem)
@@ -553,6 +557,7 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 		BillingMode            string                    `json:"BillingMode"`
 		GlobalSecondaryIndexes []DDBGlobalSecondaryIndex `json:"GlobalSecondaryIndexes"`
 		LocalSecondaryIndexes  []DDBLocalSecondaryIndex  `json:"LocalSecondaryIndexes"`
+		VectorIndexes          []map[string]any          `json:"VectorIndexes"`
 		SSESpecification       *struct {
 			Enabled        bool   `json:"Enabled"`
 			SSEType        string `json:"SSEType"`
@@ -667,6 +672,16 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 			KMSMasterKeyArn: req.SSESpecification.KMSMasterKeyId,
 		}
 	}
+	// Vector indexes declared with the table, validated the same way
+	// UpdateTable validates one it is asked to create.
+	for _, raw := range req.VectorIndexes {
+		idx, err := ddbParseVectorIndex(req.TableName, raw)
+		if err != nil {
+			sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+			return
+		}
+		table.VectorIndexes = append(table.VectorIndexes, idx)
+	}
 	ddbTables.Put(req.TableName, table)
 	// Tags set at create time round-trip through ListTagsOfResource — real
 	// DynamoDB accepts Tags on CreateTable; dropping them makes every plan
@@ -738,6 +753,8 @@ func handleDDBUpdateTable(w http.ResponseWriter, r *http.Request) {
 		DeletionProtectionEnabled *bool                     `json:"DeletionProtectionEnabled"`
 		ProvisionedThroughput     *DDBProvisionedThroughput `json:"ProvisionedThroughput"`
 
+		VectorIndexUpdates []map[string]any `json:"VectorIndexUpdates"`
+
 		GlobalSecondaryIndexUpdates []struct {
 			Create *DDBGlobalSecondaryIndex `json:"Create"`
 			Update *struct {
@@ -758,6 +775,12 @@ func handleDDBUpdateTable(w http.ResponseWriter, r *http.Request) {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
 		return
+	}
+	if len(req.VectorIndexUpdates) > 0 {
+		if err := ddbApplyVectorIndexUpdates(&t, req.VectorIndexUpdates); err != nil {
+			sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	if len(req.AttributeDefinitions) > 0 {
 		t.AttributeDefinitions = ddbMergeAttributeDefs(t.AttributeDefinitions, req.AttributeDefinitions)

@@ -71,6 +71,7 @@ type RDSProxyTarget struct {
 // RDSProxyTargetGroup models the default target group of a proxy. RDS
 // proxies have exactly one target group named "default".
 type RDSProxyTargetGroup struct {
+	TargetGroupId             string
 	TargetGroupName           string
 	DBProxyName               string
 	IsDefault                 bool
@@ -278,8 +279,17 @@ func rdsProxyEndpointARN(name string) string {
 	return fmt.Sprintf("arn:aws:rds:%s:%s:db-proxy-endpoint:%s", awsRegion(), awsAccountID(), name)
 }
 
-func rdsTargetGroupARN(proxy, group string) string {
-	return fmt.Sprintf("arn:aws:rds:%s:%s:target-group:%s/%s", awsRegion(), awsAccountID(), proxy, group)
+// rdsTargetGroupARN builds the ARN AWS publishes for a proxy target group:
+// "target-group:<id>", one identifier rather than the proxy and group names
+// that address it in a request.
+func rdsTargetGroupARN(id string) string {
+	return fmt.Sprintf("arn:aws:rds:%s:%s:target-group:%s", awsRegion(), awsAccountID(), id)
+}
+
+// rdsTargetGroupID mints the identifier AWS assigns a proxy target group,
+// in the shape its own identifiers take.
+func rdsTargetGroupID() string {
+	return "prx-tg-" + strings.ReplaceAll(generateUUID(), "-", "")[:17]
 }
 
 func rdsSecurityGroupARN(name string) string {
@@ -375,7 +385,9 @@ func handleRDSCreateProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	rdsProxies.Put(name, p)
 	// A proxy is created with a default target group.
+	targetGroupID := rdsTargetGroupID()
 	tg := RDSProxyTargetGroup{
+		TargetGroupId:             targetGroupID,
 		TargetGroupName:           "default",
 		DBProxyName:               name,
 		IsDefault:                 true,
@@ -385,7 +397,7 @@ func handleRDSCreateProxy(w http.ResponseWriter, r *http.Request) {
 		MaxIdleConnectionsPercent: 50,
 		CreatedDate:               now,
 		UpdatedDate:               now,
-		ARN:                       rdsTargetGroupARN(name, "default"),
+		ARN:                       rdsTargetGroupARN(targetGroupID),
 	}
 	rdsProxyTargetGroups.Put(name+"/default", tg)
 	rdsXMLResponse(w, "CreateDBProxy", renderRDSProxy(p), sim.RequestID(r.Context()))

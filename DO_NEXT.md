@@ -24,12 +24,11 @@ Eight services still carry an older per-service case that fires only when the
 request happens to name the field it reads; replacing each with a table-driven
 extractor is what retires `iamHandwrittenDerivationServices` entirely.
 
-BUG-2927 is still open and is the one piece of this work that is a fix rather
-than an addition: two Amazon RDS ARNs the simulator assigns do not match the
-shape AWS publishes, which is why those two resource types are left underived.
-Closing it means giving a custom engine version a real identifier and a proxy
-target group a single one, changing the ARNs both surfaces return, and then
-deriving both types.
+BUG-2929 is the newest fidelity gap and the one with a clear shape: Amazon
+DynamoDB vector search. The search itself is arithmetic — a distance per item, a
+sort, a cut at K — and what makes it a feature is the index lifecycle
+underneath, created and dropped through `UpdateTable` and reported by
+`DescribeTable`.
 
 Two pieces remain staged in [PLAN.md](PLAN.md) § "Staged: the Compute and
 Console Tails", and both are breadth work needing no special host: Google

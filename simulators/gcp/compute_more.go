@@ -51,6 +51,13 @@ type computeMetaResource struct {
 	patch      bool
 	setLabels  bool
 	aggregated bool
+	// resourceMetadata stamps the standardized ResourceMetadata the Compute
+	// Discovery document declares. It is opt-in per collection because only
+	// three schemas carry the member — a reservation, a future reservation and
+	// an accelerator type — and emitting it on a schema that does not declare
+	// it would be an invented field, which the spec validator reads as the
+	// defect it is.
+	resourceMetadata bool
 	// reconcile, when set, runs after a verb has changed the store, with the
 	// resource's key. A collection whose resource does something in the world
 	// — a packet mirroring policy really mirroring traffic — brings the world
@@ -101,6 +108,26 @@ func stampComputeScopeURL(m map[string]any, scope computeScopeKind, project stri
 }
 
 // register wires the configured verbs onto the mux.
+// computeResourceMetadata builds the standardized ResourceMetadata Compute
+// Engine returns beside a resource, from that resource's own kind. The
+// canonical type name is the AIP-123 form the schema describes — "compute#reservation"
+// is "compute.googleapis.com/Reservation".
+//
+// Only resourceType is stamped. The schema's other member, apiVersion, is the
+// version string the resource was retrieved through, and the Discovery document
+// gives its shape by example rather than stating what Compute v1 answers with —
+// so it is left absent rather than guessed at, which is the difference between
+// an incomplete answer and a wrong one.
+func computeResourceMetadata(kind string) map[string]any {
+	name := strings.TrimPrefix(kind, "compute#")
+	if name == "" {
+		return nil
+	}
+	return map[string]any{
+		"resourceType": "compute.googleapis.com/" + strings.ToUpper(name[:1]) + name[1:],
+	}
+}
+
 func (res computeMetaResource) register(srv *sim.Server) {
 	base := computeScopeMux(res.scope, res.collection)
 	listKind := res.kind + "List"
@@ -135,6 +162,9 @@ func (res computeMetaResource) register(srv *sim.Server) {
 			return
 		}
 		body["kind"] = res.kind
+		if res.resourceMetadata {
+			body["resourceMetadata"] = computeResourceMetadata(res.kind)
+		}
 		body["id"] = computeNumericID()
 		body["selfLink"] = computeSelfLink(key)
 		body["creationTimestamp"] = time.Now().UTC().Format(time.RFC3339)
@@ -462,6 +492,7 @@ func registerComputeCatalogMore(srv *sim.Server) {
 			"zone":                    computeSelfLink(fmt.Sprintf("projects/%s/zones/%s", project, zone)),
 			"selfLink":                computeSelfLink(fmt.Sprintf("projects/%s/zones/%s/acceleratorTypes/%s", project, zone, name)),
 			"maximumCardsPerInstance": 8,
+			"resourceMetadata":        computeResourceMetadata("compute#acceleratorType"),
 		}
 	}
 	accelNames := []string{"nvidia-tesla-t4", "nvidia-tesla-v100"}

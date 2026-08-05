@@ -652,16 +652,49 @@ func iamJSONRequestFields(r *http.Request) map[string][]string {
 // parameter the operations authorizing against that type actually take —
 // rather than derived from the name by a pattern.
 //
-// Two of the twenty-four types derive nothing, and deliberately. A custom
-// engine version's ARN carries an engine, a version and the version's own
-// identifier, and a request names only the first two; a proxy target group's
-// carries an identifier no request supplies. The simulator's own builders for
-// both disagree with the published shape, which is a defect in the ARNs it
-// assigns rather than something to paper over here.
+// Two of the twenty-four types carry an identifier no request names — a custom
+// engine version's own id and a proxy target group's — and are resolved through
+// the simulator's state instead, so every one of the twenty-four derives.
 func iamRDSResourceARNs(r *http.Request, types []string, region, account string) []string {
 	params := iamQueryRequestParameters(r)
-	return iamTableDrivenARNs("rds", types, region, account, iamRDSFieldAliases,
-		func(field string) []string { return params[strings.ToLower(field)] })
+	lookup := func(field string) []string { return params[strings.ToLower(field)] }
+
+	// Two of Amazon RDS's ARNs carry an identifier no request ever names. A
+	// custom engine version is addressed by its engine and version, a proxy
+	// target group by its proxy and group name, and each ARN carries an id AWS
+	// assigns instead. Those two are resolved through the simulator's own state,
+	// which is what makes the derived ARN the one the resource actually has
+	// rather than one assembled to look right.
+	var stateful []string
+	generic := make([]string, 0, len(types))
+	for _, resourceType := range types {
+		switch resourceType {
+		case "cev":
+			if cev, ok := rdsCustomEngineVersions.Get(
+				rdsCEVKey(iamFirstValue(lookup, "Engine"), iamFirstValue(lookup, "EngineVersion"))); ok {
+				stateful = append(stateful, cev.ARN)
+			}
+		case "target-group":
+			group := iamFirstValue(lookup, "TargetGroupName")
+			if group == "" {
+				group = "default" // a proxy's only target group, as the API names it
+			}
+			if tg, ok := rdsProxyTargetGroups.Get(iamFirstValue(lookup, "DBProxyName") + "/" + group); ok {
+				stateful = append(stateful, tg.ARN)
+			}
+		default:
+			generic = append(generic, resourceType)
+		}
+	}
+	return append(iamTableDrivenARNs("rds", generic, region, account, iamRDSFieldAliases, lookup), stateful...)
+}
+
+// iamFirstValue returns the single value a request carries for a field.
+func iamFirstValue(lookup func(string) []string, field string) string {
+	if values := lookup(field); len(values) > 0 {
+		return values[0]
+	}
+	return ""
 }
 
 // iamRDSFieldAliases maps an ARN format's identifier variable to the request

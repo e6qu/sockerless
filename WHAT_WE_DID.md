@@ -4,6 +4,90 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-05 — CreateSecret names its secret in Name, not SecretId
+
+Reported as GitHub issue #889 and consolidated into the same branch as the
+Amazon RDS ARN work, because only one pull request is open at a time.
+
+The gate read an AWS Secrets Manager request's resource from `SecretId`.
+`CreateSecret` does not send one — it names the secret it is about to create in
+`Name` — so the lookup missed, the request fell through to a literal `"*"`, and
+a role holding exactly the grant it needed was denied against a policy that
+plainly granted it. It is the same shape as the defect that started this work:
+an action whose resource the gate cannot read is authorized against `"*"`, which
+matches only a policy whose Resource is itself `"*"`, so the scoped grant is the
+one that fails.
+
+## 2026-08-05 — Amazon DynamoDB vector search, and a Compute member that was missing
+
+Two gaps that had been filed rather than closed are closed.
+
+Refreshing the vendored Amazon DynamoDB model brought `SearchVectors`, and with
+it nineteen shapes describing a surface rather than a call. It is served now,
+lifecycle and all: a vector index is declared with the table or added through
+`UpdateTable`, reported by `DescribeTable`, and dropped the same way, carrying
+the attribute holding the vector, the number of dimensions, and the distance
+function to compare under.
+
+The search reads each item's own vector attribute — the list of numbers a Put
+already wrote, rather than a parallel copy that could drift from it — scores it,
+and answers with the nearest TopK in order, each result carrying the score the
+comparison produced. Which way a score sorts is the difference between the
+nearest neighbours and the furthest: COSINE and DOT_PRODUCT rank larger-first,
+EUCLIDEAN smaller-first. A zero vector has no direction, so it is refused a
+cosine rather than scored 0, which would rank it as merely orthogonal — a claim
+the geometry does not support. Mismatched dimensions and an unmodelled distance
+function are refused rather than defaulted, because defaulting scores by a
+measure the caller did not ask for and the answer still looks valid.
+
+The end-to-end tests place their documents so the correct answer differs from
+the order they were written in, which means storage order cannot produce the
+result; removing the sort fails them, as a negative control confirmed. Amazon
+DynamoDB is complete at 58 of 58. The installed AWS command-line client does not
+yet expose the operation, so the official SDK carries the client-surface
+coverage.
+
+The Compute Engine gap was smaller and the same in kind. Discovery revision
+20260729 added a standardized `resourceMetadata` beside an accelerator type, a
+reservation and a future reservation, and the simulator answered without it. It
+is stamped on exactly those three, carrying the canonical AIP-123 type name
+derived from the resource's own kind so it cannot drift from it. Stamping it
+more widely would invent a member those schemas do not declare, which is the
+same defect as omitting a real one. The schema's other member, `apiVersion`, is
+left absent rather than guessed: the document gives its shape by example without
+stating what Compute v1 answers with.
+
+## 2026-08-05 — Two Amazon RDS ARNs that named nothing real
+
+Deriving Amazon RDS left two of its twenty-four resource types alone, and the
+reason was not that the request withheld something. The simulator was building
+both ARNs in a shape AWS does not publish: a custom engine version as
+`cev:<engine>/<version>`, dropping the identifier that is its third part, and a
+proxy target group as `target-group:<proxy>/<group>` where AWS publishes a
+single identifier. Both named nothing real, so a resource-scoped grant written
+against either was evaluated against an ARN for something else — and deriving
+them then would have had the gate build one shape while the handlers built
+another.
+
+Each type gained the identifier its ARN needs. Neither is a member of AWS's own
+wire shapes — checked against the vendored model before adding them — so both
+are internal state that exists to build the ARN, and neither is rendered;
+returning a member AWS does not have would be the same defect facing the other
+way.
+
+With the shapes right, both derive. They are the first types whose identifier no
+request carries at all: a caller names a custom engine version by its engine and
+version, and a target group by its proxy and group name. So the gate resolves
+both through the simulator's own state and requests the ARN the resource
+actually has, which is the only property that matters — an ARN that is merely
+well-shaped still denies every policy written against the real one.
+
+The coverage number did not move, and that is honest. The probe that measures it
+fills every field with a placeholder and cannot create state, so these two
+operations still count as underived even though the derivation works. Filling a
+field with an ARN because the metric wanted one would be measuring the
+measurement.
+
 ## 2026-08-05 — AWS Systems Manager, where a variable name carries meaning
 
 AWS Systems Manager took the derivation past what a spelling table can express,
