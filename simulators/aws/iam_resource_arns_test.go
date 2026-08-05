@@ -984,3 +984,53 @@ func TestIAMResourceARNs_EventBridgeResolvesTheAbbreviatedIdentifier(t *testing.
 		iamEventBridgeRequest("DeleteConnection", `{"Name":"github"}`),
 		"events:DeleteConnection", "arn:aws:events:us-east-1:123456789012:connection/github")
 }
+
+// AWS Glue groups an identifier into a structure of its own rather than naming
+// it at the top level: a registry is addressed as RegistryId{RegistryName} and
+// a schema as SchemaId{SchemaName}. The member inside is the resource's name
+// however it is wrapped, so the derivation reads one level down.
+func TestIAMResourceARNs_GlueReadsANestedIdentifier(t *testing.T) {
+	const p = "arn:aws:glue:us-east-1:123456789012:"
+	t.Run("a registry names itself inside RegistryId", func(t *testing.T) {
+		got := iamResourceARNsForRequest(
+			iamGlueRequest("DeleteRegistry", `{"RegistryId":{"RegistryName":"events"}}`),
+			"glue:DeleteRegistry")
+		if !slicesContain(got, p+"registry/events") {
+			t.Fatalf("derived %v, want it to include the registry named inside RegistryId", got)
+		}
+	})
+	t.Run("a schema names itself inside SchemaId", func(t *testing.T) {
+		got := iamResourceARNsForRequest(
+			iamGlueRequest("DeleteSchema", `{"SchemaId":{"SchemaName":"orders","RegistryName":"events"}}`),
+			"glue:DeleteSchema")
+		if !slicesContain(got, p+"schema/orders") {
+			t.Fatalf("derived %v, want it to include the schema named inside SchemaId", got)
+		}
+	})
+}
+
+// A member at the top level is the more direct statement of what a request
+// names, so it wins over one found inside a structure — otherwise the ARN would
+// depend on which the JSON happened to carry.
+func TestIAMResourceARNs_TopLevelMemberWinsOverANestedOne(t *testing.T) {
+	got := iamResourceARNsForRequest(
+		iamGlueRequest("GetTable", `{"DatabaseName":"top","Name":"orders","Wrapper":{"DatabaseName":"nested"}}`),
+		"glue:GetTable")
+	for _, a := range got {
+		if strings.Contains(a, "nested") {
+			t.Fatalf("derived %q from a nested member while the top level named one", a)
+		}
+	}
+	if !slicesContain(got, "arn:aws:glue:us-east-1:123456789012:database/top") {
+		t.Fatalf("derived %v, want the top-level database", got)
+	}
+}
+
+func slicesContain(haystack []string, want string) bool {
+	for _, got := range haystack {
+		if got == want {
+			return true
+		}
+	}
+	return false
+}

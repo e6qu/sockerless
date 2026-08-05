@@ -234,11 +234,9 @@ func matchesAnySwagger(specs []swaggerPath, method, path string) bool {
 
 // allowedNonSpecAzurePrefixes lists route families that are real,
 // documented Azure wire surfaces with NO swagger in
-// Azure/azure-rest-api-specs, plus the simulator's own control surface.
+// Azure/azure-rest-api-specs.
 // Each entry MUST be justified — never a place to hide an invented path.
 var allowedNonSpecAzurePrefixes = map[string]string{
-	"/sim/v1/": "simulator control + dashboard surface (sockerless-specific)",
-
 	// Cosmos DB SQL (core) data plane — documented REST API
 	// (/dbs/{db}/colls/{coll}/docs) has no swagger in azure-rest-api-specs.
 	"/dbs": "Cosmos DB SQL data plane (documented REST API, no upstream swagger)",
