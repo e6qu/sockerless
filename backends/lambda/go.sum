@@ -18,12 +18,12 @@ github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.35 h1:WK6CjihTuLisCjSKKb
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.35/go.mod h1:KYleN57luLoe97R7vTnx8PMcVrr9gAcRECtOjl91DNg=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36 h1:jbGY4CXLzZElOXgGsexlC3Hi+3YM0rSmk4opFXKqg/k=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36/go.mod h1:uBu/9aKsS/UQGc72RAt3y54kjgYQxmhut8ZD2dXCDNE=
-github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.81.1 h1:snTrm7koUumqi+IYoRDgsVfYBEM0naT29binkFO57M0=
-github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.81.1/go.mod h1:o61Nvqd2pIpM6QHfChgSyQRvdIJzF0AHTss5ehFFfO0=
+github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.82.0 h1:mA1eNuVy5LAapf4aMwIljmz9/MekiEPhohr1maGUwvw=
+github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.82.0/go.mod h1:o61Nvqd2pIpM6QHfChgSyQRvdIJzF0AHTss5ehFFfO0=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.4 h1:z1ih1BpOKK4T4mEnmr7ZV32Q1jphHuVuK1JuK5ohrrc=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.4/go.mod h1:CeWRkxBqodCc7NX/+B1hX902ybXY3ARKhi/vGpa1+so=
-github.com/aws/aws-sdk-go-v2/service/ec2 v1.319.1 h1:+czrxOpRRTbqtD3hRk+eDohm4TBBfCLnz5iKs9zBDSg=
-github.com/aws/aws-sdk-go-v2/service/ec2 v1.319.1/go.mod h1:Gi5mEHpABbT34fHwafgyxqrIte9oHUEHscusPBYEdHA=
+github.com/aws/aws-sdk-go-v2/service/ec2 v1.320.0 h1:/tI2/yVgVh/IxJJVvb4Csfec8FsHmi49By8iLHmTEhc=
+github.com/aws/aws-sdk-go-v2/service/ec2 v1.320.0/go.mod h1:Gi5mEHpABbT34fHwafgyxqrIte9oHUEHscusPBYEdHA=
 github.com/aws/aws-sdk-go-v2/service/ecr v1.60.4 h1:qIgueZwgw+rANqXuL1Cjk2Lm/Pihbw2nx3C1D7eQD+k=
 github.com/aws/aws-sdk-go-v2/service/ecr v1.60.4/go.mod h1:Jr9Mh7l72YtNr8nmEwcJiU4xwCerZB8/krBWW4RckmY=
 github.com/aws/aws-sdk-go-v2/service/efs v1.44.4 h1:JM0fOZbLfYpMSAax5oPR1qEBIa5jJq7Jyk901+9GDp8=
@@ -38,8 +38,8 @@ github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.36 h1:EUIwBoN+q7Umh
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.36/go.mod h1:6u00gmlTGR6W0b2k9NBrld7MnOEmf1Spqx0VVt6AqyE=
 github.com/aws/aws-sdk-go-v2/service/lambda v1.101.2 h1:CkTYIMCfXy2/Td2jLBqw341cNYbRxwSCNPxdDm5COXc=
 github.com/aws/aws-sdk-go-v2/service/lambda v1.101.2/go.mod h1:1YzSvApzBChjIuI1UN2cN2roWoGjR/V7Ch3+pfIfyN0=
-github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5 h1:HpN6GgZ3T8pSvRp81ZsgumNjlvRsa+9M0ZL2o6W4uLY=
-github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5/go.mod h1:5FTZoQxhmLEiCAtYVk6V+t0iS/B5yGZVLZ3Wq5FDJZI=
+github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0 h1:OkYV+1171za+ab9otU1tGxMXhx6uZvwVEtVddjLuYTg=
+github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0/go.mod h1:5FTZoQxhmLEiCAtYVk6V+t0iS/B5yGZVLZ3Wq5FDJZI=
 github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.43.4 h1:yDpDGCB+WQ86x3h3feiVr6IYknnNX8by8+FSy8uYSis=
 github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.43.4/go.mod h1:2HybnlpdcfJa/ojiBUvuUJ+QRPlCkfAO4ebWTIurEcg=
 github.com/aws/aws-sdk-go-v2/service/signin v1.5.4 h1:cOJELVNrq5Q3Udry2GLuHUM7MhwpeaQRdYaoa6GI/yI=

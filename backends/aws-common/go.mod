@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.4
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.4
 	github.com/aws/aws-sdk-go-v2/service/efs v1.44.4
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.43.4
 	github.com/rs/zerolog v1.35.1
 	github.com/sockerless/api v0.0.0

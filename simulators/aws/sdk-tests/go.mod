@@ -14,16 +14,16 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.42.4
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.37.4
 	github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.45.4
-	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.70.4
+	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.71.0
 	github.com/aws/aws-sdk-go-v2/service/batch v1.68.4
 	github.com/aws/aws-sdk-go-v2/service/budgets v1.46.4
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.67.4
 	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.58.4
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.3
-	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.81.1
+	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.82.0
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.63.1
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.319.1
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.320.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.4
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.90.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.44.4
@@ -39,7 +39,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.53.5
 	github.com/aws/aws-sdk-go-v2/service/rds v1.124.1
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.65.6
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/aws/aws-sdk-go-v2/service/scheduler v1.20.4
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.44.4
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.43.4
