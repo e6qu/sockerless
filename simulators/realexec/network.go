@@ -402,7 +402,7 @@ func (n *Network) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, t
 // Both protocols are carried because a resolver is reached over UDP and falls
 // back to TCP for truncated answers, and port 53 is the address a resolv.conf
 // entry implies.
-func (n *Network) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string, resolverPort int, tableName string) error {
+func (n *Network) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string, resolverPort int, deviceName, tableName string) error {
 	if net.ParseIP(resolverIPv4).To4() == nil {
 		return fmt.Errorf("resolver IPv4 address is required, got %q", resolverIPv4)
 	}
@@ -411,6 +411,9 @@ func (n *Network) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string
 	}
 	if tableName == "" {
 		return fmt.Errorf("resolver DNAT table name is required")
+	}
+	if deviceName == "" {
+		return fmt.Errorf("resolver device name is required")
 	}
 	link, err := n.EnsureEgress(ctx)
 	if err != nil {
@@ -421,7 +424,7 @@ func (n *Network) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string
 	// address unless it exists here, and an unanswered request is not a refusal
 	// — the sender waits. Adding it to the bridge makes the query arrive, which
 	// is also what puts it through the prerouting hook the redirect hangs on.
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "ip", "addr", "add", resolverIPv4+"/32", "dev", n.BridgeName); err != nil {
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "ip", "addr", "add", resolverIPv4+"/32", "dev", deviceName); err != nil {
 		// Already present is the steady state: every task on the VPC configures
 		// the same resolver.
 		if !strings.Contains(err.Error(), "File exists") {
@@ -481,11 +484,15 @@ func (s *Subnet) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, ta
 	return s.network.ConfigureAddressDNAT(ctx, targetIPv4, targetPort, tableName)
 }
 
+// ConfigureResolverDNAT serves the resolver on the subnet's own bridge, which
+// is the device a workload on that subnet resolves the address over. A network
+// carries no bridge of its own — each of its subnets has one — so the device
+// comes from here rather than from the network.
 func (s *Subnet) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string, resolverPort int, tableName string) error {
 	if s == nil || s.network == nil {
 		return fmt.Errorf("subnet is not attached to a network")
 	}
-	return s.network.ConfigureResolverDNAT(ctx, resolverIPv4, resolverPort, tableName)
+	return s.network.ConfigureResolverDNAT(ctx, resolverIPv4, resolverPort, s.BridgeName, tableName)
 }
 
 func (s *Subnet) RemoveAddressDNAT(ctx context.Context, tableName string) error {

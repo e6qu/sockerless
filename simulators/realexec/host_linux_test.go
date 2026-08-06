@@ -425,7 +425,7 @@ func TestResolverDNATReachesTheHostResolver(t *testing.T) {
 	}()
 
 	const resolver = "10.211.0.2"
-	if err := network.ConfigureResolverDNAT(ctx, resolver, resolverPort, prefix+"dns"); err != nil {
+	if err := network.ConfigureResolverDNAT(ctx, resolver, resolverPort, network.BridgeName, prefix+"dns"); err != nil {
 		t.Fatalf("configure resolver DNAT: %v", err)
 	}
 
@@ -450,5 +450,93 @@ func TestResolverDNATReachesTheHostResolver(t *testing.T) {
 	case <-tcpSeen:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the host resolver never saw the workload's TCP connection")
+	}
+}
+
+// TestSubnetResolverDNATServesTheSubnetBridge drives the path an Amazon ECS
+// task takes: a VPC network, a subnet inside it, and a workload attached to
+// that subnet. A network carries no bridge of its own — each of its subnets has
+// one — so a resolver configured against the network's bridge name lands on
+// `dev ""` and every task attach fails with "Cannot find device". Exercising
+// only the network-level call hid that completely.
+func TestSubnetResolverDNATServesTheSubnetBridge(t *testing.T) {
+	report := DetectNetworkCapabilities()
+	if err := report.Require(); err != nil {
+		t.Skipf("host cannot create network namespaces: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	prefix := shortPrefix()
+	runner := Runner{}
+	host := NewHost()
+	// A VPC network, created the way the Amazon EC2 slice creates one: no
+	// bridge of its own, subnets underneath it.
+	network, err := host.CreateNetwork(ctx, NetworkSpec{
+		NamespaceName: prefix + "vn",
+		BridgeName:    prefix + "vb",
+		CIDR:          "10.212.0.0/16",
+	})
+	if err != nil {
+		t.Fatalf("create the VPC network: %v", err)
+	}
+	defer func() { _ = network.Close(context.Background()) }()
+
+	subnet, err := network.CreateSubnet(ctx, SubnetSpec{
+		Name:       prefix + "sn",
+		BridgeName: prefix + "sb",
+		CIDR:       "10.212.1.0/24",
+	})
+	if err != nil {
+		t.Fatalf("create the subnet: %v", err)
+	}
+
+	workload, err := subnet.AttachNamespaceNIC(ctx, NamespaceNICSpec{
+		NamespaceName: prefix + "s1",
+		HostVethName:  prefix + "sh",
+		GuestVethName: prefix + "sg",
+		MAC:           "02:00:5e:12:00:01",
+	})
+	if err != nil {
+		t.Fatalf("attach the workload to the subnet: %v", err)
+	}
+
+	udpConn, err := net.ListenPacket("udp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer udpConn.Close()
+	resolverPort := udpConn.LocalAddr().(*net.UDPAddr).Port
+	seen := make(chan struct{}, 1)
+	go func() {
+		buf := make([]byte, 512)
+		if _, _, err := udpConn.ReadFrom(buf); err == nil {
+			seen <- struct{}{}
+		}
+	}()
+
+	// The VPC's own resolver address, as AmazonProvidedDNS defines it.
+	const resolver = "10.212.0.2"
+	if err := subnet.ConfigureResolverDNAT(ctx, resolver, resolverPort, prefix+"dns"); err != nil {
+		t.Fatalf("configure the subnet resolver: %v", err)
+	}
+	if err := runner.Run(ctx, "ip", "netns", "exec", workload.NamespaceName, "bash", "-c",
+		fmt.Sprintf("exec 3<>/dev/udp/%s/53 && printf probe >&3", resolver)); err != nil {
+		t.Fatalf("query the VPC resolver from the workload: %v", err)
+	}
+	select {
+	case <-seen:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the host resolver never saw the workload's query")
+	}
+}
+
+// A resolver with no device to serve it on is refused rather than silently
+// configured against an empty interface name.
+func TestResolverDNATRequiresADevice(t *testing.T) {
+	network := &Network{NamespaceName: "unused", runner: Runner{}}
+	err := network.ConfigureResolverDNAT(context.Background(), "10.0.0.2", 53, "", "tbl")
+	if err == nil || !strings.Contains(err.Error(), "device name is required") {
+		t.Fatalf("an empty device was accepted: %v", err)
 	}
 }
