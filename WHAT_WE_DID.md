@@ -4,6 +4,66 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-06 — The pattern check reaches the other two simulators
+
+The check that found six defects in AWS Organizations was AWS-only, so the same
+class was unmeasured in Google Cloud and Microsoft Azure rather than
+known-clean. Both validators check a declared pattern now, each on the terms its
+own specification language sets.
+
+Discovery and Swagger differ in a way that matters. Swagger writes its patterns
+anchored when it means them anchored — most of the vendored corpus is `^...$`,
+and a few deliberately constrain only the start — so the expression is matched
+as written, exactly as Smithy is. Discovery writes every pattern unanchored, but
+each one describes a whole value: a Compute Engine resource name, a
+forty-character fingerprint, an IPv4 address, a `tagValues` id. Read as a
+substring search, an address pattern would admit any text that merely contains
+an address, which is no constraint at all. So Discovery patterns are anchored
+and Swagger patterns are not, and the reason is written where each is applied.
+
+Google Cloud reports no pattern divergences across its SDK and CLI suites. That
+is a measurement, not an assumption: each check carries its own regression —
+a value the pattern rejects, a value it admits, the anchoring difference, an
+unpatterned field, and one whose expression the Go engine cannot compile —
+so removing the check fails a test rather than passing quietly while a simulator
+happens to be clean.
+
+A gap surfaced on the way. The Azure Docker harness, which is how the suite runs
+on macOS, did not carry `SOCKERLESS_SPEC_VALIDATE` into the container the way
+the AWS harness does. A developer arming validation there got a pass that
+validated nothing and wrote no report — the failure mode where a green result
+means the gate never ran. It carries both coordinates now.
+
+## 2026-08-06 — A VPC subnet a dead simulator held is reclaimed
+
+A VPC network is named for its VPC and its subnet is the VPC's own CIDR, so a
+simulator that exits without removing it leaves the subnet held under a name no
+later run looks for. The next run has a different VPC id, misses the name
+lookup, and then cannot create its own network because the subnet is taken —
+`netavark (exit code 1): subnet 10.0.0.0/16 is already used on the host or by
+another config`. Every awsvpc task fails, and the only cure was removing the
+network by hand.
+
+`EnsureVPCNetwork` reclaims it: a network holding the wanted subnet, carrying
+the simulator label, with no containers attached, and a run id other than this
+process's, belongs to a simulator that is gone. All four conditions have to hold
+together, which is what makes the sweep safe — it cannot reach a network in use,
+one this run owns, or one the project did not create. The create is retried once
+after.
+
+The regression reproduces the original failure exactly, and its negative control
+is the error message itself: with the reclaim disabled, the test fails with the
+netavark line above. Two more cover what the reclaim must leave alone.
+
+What remains is the design question and it is left open deliberately. Two *live*
+VPCs sharing a CIDR still conflict, because AWS allows overlapping CIDRs and a
+host subnet is exclusive. Resolving that means allocating the Docker subnet
+independently of the AWS CIDR, which would make a container's real address
+differ from the ENI address reported unless the two are mapped — and an address
+that does not correspond to the workload's own is the synthetic-value class this
+project treats as a defect. Deleting a live peer's network instead would trade a
+clear failure for a confusing one.
+
 ## 2026-08-06 — A response member's pattern is part of the contract
 
 The runtime spec validator checked that a response member was a string and

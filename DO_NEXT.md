@@ -30,14 +30,14 @@ next three by size and none is known to need a new shape. AWS Glue's remaining
 35 are the data-quality operations, which name a result rather than the ruleset
 they authorize against, and creates that have no identifier yet.
 
-The response-pattern burn-down that was BUG-2931 is done: the runtime spec
-validator now checks `smithy.api#pattern`, and the AWS simulator carries a
-three-entry violation allowlist against BUG-2932 — patterns stricter than the
-service they describe, which no simulator change can satisfy. Anything else is
-a failure. BUG-2933 is the natural next increment: the same check does not
-exist in the Google Cloud (Discovery `pattern`) or Microsoft Azure (Swagger
-`pattern`) validators, so the same class of divergence is unmeasured there
-rather than known-clean.
+The response-pattern burn-down is done on all three simulators. The AWS
+validator checks `smithy.api#pattern`, the Google Cloud one Discovery's
+`pattern` and the Azure one Swagger's; AWS carries a three-entry allowlist
+against BUG-2932, Google Cloud reports none, and each check has its own
+regression. What is left of the class is the design question in BUG-2924 and
+whatever the Azure suites report on a host that can run them — the Azure
+harness needs a Linux real-network host, and this one cannot bind the
+resolver it wants.
 
 Two pieces remain staged in [PLAN.md](PLAN.md) § "Staged: the Compute and
 Console Tails", and both are breadth work needing no special host: Google

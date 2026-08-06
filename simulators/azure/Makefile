@@ -82,6 +82,11 @@ DOCKER_TEST_GROUPS := $(DOCKER_SOCK_GID),0
 DOCKER_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e SOCKERLESS_DOCKER_TEST_UIDGID=$(DOCKER_TEST_USER) -e SOCKERLESS_DOCKER_TEST_GROUPS=$(DOCKER_TEST_GROUPS) -e GOWORK=off -e CGO_ENABLED=0 -e TF_IN_AUTOMATION=1 -e CLOUDSDK_CORE_DISABLE_PROMPTS=1 -e AZURE_CORE_NO_COLOR=true -e AWS_PAGER=
 DOCKER_REALNET_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e GOWORK=off -e CGO_ENABLED=0 -e TF_IN_AUTOMATION=1 -e CLOUDSDK_CORE_DISABLE_PROMPTS=1 -e AZURE_CORE_NO_COLOR=true -e AWS_PAGER= -e NO_PROXY=localhost,127.0.0.1,::1,.localhost,*.localhost -e no_proxy=localhost,127.0.0.1,::1,.localhost,*.localhost
 DOCKER_REALNET_FLAGS := --privileged
+# Spec validation is armed by two coordinates the harness has to carry into the
+# container, exactly as the Amazon Web Services harness does. Without them a
+# macOS run of `SOCKERLESS_SPEC_VALIDATE=... make sdk-test` validates nothing
+# and writes no report — a pass that checked no wire shape at all.
+DOCKER_SPEC_VALIDATION_FLAGS := $(if $(strip $(SOCKERLESS_SPEC_VALIDATE)),-v "$(dir $(SOCKERLESS_SPEC_VALIDATE)):/sockerless-spec" -e SOCKERLESS_SPEC_VALIDATE="/sockerless-spec/$(notdir $(SOCKERLESS_SPEC_VALIDATE))" -e SOCKERLESS_SPEC_DIR=/src/specs/cloud-api/azure)
 
 docker-build: ## build the docker image
 	docker build --load -t $(IMAGE) -f Dockerfile ..
@@ -105,6 +110,7 @@ docker-test: docker-test-build ## run all tests inside docker
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-w /src/simulators/azure \
 		$(DOCKER_REALNET_TEST_ENV) \
+		$(DOCKER_SPEC_VALIDATION_FLAGS) \
 		$(DOCKER_TEST_IMAGE) make test-all
 
 docker-sdk-test: docker-test-build ## run SDK tests inside the Linux real-network docker harness
@@ -117,4 +123,5 @@ docker-sdk-test: docker-test-build ## run SDK tests inside the Linux real-networ
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-w /src/simulators/azure \
 		$(DOCKER_REALNET_TEST_ENV) \
+		$(DOCKER_SPEC_VALIDATION_FLAGS) \
 		$(DOCKER_TEST_IMAGE) make sdk-test-local

@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -34,6 +36,33 @@ type discoverySchema struct {
 	Items                *discoverySchema            `json:"items"`
 	Properties           map[string]*discoverySchema `json:"properties"`
 	AdditionalProperties *discoverySchema            `json:"additionalProperties"`
+	Pattern              string                      `json:"pattern"`
+
+	// compiled memoizes Pattern so the validator does not recompile it on
+	// every response; compileOnce guards it.
+	compiled    *regexp.Regexp
+	compileOnce sync.Once
+}
+
+// patternRE returns the compiled form of a schema's declared pattern, or nil
+// when it declares none or the expression cannot be compiled — the validator
+// refuses to judge what it cannot read.
+//
+// Discovery patterns are written unanchored but mean a whole value: every one
+// in the vendored corpus is a format for the entire field — a Compute resource
+// name, a forty-character fingerprint, an IPv4 address, a tagValues id — and
+// as a substring search an address pattern would admit any text that merely
+// contains an address. So the expression is anchored here. This is the one
+// place Discovery and Smithy differ: a Smithy pattern anchors itself when it
+// means to, and is matched as written.
+func (sch *discoverySchema) patternRE() *regexp.Regexp {
+	sch.compileOnce.Do(func() {
+		if sch.Pattern == "" {
+			return
+		}
+		sch.compiled, _ = regexp.Compile(`^(?:` + sch.Pattern + `)$`)
+	})
+	return sch.compiled
 }
 
 // discoverySpecDoc carries one document's schema namespace; $refs resolve
@@ -603,12 +632,22 @@ func validateDiscoveryValue(doc *discoverySpecDoc, op string, sch *discoverySche
 			}
 		}
 	case "string":
-		if _, ok := v.(string); !ok {
+		str, ok := v.(string)
+		if !ok {
 			want := "a string"
 			if sch.Format != "" {
 				want = fmt.Sprintf("a string (format %s)", sch.Format)
 			}
 			mismatch(want)
+			return
+		}
+		// A declared pattern is part of the contract, and it is where the
+		// identity-bearing strings are pinned — a resource name, a fingerprint,
+		// an address. Checking the type alone accepts a value no client could
+		// send back.
+		if re := sch.patternRE(); re != nil && !re.MatchString(str) {
+			*out = append(*out, sim.SpecViolation{Op: op, Kind: "pattern-mismatch", Field: path,
+				Detail: fmt.Sprintf("spec (%s) requires %s, response has %q", owner, sch.Pattern, str)})
 		}
 	case "boolean":
 		if _, ok := v.(bool); !ok {
