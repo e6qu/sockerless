@@ -528,7 +528,10 @@ func handleCWCreateDelivery(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	id := uuid.New().String()
+	// A delivery id is alphanumeric — the model admits no hyphen — so the UUID
+	// is carried without its separators rather than in its dashed form, which a
+	// client could not send back to GetDelivery.
+	id := strings.ReplaceAll(uuid.New().String(), "-", "")
 	d := CWDelivery{
 		Id:                      id,
 		Arn:                     cwDeliveryArn(id),

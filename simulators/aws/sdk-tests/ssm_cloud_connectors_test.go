@@ -52,7 +52,7 @@ func TestSSM_CloudConnectorLifecycle(t *testing.T) {
 		DisplayName:        aws.String("sdk-azure-connector"),
 		Description:        aws.String("Azure nodes for Systems Manager"),
 		RoleArn:            aws.String(roleArn),
-		ConfigConnectorArn: aws.String("arn:aws:config:us-east-1:000000000000:configuration-connector/azure"),
+		ConfigConnectorArn: aws.String("arn:aws:config:us-east-1:000000000000:connector/azure"),
 		Configuration:      ssmCloudConnectorAzureConfig(tenant, subscription),
 	})
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestSSM_ValidateCloudConnector(t *testing.T) {
 	broken, err := c.CreateCloudConnector(ctx, &ssm.CreateCloudConnectorInput{
 		DisplayName:        aws.String("sdk-connector-missing-role"),
 		RoleArn:            aws.String("arn:aws:iam::000000000000:role/NoSuchCloudConnectorRole"),
-		ConfigConnectorArn: aws.String("arn:aws:config:us-east-1:000000000000:configuration-connector/azure"),
+		ConfigConnectorArn: aws.String("arn:aws:config:us-east-1:000000000000:connector/azure"),
 		Configuration:      ssmCloudConnectorAzureConfig(tenant, subscription),
 	})
 	require.NoError(t, err)
@@ -153,7 +153,7 @@ func TestSSM_ValidateCloudConnector(t *testing.T) {
 	good, err := c.CreateCloudConnector(ctx, &ssm.CreateCloudConnectorInput{
 		DisplayName:        aws.String("sdk-connector-valid-role"),
 		RoleArn:            role.Role.Arn,
-		ConfigConnectorArn: aws.String("arn:aws:config:us-east-1:000000000000:configuration-connector/azure"),
+		ConfigConnectorArn: aws.String("arn:aws:config:us-east-1:000000000000:connector/azure"),
 		Configuration:      ssmCloudConnectorAzureConfig(tenant, subscription),
 	})
 	require.NoError(t, err)

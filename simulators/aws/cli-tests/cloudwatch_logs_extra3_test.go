@@ -50,7 +50,7 @@ func TestLogsIntegrationAndLookupCLI(t *testing.T) {
 	runCLI(t, awsCLI("logs", "delete-integration", "--integration-name", integName, "--force"))
 
 	// Lookup table.
-	ltName := "cli-lookup-table"
+	ltName := "cli_lookup_table"
 	body := "key,value\nfoo,bar\n"
 	create := runCLI(t, awsCLI("logs", "create-lookup-table",
 		"--lookup-table-name", ltName,
@@ -80,7 +80,7 @@ func TestLogsIntegrationAndLookupCLI(t *testing.T) {
 		"--table-body", "key,value\nbaz,qux\n"))
 
 	descLT := runCLI(t, awsCLI("logs", "describe-lookup-tables",
-		"--lookup-table-name-prefix", "cli-lookup", "--output", "json"))
+		"--lookup-table-name-prefix", "cli_lookup", "--output", "json"))
 	var dlt struct {
 		LookupTables []struct {
 			LookupTableArn string `json:"lookupTableArn"`
@@ -102,7 +102,7 @@ func TestLogsIntegrationAndLookupCLI(t *testing.T) {
 func TestLogsScheduledQueryAndTransformerCLI(t *testing.T) {
 	// Scheduled query.
 	sqName := "cli-scheduled-query"
-	dest := `{"s3Configuration":{"destinationIdentifier":"arn:aws:s3:::cli-sq-bucket","roleArn":"arn:aws:iam::123456789012:role/sq-role"}}`
+	dest := `{"s3Configuration":{"destinationIdentifier":"s3://cli-sq-bucket","roleArn":"arn:aws:iam::123456789012:role/sq-role"}}`
 	create := runCLI(t, awsCLI("logs", "create-scheduled-query",
 		"--name", sqName,
 		"--query-language", "CWLI",

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,10 @@ func TestACM_ACMEControlPlaneAndAccountRegistration(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(zoneOutput), &zone))
 	require.NotEmpty(t, zone.HostedZone.ID)
+	// Amazon Route 53 prefixes the id it returns with "/hostedzone/", and AWS
+	// Certificate Manager's HostedZoneId admits the bare id alone — so a caller
+	// carrying one API's answer into the other's request strips it, as here.
+	zoneID := strings.TrimPrefix(zone.HostedZone.ID, "/hostedzone/")
 
 	endpointOutput := runCLI(t, awsCLI("acm", "create-acme-endpoint",
 		"--authorization-behavior", "PRE_APPROVED",
@@ -67,7 +72,7 @@ func TestACM_ACMEControlPlaneAndAccountRegistration(t *testing.T) {
 		"--domain-name", "service.acme-cli.example",
 		"--prevalidation-options", fmt.Sprintf(
 			`{"DnsPrevalidation":{"DomainScope":{"ExactDomain":"ENABLED","Subdomains":"DISABLED","Wildcards":"DISABLED"},"HostedZoneId":%q}}`,
-			zone.HostedZone.ID,
+			zoneID,
 		),
 		"--tags", "Key=domain,Value=service",
 		"--output", "json",
@@ -90,7 +95,7 @@ func TestACM_ACMEControlPlaneAndAccountRegistration(t *testing.T) {
 		"--acme-domain-validation-arn", validationCreated.Arn,
 		"--prevalidation-options", fmt.Sprintf(
 			`{"DnsPrevalidation":{"DomainScope":{"ExactDomain":"ENABLED","Subdomains":"DISABLED","Wildcards":"DISABLED"},"HostedZoneId":%q}}`,
-			zone.HostedZone.ID,
+			zoneID,
 		),
 	))
 

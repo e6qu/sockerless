@@ -13,6 +13,7 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/hex"
 	"hash"
 	"io"
 	"net/http"
@@ -718,6 +719,15 @@ func kmsGenerateDataKeyPairMaterial(spec string) (pubDER, privDER []byte, err er
 	}
 }
 
+// kmsKeyMaterialID returns the identifier of the backing key material a key is
+// currently using. The model admits only hex digits, so the key's own dashed
+// UUID is not one: the material id is derived from the key id, stable for as
+// long as the key backs itself with the same material.
+func kmsKeyMaterialID(keyID string) string {
+	sum := sha256.Sum256([]byte("kms-key-material:" + keyID))
+	return hex.EncodeToString(sum[:])
+}
+
 func handleKMSGenerateDataKeyPair(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		KeyId       string `json:"KeyId"`
@@ -753,7 +763,7 @@ func handleKMSGenerateDataKeyPair(w http.ResponseWriter, r *http.Request) {
 		"PublicKey":                pubDER,  // SDK base64-encodes on the wire
 		"PrivateKeyPlaintext":      privDER, // SDK base64-encodes on the wire
 		"PrivateKeyCiphertextBlob": wrapped,
-		"KeyMaterialId":            keyId,
+		"KeyMaterialId":            kmsKeyMaterialID(keyId),
 	})
 }
 
@@ -791,7 +801,7 @@ func handleKMSGenerateDataKeyPairWithoutPlaintext(w http.ResponseWriter, r *http
 		"KeyPairSpec":              req.KeyPairSpec,
 		"PublicKey":                pubDER, // SDK base64-encodes on the wire
 		"PrivateKeyCiphertextBlob": wrapped,
-		"KeyMaterialId":            keyId,
+		"KeyMaterialId":            kmsKeyMaterialID(keyId),
 	})
 }
 

@@ -78,10 +78,24 @@ func ssmDocVersion(d SSMDocument, version string) (SSMDocumentVersion, bool) {
 	return SSMDocumentVersion{}, false
 }
 
+// ssmOmitEmptyStrings drops members whose value is the empty string. AWS Systems
+// Manager omits an optional string it has no value for, and several of these are
+// pattern-constrained — a document with no version name has no VersionName
+// member, where an empty one is a value the model forbids and a client cannot
+// send back.
+func ssmOmitEmptyStrings(m map[string]any, keys ...string) map[string]any {
+	for _, key := range keys {
+		if v, ok := m[key].(string); ok && v == "" {
+			delete(m, key)
+		}
+	}
+	return m
+}
+
 // ssmDocumentDescriptionWire projects the DocumentDescription shape
 // (CreateDocument / DescribeDocument / UpdateDocument responses).
 func ssmDocumentDescriptionWire(d SSMDocument, v SSMDocumentVersion) map[string]any {
-	return map[string]any{
+	return ssmOmitEmptyStrings(map[string]any{
 		"Name":            d.Name,
 		"DisplayName":     d.DisplayName,
 		"DocumentType":    d.DocumentType,
@@ -99,7 +113,7 @@ func ssmDocumentDescriptionWire(d SSMDocument, v SSMDocumentVersion) map[string]
 		"Hash":            ssmDocHash(v.Content),
 		"HashType":        "Sha256",
 		"PlatformTypes":   []string{"Linux", "Windows", "MacOS"},
-	}
+	}, "VersionName", "TargetType", "DisplayName")
 }
 
 func handleSSMCreateDocument(w http.ResponseWriter, r *http.Request) {
@@ -231,7 +245,7 @@ func handleSSMGetDocument(w http.ResponseWriter, r *http.Request) {
 	if req.DocumentFormat != "" {
 		format = req.DocumentFormat
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
+	sim.WriteJSON(w, http.StatusOK, ssmOmitEmptyStrings(map[string]any{
 		"Name":            doc.Name,
 		"DisplayName":     doc.DisplayName,
 		"DocumentType":    doc.DocumentType,
@@ -242,7 +256,7 @@ func handleSSMGetDocument(w http.ResponseWriter, r *http.Request) {
 		"CreatedDate":     ver.CreatedDate,
 		"Status":          ver.Status,
 		"ReviewStatus":    ver.ReviewStatus,
-	})
+	}, "VersionName", "DisplayName"))
 }
 
 func handleSSMListDocuments(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +277,7 @@ func handleSSMListDocuments(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(page))
 	for _, d := range page {
 		def, _ := ssmDocVersion(d, "$DEFAULT")
-		out = append(out, map[string]any{
+		out = append(out, ssmOmitEmptyStrings(map[string]any{
 			"Name":            d.Name,
 			"DisplayName":     d.DisplayName,
 			"DocumentType":    d.DocumentType,
@@ -276,7 +290,7 @@ func handleSSMListDocuments(w http.ResponseWriter, r *http.Request) {
 			"CreatedDate":     d.CreatedDate,
 			"ReviewStatus":    def.ReviewStatus,
 			"PlatformTypes":   []string{"Linux", "Windows", "MacOS"},
-		})
+		}, "VersionName", "TargetType", "DisplayName"))
 	}
 	resp := map[string]any{"DocumentIdentifiers": out}
 	if next != "" {
@@ -306,7 +320,7 @@ func handleSSMListDocumentVersions(w http.ResponseWriter, r *http.Request) {
 	page, next := awsPage(all, req.NextToken, req.MaxResults, 50)
 	out := make([]map[string]any, 0, len(page))
 	for _, v := range page {
-		out = append(out, map[string]any{
+		out = append(out, ssmOmitEmptyStrings(map[string]any{
 			"Name":             doc.Name,
 			"DisplayName":      doc.DisplayName,
 			"DocumentVersion":  v.DocumentVersion,
@@ -316,7 +330,7 @@ func handleSSMListDocumentVersions(w http.ResponseWriter, r *http.Request) {
 			"IsDefaultVersion": v.DocumentVersion == doc.DefaultVersion,
 			"Status":           v.Status,
 			"ReviewStatus":     v.ReviewStatus,
-		})
+		}, "VersionName", "DisplayName"))
 	}
 	resp := map[string]any{"DocumentVersions": out}
 	if next != "" {
@@ -445,10 +459,10 @@ func handleSSMUpdateDocumentDefaultVersion(w http.ResponseWriter, r *http.Reques
 	doc.DefaultVersion = ver.DocumentVersion
 	ssmDocuments.Put(doc.Name, doc)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Description": map[string]any{
+		"Description": ssmOmitEmptyStrings(map[string]any{
 			"Name":               doc.Name,
 			"DefaultVersion":     ver.DocumentVersion,
 			"DefaultVersionName": ver.VersionName,
-		},
+		}, "DefaultVersionName"),
 	})
 }

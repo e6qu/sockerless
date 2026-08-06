@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/acme"
 )
+
+// acmHostedZoneID strips the "/hostedzone/" Amazon Route 53 prefixes onto the
+// id it returns. AWS Certificate Manager's HostedZoneId admits the bare id
+// alone, so a caller carrying one API's answer into the other's request has to
+// strip it — exactly as here.
+func acmHostedZoneID(route53ID *string) string {
+	return strings.TrimPrefix(aws.ToString(route53ID), "/hostedzone/")
+}
 
 func TestACMAcmeControlAndRFC8555DataPlane(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -72,7 +81,7 @@ func TestACMAcmeControlAndRFC8555DataPlane(t *testing.T) {
 		DomainName:      aws.String("service.acme-sdk.example"),
 		PrevalidationOptions: &acmtypes.PrevalidationOptionsMemberDnsPrevalidation{
 			Value: acmtypes.DnsPrevalidationOptions{
-				HostedZoneId: zone.HostedZone.Id,
+				HostedZoneId: aws.String(acmHostedZoneID(zone.HostedZone.Id)),
 				DomainScope: &acmtypes.DomainScope{
 					ExactDomain: acmtypes.DomainScopeOptionEnabled,
 					Subdomains:  acmtypes.DomainScopeOptionDisabled,
@@ -94,7 +103,7 @@ func TestACMAcmeControlAndRFC8555DataPlane(t *testing.T) {
 		AcmeDomainValidationArn: aws.String(validationArn),
 		PrevalidationOptions: &acmtypes.PrevalidationOptionsMemberDnsPrevalidation{
 			Value: acmtypes.DnsPrevalidationOptions{
-				HostedZoneId: zone.HostedZone.Id,
+				HostedZoneId: aws.String(acmHostedZoneID(zone.HostedZone.Id)),
 				DomainScope: &acmtypes.DomainScope{
 					ExactDomain: acmtypes.DomainScopeOptionEnabled,
 					Subdomains:  acmtypes.DomainScopeOptionDisabled,

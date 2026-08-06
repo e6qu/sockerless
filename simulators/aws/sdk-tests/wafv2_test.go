@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// wafStamp is a unique suffix built only from characters an AWS WAFV2 name
+// admits. The model's EntityName pattern is ^[\w\-]+$, so the fractional-
+// seconds dot the other suites use would be rejected by the service — and the
+// load-balancer names built here forbid it too.
+func wafStamp() string {
+	return strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "-")
+}
 
 func wafClient() *wafv2.Client {
 	cfg := sdkConfig()
@@ -76,7 +85,7 @@ func TestWAFv2WebACLLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	name := "sdk-acl-" + time.Now().Format("150405.000000")
+	name := "sdk-acl-" + wafStamp()
 	createOut, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
 		Name:  aws.String(name),
 		Scope: wafv2types.ScopeCloudfront,
@@ -143,7 +152,7 @@ func TestWAFv2IPSetLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	name := "sdk-ipset-" + time.Now().Format("150405.000000")
+	name := "sdk-ipset-" + wafStamp()
 	createOut, err := c.CreateIPSet(ctx, &wafv2.CreateIPSetInput{
 		Name:             aws.String(name),
 		Scope:            wafv2types.ScopeCloudfront,
@@ -187,7 +196,7 @@ func TestWAFv2RuleGroupAndRegexPatternSet(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	rgName := "sdk-rg-" + time.Now().Format("150405.000000")
+	rgName := "sdk-rg-" + wafStamp()
 	rgOut, err := c.CreateRuleGroup(ctx, &wafv2.CreateRuleGroupInput{
 		Name:     aws.String(rgName),
 		Scope:    wafv2types.ScopeCloudfront,
@@ -226,7 +235,7 @@ func TestWAFv2RuleGroupAndRegexPatternSet(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rsName := "sdk-rs-" + time.Now().Format("150405.000000")
+	rsName := "sdk-rs-" + wafStamp()
 	rsOut, err := c.CreateRegexPatternSet(ctx, &wafv2.CreateRegexPatternSetInput{
 		Name:                  aws.String(rsName),
 		Scope:                 wafv2types.ScopeCloudfront,
@@ -257,7 +266,7 @@ func TestWAFv2UpdatesAndListsAndTags(t *testing.T) {
 	c := wafClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	ts := time.Now().Format("150405.000000")
+	ts := wafStamp()
 
 	// IPSet for List + Tag verbs
 	ipsetOut, err := c.CreateIPSet(ctx, &wafv2.CreateIPSetInput{
@@ -413,7 +422,7 @@ func TestWAFv2AssociateWebACLWithCloudFront(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	name := "sdk-assoc-" + time.Now().Format("150405.000000")
+	name := "sdk-assoc-" + wafStamp()
 	createOut, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
 		Name:  aws.String(name),
 		Scope: wafv2types.ScopeCloudfront,
@@ -439,7 +448,7 @@ func TestWAFv2AssociateWebACLWithCloudFront(t *testing.T) {
 	cloudFrontAPI := cfClient()
 	distribution, err := cloudFrontAPI.CreateDistribution(ctx, &cloudfront.CreateDistributionInput{
 		DistributionConfig: &cftypes.DistributionConfig{
-			CallerReference: aws.String("waf-association-" + time.Now().Format("150405.000000")),
+			CallerReference: aws.String("waf-association-" + wafStamp()),
 			Comment:         aws.String("AWS WAFv2 association target"),
 			Enabled:         aws.Bool(true),
 			Origins: &cftypes.Origins{Quantity: aws.Int32(1), Items: []cftypes.Origin{{
@@ -532,7 +541,7 @@ func TestWAFv2AssociateRegionalWebACLWithApplicationLoadBalancer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	name := "sdk-alb-" + time.Now().Format("150405.000000")
+	name := "sdk-alb-" + wafStamp()
 	createOut, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
 		Name:  aws.String(name),
 		Scope: wafv2types.ScopeRegional,
@@ -590,7 +599,7 @@ func TestWAFv2ListWebACLsPagination(t *testing.T) {
 	// Use the regional scope so this test's ACLs don't collide with the
 	// cloudfront-scope lifecycle test's ACL.
 	scope := wafv2types.ScopeRegional
-	stamp := time.Now().Format("150405.000000")
+	stamp := wafStamp()
 	for i := 0; i < 3; i++ {
 		name := "sdk-page-" + stamp + "-" + string(rune('a'+i))
 		_, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
@@ -643,7 +652,7 @@ func TestWAFv2LoggingConfiguration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	name := "sdk-log-" + time.Now().Format("150405.000000")
+	name := "sdk-log-" + wafStamp()
 	createOut, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
 		Name:          aws.String(name),
 		Scope:         wafv2types.ScopeCloudfront,
@@ -913,7 +922,7 @@ func TestWAFv2PermissionPolicyAndStats(t *testing.T) {
 	c := wafClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	ts := time.Now().Format("150405.000000")
+	ts := wafStamp()
 
 	// Rule group → permission policy round-trip.
 	rgOut, err := c.CreateRuleGroup(ctx, &wafv2.CreateRuleGroupInput{

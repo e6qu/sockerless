@@ -9,8 +9,8 @@ import (
 // the AWS Command Line Interface: create, get, list (with the Azure
 // subscription filter), update, validate and delete.
 func TestSSMCLI_CloudConnectors(t *testing.T) {
-	const tenant = "cli-tenant-0000-1111-2222"
-	const subscription = "cli-subscription-3333-4444"
+	const tenant = "1c11e0a0-0000-4000-8000-000000001111"
+	const subscription = "1c11e0a0-0000-4000-8000-000000003333"
 
 	roleName := "SSMCLICloudConnectorRole"
 	trust := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ssm.amazonaws.com"},"Action":"sts:AssumeRole"}]}`
@@ -23,7 +23,7 @@ func TestSSMCLI_CloudConnectors(t *testing.T) {
 		"AzureConfiguration": map[string]any{
 			"TenantId":               tenant,
 			"TenantDisplayName":      "cli-tenant",
-			"ApplicationId":          "cli-app-5555",
+			"ApplicationId":          "1c11e0a0-0000-4000-8000-000000005555",
 			"ApplicationDisplayName": "cli-app",
 			"Targets": map[string]any{
 				"Subscriptions": []map[string]any{
@@ -38,7 +38,7 @@ func TestSSMCLI_CloudConnectors(t *testing.T) {
 		"--display-name", "cli-azure-connector",
 		"--description", "Azure nodes for Systems Manager",
 		"--role-arn", roleArn,
-		"--config-connector-arn", "arn:aws:config:us-east-1:000000000000:configuration-connector/azure",
+		"--config-connector-arn", "arn:aws:config:us-east-1:000000000000:connector/azure",
 		"--configuration", "file://"+configFile,
 		"--query", "CloudConnectorId", "--output", "text")))
 	if id == "" {

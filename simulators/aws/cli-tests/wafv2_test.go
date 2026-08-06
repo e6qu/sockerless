@@ -4,14 +4,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
+// wafStamp is a unique suffix built only from characters an AWS WAFV2 name
+// admits. The model's EntityName pattern is ^[\w\-]+$, so the fractional-
+// seconds dot the other suites use would be rejected by the service — and the
+// load-balancer names built here forbid it too.
+func wafStamp() string {
+	return strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "-")
+}
+
 func TestWAFv2_WebACL_Lifecycle(t *testing.T) {
-	name := "cli-acl-" + time.Now().Format("150405.000000")
+	name := "cli-acl-" + wafStamp()
 	out := runCLI(t, awsCLI("wafv2", "create-web-acl",
 		"--name", name,
 		"--scope", "CLOUDFRONT",
@@ -112,7 +121,7 @@ func TestWAFv2_RevenueSurfacesWithoutSettlements_CLI(t *testing.T) {
 }
 
 func TestWAFv2_IPSet_Lifecycle(t *testing.T) {
-	name := "cli-ipset-" + time.Now().Format("150405.000000")
+	name := "cli-ipset-" + wafStamp()
 	out := runCLI(t, awsCLI("wafv2", "create-ip-set",
 		"--name", name, "--scope", "CLOUDFRONT",
 		"--ip-address-version", "IPV4",
@@ -139,7 +148,7 @@ func TestWAFv2_IPSet_Lifecycle(t *testing.T) {
 }
 
 func TestWAFv2_LoggingConfiguration_Lifecycle(t *testing.T) {
-	name := "cli-log-" + time.Now().Format("150405.000000")
+	name := "cli-log-" + wafStamp()
 	out := runCLI(t, awsCLI("wafv2", "create-web-acl",
 		"--name", name,
 		"--scope", "CLOUDFRONT",
@@ -380,7 +389,7 @@ func TestWAFv2_ManagedRuleSet(t *testing.T) {
 // group, the mobile SDK release catalog, delete-firewall-manager-rule-groups,
 // get-rate-based-statement-managed-keys, and get-top-path-statistics-by-traffic.
 func TestWAFv2_PermissionPolicyAndStats(t *testing.T) {
-	ts := time.Now().Format("150405.000000")
+	ts := wafStamp()
 
 	rgOut := runCLI(t, awsCLI("wafv2", "create-rule-group",
 		"--name", "cli-pp-rg-"+ts, "--scope", "CLOUDFRONT", "--capacity", "50",

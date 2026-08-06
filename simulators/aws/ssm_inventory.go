@@ -535,8 +535,13 @@ func handleSSMListInventoryEntries(w http.ResponseWriter, r *http.Request) {
 		"TypeName":      req.TypeName,
 		"InstanceId":    req.InstanceId,
 		"SchemaVersion": schemaVersion,
-		"CaptureTime":   captureTime,
 		"Entries":       ssmInvContentWire(page),
+	}
+	// An instance with nothing recorded for the type has no capture time, and
+	// the model constrains the member to a real timestamp — so it is absent
+	// rather than empty.
+	if captureTime != "" {
+		resp["CaptureTime"] = captureTime
 	}
 	if next != "" {
 		resp["NextToken"] = next
@@ -1248,8 +1253,10 @@ func handleSSMListDocumentMetadataHistory(w http.ResponseWriter, r *http.Request
 			"CreateTime":   doc.CreatedDate,
 			"UpdatedTime":  doc.CreatedDate,
 			"ReviewStatus": reviewStatus,
-			"Reviewer":     "arn:aws:iam::" + awsAccountID() + ":root",
-			"Comment":      []map[string]any{},
+			// Reviewer is a principal's name, not its ARN: the model admits no
+			// colon in it, so an ARN here is a value the service never returns.
+			"Reviewer": "root",
+			"Comment":  []map[string]any{},
 		},
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -1334,7 +1341,8 @@ func handleSSMStartAccessRequest(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "Targets is required", http.StatusBadRequest)
 		return
 	}
-	id := "oar-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:17]
+	// An access-request id is "oi-" followed by exactly twelve hex digits.
+	id := "oi-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	now := time.Now()
 	ar := SSMAccessRequest{
 		AccessRequestId: id,

@@ -192,7 +192,7 @@ func TestSSM_Compliance(t *testing.T) {
 // it reports inventory.
 func TestSSM_Nodes(t *testing.T) {
 	c := ssmClient()
-	instanceID := "i-0nodes0sdk000001"
+	instanceID := "i-0nodes0sdk0000001"
 
 	_, err := c.PutInventory(ctx, &ssm.PutInventoryInput{
 		InstanceId: aws.String(instanceID),
@@ -238,7 +238,7 @@ func TestSSM_Nodes(t *testing.T) {
 // UpdateManagedInstanceRole and DeregisterManagedInstance.
 func TestSSM_InstanceInformation(t *testing.T) {
 	c := ssmClient()
-	instanceID := "mi-0instinfo0sdk001"
+	instanceID := "mi-0instinfo0sdk0001"
 
 	_, err := c.PutInventory(ctx, &ssm.PutInventoryInput{
 		InstanceId: aws.String(instanceID),
@@ -442,7 +442,7 @@ func TestSSM_AccessRequest(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, sr.AccessRequestId)
-	assert.True(t, strings.HasPrefix(*sr.AccessRequestId, "oar-"))
+	assert.True(t, strings.HasPrefix(*sr.AccessRequestId, "oi-"))
 
 	gt, err := c.GetAccessToken(ctx, &ssm.GetAccessTokenInput{
 		AccessRequestId: sr.AccessRequestId,
