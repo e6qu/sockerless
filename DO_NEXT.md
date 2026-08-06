@@ -4,29 +4,39 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Next
 
-Resource-scoped IAM authorization covers thirteen services, and the remainder
-is measured rather than unknown: BUG-2909 records the 653 served operations that
-still authorize against a literal `"*"`, largest first — AWS Glue (55), Amazon
-EC2 Auto Scaling (44), AWS KMS (42), AWS Organizations (40), Elastic Load
-Balancing (35).
+Resource-scoped IAM authorization covers sixteen services, and the remainder is
+measured rather than unknown: BUG-2909 records the 513 served operations that
+still authorize against a literal `"*"`, largest first — Amazon EC2 (55),
+Elastic Load Balancing (35), AWS Glue (35), Amazon CloudWatch (33), AWS
+Certificate Manager (32).
 
 Adding a service is small. `iamTableDrivenARNs` fills any published ARN format,
 so a service needs its entry in `scripts/gen-aws-iam-resource-types.sh`, a
 lookup that reads a field in its protocol, and, where the API renamed an
 identifier, an alias table written off the model rather than from the name.
 
-Two shapes now have precedent for the harder cases. Where an ARN carries an
+Three shapes now have precedent for the harder cases. Where an ARN carries an
 identifier no request supplies, the gate resolves it through the simulator's own
-state, as Amazon RDS does for a custom engine version and a proxy target group —
-which is what Amazon EC2 Auto Scaling needs, its ARNs carrying an assigned group
-id beside the friendly name. Where the reference publishes one resource two
-ways, the request decides which applies before the derivation runs, as Amazon
-EventBridge does for a rule on the default bus versus a custom one.
+state, as Amazon RDS does for a custom engine version and Amazon EC2 Auto
+Scaling does for a group's assigned id. Where the reference publishes one
+resource two ways, the request decides which applies before the derivation runs,
+as Amazon EventBridge does for a rule on the default bus versus a custom one.
+Where the identifier itself says what it identifies, the type is read off it
+rather than off the member it arrived under, as AWS Organizations does — the
+shape for a service whose members accept several resource types at once.
 
-AWS Glue's 55 are the largest single remainder and have a known shape: its
-registry and schema operations name their resource inside a nested
-`RegistryId`/`SchemaId` member rather than at the top level, which the JSON
-field reader does not descend into.
+Elastic Load Balancing, Amazon CloudWatch and AWS Certificate Manager are the
+next three by size and none is known to need a new shape. AWS Glue's remaining
+35 are the data-quality operations, which name a result rather than the ruleset
+they authorize against, and creates that have no identifier yet.
+
+BUG-2931 is the other measured burn-down and is independent of the above: the
+runtime spec validator does not check `smithy.api#pattern`, and arming it
+reports 185 divergences over 87 keys in AWS WAFV2, AWS Systems Manager, Amazon
+CloudWatch Logs and four more. About eight root causes, the largest being an
+optional string emitted as `""` where the service omits the member. The check
+itself is a small change to `validateSmithyValue`; the work is the burn-down,
+and the AWS simulator carries no violation allowlist to ratchet against today.
 
 Two pieces remain staged in [PLAN.md](PLAN.md) § "Staged: the Compute and
 Console Tails", and both are breadth work needing no special host: Google

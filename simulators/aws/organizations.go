@@ -29,7 +29,11 @@ func awsOrgID() string {
 	if id := os.Getenv("SOCKERLESS_AWS_ORG_ID"); id != "" {
 		return id
 	}
-	return "o-sim000000"
+	// The model's OrganizationId pattern requires at least ten characters after
+	// the "o-", and the id appears inside every ARN Organizations emits — so an
+	// id one character short makes every one of those ARNs malformed rather
+	// than just this one value.
+	return "o-sim0000000"
 }
 
 func awsOrgArn() string {
@@ -271,15 +275,31 @@ func orgOUArn(id string) string {
 func orgRootArn(id string) string {
 	return "arn:aws:organizations::" + awsAccountID() + ":root/" + awsOrgID() + "/" + id
 }
-func orgPolicyArn(id, typ string) string {
-	// AWS-managed policies use the aws/service-role-shaped path with no account.
+
+// orgPolicyArn builds a policy's ARN. The model's PolicyArn pattern is an
+// alternation of two shapes, and which one applies is whether AWS manages the
+// policy: a customer policy is scoped to the account and the organization,
+// while an AWS-managed policy belongs to no organization and carries the
+// literal "aws" where an account would be. Only the AWS-managed arm admits an
+// uppercase letter in the identifier, which is what "p-FullAWSAccess" needs.
+func orgPolicyArn(id, typ string, awsManaged bool) string {
+	if awsManaged {
+		return "arn:aws:organizations::aws:policy/" + orgPolicyTypeSlug(typ) + "/" + id
+	}
 	return "arn:aws:organizations::" + awsAccountID() + ":policy/" + awsOrgID() + "/" + orgPolicyTypeSlug(typ) + "/" + id
 }
 func orgPolicyTypeSlug(typ string) string {
 	return strings.ToLower(typ)
 }
-func orgHandshakeArn(id string) string {
-	return "arn:aws:organizations::" + awsAccountID() + ":handshake/" + awsOrgID() + "/invite/" + id
+
+// orgHandshakeArn builds a handshake's ARN. The segment before the identifier
+// names what the handshake is for, which the model spells as a variable
+// ([a-z_]{1,32}) and never as a constant: an invitation and an
+// enable-all-features handshake are the same resource type reached by
+// different actions, and the ARN is where they differ.
+func orgHandshakeArn(id, action string) string {
+	return "arn:aws:organizations::" + awsAccountID() + ":handshake/" + awsOrgID() +
+		"/" + strings.ToLower(action) + "/" + id
 }
 func orgResourcePolicyArn(id string) string {
 	return "arn:aws:organizations::" + awsAccountID() + ":resourcepolicy/" + awsOrgID() + "/" + id
@@ -346,7 +366,7 @@ func orgEnsureDefault() {
 	})
 	orgPolicies.Put(orgFullAWSAccessPolicyID, OrgPolicy{
 		Id:          orgFullAWSAccessPolicyID,
-		Arn:         orgPolicyArn(orgFullAWSAccessPolicyID, "SERVICE_CONTROL_POLICY"),
+		Arn:         orgPolicyArn(orgFullAWSAccessPolicyID, "SERVICE_CONTROL_POLICY", true),
 		Name:        "FullAWSAccess",
 		Description: "Allows access to every operation",
 		Type:        "SERVICE_CONTROL_POLICY",
@@ -529,7 +549,7 @@ func handleOrgEnableAllFeatures(w http.ResponseWriter, _ *http.Request) {
 			{Id: awsOrgID(), Type: "ORGANIZATION"},
 		},
 	}
-	h.Arn = orgHandshakeArn(h.Id)
+	h.Arn = orgHandshakeArn(h.Id, h.Action)
 	orgHandshakes.Put(h.Id, h)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Handshake": orgHandshakeToMap(h)})
 }
@@ -961,7 +981,7 @@ func handleOrgCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		AwsManaged:  false,
 		Content:     req.Content,
 	}
-	p.Arn = orgPolicyArn(p.Id, p.Type)
+	p.Arn = orgPolicyArn(p.Id, p.Type, p.AwsManaged)
 	orgPolicies.Put(p.Id, p)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Policy": orgPolicyToMap(p)})
 }
@@ -1384,7 +1404,7 @@ func handleOrgInviteAccount(w http.ResponseWriter, r *http.Request) {
 			{Id: req.Target.Id, Type: req.Target.Type},
 		},
 	}
-	h.Arn = orgHandshakeArn(h.Id)
+	h.Arn = orgHandshakeArn(h.Id, h.Action)
 	orgHandshakes.Put(h.Id, h)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Handshake": orgHandshakeToMap(h)})
 }

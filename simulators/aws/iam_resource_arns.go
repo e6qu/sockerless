@@ -68,6 +68,8 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamKMSResourceARNs(r, types, region, account)
 	case "logs":
 		return iamLogsResourceARNs(r, types, arn)
+	case "organizations":
+		return iamOrganizationsResourceARNs(r, types)
 	case "rds":
 		return iamRDSResourceARNs(r, types, region, account)
 	case "ssm":
@@ -233,6 +235,116 @@ func iamHasType(types []string, resourceType string) bool {
 	}
 	return false
 }
+
+// ===== AWS Organizations =====
+
+// iamOrganizationsResourceARNs derives the ARNs an AWS Organizations request
+// names.
+//
+// Organizations is the service whose identifiers say what they identify. Every
+// id the model declares carries a literal prefix — "r-" a root, "ou-" an
+// organizational unit, "p-" a policy, "h-" a handshake, "rp-" a resource
+// policy, "rt-" a responsibility transfer, and a bare twelve digits an account
+// — and the members that accept more than one kind are alternations over
+// exactly those prefixes: TaggableResourceId admits six, PolicyTargetId three,
+// ParentId two. So which resource type a request names is read off the
+// identifier, because that is the only way a caller can say it, and therefore
+// the way AWS reads it too. Ten of these operations name a resource under a
+// member whose own name says nothing about its type — TargetId, ParentId,
+// ChildId, ResourceId — and no table of field spellings could type them.
+//
+// The ARN is then the resource's own. Four types carry an attribute no request
+// supplies — a policy's type and whether AWS manages it, what a handshake is
+// for, what a transfer moves and which way it moves, and a resource policy's
+// assigned id — so those are read from the simulator's state, as Amazon RDS
+// resolves a custom engine version. The rest are a function of the identifier
+// alone and are built from it, which also covers a request naming a resource
+// that does not exist: AWS authorizes such a call and then reports it missing,
+// rather than refusing it as unauthorized.
+func iamOrganizationsResourceARNs(r *http.Request, types []string) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(arn string) {
+		if arn == "" {
+			return
+		}
+		if _, dup := seen[arn]; dup {
+			return
+		}
+		seen[arn] = struct{}{}
+		out = append(out, arn)
+	}
+
+	for field, values := range iamJSONRequestFields(r) {
+		// Every identifier member the model declares ends in "Id", and the
+		// members that do not end in it are not identifiers.
+		if !strings.HasSuffix(field, "id") {
+			continue
+		}
+		for _, value := range values {
+			candidates, arn := iamOrganizationsResource(value)
+			if arn == "" {
+				continue
+			}
+			// An action authorizes only against the types AWS declares for it,
+			// so an identifier of any other type is not this action's resource.
+			for _, candidate := range candidates {
+				if iamHasType(types, candidate) {
+					add(arn)
+					break
+				}
+			}
+		}
+	}
+
+	// The organization has exactly one resource policy and PutResourcePolicy
+	// names no identifier for it, so the one that exists is the one the request
+	// is about. A request made before it exists names an ARN AWS has not
+	// assigned yet, which is undivinable rather than "*"-shaped.
+	if len(out) == 0 && iamHasType(types, "resourcepolicy") {
+		if rp, ok := orgResourcePolicies.Get(orgSingletonKey); ok {
+			add(rp.Arn)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// iamOrganizationsResource reads an AWS Organizations identifier and returns
+// the resource types it could name together with that resource's ARN. The
+// types are plural only for a policy, which the reference publishes twice —
+// "policy" for a customer's and "awspolicy" for an AWS-managed one — and which
+// of the two an identifier names is a property of the policy, not of the
+// request.
+func iamOrganizationsResource(id string) ([]string, string) {
+	switch {
+	case strings.HasPrefix(id, "r-"):
+		return []string{"root"}, orgRootArn(id)
+	case strings.HasPrefix(id, "ou-"):
+		return []string{"organizationalunit"}, orgOUArn(id)
+	case strings.HasPrefix(id, "rp-"):
+		return []string{"resourcepolicy"}, orgResourcePolicyArn(id)
+	case strings.HasPrefix(id, "rt-"):
+		if t, ok := orgResponsibilityTransfers.Get(id); ok {
+			return []string{"responsibilitytransfer"}, t.Arn
+		}
+	case strings.HasPrefix(id, "p-"):
+		if p, ok := orgPolicies.Get(id); ok {
+			return []string{"policy", "awspolicy"}, p.Arn
+		}
+	case strings.HasPrefix(id, "h-"):
+		if h, ok := orgHandshakes.Get(id); ok {
+			return []string{"handshake"}, h.Arn
+		}
+	case iamOrganizationsAccountID.MatchString(id):
+		return []string{"account"}, orgAccountArn(id)
+	}
+	return nil, ""
+}
+
+// iamOrganizationsAccountID matches the one identifier Organizations spells
+// without a prefix, which the model declares as exactly twelve digits.
+var iamOrganizationsAccountID = regexp.MustCompile(`^\d{12}$`)
 
 // ===== Amazon EC2 Auto Scaling =====
 

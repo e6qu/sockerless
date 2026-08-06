@@ -184,13 +184,10 @@ func handleOrgListEffectivePolicyValidationErrors(w http.ResponseWriter, r *http
 		sim.AWSError(w, "AccountNotFoundException", "You specified an account that doesn't exist.", http.StatusBadRequest)
 		return
 	}
-	// Path is the OU/root chain from the account up to the root, joined as the
-	// real service reports it.
-	path := orgPathToRoot(req.AccountId)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"AccountId":                       req.AccountId,
 		"PolicyType":                      req.PolicyType,
-		"Path":                            strings.Join(path, "/"),
+		"Path":                            orgHierarchyPath(req.AccountId),
 		"EvaluationTimestamp":             orgEpoch(),
 		"EffectivePolicyValidationErrors": []map[string]any{},
 	})
@@ -198,8 +195,29 @@ func handleOrgListEffectivePolicyValidationErrors(w http.ResponseWriter, r *http
 
 // Responsibility transfers ---------------------------------------------------
 
-func orgResponsibilityTransferArn(id string) string {
-	return "arn:aws:organizations::" + awsAccountID() + ":responsibilitytransfer/" + awsOrgID() + "/" + id
+// orgResponsibilityTransferArn builds a transfer's ARN. The resource type the
+// Service Reference names is "responsibilitytransfer", but the ARN segment the
+// model's ResponsibilityTransferArn pattern requires is "transfer", followed by
+// what is being transferred and which way it moves relative to this
+// organization — a transfer is only identifiable with both.
+func orgResponsibilityTransferArn(id, transferType, direction string) string {
+	return "arn:aws:organizations::" + awsAccountID() + ":transfer/" + awsOrgID() +
+		"/" + strings.ToLower(transferType) + "/" + strings.ToLower(direction) + "/" + id
+}
+
+// orgHierarchyPath renders a node's place in the organization the way the
+// model's Path pattern requires: the organization, then the chain from the root
+// down to the node, then a trailing slash. orgPathToRoot walks the other way —
+// from the node up — because that is the order policy inheritance needs, so the
+// chain is reversed here rather than in the walk.
+func orgHierarchyPath(nodeID string) string {
+	up := orgPathToRoot(nodeID)
+	segments := make([]string, 0, len(up)+1)
+	segments = append(segments, awsOrgID())
+	for i := len(up) - 1; i >= 0; i-- {
+		segments = append(segments, up[i])
+	}
+	return strings.Join(segments, "/") + "/"
 }
 
 func orgTransferParticipant(accountID, email string) map[string]any {
@@ -269,14 +287,28 @@ func handleOrgInviteResponsibilityTransfer(w http.ResponseWriter, r *http.Reques
 		State:               "OPEN",
 		RequestedTimestamp:  now,
 		ExpirationTimestamp: now + 15*24*3600,
-		Action:              "INVITE",
+		Action:              "TRANSFER_RESPONSIBILITY",
 		Parties: []OrgHandshakeParty{
 			{Id: awsOrgID(), Type: "ORGANIZATION"},
 			{Id: req.Target.Id, Type: req.Target.Type},
 		},
 	}
-	h.Arn = orgHandshakeArn(h.Id)
+	h.Arn = orgHandshakeArn(h.Id, h.Action)
 	orgHandshakes.Put(h.Id, h)
+
+	// A handshake party names an account, an email address, or a whole
+	// organization, and a transfer participant reports a management account and
+	// its email. Only the first spelling names an account: inviting an
+	// organization says nothing about which of its accounts manages it until
+	// the handshake is accepted, and an id of any other kind put in the account
+	// member would be an account id that is not one.
+	targetAccount, targetEmail := "", ""
+	switch req.Target.Type {
+	case "ACCOUNT":
+		targetAccount = req.Target.Id
+	case "EMAIL":
+		targetEmail = req.Target.Id
+	}
 
 	t := OrgResponsibilityTransfer{
 		Id:                 "rt-" + orgRandHex(8),
@@ -285,12 +317,13 @@ func handleOrgInviteResponsibilityTransfer(w http.ResponseWriter, r *http.Reques
 		Status:             "REQUESTED",
 		SourceAccountId:    o.MasterAccountId,
 		SourceAccountEmail: o.MasterAccountEmail,
-		TargetAccountId:    req.Target.Id,
+		TargetAccountId:    targetAccount,
+		TargetAccountEmail: targetEmail,
 		StartTimestamp:     now,
 		ActiveHandshakeId:  h.Id,
 		Direction:          "OUTBOUND",
 	}
-	t.Arn = orgResponsibilityTransferArn(t.Id)
+	t.Arn = orgResponsibilityTransferArn(t.Id, t.Type, t.Direction)
 	orgResponsibilityTransfers.Put(t.Id, t)
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Handshake": orgHandshakeToMap(h)})

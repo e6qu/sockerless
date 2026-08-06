@@ -547,6 +547,156 @@ func iamKMSDerivesItsResource(operation string, members map[string]bool) bool {
 	return len(iamDerivedResourceARNs(r, "kms", operation, "us-east-1", "123456789012")) > 0
 }
 
+// iamOrganizationsProbeState seeds one resource of every AWS Organizations type
+// and returns the identifier of each, keyed by the model shape a request member
+// targets when it accepts that identifier.
+//
+// AWS Organizations reads a resource's type out of the identifier itself, so a
+// probe filling every member with the same placeholder would measure zero
+// however well the derivation works — it would be asking what resource
+// "probe" names, which is nothing. The identifiers here are not invented to
+// suit the metric: each is the shape the model's own @pattern requires of that
+// member, and a request carrying anything else is rejected by the service
+// before authorization is ever reached.
+//
+// A member that accepts several types (ParentId, PolicyTargetId,
+// TaggableResourceId, ChildId are alternations over the id prefixes) is given
+// the organizational unit, which every one of them admits.
+func iamOrganizationsProbeState() map[string]string {
+	root := OrgRoot{Id: "r-prb0", Name: "Root"}
+	root.Arn = orgRootArn(root.Id)
+	orgRoots.Put(root.Id, root)
+
+	ou := OrgOU{Id: "ou-prb0-probe000", Name: "Probe", ParentId: root.Id}
+	ou.Arn = orgOUArn(ou.Id)
+	orgOUs.Put(ou.Id, ou)
+
+	account := OrgAccount{Id: "123456789012", Name: "Probe", ParentId: root.Id}
+	account.Arn = orgAccountArn(account.Id)
+	orgAccounts.Put(account.Id, account)
+
+	policy := OrgPolicy{Id: "p-probe0000", Name: "Probe", Type: "SERVICE_CONTROL_POLICY"}
+	policy.Arn = orgPolicyArn(policy.Id, policy.Type, policy.AwsManaged)
+	orgPolicies.Put(policy.Id, policy)
+
+	handshake := OrgHandshake{Id: "h-probe000", Action: "INVITE", State: "OPEN"}
+	handshake.Arn = orgHandshakeArn(handshake.Id, handshake.Action)
+	orgHandshakes.Put(handshake.Id, handshake)
+
+	transfer := OrgResponsibilityTransfer{Id: "rt-probe000", Type: "BILLING", Direction: "OUTBOUND"}
+	transfer.Arn = orgResponsibilityTransferArn(transfer.Id, transfer.Type, transfer.Direction)
+	orgResponsibilityTransfers.Put(transfer.Id, transfer)
+
+	resourcePolicy := OrgResourcePolicy{Id: "rp-probe000"}
+	resourcePolicy.Arn = orgResourcePolicyArn(resourcePolicy.Id)
+	orgResourcePolicies.Put(orgSingletonKey, resourcePolicy)
+
+	return map[string]string{
+		"AccountId":                account.Id,
+		"HandshakePartyId":         account.Id,
+		"PolicyId":                 policy.Id,
+		"RootId":                   root.Id,
+		"OrganizationalUnitId":     ou.Id,
+		"HandshakeId":              handshake.Id,
+		"ResponsibilityTransferId": transfer.Id,
+		"ParentId":                 ou.Id,
+		"PolicyTargetId":           ou.Id,
+		"TaggableResourceId":       ou.Id,
+		"ChildId":                  ou.Id,
+	}
+}
+
+// iamOrganizationsDerivesItsResource runs the production derivation against a
+// request naming resources that exist, under the members the model declares.
+func iamOrganizationsDerivesItsResource(operation string, members map[string]string,
+	ids map[string]string) bool {
+
+	if len(iamActionResourceTypes["organizations:"+operation]) == 0 {
+		return false
+	}
+	body := map[string]any{}
+	for path, shape := range members {
+		value, ok := ids[shape]
+		if !ok {
+			value = "probe"
+		}
+		member, inner, nested := strings.Cut(path, ".")
+		if !nested {
+			body[member] = value
+			continue
+		}
+		object, _ := body[member].(map[string]any)
+		if object == nil {
+			object = map[string]any{}
+			body[member] = object
+		}
+		object[inner] = value
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	return len(iamDerivedResourceARNs(r, "organizations", operation, "us-east-1", "123456789012")) > 0
+}
+
+// loadOrganizationsRequestShapes returns, per operation, every request member
+// with the model shape it targets — a member nested in a structure keyed
+// "Member.Inner" — so a probe can send an identifier of the shape the member
+// accepts rather than a placeholder.
+func loadOrganizationsRequestShapes(t *testing.T) map[string]map[string]string {
+	t.Helper()
+	path := filepath.Join("..", "..", "specs", "cloud-api", "aws", "organizations.smithy.json.gz")
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v — run scripts/fetch-aws-spec.sh organizations", path, err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("gunzip %s: %v", path, err)
+	}
+	defer gz.Close()
+
+	var doc struct {
+		Shapes map[string]struct {
+			Type    string                  `json:"type"`
+			Input   struct{ Target string } `json:"input"`
+			Members map[string]struct {
+				Target string `json:"target"`
+			} `json:"members"`
+		} `json:"shapes"`
+	}
+	if err := json.NewDecoder(gz).Decode(&doc); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	simple := func(target string) string { return target[strings.Index(target, "#")+1:] }
+
+	shapes := map[string]map[string]string{}
+	for id, shape := range doc.Shapes {
+		if shape.Type != "operation" || shape.Input.Target == "" {
+			continue
+		}
+		members := map[string]string{}
+		for name, m := range doc.Shapes[shape.Input.Target].Members {
+			target, known := doc.Shapes[m.Target]
+			if known && target.Type == "structure" {
+				for innerName, inner := range target.Members {
+					members[name+"."+innerName] = simple(inner.Target)
+				}
+				continue
+			}
+			members[name] = simple(m.Target)
+		}
+		shapes[id[strings.Index(id, "#")+1:]] = members
+	}
+	if len(shapes) == 0 {
+		t.Fatalf("%s declares no operations", path)
+	}
+	return shapes
+}
+
 // iamAutoScalingDerivesItsResource runs the production derivation against a
 // request naming a group and a launch configuration that exist.
 //
@@ -717,7 +867,16 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // the gate does read — TestIAMResourceARNs_RDSTakesTheARNTheRequestNames pins
 // that. Counting them as derived here would mean filling a field with an ARN
 // because the metric wanted one, which is measuring the measurement.
-const iamDerivationCoverageFloor = 1423
+//
+// AWS Organizations' 2: CreatePolicy names a policy that does not exist yet,
+// and DescribeEffectivePolicy takes a target that may be a root, an
+// organizational unit or an account while the reference declares only the
+// account for it — so the two other spellings have no declared type to
+// authorize against and derive nothing. The probe gives every member that
+// accepts several types the organizational unit, uniformly; picking the
+// account for that one member would raise the count by one without changing
+// what the gate does for the other two spellings.
+const iamDerivationCoverageFloor = 1461
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -759,6 +918,8 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	autoScalingParameters := loadRequestFields(t, "auto-scaling", memberWireName)
 	kmsMembers := loadKMSRequestMembers(t)
 	eventBridgeMembers := loadEventBridgeRequestMembers(t)
+	organizationsMembers := loadOrganizationsRequestShapes(t)
+	organizationsIDs := iamOrganizationsProbeState()
 
 	covered := 0
 	missingByService := map[string][]string{}
@@ -793,6 +954,8 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamKMSDerivesItsResource(o.name, kmsMembers[o.name])
 		case "events":
 			derived = iamEventBridgeDerivesItsResource(o.name, eventBridgeMembers[o.name])
+		case "organizations":
+			derived = iamOrganizationsDerivesItsResource(o.name, organizationsMembers[o.name], organizationsIDs)
 		}
 		if derived {
 			covered++
