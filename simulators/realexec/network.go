@@ -416,6 +416,18 @@ func (n *Network) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string
 	if err != nil {
 		return err
 	}
+	// The resolver address belongs to the VPC's own range, so a workload asks
+	// for it on the link rather than through the gateway. Nothing answers that
+	// address unless it exists here, and an unanswered request is not a refusal
+	// — the sender waits. Adding it to the bridge makes the query arrive, which
+	// is also what puts it through the prerouting hook the redirect hangs on.
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "ip", "addr", "add", resolverIPv4+"/32", "dev", n.BridgeName); err != nil {
+		// Already present is the steady state: every task on the VPC configures
+		// the same resolver.
+		if !strings.Contains(err.Error(), "File exists") {
+			return fmt.Errorf("add resolver address %s: %w", resolverIPv4, err)
+		}
+	}
 	target := net.JoinHostPort(link.HostIP.String(), strconv.Itoa(resolverPort))
 	return withTableLock(tableName, func() error {
 		_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)

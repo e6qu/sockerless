@@ -349,15 +349,20 @@ func TestCloseRemovesHostArtifacts(t *testing.T) {
 	}
 }
 
-// TestResolverDNATReachesTheHostResolver plumbs a namespace and checks that DNS
-// sent to the VPC's resolver address arrives at the resolver the host runs, on
-// both protocols.
+// TestResolverDNATReachesTheHostResolver attaches a workload namespace and
+// checks that DNS it sends to the VPC's resolver address arrives at the
+// resolver the host runs, on both protocols.
 //
-// Without it the namespace keeps whatever resolver its image was configured
+// Without it the workload keeps whatever resolver its image was configured
 // with — Docker's embedded 127.0.0.11 — which answers nothing once the
 // container is detached from Docker's networks. Lookups then block until they
 // time out rather than failing, and a workload binds its ports minutes after
 // its container started with nothing logged in between.
+//
+// The query has to come from the workload's own namespace, not the network's:
+// a packet a process generates locally never crosses the prerouting hook the
+// redirect hangs on, so testing it from the wrong side proves nothing about
+// the path a task actually takes.
 func TestResolverDNATReachesTheHostResolver(t *testing.T) {
 	report := DetectNetworkCapabilities()
 	if err := report.Require(); err != nil {
@@ -379,39 +384,44 @@ func TestResolverDNATReachesTheHostResolver(t *testing.T) {
 	}
 	defer func() { _ = network.Close(context.Background()) }()
 
-	// A resolver on the host, answering on both protocols, as a real one does.
-	udpConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	workload, err := network.AttachNamespaceNIC(ctx, NamespaceNICSpec{
+		NamespaceName: prefix + "w1",
+		HostVethName:  prefix + "h1",
+		GuestVethName: prefix + "g1",
+		MAC:           "02:00:5e:11:00:01",
+	})
+	if err != nil {
+		t.Fatalf("attach the workload namespace: %v", err)
+	}
+
+	// A resolver on the host, answering on both protocols as a real one does.
+	udpConn, err := net.ListenPacket("udp", "0.0.0.0:0")
 	if err != nil {
 		t.Fatalf("listen udp: %v", err)
 	}
 	defer udpConn.Close()
 	resolverPort := udpConn.LocalAddr().(*net.UDPAddr).Port
-	tcpLn, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", resolverPort))
+	tcpLn, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", resolverPort))
 	if err != nil {
 		t.Fatalf("listen tcp on the resolver port: %v", err)
 	}
 	defer tcpLn.Close()
 
-	udpSeen := make(chan string, 1)
+	udpSeen := make(chan struct{}, 1)
 	go func() {
 		buf := make([]byte, 512)
-		n, addr, err := udpConn.ReadFrom(buf)
-		if err != nil {
-			return
+		if _, _, err := udpConn.ReadFrom(buf); err == nil {
+			udpSeen <- struct{}{}
 		}
-		_, _ = udpConn.WriteTo(buf[:n], addr)
-		host, _, _ := net.SplitHostPort(addr.String())
-		udpSeen <- host
 	}()
-	tcpSeen := make(chan string, 1)
+	tcpSeen := make(chan struct{}, 1)
 	go func() {
 		conn, err := tcpLn.Accept()
 		if err != nil {
 			return
 		}
 		defer conn.Close()
-		host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-		tcpSeen <- host
+		tcpSeen <- struct{}{}
 	}()
 
 	const resolver = "10.211.0.2"
@@ -419,24 +429,26 @@ func TestResolverDNATReachesTheHostResolver(t *testing.T) {
 		t.Fatalf("configure resolver DNAT: %v", err)
 	}
 
-	// Anything sent to the VPC resolver address on port 53 must arrive.
-	if err := runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName,
-		"sh", "-c", "printf probe | timeout 3 nc -u -w1 "+resolver+" 53"); err != nil {
+	// bash speaks both protocols without another package on the runner.
+	probe := func(scheme string) error {
+		return runner.Run(ctx, "ip", "netns", "exec", workload.NamespaceName, "bash", "-c",
+			fmt.Sprintf("exec 3<>/dev/%s/%s/53 && printf probe >&3", scheme, resolver))
+	}
+	if err := probe("udp"); err != nil {
 		t.Fatalf("send a UDP query to the VPC resolver address: %v", err)
 	}
 	select {
 	case <-udpSeen:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the host resolver never saw the namespace's UDP query")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the host resolver never saw the workload's UDP query")
 	}
 
-	if err := runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName,
-		"sh", "-c", "printf probe | timeout 3 nc -w1 "+resolver+" 53"); err != nil {
+	if err := probe("tcp"); err != nil {
 		t.Fatalf("open a TCP connection to the VPC resolver address: %v", err)
 	}
 	select {
 	case <-tcpSeen:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the host resolver never saw the namespace's TCP connection")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the host resolver never saw the workload's TCP connection")
 	}
 }
