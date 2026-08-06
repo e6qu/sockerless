@@ -1039,17 +1039,80 @@ func EnsureVPCNetwork(name, cidr string) (string, error) {
 	if existing, err := cli.NetworkInspect(ctx, name, network.InspectOptions{}); err == nil {
 		return existing.ID, nil
 	}
-	resp, err := cli.NetworkCreate(ctx, name, network.CreateOptions{
-		Driver: "bridge",
-		IPAM: &network.IPAM{
-			Config: []network.IPAMConfig{{Subnet: cidr}},
-		},
-		Labels: simulatorLabels(map[string]string{"sockerless-sim-vpc": name}),
+	create := func() (string, error) {
+		resp, err := cli.NetworkCreate(ctx, name, network.CreateOptions{
+			Driver: "bridge",
+			IPAM: &network.IPAM{
+				Config: []network.IPAMConfig{{Subnet: cidr}},
+			},
+			Labels: simulatorLabels(map[string]string{"sockerless-sim-vpc": name}),
+		})
+		if err != nil {
+			return "", err
+		}
+		return resp.ID, nil
+	}
+	id, err := create()
+	if err == nil {
+		return id, nil
+	}
+	// The subnet may be held by a network an earlier simulator left behind. A
+	// VPC network is named for its VPC, so a run with a different VPC id does
+	// not find the old network by name and then cannot create its own: the
+	// subnet is taken under a name nothing looks for. Reclaiming it frees the
+	// subnet without touching anything live, and then the create is retried
+	// once.
+	if reclaimOrphanedSubnet(ctx, cli, cidr) {
+		if id, retryErr := create(); retryErr == nil {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("vpc network create %s (%s): %w", name, cidr, err)
+}
+
+// reclaimOrphanedSubnet removes simulator networks holding the given subnet
+// that no container is attached to and that another simulator run created,
+// reporting whether it removed any.
+//
+// All three conditions are load-bearing. The simulator label keeps the sweep
+// inside networks this project made. The exact subnet keeps it to the one
+// blocking the caller. No attached containers means nothing is using it, and a
+// different run id means the process that made it is not this one — together,
+// a network that only a dead run could still own. A live run's own empty
+// network is deliberately left alone, which is why two simultaneous VPCs
+// sharing a CIDR still conflict; that is a separate problem, and silently
+// deleting a peer's network would not solve it.
+func reclaimOrphanedSubnet(ctx context.Context, cli *client.Client, cidr string) bool {
+	nets, err := cli.NetworkList(ctx, network.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("label", "sockerless-sim=true")),
 	})
 	if err != nil {
-		return "", fmt.Errorf("vpc network create %s (%s): %w", name, cidr, err)
+		return false
 	}
-	return resp.ID, nil
+	reclaimed := false
+	for _, n := range nets {
+		if n.Labels["sockerless-sim-run"] == simulatorRunID {
+			continue
+		}
+		details, err := cli.NetworkInspect(ctx, n.ID, network.InspectOptions{})
+		if err != nil || len(details.Containers) > 0 {
+			continue
+		}
+		holds := false
+		for _, cfg := range details.IPAM.Config {
+			if cfg.Subnet == cidr {
+				holds = true
+				break
+			}
+		}
+		if !holds {
+			continue
+		}
+		if cli.NetworkRemove(ctx, n.ID) == nil {
+			reclaimed = true
+		}
+	}
+	return reclaimed
 }
 
 // RemoveDockerNetwork removes a simulator-managed Docker network if

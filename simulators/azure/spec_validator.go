@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -424,6 +425,28 @@ func (idx *azureSpecIndex) deref(rs azureRefSchema) (azureRefSchema, string) {
 	return azureRefSchema{}, ""
 }
 
+// azureCompiledPattern returns the compiled form of a declared pattern, or nil
+// when there is none or the expression cannot be compiled — the validator
+// refuses to judge what it cannot read. Compilation is memoized because the
+// same schemas are re-reached on every response.
+var azurePatternCache sync.Map
+
+func azureCompiledPattern(pattern string) *regexp.Regexp {
+	if pattern == "" {
+		return nil
+	}
+	if cached, ok := azurePatternCache.Load(pattern); ok {
+		re, _ := cached.(*regexp.Regexp)
+		return re
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		re = nil
+	}
+	azurePatternCache.Store(pattern, re)
+	return re
+}
+
 // azureMergedSchema is the flattened view of a schema and its whole
 // allOf chain (ARM models inheritance via allOf: Resource ->
 // TrackedResource -> ConcreteType).
@@ -435,6 +458,7 @@ type azureMergedSchema struct {
 	addlAny   bool            // additionalProperties: true
 	disc      string          // discriminator property name
 	discOwner string          // canonical id of the declaring schema
+	pattern   string          // declared regular expression for a string value
 }
 
 // merge folds one schema (and recursively its allOf branches) into m.
@@ -449,6 +473,9 @@ func (idx *azureSpecIndex) merge(rs azureRefSchema, id string, visited map[strin
 	}
 	if t, ok := rs.s["type"].(string); ok && m.typ == "" {
 		m.typ = t
+	}
+	if p, ok := rs.s["pattern"].(string); ok && p != "" && m.pattern == "" {
+		m.pattern = p
 	}
 	if props, ok := rs.s["properties"].(map[string]any); ok {
 		for name, raw := range props {
@@ -618,8 +645,19 @@ func (idx *azureSpecIndex) validate(op string, rs azureRefSchema, fieldPath stri
 			idx.validate(op, *m.items, fmt.Sprintf("%s[%d]", fieldPath, i), item, false, out)
 		}
 	case "string":
-		if _, ok := v.(string); !ok {
+		str, ok := v.(string)
+		if !ok {
 			mismatch("a string")
+			return
+		}
+		// A declared pattern is part of the contract, and it is where the
+		// identity-bearing strings are pinned. Swagger patterns anchor
+		// themselves when they mean to — most in the vendored corpus are
+		// written ^...$ — so the expression is matched as written rather than
+		// anchored for the author.
+		if re := azureCompiledPattern(m.pattern); re != nil && !re.MatchString(str) {
+			*out = append(*out, sim.SpecViolation{Op: op, Kind: "pattern-mismatch", Field: fieldPath,
+				Detail: fmt.Sprintf("spec (%s) requires %s, response has %q", schemaName(id, rs), m.pattern, str)})
 		}
 	case "boolean":
 		if _, ok := v.(bool); !ok {
