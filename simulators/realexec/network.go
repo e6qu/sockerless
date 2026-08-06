@@ -392,6 +392,52 @@ func (n *Network) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, t
 	})
 }
 
+// ConfigureResolverDNAT points a namespace's DNS traffic at a resolver the host
+// runs. A workload namespace holds only its own interface, so the embedded
+// resolver its container image was configured with — Docker's 127.0.0.11 —
+// answers nothing once the container is detached from Docker's networks: every
+// lookup inside blocks until it times out rather than failing, which reads as a
+// workload that starts minutes late for no logged reason.
+//
+// Both protocols are carried because a resolver is reached over UDP and falls
+// back to TCP for truncated answers, and port 53 is the address a resolv.conf
+// entry implies.
+func (n *Network) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string, resolverPort int, tableName string) error {
+	if net.ParseIP(resolverIPv4).To4() == nil {
+		return fmt.Errorf("resolver IPv4 address is required, got %q", resolverIPv4)
+	}
+	if resolverPort <= 0 || resolverPort > 65535 {
+		return fmt.Errorf("resolver port must be 1..65535, got %d", resolverPort)
+	}
+	if tableName == "" {
+		return fmt.Errorf("resolver DNAT table name is required")
+	}
+	link, err := n.EnsureEgress(ctx)
+	if err != nil {
+		return err
+	}
+	target := net.JoinHostPort(link.HostIP.String(), strconv.Itoa(resolverPort))
+	return withTableLock(tableName, func() error {
+		_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "ip", tableName); err != nil {
+			return err
+		}
+		n.registerTableCleanupOnce(tableName, func(cleanupCtx context.Context) error {
+			_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
+			return nil
+		})
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "ip", tableName, "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"); err != nil {
+			return err
+		}
+		for _, protocol := range []string{"udp", "tcp"} {
+			if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "ip", tableName, "prerouting", "ip", "daddr", resolverIPv4, protocol, "dport", "53", "dnat", "to", target); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // RemoveAddressDNAT removes a previously configured address-specific DNAT
 // table. It is idempotent because callers use it while unwinding short-lived
 // workload control-plane listeners whose parent VPC can disappear concurrently.
@@ -421,6 +467,13 @@ func (s *Subnet) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, ta
 		return fmt.Errorf("subnet is not attached to a network")
 	}
 	return s.network.ConfigureAddressDNAT(ctx, targetIPv4, targetPort, tableName)
+}
+
+func (s *Subnet) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string, resolverPort int, tableName string) error {
+	if s == nil || s.network == nil {
+		return fmt.Errorf("subnet is not attached to a network")
+	}
+	return s.network.ConfigureResolverDNAT(ctx, resolverIPv4, resolverPort, tableName)
 }
 
 func (s *Subnet) RemoveAddressDNAT(ctx context.Context, tableName string) error {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -31,6 +32,25 @@ func startRoute53DNSServer() {
 		go serveRoute53DNSUDP(udpConn)
 		go serveRoute53DNSTCP(tcpLn)
 	})
+}
+
+// route53DNSPort is the port the simulator's resolver answers on, which a
+// workload namespace's DNS is redirected to. It reads the bound address rather
+// than the configured one so an ephemeral port resolves to what was actually
+// taken.
+func route53DNSPort() (int, error) {
+	if r53DNSAddr == "" {
+		return 0, fmt.Errorf("the simulator's resolver is not listening yet")
+	}
+	_, port, err := net.SplitHostPort(r53DNSAddr)
+	if err != nil {
+		return 0, fmt.Errorf("read resolver port from %q: %w", r53DNSAddr, err)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 || n > 65535 {
+		return 0, fmt.Errorf("resolver port %q is not usable", port)
+	}
+	return n, nil
 }
 
 // r53DNSEphemeralAttempts bounds the search for a port free on both protocols.
