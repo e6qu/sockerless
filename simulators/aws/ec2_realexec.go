@@ -1272,37 +1272,17 @@ func ec2PublicInstanceSourcesForSubnet(subnetID string) []string {
 }
 
 // ec2ConfigureTaskResolver points the task namespace's DNS at the simulator's
-// own resolver, reached at the VPC's AmazonProvidedDNS address.
+// own resolver, reached at the link-local address AWS answers on from inside
+// any VPC.
 func ec2ConfigureTaskResolver(ctx context.Context, subnet *realexec.Subnet, vpcID, taskID string) error {
-	vpc, ok := ec2Vpcs.Get(vpcID)
-	if !ok {
-		return fmt.Errorf("configure task resolver for %s: VPC %s not found", taskID, vpcID)
-	}
-	resolver := ec2VPCResolverIPv4(vpc.CidrBlock)
-	if resolver == nil {
-		return fmt.Errorf("configure task resolver for %s: VPC %s has no usable CIDR %q", taskID, vpcID, vpc.CidrBlock)
-	}
 	port, err := route53DNSPort()
 	if err != nil {
 		return fmt.Errorf("configure task resolver for %s: %w", taskID, err)
 	}
-	if err := subnet.ConfigureResolverDNAT(ctx, resolver.String(), port, ec2RealName("dns", vpcID)); err != nil {
+	if err := subnet.ConfigureResolverDNAT(ctx, port, ec2RealName("dns", vpcID)); err != nil {
 		return fmt.Errorf("configure task resolver for %s: %w", taskID, err)
 	}
 	return nil
-}
-
-// ec2VPCResolverIPv4 is the address a VPC serves DNS on: the base of the VPC's
-// own CIDR range plus two, which is what AmazonProvidedDNS means and what every
-// awsvpc task's resolver entry points at.
-func ec2VPCResolverIPv4(vpcCIDR string) net.IP {
-	ip, _, err := net.ParseCIDR(vpcCIDR)
-	if err != nil || ip.To4() == nil {
-		return nil
-	}
-	out := append(net.IP(nil), ip.To4()...)
-	out[3] += 2
-	return out
 }
 
 func ec2AWSSubnetGateway(cidr string) net.IP {

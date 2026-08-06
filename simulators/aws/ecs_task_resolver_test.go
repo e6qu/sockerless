@@ -1,8 +1,11 @@
 package main
 
 import (
+	"net"
 	"strings"
 	"testing"
+
+	realexec "github.com/sockerless/simulator-realexec"
 )
 
 // A workload namespace holds only its own interface, so the resolver its image
@@ -12,23 +15,19 @@ import (
 // bind its ports minutes after its container started with nothing logged in
 // between (GitHub issue #905). A VPC serves DNS at its own base address plus
 // two, which is what AmazonProvidedDNS means.
-func TestVPCResolverIsTheCIDRBasePlusTwo(t *testing.T) {
-	for _, tc := range []struct{ cidr, want string }{
-		{"10.0.0.0/16", "10.0.0.2"},
-		{"172.31.0.0/16", "172.31.0.2"},
-		{"192.168.100.0/24", "192.168.100.2"},
-	} {
-		if got := ec2VPCResolverIPv4(tc.cidr); got == nil || got.String() != tc.want {
-			t.Errorf("resolver for %s = %v, want %s", tc.cidr, got, tc.want)
-		}
+// A task in its own namespace cannot reach the resolver Docker would configure
+// — that one lives on the Docker networks the namespace was detached from — so
+// the task is pointed at the VPC's, which the namespace redirects to the
+// simulator's own. Without this the redirect is in place and nothing uses it.
+func TestTaskResolverIsTheVPCResolver(t *testing.T) {
+	if realexec.VPCResolverIPv4 == "" {
+		t.Fatal("no VPC resolver address is defined for a task to ask")
 	}
-	// A gateway is base+1 and a resolver base+2; conflating them would send
-	// every lookup to the router.
-	if gw := ec2AWSSubnetGateway("10.0.0.0/16"); gw == nil || gw.String() == "10.0.0.2" {
-		t.Errorf("the subnet gateway and the resolver are the same address: %v", gw)
-	}
-	if got := ec2VPCResolverIPv4("not-a-cidr"); got != nil {
-		t.Errorf("an unparseable CIDR produced a resolver address: %v", got)
+	ip := net.ParseIP(realexec.VPCResolverIPv4)
+	if ip == nil || !ip.IsLinkLocalUnicast() {
+		t.Fatalf("the VPC resolver %q is not a link-local address, so a task whose "+
+			"subnet contains it would resolve it on the link instead of through the gateway",
+			realexec.VPCResolverIPv4)
 	}
 }
 

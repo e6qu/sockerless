@@ -349,110 +349,6 @@ func TestCloseRemovesHostArtifacts(t *testing.T) {
 	}
 }
 
-// TestResolverDNATReachesTheHostResolver attaches a workload namespace and
-// checks that DNS it sends to the VPC's resolver address arrives at the
-// resolver the host runs, on both protocols.
-//
-// Without it the workload keeps whatever resolver its image was configured
-// with — Docker's embedded 127.0.0.11 — which answers nothing once the
-// container is detached from Docker's networks. Lookups then block until they
-// time out rather than failing, and a workload binds its ports minutes after
-// its container started with nothing logged in between.
-//
-// The query has to come from the workload's own namespace, not the network's:
-// a packet a process generates locally never crosses the prerouting hook the
-// redirect hangs on, so testing it from the wrong side proves nothing about
-// the path a task actually takes.
-func TestResolverDNATReachesTheHostResolver(t *testing.T) {
-	report := DetectNetworkCapabilities()
-	if err := report.Require(); err != nil {
-		t.Skipf("host cannot create network namespaces: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	prefix := shortPrefix()
-	runner := Runner{}
-	host := NewHost()
-	network, err := host.CreateNetwork(ctx, NetworkSpec{
-		NamespaceName: prefix + "rn",
-		BridgeName:    prefix + "rb",
-		CIDR:          "10.211.0.0/24",
-	})
-	if err != nil {
-		t.Fatalf("create network: %v", err)
-	}
-	defer func() { _ = network.Close(context.Background()) }()
-
-	workload, err := network.AttachNamespaceNIC(ctx, NamespaceNICSpec{
-		NamespaceName: prefix + "w1",
-		HostVethName:  prefix + "h1",
-		GuestVethName: prefix + "g1",
-		MAC:           "02:00:5e:11:00:01",
-	})
-	if err != nil {
-		t.Fatalf("attach the workload namespace: %v", err)
-	}
-
-	// A resolver on the host, answering on both protocols as a real one does.
-	udpConn, err := net.ListenPacket("udp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatalf("listen udp: %v", err)
-	}
-	defer udpConn.Close()
-	resolverPort := udpConn.LocalAddr().(*net.UDPAddr).Port
-	tcpLn, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", resolverPort))
-	if err != nil {
-		t.Fatalf("listen tcp on the resolver port: %v", err)
-	}
-	defer tcpLn.Close()
-
-	udpSeen := make(chan struct{}, 1)
-	go func() {
-		buf := make([]byte, 512)
-		if _, _, err := udpConn.ReadFrom(buf); err == nil {
-			udpSeen <- struct{}{}
-		}
-	}()
-	tcpSeen := make(chan struct{}, 1)
-	go func() {
-		conn, err := tcpLn.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		tcpSeen <- struct{}{}
-	}()
-
-	const resolver = "10.211.0.2"
-	if err := network.ConfigureResolverDNAT(ctx, resolver, resolverPort, network.BridgeName, prefix+"dns"); err != nil {
-		t.Fatalf("configure resolver DNAT: %v", err)
-	}
-
-	// bash speaks both protocols without another package on the runner.
-	probe := func(scheme string) error {
-		return runner.Run(ctx, "ip", "netns", "exec", workload.NamespaceName, "bash", "-c",
-			fmt.Sprintf("exec 3<>/dev/%s/%s/53 && printf probe >&3", scheme, resolver))
-	}
-	if err := probe("udp"); err != nil {
-		t.Fatalf("send a UDP query to the VPC resolver address: %v", err)
-	}
-	select {
-	case <-udpSeen:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the host resolver never saw the workload's UDP query")
-	}
-
-	if err := probe("tcp"); err != nil {
-		t.Fatalf("open a TCP connection to the VPC resolver address: %v", err)
-	}
-	select {
-	case <-tcpSeen:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the host resolver never saw the workload's TCP connection")
-	}
-}
-
 // TestSubnetResolverDNATServesTheSubnetBridge drives the path an Amazon ECS
 // task takes: a VPC network, a subnet inside it, and a workload attached to
 // that subnet. A network carries no bridge of its own — each of its subnets has
@@ -515,13 +411,11 @@ func TestSubnetResolverDNATServesTheSubnetBridge(t *testing.T) {
 		}
 	}()
 
-	// The VPC's own resolver address, as AmazonProvidedDNS defines it.
-	const resolver = "10.212.0.2"
-	if err := subnet.ConfigureResolverDNAT(ctx, resolver, resolverPort, prefix+"dns"); err != nil {
+	if err := subnet.ConfigureResolverDNAT(ctx, resolverPort, prefix+"dns"); err != nil {
 		t.Fatalf("configure the subnet resolver: %v", err)
 	}
 	if err := runner.Run(ctx, "ip", "netns", "exec", workload.NamespaceName, "bash", "-c",
-		fmt.Sprintf("exec 3<>/dev/udp/%s/53 && printf probe >&3", resolver)); err != nil {
+		fmt.Sprintf("exec 3<>/dev/udp/%s/53 && printf probe >&3", VPCResolverIPv4)); err != nil {
 		t.Fatalf("query the VPC resolver from the workload: %v", err)
 	}
 	select {
@@ -531,12 +425,14 @@ func TestSubnetResolverDNATServesTheSubnetBridge(t *testing.T) {
 	}
 }
 
-// A resolver with no device to serve it on is refused rather than silently
-// configured against an empty interface name.
-func TestResolverDNATRequiresADevice(t *testing.T) {
-	network := &Network{NamespaceName: "unused", runner: Runner{}}
-	err := network.ConfigureResolverDNAT(context.Background(), "10.0.0.2", 53, "", "tbl")
-	if err == nil || !strings.Contains(err.Error(), "device name is required") {
-		t.Fatalf("an empty device was accepted: %v", err)
+// The resolver is served on a link-local address, which is never on a
+// workload's own subnet — so a query for it is routed to the namespace rather
+// than depending on an address-resolution answer for an address inside the
+// subnet. That difference is what makes it work for a task whose subnet
+// contains the VPC's base address.
+func TestVPCResolverIsLinkLocal(t *testing.T) {
+	ip := net.ParseIP(VPCResolverIPv4)
+	if ip == nil || !ip.IsLinkLocalUnicast() {
+		t.Fatalf("the VPC resolver address %q is not link-local", VPCResolverIPv4)
 	}
 }

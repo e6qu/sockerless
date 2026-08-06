@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	realexec "github.com/sockerless/simulator-realexec"
 	"net/http"
 	"os"
 	"strconv"
@@ -2060,6 +2061,16 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 	if netnsTier {
 		metadataEnv = hostMetadataLinkLocalEnv(taskID)
 	}
+	// A task in its own namespace cannot reach the resolver Docker would
+	// configure — that one lives on the Docker networks the namespace was
+	// detached from — so it asks the VPC's, which the namespace redirects to
+	// the simulator's own. Without this the redirect is in place and nothing
+	// uses it: every lookup still goes to an address that answers nothing and
+	// blocks until it times out.
+	var taskDNS []string
+	if netnsTier {
+		taskDNS = []string{realexec.VPCResolverIPv4}
+	}
 	var mainDockerID string
 
 	for i, cd := range td.ContainerDefinitions {
@@ -2136,6 +2147,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			OpenStdin: wantTTY || cd.Interactive,
 			Binds:     binds,
 			Sandbox:   ecsTaskSandbox(launchType, cd.Privileged),
+			DNS:       taskDNS,
 		}
 		// Docker Desktop does not route a Linux VM's user-defined bridge
 		// addresses back to the host process. Publish the task definition's

@@ -392,6 +392,14 @@ func (n *Network) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, t
 	})
 }
 
+// VPCResolverIPv4 is the link-local address a VPC serves DNS on. AWS answers
+// there from inside any VPC, alongside the VPC's own base-plus-two address.
+// Link-local is the one of the two that is never on the workload's own subnet,
+// so a query for it is always routed through the gateway and always arrives
+// here — where the redirect below is waiting — instead of depending on someone
+// answering an address-resolution request for an address inside the subnet.
+const VPCResolverIPv4 = "169.254.169.253"
+
 // ConfigureResolverDNAT points a namespace's DNS traffic at a resolver the host
 // runs. A workload namespace holds only its own interface, so the embedded
 // resolver its container image was configured with — Docker's 127.0.0.11 —
@@ -401,35 +409,20 @@ func (n *Network) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, t
 //
 // Both protocols are carried because a resolver is reached over UDP and falls
 // back to TCP for truncated answers, and port 53 is the address a resolv.conf
-// entry implies.
-func (n *Network) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string, resolverPort int, deviceName, tableName string) error {
-	if net.ParseIP(resolverIPv4).To4() == nil {
-		return fmt.Errorf("resolver IPv4 address is required, got %q", resolverIPv4)
-	}
+// entry implies. Nothing is assigned to an interface: the address is
+// link-local, so the query is routed here and the prerouting hook claims it
+// before any local-delivery decision — the same way the metadata addresses
+// work.
+func (n *Network) ConfigureResolverDNAT(ctx context.Context, resolverPort int, tableName string) error {
 	if resolverPort <= 0 || resolverPort > 65535 {
 		return fmt.Errorf("resolver port must be 1..65535, got %d", resolverPort)
 	}
 	if tableName == "" {
 		return fmt.Errorf("resolver DNAT table name is required")
 	}
-	if deviceName == "" {
-		return fmt.Errorf("resolver device name is required")
-	}
 	link, err := n.EnsureEgress(ctx)
 	if err != nil {
 		return err
-	}
-	// The resolver address belongs to the VPC's own range, so a workload asks
-	// for it on the link rather than through the gateway. Nothing answers that
-	// address unless it exists here, and an unanswered request is not a refusal
-	// — the sender waits. Adding it to the bridge makes the query arrive, which
-	// is also what puts it through the prerouting hook the redirect hangs on.
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "ip", "addr", "add", resolverIPv4+"/32", "dev", deviceName); err != nil {
-		// Already present is the steady state: every task on the VPC configures
-		// the same resolver.
-		if !strings.Contains(err.Error(), "File exists") {
-			return fmt.Errorf("add resolver address %s: %w", resolverIPv4, err)
-		}
 	}
 	target := net.JoinHostPort(link.HostIP.String(), strconv.Itoa(resolverPort))
 	return withTableLock(tableName, func() error {
@@ -445,7 +438,7 @@ func (n *Network) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string
 			return err
 		}
 		for _, protocol := range []string{"udp", "tcp"} {
-			if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "ip", tableName, "prerouting", "ip", "daddr", resolverIPv4, protocol, "dport", "53", "dnat", "to", target); err != nil {
+			if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "ip", tableName, "prerouting", "ip", "daddr", VPCResolverIPv4, protocol, "dport", "53", "dnat", "to", target); err != nil {
 				return err
 			}
 		}
@@ -488,11 +481,11 @@ func (s *Subnet) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, ta
 // is the device a workload on that subnet resolves the address over. A network
 // carries no bridge of its own — each of its subnets has one — so the device
 // comes from here rather than from the network.
-func (s *Subnet) ConfigureResolverDNAT(ctx context.Context, resolverIPv4 string, resolverPort int, tableName string) error {
+func (s *Subnet) ConfigureResolverDNAT(ctx context.Context, resolverPort int, tableName string) error {
 	if s == nil || s.network == nil {
 		return fmt.Errorf("subnet is not attached to a network")
 	}
-	return s.network.ConfigureResolverDNAT(ctx, resolverIPv4, resolverPort, s.BridgeName, tableName)
+	return s.network.ConfigureResolverDNAT(ctx, resolverPort, tableName)
 }
 
 func (s *Subnet) RemoveAddressDNAT(ctx context.Context, tableName string) error {
