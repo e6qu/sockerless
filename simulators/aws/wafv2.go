@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -197,12 +198,12 @@ func wafRandomID() string {
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
-func wafLockToken() string {
-	buf := make([]byte, 8)
-	_, _ = rand.Read(buf)
-	h := hex.EncodeToString(buf)
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16]
-}
+// wafLockToken returns the optimistic-concurrency token AWS WAFV2 hands back
+// with every entity. The model types it as a UUID exactly as it types an entity
+// id — LockToken and EntityId carry the same pattern — so it is generated the
+// same way. A shorter token is not one the service could have issued, and a
+// client that round-trips it into a request would be sending a malformed value.
+func wafLockToken() string { return wafRandomID() }
 
 // wafARN constructs an ARN. Real AWS convention:
 //
@@ -355,6 +356,36 @@ type wafCreateWebACLReq struct {
 	AssociationConfig    json.RawMessage `json:"AssociationConfig,omitempty"`
 }
 
+// wafEntitySummary builds the summary AWS WAFV2 returns for a created entity.
+// Description is optional and the model's EntityDescription pattern requires at
+// least one character, so an entity created without one carries no Description
+// member rather than an empty string — which is what the service returns and
+// what a client reading the field back can rely on.
+func wafEntitySummary(name, id, description, lockToken, arn string) map[string]any {
+	summary := map[string]any{"Name": name, "Id": id, "LockToken": lockToken, "ARN": arn}
+	if description != "" {
+		summary["Description"] = description
+	}
+	return summary
+}
+
+// wafEntityNamePattern is the model's EntityName pattern. A name outside it is
+// rejected by the service before anything is created, so accepting one here
+// would let a caller store a name it could never have stored — and every
+// response echoing that name back would then carry a value the model forbids.
+var wafEntityNamePattern = regexp.MustCompile(`^[\w\-]+$`)
+
+// wafValidateName reports whether the name is one AWS WAFV2 accepts, writing
+// the service's own rejection when it is not.
+func wafValidateName(w http.ResponseWriter, name string) bool {
+	if wafEntityNamePattern.MatchString(name) {
+		return true
+	}
+	wafWriteError(w, "WAFInvalidParameterException",
+		"Error reason: The parameter contains formatting that is not valid., field: NAME, parameter: "+name)
+	return false
+}
+
 func handleWAFCreateWebACL(w http.ResponseWriter, r *http.Request) {
 	var req wafCreateWebACLReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -363,6 +394,9 @@ func handleWAFCreateWebACL(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" || req.Scope == "" {
 		wafWriteError(w, "WAFInvalidParameterException", "Name and Scope are required")
+		return
+	}
+	if !wafValidateName(w, req.Name) {
 		return
 	}
 	for _, s := range wafWebACLs.List() {
@@ -391,13 +425,7 @@ func handleWAFCreateWebACL(w http.ResponseWriter, r *http.Request) {
 	}
 	wafWebACLs.Put(wafKey(req.Scope, id), wafStoredWebACL{WebACL: acl, Scope: req.Scope, LockToken: lock, Tags: req.Tags})
 	wafWriteJSON(w, map[string]any{
-		"Summary": map[string]any{
-			"Name":        acl.Name,
-			"Id":          acl.Id,
-			"Description": acl.Description,
-			"LockToken":   lock,
-			"ARN":         acl.ARN,
-		},
+		"Summary": wafEntitySummary(acl.Name, acl.Id, acl.Description, lock, acl.ARN),
 	})
 }
 
@@ -720,6 +748,9 @@ func handleWAFCreateIPSet(w http.ResponseWriter, r *http.Request) {
 		wafWriteError(w, "WAFInvalidParameterException", "Name, Scope, IPAddressVersion are required")
 		return
 	}
+	if !wafValidateName(w, req.Name) {
+		return
+	}
 	for _, s := range wafIPSets.List() {
 		if s.Scope == req.Scope && s.IPSet.Name == req.Name {
 			wafWriteDuplicate(w, "IPSet", req.Name)
@@ -740,13 +771,7 @@ func handleWAFCreateIPSet(w http.ResponseWriter, r *http.Request) {
 	}
 	wafIPSets.Put(wafKey(req.Scope, id), wafStoredIPSet{IPSet: ipset, Scope: req.Scope, LockToken: lock, Tags: req.Tags})
 	wafWriteJSON(w, map[string]any{
-		"Summary": map[string]any{
-			"Name":        ipset.Name,
-			"Id":          ipset.Id,
-			"Description": ipset.Description,
-			"LockToken":   lock,
-			"ARN":         ipset.ARN,
-		},
+		"Summary": wafEntitySummary(ipset.Name, ipset.Id, ipset.Description, lock, ipset.ARN),
 	})
 }
 
@@ -874,6 +899,9 @@ func handleWAFCreateRuleGroup(w http.ResponseWriter, r *http.Request) {
 		wafWriteError(w, "WAFInvalidParameterException", "Name and Scope are required")
 		return
 	}
+	if !wafValidateName(w, req.Name) {
+		return
+	}
 	for _, s := range wafRuleGroups.List() {
 		if s.Scope == req.Scope && s.RuleGroup.Name == req.Name {
 			wafWriteDuplicate(w, "RuleGroup", req.Name)
@@ -894,10 +922,7 @@ func handleWAFCreateRuleGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	wafRuleGroups.Put(wafKey(req.Scope, id), wafStoredRuleGroup{RuleGroup: rg, Scope: req.Scope, LockToken: lock, Tags: req.Tags})
 	wafWriteJSON(w, map[string]any{
-		"Summary": map[string]any{
-			"Name": rg.Name, "Id": rg.Id, "Description": rg.Description,
-			"LockToken": lock, "ARN": rg.ARN,
-		},
+		"Summary": wafEntitySummary(rg.Name, rg.Id, rg.Description, lock, rg.ARN),
 	})
 }
 
@@ -1041,6 +1066,9 @@ func handleWAFCreateRegexSet(w http.ResponseWriter, r *http.Request) {
 		wafWriteError(w, "WAFInvalidParameterException", "Name and Scope are required")
 		return
 	}
+	if !wafValidateName(w, req.Name) {
+		return
+	}
 	for _, s := range wafRegexSets.List() {
 		if s.Scope == req.Scope && s.RegexSet.Name == req.Name {
 			wafWriteDuplicate(w, "RegexPatternSet", req.Name)
@@ -1057,7 +1085,7 @@ func handleWAFCreateRegexSet(w http.ResponseWriter, r *http.Request) {
 	}
 	wafRegexSets.Put(wafKey(req.Scope, id), wafStoredRegex{RegexSet: rs, Scope: req.Scope, LockToken: lock, Tags: req.Tags})
 	wafWriteJSON(w, map[string]any{
-		"Summary": map[string]any{"Name": rs.Name, "Id": rs.Id, "Description": rs.Description, "LockToken": lock, "ARN": rs.ARN},
+		"Summary": wafEntitySummary(rs.Name, rs.Id, rs.Description, lock, rs.ARN),
 	})
 }
 
@@ -2284,7 +2312,9 @@ type WAFManagedRuleSetVer struct {
 // PutManagedRuleSetVersions then publishes new versions against the seed.
 func wafSeedManagedRuleSets() {
 	for _, scope := range []string{"CLOUDFRONT", "REGIONAL"} {
-		id := "a1b2c3d4-5678-90ab-cdef-EXAMPLE11111"
+		// EntityId is a UUID, so the seed's id is one; a readable placeholder
+		// with "EXAMPLE" in it is not a value the service could return.
+		id := "a1b2c3d4-5678-90ab-cdef-e0a3b1c5d7f9"
 		name := "AWSManagedRulesExampleRuleSet"
 		key := wafKey(scope, id)
 		if _, ok := wafManagedRuleSet.Get(key); ok {
@@ -2298,8 +2328,10 @@ func wafSeedManagedRuleSets() {
 				PublishedVersions: map[string]WAFManagedRuleSetVer{},
 				LabelNamespace:    "awswaf:managed:" + name + ":",
 			},
-			Scope:     scope,
-			LockToken: "seed-lock-0000",
+			Scope: scope,
+			// A lock token is a UUID whoever issued it; a readable placeholder
+			// is not a token a client could round-trip into an update.
+			LockToken: "5eed10c0-0000-4000-8000-000000000001",
 		})
 	}
 }

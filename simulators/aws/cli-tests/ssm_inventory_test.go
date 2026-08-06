@@ -22,7 +22,7 @@ func ssmHexSuffix() string {
 // type, and delete-inventory + describe-inventory-deletions model the
 // async deletion job.
 func TestSSMCLI_Inventory(t *testing.T) {
-	instanceID := "i-0cliinv" + ssmStamp()[:9]
+	instanceID := ssmInstanceID("0cliinv")
 	typeName := "Custom:SockerlessCLI"
 	capture := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 
@@ -104,7 +104,7 @@ func TestSSMCLI_Inventory(t *testing.T) {
 // records items, list-compliance-items reads them, and the two summary
 // ops roll up counts.
 func TestSSMCLI_Compliance(t *testing.T) {
-	resourceID := "i-0clicmp" + ssmStamp()[:9]
+	resourceID := ssmInstanceID("0clicmp")
 	complianceType := "Custom:SockerlessCLICheck"
 	execTime := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 

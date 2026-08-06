@@ -250,7 +250,7 @@ func TestSSMCLI_AutomationLifecycle(t *testing.T) {
 func TestSSMCLI_CommandLifecycle(t *testing.T) {
 	docName := "cli-command-doc-" + ssmStamp()
 	ssmCLIEnsureDoc(t, docName)
-	instanceID := "i-cccc3333dddd4444"
+	instanceID := "i-cccc3333dddd44440"
 
 	sendOut := runCLI(t, awsCLI("ssm", "send-command",
 		"--document-name", docName,

@@ -4,6 +4,70 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-06 — A response member's pattern is part of the contract
+
+The runtime spec validator checked that a response member was a string and
+stopped there. A `smithy.api#pattern` is as much of the wire contract as the
+type is, and it is where the identity-bearing strings are pinned — an ARN, an
+instance id, a lock token — so a value that deserialized fine could still be one
+no client could ever send back. That is how a malformed ARN reached every AWS
+Organizations response and went unnoticed until it was looked for.
+
+`validateSmithyValue` now matches a string shape's pattern, compiled once per
+shape. Smithy patterns are unanchored unless the expression anchors itself,
+which is exactly what `MatchString` does; a pattern the Go engine cannot compile
+constrains nothing rather than failing every value, because the validator
+refuses to judge what it cannot read.
+
+Arming it reported 185 divergences over 87 keys. All but three are fixed rather
+than allowlisted.
+
+AWS WAFV2 accounted for 43 of them and now for none. It emitted a lock token
+that was not a UUID though the model types it exactly as it types an entity id,
+seeded a rule set whose id read `EXAMPLE`, and returned a created entity's
+Description as `""` where the service omits the member — the stored shapes
+carried `omitempty` but the summary was built as a map, which has no such thing.
+It also accepted entity names the service rejects and echoed them back; it now
+refuses them the way AWS does, which is what had let them into responses at all.
+
+AWS Systems Manager accounted for 26. VersionName, TargetType and CaptureTime
+were emitted as `""`, a reviewer was reported as an ARN where the member admits
+no colon, and an access-request id was built as `oar-` plus seventeen characters
+where the model says `oi-` plus twelve. SendCommand now applies AWS's documented
+MaxConcurrency and MaxErrors defaults rather than returning empty strings, which
+is what the service does with a request that names neither.
+
+The rest were singletons. Amazon CloudWatch Logs carried a UUID's hyphens into
+an alphanumeric delivery id and reported an OpenSearch endpoint as `""` — the
+comment beside it said it would not fabricate the fact, which was the right
+instinct and the wrong execution, since an empty string is itself a value the
+model forbids. AWS CloudTrail returned a UUID where a refresh id is decimal. AWS
+KMS returned a dashed UUID where a key-material id is hex. A managed Contributor
+Insights rule was created with an empty definition, and a rule's definition is
+what the rule is, so it now carries the body it actually runs. AWS Glue emitted
+an absent iterable form name as `""`.
+
+Several were not the simulator at all but test inputs no real caller could send:
+instance ids sixteen characters long where the model admits eight or seventeen,
+a lookup-table name with hyphens, an Amazon S3 ARN where an S3 URI belongs, a
+Route 53 hosted-zone id carried into AWS Certificate Manager with its
+`/hostedzone/` prefix still on it, and AWS WAFV2 names built from a
+fractional-seconds timestamp. Each is fixed where a real client would have had
+to get it right.
+
+Three are allowlisted, tracked as BUG-2932, because the pattern is stricter than
+the service it describes: Amazon EventBridge really does name a connection's
+managed secret `events!connection/...`, AWS Certificate Manager really does
+report an AWS Private Certificate Authority ARN as the issuing authority, and
+Amazon CloudWatch Logs really does report a configuration template's resource
+type in CloudFormation spelling. Emitting something the pattern admits would
+mean emitting something AWS never emits. They close when a model revision
+widens the pattern, not when the simulator changes.
+
+The check carries its own regression rather than resting on the suites it
+serves, and the AWS simulator now has a violation allowlist where it had none,
+so any new pattern divergence fails CI.
+
 ## 2026-08-06 — AWS Organizations reads the resource type off the identifier
 
 AWS Organizations is the service whose identifiers say what they identify. Every

@@ -62,7 +62,7 @@ func TestAmplifyWAFv2Association(t *testing.T) {
 		_, _ = amplifyAPI.DeleteApp(context.Background(), &amplify.DeleteAppInput{AppId: aws.String(appID)})
 	})
 
-	aclName := "amplify-waf-" + time.Now().Format("150405.000000")
+	aclName := "amplify-waf-" + wafStamp()
 	acl, err := wafAPI.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
 		Name:  aws.String(aclName),
 		Scope: wafv2types.ScopeCloudfront,
@@ -163,7 +163,7 @@ func TestAmplifyWAFv2RequestEvaluation(t *testing.T) {
 			SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: aws.String(metric),
 		}
 	}
-	aclName := "waf-runtime-" + time.Now().Format("150405.000000")
+	aclName := "waf-runtime-" + wafStamp()
 	acl, err := wafAPI.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
 		Name:  aws.String(aclName),
 		Scope: wafv2types.ScopeCloudfront,
@@ -912,7 +912,7 @@ func TestAmplifyDeploymentFileMapUploads(t *testing.T) {
 	}
 
 	wafAPI := wafClient()
-	aclName := "filemap-block-" + time.Now().Format("150405.000000")
+	aclName := "filemap-block-" + wafStamp()
 	acl, err := wafAPI.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
 		Name:  aws.String(aclName),
 		Scope: wafv2types.ScopeCloudfront,

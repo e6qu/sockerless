@@ -1323,15 +1323,26 @@ func handleSSMSendCommand(w http.ResponseWriter, r *http.Request) {
 		ExpiresAfter:    now + float64(timeout),
 		Status:          "Success",
 		StatusDetail:    "Success",
-		MaxConcurrency:  req.MaxConcurrency,
-		MaxErrors:       req.MaxErrors,
-		TimeoutSeconds:  timeout,
-		Invocations:     invocations,
+		// A command always reports a concurrency and an error threshold: AWS
+		// applies its documented defaults when the request names none, so an
+		// unset member is not empty on the wire.
+		MaxConcurrency: ssmOrDefault(req.MaxConcurrency, "50"),
+		MaxErrors:      ssmOrDefault(req.MaxErrors, "0"),
+		TimeoutSeconds: timeout,
+		Invocations:    invocations,
 	}
 	ssmCommands.Put(cmd.CommandId, cmd)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Command": ssmCommandWire(cmd),
 	})
+}
+
+// ssmOrDefault returns value, or fallback when value is unset.
+func ssmOrDefault(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func ssmCommandWire(cmd SSMCommand) map[string]any {

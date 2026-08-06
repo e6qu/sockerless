@@ -66,7 +66,7 @@ func TestLogs_IntegrationRoundTrip(t *testing.T) {
 // UpdateLookupTable, DescribeLookupTables, and DeleteLookupTable.
 func TestLogs_LookupTableRoundTrip(t *testing.T) {
 	cw := cwLogsClient()
-	name := "test-lookup-table"
+	name := "test_lookup_table"
 	body := "key,value\nfoo,bar\n"
 
 	create, err := cw.CreateLookupTable(ctx, &cloudwatchlogs.CreateLookupTableInput{
@@ -96,7 +96,7 @@ func TestLogs_LookupTableRoundTrip(t *testing.T) {
 	require.NotNil(t, upd.LastUpdatedTime)
 
 	desc, err := cw.DescribeLookupTables(ctx, &cloudwatchlogs.DescribeLookupTablesInput{
-		LookupTableNamePrefix: aws.String("test-lookup"),
+		LookupTableNamePrefix: aws.String("test_lookup"),
 	})
 	require.NoError(t, err)
 	found := false
@@ -119,7 +119,7 @@ func TestLogs_ScheduledQueryRoundTrip(t *testing.T) {
 	name := "test-scheduled-query"
 	dest := &cwlogtypes.DestinationConfiguration{
 		S3Configuration: &cwlogtypes.S3Configuration{
-			DestinationIdentifier: aws.String("arn:aws:s3:::test-sq-bucket"),
+			DestinationIdentifier: aws.String("s3://test-sq-bucket"),
 			RoleArn:               aws.String("arn:aws:iam::123456789012:role/sq-role"),
 		},
 	}

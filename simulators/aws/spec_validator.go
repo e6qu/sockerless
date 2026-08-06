@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -67,6 +69,10 @@ type smithyOpDef struct {
 
 type smithyModelIndex struct {
 	shapes map[string]smithyShapeDef
+	// patterns memoizes compiled smithy.api#pattern traits by shape id; a nil
+	// entry records "this shape declares no usable pattern".
+	patterns   map[string]*regexp.Regexp
+	patternsMu sync.Mutex
 	// ops maps short operation name -> operation definition.
 	ops map[string]smithyOpDef
 	// serviceShort is the service shape's short name (the Go SDK's
@@ -436,8 +442,21 @@ func validateSmithyValue(idx *smithyModelIndex, op, shapeID, path string, v any,
 			}
 		}
 	case "string", "enum", "blob":
-		if _, ok := v.(string); !ok {
+		s, ok := v.(string)
+		if !ok {
 			*out = append(*out, sim.SpecViolation{Op: op, Kind: "type-mismatch", Field: path, Detail: fmt.Sprintf("spec %s is a %s, response has %T", shapeID, shape.Type, v)})
+			return
+		}
+		// A smithy.api#pattern is as much a part of the wire contract as the
+		// type is, and it is where identity-bearing strings are pinned: an ARN
+		// or an instance id whose shape carries a pattern is not merely "a
+		// string", and a value well-formed enough to deserialize can still name
+		// something that does not exist. Checking the type alone accepts those
+		// silently, which is how a malformed ARN reached every AWS
+		// Organizations response.
+		if re := idx.pattern(shapeID, shape); re != nil && !re.MatchString(s) {
+			*out = append(*out, sim.SpecViolation{Op: op, Kind: "pattern-mismatch", Field: path,
+				Detail: fmt.Sprintf("spec %s requires %s, response has %q", shapeID, re.String(), s)})
 		}
 	case "boolean":
 		if _, ok := v.(bool); !ok {
@@ -458,6 +477,34 @@ func validateSmithyValue(idx *smithyModelIndex, op, shapeID, path string, v any,
 	case "document":
 		// any JSON
 	}
+}
+
+// pattern returns the compiled smithy.api#pattern of a string shape, or nil
+// when the shape declares none. Compilation is memoized because the validator
+// re-reaches the same shapes on every response, and a pattern the Go regexp
+// engine cannot compile is treated as no constraint rather than as a
+// violation — the validator refuses to judge what it cannot read.
+//
+// Smithy patterns are unanchored unless the expression anchors itself, which
+// is exactly MatchString's semantics.
+func (idx *smithyModelIndex) pattern(shapeID string, shape smithyShapeDef) *regexp.Regexp {
+	idx.patternsMu.Lock()
+	defer idx.patternsMu.Unlock()
+	if re, done := idx.patterns[shapeID]; done {
+		return re
+	}
+	var re *regexp.Regexp
+	if raw, ok := shape.Traits["smithy.api#pattern"]; ok {
+		var expr string
+		if json.Unmarshal(raw, &expr) == nil && expr != "" {
+			re, _ = regexp.Compile(expr)
+		}
+	}
+	if idx.patterns == nil {
+		idx.patterns = map[string]*regexp.Regexp{}
+	}
+	idx.patterns[shapeID] = re
+	return re
 }
 
 // validateSmithyPrimitive covers smithy.api# prelude targets.

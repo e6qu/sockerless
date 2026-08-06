@@ -30,13 +30,14 @@ next three by size and none is known to need a new shape. AWS Glue's remaining
 35 are the data-quality operations, which name a result rather than the ruleset
 they authorize against, and creates that have no identifier yet.
 
-BUG-2931 is the other measured burn-down and is independent of the above: the
-runtime spec validator does not check `smithy.api#pattern`, and arming it
-reports 185 divergences over 87 keys in AWS WAFV2, AWS Systems Manager, Amazon
-CloudWatch Logs and four more. About eight root causes, the largest being an
-optional string emitted as `""` where the service omits the member. The check
-itself is a small change to `validateSmithyValue`; the work is the burn-down,
-and the AWS simulator carries no violation allowlist to ratchet against today.
+The response-pattern burn-down that was BUG-2931 is done: the runtime spec
+validator now checks `smithy.api#pattern`, and the AWS simulator carries a
+three-entry violation allowlist against BUG-2932 — patterns stricter than the
+service they describe, which no simulator change can satisfy. Anything else is
+a failure. BUG-2933 is the natural next increment: the same check does not
+exist in the Google Cloud (Discovery `pattern`) or Microsoft Azure (Swagger
+`pattern`) validators, so the same class of divergence is unmeasured there
+rather than known-clean.
 
 Two pieces remain staged in [PLAN.md](PLAN.md) § "Staged: the Compute and
 Console Tails", and both are breadth work needing no special host: Google

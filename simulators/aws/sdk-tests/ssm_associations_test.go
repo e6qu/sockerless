@@ -255,7 +255,7 @@ func TestSSM_CommandLifecycle(t *testing.T) {
 	docName := "sockerless-command-doc-sdk"
 	ssmEnsureDoc(t, c, docName)
 
-	instanceID := "i-cccc3333dddd4444"
+	instanceID := "i-cccc3333dddd44440"
 	send, err := c.SendCommand(ctx, &ssm.SendCommandInput{
 		DocumentName: aws.String(docName),
 		InstanceIds:  []string{instanceID},

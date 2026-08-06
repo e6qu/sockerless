@@ -211,14 +211,16 @@ func handleCWGetIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	// integrationDetails carries the OpenSearch resources the integration owns.
 	// The application ARN derives from the integration name; this is faithful to
-	// the GetIntegration response without fabricating unrelated facts.
+	// the GetIntegration response without fabricating unrelated facts. The
+	// endpoint is one of those facts, and the member is therefore absent: the
+	// model constrains it to an https URL, so an empty string is not "no value"
+	// but a value the service could never return.
 	details := map[string]any{
 		"openSearchIntegrationDetails": map[string]any{
 			"application": map[string]any{
-				"applicationArn":      cwIntegrationArn(integ.IntegrationName),
-				"applicationEndpoint": "",
-				"applicationId":       integ.IntegrationName,
-				"status":              map[string]any{"status": integ.IntegrationStatus},
+				"applicationArn": cwIntegrationArn(integ.IntegrationName),
+				"applicationId":  integ.IntegrationName,
+				"status":         map[string]any{"status": integ.IntegrationStatus},
 			},
 		},
 	}

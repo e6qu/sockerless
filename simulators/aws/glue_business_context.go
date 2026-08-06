@@ -954,10 +954,19 @@ func handleGluePutAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	asset.UpdatedAt = glueEpochNow()
 	glueBusinessAssets.Put(asset.Id, asset)
-	glueWriteJSON(w, http.StatusOK, map[string]any{
+	// An attachment made against the asset rather than an iterable form names
+	// no form, and the model constrains IterableFormName to a real identifier —
+	// so the member is absent rather than empty.
+	response := map[string]any{
 		"AssetIdentifier": asset.Id, "AttachmentName": req.AttachmentName, "FormTypeId": req.FormTypeId,
-		"IterableFormName": req.IterableFormName, "ItemIdentifier": req.ItemIdentifier,
-	})
+	}
+	if req.IterableFormName != "" {
+		response["IterableFormName"] = req.IterableFormName
+	}
+	if req.ItemIdentifier != "" {
+		response["ItemIdentifier"] = req.ItemIdentifier
+	}
+	glueWriteJSON(w, http.StatusOK, response)
 }
 
 func handleGlueDeleteAttachment(w http.ResponseWriter, r *http.Request) {

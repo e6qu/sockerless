@@ -878,7 +878,21 @@ jobs:
         with:
           bun-version: '1.3'
       - run: cd ui && bun install --frozen-lockfile
-      - run: cd ui && bunx playwright install --with-deps chromium
+      # The browser binaries are cached because the only thing between this job
+      # and the network is a 177 MiB download that the lockfile pins exactly.
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
+      # Deliberately not --with-deps. The runner image already carries every
+      # library Chromium links against — a --with-deps run reports all of them
+      # "already the newest version" — so the only packages it adds are nine
+      # CJK, Thai and Cyrillic font packages no browser test renders. Fetching
+      # them cost 10min 22s at 33.9 kB/s on one run, which overran the job
+      # budget and cancelled the tests. A missing library, if the image ever
+      # drops one, fails loudly at browser launch naming what is absent.
+      - run: cd ui && bunx playwright install chromium
+        timeout-minutes: 5
       - run: cd "ui/packages/${{ matrix.package }}" && bun run test:e2e
 
   sso-browser:
@@ -905,7 +919,14 @@ jobs:
           bun-version: '1.3'
       - run: sudo apt-get update && sudo apt-get install -y jq
       - run: cd ui && bun install --frozen-lockfile
-      - run: cd ui && bunx playwright install --with-deps chromium
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
+      # See the note in ui-browser: --with-deps adds only font packages here,
+      # and fetching them is what overran this job's budget.
+      - run: cd ui && bunx playwright install chromium
+        timeout-minutes: 5
       - run: SHAUTH_SOURCE_DIR="$GITHUB_WORKSPACE/.test-deps/shauth" bash scripts/test-shauth-rps.sh
 
   simulators-quality:

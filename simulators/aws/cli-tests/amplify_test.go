@@ -16,7 +16,7 @@ import (
 
 func TestAmplify_WAFv2_Association_CLI(t *testing.T) {
 	appOut := runCLI(t, awsCLI("amplify", "create-app",
-		"--name", "cli-amplify-waf-"+time.Now().Format("150405.000000"),
+		"--name", "cli-amplify-waf-"+wafStamp(),
 		"--output", "json",
 	))
 	var appResult struct {
@@ -31,7 +31,7 @@ func TestAmplify_WAFv2_Association_CLI(t *testing.T) {
 		_ = awsCLI("amplify", "delete-app", "--app-id", appResult.App.AppID).Run()
 	})
 
-	aclName := "cli-amplify-waf-" + time.Now().Format("150405.000000")
+	aclName := "cli-amplify-waf-" + wafStamp()
 	aclOut := runCLI(t, awsCLI("wafv2", "create-web-acl",
 		"--name", aclName,
 		"--scope", "CLOUDFRONT",

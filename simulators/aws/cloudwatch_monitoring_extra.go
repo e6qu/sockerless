@@ -156,7 +156,8 @@ func cwPutManagedRules(rules []cwManagedRuleInput) []map[string]any {
 			continue
 		}
 		ruleName := "ManagedRule-" + mr.templateName + "-" + mr.resourceARN
-		cwPutInsightRule(ruleName, "ENABLED", "", false, tagsToKV(mr.tags))
+		cwPutInsightRule(ruleName, "ENABLED", cwManagedRuleDefinition(mr.templateName, mr.resourceARN),
+			false, tagsToKV(mr.tags))
 		cwManagedRules.Put(mr.resourceARN+"\x00"+mr.templateName, CWManagedRule{
 			TemplateName: mr.templateName,
 			ResourceARN:  mr.resourceARN,
@@ -658,4 +659,26 @@ func handleCWCBORGetMetricWidgetImage(w http.ResponseWriter, r *http.Request) {
 	// MetricWidgetImage is a Blob; CBOR encodes a []byte as a byte string, which
 	// is exactly the wire form the blob deserializer reads.
 	cwWriteCBOR(w, map[string]any{"MetricWidgetImage": cwRenderWidgetPNG(widget)})
+} // cwManagedRuleDefinition is the Contributor Insights rule body a managed rule
+// runs. A rule's definition is what the rule is — Amazon CloudWatch returns it
+// from DescribeInsightRules for managed and customer rules alike — so a managed
+// rule created with an empty one is a rule that aggregates nothing, and the
+// model constrains the member to a real document besides. This builds the
+// genuine definition for the rule the simulator creates: the template it came
+// from, over the resource it watches.
+func cwManagedRuleDefinition(templateName, resourceARN string) string {
+	definition, err := json.Marshal(map[string]any{
+		"Schema":       map[string]any{"Name": "CloudWatchLogRule", "Version": 1},
+		"LogGroupARNs": []string{resourceARN},
+		"LogFormat":    "JSON",
+		"Contribution": map[string]any{"Keys": []string{"$.requestId"}},
+		"AggregateOn":  "Count",
+		"ManagedRule":  templateName,
+	})
+	if err != nil {
+		// The map above is fixed-shape and always marshals; a failure here
+		// would mean the runtime is broken, not the input.
+		panic("cloudwatch: managed insight-rule definition: " + err.Error())
+	}
+	return string(definition)
 }

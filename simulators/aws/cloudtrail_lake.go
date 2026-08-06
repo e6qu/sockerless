@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -864,6 +867,14 @@ func handleCloudTrailDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 	writeAWSJSON(w, http.StatusOK, map[string]any{})
 }
 
+// cloudTrailRefreshID returns the decimal refresh id AWS CloudTrail assigns to
+// a dashboard refresh.
+func cloudTrailRefreshID() string {
+	buf := make([]byte, 8)
+	_, _ = rand.Read(buf)
+	return strconv.FormatUint(binary.BigEndian.Uint64(buf)%1_000_000_000_000, 10)
+}
+
 func handleCloudTrailStartDashboardRefresh(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DashboardId string
@@ -875,7 +886,10 @@ func handleCloudTrailStartDashboardRefresh(w http.ResponseWriter, r *http.Reques
 		cloudTrailError(w, "ResourceNotFoundException", "Dashboard not found", http.StatusNotFound)
 		return
 	}
-	writeAWSJSON(w, http.StatusOK, map[string]any{"RefreshId": generateUUID()})
+	// A refresh id is a decimal number, not a UUID: the model admits only
+	// digits, so a client that round-trips it into GetDashboard would be
+	// sending a value the service rejects.
+	writeAWSJSON(w, http.StatusOK, map[string]any{"RefreshId": cloudTrailRefreshID()})
 }
 
 // ---- Imports ----
