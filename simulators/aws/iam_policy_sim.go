@@ -252,9 +252,12 @@ func iamActionMatches(stmt iamStatement, action string) bool {
 }
 
 func iamResourceMatches(stmt iamStatement, resource string) bool {
+	match := func(pattern string) bool {
+		return iamGlobMatch(pattern, resource) || iamLogGroupPatternMatches(pattern, resource)
+	}
 	if len(stmt.NotResource) > 0 {
 		for _, p := range stmt.NotResource {
-			if iamGlobMatch(p, resource) {
+			if match(p) {
 				return false
 			}
 		}
@@ -264,11 +267,37 @@ func iamResourceMatches(stmt iamStatement, resource string) bool {
 		return true // no resource constraint (e.g. an action with "*" resource)
 	}
 	for _, p := range stmt.Resource {
-		if iamGlobMatch(p, resource) {
+		if match(p) {
 			return true
 		}
 	}
 	return false
+}
+
+// iamLogGroupPatternMatches covers the one place CloudWatch Logs spells a log
+// group's ARN two ways and authorizes against both.
+//
+// The AWS Service Reference declares the log-group resource format with no
+// suffix — "…:log-group:${LogGroupName}" — and that is the form a request
+// derives. But DescribeLogGroups RETURNS the ARN with a trailing ":*", and that
+// is the form policies are written in: AWS's own documentation examples, the
+// policies the console generates, and Terraform modules. Matching only the
+// declared form denies a role holding exactly the grant it needs, and because
+// it is the RESOURCE that failed to match, the denial reads "no identity-based
+// policy allows the logs:FilterLogEvents action" — sending the reader to hunt
+// for a missing action that is plainly present in the policy.
+//
+// Only log-group-level resources qualify. A log-stream ARN carries its own
+// segment and keeps matching exactly, so a grant on one stream cannot widen to
+// the whole group.
+func iamLogGroupPatternMatches(pattern, resource string) bool {
+	if !strings.HasSuffix(pattern, ":*") {
+		return false
+	}
+	if !strings.Contains(resource, ":log-group:") || strings.Contains(resource, ":log-stream:") {
+		return false
+	}
+	return iamGlobMatch(strings.TrimSuffix(pattern, ":*"), resource)
 }
 
 func iamAnyMatch(ctxVals, wantVals []string, eq func(ctx, want string) bool) bool {
