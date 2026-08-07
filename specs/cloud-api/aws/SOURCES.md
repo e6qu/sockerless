@@ -5,7 +5,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 
 | Local file | Upstream repo / host | Upstream path | License | Pinned at | Fetched (UTC) |
 |---|---|---|---|---|---|
-| `amplify.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/amplify.json` | Apache-2.0 | `af6568be692483489ab5df33958f4b69734a4318` | 2026-07-26T18:38:13Z |
 | `api-gateway.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/api-gateway.json` | Apache-2.0 | `02c8323ee6c99be82dae3a3923616756cb164525` | 2026-07-26T18:38:16Z |
 | `apigatewayv2.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/apigatewayv2.json` | Apache-2.0 | `02c8323ee6c99be82dae3a3923616756cb164525` | 2026-07-26T18:38:18Z |
 | `application-auto-scaling.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/application-auto-scaling.json` | Apache-2.0 | `aee4eeca7e6917419137f50c4e7b7ac62ba7107a` | 2026-07-26T18:38:20Z |
@@ -43,5 +42,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `glue.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/glue.json` | Apache-2.0 | `8868ff7799c8f8ff772f921ab0e3b71d9117cb49` | 2026-08-05T20:18:22Z |
 | `s3.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/s3.json` | Apache-2.0 | `22a51fa09db7e4e07058e8e155d4ceb53bff992f` | 2026-08-06T20:54:06Z |
 | `cloudwatch-logs.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/cloudwatch-logs.json` | Apache-2.0 | `22a51fa09db7e4e07058e8e155d4ceb53bff992f` | 2026-08-06T20:54:07Z |
-| `ec2.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/ec2.json` | Apache-2.0 | `22a51fa09db7e4e07058e8e155d4ceb53bff992f` | 2026-08-06T20:54:09Z |
 | `auto-scaling.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/auto-scaling.json` | Apache-2.0 | `22a51fa09db7e4e07058e8e155d4ceb53bff992f` | 2026-08-06T20:54:10Z |
+| `amplify.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/amplify.json` | Apache-2.0 | `0c522bf377460ee85d2dad77a7e6c98a97a2f637` | 2026-08-07T19:39:56Z |
+| `ec2.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/ec2.json` | Apache-2.0 | `0c522bf377460ee85d2dad77a7e6c98a97a2f637` | 2026-08-07T19:39:58Z |
