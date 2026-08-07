@@ -696,22 +696,33 @@ func gcpProxyHTTPRequest(w http.ResponseWriter, r *http.Request, bs ComputeBacke
 		Path:     r.URL.EscapedPath(),
 		RawQuery: r.URL.RawQuery,
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(gcpDefaultBackendTimeout(bs.TimeoutSec))*time.Second)
-	defer cancel()
+	// The backend service timeout bounds a request/response exchange. An upgraded
+	// connection is not one, and applying it there would cut every long-lived
+	// session at the timeout.
+	ctx := r.Context()
+	upgrade := sim.IsUpgradeRequest(r)
+	if !upgrade {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(gcpDefaultBackendTimeout(bs.TimeoutSec))*time.Second)
+		defer cancel()
+	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, upstreamURL.String(), r.Body)
 	if err != nil {
 		return err
 	}
 	req.Header = r.Header.Clone()
-	client := http.Client{
-		Timeout:       time.Duration(gcpDefaultBackendTimeout(bs.TimeoutSec)) * time.Second,
-		CheckRedirect: returnRedirectsToClient,
+	client := http.Client{CheckRedirect: returnRedirectsToClient}
+	if !upgrade {
+		client.Timeout = time.Duration(gcpDefaultBackendTimeout(bs.TimeoutSec)) * time.Second
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("forward to backend %s: %w", target.Address, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		return sim.TunnelUpgradedResponse(w, resp)
+	}
 	for key, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)

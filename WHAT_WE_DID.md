@@ -4,6 +4,38 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-07 — Stopped tasks age out, and the data-plane tests own their setup
+
+Two issues filed against the deployed simulator, both about state that
+accumulates rather than about a request that fails.
+
+A cluster held 6,129 stopped Amazon ECS tasks, the oldest a week old. Real ECS
+stops returning them from ListTasks about an hour after they stop; keeping them
+forever is not merely untidy, because it changes what an operator sees. Listing
+stopped tasks paged through thousands of ARNs to answer the ordinary "what
+happened to my task", and a cluster reporting one running task beside thousands
+stopped reads at a glance like a crash loop — the reporter lost time to exactly
+that false alarm during an unrelated investigation.
+
+Stopped tasks now age out after an hour. ListTasks omits them at that point and
+a sweep deletes the records behind them, so the retention bounds what the
+simulator holds and not only what it reports; a filter alone would leave the
+records piling up behind it. A task that is not stopped never ages out, and
+neither does one whose stop time was never recorded — the absence of a timestamp
+is not evidence of age, and removing such a task would delete something whose
+stop time is merely unknown.
+
+The second issue was a test that passed for the wrong reason. The Elastic Load
+Balancing data plane reads package-level stores that other subsystems'
+registration populates, so running one of its tests alone panicked on a nil
+dereference inside AWS WAFV2, while the full package run passed because an
+earlier test had registered that subsystem first. By the time it was picked up
+the panic had been masked by an in-memory default on the store — the tests
+passed, but still on whatever those stores happened to hold rather than on
+anything they set up. They now register the subsystems the data plane reads,
+which is the difference between passing and passing for a reason: with the
+default removed they still pass, where before all four panicked.
+
 ## 2026-08-06 — An awsvpc task can resolve names again
 
 Two issues were filed against a deployment: a task that stayed PENDING while its

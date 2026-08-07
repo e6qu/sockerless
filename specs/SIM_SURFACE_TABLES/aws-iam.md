@@ -60,8 +60,8 @@ Surface registered in `simulators/aws/iam.go` (and related files grouped under t
 | `Action ListRoles` | ✓ `simulators/aws/iam_lists.go:29::handleIAMListRoles` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action ListRoleTags` | ✓ `simulators/aws/iam_lists.go:30::handleIAMListRoleTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action ListPolicyTags` | ✓ `simulators/aws/iam_lists.go:31::handleIAMListPolicyTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action SimulateCustomPolicy` | ✓ `simulators/aws/iam_policy_sim.go:730::handleIAMSimulateCustomPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action SimulatePrincipalPolicy` | ✓ `simulators/aws/iam_policy_sim.go:731::handleIAMSimulatePrincipalPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action SimulateCustomPolicy` | ✓ `simulators/aws/iam_policy_sim.go:759::handleIAMSimulateCustomPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action SimulatePrincipalPolicy` | ✓ `simulators/aws/iam_policy_sim.go:760::handleIAMSimulatePrincipalPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action CreateServiceLinkedRole` | ✓ `simulators/aws/iam_slr_oidc.go:63::handleIAMCreateServiceLinkedRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DeleteServiceLinkedRole` | ✓ `simulators/aws/iam_slr_oidc.go:64::handleIAMDeleteServiceLinkedRole` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action GetServiceLinkedRoleDeletionStatus` | ✓ `simulators/aws/iam_slr_oidc.go:65::handleIAMGetSLRDeletionStatus` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |

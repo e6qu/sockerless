@@ -138,20 +138,34 @@ func elbv2ProxyHTTPRequest(w http.ResponseWriter, r *http.Request, listener ELBv
 		Path:     r.URL.EscapedPath(),
 		RawQuery: r.URL.RawQuery,
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
+	// A real ALB carries WebSockets, so the deadlines that bound an ordinary
+	// request must not apply to an upgrade: those connections are meant to last
+	// for hours, and a 30s cap would cut every one of them.
+	ctx := r.Context()
+	upgrade := sim.IsUpgradeRequest(r)
+	if !upgrade {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, upstreamURL.String(), r.Body)
 	if err != nil {
 		return err
 	}
 	req.Header = r.Header.Clone()
 	req.Host = elbv2TargetHostHeader(r.Host, listener)
-	client := http.Client{Timeout: 30 * time.Second, CheckRedirect: returnRedirectsToClient}
+	client := http.Client{CheckRedirect: returnRedirectsToClient}
+	if !upgrade {
+		client.Timeout = 30 * time.Second
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("forward to target %s: %w", address, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		return sim.TunnelUpgradedResponse(w, resp)
+	}
 	for key, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)

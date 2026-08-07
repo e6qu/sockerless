@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -8,18 +9,39 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
 
-func TestELBv2DataPlaneRoutesOnlyLoadBalancerHosts(t *testing.T) {
+// newELBv2DataPlaneServer builds a simulator carrying everything the load
+// balancer data plane reads, not only the load balancers themselves.
+//
+// The data plane consults AWS WAFV2 for a web ACL association and Amazon ECS
+// for a task's published port, both through package-level stores that the
+// owning subsystem's registration populates. A test that registers only
+// Elastic Load Balancing therefore passes on whatever those stores happen to
+// hold — a zero value when the test runs alone, another test's leavings when
+// it does not — so what it proves depends on test ordering rather than on the
+// handler (GitHub issue #907). Registering the subsystems it reads makes the
+// dependency the test's own.
+func newELBv2DataPlaneServer(t *testing.T) *sim.Server {
+	t.Helper()
 	t.Setenv("SIM_RUNTIME", "process")
 	srv, err := sim.NewServer(sim.Config{Provider: "aws", LogLevel: "disabled"})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
+	jsonRouter := sim.NewAWSRouter()
 	registerELBv2(sim.NewAWSQueryRouter(), srv)
+	registerWAFv2(jsonRouter, srv)
+	registerECS(jsonRouter, srv)
 	registerELBv2DataPlane(srv)
+	return srv
+}
+
+func TestELBv2DataPlaneRoutesOnlyLoadBalancerHosts(t *testing.T) {
+	srv := newELBv2DataPlaneServer(t)
 
 	var targetHostHeader string
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,13 +128,7 @@ func TestELBv2DataPlaneRoutesOnlyLoadBalancerHosts(t *testing.T) {
 }
 
 func TestELBv2DataPlaneDoesNotInterceptControlPlaneHost(t *testing.T) {
-	t.Setenv("SIM_RUNTIME", "process")
-	srv, err := sim.NewServer(sim.Config{Provider: "aws", LogLevel: "disabled"})
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-	registerELBv2(sim.NewAWSQueryRouter(), srv)
-	registerELBv2DataPlane(srv)
+	srv := newELBv2DataPlaneServer(t)
 
 	srv.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("query-control-plane"))
@@ -131,12 +147,9 @@ func TestELBv2DataPlaneDoesNotInterceptControlPlaneHost(t *testing.T) {
 }
 
 func TestELBv2TargetHostHeaderMatchesALBDefaults(t *testing.T) {
-	t.Setenv("SIM_RUNTIME", "process")
-	srv, err := sim.NewServer(sim.Config{Provider: "aws", LogLevel: "disabled"})
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-	registerELBv2(sim.NewAWSQueryRouter(), srv)
+	// This one exercises the header helper rather than the served path, but it
+	// still reads the load-balancer store the registration populates.
+	newELBv2DataPlaneServer(t)
 
 	lb := ELBv2LoadBalancer{
 		Arn:        "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/test-lb/abc123",
@@ -175,13 +188,7 @@ func TestELBv2TargetHostHeaderMatchesALBDefaults(t *testing.T) {
 // rewindable body for Go to replay. Nothing about the defect is status-specific,
 // and a bodyless request like the one below follows all five.
 func TestELBv2DataPlaneReturnsTargetRedirectsInsteadOfFollowingThem(t *testing.T) {
-	t.Setenv("SIM_RUNTIME", "process")
-	srv, err := sim.NewServer(sim.Config{Provider: "aws", LogLevel: "disabled"})
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-	registerELBv2(sim.NewAWSQueryRouter(), srv)
-	registerELBv2DataPlane(srv)
+	srv := newELBv2DataPlaneServer(t)
 
 	const sessionCookie = "session=granted; Path=/; HttpOnly"
 	var landingRequests int
@@ -269,5 +276,129 @@ func TestELBv2DataPlaneReturnsTargetRedirectsInsteadOfFollowingThem(t *testing.T
 		if strings.Contains(rr.Body.String(), "followed-the-redirect") {
 			t.Errorf("%d: client received the redirect target's body instead of the redirect", status)
 		}
+	}
+}
+
+// A WebSocket is not delivered by relaying its handshake. The data plane used to
+// forward with an ordinary client and copy the response body to the
+// ResponseWriter, which produces a 101 the client accepts and then a one-way pipe:
+// nothing the client sends can reach the target, because a ResponseWriter has no
+// route back. The failure is silent in exactly the wrong way — the peer sees a
+// successful upgrade followed by silence and reports a handshake timeout.
+//
+// This runs over real sockets. httptest.NewRecorder cannot hijack, so a recorder
+// would pass while production fails.
+func TestELBv2DataPlaneTunnelsUpgradedConnectionsBothWays(t *testing.T) {
+	srv := newELBv2DataPlaneServer(t)
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		if !sim.IsUpgradeRequest(r) {
+			http.Error(w, "expected an upgrade request", http.StatusBadRequest)
+			return
+		}
+		conn, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("target hijack: %v", err)
+			return
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: pinned\r\n\r\n")
+		_ = buf.Flush()
+		// Echo, so a reply proves the CLIENT's bytes arrived — the direction the
+		// old implementation dropped. A target that merely spoke first would pass
+		// against a one-way pipe.
+		for {
+			line, err := buf.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if _, err := buf.WriteString("echo:" + line); err != nil {
+				return
+			}
+			if err := buf.Flush(); err != nil {
+				return
+			}
+		}
+	}))
+	defer target.Close()
+	parsedTargetURL, err := url.Parse(target.URL)
+	if err != nil {
+		t.Fatalf("parse target URL %s: %v", target.URL, err)
+	}
+	targetHost, targetPortText, err := net.SplitHostPort(parsedTargetURL.Host)
+	if err != nil {
+		t.Fatalf("target URL host has no port: %s: %v", target.URL, err)
+	}
+	targetPort, err := strconv.Atoi(targetPortText)
+	if err != nil {
+		t.Fatalf("target URL port is not numeric: %s: %v", target.URL, err)
+	}
+
+	lb := ELBv2LoadBalancer{
+		Arn:     "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/upgrade-lb/abc123",
+		Name:    "upgrade-lb",
+		DNSName: "upgrade-lb-abc123.elb.us-east-1.amazonaws.com",
+		Type:    "application",
+	}
+	tg := ELBv2TargetGroup{
+		Arn:                 "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/upgrade-tg/abc123",
+		Protocol:            "HTTP",
+		Port:                80,
+		HealthCheckProtocol: "HTTP",
+		HealthCheckPath:     "/healthz",
+		HealthCheckTimeout:  2,
+		Targets:             []ELBv2TargetDescription{{ID: targetHost, Port: targetPort}},
+	}
+	listener := ELBv2Listener{
+		Arn:             "arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/upgrade-lb/abc123/def456",
+		LoadBalancerArn: lb.Arn,
+		Protocol:        "HTTP",
+		Port:            80,
+		DefaultActions:  []ELBv2Action{{Type: "forward", TargetGroupArn: tg.Arn}},
+	}
+	elbv2LoadBalancers.Put(lb.Arn, lb)
+	elbv2TargetGroups.Put(tg.Arn, tg)
+	elbv2Listeners.Put(listener.Arn, listener)
+
+	dataPlane := httptest.NewServer(srv)
+	defer dataPlane.Close()
+	conn, err := net.Dial("tcp", strings.TrimPrefix(dataPlane.URL, "http://"))
+	if err != nil {
+		t.Fatalf("dial data plane: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	if _, err := conn.Write([]byte("GET /socket HTTP/1.1\r\nHost: " + lb.DNSName +
+		"\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")); err != nil {
+		t.Fatalf("write upgrade request: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatalf("read upgrade response: %v", err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade response = %d, want %d", resp.StatusCode, http.StatusSwitchingProtocols)
+	}
+	if got := resp.Header.Get("Sec-WebSocket-Accept"); got != "pinned" {
+		t.Errorf("Sec-WebSocket-Accept = %q, want %q — handshake headers must reach the client verbatim", got, "pinned")
+	}
+
+	if _, err := conn.Write([]byte("ping\n")); err != nil {
+		t.Fatalf("write through the tunnel: %v", err)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("the target never answered, so the client's bytes never reached it: %v", err)
+	}
+	if line != "echo:ping\n" {
+		t.Errorf("tunnel returned %q, want %q", line, "echo:ping\n")
 	}
 }
