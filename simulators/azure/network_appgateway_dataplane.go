@@ -740,20 +740,35 @@ func applicationGatewayForward(w http.ResponseWriter, r *http.Request, settings 
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
-	defer cancel()
+	// The backend HTTP settings' request timeout bounds a request/response
+	// exchange; an upgraded connection is not one and must not inherit it.
+	ctx := r.Context()
+	upgrade := sim.IsUpgradeRequest(r)
+	if !upgrade {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, upstream.String(), r.Body)
 	if err != nil {
 		return err
 	}
 	req.Header = headers
 	req.Host = host
-	client := http.Client{Timeout: timeout, CheckRedirect: returnRedirectsToClient}
+	client := http.Client{CheckRedirect: returnRedirectsToClient}
+	if !upgrade {
+		client.Timeout = timeout
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("forward to backend %s: %w", upstream.Host, err)
 	}
 	defer resp.Body.Close()
+	// Response rewrites shape headers; an upgrade hands the connection over
+	// instead, so it tunnels before they would apply.
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		return sim.TunnelUpgradedResponse(w, resp)
+	}
 	responseHeaders := resp.Header.Clone()
 	if rewrite != nil {
 		vars := applicationGatewayServerVariables(r, host, resp.StatusCode)

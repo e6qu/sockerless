@@ -96,9 +96,16 @@ func proxyACAIngress(w http.ResponseWriter, r *http.Request, app ContainerApp) {
 	// Route to the App's configured ingress target port — exactly what real
 	// ACA ingress forwards to (the container's listening port).
 	target := fmt.Sprintf("http://%s:%d%s", ip, acaIngressTargetPort(app), r.URL.RequestURI())
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
-	defer cancel()
-	client := &http.Client{Timeout: 10 * time.Minute, CheckRedirect: returnRedirectsToClient}
+	// An upgraded connection outlives any request deadline, so it gets none.
+	ctx := r.Context()
+	upgrade := sim.IsUpgradeRequest(r)
+	client := &http.Client{CheckRedirect: returnRedirectsToClient}
+	if !upgrade {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+		client.Timeout = 10 * time.Minute
+	}
 
 	// The replica's HTTP listener binds a moment after the container starts;
 	// retry the connection briefly so an invoke racing replica startup doesn't
@@ -129,6 +136,12 @@ func proxyACAIngress(w http.ResponseWriter, r *http.Request, app ContainerApp) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		if terr := sim.TunnelUpgradedResponse(w, resp); terr != nil {
+			sim.AzureErrorf(w, "BadGateway", http.StatusBadGateway, "container app %q ingress: %v", app.Name, terr)
+		}
+		return
+	}
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)

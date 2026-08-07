@@ -460,20 +460,33 @@ func amplifyProxyToCompute(w http.ResponseWriter, r *http.Request, port int, int
 		Path:     r.URL.EscapedPath(),
 		RawQuery: r.URL.RawQuery,
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
+	// An upgraded connection is long-lived, so the request deadline that bounds an
+	// ordinary proxied request must not be imposed on it.
+	ctx := r.Context()
+	upgrade := sim.IsUpgradeRequest(r)
+	if !upgrade {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, upstreamURL.String(), r.Body)
 	if err != nil {
 		return false, err
 	}
 	req.Header = r.Header.Clone()
 	req.Host = r.Host
-	client := http.Client{Timeout: 30 * time.Second, CheckRedirect: returnRedirectsToClient}
+	client := http.Client{CheckRedirect: returnRedirectsToClient}
+	if !upgrade {
+		client.Timeout = 30 * time.Second
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("forward to compute %s: %w", upstreamURL.Host, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		return true, sim.TunnelUpgradedResponse(w, resp)
+	}
 	if interceptNotFound && resp.StatusCode == http.StatusNotFound {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return false, nil
