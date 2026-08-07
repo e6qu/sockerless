@@ -348,3 +348,91 @@ func TestCloseRemovesHostArtifacts(t *testing.T) {
 		t.Fatalf("network namespace %snw still exists after cleanup: %s", prefix, out)
 	}
 }
+
+// TestSubnetResolverDNATServesTheSubnetBridge drives the path an Amazon ECS
+// task takes: a VPC network, a subnet inside it, and a workload attached to
+// that subnet. A network carries no bridge of its own — each of its subnets has
+// one — so a resolver configured against the network's bridge name lands on
+// `dev ""` and every task attach fails with "Cannot find device". Exercising
+// only the network-level call hid that completely.
+func TestSubnetResolverDNATServesTheSubnetBridge(t *testing.T) {
+	report := DetectNetworkCapabilities()
+	if err := report.Require(); err != nil {
+		t.Skipf("host cannot create network namespaces: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	prefix := shortPrefix()
+	runner := Runner{}
+	host := NewHost()
+	// A VPC network, created the way the Amazon EC2 slice creates one: no
+	// bridge of its own, subnets underneath it.
+	network, err := host.CreateNetwork(ctx, NetworkSpec{
+		NamespaceName: prefix + "vn",
+		BridgeName:    prefix + "vb",
+		CIDR:          "10.212.0.0/16",
+	})
+	if err != nil {
+		t.Fatalf("create the VPC network: %v", err)
+	}
+	defer func() { _ = network.Close(context.Background()) }()
+
+	subnet, err := network.CreateSubnet(ctx, SubnetSpec{
+		Name:       prefix + "sn",
+		BridgeName: prefix + "sb",
+		CIDR:       "10.212.1.0/24",
+	})
+	if err != nil {
+		t.Fatalf("create the subnet: %v", err)
+	}
+
+	workload, err := subnet.AttachNamespaceNIC(ctx, NamespaceNICSpec{
+		NamespaceName: prefix + "s1",
+		HostVethName:  prefix + "sh",
+		GuestVethName: prefix + "sg",
+		MAC:           "02:00:5e:12:00:01",
+	})
+	if err != nil {
+		t.Fatalf("attach the workload to the subnet: %v", err)
+	}
+
+	udpConn, err := net.ListenPacket("udp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer udpConn.Close()
+	resolverPort := udpConn.LocalAddr().(*net.UDPAddr).Port
+	seen := make(chan struct{}, 1)
+	go func() {
+		buf := make([]byte, 512)
+		if _, _, err := udpConn.ReadFrom(buf); err == nil {
+			seen <- struct{}{}
+		}
+	}()
+
+	if err := subnet.ConfigureResolverDNAT(ctx, resolverPort, prefix+"dns"); err != nil {
+		t.Fatalf("configure the subnet resolver: %v", err)
+	}
+	if err := runner.Run(ctx, "ip", "netns", "exec", workload.NamespaceName, "bash", "-c",
+		fmt.Sprintf("exec 3<>/dev/udp/%s/53 && printf probe >&3", VPCResolverIPv4)); err != nil {
+		t.Fatalf("query the VPC resolver from the workload: %v", err)
+	}
+	select {
+	case <-seen:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the host resolver never saw the workload's query")
+	}
+}
+
+// The resolver is served on a link-local address, which is never on a
+// workload's own subnet — so a query for it is routed to the namespace rather
+// than depending on an address-resolution answer for an address inside the
+// subnet. That difference is what makes it work for a task whose subnet
+// contains the VPC's base address.
+func TestVPCResolverIsLinkLocal(t *testing.T) {
+	ip := net.ParseIP(VPCResolverIPv4)
+	if ip == nil || !ip.IsLinkLocalUnicast() {
+		t.Fatalf("the VPC resolver address %q is not link-local", VPCResolverIPv4)
+	}
+}

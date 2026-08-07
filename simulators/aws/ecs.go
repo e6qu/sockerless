@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	realexec "github.com/sockerless/simulator-realexec"
 	"net/http"
 	"os"
 	"strconv"
@@ -1896,7 +1897,12 @@ func ecsPauseImage() string {
 // startECSPauseContainer launches the netns pause container (Fargate-style): a
 // long-lived process that holds the task's network namespace so the ENI can be
 // plumbed in with no start-race, then shared by every task container.
-func startECSPauseContainer(taskID string, td ECSTaskDefinition, sink sim.LogSink) (*sim.ContainerHandle, error) {
+// The pause container carries the task's resolver because it owns the network
+// namespace. Docker refuses --dns on a container that joins another's namespace
+// — "conflicting options: dns and the network mode" — and rightly so: the
+// resolver is a property of the namespace, and every task container inherits
+// this one along with the interface.
+func startECSPauseContainer(taskID string, td ECSTaskDefinition, dns []string, sink sim.LogSink) (*sim.ContainerHandle, error) {
 	img := sim.ResolveLocalImage(ecsPauseImage())
 	platform, err := localImagePlatform(context.Background(), img)
 	if err != nil {
@@ -1913,6 +1919,7 @@ func startECSPauseContainer(taskID string, td ECSTaskDefinition, sink sim.LogSin
 			"sockerless-sim-task-pause": "true",
 		},
 		Sandbox: sim.SandboxFargate,
+		DNS:     dns,
 	}, sink)
 }
 
@@ -2030,9 +2037,19 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		return nil, fmt.Errorf("awsvpc task %s has no elastic network interface attachment", taskID)
 	}
 	netnsTier := networkMode == ecsNetworkModeAwsvpc && ec2ECSRealNetAvailable()
+	// A task in its own namespace cannot reach the resolver Docker would
+	// configure — that one lives on the Docker networks the namespace is
+	// detached from — so it asks the VPC's, which the namespace redirects to
+	// the simulator's own. Without this the redirect is in place and nothing
+	// uses it: every lookup still goes to an address that answers nothing and
+	// blocks until it times out.
+	var taskDNS []string
+	if netnsTier {
+		taskDNS = []string{realexec.VPCResolverIPv4}
+	}
 	var sharedNetMode string
 	if netnsTier {
-		pause, perr := startECSPauseContainer(taskID, td, sink)
+		pause, perr := startECSPauseContainer(taskID, td, taskDNS, sink)
 		if perr != nil {
 			return nil, perr
 		}

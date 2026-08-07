@@ -67,7 +67,12 @@ type ContainerConfig struct {
 	OpenStdin    bool              // keep stdin open
 	Binds        []string          // bind mounts (e.g., "vol:/path")
 	ExtraHosts   []string          // --add-host entries (e.g., "host.docker.internal:host-gateway")
-	WorkingDir   string            // working directory inside the container (optional)
+	// DNS are the resolvers written into the container's /etc/resolv.conf. A
+	// workload in its own network namespace cannot reach the embedded resolver
+	// Docker would otherwise configure, so the namespace's own resolver is named
+	// here; empty leaves Docker's default in place.
+	DNS        []string
+	WorkingDir string // working directory inside the container (optional)
 
 	// PublishPorts maps containerPort → hostPort (bound on 127.0.0.1).
 	// Used by host-addressed data planes that must reach a workload's
@@ -646,6 +651,7 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	hostCfg := &container.HostConfig{
 		Binds:      cfg.Binds,
 		ExtraHosts: cfg.ExtraHosts,
+		DNS:        cfg.DNS,
 	}
 	// Apply the advertised resource limits to the container's cgroup so the
 	// workload is actually bounded the way the cloud product reports (e.g. a

@@ -4,6 +4,47 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-06 — An awsvpc task can resolve names again
+
+Two issues were filed against a deployment: a task that stayed PENDING while its
+container ran (#904), and the same workload taking six silent minutes to bind
+its ports when the control plane launched it and five seconds when a person did
+(#905). They turned out to be one measurement and one defect.
+
+The first does not reproduce. A task definition with no healthCheck, whose
+container runs immediately and binds nothing for a minute, reports RUNNING in
+about two seconds on this code — lastStatus is set as soon as the containers are
+started, and nothing in that path waits on the application. The regression the
+issue asked for is here as a guard, because the contract is worth pinning
+whether or not it is currently broken: lastStatus says where a task is in its
+lifecycle, healthStatus says whether the application is well, and Amazon ECS
+only has an opinion about the second when a healthCheck is declared. Gating the
+first on readiness is not a delay but a failure — a caller that waits for
+RUNNING times out and stops a task that was serving perfectly well.
+
+The second is real, and it explains the six minutes. An awsvpc task on a
+real-network host gets its own network namespace: a pause container is created
+on Docker's networks, which writes Docker's embedded resolver 127.0.0.11 into
+its `/etc/resolv.conf`, and is then detached from those networks so the ENI can
+be plumbed into the namespace. Nothing answers at that address afterwards.
+Lookups do not fail — they block until they time out, which is why the gap is
+silent and why an application that resolves a name at startup binds its ports
+minutes after its container started.
+
+A VPC serves DNS at its own CIDR base plus two; that is what AmazonProvidedDNS
+means and what every awsvpc task's resolver entry points at. The task's
+namespace now redirects that address to the simulator's own resolver, on UDP and
+on TCP, because a resolver is reached over UDP and falls back to TCP for
+truncated answers. The redirect helper the metadata addresses already used could
+not carry it — it hardcoded `tcp dport 80` — so DNS needed its own.
+
+What is verified where: the resolver address and the port derivation are unit
+tested, including that the resolver is not the gateway, since base+1 and base+2
+one character apart would send every lookup to the router. The namespace path
+itself is Linux-only, so its test creates a real namespace, sends both protocols
+to the VPC resolver address, and requires the host resolver to receive them —
+that runs on CI, not on a macOS host.
+
 ## 2026-08-06 — The pattern check reaches the other two simulators
 
 The check that found six defects in AWS Organizations was AWS-only, so the same

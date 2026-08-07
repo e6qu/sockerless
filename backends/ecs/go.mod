@@ -7,13 +7,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.35
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.34
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.3
-	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.81.1
+	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.82.0
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.4
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.319.1
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.320.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.4
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.90.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.44.4
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.43.4
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/google/uuid v1.6.0

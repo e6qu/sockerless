@@ -129,6 +129,17 @@ func ec2AttachRealECSTaskNIC(ctx context.Context, taskID, subnetID string, pid i
 		_ = nic.Close(context.Background())
 		return fmt.Errorf("configure ECS IMDS routing for %s: %w", taskID, err)
 	}
+	// The task's namespace holds only its own interface, so the resolver its
+	// image was configured with — Docker's embedded 127.0.0.11, written before
+	// the pause container was detached from Docker's networks — answers nothing.
+	// Every lookup inside then blocks until it times out instead of failing,
+	// which surfaces as a workload that binds its ports minutes late with
+	// nothing logged in between. The VPC serves DNS at its own base address plus
+	// two, exactly as AmazonProvidedDNS does, and that is where the task asks.
+	if err := ec2ConfigureTaskResolver(ctx, subnet, sn.VpcId, taskID); err != nil {
+		_ = nic.Close(context.Background())
+		return err
+	}
 	if err := ec2ApplyRealVPCEgressPolicy(ctx, sn.VpcId); err != nil {
 		_ = nic.Close(context.Background())
 		return fmt.Errorf("configure VPC egress policy for %s: %w", taskID, err)
@@ -1258,6 +1269,20 @@ func ec2PublicInstanceSourcesForSubnet(subnetID string) []string {
 		}
 	}
 	return out
+}
+
+// ec2ConfigureTaskResolver points the task namespace's DNS at the simulator's
+// own resolver, reached at the link-local address AWS answers on from inside
+// any VPC.
+func ec2ConfigureTaskResolver(ctx context.Context, subnet *realexec.Subnet, vpcID, taskID string) error {
+	port, err := route53DNSPort()
+	if err != nil {
+		return fmt.Errorf("configure task resolver for %s: %w", taskID, err)
+	}
+	if err := subnet.ConfigureResolverDNAT(ctx, port, ec2RealName("dns", vpcID)); err != nil {
+		return fmt.Errorf("configure task resolver for %s: %w", taskID, err)
+	}
+	return nil
 }
 
 func ec2AWSSubnetGateway(cidr string) net.IP {
