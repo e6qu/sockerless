@@ -23,7 +23,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.82.0
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.63.1
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.320.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.321.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.4
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.90.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.44.4
@@ -49,7 +49,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.4
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.4
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.77.3
-	github.com/aws/smithy-go v1.27.6
+	github.com/aws/smithy-go v1.27.7
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/golang/snappy v1.0.0
