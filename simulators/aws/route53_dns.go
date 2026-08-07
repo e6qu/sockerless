@@ -204,6 +204,18 @@ func answerRoute53DNS(query []byte) ([]byte, error) {
 		return buildRoute53DNSResponse(hdr, dnsmessage.RCodeFormatError, q, nil), nil
 	}
 
+	// Outside every hosted zone the VPC resolver recurses, exactly as
+	// AmazonProvidedDNS does. Answering NXDOMAIN here instead leaves a task able
+	// to resolve its own services and nothing else on the internet.
+	if zoneID, _ := longestMatchingZone(normalizeDNSName(q.Name.String())); zoneID == "" {
+		if forwarded, ok := route53ForwardQuery(query); ok {
+			return forwarded, nil
+		}
+		// No upstream answered. That is not evidence the name is absent, and a
+		// client caches NXDOMAIN — SERVFAIL leaves it free to retry.
+		return buildRoute53DNSResponse(hdr, dnsmessage.RCodeServerFailure, q, nil), nil
+	}
+
 	answers, rcode := resolveRoute53(q)
 	resp := buildRoute53DNSResponse(hdr, rcode, q, answers)
 	return resp, nil
