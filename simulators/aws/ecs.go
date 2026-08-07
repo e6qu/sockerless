@@ -465,6 +465,7 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	ecsTaskDefinitions = sim.MakeStore[ECSTaskDefinition](srv.DB(), "ecs_task_definitions")
 	ecsTasks = sim.MakeStore[ECSTask](srv.DB(), "ecs_tasks")
 	ecsBackgroundServer = srv
+	ecsStartStoppedTaskSweeper(srv)
 	ecsRebuildRevisionIndex()
 
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateCluster", handleECSCreateCluster)
@@ -2585,6 +2586,64 @@ func stopECSTask(taskID, reason, code string) bool {
 	return true
 }
 
+// ecsStoppedTaskRetention is how long a stopped task remains visible. Amazon
+// ECS stops returning stopped tasks from ListTasks about an hour after they
+// stop and keeps them behind DescribeTasks only briefly after that, so a
+// simulator that retains them forever diverges in a way that compounds: a
+// cluster accumulates thousands of stopped tasks, ListTasks pages through all
+// of them to answer "what happened to my task", and a cluster with one running
+// task and thousands stopped reads at a glance like a crash loop.
+const ecsStoppedTaskRetention = time.Hour
+
+// ecsTaskExpired reports whether a stopped task has aged out of the window
+// Amazon ECS keeps it visible for. A task that is not stopped never expires,
+// and neither does one whose stop time was never recorded — the absence of a
+// timestamp is not evidence of age.
+func ecsTaskExpired(t ECSTask, now time.Time) bool {
+	if t.LastStatus != ECSTaskStatusStopped || t.StoppedAt == nil {
+		return false
+	}
+	return now.Sub(time.Unix(*t.StoppedAt, 0)) > ecsStoppedTaskRetention
+}
+
+// ecsSweepStoppedTasks deletes the tasks that have aged out, so the retention
+// is a real bound on what the simulator holds rather than only a filter on what
+// it reports.
+func ecsSweepStoppedTasks(now time.Time) int {
+	swept := 0
+	for _, task := range ecsTasks.List() {
+		if !ecsTaskExpired(task, now) {
+			continue
+		}
+		if ecsTasks.Delete(task.TaskArn) {
+			swept++
+		}
+	}
+	return swept
+}
+
+// ecsStartStoppedTaskSweeper prunes aged-out stopped tasks for as long as the
+// server runs.
+func ecsStartStoppedTaskSweeper(srv *sim.Server) {
+	srv.StartBackground(func(ctx context.Context) {
+		ticker := time.NewTicker(ecsStoppedTaskSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ecsSweepStoppedTasks(time.Now())
+			}
+		}
+	})
+}
+
+// ecsStoppedTaskSweepInterval is how often the sweep runs. It is far shorter
+// than the retention window so a task leaves soon after it ages out, and far
+// longer than a request so the sweep costs nothing measurable.
+const ecsStoppedTaskSweepInterval = time.Minute
+
 func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Cluster       string `json:"cluster"`
@@ -2617,8 +2676,12 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 
 	clusterArn := ecsArn("cluster", clusterName)
 
+	now := time.Now()
 	tasks := ecsTasks.Filter(func(t ECSTask) bool {
 		if t.ClusterArn != clusterArn {
+			return false
+		}
+		if ecsTaskExpired(t, now) {
 			return false
 		}
 		if req.Family != "" {

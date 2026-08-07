@@ -12,14 +12,34 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-func TestELBv2DataPlaneRoutesOnlyLoadBalancerHosts(t *testing.T) {
+// newELBv2DataPlaneServer builds a simulator carrying everything the load
+// balancer data plane reads, not only the load balancers themselves.
+//
+// The data plane consults AWS WAFV2 for a web ACL association and Amazon ECS
+// for a task's published port, both through package-level stores that the
+// owning subsystem's registration populates. A test that registers only
+// Elastic Load Balancing therefore passes on whatever those stores happen to
+// hold — a zero value when the test runs alone, another test's leavings when
+// it does not — so what it proves depends on test ordering rather than on the
+// handler (GitHub issue #907). Registering the subsystems it reads makes the
+// dependency the test's own.
+func newELBv2DataPlaneServer(t *testing.T) *sim.Server {
+	t.Helper()
 	t.Setenv("SIM_RUNTIME", "process")
 	srv, err := sim.NewServer(sim.Config{Provider: "aws", LogLevel: "disabled"})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
+	jsonRouter := sim.NewAWSRouter()
 	registerELBv2(sim.NewAWSQueryRouter(), srv)
+	registerWAFv2(jsonRouter, srv)
+	registerECS(jsonRouter, srv)
 	registerELBv2DataPlane(srv)
+	return srv
+}
+
+func TestELBv2DataPlaneRoutesOnlyLoadBalancerHosts(t *testing.T) {
+	srv := newELBv2DataPlaneServer(t)
 
 	var targetHostHeader string
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,13 +126,7 @@ func TestELBv2DataPlaneRoutesOnlyLoadBalancerHosts(t *testing.T) {
 }
 
 func TestELBv2DataPlaneDoesNotInterceptControlPlaneHost(t *testing.T) {
-	t.Setenv("SIM_RUNTIME", "process")
-	srv, err := sim.NewServer(sim.Config{Provider: "aws", LogLevel: "disabled"})
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-	registerELBv2(sim.NewAWSQueryRouter(), srv)
-	registerELBv2DataPlane(srv)
+	srv := newELBv2DataPlaneServer(t)
 
 	srv.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("query-control-plane"))
@@ -131,12 +145,9 @@ func TestELBv2DataPlaneDoesNotInterceptControlPlaneHost(t *testing.T) {
 }
 
 func TestELBv2TargetHostHeaderMatchesALBDefaults(t *testing.T) {
-	t.Setenv("SIM_RUNTIME", "process")
-	srv, err := sim.NewServer(sim.Config{Provider: "aws", LogLevel: "disabled"})
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-	registerELBv2(sim.NewAWSQueryRouter(), srv)
+	// This one exercises the header helper rather than the served path, but it
+	// still reads the load-balancer store the registration populates.
+	newELBv2DataPlaneServer(t)
 
 	lb := ELBv2LoadBalancer{
 		Arn:        "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/test-lb/abc123",
@@ -175,13 +186,7 @@ func TestELBv2TargetHostHeaderMatchesALBDefaults(t *testing.T) {
 // rewindable body for Go to replay. Nothing about the defect is status-specific,
 // and a bodyless request like the one below follows all five.
 func TestELBv2DataPlaneReturnsTargetRedirectsInsteadOfFollowingThem(t *testing.T) {
-	t.Setenv("SIM_RUNTIME", "process")
-	srv, err := sim.NewServer(sim.Config{Provider: "aws", LogLevel: "disabled"})
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-	registerELBv2(sim.NewAWSQueryRouter(), srv)
-	registerELBv2DataPlane(srv)
+	srv := newELBv2DataPlaneServer(t)
 
 	const sessionCookie = "session=granted; Path=/; HttpOnly"
 	var landingRequests int
