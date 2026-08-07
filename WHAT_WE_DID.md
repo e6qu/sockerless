@@ -4,6 +4,36 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-07 — Three services leave their hand-written cases behind
+
+Amazon Elastic Container Registry, Amazon Kinesis and AWS Step Functions were
+derived by per-request cases that predated the generated resource-type table.
+Those cases fired only when a request carried the one field each read — a
+repository name, a stream name, a state machine ARN — so every other way of
+naming the same resource fell through to a literal `"*"`. The table-driven form
+reads the types AWS declares for the action instead, which is why it replaced
+them.
+
+The three came to 93 undivined operations and now come to three. Amazon ECR
+addresses a repository by name and authorizes every name a request carries, so a
+filtered call is a call about each of them. Amazon Kinesis takes a stream by
+name or by ARN, and a consumer only by ARN — a consumer's ARN ends in the
+timestamp at which it was registered, which no request supplies and nothing can
+reconstruct. AWS Step Functions addresses everything by ARN, and its published
+formats carry parts no request supplies separately: an execution's assigned id,
+a labelled execution's map-run label inside the state machine segment.
+
+What was left after the first pass was one shape repeated: the tagging and
+resource-policy operations name their target under a member whose spelling
+varies by service — `resourceArn`, `ResourceARN` — and reading it by exact key
+made the derivation depend on which spelling a service chose. Reading it
+case-insensitively closed nine more operations across the two services that
+still did.
+
+The three that remain create an object that has no ARN yet, which no derivation
+can supply. Coverage went from 1,553 to 1,643 of 1,974 served operations, and
+the services still carrying a per-request case are down to three.
+
 ## 2026-08-07 — Three more services authorize against the resource they name
 
 Elastic Load Balancing, Amazon CloudWatch and AWS Certificate Manager were the

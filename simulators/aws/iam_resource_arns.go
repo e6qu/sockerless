@@ -70,6 +70,12 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamLogsResourceARNs(r, types, arn)
 	case "acm":
 		return iamACMResourceARNs(r, types)
+	case "ecr":
+		return iamECRResourceARNs(r, types, region, account)
+	case "kinesis":
+		return iamKinesisResourceARNs(r, types, region, account)
+	case "states":
+		return iamStatesResourceARNs(r, types)
 	case "cloudwatch":
 		return iamCloudWatchResourceARNs(r, types, region, account)
 	case "elasticloadbalancing":
@@ -351,6 +357,108 @@ func iamOrganizationsResource(id string) ([]string, string) {
 // iamOrganizationsAccountID matches the one identifier Organizations spells
 // without a prefix, which the model declares as exactly twelve digits.
 var iamOrganizationsAccountID = regexp.MustCompile(`^\d{12}$`)
+
+// ===== Amazon Elastic Container Registry =====
+
+// iamECRResourceARNs derives the repository ARNs an Amazon ECR request names.
+// A repository is addressed by name — repositoryName on the per-repository
+// operations, repositoryNames on the filters and batches — and AWS authorizes
+// every one a request names, so a filtered call must be allowed for all of
+// them. Registry-wide calls that name none (GetAuthorizationToken, an
+// unfiltered DescribeRepositories, the registry policy and replication
+// operations) keep the account-level "*".
+func iamECRResourceARNs(r *http.Request, types []string, region, account string) []string {
+	fields := iamJSONRequestFields(r)
+	// The tagging operations name the repository by ARN instead, under a
+	// member whose spelling varies by service; reading it here rather than by
+	// exact key keeps the derivation independent of that.
+	var tagged []string
+	for _, value := range fields["resourcearn"] {
+		if strings.HasPrefix(value, "arn:") {
+			tagged = append(tagged, value)
+		}
+	}
+	if len(tagged) > 0 {
+		return tagged
+	}
+	return iamTableDrivenARNs("ecr", types, region, account, nil,
+		func(field string) []string { return fields[strings.ToLower(field)] })
+}
+
+// ===== Amazon Kinesis Data Streams =====
+
+// iamKinesisResourceARNs derives the ARNs an Amazon Kinesis request names. A
+// stream is addressed either by name or by its ARN, and a consumer only by ARN:
+// a consumer's own ARN ends in the timestamp at which it was registered, which
+// no request supplies and nothing can reconstruct.
+func iamKinesisResourceARNs(r *http.Request, types []string, region, account string) []string {
+	fields := iamJSONRequestFields(r)
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(arn string) {
+		if arn == "" {
+			return
+		}
+		if _, dup := seen[arn]; dup {
+			return
+		}
+		seen[arn] = struct{}{}
+		out = append(out, arn)
+	}
+	// The tagging and resource-policy operations name their target by ARN under
+	// ResourceARN, and which of the two types it is is what the ARN says.
+	for _, field := range []string{"streamarn", "consumerarn", "resourcearn", "keyid"} {
+		for _, value := range fields[field] {
+			if strings.HasPrefix(value, "arn:") {
+				add(value)
+			}
+		}
+	}
+	if iamHasType(types, "stream") {
+		for _, name := range fields["streamname"] {
+			if name != "" && !strings.HasPrefix(name, "arn:") {
+				add("arn:aws:kinesis:" + region + ":" + account + ":stream/" + name)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ===== AWS Step Functions =====
+
+// iamStatesResourceARNs derives the ARNs an AWS Step Functions request names.
+// Every one of its resources is addressed by its own ARN — a state machine, an
+// execution, an activity, a map run, a version, an alias — and the ARNs the
+// reference publishes carry parts no request supplies separately: an execution
+// ARN ends in an id AWS assigned, a labelled one carries the map run's label
+// inside the state machine segment. So the ARN the caller sent is the ARN to
+// authorize against, and there is nothing to assemble.
+//
+// The one name-addressed case is creation, where the state machine does not
+// exist yet and no ARN can be derived at all.
+func iamStatesResourceARNs(r *http.Request, types []string) []string {
+	fields := iamJSONRequestFields(r)
+	var out []string
+	seen := map[string]struct{}{}
+	for _, field := range []string{
+		"statemachinearn", "executionarn", "activityarn", "maprunarn",
+		"statemachineversionarn", "statemachinealiasarn", "resourcearn",
+	} {
+		for _, value := range fields[field] {
+			if !strings.HasPrefix(value, "arn:") {
+				continue
+			}
+			if _, dup := seen[value]; dup {
+				continue
+			}
+			seen[value] = struct{}{}
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 // ===== Elastic Load Balancing =====
 
