@@ -4,6 +4,49 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-07 — Three more services authorize against the resource they name
+
+Elastic Load Balancing, Amazon CloudWatch and AWS Certificate Manager were the
+three largest remaining blocks of operations authorized against a literal `"*"`,
+and each addresses its resources a different way.
+
+Elastic Load Balancing names them by ARN outright. Every one of its resource
+ARNs carries an identifier AWS assigned — `loadbalancer/app/${LoadBalancerName}/
+${LoadBalancerId}`, `targetgroup/${TargetGroupName}/${TargetGroupId}` — which no
+request supplies as parts, so there is nothing to assemble: the ARN the caller
+sent is the one to authorize against. A request naming several is authorized
+against all of them, because creating a listener on a load balancer that
+forwards to a target group is a call about both. The previous-generation load
+balancer is the exception the reference keeps, addressed by name alone.
+
+Amazon CloudWatch names its resources, and each type's name arrives under a
+member of its own, so filling the published format is all it takes — with two
+renamings read off the model rather than guessed: an insight rule's
+`${InsightRuleName}` arrives as `RuleName`, a metric stream's
+`${MetricStreamName}` simply as `Name`. AWS Certificate Manager is addressed by
+ARN like Elastic Load Balancing.
+
+The tagging operations of both list every taggable type, which looks like an
+ambiguity and is not: the call names its target by ARN, and which type it is is
+what the ARN says.
+
+Coverage went from 1,461 to 1,553 of 1,974 served operations. Membership in the
+generated table alone would have read 1,561, and the difference is the point:
+adding a service to the table without an extractor behind it inflates the number
+while every request still falls through to `"*"`. Each service is measured by
+running the production derivation against a request carrying what the model
+declares.
+
+What remains in the three is genuinely absent from the request. Three Elastic
+Load Balancing operations create an object that has no assigned identifier yet;
+three Amazon CloudWatch operations are metric calls the reference associates
+with a dataset the request never names; one lists mute rules by the alarm they
+belong to. `SetRulePriorities` is the odd one: it does derive, from a rule ARN
+nested inside a priority entry, but the coverage probe fills each member with a
+single scalar and cannot express that shape — so it is counted as underived and
+pinned by its own regression instead, rather than teaching the probe about one
+operation.
+
 ## 2026-08-07 — Stopped tasks age out, and the data-plane tests own their setup
 
 Two issues filed against the deployed simulator, both about state that

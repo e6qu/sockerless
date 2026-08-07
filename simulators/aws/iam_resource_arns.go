@@ -68,6 +68,12 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamKMSResourceARNs(r, types, region, account)
 	case "logs":
 		return iamLogsResourceARNs(r, types, arn)
+	case "acm":
+		return iamACMResourceARNs(r, types)
+	case "cloudwatch":
+		return iamCloudWatchResourceARNs(r, types, region, account)
+	case "elasticloadbalancing":
+		return iamELBv2ResourceARNs(r, types, region, account)
 	case "organizations":
 		return iamOrganizationsResourceARNs(r, types)
 	case "rds":
@@ -345,6 +351,147 @@ func iamOrganizationsResource(id string) ([]string, string) {
 // iamOrganizationsAccountID matches the one identifier Organizations spells
 // without a prefix, which the model declares as exactly twelve digits.
 var iamOrganizationsAccountID = regexp.MustCompile(`^\d{12}$`)
+
+// ===== Elastic Load Balancing =====
+
+// iamELBv2ResourceARNs derives the ARNs an Elastic Load Balancing request
+// names. Every one of its resource ARNs carries an identifier AWS assigned —
+// "loadbalancer/app/${LoadBalancerName}/${LoadBalancerId}",
+// "targetgroup/${TargetGroupName}/${TargetGroupId}" — which no request supplies
+// as parts. What a request carries instead is the whole ARN, under a member
+// named for the resource, so there is nothing to assemble: the ARN the caller
+// sent is the ARN the gate authorizes against.
+//
+// The classic load balancer is the exception the reference keeps for the
+// previous generation, addressed by name alone.
+func iamELBv2ResourceARNs(r *http.Request, types []string, region, account string) []string {
+	params := iamQueryRequestParameters(r)
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(arn string) {
+		if arn == "" {
+			return
+		}
+		if _, dup := seen[arn]; dup {
+			return
+		}
+		seen[arn] = struct{}{}
+		out = append(out, arn)
+	}
+	// A member is read whatever its type, because AWS authorizes every resource
+	// a request names: DescribeTargetGroups filtered by load balancer is a call
+	// about both.
+	for _, field := range []string{
+		"loadbalancerarn", "loadbalancerarns",
+		"targetgrouparn", "targetgrouparns",
+		"listenerarn", "listenerarns",
+		"rulearn", "rulearns",
+		"truststorearn", "truststorearns",
+		"resourcearn", "resourcearns",
+	} {
+		for _, value := range params[field] {
+			if strings.HasPrefix(value, "arn:") {
+				add(value)
+			}
+		}
+	}
+	// SetRulePriorities carries each rule's ARN inside a priority entry rather
+	// than in a member of its own — "RulePriorities.member.1.RuleArn" — which
+	// the flat-member reader drops, its contract being members and not paths.
+	// A rule named anywhere in the request is still a rule the call is about,
+	// so the raw form is read for those.
+	_ = r.ParseForm()
+	for key, values := range r.Form {
+		if !strings.HasSuffix(strings.ToLower(key), "rulearn") {
+			continue
+		}
+		for _, value := range values {
+			if strings.HasPrefix(value, "arn:") {
+				add(value)
+			}
+		}
+	}
+	// The classic load balancer is named rather than addressed by ARN.
+	if iamHasType(types, "loadbalancer") {
+		for _, field := range []string{"loadbalancername", "loadbalancernames"} {
+			for _, name := range params[field] {
+				if name != "" && !strings.HasPrefix(name, "arn:") {
+					add("arn:aws:elasticloadbalancing:" + region + ":" + account + ":loadbalancer/" + name)
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ===== AWS Certificate Manager =====
+
+// iamACMResourceARNs derives the ARNs an AWS Certificate Manager request names.
+// Its resources are addressed by ARN — a certificate's own, an ACME endpoint's,
+// and the validations and account bindings nested under an endpoint — so the
+// ARN the caller sent is the one to authorize against.
+func iamACMResourceARNs(r *http.Request, types []string) []string {
+	fields := iamJSONRequestFields(r)
+	var out []string
+	seen := map[string]struct{}{}
+	// The tagging operations name their target by ARN under ResourceArn, and
+	// the reference lists every taggable type for them — which of those the ARN
+	// names is what the ARN itself says.
+	for _, field := range []string{
+		"certificatearn", "acmeendpointarn",
+		"acmedomainvalidationarn", "acmeexternalaccountbindingarn",
+		"resourcearn",
+	} {
+		for _, value := range fields[field] {
+			if !strings.HasPrefix(value, "arn:") {
+				continue
+			}
+			if _, dup := seen[value]; dup {
+				continue
+			}
+			seen[value] = struct{}{}
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ===== Amazon CloudWatch =====
+
+// iamCloudWatchResourceARNs derives the ARNs an Amazon CloudWatch request
+// names. Its resources are addressed by name, and each type's name arrives
+// under a member of its own — an alarm's AlarmName, a dashboard's
+// DashboardName, an insight rule's RuleName — so filling the published format
+// is all it takes.
+func iamCloudWatchResourceARNs(r *http.Request, types []string, region, account string) []string {
+	fields := iamJSONRequestFields(r)
+	// The tagging operations name their target by ARN and the reference lists
+	// every taggable type for them; which one the call is about is what the ARN
+	// says, so there is nothing to fill.
+	var tagged []string
+	for _, value := range fields["resourcearn"] {
+		if strings.HasPrefix(value, "arn:") {
+			tagged = append(tagged, value)
+		}
+	}
+	if len(tagged) > 0 {
+		return tagged
+	}
+	return iamTableDrivenARNs("cloudwatch", types, region, account, iamCloudWatchFieldAliases,
+		func(field string) []string { return fields[strings.ToLower(field)] })
+}
+
+// iamCloudWatchFieldAliases records where the API's spelling differs from the
+// reference's variable, read off the vendored model rather than guessed: an
+// insight rule's ${InsightRuleName} arrives as RuleName, and a metric stream's
+// ${MetricStreamName} simply as Name.
+var iamCloudWatchFieldAliases = map[string][]string{
+	"InsightRuleName":  {"RuleName"},
+	"MetricStreamName": {"Name"},
+	"DatasetId":        {"DatasetIdentifier"},
+}
 
 // ===== Amazon EC2 Auto Scaling =====
 
