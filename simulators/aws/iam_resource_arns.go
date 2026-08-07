@@ -72,6 +72,12 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamACMResourceARNs(r, types)
 	case "ecr":
 		return iamECRResourceARNs(r, types, region, account)
+	case "sns":
+		return iamSNSResourceARNs(r, types, region, account)
+	case "sqs":
+		return iamSQSResourceARNs(r, types, region, account)
+	case "secretsmanager":
+		return iamSecretsManagerResourceARNs(r, types, region, account)
 	case "kinesis":
 		return iamKinesisResourceARNs(r, types, region, account)
 	case "states":
@@ -357,6 +363,103 @@ func iamOrganizationsResource(id string) ([]string, string) {
 // iamOrganizationsAccountID matches the one identifier Organizations spells
 // without a prefix, which the model declares as exactly twelve digits.
 var iamOrganizationsAccountID = regexp.MustCompile(`^\d{12}$`)
+
+// ===== Amazon Simple Notification Service =====
+
+// iamSNSResourceARNs derives the topic ARNs an Amazon SNS request names. A
+// topic is addressed by its ARN on every operation but creation, where it is
+// named — and a topic ARN ends in the name itself, so the one can be built from
+// the other.
+func iamSNSResourceARNs(r *http.Request, types []string, region, account string) []string {
+	if !iamHasType(types, "topic") {
+		return nil
+	}
+	params := iamQueryRequestParameters(r)
+	first := func(field string) string {
+		return iamFirstValue(func(f string) []string { return params[strings.ToLower(f)] }, field)
+	}
+	// The tagging and data-protection operations name the topic under
+	// ResourceArn instead.
+	for _, field := range []string{"TopicArn", "ResourceArn"} {
+		if a := first(field); strings.HasPrefix(a, "arn:") {
+			return []string{a}
+		}
+	}
+	// A subscription is addressed by its own ARN, which is the topic's with the
+	// subscription id appended — and the reference declares the topic as what
+	// these authorize against, so the topic is what the gate asks for.
+	if a := first("SubscriptionArn"); strings.HasPrefix(a, "arn:") {
+		if i := strings.LastIndex(a, ":"); i > len("arn:aws:sns:") {
+			return []string{a[:i]}
+		}
+	}
+	if name := first("Name"); name != "" {
+		return []string{"arn:aws:sns:" + region + ":" + account + ":" + name}
+	}
+	return nil
+}
+
+// ===== Amazon Simple Queue Service =====
+
+// iamSQSResourceARNs derives the queue ARNs an Amazon SQS request names. A
+// queue is addressed by its URL rather than by its ARN or its name, and the
+// name is the URL's last segment — which is what the queue's ARN ends in.
+func iamSQSResourceARNs(r *http.Request, types []string, region, account string) []string {
+	if !iamHasType(types, "queue") {
+		return nil
+	}
+	params := iamQueryRequestParameters(r)
+	first := func(field string) string {
+		return iamFirstValue(func(f string) []string { return params[strings.ToLower(f)] }, field)
+	}
+	// The message-move operations name their queues by ARN rather than by URL,
+	// and a move is a call about both ends of it.
+	var moved []string
+	for _, field := range []string{"SourceArn", "DestinationArn"} {
+		if a := first(field); strings.HasPrefix(a, "arn:") {
+			moved = append(moved, a)
+		}
+	}
+	if len(moved) > 0 {
+		return moved
+	}
+	name := first("QueueName")
+	if url := first("QueueUrl"); url != "" {
+		if i := strings.LastIndex(url, "/"); i >= 0 {
+			name = url[i+1:]
+		}
+	}
+	if name == "" {
+		return nil
+	}
+	return []string{"arn:aws:sqs:" + region + ":" + account + ":" + name}
+}
+
+// ===== AWS Secrets Manager =====
+
+// iamSecretsManagerResourceARNs derives the secret ARNs an AWS Secrets Manager
+// request names. A secret is addressed by SecretId, which the API accepts as
+// either the secret's name or its full ARN, and named in Name at creation —
+// where SecretId does not exist yet, so a role holding exactly the grant it
+// needs was denied against a policy that plainly granted it (GitHub issue #889).
+func iamSecretsManagerResourceARNs(r *http.Request, types []string, region, account string) []string {
+	if !iamHasType(types, "Secret") {
+		return nil
+	}
+	fields := iamJSONRequestFields(r)
+	for _, field := range []string{"secretid", "name"} {
+		for _, value := range fields[field] {
+			if value == "" {
+				continue
+			}
+			if strings.HasPrefix(value, "arn:") {
+				return []string{value}
+			}
+			return []string{"arn:aws:secretsmanager:" + region + ":" + account + ":secret:" + value}
+		}
+	}
+	return nil
+}
 
 // ===== Amazon Elastic Container Registry =====
 

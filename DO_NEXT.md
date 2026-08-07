@@ -4,13 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Next
 
-Resource-scoped IAM authorization covers twenty-two services, and the remainder
-is measured rather than unknown: BUG-2909 records the 331 served operations that
-still authorize against a literal `"*"`, largest first — Amazon EC2 (55), AWS
-Glue (35), Amazon RDS (27), AWS Private Certificate Authority (21), AWS Cloud
-Map (21). Three services still carry an older per-request case — Amazon SNS,
-Amazon SQS and AWS Secrets Manager — and converting them is the cheapest
-increment left, needing no new shape.
+Resource-scoped IAM authorization covers twenty-five services, and every
+per-request case that predated the generated table is gone but for AWS Lambda.
+BUG-2909 records the 275 served operations that still authorize against a
+literal `"*"`, largest first — Amazon EC2 (55), AWS Glue (35), Amazon RDS (27),
+AWS Private Certificate Authority (21), AWS Cloud Map (21).
+
+The cheap increments are spent. What remains is mostly an operation that creates
+its resource and so carries no identifier for it yet, or one that names
+something other than what it authorizes against — AWS Private Certificate
+Authority and AWS Cloud Map are the largest services not yet attempted and are
+the place to look next.
 
 Adding a service is small. `iamTableDrivenARNs` fills any published ARN format,
 so a service needs its entry in `scripts/gen-aws-iam-resource-types.sh`, a

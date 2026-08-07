@@ -4,6 +4,34 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-07 — The last of the hand-written cases but one
+
+Amazon SNS, Amazon SQS and AWS Secrets Manager were the three services still
+deriving their resource from a per-request case rather than from the types AWS
+declares. All three are converted, leaving AWS Lambda as the only one that has
+not been.
+
+Each addresses its resource differently and none of them by a plain ARN member.
+An Amazon SNS topic arrives as TopicArn, as ResourceArn on the tagging and
+data-protection operations, and as a name only at creation; a subscription
+arrives as its own ARN, which is the topic's with the subscription id appended,
+and the reference declares the topic as what those authorize against — so the
+topic is what the gate asks for. An Amazon SQS queue is addressed by its URL,
+whose last segment is the name the queue's ARN ends in, except on the
+message-move operations, which name both ends by ARN. An AWS Secrets Manager
+secret arrives as SecretId, which the API accepts as either a name or a full
+ARN, and as Name at creation — the case that GitHub issue #889 was about.
+
+The same lesson landed twice more. Both Amazon SNS and Amazon SQS read their
+parameters by exact spelling, which made the derivation depend on the case a
+service happened to choose; reading them the way the rest of the gate does
+closed 26 operations that the first cut had left. It is the third time this
+shape has appeared, after the resourceArn spellings in the previous change.
+
+Coverage went from 1,643 to 1,699 of 1,974 served operations. One Amazon SQS
+operation remains: CancelMessageMoveTask names only the task handle, which
+encodes its queue opaquely.
+
 ## 2026-08-07 — Three services leave their hand-written cases behind
 
 Amazon Elastic Container Registry, Amazon Kinesis and AWS Step Functions were

@@ -350,16 +350,6 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 	}
 	one := func(s string) []string { return []string{s} }
 	switch service {
-	case "sns":
-		if a := r.FormValue("TopicArn"); a != "" {
-			return one(a)
-		}
-	case "sqs":
-		if u := r.FormValue("QueueUrl"); u != "" {
-			if i := strings.LastIndex(u, "/"); i >= 0 {
-				return one(arn("sqs", u[i+1:]))
-			}
-		}
 	case "dynamodb":
 		// A transaction carries its table references per item rather than at
 		// the top level, and the AWS Service Reference declares no resource
@@ -381,21 +371,6 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 				return one(name)
 			}
 			return one(arn("lambda", "function:"+name))
-		}
-	case "secretsmanager":
-		if id := iamJSONBodyField(r, "SecretId"); id != "" {
-			if strings.HasPrefix(id, "arn:") {
-				return one(id)
-			}
-			return one(arn("secretsmanager", "secret:"+id))
-		}
-		// CreateSecret names the secret it is about to create in Name, not in
-		// SecretId. Without this the request falls through to "*", which no
-		// policy scoped to a name prefix can ever match, so a role holding
-		// exactly the grant it needs is denied — and the denial claims the
-		// ACTION is not allowed, which sends the reader to the wrong place.
-		if name := iamJSONBodyField(r, "Name"); name != "" {
-			return one(arn("secretsmanager", "secret:"+name))
 		}
 	}
 	// Services whose target resource is derived from the resource types AWS
