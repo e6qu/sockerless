@@ -89,3 +89,40 @@ func TestIAMResourceARNs_TaggingTakesTheARNTheRequestNames(t *testing.T) {
 	iamAssertDerived(t, iamDeriveJSON("acm", "AddTagsToCertificate",
 		`{"CertificateArn":"`+certificate+`","Tags":[]}`), certificate)
 }
+
+// Amazon ECR addresses a repository by name, and every name a request carries
+// is authorized — a filtered call is a call about each of them.
+func TestIAMResourceARNs_ECRAuthorizesEveryRepositoryNamed(t *testing.T) {
+	iamAssertDerived(t, iamDeriveJSON("ecr", "BatchGetImage",
+		`{"repositoryName":"edd-dev/golden"}`),
+		"arn:aws:ecr:us-east-1:123456789012:repository/edd-dev/golden")
+	iamAssertDerived(t, iamDeriveJSON("ecr", "DescribeRepositories",
+		`{"repositoryNames":["one","two"]}`),
+		"arn:aws:ecr:us-east-1:123456789012:repository/one",
+		"arn:aws:ecr:us-east-1:123456789012:repository/two")
+}
+
+// Amazon Kinesis addresses a stream by name or by ARN, and a consumer only by
+// ARN — a consumer's ARN ends in the timestamp at which it was registered,
+// which no request supplies and nothing can reconstruct.
+func TestIAMResourceARNs_KinesisTakesTheStreamNameOrTheARN(t *testing.T) {
+	iamAssertDerived(t, iamDeriveJSON("kinesis", "PutRecord", `{"StreamName":"events"}`),
+		"arn:aws:kinesis:us-east-1:123456789012:stream/events")
+	const consumer = "arn:aws:kinesis:us-east-1:123456789012:stream/events/consumer/reader:1700000000"
+	iamAssertDerived(t, iamDeriveJSON("kinesis", "SubscribeToShard",
+		`{"ConsumerARN":"`+consumer+`"}`), consumer)
+}
+
+// AWS Step Functions addresses every resource by its own ARN, and those ARNs
+// carry parts no request supplies separately — an execution's assigned id, a
+// labelled execution's map-run label inside the state machine segment — so
+// there is nothing to assemble.
+func TestIAMResourceARNs_StepFunctionsTakesTheARNTheRequestNames(t *testing.T) {
+	const execution = "arn:aws:states:us-east-1:123456789012:execution:orders:0123abcd"
+	iamAssertDerived(t, iamDeriveJSON("states", "DescribeExecution",
+		`{"executionArn":"`+execution+`"}`), execution)
+
+	const machine = "arn:aws:states:us-east-1:123456789012:stateMachine:orders"
+	iamAssertDerived(t, iamDeriveJSON("states", "StartExecution",
+		`{"stateMachineArn":"`+machine+`","input":"{}"}`), machine)
+}

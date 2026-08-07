@@ -776,6 +776,31 @@ func TestIAMCloudWatchFieldAliasesAreRealRequestMembers(t *testing.T) {
 		loadRequestFields(t, "cloudwatch", memberWireName))
 }
 
+// iamECRDerivesItsResource, iamKinesisDerivesItsResource and
+// iamStatesDerivesItsResource run the production derivation against a request
+// carrying every member the model declares. A member that is an ARN by
+// definition carries one, because that is what a real caller sends.
+func iamJSONProbeDerives(service, operation string, members map[string]bool, arnValue string) bool {
+	if len(iamActionResourceTypes[service+":"+operation]) == 0 {
+		return false
+	}
+	body := make(map[string]string, len(members))
+	for name := range members {
+		if strings.HasSuffix(strings.ToLower(name), "arn") {
+			body[name] = arnValue
+			continue
+		}
+		body[name] = "probe"
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	return len(iamDerivedResourceARNs(r, service, operation, "us-east-1", "123456789012")) > 0
+}
+
 // iamAutoScalingDerivesItsResource runs the production derivation against a
 // request naming a group and a launch configuration that exist.
 //
@@ -908,8 +933,7 @@ func iamSSMDerivesItsResource(operation string, members map[string]bool) bool {
 // coverage is per-request (the case fires only when the request carries the
 // field it reads), which is precisely why the table-driven form replaced it.
 var iamHandwrittenDerivationServices = map[string]bool{
-	"sns": true, "sqs": true, "lambda": true,
-	"secretsmanager": true, "states": true, "kinesis": true, "ecr": true,
+	"sns": true, "sqs": true, "lambda": true, "secretsmanager": true,
 }
 
 // iamDerivationCoverageFloor is the number of served operations that both
@@ -966,7 +990,9 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // Amazon CloudWatch's 4: three are metric operations the reference associates
 // with a dataset while the request names no dataset, and ListAlarmMuteRules
 // filters mute rules by the alarm they belong to rather than naming one.
-const iamDerivationCoverageFloor = 1553
+// AWS Step Functions' 3: creating a state machine, an activity or an alias
+// names an object that has no ARN yet.
+const iamDerivationCoverageFloor = 1643
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -1012,6 +1038,9 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	elbParameters := loadRequestFields(t, "elastic-load-balancing-v2", memberWireName)
 	acmMembers := loadRequestFields(t, "acm", memberWireName)
 	cloudWatchMembers := loadRequestFields(t, "cloudwatch", memberWireName)
+	ecrMembers := loadRequestFields(t, "ecr", memberWireName)
+	kinesisMembers := loadRequestFields(t, "kinesis", memberWireName)
+	statesMembers := loadRequestFields(t, "sfn", memberWireName)
 	organizationsIDs := iamOrganizationsProbeState()
 
 	covered := 0
@@ -1055,6 +1084,15 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamACMDerivesItsResource(o.name, acmMembers[o.name])
 		case "cloudwatch":
 			derived = iamCloudWatchDerivesItsResource(o.name, cloudWatchMembers[o.name])
+		case "ecr":
+			derived = iamJSONProbeDerives("ecr", o.name, ecrMembers[o.name],
+				"arn:aws:ecr:us-east-1:123456789012:repository/probe")
+		case "kinesis":
+			derived = iamJSONProbeDerives("kinesis", o.name, kinesisMembers[o.name],
+				"arn:aws:kinesis:us-east-1:123456789012:stream/probe")
+		case "states":
+			derived = iamJSONProbeDerives("states", o.name, statesMembers[o.name],
+				"arn:aws:states:us-east-1:123456789012:stateMachine:probe")
 		}
 		if derived {
 			covered++

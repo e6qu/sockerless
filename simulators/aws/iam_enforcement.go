@@ -397,21 +397,6 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 		if name := iamJSONBodyField(r, "Name"); name != "" {
 			return one(arn("secretsmanager", "secret:"+name))
 		}
-	case "states":
-		if a := iamJSONBodyField(r, "stateMachineArn"); a != "" {
-			return one(a)
-		}
-	case "kinesis":
-		if name := iamJSONBodyField(r, "StreamName"); name != "" {
-			return one(arn("kinesis", "stream/"+name))
-		}
-		if a := iamJSONBodyField(r, "StreamARN"); a != "" {
-			return one(a)
-		}
-	case "ecr":
-		if arns := iamECRRequestRepositoryARNs(r, arn); len(arns) > 0 {
-			return arns
-		}
 	}
 	// Services whose target resource is derived from the resource types AWS
 	// declares for the action rather than from a hand-written case above; see
@@ -420,51 +405,6 @@ func iamResourceARNsForRequest(r *http.Request, action string) []string {
 		return arns
 	}
 	return one("*")
-}
-
-// iamECRRequestRepositoryARNs returns the repository ARNs an Amazon Elastic
-// Container Registry (ECR) request targets. ECR identifies a repository in the
-// request body — repositoryName on the per-repository operations, the
-// repositoryNames filter DescribeRepositories and the scanning-configuration
-// batch accept, and resourceArn on the tagging operations — and AWS authorizes
-// every named repository, so a filtered call must be allowed for all of them.
-// Registry-wide calls (GetAuthorizationToken, an unfiltered
-// DescribeRepositories, the registry policy and replication operations) name no
-// repository and return nothing, leaving the caller's account-level "*".
-func iamECRRequestRepositoryARNs(r *http.Request, arn func(svc, resource string) string) []string {
-	body := iamRequestBody(r)
-	if len(body) == 0 {
-		return nil
-	}
-	var req struct {
-		RepositoryName  string   `json:"repositoryName"`
-		RepositoryNames []string `json:"repositoryNames"`
-		ResourceArn     string   `json:"resourceArn"`
-	}
-	if json.Unmarshal(body, &req) != nil {
-		return nil
-	}
-	if req.ResourceArn != "" {
-		return []string{req.ResourceArn}
-	}
-	names := req.RepositoryNames
-	if req.RepositoryName != "" {
-		names = append([]string{req.RepositoryName}, names...)
-	}
-	arns := make([]string, 0, len(names))
-	seen := map[string]struct{}{}
-	for _, name := range names {
-		if name == "" {
-			continue
-		}
-		a := arn("ecr", "repository/"+name)
-		if _, dup := seen[a]; dup {
-			continue
-		}
-		seen[a] = struct{}{}
-		arns = append(arns, a)
-	}
-	return arns
 }
 
 // iamDynamoDBRequestTables returns the distinct table names referenced by a
