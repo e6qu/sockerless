@@ -4,11 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Next
 
-Resource-scoped IAM authorization covers sixteen services, and the remainder is
-measured rather than unknown: BUG-2909 records the 513 served operations that
-still authorize against a literal `"*"`, largest first — Amazon EC2 (55),
-Elastic Load Balancing (35), AWS Glue (35), Amazon CloudWatch (33), AWS
-Certificate Manager (32).
+Resource-scoped IAM authorization covers nineteen services, and the remainder is
+measured rather than unknown: BUG-2909 records the 421 served operations that
+still authorize against a literal `"*"`, largest first — Amazon EC2 (55), AWS
+Glue (35), Amazon Elastic Container Registry (32), Amazon Kinesis (31), AWS Step
+Functions (30). The last three of those are among the six services still served
+by an older per-request case rather than by the declared types, so converting
+them is the next increment and needs no new shape.
 
 Adding a service is small. `iamTableDrivenARNs` fills any published ARN format,
 so a service needs its entry in `scripts/gen-aws-iam-resource-types.sh`, a

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -697,6 +698,84 @@ func loadOrganizationsRequestShapes(t *testing.T) map[string]map[string]string {
 	return shapes
 }
 
+// iamELBv2DerivesItsResource runs the production derivation against a request
+// carrying every parameter the model declares, with the ARN-bearing ones
+// carrying an ARN — which is what a real caller sends, since Elastic Load
+// Balancing resources are addressed by ARN and not by parts.
+func iamELBv2DerivesItsResource(operation string, params map[string]bool) bool {
+	if len(iamActionResourceTypes["elasticloadbalancing:"+operation]) == 0 {
+		return false
+	}
+	form := "Action=" + operation + "&Version=2015-12-01"
+	for name := range params {
+		if name == "action" || name == "version" {
+			continue
+		}
+		value := "probe"
+		if strings.HasSuffix(name, "arn") || strings.HasSuffix(name, "arns") {
+			value = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/probe/0123456789abcdef"
+		}
+		form += "&" + name + "=" + url.QueryEscape(value)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return len(iamDerivedResourceARNs(r, "elasticloadbalancing", operation, "us-east-1", "123456789012")) > 0
+}
+
+// iamACMDerivesItsResource runs the production derivation against a request
+// carrying every member the model declares, with the ARN-bearing ones carrying
+// an ARN.
+func iamACMDerivesItsResource(operation string, members map[string]bool) bool {
+	if len(iamActionResourceTypes["acm:"+operation]) == 0 {
+		return false
+	}
+	body := make(map[string]string, len(members))
+	for name := range members {
+		if strings.HasSuffix(strings.ToLower(name), "arn") {
+			body[name] = "arn:aws:acm:us-east-1:123456789012:certificate/0123abcd-ef45-6789-abcd-ef0123456789"
+			continue
+		}
+		body[name] = "probe"
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	return len(iamDerivedResourceARNs(r, "acm", operation, "us-east-1", "123456789012")) > 0
+}
+
+// iamCloudWatchDerivesItsResource runs the production derivation against a
+// request carrying every member the model declares. A member that is an ARN by
+// definition carries one, because that is what a real caller sends — this is
+// not the same as filling an ordinary field with an ARN to satisfy the metric.
+func iamCloudWatchDerivesItsResource(operation string, members map[string]bool) bool {
+	if len(iamActionResourceTypes["cloudwatch:"+operation]) == 0 {
+		return false
+	}
+	body := make(map[string]string, len(members))
+	for name := range members {
+		if strings.HasSuffix(strings.ToLower(name), "arn") {
+			body[name] = "arn:aws:cloudwatch:us-east-1:123456789012:alarm:probe"
+			continue
+		}
+		body[name] = "probe"
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(encoded)))
+	r.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	return len(iamDerivedResourceARNs(r, "cloudwatch", operation, "us-east-1", "123456789012")) > 0
+}
+
+func TestIAMCloudWatchFieldAliasesAreRealRequestMembers(t *testing.T) {
+	assertAliasesAreRealFields(t, "cloudwatch", iamCloudWatchFieldAliases,
+		loadRequestFields(t, "cloudwatch", memberWireName))
+}
+
 // iamAutoScalingDerivesItsResource runs the production derivation against a
 // request naming a group and a launch configuration that exist.
 //
@@ -876,7 +955,18 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // accepts several types the organizational unit, uniformly; picking the
 // account for that one member would raise the count by one without changing
 // what the gate does for the other two spellings.
-const iamDerivationCoverageFloor = 1461
+// Elastic Load Balancing's 4: three create an object that has no assigned
+// identifier yet, and SetRulePriorities carries each rule's ARN inside a
+// priority entry rather than under a member of its own — a shape this probe
+// cannot express, since it fills every member with one scalar.
+// TestIAMResourceARNs_ELBReadsARuleARNNestedInAPriority pins that the real
+// request shape does derive; counting it here would mean teaching the probe
+// about one operation, which is measuring the measurement.
+//
+// Amazon CloudWatch's 4: three are metric operations the reference associates
+// with a dataset while the request names no dataset, and ListAlarmMuteRules
+// filters mute rules by the alarm they belong to rather than naming one.
+const iamDerivationCoverageFloor = 1553
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -919,6 +1009,9 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	kmsMembers := loadKMSRequestMembers(t)
 	eventBridgeMembers := loadEventBridgeRequestMembers(t)
 	organizationsMembers := loadOrganizationsRequestShapes(t)
+	elbParameters := loadRequestFields(t, "elastic-load-balancing-v2", memberWireName)
+	acmMembers := loadRequestFields(t, "acm", memberWireName)
+	cloudWatchMembers := loadRequestFields(t, "cloudwatch", memberWireName)
 	organizationsIDs := iamOrganizationsProbeState()
 
 	covered := 0
@@ -956,6 +1049,12 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamEventBridgeDerivesItsResource(o.name, eventBridgeMembers[o.name])
 		case "organizations":
 			derived = iamOrganizationsDerivesItsResource(o.name, organizationsMembers[o.name], organizationsIDs)
+		case "elasticloadbalancing":
+			derived = iamELBv2DerivesItsResource(o.name, elbParameters[o.name])
+		case "acm":
+			derived = iamACMDerivesItsResource(o.name, acmMembers[o.name])
+		case "cloudwatch":
+			derived = iamCloudWatchDerivesItsResource(o.name, cloudWatchMembers[o.name])
 		}
 		if derived {
 			covered++
