@@ -776,6 +776,31 @@ func TestIAMCloudWatchFieldAliasesAreRealRequestMembers(t *testing.T) {
 		loadRequestFields(t, "cloudwatch", memberWireName))
 }
 
+// iamQueryProbeDerives runs the production derivation against a query-protocol
+// request carrying every parameter the model declares.
+func iamQueryProbeDerives(service, operation, version string, params map[string]bool) bool {
+	if len(iamActionResourceTypes[service+":"+operation]) == 0 {
+		return false
+	}
+	form := "Action=" + operation + "&Version=" + version
+	for name := range params {
+		if name == "action" || name == "version" {
+			continue
+		}
+		value := "probe"
+		switch {
+		case strings.HasSuffix(name, "arn"):
+			value = "arn:aws:" + service + ":us-east-1:123456789012:probe"
+		case name == "queueurl":
+			value = "http://localhost:4566/123456789012/probe"
+		}
+		form += "&" + name + "=" + url.QueryEscape(value)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return len(iamDerivedResourceARNs(r, service, operation, "us-east-1", "123456789012")) > 0
+}
+
 // iamECRDerivesItsResource, iamKinesisDerivesItsResource and
 // iamStatesDerivesItsResource run the production derivation against a request
 // carrying every member the model declares. A member that is an ARN by
@@ -933,7 +958,7 @@ func iamSSMDerivesItsResource(operation string, members map[string]bool) bool {
 // coverage is per-request (the case fires only when the request carries the
 // field it reads), which is precisely why the table-driven form replaced it.
 var iamHandwrittenDerivationServices = map[string]bool{
-	"sns": true, "sqs": true, "lambda": true, "secretsmanager": true,
+	"lambda": true,
 }
 
 // iamDerivationCoverageFloor is the number of served operations that both
@@ -992,7 +1017,9 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // filters mute rules by the alarm they belong to rather than naming one.
 // AWS Step Functions' 3: creating a state machine, an activity or an alias
 // names an object that has no ARN yet.
-const iamDerivationCoverageFloor = 1643
+// Amazon SQS's 1: CancelMessageMoveTask names only the task handle, which
+// encodes its queue opaquely.
+const iamDerivationCoverageFloor = 1699
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -1041,6 +1068,9 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	ecrMembers := loadRequestFields(t, "ecr", memberWireName)
 	kinesisMembers := loadRequestFields(t, "kinesis", memberWireName)
 	statesMembers := loadRequestFields(t, "sfn", memberWireName)
+	secretsMembers := loadRequestFields(t, "secrets-manager", memberWireName)
+	snsParameters := loadRequestFields(t, "sns", memberWireName)
+	sqsParameters := loadRequestFields(t, "sqs", memberWireName)
 	organizationsIDs := iamOrganizationsProbeState()
 
 	covered := 0
@@ -1093,6 +1123,13 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 		case "states":
 			derived = iamJSONProbeDerives("states", o.name, statesMembers[o.name],
 				"arn:aws:states:us-east-1:123456789012:stateMachine:probe")
+		case "secretsmanager":
+			derived = iamJSONProbeDerives("secretsmanager", o.name, secretsMembers[o.name],
+				"arn:aws:secretsmanager:us-east-1:123456789012:secret:probe")
+		case "sns":
+			derived = iamQueryProbeDerives("sns", o.name, "2010-03-31", snsParameters[o.name])
+		case "sqs":
+			derived = iamQueryProbeDerives("sqs", o.name, "2012-11-05", sqsParameters[o.name])
 		}
 		if derived {
 			covered++

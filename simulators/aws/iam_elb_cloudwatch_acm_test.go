@@ -12,10 +12,14 @@ import (
 // request shaped the way a real client sends it.
 
 func iamDeriveQuery(operation, version, form string) []string {
+	return iamDeriveQueryFor("elasticloadbalancing", operation, version, form)
+}
+
+func iamDeriveQueryFor(service, operation, version, form string) []string {
 	r := httptest.NewRequest(http.MethodPost, "/",
 		strings.NewReader("Action="+operation+"&Version="+version+"&"+form))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	return iamDerivedResourceARNs(r, "elasticloadbalancing", operation, "us-east-1", "123456789012")
+	return iamDerivedResourceARNs(r, service, operation, "us-east-1", "123456789012")
 }
 
 func iamDeriveJSON(service, operation, body string) []string {
@@ -125,4 +129,42 @@ func TestIAMResourceARNs_StepFunctionsTakesTheARNTheRequestNames(t *testing.T) {
 	const machine = "arn:aws:states:us-east-1:123456789012:stateMachine:orders"
 	iamAssertDerived(t, iamDeriveJSON("states", "StartExecution",
 		`{"stateMachineArn":"`+machine+`","input":"{}"}`), machine)
+}
+
+// A topic is addressed by its ARN, by ResourceArn on the tagging and
+// data-protection operations, and by name only at creation.
+func TestIAMResourceARNs_SNSTakesTheTopicHoweverItIsNamed(t *testing.T) {
+	const topic = "arn:aws:sns:us-east-1:123456789012:orders"
+	iamAssertDerived(t, iamDeriveQueryFor("sns", "Publish", "2010-03-31", "TopicArn="+topic), topic)
+	iamAssertDerived(t, iamDeriveQueryFor("sns", "ListTagsForResource", "2010-03-31", "ResourceArn="+topic), topic)
+	iamAssertDerived(t, iamDeriveQueryFor("sns", "CreateTopic", "2010-03-31", "Name=orders"), topic)
+	// A subscription's ARN is the topic's with the subscription id appended,
+	// and the reference declares the topic as what these authorize against.
+	iamAssertDerived(t, iamDeriveQueryFor("sns", "Unsubscribe", "2010-03-31",
+		"SubscriptionArn="+topic+":8a21d249-4329-4871-acc6-7be709c6ea7f"), topic)
+}
+
+// A queue is addressed by its URL, whose last segment is its name — which is
+// what the queue's ARN ends in. The message-move operations name their queues
+// by ARN instead, and a move is a call about both ends of it.
+func TestIAMResourceARNs_SQSTakesTheQueueFromItsURLOrARN(t *testing.T) {
+	const queue = "arn:aws:sqs:us-east-1:123456789012:orders"
+	iamAssertDerived(t, iamDeriveQueryFor("sqs", "SendMessage", "2012-11-05",
+		"QueueUrl=http://localhost:4566/123456789012/orders"), queue)
+	const dead = "arn:aws:sqs:us-east-1:123456789012:orders-dlq"
+	iamAssertDerived(t, iamDeriveQueryFor("sqs", "StartMessageMoveTask", "2012-11-05",
+		"SourceArn="+dead+"&DestinationArn="+queue), dead, queue)
+}
+
+// A secret is addressed by SecretId, which the API accepts as either its name
+// or its full ARN, and named in Name at creation — where SecretId does not
+// exist yet (GitHub issue #889).
+func TestIAMResourceARNs_SecretsManagerTakesTheNameOrTheARN(t *testing.T) {
+	const secret = "arn:aws:secretsmanager:us-east-1:123456789012:secret:db-password"
+	iamAssertDerived(t, iamDeriveJSON("secretsmanager", "GetSecretValue",
+		`{"SecretId":"db-password"}`), secret)
+	iamAssertDerived(t, iamDeriveJSON("secretsmanager", "GetSecretValue",
+		`{"SecretId":"`+secret+`"}`), secret)
+	iamAssertDerived(t, iamDeriveJSON("secretsmanager", "CreateSecret",
+		`{"Name":"db-password"}`), secret)
 }
