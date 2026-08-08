@@ -776,6 +776,21 @@ func TestIAMCloudWatchFieldAliasesAreRealRequestMembers(t *testing.T) {
 		loadRequestFields(t, "cloudwatch", memberWireName))
 }
 
+// iamCloudMapProbeState seeds a namespace and a service named the way the
+// coverage probe fills a request, because AWS Cloud Map's discovery operations
+// address them by name while their ARNs carry the identifiers AWS assigned —
+// so a probe that only fills fields would measure zero however well the
+// derivation works. It is the same seeding Amazon EC2 Auto Scaling needs, and
+// it is the state any real caller discovering a service is in.
+func iamCloudMapProbeState() {
+	namespace := CMNamespace{Id: "ns-probe", Name: "probe",
+		Arn: "arn:aws:servicediscovery:us-east-1:123456789012:namespace/ns-probe"}
+	cmNamespaces.Put(namespace.Id, namespace)
+	service := CMService{Id: "srv-probe", Name: "probe", NamespaceId: namespace.Id,
+		Arn: "arn:aws:servicediscovery:us-east-1:123456789012:service/srv-probe"}
+	cmServices.Put(service.Id, service)
+}
+
 // iamQueryProbeDerives runs the production derivation against a query-protocol
 // request carrying every parameter the model declares.
 func iamQueryProbeDerives(service, operation, version string, params map[string]bool) bool {
@@ -1019,7 +1034,9 @@ var iamHandwrittenDerivationServices = map[string]bool{
 // names an object that has no ARN yet.
 // Amazon SQS's 1: CancelMessageMoveTask names only the task handle, which
 // encodes its queue opaquely.
-const iamDerivationCoverageFloor = 1699
+// AWS Cloud Map's 1: GetOperation names an operation id, which identifies
+// neither of the two resource types the reference declares for it.
+const iamDerivationCoverageFloor = 1740
 
 // TestIAMResourceDerivationCoverage measures how much of the simulator's served
 // surface authorizes against a real resource rather than the "*" fallback, and
@@ -1071,6 +1088,9 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 	secretsMembers := loadRequestFields(t, "secrets-manager", memberWireName)
 	snsParameters := loadRequestFields(t, "sns", memberWireName)
 	sqsParameters := loadRequestFields(t, "sqs", memberWireName)
+	acmPCAMembers := loadRequestFields(t, "acm-pca", memberWireName)
+	cloudMapMembers := loadRequestFields(t, "servicediscovery", memberWireName)
+	iamCloudMapProbeState()
 	organizationsIDs := iamOrganizationsProbeState()
 
 	covered := 0
@@ -1130,6 +1150,12 @@ func TestIAMResourceDerivationCoverage(t *testing.T) {
 			derived = iamQueryProbeDerives("sns", o.name, "2010-03-31", snsParameters[o.name])
 		case "sqs":
 			derived = iamQueryProbeDerives("sqs", o.name, "2012-11-05", sqsParameters[o.name])
+		case "acm-pca":
+			derived = iamJSONProbeDerives("acm-pca", o.name, acmPCAMembers[o.name],
+				"arn:aws:acm-pca:us-east-1:123456789012:certificate-authority/0123abcd-ef45-6789-abcd-ef0123456789")
+		case "servicediscovery":
+			derived = iamJSONProbeDerives("servicediscovery", o.name, cloudMapMembers[o.name],
+				"arn:aws:servicediscovery:us-east-1:123456789012:namespace/ns-probe")
 		}
 		if derived {
 			covered++

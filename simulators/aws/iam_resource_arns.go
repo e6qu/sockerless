@@ -70,6 +70,10 @@ func iamDerivedResourceARNs(r *http.Request, service, op, region, account string
 		return iamLogsResourceARNs(r, types, arn)
 	case "acm":
 		return iamACMResourceARNs(r, types)
+	case "acm-pca":
+		return iamACMPCAResourceARNs(r, types)
+	case "servicediscovery":
+		return iamCloudMapResourceARNs(r, types, region, account)
 	case "ecr":
 		return iamECRResourceARNs(r, types, region, account)
 	case "sns":
@@ -363,6 +367,82 @@ func iamOrganizationsResource(id string) ([]string, string) {
 // iamOrganizationsAccountID matches the one identifier Organizations spells
 // without a prefix, which the model declares as exactly twelve digits.
 var iamOrganizationsAccountID = regexp.MustCompile(`^\d{12}$`)
+
+// ===== AWS Private Certificate Authority =====
+
+// iamACMPCAResourceARNs derives the ARNs an AWS Private Certificate Authority
+// request names. A certificate authority's ARN carries an identifier AWS
+// assigned, which no request supplies as a part — what a request carries is the
+// whole ARN, so there is nothing to assemble.
+func iamACMPCAResourceARNs(r *http.Request, types []string) []string {
+	fields := iamJSONRequestFields(r)
+	for _, field := range []string{"certificateauthorityarn", "resourcearn"} {
+		for _, value := range fields[field] {
+			if strings.HasPrefix(value, "arn:") {
+				return []string{value}
+			}
+		}
+	}
+	return nil
+}
+
+// ===== AWS Cloud Map =====
+
+// iamCloudMapResourceARNs derives the ARNs an AWS Cloud Map request names. A
+// namespace and a service are each addressed by an assigned id, which arrives
+// under the resource's own member — NamespaceId, ServiceId — or simply as Id on
+// the operations that act on one resource and need no qualifier.
+func iamCloudMapResourceARNs(r *http.Request, types []string, region, account string) []string {
+	fields := iamJSONRequestFields(r)
+	// The tagging operations name their target by ARN, and which of the two
+	// types it is is what the ARN says.
+	for _, value := range fields["resourcearn"] {
+		if strings.HasPrefix(value, "arn:") {
+			return []string{value}
+		}
+	}
+	if arns := iamTableDrivenARNs("servicediscovery", types, region, account, nil,
+		func(field string) []string { return fields[strings.ToLower(field)] }); len(arns) > 0 {
+		return arns
+	}
+	// The discovery operations address a namespace and a service by name, while
+	// their ARNs carry the identifiers AWS assigned. Neither can be assembled
+	// from the request, so both are read from the simulator's own state — the
+	// same resolution Amazon RDS uses for a custom engine version, and for the
+	// same reason: the ARN the gate requests has to be the ARN the resource
+	// actually has.
+	var out []string
+	namespaceName := iamFirstValue(func(f string) []string { return fields[strings.ToLower(f)] }, "NamespaceName")
+	serviceName := iamFirstValue(func(f string) []string { return fields[strings.ToLower(f)] }, "ServiceName")
+	var namespaceID string
+	if namespaceName != "" {
+		for _, namespace := range cmNamespaces.List() {
+			if namespace.Name == namespaceName {
+				namespaceID = namespace.Id
+				if namespace.Arn != "" {
+					out = append(out, namespace.Arn)
+				}
+				break
+			}
+		}
+	}
+	if serviceName != "" {
+		for _, service := range cmServices.List() {
+			if service.Name != serviceName {
+				continue
+			}
+			if namespaceID != "" && service.NamespaceId != namespaceID {
+				continue
+			}
+			if service.Arn != "" {
+				out = append(out, service.Arn)
+			}
+			break
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 // ===== Amazon Simple Notification Service =====
 

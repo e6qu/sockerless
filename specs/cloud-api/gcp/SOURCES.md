@@ -5,7 +5,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 
 | Local file | Upstream repo / host | Upstream path | License | Pinned at | Fetched (UTC) |
 |---|---|---|---|---|---|
-| `bigquery-v2.discovery.json.gz` | `bigquery.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260707` | 2026-07-26T18:38:35Z |
 | `bigtableadmin-v2.discovery.json.gz` | `bigtableadmin.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260725` | 2026-07-29T00:06:48Z |
 | `cloudbuild-v1.discovery.json.gz` | `cloudbuild.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260627` | 2026-07-26T18:38:36Z |
 | `firestore-v1.discovery.json.gz` | `firestore.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260706` | 2026-07-26T18:38:40Z |
@@ -25,7 +24,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `dns-v1.discovery.json.gz` | `dns.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260728` | 2026-08-05T09:45:23Z |
 | `compute-v1.discovery.json.gz` | `www.googleapis.com` | `discovery/v1/apis/compute/v1/rest` | Apache-2.0 | `revision 20260729` | 2026-08-05T10:03:01Z |
 | `sqladmin-v1beta4.discovery.json.gz` | `sqladmin.googleapis.com` | `$discovery/rest?version=v1beta4` | Apache-2.0 | `revision 20260803` | 2026-08-05T14:25:46Z |
-| `spanner-v1.discovery.json.gz` | `spanner.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260801` | 2026-08-05T17:08:49Z |
 | `dataflow-v1b3.discovery.json.gz` | `dataflow.googleapis.com` | `$discovery/rest?version=v1b3` | Apache-2.0 | `revision 20260805` | 2026-08-05T18:31:19Z |
 | `cloudrun-v1.discovery.json.gz` | `run.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260731` | 2026-08-05T19:33:25Z |
 | `cloudrun-v2.discovery.json.gz` | `run.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260731` | 2026-08-05T19:33:25Z |
@@ -35,3 +33,5 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `cloudkms-v1.discovery.json.gz` | `cloudkms.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260803` | 2026-08-07T06:57:21Z |
 | `eventarc-v1.discovery.json.gz` | `eventarc.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260731` | 2026-08-07T06:57:21Z |
 | `vpcaccess-v1.discovery.json.gz` | `vpcaccess.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260802` | 2026-08-07T12:47:42Z |
+| `bigquery-v2.discovery.json.gz` | `bigquery.googleapis.com` | `$discovery/rest?version=v2` | Apache-2.0 | `revision 20260731` | 2026-08-08T12:24:34Z |
+| `spanner-v1.discovery.json.gz` | `spanner.googleapis.com` | `$discovery/rest?version=v1` | Apache-2.0 | `revision 20260806` | 2026-08-08T12:41:24Z |
