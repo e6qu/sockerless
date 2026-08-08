@@ -168,3 +168,43 @@ func TestIAMResourceARNs_SecretsManagerTakesTheNameOrTheARN(t *testing.T) {
 	iamAssertDerived(t, iamDeriveJSON("secretsmanager", "CreateSecret",
 		`{"Name":"db-password"}`), secret)
 }
+
+// A certificate authority's ARN carries an identifier AWS assigned, which no
+// request supplies as a part — what a request carries is the whole ARN.
+func TestIAMResourceARNs_ACMPCATakesTheAuthorityARN(t *testing.T) {
+	const ca = "arn:aws:acm-pca:us-east-1:123456789012:certificate-authority/0123abcd-ef45-6789-abcd-ef0123456789"
+	iamAssertDerived(t, iamDeriveJSON("acm-pca", "DescribeCertificateAuthority",
+		`{"CertificateAuthorityArn":"`+ca+`"}`), ca)
+}
+
+// AWS Cloud Map addresses a namespace and a service by an assigned id, under
+// the resource's own member or simply as Id where no qualifier is needed. The
+// discovery operations address them by name instead, and the name-to-ARN
+// mapping lives in the simulator's state because the ARN carries the id.
+func TestIAMResourceARNs_CloudMapTakesTheIdOrResolvesTheName(t *testing.T) {
+	buildConformanceSimulator(t)
+	iamAssertDerived(t, iamDeriveJSON("servicediscovery", "GetNamespace", `{"Id":"ns-1234"}`),
+		"arn:aws:servicediscovery:us-east-1:123456789012:namespace/ns-1234")
+	iamAssertDerived(t, iamDeriveJSON("servicediscovery", "ListInstances", `{"ServiceId":"srv-1234"}`),
+		"arn:aws:servicediscovery:us-east-1:123456789012:service/srv-1234")
+
+	namespace := CMNamespace{Id: "ns-live", Name: "prod",
+		Arn: "arn:aws:servicediscovery:us-east-1:123456789012:namespace/ns-live"}
+	cmNamespaces.Put(namespace.Id, namespace)
+	service := CMService{Id: "srv-live", Name: "api", NamespaceId: namespace.Id,
+		Arn: "arn:aws:servicediscovery:us-east-1:123456789012:service/srv-live"}
+	cmServices.Put(service.Id, service)
+	t.Cleanup(func() {
+		cmNamespaces.Delete(namespace.Id)
+		cmServices.Delete(service.Id)
+	})
+
+	// Discovering a service is a call about the namespace and the service, and
+	// the ARNs are the ones those resources actually have.
+	iamAssertDerived(t, iamDeriveJSON("servicediscovery", "DiscoverInstances",
+		`{"NamespaceName":"prod","ServiceName":"api"}`), namespace.Arn, service.Arn)
+
+	// A name no namespace has derives nothing rather than an invented ARN.
+	iamAssertDerived(t, iamDeriveJSON("servicediscovery", "DiscoverInstances",
+		`{"NamespaceName":"absent","ServiceName":"absent"}`))
+}

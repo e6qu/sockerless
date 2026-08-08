@@ -4,6 +4,32 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-08-08 — Certificate authorities and Cloud Map, by ARN and by name
+
+AWS Private Certificate Authority and AWS Cloud Map were the largest services
+whose resources the gate had never derived. Both are closed but for one
+operation.
+
+A certificate authority's ARN carries an identifier AWS assigned, which no
+request supplies as a part — what a request carries is the whole ARN, so there
+is nothing to assemble. AWS Cloud Map addresses a namespace and a service by an
+assigned id, under the resource's own member or simply as Id where no qualifier
+is needed, and the published formats take that id directly.
+
+Its discovery operations are the interesting half: they address a namespace and
+a service by *name*, while the ARNs carry the ids. Neither can be assembled from
+the request, so both are read from the simulator's own state — the resolution
+Amazon RDS uses for a custom engine version, for the same reason: the ARN the
+gate requests has to be the ARN the resource actually has. A name no namespace
+holds derives nothing rather than an invented ARN, which is pinned by its own
+case.
+
+One operation remains. GetOperation names an operation id, which identifies
+neither of the two resource types the reference declares for it.
+
+Coverage went from 1,699 to 1,740 of 1,974 served operations, across
+twenty-seven services.
+
 ## 2026-08-07 — The last of the hand-written cases but one
 
 Amazon SNS, Amazon SQS and AWS Secrets Manager were the three services still
