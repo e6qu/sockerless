@@ -540,19 +540,6 @@ func ecsRefreshServiceState(key string) {
 		if currentRunning == targetCount && currentHealthy == targetCount && pending == 0 && !oldActive {
 			deployment.RolloutState = "COMPLETED"
 			deployment.RolloutStateReason = ""
-			// Retire the superseded deployments. Real Amazon ECS drops a
-			// replaced deployment once the new one is stable and its old tasks
-			// have drained, so DescribeServices then reports exactly one,
-			// PRIMARY. `!oldActive` above IS that drain: no task is running on
-			// any other task definition.
-			//
-			// Keeping them leaves a rollback's FAILED entry visible for the life
-			// of the service, and anything that waits for every deployment to
-			// report COMPLETED then waits for ever against a service that is
-			// healthy and serving.
-			if len(current.Deployments) > 1 {
-				current.Deployments = current.Deployments[:1]
-			}
 			ecsCompleteServiceDeployments(current.ServiceArn, now)
 		} else if deployment.RolloutState != "FAILED" {
 			deployment.RolloutState = "IN_PROGRESS"
