@@ -10,17 +10,17 @@ Runs Docker containers as AWS Lambda functions using container images, with Clou
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | **Backend (AWS API)** | [`aws` CLI](https://docs.aws.amazon.com/cli/latest/reference/lambda/) | v2.17+ | `aws lambda invoke`, `aws lambda get-function`, `aws logs tail` — operators inspect function state. |
 | | [AWS Go SDK v2](https://github.com/aws/aws-sdk-go-v2/tree/main/service/lambda) | v1.50+ | `lambda.CreateFunction`, `lambda.Invoke` with `LogType=Tail`. The Invoke-diagnostics pattern uses `LogType=Tail` plus a payload dump on crashes. |
-| | [Terraform `aws` provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | v6.32+ | `aws_lambda_function` provisions the function infra; `simulators/aws/terraform-tests/` covers the path. |
+| | [Terraform `aws` provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | v6.32+ | `aws_lambda_function` provisions the function infra; `simulator-aws/terraform-tests/` (sockerless-cloud repository) covers the path. |
 
-Local development and CI replace the backend-side upstream with [`simulators/aws`](../../simulators/aws/README.md). The agent-as-handler model unique to Lambda is described in [`docs/POD_MATERIALIZATION.md § Lambda`](../../docs/POD_MATERIALIZATION.md).
+Local development and CI replace the backend-side upstream with [`simulator-aws`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-aws) (sockerless-cloud repository, consumed here as a pinned Go module — `make install-simulators` builds it into `tests/.build/`). The agent-as-handler model unique to Lambda is described in [`docs/POD_MATERIALIZATION.md § Lambda`](../../docs/POD_MATERIALIZATION.md).
 
 ## Validation
 
 | Test path | What runs | Last green |
 |---|---|---|
 | `tests/` (Docker SDK against running backend, Lambda profile) | Container lifecycle round-trip through Lambda Invoke. | 2026-05-13 |
-| `simulators/aws/sdk-tests/` Lambda package | `CreateFunction` / `Invoke` / `GetFunction` wire shapes validated against sim. | 2026-05-15 |
-| `simulators/aws/terraform-tests/` | `aws_lambda_function` apply / destroy round-trip. | 2026-05-15 |
+| `simulator-aws/sdk-tests/` Lambda package (sockerless-cloud) | `CreateFunction` / `Invoke` / `GetFunction` wire shapes validated against sim. | 2026-05-15 |
+| `simulator-aws/terraform-tests/` (sockerless-cloud) | `aws_lambda_function` apply / destroy round-trip. | 2026-05-15 |
 | `make backends/lambda/test` | Leaf-Makefile unit + integration suite. | 2026-05-13 |
 
 ## Wiring the adaptor
@@ -69,7 +69,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_LAMBDA_SECURITY_GROUPS` | | no | Comma-separated security group IDs |
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL injected into every function as `SOCKERLESS_CALLBACK_URL`. The bootstrap dials back here so `docker exec` can route through the WebSocket. Empty → backend fails loud at startup (Phase 168 — no Path B fallback). |
 | `SOCKERLESS_LAMBDA_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud (Phase 168 — no race-with-first-exec). |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS API endpoint, commonly the local [`simulators/aws`](../../simulators/aws/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS API endpoint, commonly the local [`simulator-aws`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-aws) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 
@@ -104,4 +104,4 @@ None open. **Lambda has no invoke-cancel API**: `UpdateFunctionConfiguration(Tim
 - VPC subnets/security groups are only needed if functions must reach private resources.
 - Lambda timeout max is 900 seconds (15 minutes). Container images must be in ECR.
 
-See also: [`backends/aws-common`](../aws-common/), [`simulators/aws/API_SPEC.md § Lambda`](../../simulators/aws/API_SPEC.md), [`specs/CLOUD_RESOURCE_MAPPING.md`](../../specs/CLOUD_RESOURCE_MAPPING.md).
+See also: [`backends/aws-common`](../aws-common/), [`simulator-aws/API_SPEC.md § Lambda`](https://github.com/e6qu/sockerless-cloud/blob/main/simulator-aws/API_SPEC.md) (sockerless-cloud), [`specs/CLOUD_RESOURCE_MAPPING.md`](../../specs/CLOUD_RESOURCE_MAPPING.md).

@@ -10,17 +10,17 @@ Runs Docker containers as Google Cloud Run Jobs/Executions or long-running Cloud
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | **Backend (GCP API)** | [`gcloud` CLI](https://cloud.google.com/sdk/gcloud/reference/run/jobs) | 480+ | `gcloud run jobs describe`, `gcloud logging read` — operators inspect job state. |
 | | [GCP Go SDK](https://pkg.go.dev/cloud.google.com/go/run) | v1.6+ | The [Cloud Run Admin v2 REST API](https://cloud.google.com/run/docs/reference/rest) (`jobs.create`, `jobs.run`, `executions.get`) the backend issues. |
-| | [Terraform `google` provider](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/cloud_run_v2_job) | v6+ | `google_cloud_run_v2_job` provisions the job infra; `simulators/gcp/terraform-tests/` covers the path. |
+| | [Terraform `google` provider](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/cloud_run_v2_job) | v6+ | `google_cloud_run_v2_job` provisions the job infra; `simulator-gcp/terraform-tests/` (sockerless-cloud repository) covers the path. |
 
-Local development replaces the backend-side upstream with [`simulators/gcp`](../../simulators/gcp/README.md). The container → Job/Execution mapping is documented in [`docs/POD_MATERIALIZATION.md § Cloud Run`](../../docs/POD_MATERIALIZATION.md).
+Local development replaces the backend-side upstream with [`simulator-gcp`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-gcp) (sockerless-cloud repository, consumed here as a pinned Go module — `make install-simulators` builds it into `tests/.build/`). The container → Job/Execution mapping is documented in [`docs/POD_MATERIALIZATION.md § Cloud Run`](../../docs/POD_MATERIALIZATION.md).
 
 ## Validation
 
 | Test path | What runs | Last green |
 |---|---|---|
 | `tests/` (Docker SDK against running backend, Cloud Run profile) | Container lifecycle round-trip via Cloud Run Job. | 2026-05-13 |
-| `simulators/gcp/sdk-tests/` Cloud Run package | The Admin v2 calls this backend issues, validated against the sim. | 2026-05-13 |
-| `simulators/gcp/terraform-tests/` | `google_cloud_run_v2_job` apply / destroy round-trip. | 2026-05-13 |
+| `simulator-gcp/sdk-tests/` Cloud Run package (sockerless-cloud) | The Admin v2 calls this backend issues, validated against the sim. | 2026-05-13 |
+| `simulator-gcp/terraform-tests/` (sockerless-cloud) | `google_cloud_run_v2_job` apply / destroy round-trip. | 2026-05-13 |
 | `SOCKERLESS_TEST_TARGET=sim go test -count=1 -run TestCloudRunContainerExec` in `backends/cloudrun` | Builds the real bootstrap, overlay-wraps a stock image, starts the Cloud Run Service path, waits for reverse-agent registration, and runs `docker exec` over WebSocket. | 2026-05-17 |
 | `make backends/cloudrun/test` | Leaf-Makefile unit + integration suite. | 2026-05-17 |
 
@@ -71,7 +71,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-Service bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no fallback). |
 | `SOCKERLESS_CLOUDRUN_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
 | `SOCKERLESS_CLOUDRUN_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB) for `Backing: memory` SharedVolumes. Memory is the default backing on cloudrun — set `Backing: gcs-sync` / `pd-ephemeral` per-volume for persistence. Per-container memory default raised to `4Gi` to fit. |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom GCP API endpoint, commonly the local [`simulators/gcp`](../../simulators/gcp/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom GCP API endpoint, commonly the local [`simulator-gcp`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-gcp) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 | `SOCKERLESS_LOG_TIMEOUT` | `30s` | no | Cloud Logging query timeout |
@@ -108,4 +108,4 @@ None open for the Cloud Run Service reverse-agent path. Cloud Run lacks a protob
 - Service-backed exec, attach, and archive operations require the reverse-agent callback URL. Jobs remain the one-shot path.
 - VPC connector is only needed if services must reach private VPC resources.
 
-See also: [`backends/gcp-common`](../gcp-common/), [`simulators/gcp/README.md`](../../simulators/gcp/README.md), [`specs/CLOUD_RESOURCE_MAPPING.md § Cloud Run`](../../specs/CLOUD_RESOURCE_MAPPING.md).
+See also: [`backends/gcp-common`](../gcp-common/), [`simulator-gcp/README.md`](https://github.com/e6qu/sockerless-cloud/blob/main/simulator-gcp/README.md) (sockerless-cloud), [`specs/CLOUD_RESOURCE_MAPPING.md § Cloud Run`](../../specs/CLOUD_RESOURCE_MAPPING.md).

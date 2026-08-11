@@ -1,10 +1,10 @@
 # Specs
 
-Specification documents for sockerless. [`SOCKERLESS_SPEC.md`](SOCKERLESS_SPEC.md) is the core spec; the rest are companion specs, contracts, and maintained matrices. Three are authoritative references cited by implementation work:
+Specification documents for sockerless. [`SOCKERLESS_SPEC.md`](SOCKERLESS_SPEC.md) is the core spec; the rest are companion specs, contracts, and maintained matrices. The authoritative reference cited by implementation work:
 
 - [`CLOUD_RESOURCE_MAPPING.md`](CLOUD_RESOURCE_MAPPING.md) — the authoritative "how does sockerless model X on cloud Y" mapping and the source of truth for the stateless-backend invariant.
-- [`SIM_TEST_COVERAGE_MATRIX.md`](SIM_TEST_COVERAGE_MATRIX.md) + [`SIM_SURFACE_TABLES/`](SIM_SURFACE_TABLES/README.md) — the maintained simulator coverage index, enforced in CI.
-- [`cloud-api/`](cloud-api/README.md) — vendored official cloud API specs (AWS Smithy models, GCP Discovery documents, Azure Swagger), pinned + provenance-tracked; the ground truth behind the simulator spec-conformance gates and the runtime wire-shape validator.
+
+The simulator specs — coverage matrices, surface tables, and the vendored official cloud API specs (`specs/cloud-api/`) — moved with the simulators to the [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud/tree/main/specs).
 
 ## Core spec + configuration
 
@@ -36,18 +36,20 @@ Specification documents for sockerless. [`SOCKERLESS_SPEC.md`](SOCKERLESS_SPEC.m
 
 ## Simulator architecture + coverage
 
+These specs moved with the simulators to the [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud/tree/main/specs) (same relative paths under its root):
+
 | Doc | Summary |
 |---|---|
-| [`SIMULATOR_EXECUTION.md`](SIMULATOR_EXECUTION.md) | Execution-model guardrail: container and FaaS workloads in the sims run through real Docker/Podman containers, never as simulator host processes. |
-| [`SIMULATOR_REAL_EXECUTION.md`](SIMULATOR_REAL_EXECUTION.md) | Implementation contract + completion audit for the real-execution substrate behind the EC2 / GCE / Azure VM and VPC/network surfaces. |
-| [`SIMULATOR_PERSISTENCE.md`](SIMULATOR_PERSISTENCE.md) | SQLite persistence: the generic `Store[T]` with `MemoryStore` (default) and `SQLiteStore` implementations. |
-| [`SIMULATOR_RECOVERY.md`](SIMULATOR_RECOVERY.md) | Restart recovery and re-sync: SQLite state restore plus the `ProcessTracker` PID scan for live workloads. |
-| [`SIM_FOUNDATIONAL_AUDIT.md`](SIM_FOUNDATIONAL_AUDIT.md) | Audit of foundational service slices per sim (object storage, data stores, DNS, queues, eventing, VPC, NAT, load balancers). |
-| [`SIM_PARITY_MATRIX.md`](SIM_PARITY_MATRIX.md) | Cross-simulator parity matrix: every cloud-API call the backends make, with per-sim implemented / reduced-fidelity / missing status. |
-| [`SIM_TEST_COVERAGE_MATRIX.md`](SIM_TEST_COVERAGE_MATRIX.md) | Maintained client-surface index for the simulator testing contract — SDK / CLI / Terraform evidence per surface; `scripts/check-simulator-coverage-matrix.sh` fails CI on drift. |
-| [`SIM_SURFACE_TABLES/`](SIM_SURFACE_TABLES/README.md) | Per-service canonical-operation enumerations (✓ implemented / ✗ missing rows) for every sim surface, seeded by `scripts/seed-surface-tables.sh`. |
-| [`AWS_BEHAVIORAL_PATTERNS.md`](AWS_BEHAVIORAL_PATTERNS.md) | Registry of the AWS simulator's asynchronous / background / dispatch patterns (evaluators, listeners, fan-out), each pointing to a behavioral test that proves it end-to-end through a canonical SDK call. |
-| [`cloud-api/`](cloud-api/README.md) | Vendored official cloud API specs (AWS Smithy models, GCP Discovery documents, Azure Swagger) — ground truth for the sims' static surface-conformance gates and the runtime wire-shape ratchet. |
+| [`SIMULATOR_EXECUTION.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIMULATOR_EXECUTION.md) | Execution-model guardrail: container and FaaS workloads in the sims run through real Docker/Podman containers, never as simulator host processes. |
+| [`SIMULATOR_REAL_EXECUTION.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIMULATOR_REAL_EXECUTION.md) | Implementation contract + completion audit for the real-execution substrate behind the EC2 / GCE / Azure VM and VPC/network surfaces. |
+| [`SIMULATOR_PERSISTENCE.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIMULATOR_PERSISTENCE.md) | SQLite persistence: the generic `Store[T]` with `MemoryStore` (default) and `SQLiteStore` implementations. |
+| [`SIMULATOR_RECOVERY.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIMULATOR_RECOVERY.md) | Restart recovery and re-sync: SQLite state restore plus the `ProcessTracker` PID scan for live workloads. |
+| [`SIM_FOUNDATIONAL_AUDIT.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_FOUNDATIONAL_AUDIT.md) | Audit of foundational service slices per sim (object storage, data stores, DNS, queues, eventing, VPC, NAT, load balancers). |
+| [`SIM_PARITY_MATRIX.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_PARITY_MATRIX.md) | Cross-simulator parity matrix: every cloud-API call the backends make, with per-sim implemented / reduced-fidelity / missing status. |
+| [`SIM_TEST_COVERAGE_MATRIX.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_TEST_COVERAGE_MATRIX.md) | Maintained client-surface index for the simulator testing contract — SDK / CLI / Terraform evidence per surface; enforced in that repo's CI. |
+| [`SIM_SURFACE_TABLES/`](https://github.com/e6qu/sockerless-cloud/tree/main/specs/SIM_SURFACE_TABLES) | Per-service canonical-operation enumerations (✓ implemented / ✗ missing rows) for every sim surface. |
+| [`AWS_BEHAVIORAL_PATTERNS.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/AWS_BEHAVIORAL_PATTERNS.md) | Registry of the AWS simulator's asynchronous / background / dispatch patterns (evaluators, listeners, fan-out), each pointing to a behavioral test that proves it end-to-end through a canonical SDK call. |
+| [`cloud-api/`](https://github.com/e6qu/sockerless-cloud/tree/main/specs/cloud-api) | Vendored official cloud API specs (AWS Smithy models, GCP Discovery documents, Azure Swagger) — ground truth for the sims' static surface-conformance gates and the runtime wire-shape ratchet. |
 
 ## Comparisons / parity
 

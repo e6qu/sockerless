@@ -31,7 +31,7 @@ Three properties, none of which the alternatives combine:
    own in-memory state).
 3. **Strict live spec validation.** Every response is checked against the
    vendored cloud API spec at test time (`SOCKERLESS_SPEC_VALIDATE`), and a CI
-   ratchet (`check-spec-violations.sh`) fails on *any* new divergence. LocalStack
+   ratchet (`check-spec-violations.sh` in the sockerless-cloud repository) fails on *any* new divergence. LocalStack
    uses snapshot parity (capture-from-real-AWS), which doesn't catch
    un-snapshotted edges; moto and most others have no formal spec conformance.
 
@@ -45,12 +45,12 @@ official emulator**. Sockerless implements those control planes.
 ## Spec-fidelity audit baseline (2026-06-19)
 
 Ran each cloud's full SDK test suite with `SOCKERLESS_SPEC_VALIDATE` on, checked
-divergences against the vendored specs in `specs/cloud-api/<cloud>/`:
+divergences against the vendored specs in `specs/cloud-api/<cloud>/` (sockerless-cloud repository):
 
 | Cloud | Distinct response-shape divergences | Notes |
 |-------|-------------------------------------|-------|
 | **AWS** | **0** | Full SDK suite, no allowlist file — i.e. zero accepted divergences (strict). |
-| **GCP** | **2** (allowlisted) | Firestore `documents:batchGet` + `:runQuery` `type-mismatch` at `$` — documented in `simulators/gcp/spec-violation-allowlist.txt`. |
+| **GCP** | **2** (allowlisted) | Firestore `documents:batchGet` + `:runQuery` `type-mismatch` at `$` — documented in `simulator-gcp/spec-violation-allowlist.txt`. |
 | **Azure** | **0** | No divergences recorded across the validated responses. |
 
 The ratchet only ever shrinks: every allowlist entry carries a BUG ID, and new

@@ -230,7 +230,7 @@ If a backend still needs a local cache for performance, the cache is invalidatab
 
 ## Chinese Wall: Backends ↔ Simulators
 
-**Backends NEVER depend on simulator code.** There is no import, no shared type, no direct reference between `backends/` and `simulators/`. Backends talk to the cloud API — which happens to be the simulator in development and the real cloud in production. The API contract is the cloud provider's API specification (AWS SDK, GCP SDK, Azure SDK).
+**Backends NEVER depend on simulator code.** There is no import, no shared type, no direct reference between `backends/` and the simulators (the `simulator-*` modules in the [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud)). Backends talk to the cloud API — which happens to be the simulator in development and the real cloud in production. The API contract is the cloud provider's API specification (AWS SDK, GCP SDK, Azure SDK).
 
 This means:
 - Backends use only cloud SDK clients (`aws-sdk-go-v2`, `cloud.google.com/go`, `azure-sdk-for-go`)

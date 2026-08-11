@@ -82,9 +82,12 @@ if [[ -n "${SIMULATOR_PACKAGE:-}" ]]; then
   fi
 
   simulator_tmp="$(mktemp -d "${TMPDIR:-/tmp}/sockerless-e2e.XXXXXX")"
+  # SIMULATOR_PACKAGE names a simulator module of the sockerless-cloud
+  # repository (e.g. simulator-aws); the tests module pins its version.
   (
-    cd "$repo_root/$SIMULATOR_PACKAGE"
-    env GOWORK=off CGO_ENABLED=0 go build -tags noui -o "$simulator_tmp/$SIMULATOR_NAME" .
+    cd "$repo_root/tests"
+    env CGO_ENABLED=0 go build -tags noui -o "$simulator_tmp/$SIMULATOR_NAME" \
+      "github.com/e6qu/sockerless-cloud/$SIMULATOR_PACKAGE"
   )
 
   simulator_url="http://127.0.0.1:${SIMULATOR_PORT}"

@@ -12,10 +12,10 @@ This backend is a translator. The **frontend** adaptors are the Docker clients t
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | | `podman` CLI | 5.x | Docker-compat shim (`podman --url tcp://localhost:3375 …`). |
 | **Backend (AWS API)** | [`aws` CLI](https://docs.aws.amazon.com/cli/latest/reference/ecs/) | v2.17+ | `aws ecs describe-tasks`, `aws logs filter-log-events`, etc. — operators verify task state the same way they would against real ECS. |
-| | [AWS Go SDK v2](https://github.com/aws/aws-sdk-go-v2/tree/main/service/ecs) | v1.50+ | `ecs.RunTask`, `cloudwatchlogs.GetLogEvents` — the calls this backend issues. Same calls validated by `simulators/aws/sdk-tests/`. |
-| | [Terraform `aws` provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs) | v6.32+ | The supporting infra (cluster, IAM roles, subnets, log group) is provisioned via real Terraform; covered by `simulators/aws/terraform-tests/`. |
+| | [AWS Go SDK v2](https://github.com/aws/aws-sdk-go-v2/tree/main/service/ecs) | v1.50+ | `ecs.RunTask`, `cloudwatchlogs.GetLogEvents` — the calls this backend issues. Same calls validated by `simulator-aws/sdk-tests/` (sockerless-cloud repository). |
+| | [Terraform `aws` provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs) | v6.32+ | The supporting infra (cluster, IAM roles, subnets, log group) is provisioned via real Terraform; covered by `simulator-aws/terraform-tests/` (sockerless-cloud). |
 
-For local development and CI the **backend adaptor's upstream is replaced** by [`simulators/aws`](../../simulators/aws/README.md) — same wire shapes, no AWS account needed.
+For local development and CI the **backend adaptor's upstream is replaced** by [`simulator-aws`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-aws) (from the sockerless-cloud repository, consumed here as a pinned Go module — `make install-simulators` builds it into `tests/.build/`) — same wire shapes, no AWS account needed.
 
 ## Validation
 
@@ -23,8 +23,8 @@ For local development and CI the **backend adaptor's upstream is replaced** by [
 |---|---|---|
 | `tests/` (Docker SDK against running backend) | Real Docker Go SDK exercising 59 functions — containers / images / volumes / networks / exec / logs / attach round-trip. | 2026-05-13 |
 | `tests/github_runner_e2e_test.go` | Official `actions/runner` driving Docker REST against this backend, with jobs executing inside ECS tasks. | 2026-05-13 |
-| `simulators/aws/sdk-tests/` ECS package | The AWS-side calls this backend makes (`RunTask`, `DescribeTasks`, `StopTask`, etc.) validated against the sim. | 2026-05-15 |
-| `simulators/aws/terraform-tests/TestStackProductionShape` | Cross-resource Terraform plan including `aws_ecs_cluster` — proves the operator-provisioning path. | 2026-05-15 |
+| `simulator-aws/sdk-tests/` ECS package (sockerless-cloud) | The AWS-side calls this backend makes (`RunTask`, `DescribeTasks`, `StopTask`, etc.) validated against the sim. | 2026-05-15 |
+| `simulator-aws/terraform-tests/TestStackProductionShape` (sockerless-cloud) | Cross-resource Terraform plan including `aws_ecs_cluster` — proves the operator-provisioning path. | 2026-05-15 |
 | `make backends/ecs/test` | The leaf-Makefile unit + integration suite per [`docs/MAKEFILE_STANDARD.md`](../../docs/MAKEFILE_STANDARD.md). | 2026-05-13 |
 
 ## Wiring the adaptor
@@ -46,7 +46,7 @@ environments:
     backend: ecs
     addr: ":3375"
     log_level: info
-    simulator: aws-sim          # optional, for local dev — points at simulators/aws
+    simulator: aws-sim          # optional, for local dev — points at simulator-aws
     aws:
       region: us-east-1
       ecs:
@@ -84,7 +84,7 @@ Full YAML schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_AGENT_EFS_ID` | | no | EFS filesystem ID for agent binary |
 | `SOCKERLESS_AGENT_TOKEN` | | no | Agent authentication token |
 | `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent mode |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS API endpoint, commonly the local [`simulators/aws`](../../simulators/aws/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS API endpoint, commonly the local [`simulator-aws`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-aws) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 
@@ -130,4 +130,4 @@ None open. Backend-API quirks are catalogued in [`docs/RUNNERS.md § Runner hurd
 - Set `assign_public_ip: true` if tasks run in public subnets without a NAT gateway.
 - Exec and attach use the configured ECS cloud access path, primarily ECS ExecuteCommand / SSM. Required IAM and SSM network access must be present.
 
-See also: [`backends/aws-common`](../aws-common/) (shared `AuthProvider`), [`simulators/aws/API_SPEC.md`](../../simulators/aws/API_SPEC.md) for the AWS-side wire shapes.
+See also: [`backends/aws-common`](../aws-common/) (shared `AuthProvider`), [`simulator-aws/API_SPEC.md`](https://github.com/e6qu/sockerless-cloud/blob/main/simulator-aws/API_SPEC.md) (sockerless-cloud) for the AWS-side wire shapes.

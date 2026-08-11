@@ -8,7 +8,7 @@ Per-cloud manual test sweeps against live infrastructure. Each runbook walks the
 - After landing a backend that's been worked-on with sim-only tests.
 - Periodically as a regression sweep when the live-AWS / live-GCP / live-Azure tracks have gone untouched for more than a few weeks.
 
-Sim-only changes don't need a manual test pass — the SDK + CLI + terraform tests under `simulators/<cloud>/{sdk-tests,cli-tests,terraform-tests}/` cover wire-format parity, and the per-commit sim parity rule (PLAN.md principle #10) keeps drift out.
+Sim-only changes don't need a manual test pass — the SDK + CLI + terraform tests under `simulator-<cloud>/{sdk-tests,cli-tests,terraform-tests}/` in the sockerless-cloud repository cover wire-format parity, and the per-commit sim parity rule keeps drift out.
 
 ## Structure
 
@@ -35,4 +35,4 @@ Sim-only changes don't need a manual test pass — the SDK + CLI + terraform tes
 - Resume pointer: [DO_NEXT.md](../DO_NEXT.md)
 - Bug log: [BUGS.md](../BUGS.md)
 - Architecture: [specs/SOCKERLESS_SPEC.md](../specs/SOCKERLESS_SPEC.md), [specs/CLOUD_RESOURCE_MAPPING.md](../specs/CLOUD_RESOURCE_MAPPING.md), [specs/BACKEND_STATE.md](../specs/BACKEND_STATE.md)
-- Sim parity matrix: [specs/SIM_PARITY_MATRIX.md](../specs/SIM_PARITY_MATRIX.md)
+- Sim parity matrix: [specs/SIM_PARITY_MATRIX.md](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_PARITY_MATRIX.md) (sockerless-cloud repository)

@@ -116,7 +116,11 @@ func TestMain(m *testing.M) {
 	}()
 	defer close(watchdogDone)
 
-	repoRoot := findModuleDir(".")
+	repoRoot, repoRootErr := filepath.Abs(findModuleDir("."))
+	if repoRootErr != nil {
+		fmt.Fprintf(os.Stderr, "failed to resolve repository root: %v\n", repoRootErr)
+		os.Exit(1)
+	}
 	var cleanups []func()
 	cleanup := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
@@ -138,7 +142,7 @@ func TestMain(m *testing.M) {
 
 	// Multi-stage Docker build uses the same platform the backend's
 	// overlay Cloud Build path uses for this test run.
-	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
+	evalDir := repoRoot + "/tests/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
 	arTag := "us-central1-docker.pkg.dev/sockerless-test/docker-hub/library/" + evalImageName
 	// FROM lines pull from public.ecr.aws (no anonymous-pull rate
@@ -210,16 +214,22 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	var endpointURL, logAdminEndpoint, project, buildBucket, saJSONPath, gcfBootstrapPath, arRegistryEndpoint string
 	switch target {
 	case "sim":
-		// Build simulator
-		simDir := repoRoot + "/simulators/gcp"
-		simBinary := simDir + "/simulator-gcp"
+		// Build the simulator from its pinned sockerless-cloud module (the
+		// tests module pins the version via the tool directives in
+		// tests/go.mod).
+		simBinary := repoRoot + "/tests/.build/simulator-gcp"
+		if err := os.MkdirAll(repoRoot+"/tests/.build", 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create tests/.build: %v\n", err)
+			os.Exit(1)
+		}
 		step("go build simulator-gcp")
 		fmt.Println("[sim] Building simulator-gcp...")
 		buildCtx1, buildCancel1 := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer buildCancel1()
-		build := exec.CommandContext(buildCtx1, "go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
-		build.Dir = simDir
-		build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
+		build := exec.CommandContext(buildCtx1, "go", "build", "-tags", "noui", "-o", simBinary,
+			"github.com/e6qu/sockerless-cloud/simulator-gcp")
+		build.Dir = repoRoot + "/tests"
+		build.Env = filterBuildEnv(os.Environ())
 		build.Stdout = os.Stderr
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {

@@ -2,7 +2,7 @@
 
 **Status:** placeholder. Live-Azure track is queued in [PLAN.md](../PLAN.md). The terraform live env under `terraform/environments/aca/live/` and `azure-functions/live/` still needs to be added; once it's in place the runbook below gets fleshed out track-by-track.
 
-The shape mirrors [02-aws-runbook.md](02-aws-runbook.md) — same docker / podman CLI surface, same track structure (A core, B podman, C advanced, D function-specific, E peer comms, F pods, G compose, H podman compose, I stateless, J runner integration). The cloud-API parity (every SDK call sockerless makes against Container Apps / App Service / Storage / Log Analytics / Private DNS / Network Security Groups) is already exercised against the Azure simulator under `simulators/azure/{sdk-tests,cli-tests,terraform-tests}/`; the live runbook is to verify the same surface against real Azure.
+The shape mirrors [02-aws-runbook.md](02-aws-runbook.md) — same docker / podman CLI surface, same track structure (A core, B podman, C advanced, D function-specific, E peer comms, F pods, G compose, H podman compose, I stateless, J runner integration). The cloud-API parity (every SDK call sockerless makes against Container Apps / App Service / Storage / Log Analytics / Private DNS / Network Security Groups) is already exercised against the Azure simulator under `simulator-azure/{sdk-tests,cli-tests,terraform-tests}/` in the sockerless-cloud repository; the live runbook is to verify the same surface against real Azure.
 
 ## Prerequisites (when ready)
 
@@ -13,6 +13,6 @@ The shape mirrors [02-aws-runbook.md](02-aws-runbook.md) — same docker / podma
 
 ## Cross-links
 
-- Sim coverage: [specs/SIM_PARITY_MATRIX.md](../specs/SIM_PARITY_MATRIX.md) § Azure — 28/28 cloud-API rows ✓
+- Sim coverage: [specs/SIM_PARITY_MATRIX.md](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_PARITY_MATRIX.md) (sockerless-cloud repository) § Azure — 28/28 cloud-API rows ✓
 - Backend code: `backends/aca/`, `backends/azure-functions/`
-- Sim handlers: `simulators/azure/containerapps.go`, `simulators/azure/containerapps_apps.go`, `simulators/azure/functions.go`
+- Sim handlers (sockerless-cloud): `simulator-azure/containerapps.go`, `simulator-azure/containerapps_apps.go`, `simulator-azure/functions.go`

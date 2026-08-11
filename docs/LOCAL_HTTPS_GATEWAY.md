@@ -113,10 +113,11 @@ Azure Terraform uses Caddy HTTPS as the canonical test path. The AzureRM and Azu
 AWS and GCP Terraform providers accept full custom endpoint URLs. Their direct HTTP configs stay valid, and the optional HTTPS configs use the same provider endpoint fields with the gateway base URL:
 
 ```sh
-cd simulators/aws
+# in a sockerless-cloud checkout
+cd simulator-aws
 make terraform-https-test
 
-cd simulators/gcp
+cd simulator-gcp
 make terraform-https-test
 ```
 

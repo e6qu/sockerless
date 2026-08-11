@@ -142,8 +142,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: go version
-      - run: go test -count=1 ./simulators/testdata/eval-arithmetic
-      - run: test "$(go run ./simulators/testdata/eval-arithmetic '(10 + 5) * 2')" = "30"
+      - run: go test -count=1 ./tests/testdata/eval-arithmetic
+      - run: test "$(go run ./tests/testdata/eval-arithmetic '(10 + 5) * 2')" = "30"
 `,
 	})
 }

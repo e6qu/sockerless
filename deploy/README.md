@@ -72,7 +72,7 @@ CORS, faithfully implemented by the simulator — never a co-served shortcut).
 Sockerless Admin and every simulator console validate their own OpenID
 Connect issuer/public URL strictly at startup: HTTPS, or plain HTTP only for
 the literal hostname `localhost` (see `cmd/sockerless-admin/shauth.go`'s
-`validate()` and `simulators/ui-auth/auth.go`'s `isLoopbackHost`). Shauth
+`validate()` and `the sockerless-cloud repository's ui-auth/auth.go`'s `isLoopbackHost`). Shauth
 enforces the identical rule on every bootstrap app URL it reconciles,
 *including* `backchannel_logout_uri`. A persistent custom hostname
 (`shauth.localtest.me`, `admin.localtest.me`, …) reached over plain HTTP is
@@ -252,7 +252,7 @@ initialization of its data directory (see "Teardown").
   presents is the operator's own console sign-in ID token). Provisioning
   authenticates to Azure Resource Manager with the simulator's seeded
   bootstrap service principal (`test-client-id`/`test-client-secret`, the
-  same coordinate `simulators/azure/docs/terraform.md` documents), reached
+  same coordinate `the sockerless-cloud repository's simulator-azure/docs/terraform.md` documents), reached
   through caddy at `https://azure-cloud.localtest.me:8443`.
 
   **Real Azure constraint, not a sockerless limitation:** Microsoft Entra

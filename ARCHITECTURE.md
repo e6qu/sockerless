@@ -518,7 +518,7 @@ bleephub also implements enough of the GitHub REST/GraphQL API and Git smart HTT
 
 ## Simulators
 
-Simulators (`simulators/{aws,gcp,azure}/`) are standalone HTTP servers that implement the local cloud-slice APIs sockerless touches. They allow backends, SDKs, CLIs, and Terraform providers to run against a local endpoint while preserving cloud-shaped request/response semantics.
+Simulators live in the standalone [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud) (`simulator-{aws,gcp,azure}/` modules). They are standalone HTTP servers that implement the local cloud-slice APIs sockerless touches, allowing backends, SDKs, CLIs, and Terraform providers to run against a local endpoint while preserving cloud-shaped request/response semantics. This repository consumes them as pinned Go modules: `tests/go.mod` pins `github.com/e6qu/sockerless-cloud/simulator-<cloud>` via `tool` directives, `make install-simulators` builds the pinned binaries into `tests/.build/`, and the harness Docker images `go install` them at the pinned `ARG SOCKERLESS_CLOUD_VERSION`.
 
 ```mermaid
 graph LR
@@ -573,15 +573,11 @@ sockerless/
 │   ├── sockerless/               # CLI tool (context management)
 │   └── sockerless-admin/         # Admin dashboard server
 ├── ui/                           # React SPA monorepo (14 packages)
-├── simulators/
-│   ├── aws/                      # AWS API simulator
-│   ├── gcp/                      # GCP API simulator
-│   └── azure/                    # Azure API simulator
 ├── terraform/                    # IaC modules for real deployment
-└── tests/                        # Integration + E2E tests
+└── tests/                        # Integration + E2E tests (consume the pinned simulator modules)
 ```
 
-Each backend and simulator is a separate Go module connected via `go.work`. Simulators are **not** in the workspace (built with `GOWORK=off`) to avoid dependency conflicts with cloud SDKs. Major components embed React dashboards (Bun/Vite/React 19/Tailwind 4) served at `/ui/`.
+Each backend is a separate Go module connected via `go.work`. The cloud simulators live in the separate [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud) (`simulator-{aws,gcp,azure}/`) and are consumed here as pinned Go modules via `tests/go.mod` `tool` directives (`make install-simulators` builds them into `tests/.build/`). Major components embed React dashboards (Bun/Vite/React 19/Tailwind 4) served at `/ui/`.
 
 ---
 

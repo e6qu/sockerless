@@ -48,9 +48,6 @@ jobs:
       matrix:
         image:
           - { name: sockerless-admin, dockerfile: cmd/sockerless-admin/Dockerfile, context: . }
-          - { name: sockerless-simulator-aws, dockerfile: simulators/aws/Dockerfile, context: . }
-          - { name: sockerless-simulator-gcp, dockerfile: simulators/gcp/Dockerfile, context: . }
-          - { name: sockerless-simulator-azure, dockerfile: simulators/azure/Dockerfile, context: . }
         arch:
           - { platform: linux/amd64, runner: ubuntu-latest, suffix: amd64 }
           - { platform: linux/arm64, runner: ubuntu-24.04-arm, suffix: arm64 }
@@ -95,9 +92,6 @@ jobs:
       matrix:
         image:
           - sockerless-admin
-          - sockerless-simulator-aws
-          - sockerless-simulator-gcp
-          - sockerless-simulator-azure
     name: ${{ matrix.image }} manifest
     steps:
       - uses: docker/login-action@v4.6.0
@@ -145,9 +139,6 @@ jobs:
       matrix:
         image:
           - sockerless-admin
-          - sockerless-simulator-aws
-          - sockerless-simulator-gcp
-          - sockerless-simulator-azure
     name: ${{ matrix.image }} retention
     steps:
       - uses: actions/checkout@v7.0.1

@@ -28,7 +28,7 @@ export default defineConfig({
       SERVER_PACKAGE: "backends/aca",
       SERVER_NAME: "sockerless-backend-aca",
       ...(BIN ? { SERVER_BIN: BIN } : {}),
-      SIMULATOR_PACKAGE: "simulators/azure",
+      SIMULATOR_PACKAGE: "simulator-azure",
       SIMULATOR_NAME: "simulator-azure",
       SIMULATOR_PORT: String(SIMULATOR_PORT),
       SIMULATOR_SETUP: "azure-aca",

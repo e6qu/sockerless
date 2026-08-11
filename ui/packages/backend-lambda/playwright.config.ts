@@ -28,7 +28,7 @@ export default defineConfig({
       SERVER_PACKAGE: "backends/lambda",
       SERVER_NAME: "sockerless-backend-lambda",
       ...(BIN ? { SERVER_BIN: BIN } : {}),
-      SIMULATOR_PACKAGE: "simulators/aws",
+      SIMULATOR_PACKAGE: "simulator-aws",
       SIMULATOR_NAME: "simulator-aws",
       SIMULATOR_PORT: String(SIMULATOR_PORT),
       SOCKERLESS_ENDPOINT_URL: `http://127.0.0.1:${SIMULATOR_PORT}`,

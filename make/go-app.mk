@@ -23,7 +23,7 @@
 # Convention: this file lives at <repo>/make/go-app.mk. Leaf Makefiles
 # discover the repo root by counting up from $(CURDIR) — but to keep
 # leaves dead-simple, we accept a REPO_ROOT_REL var the leaf Makefile
-# may set. Default: ../.. (works for backends/<x>/, simulators/<x>/,
+# may set. Default: ../.. (works for backends/<x>/,
 # cmd/<x>/ and agent/).
 
 REPO_ROOT_REL ?= ../..

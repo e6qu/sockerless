@@ -65,7 +65,7 @@ probe-and-compile:
     - psql "host=postgres user=ci dbname=ci" -c 'SELECT version();'
     - echo "=== clone-and-compile ==="
     - git clone --depth=1 --branch="$SOCKERLESS_REF" https://github.com/e6qu/sockerless /work/sockerless
-    - cd /work/sockerless/simulators/testdata/eval-arithmetic
+    - cd /work/sockerless/tests/testdata/eval-arithmetic
     - go build -v -o eval-arithmetic .
     - echo "=== run-arithmetic ==="
     - |

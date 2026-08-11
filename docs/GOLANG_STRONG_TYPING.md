@@ -90,7 +90,7 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`; 
 
 **Risk.** > "NilAway is currently under active development: false positives and breaking changes can happen." — NilAway README (<https://github.com/uber-go/nilaway>). > "It is practical: it does not prevent all possible nil panics in your code, but it catches most of the potential nil panics we have observed in production" (same README). Soundness is intentionally not the goal, so it will miss real bugs. False positives need per-line annotations or scope exclusion.
 
-**Verdict for sockerless.** Try, scoped to `backends/core/` and the per-backend cloud-state files. Skip `simulators/` — too much generated boilerplate.
+**Verdict for sockerless.** Try, scoped to `backends/core/` and the per-backend cloud-state files. (The simulators live in the sockerless-cloud repository and make their own call — too much generated boilerplate there.)
 
 **Source.** README quotes above; Uber engineering blog at <https://www.uber.com/en-NL/blog/nilaway-practical-nil-panic-detection-for-go/>.
 
@@ -154,7 +154,7 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`; 
 
 **Risk.** None. The pattern is universally idiomatic. The Uber Go Style Guide considered codifying it: <https://github.com/uber-go/guide/issues/25>.
 
-**Verdict for sockerless.** Adopt as policy — every interface implementer in `backends/*/`, `agent/`, `simulators/*/` should carry an assertion. Add a lint rule (custom revive rule or `analyze` pass) that requires the assertion for any package implementing a `core` interface.
+**Verdict for sockerless.** Adopt as policy — every interface implementer in `backends/*/` and `agent/` (and the `simulator-*` modules in the sockerless-cloud repository) should carry an assertion. Add a lint rule (custom revive rule or `analyze` pass) that requires the assertion for any package implementing a `core` interface.
 
 **Source.** > "this line ensures that your Implementation satisfies your Interface, and will fail to compile if the Interface adds methods that the Implementation fails to satisfy. Since the variable is named an underscore, it will not be kept around and won't take up any memory" — Mat Ryer / "Stupid Gopher Tricks" (<https://medium.com/stupid-gopher-tricks/ensuring-go-interface-satisfaction-at-compile-time-1ed158e8fa17>).
 

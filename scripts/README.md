@@ -4,30 +4,15 @@ Repo-wide guard scripts, code-quality scans, and operator helpers. Most are wire
 
 Every script must be shellcheck-clean and run under both bash and zsh on macOS and Linux — enforced at pre-push (`shellcheck -x -s bash scripts/*.sh`, `bash -n`, `zsh -n`) and again in the CI lint job.
 
+The simulator gate scripts (`check-simulator-tests.sh`, `scan-mux-overlap.sh`, `seed-surface-tables.sh`, the `check-spec-*.sh` / `fetch-*-spec.sh` spec-maintenance scripts, the `simulators-*.sh` code-quality scans, the shard/coverage/surface-table gates, and `install-firecracker.sh`) moved with the simulators to the [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud) and run in its CI.
+
 ## Architecture / fidelity guards
 
 | Script | What it does | When it runs |
 |---|---|---|
 | `check-cloud-backend-isolation.sh` | Verifies cloud backends stay stateless: no `BaseServer` lifecycle/query/exec calls, no `Store.Containers` writes — cloud backends operate exclusively through cloud APIs. | pre-commit (Go changes) + CI `test (core)` |
-| `check-simulator-tests.sh` | Simulator testing contract: every new `Register(...)` / `RegisterVersioned(...)` operation under `simulators/<cloud>/` must be referenced by an SDK / CLI / terraform test in the same commit (opt-outs via `simulators/<cloud>/tests-exempt.txt`). | pre-commit (always) |
-| `check-simulator-coverage-matrix.sh` | Keeps [`specs/SIM_TEST_COVERAGE_MATRIX.md`](../specs/SIM_TEST_COVERAGE_MATRIX.md) in lockstep with [`specs/SIM_SURFACE_TABLES/`](../specs/SIM_SURFACE_TABLES/README.md). | pre-commit (always) + CI `build-gates` |
-| `check-surface-tables-generated.sh` | Regenerates simulator surface tables in an isolated temporary directory and fails when the checked-in operation rows or index are stale. | pre-commit (always) + CI `build-gates` |
-| `check-cli-shard-coverage.sh` | Asserts every AWS CLI test function matches exactly one of the CI shard `-run` regexes — a test matching no shard would silently never run. | pre-commit (always) |
 | `check-no-public-cloud-services.sh` | Forbids Cloud Run / Cloud Functions resources granting invoke to `allUsers` / `allAuthenticatedUsers`; long-lived Services must default to `ingress=internal`. | pre-commit (always) |
 | `check-port-defaults.sh` | Fails on references to the two obsolete default ports it greps for (canonical default is `:3375`). | pre-commit (always) |
-| `scan-mux-overlap.sh` | Enumerates every sim route registration and flags wildcard patterns that shadow another service's literal path. Warn mode by default; `--gate` exits 1 on un-allowlisted overlap. | pre-commit (always, warn mode) / manual `--gate` |
-| `mux-overlap-allowlist.txt` | Allowlist consumed by `scan-mux-overlap.sh` — one tab-separated `<pattern1> <pattern2> <justification>` per line (currently empty). | data file |
-
-## Code-quality scans
-
-The four simulator scans run in pre-commit when matching files are touched and unconditionally in the CI simulator-quality job.
-
-| Script | What it does |
-|---|---|
-| `simulators-deadcode.sh` | `deadcode` per simulator module (aws/gcp/azure, `noui` tag, `GOWORK=off`). |
-| `simulators-dupl.sh` | `dupl` over the per-cloud simulator handler sources (≥200 tokens). |
-| `simulators-knip.sh` | `knip` over the three simulator dashboard UI packages. |
-| `simulators-jscpd.sh` | `jscpd` over the simulator dashboard UIs (≥200 tokens). |
 
 ## Lint / hygiene hooks
 
@@ -44,24 +29,6 @@ The four simulator scans run in pre-commit when matching files are touched and u
 | `test-workflow-timeouts.sh` | Exercises the workflow-timeout parser against passing, over-limit, missing, reusable-workflow, and matrix fixtures. | pre-commit + `make check-workflow-timeouts` |
 | `update-readme-badges.sh` | Recomputes the badge values in the top-level `README.md` from codebase stats. | pre-push |
 | `check-latest-deps.sh` | Fails if any direct Go module require, Terraform provider constraint, or pinned GitHub Action is behind its latest published version (fix with `make upgrade-deps`). | pre-push + CI `lint` (bash and zsh passes) |
-
-## Spec / table maintenance
-
-| Script | What it does | When it runs |
-|---|---|---|
-| `seed-surface-tables.sh` | Regenerates [`specs/SIM_SURFACE_TABLES/`](../specs/SIM_SURFACE_TABLES/README.md) stubs from registered sim `HandleFunc` patterns; hand-written sections inside `<!-- HAND-WRITTEN BEGIN/END -->` are preserved. `SEED_SURFACE_TABLES_OUT_DIR` selects an isolated output directory for verification. | manual, after adding sim routes |
-| `fetch-aws-spec.sh` | Vendors/refreshes one AWS Smithy model into [`specs/cloud-api/aws/`](../specs/cloud-api/README.md), pinned to an `aws/aws-sdk-go-v2` commit; rewrites the `SOURCES.md` row. | manual, when adding a service / refreshing pins |
-| `fetch-gcp-discovery.sh` | Vendors/refreshes one Google API Discovery document into `specs/cloud-api/gcp/`, pinned by the document's `revision`. | manual |
-| `fetch-azure-spec.sh` | Vendors/refreshes one Azure Swagger 2.0 spec into `specs/cloud-api/azure/`, pinned to an `Azure/azure-rest-api-specs` commit. | manual |
-| `spec-sources-row.sh` | Shared helper: idempotently upserts one provenance row in a `specs/cloud-api/<cloud>/SOURCES.md` table. Invoked by the three fetch scripts, not directly. | helper |
-| `check-spec-violations.sh` | Ratchet gate for runtime spec-shape validation: dedupes a `SOCKERLESS_SPEC_VALIDATE` report and fails on violations missing from `simulators/<cloud>/spec-violation-allowlist.txt` (the list only shrinks; burn-down entries carry a BUG ID — currently only GCP carries an allowlist, with two permanent documented exemptions). | CI sim jobs, after sdk/cli suites |
-| `check-spec-freshness.sh` | Probes upstream cloud API specifications and fails on definite drift. Google Cloud compares each pin against the newest of repeated Discovery probes so concurrently served older revisions cannot make the result flap. | CI `check-deps` (Google Cloud) + manual |
-
-## Setup / CI infrastructure
-
-| Script | What it does | When it runs |
-|---|---|---|
-| `install-firecracker.sh` | Downloads + installs the pinned Firecracker release binary (x86_64 / aarch64). | CI real-execution jobs |
 
 ## Operator / test helpers
 

@@ -8,15 +8,15 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-441.2k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
-[![TypeScript](https://img.shields.io/badge/TypeScript-66.8k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-269.1k_lines-brightgreen)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-89.3k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-12.9k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-43.6k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
-[![Modules](https://img.shields.io/badge/Go_Modules-45-informational)](#module-sizes)
+[![Modules](https://img.shields.io/badge/Go_Modules-25-informational)](#module-sizes)
 
 > ## ⚠ Caveat emptor — read before you run this
 >
-> Sockerless is **highly experimental** and **fully vibe-coded**. Effort has gone into producing real, tool-validated results (210 k+ lines of Go, 120 k+ lines of tests, three cloud simulators, eight runner-integration cells green) — and yet:
+> Sockerless is **highly experimental** and **fully vibe-coded**. Effort has gone into producing real, tool-validated results (210 k+ lines of Go, 120 k+ lines of tests, three cloud simulators in the sibling [sockerless-cloud](https://github.com/e6qu/sockerless-cloud) repository, eight runner-integration cells green) — and yet:
 >
 > - **Security is unaudited and questionable.** Tokens, auth flows, cert handling, and credential plumbing have not been reviewed by anyone qualified to sign off. Assume any production-style use is unsafe until proven otherwise.
 > - **The implementation is immature.** Edge cases routinely surface; the repo policy is no stubs, no fakes, and no silent fallbacks, but the cloud-API surface area is large enough that every unvalidated path should be treated cautiously until it has tool-backed evidence.
@@ -89,10 +89,6 @@ backends/
 cmd/sockerless/               CLI tool (context management, server control)
 cmd/sockerless-admin/         Admin dashboard server (aggregates all components)
 ui/                           React SPA monorepo (Bun, Vite, Tailwind, TanStack)
-simulators/
-  aws/                        AWS API simulator (ECS, ECR, IAM, VPC, EFS, Lambda, ...)
-  gcp/                        GCP API simulator (Cloud Run, Compute, DNS, GCS, AR, ...)
-  azure/                      Azure API simulator (ACA, ACR, Storage, Functions, ...)
 terraform/
   modules/                    Terraform modules (one per backend)
   environments/               Terragrunt environments (live + simulator per backend)
@@ -110,9 +106,6 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 **Go**
 
 ![core](https://img.shields.io/badge/core-19.8k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-218.1k-00ADD8)
-![sim/azure](https://img.shields.io/badge/sim%2Fazure-71.4k-00ADD8)
-![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-56.4k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.9k-5BC0DE)
 ![cloudrun](https://img.shields.io/badge/cloudrun-6.6k-5BC0DE)
@@ -129,9 +122,6 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 
 ![ui/admin](https://img.shields.io/badge/ui%2Fadmin-8.4k-3178C6)
 ![ui/core](https://img.shields.io/badge/ui%2Fcore-3.8k-3178C6)
-![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-247-6295D2)
-![ui/sim-gcp](https://img.shields.io/badge/ui%2Fsim--gcp-228-6295D2)
-![ui/sim-azure](https://img.shields.io/badge/ui%2Fsim--azure-221-6295D2)
 
 ### Coverage
 
@@ -251,16 +241,17 @@ make backends/ecs/run           # foreground; defaults --addr :3375 + sim env-va
 make backends/ecs/clean         # clean one backend
 
 make ui/packages/admin/run      # vite dev server for admin UI
-
-make simulators/aws/run         # foreground sim on :4566
-make simulators/aws/sdk-test    # SDK tests against the sim (sim-specific target)
 ```
 
 The pattern works for any app + any standardized target.
 
-Simulator workload execution requires Docker or Podman. For explicit API-only
-simulator runs that do not invoke workload execution, set `SIM_RUNTIME=process`;
-that mode starts the cloud API surface without initializing Docker/Podman.
+The cloud simulators live in the
+[sockerless-cloud](https://github.com/e6qu/sockerless-cloud) repository and are
+consumed here as pinned Go modules (`make install-simulators` builds them into
+`tests/.build/`). Simulator workload execution requires Docker or Podman. For
+explicit API-only simulator runs that do not invoke workload execution, set
+`SIM_RUNTIME=process`; that mode starts the cloud API surface without
+initializing Docker/Podman.
 
 ### Stack orchestration
 
@@ -516,12 +507,12 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 
 | Document | Description |
 |----------|-------------|
-| [`specs/README.md`](specs/README.md) | **Specification index** — [main spec](specs/SOCKERLESS_SPEC.md), [config](specs/CONFIG.md), [backends](specs/BACKENDS.md), [drivers](specs/DRIVERS.md), [API](specs/API_SURFACE.md), [images](specs/IMAGE_MANAGEMENT.md), [sim surface tables](specs/SIM_SURFACE_TABLES/), [vendored cloud API specs](specs/cloud-api/README.md) |
+| [`specs/README.md`](specs/README.md) | **Specification index** — [main spec](specs/SOCKERLESS_SPEC.md), [config](specs/CONFIG.md), [backends](specs/BACKENDS.md), [drivers](specs/DRIVERS.md), [API](specs/API_SURFACE.md), [images](specs/IMAGE_MANAGEMENT.md), [sim surface tables](https://github.com/e6qu/sockerless-cloud/tree/main/specs/SIM_SURFACE_TABLES), [vendored cloud API specs](https://github.com/e6qu/sockerless-cloud/blob/main/specs/cloud-api/README.md) (sockerless-cloud) |
 | [`docs/README.md`](docs/README.md) | **Topic-guide index** — CI runners, build infrastructure, design notes, research references |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | System architecture, component diagrams, test architecture |
 | [`terraform/README.md`](terraform/README.md) | Terraform modules, state backends, and CI/CD deployment |
 | [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |
-| [`simulators/README.md`](simulators/README.md) | Cloud simulators: services, validation suites + spec-based conformance gates, CLI usage |
+| [sockerless-cloud](https://github.com/e6qu/sockerless-cloud) | Cloud simulators: services, validation suites + spec-based conformance gates, console SPAs |
 | [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
 | [`docs/RUNNERS.md`](docs/RUNNERS.md) | **CI runner wiring** — canonical guide: GitHub Actions + GitLab Runner against ECS + Lambda, token strategy, 4-cell coverage matrix |
 | [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |

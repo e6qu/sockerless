@@ -1,6 +1,6 @@
 # github-runner-dispatcher-azure
 
-Azure-native variant of [github-runner-dispatcher](../github-runner-dispatcher/) that creates Azure Container Apps Jobs directly via `armappcontainers` instead of shelling out to a docker daemon.
+Azure-native variant of [github-runner-dispatcher](../github-runner-dispatcher-aws/) that creates Azure Container Apps Jobs directly via `armappcontainers` instead of shelling out to a docker daemon.
 
 ## When to use which
 

@@ -178,8 +178,8 @@ ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 	evalImageName = "sockerless-overlay/azf-eval-arithmetic:test"
 	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
 	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
-WORKDIR /src/simulators/testdata/eval-arithmetic
-COPY simulators/testdata/eval-arithmetic .
+WORKDIR /src/tests/testdata/eval-arithmetic
+COPY tests/testdata/eval-arithmetic .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
 FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
@@ -200,12 +200,18 @@ ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 	var endpointURL, subscriptionID, resourceGroup, storageAccount string
 	switch target {
 	case "sim":
-		simDir := repoRoot + "/simulators/azure"
-		simBinary := simDir + "/simulator-azure"
+		// The simulator lives in the sockerless-cloud repository; the tests
+		// module pins its version (see the tool directives in tests/go.mod),
+		// so build it through that module for a single source of truth.
+		simBinary := repoRoot + "/tests/.build/simulator-azure"
+		if err := os.MkdirAll(repoRoot+"/tests/.build", 0o755); err != nil {
+			failClean("ERROR: create tests/.build: %v\n", err)
+		}
 		fmt.Println("[sim] Building simulator-azure...")
-		build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-azure", ".")
-		build.Dir = simDir
-		build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
+		build := exec.Command("go", "build", "-tags", "noui", "-o", simBinary,
+			"github.com/e6qu/sockerless-cloud/simulator-azure")
+		build.Dir = repoRoot + "/tests"
+		build.Env = filterBuildEnv(os.Environ())
 		build.Stdout = os.Stderr
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {

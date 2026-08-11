@@ -1,6 +1,6 @@
 ---
 name: adaptor-fidelity-check
-description: Verify a sockerless component change against its real reference adaptor (docker CLI / aws CLI / gcloud / az / Terraform / gh CLI / Docker SDK). Use whenever editing files under backends/, simulators/, or anything that other tools speak to over the wire. Catches drift between what we implement and what real adaptors send.
+description: Verify a sockerless component change against its real reference adaptor (docker CLI / aws CLI / gcloud / az / Terraform / gh CLI / Docker SDK). Use whenever editing files under backends/, agent/, or anything that other tools speak to over the wire. (The simulators live in sockerless-cloud, which carries its own copy.) Catches drift between what we implement and what real adaptors send.
 ---
 
 # Adaptor-fidelity check
@@ -18,9 +18,6 @@ Every sockerless component is paired with an external **reference adaptor** (per
 | `backends/cloudrun-functions` | docker CLI/SDK + gcloud + Go SDK + Terraform google |
 | `backends/aca` | docker CLI/SDK + az + Azure Go SDK + Terraform azurerm |
 | `backends/azure-functions` | docker CLI/SDK + az + Azure Go SDK + Terraform azurerm |
-| `simulators/aws` | aws CLI + AWS Go SDK + Terraform aws |
-| `simulators/gcp` | gcloud + GCP Go SDK + Terraform google |
-| `simulators/azure` | az + Azure Go SDK + Terraform azurerm |
 | `bleephub` | gh CLI + smart-HTTP git + `actions/runner` |
 
 ## The check
@@ -72,8 +69,8 @@ If a sim-handler change is failing in ways `--debug` doesn't explain, the answer
 
 Real failure mode: SDK test green, CLI test green, `terraform apply` panics or reports "couldn't find resource". Causes:
 
-- **TF Read calls a different API than Create.** `aws_iam_service_linked_role.Read` calls `GetRole` (not `GetServiceLinkedRole`). Your sim must implement *both* sides. Fix pattern: shadow-write to the Read store on Create (see `simulators/aws/iam_slr_oidc.go`).
-- **TF Read derefs deeply-nested optional fields without nil-checks.** Returning a minimal response panics the provider. Fix pattern: a `<svc>NormalizeConfig` pass that fills empty containers before responding (see `cfNormalizeConfig` in `simulators/aws/cloudfront.go`).
+- **TF Read calls a different API than Create.** `aws_iam_service_linked_role.Read` calls `GetRole` (not `GetServiceLinkedRole`). Your sim must implement *both* sides. Fix pattern: shadow-write to the Read store on Create (see the AWS simulator's `iam_slr_oidc.go` in sockerless-cloud).
+- **TF Read derefs deeply-nested optional fields without nil-checks.** Returning a minimal response panics the provider. Fix pattern: a `<svc>NormalizeConfig` pass that fills empty containers before responding (see `cfNormalizeConfig` in the AWS simulator's `cloudfront.go` in sockerless-cloud).
 - **TF Read paginates with a cursor that must be honoured.** `aws_route53_record.Read` uses `StartRecordName`/`StartRecordType`; without cursor filtering, seeded records (NS/SOA) come back first and TF reports "record not found".
 
 Check what your resource's Read actually does:
@@ -103,8 +100,7 @@ A test that doesn't drive the real adaptor doesn't count. Examples that DO count
 
 - [Bleephub](https://github.com/e6qu/bleephub)'s harness — real `gh` binary against Bleephub in Docker.
 - `tests/` — real Docker Go SDK against running backend.
-- `simulators/aws/sdk-tests/` — real AWS Go SDK against running simulator.
-- `simulators/<cloud>/terraform-tests/` — real Terraform provider against running simulator.
+- sockerless-cloud's `simulator-<cloud>/sdk-tests/` and `terraform-tests/` — real SDKs and providers against a running simulator.
 
 Tests that DON'T count:
 

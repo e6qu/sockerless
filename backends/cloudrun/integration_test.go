@@ -94,7 +94,11 @@ func TestMain(m *testing.M) {
 	requireExe("docker")
 	requireExe("go")
 
-	repoRoot := findModuleDir(".")
+	repoRoot, repoRootErr := filepath.Abs(findModuleDir("."))
+	if repoRootErr != nil {
+		fmt.Fprintf(os.Stderr, "failed to resolve repository root: %v\n", repoRootErr)
+		os.Exit(1)
+	}
 	var cleanups []func()
 	cleanup := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
@@ -107,7 +111,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
+	evalDir := repoRoot + "/tests/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
 	overlayPlatform := testOverlayPlatformCloudRun()
 	overlayArch := runtime.GOARCH
@@ -164,12 +168,18 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	var endpointURL, logAdminEndpoint, project, bootstrapPath, buildBucket, saJSONPath, arRegistryEndpoint string
 	switch target {
 	case "sim":
-		simDir := repoRoot + "/simulators/gcp"
-		simBinary := simDir + "/simulator-gcp"
+		// The simulator lives in the sockerless-cloud repository; the tests
+		// module pins its version (see the tool directives in tests/go.mod),
+		// so build it through that module for a single source of truth.
+		simBinary := repoRoot + "/tests/.build/simulator-gcp"
+		if err := os.MkdirAll(repoRoot+"/tests/.build", 0o755); err != nil {
+			failClean("ERROR: create tests/.build: %v\n", err)
+		}
 		fmt.Println("[sim] Building simulator-gcp...")
-		build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-gcp", ".")
-		build.Dir = simDir
-		build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
+		build := exec.Command("go", "build", "-tags", "noui", "-o", simBinary,
+			"github.com/e6qu/sockerless-cloud/simulator-gcp")
+		build.Dir = repoRoot + "/tests"
+		build.Env = filterBuildEnv(os.Environ())
 		build.Stdout = os.Stderr
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {

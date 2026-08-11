@@ -83,14 +83,23 @@ jobs:
           aws-region: ${{ inputs.region }}
       - uses: actions/download-artifact@v8.0.1
         with: { name: lambda-outputs, path: /tmp }
+      # The differential suites live in the sockerless-cloud repository (the
+      # sim SDK tests double as live-cloud conformance tests — same code,
+      # only the coordinates differ). Pin the revision so live runs are
+      # reproducible; bump the ref together with the sim dependency.
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: e6qu/sockerless-cloud
+          ref: v0.1.0
+          path: .test-deps/sockerless-cloud
       - name: Differential against real AWS Lambda and AWS Step Functions
         run: |
           export AWS_LIVE_LAMBDA_ROLE_ARN
           export AWS_LIVE_SFN_ROLE_ARN
           AWS_LIVE_LAMBDA_ROLE_ARN="$(jq -r '.execution_role_arn.value' /tmp/aws-infra-out.json)"
           AWS_LIVE_SFN_ROLE_ARN="$(jq -r '.step_functions_conformance_role_arn.value' /tmp/aws-infra-out.json)"
-          cd simulators/aws/sdk-tests
-          GOWORK=off go test -tags 'noui liveaws' -run 'Test(SFNTestState|SFNExecutionHistory|SFNLambdaTaskHistory|SFNControlPlane|SFNNestedWorkflow|SFNDistributedMap|LambdaZIPAndLayer|LambdaVersionAlias)DifferentialAgainstAWS' ./...
+          cd .test-deps/sockerless-cloud/simulator-aws/sdk-tests
+          go test -tags 'noui liveaws' -run 'Test(SFNTestState|SFNExecutionHistory|SFNLambdaTaskHistory|SFNControlPlane|SFNNestedWorkflow|SFNDistributedMap|LambdaZIPAndLayer|LambdaVersionAlias)DifferentialAgainstAWS' ./...
 
   lambda-baseline:
     needs: infra-up

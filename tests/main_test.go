@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 
 	// Multi-stage Docker build forced to linux/arm64 — sim's primary
 	// capacity contract.
-	evalDir := findModuleDir("simulators/testdata/eval-arithmetic")
+	evalDir := findModuleDir("tests/testdata/eval-arithmetic")
 	fmt.Println("Building eval-arithmetic Docker image (linux/arm64)...")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	dockerfile := `FROM golang:1.25-alpine AS build
@@ -61,27 +61,14 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		os.Exit(1)
 	}
 
-	// Build AWS simulator (independent module, not in go.work)
-	simDir := findModuleDir("simulators/aws")
+	// Build the AWS simulator from its pinned sockerless-cloud module
+	// (see the tool directives in go.mod).
 	fmt.Println("Building AWS simulator...")
-	buildSim := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
-	buildSim.Dir = simDir
-	// Filter out GOOS/GOARCH from env
-	var filteredEnv []string
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "GOOS=") || strings.HasPrefix(e, "GOARCH=") {
-			continue
-		}
-		filteredEnv = append(filteredEnv, e)
-	}
-	buildSim.Env = append(filteredEnv, "GOWORK=off")
-	buildSim.Stdout = os.Stderr
-	buildSim.Stderr = os.Stderr
-	if err := buildSim.Run(); err != nil {
+	simBin, err := buildSimulator("aws")
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build simulator: %v\n", err)
 		os.Exit(1)
 	}
-	simBin := simDir + "/simulator-aws"
 
 	// Build ECS backend
 	fmt.Println("Building ECS backend...")

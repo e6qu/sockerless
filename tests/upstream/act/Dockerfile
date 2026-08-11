@@ -1,20 +1,13 @@
 FROM golang:1.25 AS builder
 
+ARG SOCKERLESS_CLOUD_VERSION=v0.1.0
+
 # --- Build all 3 simulators ---
-WORKDIR /sim-aws
-COPY simulators/realexec/ /realexec/
-COPY simulators/aws/ /sim-aws/
-RUN GOWORK=off go build -tags noui -o /out/simulator-aws .
+RUN GOBIN=/out go install -tags noui github.com/e6qu/sockerless-cloud/simulator-aws@${SOCKERLESS_CLOUD_VERSION}
 
-WORKDIR /sim-gcp
-COPY simulators/realexec/ /realexec/
-COPY simulators/gcp/ /sim-gcp/
-RUN GOWORK=off go build -tags noui -o /out/simulator-gcp .
+RUN GOBIN=/out go install -tags noui github.com/e6qu/sockerless-cloud/simulator-gcp@${SOCKERLESS_CLOUD_VERSION}
 
-WORKDIR /sim-azure
-COPY simulators/realexec/ /realexec/
-COPY simulators/azure/ /sim-azure/
-RUN GOWORK=off go build -tags noui -o /out/simulator-azure .
+RUN GOBIN=/out go install -tags noui github.com/e6qu/sockerless-cloud/simulator-azure@${SOCKERLESS_CLOUD_VERSION}
 
 # --- Copy shared source for backends ---
 WORKDIR /src

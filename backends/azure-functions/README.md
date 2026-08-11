@@ -12,15 +12,15 @@ Runs Docker containers as Azure Function Apps with custom container images, with
 | | [Azure SDK for Go](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice) | v1.6+ | The [App Service ARM REST API](https://learn.microsoft.com/en-us/rest/api/appservice/) (`Sites`) and Application Insights queries the backend issues. |
 | | [Terraform `azurerm` provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/linux_function_app) | v4+ | `azurerm_linux_function_app` with container `image` provisions the function infra. |
 
-Local development replaces the backend-side upstream with [`simulators/azure`](../../simulators/azure/README.md). Container mode only (no native runtimes).
+Local development replaces the backend-side upstream with [`simulator-azure`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-azure) (sockerless-cloud repository, consumed here as a pinned Go module — `make install-simulators` builds it into `tests/.build/`). Container mode only (no native runtimes).
 
 ## Validation
 
 | Test path | What runs | Last green |
 |---|---|---|
 | `tests/` (Docker SDK against running backend, AZF profile) | Container lifecycle round-trip via Function invoke. | 2026-05-13 |
-| `simulators/azure/sdk-tests/` Functions package | App Service ARM calls validated against the sim. | 2026-05-13 |
-| `simulators/azure/terraform-tests/` (Docker-only, TLS) | `azurerm_linux_function_app` apply / destroy. | 2026-05-13 |
+| `simulator-azure/sdk-tests/` Functions package (sockerless-cloud) | App Service ARM calls validated against the sim. | 2026-05-13 |
+| `simulator-azure/terraform-tests/` (sockerless-cloud; Docker-only, TLS) | `azurerm_linux_function_app` apply / destroy. | 2026-05-13 |
 | `make backends/azure-functions/test` | Leaf-Makefile unit + integration suite. | 2026-05-13 |
 
 ## Wiring the adaptor
@@ -75,7 +75,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE` | | no | Log Analytics workspace resource ID |
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-function bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no fallback). |
 | `SOCKERLESS_AZF_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom Azure API endpoint, commonly the local [`simulators/azure`](../../simulators/azure/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom Azure API endpoint, commonly the local [`simulator-azure`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-azure) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent callback timeout |
 
@@ -98,7 +98,7 @@ $ az monitor app-insights query \
 
 ## Known issues
 
-None open. The shared Azure auth-middleware pattern (`auth.go` wraps the mux to avoid ACR `/v2/` route conflicts) is documented in [`simulators/azure/README.md § Special handling`](../../simulators/azure/README.md).
+None open. The shared Azure auth-middleware pattern (`auth.go` wraps the mux to avoid ACR `/v2/` route conflicts) is documented in [`simulator-azure/README.md § Special handling`](https://github.com/e6qu/sockerless-cloud/blob/main/simulator-azure/README.md) (sockerless-cloud).
 
 ## What's out of scope
 
@@ -115,4 +115,4 @@ None open. The shared Azure auth-middleware pattern (`auth.go` wraps the mux to 
 - ACR registry must grant the function app `AcrPull` role for private images.
 - Timeout max is 600s on Consumption plan, higher on Premium/Dedicated plans.
 
-See also: [`backends/azure-common`](../azure-common/), [`simulators/azure/README.md`](../../simulators/azure/README.md), [`specs/CLOUD_RESOURCE_MAPPING.md`](../../specs/CLOUD_RESOURCE_MAPPING.md).
+See also: [`backends/azure-common`](../azure-common/), [`simulator-azure/README.md`](https://github.com/e6qu/sockerless-cloud/blob/main/simulator-azure/README.md) (sockerless-cloud), [`specs/CLOUD_RESOURCE_MAPPING.md`](../../specs/CLOUD_RESOURCE_MAPPING.md).

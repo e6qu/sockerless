@@ -23,8 +23,8 @@
 | [BACKEND_STATE.md](BACKEND_STATE.md) | Stateless backends, cloud tags as source of truth, resource tagging conventions |
 | [CLOUD_RESOURCE_MAPPING.md](CLOUD_RESOURCE_MAPPING.md) | Per-cloud authoritative mapping (docker container/pod/network/image/exec → cloud resource), state-derivation rules, stateless recovery contract |
 | [FAAS_PODS.md](FAAS_PODS.md) | FaaS pod support boundaries for Lambda, GCF, and AZF |
-| [SIMULATOR_PERSISTENCE.md](SIMULATOR_PERSISTENCE.md) | SQLite state persistence, Store interface, process tracking |
-| [SIMULATOR_RECOVERY.md](SIMULATOR_RECOVERY.md) | Recovery on restart, PID re-attachment, backend re-sync, tagging conventions |
+| [SIMULATOR_PERSISTENCE.md](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIMULATOR_PERSISTENCE.md) (sockerless-cloud) | SQLite state persistence, Store interface, process tracking |
+| [SIMULATOR_RECOVERY.md](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIMULATOR_RECOVERY.md) (sockerless-cloud) | Recovery on restart, PID re-attachment, backend re-sync, tagging conventions |
 | [DOCKER_REST_API.md](DOCKER_REST_API.md) | Docker API compatibility analysis |
 | [COMPARISONS.md](COMPARISONS.md) | Comparison with alternatives |
 
@@ -959,13 +959,12 @@ sockerless/
 │   └── go.mod                         #   Deps: gorilla/websocket only
 │                                      #   NO api/ import — fully standalone
 │
-├── simulators/
-│   ├── aws/                           # Module: AWS API simulator (Lambda, ECS, ECR, CloudWatch)
-│   ├── gcp/                           # Module: GCP API simulator (Cloud Run, GCF, Artifact Registry, Logging)
-│   └── azure/                         # Module: Azure API simulator (ACA, AZF, ACR, Monitor)
-│
 ├── tests/                             # Module: black-box API tests
-│   └── go.mod                         #   Deps: Docker client SDK (as test client)
+│   └── go.mod                         #   Deps: Docker client SDK (as test client);
+│                                      #   pins github.com/e6qu/sockerless-cloud/simulator-{aws,gcp,azure}
+│                                      #   via `tool` directives (the cloud simulators live in the
+│                                      #   sockerless-cloud repository; `make install-simulators`
+│                                      #   builds the pinned binaries into tests/.build/)
 │
 ├── terraform/
 │   └── modules/                       # Terraform modules for cloud infrastructure
@@ -993,10 +992,9 @@ sockerless/
 | 10 | `backends/aca/` | `sockerless-backend-aca` | `api/`, `core/`, Azure SDK |
 | 11 | `backends/azure-functions/` | `sockerless-backend-azf` | `api/`, `core/`, Azure SDK |
 | 12 | `agent/` | `sockerless-agent` | `gorilla/websocket` only |
-| 13 | `simulators/aws/` | `sim-aws` | AWS SDK types (for request/response formats) |
-| 15 | `simulators/gcp/` | `sim-gcp` | GCP protobuf types |
-| 16 | `simulators/azure/` | `sim-azure` | Azure SDK types |
-| 18 | `tests/` | *(test binary — `go test`)* | Docker client SDK |
+| 18 | `tests/` | *(test binary — `go test`)* | Docker client SDK; pinned `github.com/e6qu/sockerless-cloud/simulator-{aws,gcp,azure}` modules |
+
+The `simulator-aws` / `simulator-gcp` / `simulator-azure` binaries live in the separate [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud) and are consumed here as pinned Go modules.
 
 ### 6.3 Frontend
 

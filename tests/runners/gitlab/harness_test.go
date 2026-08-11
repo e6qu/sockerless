@@ -83,8 +83,8 @@ func TestGitLab_Simulator_Arithmetic(t *testing.T) {
     - %s
   script:
     - go version
-    - go test -count=1 ./simulators/testdata/eval-arithmetic
-    - test "$(go run ./simulators/testdata/eval-arithmetic '(10 + 5) * 2')" = "30"
+    - go test -count=1 ./tests/testdata/eval-arithmetic
+    - test "$(go run ./tests/testdata/eval-arithmetic '(10 + 5) * 2')" = "30"
 `, envOr("SOCKERLESS_GL_SIM_TAG", "sockerless-sim")),
 		DefaultDockerHost: "tcp://localhost:3375",
 	})

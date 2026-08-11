@@ -71,7 +71,7 @@ Backends support two configuration methods:
 
 ## Testing
 
-Backend integration tests run against the [simulators](../simulators/):
+Backend integration tests run against the [simulators from the sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud), consumed as pinned Go modules (`make install-simulators` builds them into `tests/.build/`):
 
 ```sh
 # Run all simulator-backend integration tests (and every other integration suite)

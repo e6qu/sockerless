@@ -74,9 +74,6 @@ sedi "s|Go_Modules-[0-9]*-|Go_Modules-${go_modules}-|g" "$readme"
 # Per-module Go badges
 for pair in \
   "core:backends/core" \
-  "sim%2Faws:simulators/aws" \
-  "sim%2Fazure:simulators/azure" \
-  "sim%2Fgcp:simulators/gcp" \
   "admin:admin" \
   "ecs:backends/ecs" \
   "cloudrun:backends/cloudrun" \

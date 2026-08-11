@@ -42,50 +42,14 @@ If you find yourself writing any of the following, you are writing a bug:
 - A function that "works" by ignoring its inputs and returning a canned response
 - Fallbacks that silently degrade to local/in-memory behavior
 
-## Simulators are real implementations
+## Simulators live in the sockerless-cloud repository
 
-The cloud simulators (`simulators/{aws,gcp,azure}/`) are **local reimplementations** of cloud services, not mocks. They run real logic: jobs run, functions execute, timeouts fire, logs are produced — driven by the same cloud-native config the real services honor (`replicaTimeout` for ACA, task template `timeout` for Cloud Run, `StopTask` for ECS). No synthetic timers, hardcoded delays, or fake completion signals; if a cloud service has no native timeout (e.g. ECS tasks), neither does the simulator. Logs go to the same tables/log groups, queryable through the same APIs (KQL, Cloud Logging, CloudWatch). Every field the real API returns, the simulator returns — if a backend's CloudState expects `latestCreatedExecution` on a Cloud Run Job, populate it.
+The cloud simulators (AWS, Google Cloud, Microsoft Azure), their SDK/CLI/Terraform test suites, console SPAs, and vendored API specifications live in [github.com/e6qu/sockerless-cloud](https://github.com/e6qu/sockerless-cloud) — see its `AGENTS.md` for the simulator-side rules (cloud-slice principle, testing contract, fidelity discipline).
 
-Always ask "How does the real cloud service behave?" and implement that — use the cloud's own configuration knobs, never simulator-specific env vars or shortcuts. The simulators run on one machine today; the architecture targets distributing execution across machines with the same API surface.
+This repository consumes them as **pinned Go modules**: `tests/go.mod` pins the version via `tool` directives on `github.com/e6qu/sockerless-cloud/simulator-<cloud>`; the test harnesses, backend integration tests, and stack targets build the binaries from that pin (`make install-simulators` → `tests/.build/`), and the harness Docker images `go install` the same modules at the `SOCKERLESS_CLOUD_VERSION` build arg. When bumping the simulator version, bump every pin in the same PR: `tests/go.mod`, the Dockerfile `ARG SOCKERLESS_CLOUD_VERSION` defaults, the git context tag in `deploy/compose.build.yaml`, and the pinned ref in `.github/workflows/live-tests-*.yml`. sockerless-cloud cuts releases with exactly one `vX.Y.Z` tag per release (release-please; no per-module tags, no `latest`), so Go-module pins use the release **commit** (`go get github.com/e6qu/sockerless-cloud/simulator-<cloud>@<release-commit>` records a pseudo-version; the historical `*/v0.1.0` module tags predate that policy), while checkout- and git-context pins use the `vX.Y.Z` tag directly.
 
-### Simulator architecture — cloud-slice principle
+The simulators remain **real implementations** — local reimplementations of cloud services, never mocks — and the two coordinates rules below continue to govern the code in *this* repository that talks to them.
 
-Three principles govern every simulator change. They are load-bearing; a PR that violates any of them is a bug.
-
-1. **The simulator is a cloud slice.** `simulators/aws/` implements the subset of AWS's real public API surface that sockerless depends on, at cloud-API fidelity. It is *not* an emulation of a single product — there is no "Lambda simulator" or "ECS simulator" in isolation. If sockerless uses Lambda + ECS + ECR + CloudWatch + Cloud Map + EC2 + STS + IAM + S3 from AWS, the AWS simulator implements slices of all of them. Same for GCP and Azure.
-
-2. **One simulator binary per cloud.** All AWS service slices live in `simulators/aws/` (single Go module, one `simulator-aws` binary, one shared `sim.Server` mux). Adding a new service slice = a new `registerX(srv)` call + handler file in the existing per-cloud binary. Never a new binary per product.
-
-3. **Cloud-API fidelity.** Match the real cloud's error shapes, response headers, async operation semantics, path templates, and HTTP status codes exactly. When the cloud's contract doesn't cover something, neither does the simulator — don't invent simulator-specific env vars, synthetic shortcuts, or approximate behaviors. "How does the real cloud service behave?" is the authoritative question; the simulator answers it by implementing the same API the cloud does.
-
-**How to add a new slice:**
-1. Read the cloud's public API reference for the service (e.g. `docs.aws.amazon.com/lambda/…`).
-2. Create `simulators/<cloud>/<service>.go` with handlers matching the cloud's endpoints, error codes, and response shapes.
-3. In `simulators/<cloud>/main.go` or equivalent, call `register<Service>(srv)` so the new slice mounts on the shared mux.
-4. Add SDK + CLI + Terraform tests per the testing contract below — the pre-commit hook enforces this.
-
-**What "cloud-API fidelity" rules out:**
-- Stdout-as-response shortcuts (where the simulator returns whatever the user-process printed instead of the real cloud's response shape).
-- In-memory TODO placeholders that claim "we'll call the SDK later".
-- Embedding AWS's `aws-lambda-rie` or similar third-party local emulators inside test images — that bypasses our cloud slice; the simulator IS the cloud from the container's perspective.
-- Synthetic disambiguation (custom headers, custom env vars) that real cloud bootstraps wouldn't produce.
-- **Any sockerless-aware or runner-aware special-casing.** The sim must be faithful to the real cloud and provide *no* special / fake functionality on top to make a sockerless backend or a GitHub/GitLab runner harness work. If a backend needs something (e.g. ACA needs an ACR-Tasks-built bootstrap-overlay image the host engine then pulls), implement the *real* cloud API faithfully and have the backend/host use it exactly as a real client would — never a sim-side hook keyed on "this is for sockerless." If it can't be done through faithful cloud APIs, find the real cloud primitive that does; don't special-case the sim.
-
-**What it does allow:**
-- Ephemeral sidecar listeners (e.g. per-Lambda-invocation listener on a free port) as long as the container-facing contract matches the cloud.
-- Docker user-defined networks as the implementation mechanism behind Cloud Map / Cloud DNS / Private DNS — Docker's embedded DNS is just how the simulator realizes the cloud's DNS contract locally.
-
-### Simulator fidelity — testing contract
-
-Every simulator endpoint must be exercisable via all three real-world client surfaces, in the same commit that registers the endpoint:
-
-1. **SDK** — the official cloud SDK for Go (`aws-sdk-go-v2/*`, `cloud.google.com/go/*`, `github.com/Azure/azure-sdk-for-go/*`). Tests live in `simulators/<cloud>/sdk-tests/`.
-2. **CLI** — the vendor CLI (`aws`, `gcloud`, `az`) shelled out via `runCLI`. Tests in `simulators/<cloud>/cli-tests/`.
-3. **Terraform** — the official provider resource that wraps the endpoint. Tests in `simulators/<cloud>/terraform-tests/` (extend `main.tf` and rely on the existing apply/destroy harness).
-
-The pre-commit hook `scripts/check-simulator-tests.sh` blocks any commit that adds a `r.Register("OpName", …)` line without touching at least one file in the three test dirs that references the operation. Endpoints that genuinely aren't exposed via SDK/CLI/terraform (e.g. Lambda Runtime API routes that the function *container* polls, not an SDK) go on `simulators/<cloud>/tests-exempt.txt` — one operation per line.
-
-There is no "just land it and add tests later." If you edit a simulator, the tests ship with it.
 
 ### A sim test differs from a cloud test ONLY in coordinates
 

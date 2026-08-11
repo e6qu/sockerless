@@ -5,7 +5,7 @@ The simulator host model has two execution paths:
 - Container and FaaS workloads run through Docker/Podman containers via the
   shared simulator container runtime.
 - VM-level resources use the real-execution substrate defined in
-  [specs/SIMULATOR_REAL_EXECUTION.md](specs/SIMULATOR_REAL_EXECUTION.md).
+  [SIMULATOR_REAL_EXECUTION.md](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIMULATOR_REAL_EXECUTION.md) (sockerless-cloud).
 
 Production simulator handlers must not run user workloads as host processes.
 `os/exec` is allowed only for test harnesses, explicitly allowlisted simulator

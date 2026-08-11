@@ -33,7 +33,7 @@ rg -nC1 '_\s*=\s*[a-z]\w*\.[A-Z]\w*\s*//.*(silence|suppress|keep|future|reserved
 
 # Imports that look like silencer victims: imported package whose only
 # in-file reference is the silencer line
-rg -l '^var\s+_\s*=' --type go simulators/ backends/ agent/
+rg -l '^var\s+_\s*=' --type go backends/ agent/
 ```
 
 ### Pattern B — `//nolint:unused` directives

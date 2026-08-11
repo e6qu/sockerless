@@ -1,11 +1,9 @@
 FROM golang:1.25 AS builder
 
+ARG SOCKERLESS_CLOUD_VERSION=v0.1.0
+
 # Build simulator
-WORKDIR /sim
-COPY simulators/realexec/ /realexec/
-COPY simulators/ui-auth/ /ui-auth/
-COPY simulators/gcp/ /sim/
-RUN GOWORK=off go build -tags noui -o /simulator-gcp .
+RUN GOBIN=/ go install -tags noui github.com/e6qu/sockerless-cloud/simulator-gcp@${SOCKERLESS_CLOUD_VERSION}
 
 # Build backend
 WORKDIR /src

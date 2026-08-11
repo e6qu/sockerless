@@ -10,7 +10,7 @@ simulator composes the real underlying AWS resources to back it faithfully.
 Cross-references: the per-cloud resource mapping lives in
 [`specs/CLOUD_RESOURCE_MAPPING.md` § Amazon ECS](../specs/CLOUD_RESOURCE_MAPPING.md#amazon-elastic-container-service-ecs-backend-ecs);
 the simulator's ECS operation table lives in
-[`specs/SIM_SURFACE_TABLES/aws-ecs.md`](../specs/SIM_SURFACE_TABLES/aws-ecs.md).
+[`specs/SIM_SURFACE_TABLES/aws-ecs.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_SURFACE_TABLES/aws-ecs.md) in the sockerless-cloud repository.
 
 ## What ECS Express Mode is
 
@@ -145,7 +145,7 @@ All errors return HTTP 400 except `Server` (500).
 Per the cloud-slice principle, the simulator does **not** fake a monolithic "Express
 service" object. It **composes the real underlying AWS resources** — each landing in the
 same simulator store its own service API uses, so every one is independently describable
-through that API. Implemented in `simulators/aws/ecs_express.go`:
+through that API. Implemented in `simulator-aws/ecs_express.go` (sockerless-cloud repository):
 
 | Backing resource | Simulator store | Describable via |
 |---|---|---|
@@ -250,6 +250,6 @@ resource "aws_ecs_express_gateway_service" "web" {
 ## See also
 
 - [`specs/CLOUD_RESOURCE_MAPPING.md` § Amazon ECS](../specs/CLOUD_RESOURCE_MAPPING.md#amazon-elastic-container-service-ecs-backend-ecs) — the authoritative per-cloud Docker-concept → AWS-resource mapping.
-- [`specs/SIM_SURFACE_TABLES/aws-ecs.md`](../specs/SIM_SURFACE_TABLES/aws-ecs.md) — the simulator's ECS operation surface table.
+- [`specs/SIM_SURFACE_TABLES/aws-ecs.md`](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_SURFACE_TABLES/aws-ecs.md) (sockerless-cloud repository) — the simulator's ECS operation surface table.
 - [`docs/ECS_SERVICES_DESIGN.md`](ECS_SERVICES_DESIGN.md) — cross-container DNS for ECS via Cloud Map.
 - [`docs/ECS_LIVE_SETUP.md`](ECS_LIVE_SETUP.md) — standing up the ECS backend against a real AWS account.

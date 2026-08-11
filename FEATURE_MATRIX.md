@@ -360,7 +360,7 @@ See [STATUS.md](STATUS.md) for overall test counts.
 
 ### Simulator Integration Tests
 
-All cloud backends can be tested locally against simulators using `SOCKERLESS_ENDPOINT_URL`. The simulators themselves are validated against the vendored official cloud API specs in [`specs/cloud-api/`](specs/cloud-api/README.md): static surface-conformance gates (every registered operation must exist in the spec) run with each sim's `make unit-test`, and the SDK/CLI suites run with runtime wire-shape validation armed, gated by `scripts/check-spec-violations.sh` — see [`simulators/README.md` § Spec-based validation](simulators/README.md#spec-based-validation).
+All cloud backends can be tested locally against the simulators from the [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud) (consumed here as pinned Go modules; `make install-simulators` builds them into `tests/.build/`) using `SOCKERLESS_ENDPOINT_URL`. The simulators themselves are validated in that repository against the vendored official cloud API specs in [`specs/cloud-api/`](https://github.com/e6qu/sockerless-cloud/tree/main/specs/cloud-api): static surface-conformance gates (every registered operation must exist in the spec) run with each sim's `make unit-test`, and the SDK/CLI suites run with runtime wire-shape validation armed, gated by its `check-spec-violations.sh` — see the [sockerless-cloud README § Spec-based validation](https://github.com/e6qu/sockerless-cloud/blob/main/README.md#spec-based-validation).
 
 Run the top-level fan-out or invoke a single backend via path delegation:
 

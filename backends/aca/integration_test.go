@@ -216,11 +216,11 @@ ENTRYPOINT ["/usr/local/bin/%s"]
 	// scratch roots so the harness does not depend on external registries.
 	evalImageName = "sockerless-eval-arithmetic:test"
 	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
-	buildScratchGoImage(evalImageName, "simulators/testdata/eval-arithmetic", "eval-arithmetic")
+	buildScratchGoImage(evalImageName, "tests/testdata/eval-arithmetic", "eval-arithmetic")
 
 	commandImageName = "sockerless-container-command:test"
 	fmt.Printf("[setup] Building %s (linux/arm64)...\n", commandImageName)
-	buildScratchGoImage(commandImageName, "simulators/testdata/container-command", "container-command")
+	buildScratchGoImage(commandImageName, "tests/testdata/container-command", "container-command")
 
 	if os.Getenv(acaAppsE2EEnv) == "1" {
 		bootstrapPath := filepath.Join(repoRoot, "agent", fmt.Sprintf("sockerless-cloudrun-bootstrap-aca-test-arm64-%d", os.Getpid()))
@@ -252,7 +252,7 @@ ENTRYPOINT ["/usr/local/bin/%s"]
 		}
 		overlayCommand := filepath.Join(overlayCtx, "container-command")
 		commandBuild := exec.Command("go", "build", "-o", overlayCommand, ".")
-		commandBuild.Dir = filepath.Join(repoRoot, "simulators/testdata/container-command")
+		commandBuild.Dir = filepath.Join(repoRoot, "tests/testdata/container-command")
 		commandBuild.Env = filterBuildEnv(os.Environ(), "GOWORK=off", "GOOS=linux", "GOARCH=arm64", "CGO_ENABLED=0")
 		commandBuild.Stdout = os.Stderr
 		commandBuild.Stderr = os.Stderr
@@ -288,12 +288,18 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 	switch target {
 	case "sim":
 		// Build the simulator binary
-		simDir := repoRoot + "/simulators/azure"
-		simBinary := simDir + "/simulator-azure"
+		// The simulator lives in the sockerless-cloud repository; the tests
+		// module pins its version (see the tool directives in tests/go.mod),
+		// so build it through that module for a single source of truth.
+		simBinary := repoRoot + "/tests/.build/simulator-azure"
+		if err := os.MkdirAll(repoRoot+"/tests/.build", 0o755); err != nil {
+			failClean("ERROR: create tests/.build: %v\n", err)
+		}
 		fmt.Println("[sim] Building simulator-azure...")
-		build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-azure", ".")
-		build.Dir = simDir
-		build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
+		build := exec.Command("go", "build", "-tags", "noui", "-o", simBinary,
+			"github.com/e6qu/sockerless-cloud/simulator-azure")
+		build.Dir = repoRoot + "/tests"
+		build.Env = filterBuildEnv(os.Environ())
 		build.Stdout = os.Stderr
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {

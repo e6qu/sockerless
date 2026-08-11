@@ -251,11 +251,11 @@ Each pattern maps to one of nine categories defined at the bottom; patterns are 
 **Example**: Three sibling helpers `validateInput`, `validateInputSimple`, `validateInputEnhanced` — each authored in a different session, none deleted.
 **Why it's bad**: Static analysis can't tell you `AbstractStrategyFactoryBuilder` is solving a non-problem. The linter is green, the codebase silently bloats, and pattern 25 (comprehension debt) accumulates until refactor becomes infeasible.
 **Sockerless instance**: Phase 161 found a remarkable amount of dead code that nothing was pruning proactively — `InitTracer` in 6 modules (BUG-1008), `decodeRegistryAuth` (BUG-998), `MigrateLegacyProjects` + `DeriveLegacyInstances` (BUG-1007), `staticReactionGroups` + `prStaticReactionGroups` (BUG-1001), the entire `bph_` legacy seeded-token surface (BUG-1004). None of these would have died without an explicit pruning phase.
-**Countermeasure**: The "negative pressure" is now automated and gated. Each pruning target is its own pre-commit hook + CI job, run for **bleephub** and for the **cloud simulators** (`aws`/`gcp`/`azure`):
-- `deadcode` (`golang.org/x/tools/cmd/deadcode`) — unreachable Go functions. `scripts/{bleephub,simulators}-deadcode.sh`.
-- `dupl` (`github.com/mibk/dupl`, ≥200 tokens) — Go copy-paste clones. `scripts/{bleephub,simulators}-dupl.sh`. Note: dupl's file list **must** be fed via its `-files` stdin interface, not as positional args — a long arg list is mis-parsed as a single path (`file name too long`) and silently scans nothing.
-- `knip` — dead TS exports / unused files / unlisted deps in the dashboard UI packages. `scripts/{bleephub,simulators}-knip.sh`.
-- `jscpd` (≥200 tokens) — TS/JS copy-paste clones. `scripts/{bleephub,simulators}-jscpd.sh`.
+**Countermeasure**: The "negative pressure" is now automated and gated. Each pruning target is its own pre-commit hook + CI job, run for **bleephub** (in its repo) and for the **cloud simulators** (`aws`/`gcp`/`azure`, via the `simulators-*.sh` scripts in the [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud)):
+- `deadcode` (`golang.org/x/tools/cmd/deadcode`) — unreachable Go functions (`*-deadcode.sh`).
+- `dupl` (`github.com/mibk/dupl`, ≥200 tokens) — Go copy-paste clones (`*-dupl.sh`). Note: dupl's file list **must** be fed via its `-files` stdin interface, not as positional args — a long arg list is mis-parsed as a single path (`file name too long`) and silently scans nothing.
+- `knip` — dead TS exports / unused files / unlisted deps in the dashboard UI packages (`*-knip.sh`).
+- `jscpd` (≥200 tokens) — TS/JS copy-paste clones (`*-jscpd.sh`).
 
 These fail the build on any new dead function, clone group, or dead export — turning "would not have died without an explicit pruning phase" into "cannot land without being pruned first."
 **Source**: [Adam Wespiser, "AI is an Expansion Engine. Software Engineering Needs a Pruning Engine"](https://www.wespiser.com/posts/2026-03-22-AI-Expansion-vs-Software-Pruning.html) — *"AI is an expansion engine. Software engineering is a pruning process."* And: *"Without negative pressure, coding with AI feels like progress while the system quietly drifts toward bloat."* Corroborated by [Klement Gunndu, "AI-Generated Code Is Building Tech Debt You Can't See"](https://dev.to/klement_gunndu/ai-generated-code-is-building-tech-debt-you-cant-see-khn): *"AI generates new code. They rarely suggest consolidating existing code."*
@@ -354,13 +354,13 @@ These are the public stances from established projects on accepting AI-generated
 
 ## Project-local skills
 
-Five Claude skills under `.claude/skills/` operationalise the catalogue:
+Claude skills under `.claude/skills/` operationalise the catalogue:
 
 - [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) — read before every non-trivial change. 27-item checklist references patterns by number. Phase 161 closeout expanded it from 17 items to 26 with new categories: refactor-delegation safety-net audit (Q9, pattern 34), text-rewriting language-aware tools (Q10, pattern 35), metadata-in-test-assertions audit (Q13/Q15, pattern 28), pruning audit (Q18, pattern 27), doc-sync (Q19, pattern 33), post-commit SHA verification (Q25, pattern 31), explicit re-verification pass (Q26, patterns 24+32). PR #222 added Q27 for Makefile / script lifecycle probes after a stack target claims services are up.
-- [`adaptor-fidelity-check`](../.claude/skills/adaptor-fidelity-check/SKILL.md) — used when touching backends/simulators/bleephub; verifies the change preserves the reference-adaptor contract. Phase 160 extended it with SDK-serializer-source verification (step 1a) and TF-provider `resourceXxxRead` inspection (step 1b). Pattern 29 (mock drift) is the explicit anti-pattern this skill exists to prevent.
+- [`adaptor-fidelity-check`](../.claude/skills/adaptor-fidelity-check/SKILL.md) — used when touching backends/bleephub; verifies the change preserves the reference-adaptor contract. Phase 160 extended it with SDK-serializer-source verification (step 1a) and TF-provider `resourceXxxRead` inspection (step 1b). Pattern 29 (mock drift) is the explicit anti-pattern this skill exists to prevent.
 - [`manual-test`](../.claude/skills/manual-test/SKILL.md) — runs the canonical manual smoke per component (no mocks, real adaptor). Pattern 29 mitigation.
-- [`sim-handler-checklist`](../.claude/skills/sim-handler-checklist/SKILL.md) — pre-write checklist for new `simulators/<cloud>/<service>.go` files. Distilled from Phase 159 (CloudFront / ACM / Route 53 / WAFv2 / Amplify / IAM SLR/OIDC); every load-bearing fix came from one of four checks the skill enumerates.
-- [`cross-resource-stack-test`](../.claude/skills/cross-resource-stack-test/SKILL.md) — codifies the `TestStackProductionShape` pattern: declare `output` blocks for every cross-resource attribute, read `terraform output -json` in Go, assert what references resolve to (not just that apply doesn't crash).
+
+The simulator-specific skills (`sim-handler-checklist`, `cross-resource-stack-test`, and the other sim-* scans) moved with the simulators to the [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud) and apply there.
 
 ## How to extend this doc
 

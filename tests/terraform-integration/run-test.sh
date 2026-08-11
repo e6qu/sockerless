@@ -34,7 +34,9 @@ SIM_PORT="${SIM_PORT:-$SIM_DEFAULT_PORT}"
 BACKEND_ADDR="127.0.0.1:3375"
 
 # Paths
-SIM_DIR="$ROOT_DIR/simulators/$CLOUD"
+# Simulators come from the sockerless-cloud repository at the version pinned
+# in tests/go.mod (tool directives); build through that module.
+TESTS_DIR="$ROOT_DIR/tests"
 TG_DIR="$ROOT_DIR/terraform/environments/$BACKEND/simulator"
 WORKFLOW_DIR="$ROOT_DIR/smoke-tests/act/workflows"
 
@@ -109,7 +111,7 @@ generate_tls_certs() {
 # --- Step 1: Build simulator ---
 if [ -z "${SIM_PID_EXTERNAL:-}" ]; then
     echo "=== Building $CLOUD simulator ==="
-    (cd "$SIM_DIR" && GOWORK=off go build -tags noui -o "$BUILD_DIR/simulator-$CLOUD" .)
+    (cd "$TESTS_DIR" && go build -tags noui -o "$BUILD_DIR/simulator-$CLOUD" "github.com/e6qu/sockerless-cloud/simulator-$CLOUD")
 fi
 
 # --- Step 2: Start simulator ---

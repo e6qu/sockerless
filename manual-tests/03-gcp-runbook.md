@@ -2,7 +2,7 @@
 
 **Status:** placeholder. Live-GCP track is queued in [PLAN.md](../PLAN.md). The terraform live env under `terraform/environments/cloudrun/live/` and `cloudrun-functions/live/` still needs to be added; once it's in place the runbook below gets fleshed out track-by-track.
 
-The shape mirrors [02-aws-runbook.md](02-aws-runbook.md) — same docker / podman CLI surface, same track structure (A core, B podman, C advanced, D function-specific, E peer comms, F pods, G compose, H podman compose, I stateless, J runner integration). The cloud-API parity (every SDK call sockerless makes against Cloud Run / Cloud Run Functions / Cloud Logging / Cloud DNS) is already exercised against the GCP simulator under `simulators/gcp/{sdk-tests,cli-tests,terraform-tests}/`; the live runbook is to verify the same surface against real GCP.
+The shape mirrors [02-aws-runbook.md](02-aws-runbook.md) — same docker / podman CLI surface, same track structure (A core, B podman, C advanced, D function-specific, E peer comms, F pods, G compose, H podman compose, I stateless, J runner integration). The cloud-API parity (every SDK call sockerless makes against Cloud Run / Cloud Run Functions / Cloud Logging / Cloud DNS) is already exercised against the GCP simulator under `simulator-gcp/{sdk-tests,cli-tests,terraform-tests}/` in the sockerless-cloud repository; the live runbook is to verify the same surface against real GCP.
 
 ## Prerequisites
 
@@ -77,7 +77,7 @@ Per-row PASS/FAIL is reported; per-bundle logs land in `/tmp/sockerless-real-wor
 
 ## Cross-links
 
-- Sim coverage: [specs/SIM_PARITY_MATRIX.md](../specs/SIM_PARITY_MATRIX.md) § GCP — 16/16 cloud-API rows ✓
+- Sim coverage: [specs/SIM_PARITY_MATRIX.md](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_PARITY_MATRIX.md) (sockerless-cloud repository) § GCP — 16/16 cloud-API rows ✓
 - Backend code: `backends/cloudrun/`, `backends/cloudrun-functions/`
-- Sim handlers: `simulators/gcp/cloudrunjobs.go`, `simulators/gcp/cloudrunservices.go`, `simulators/gcp/cloudfunctions.go`
+- Sim handlers (sockerless-cloud): `simulator-gcp/cloudrunjobs.go`, `simulator-gcp/cloudrunservices.go`, `simulator-gcp/cloudfunctions.go`
 - Cloud-resource mapping: [specs/CLOUD_RESOURCE_MAPPING.md § GCP Cloud Run](../specs/CLOUD_RESOURCE_MAPPING.md#gcp-cloud-run-backend-cloudrun) and [§ GCP Cloud Run Functions](../specs/CLOUD_RESOURCE_MAPPING.md#gcp-cloud-run-functions-backend-cloudrun-functions--gcf).

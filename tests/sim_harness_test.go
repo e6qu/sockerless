@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -144,16 +145,22 @@ func cloudsForBackends(backendNames []string) []string {
 	return clouds
 }
 
-// buildSimulator builds the simulator binary for the given cloud and returns the path.
+// buildSimulator builds the simulator binary for the given cloud and returns
+// the path. The simulators live in the sockerless-cloud repository; this
+// module requires them at a pinned version (see the `tool` directives in
+// go.mod), so the build resolves through the module cache.
 func buildSimulator(cloud string) (string, error) {
-	simDir := findModuleDir("simulators/" + cloud)
-	binaryPath := simDir + "/simulator-" + cloud
+	testsDir := findModuleDir("tests")
+	buildDir := filepath.Join(testsDir, ".build")
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return "", fmt.Errorf("create build dir: %w", err)
+	}
+	binaryPath := filepath.Join(buildDir, "simulator-"+cloud)
 
-	binaryName := "simulator-" + cloud
-	fmt.Printf("[sim] Building %s...\n", binaryName)
-	build := exec.Command("go", "build", "-tags", "noui", "-o", binaryName, ".")
-	build.Dir = simDir
-	// GOWORK=off because simulators are not in the workspace.
+	fmt.Printf("[sim] Building simulator-%s...\n", cloud)
+	build := exec.Command("go", "build", "-tags", "noui", "-o", binaryPath,
+		"github.com/e6qu/sockerless-cloud/simulator-"+cloud)
+	build.Dir = testsDir
 	// Filter out GOOS/GOARCH from env to ensure we build for the host platform,
 	// since Docker test configs may set GOOS=linux.
 	var filteredEnv []string
@@ -163,7 +170,7 @@ func buildSimulator(cloud string) (string, error) {
 		}
 		filteredEnv = append(filteredEnv, e)
 	}
-	build.Env = append(filteredEnv, "GOWORK=off")
+	build.Env = filteredEnv
 	build.Stdout = os.Stderr
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {

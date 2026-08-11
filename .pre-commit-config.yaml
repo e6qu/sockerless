@@ -60,72 +60,9 @@ repos:
         pass_filenames: false
         always_run: true
 
-      - id: simulator-testing-contract
-        name: Simulator testing contract (SDK + CLI + terraform per change)
-        entry: bash scripts/check-simulator-tests.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: behavioral-coverage
-        name: AWS behavioral pattern coverage registry
-        entry: bash scripts/check-behavioral-coverage.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: simulator-coverage-matrix
-        name: Simulator SDK/CLI/Terraform coverage matrix
-        entry: bash scripts/check-simulator-coverage-matrix.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: simulator-surface-table-generation
-        name: Generated simulator surface tables
-        entry: bash scripts/check-surface-tables-generated.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: cli-shard-coverage
-        name: AWS CLI shard coverage (every CLI test runs in exactly one CI shard)
-        entry: bash scripts/check-cli-shard-coverage.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: sdk-shard-coverage
-        name: AWS SDK shard coverage (every SDK test runs in exactly one CI shard)
-        entry: bash scripts/check-sdk-shard-coverage.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
       - id: port-defaults
         name: Port defaults (no :2375 / :9100 in production sources)
         entry: bash scripts/check-port-defaults.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: mux-overlap-scan
-        name: Mux-overlap scan (warn mode; gating in Stage B)
-        entry: bash scripts/scan-mux-overlap.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: casefold-slice
-        name: No case-fold-then-index slice-bounds class (use sim.CaseInsensitiveIndex)
-        entry: bash scripts/check-casefold-slice.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: locked-helpers
-        name: No store-mutex acquisition inside *Locked helpers (RWMutex is not reentrant)
-        entry: bash scripts/check-locked-helpers.sh
         language: system
         pass_filenames: false
         always_run: true
@@ -192,39 +129,6 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-
-      # simulator code-quality: dead code + copy-paste detection
-      - id: simulators-deadcode
-        name: simulator dead code (deadcode aws/gcp/azure)
-        entry: bash scripts/simulators-deadcode.sh
-        language: system
-        pass_filenames: false
-        files: ^simulators/(aws|gcp|azure)/.*\.go$
-        always_run: false
-
-      - id: simulators-dupl
-        name: simulator copy-paste Go (dupl ≥200 tokens)
-        entry: bash scripts/simulators-dupl.sh
-        language: system
-        pass_filenames: false
-        files: ^simulators/(aws|gcp|azure)/.*\.go$
-        always_run: false
-
-      - id: simulators-knip
-        name: simulator dead TS exports (knip)
-        entry: bash scripts/simulators-knip.sh
-        language: system
-        pass_filenames: false
-        files: ^ui/packages/simulator-(aws|gcp|azure)/src/
-        always_run: false
-
-      - id: simulators-jscpd
-        name: simulator copy-paste UI (jscpd ≥200 tokens)
-        entry: bash scripts/simulators-jscpd.sh
-        language: system
-        pass_filenames: false
-        files: ^ui/packages/simulator-(aws|gcp|azure)/src/
-        always_run: false
 
       # Commit-msg: strip AI attribution
       - id: strip-ai-attribution
