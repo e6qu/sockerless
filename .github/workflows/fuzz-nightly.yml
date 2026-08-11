@@ -5,6 +5,15 @@ name: Fuzz (nightly)
 # fuzz target for a fixed time; a crasher fails the job and uploads the failing
 # input so it can be committed as a regression seed + fixed.
 
+# Without this the Go cache never restores: setup-go looks for a root go.mod,
+# this repository is a go.work, and the action logs "Restore cache failed:
+# Dependencies file is not found" on every shard. ci.yml already sets it; the
+# nightly did not, so each shard compiled every dependency from scratch.
+env:
+  GO_CACHE_DEPENDENCY_PATHS: |
+    go.work
+    **/go.sum
+
 on:
   schedule:
     # 07:00 UTC daily.
@@ -41,6 +50,8 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.25'
+          cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Fuzz
         env:
           FUZZTIME_SECONDS: ${{ github.event.inputs.seconds || '90' }}
