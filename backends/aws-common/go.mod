@@ -3,27 +3,27 @@ module github.com/sockerless/aws-common
 go 1.25.0
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.43.4
-	github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.4
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.4
-	github.com/aws/aws-sdk-go-v2/service/efs v1.44.4
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
-	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.43.4
+	github.com/aws/aws-sdk-go-v2 v1.43.5
+	github.com/aws/aws-sdk-go-v2/service/codebuild v1.72.5
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.5
+	github.com/aws/aws-sdk-go-v2/service/efs v1.44.5
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.1
+	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.43.5
 	github.com/rs/zerolog v1.35.1
 	github.com/sockerless/api v0.0.0
 	github.com/sockerless/backend-core v0.0.0
 )
 
 require (
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.16 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.35 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.35 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.15 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.28 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.35 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.36 // indirect
-	github.com/aws/smithy-go v1.27.6 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.17 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.36 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.36 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.37 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.16 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.29 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.36 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.37 // indirect
+	github.com/aws/smithy-go v1.27.7 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect

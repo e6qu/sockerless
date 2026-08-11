@@ -89,8 +89,33 @@ wait_batch() {
 	batch_logs=()
 }
 
+# Compile each package's test binary once, serially, before any fuzzing starts.
+#
+# Without this the first batch is `target_concurrency` cold `go test -fuzz`
+# invocations against the same package, each compiling it from scratch at the
+# same time, so the build peaks at N simultaneous copies of the largest module.
+# The aws group is the biggest (25 targets against one package) and is the one
+# that died: three nightlies and a manual re-run in a row were killed about
+# seven minutes in, the runner reporting a shutdown signal, before a single
+# target had reported. A warm cache makes those parallel invocations near-free.
+#
+# This also makes a build failure say so, instead of surfacing as 25 fuzz
+# targets failing at once.
+prebuild_packages() {
+	local dir relative
+	while IFS=$'\t' read -r dir relative; do
+		[[ -n "$relative" ]] || continue
+		echo "=== building test binary for [$dir] $relative ==="
+		if ! (cd "$dir" && GOWORK=off CGO_ENABLED=0 go test -tags=noui -c -o /dev/null "$relative"); then
+			echo "!!! FAILED TO BUILD: $dir $relative" >&2
+			status=1
+		fi
+	done < <(cut -f1,2 "$task_file" | sort -u)
+}
+
 : >"$task_file"
 discover_targets "$@"
+prebuild_packages
 batch_pids=()
 batch_labels=()
 batch_logs=()
@@ -98,6 +123,11 @@ task_index=0
 while IFS=$'\t' read -r dir relative function_name; do
 	[[ -n "$function_name" ]] || continue
 	log_file="$work_dir/target-$task_index.log"
+	# Announce before forking. Each target's own output is buffered to a file
+	# and only replayed once its whole batch has been waited on, so a job that
+	# dies mid-batch otherwise leaves no trace of how far it got -- which is
+	# exactly what made the aws failures unreadable.
+	echo "--- starting [$dir] $relative $function_name ---"
 	run_target "$dir" "$relative" "$function_name" "$log_file" &
 	batch_pids+=("$!")
 	batch_labels+=("$dir $relative $function_name")
