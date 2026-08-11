@@ -35,7 +35,7 @@ export default defineConfig({
       SERVER_HELPER_GOOS: "linux",
       SERVER_HELPER_GOARCH: "arm64",
       ...(BIN ? { SERVER_BIN: BIN } : {}),
-      SIMULATOR_PACKAGE: "simulators/gcp",
+      SIMULATOR_PACKAGE: "simulator-gcp",
       SIMULATOR_NAME: "simulator-gcp",
       SIMULATOR_PORT: String(SIMULATOR_PORT),
       SIMULATOR_GRPC_PORT: String(SIMULATOR_GRPC_PORT),

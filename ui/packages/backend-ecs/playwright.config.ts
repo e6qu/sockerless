@@ -28,7 +28,7 @@ export default defineConfig({
       SERVER_PACKAGE: "backends/ecs",
       SERVER_NAME: "sockerless-backend-ecs",
       ...(BIN ? { SERVER_BIN: BIN } : {}),
-      SIMULATOR_PACKAGE: "simulators/aws",
+      SIMULATOR_PACKAGE: "simulator-aws",
       SIMULATOR_NAME: "simulator-aws",
       SIMULATOR_PORT: String(SIMULATOR_PORT),
       SIMULATOR_SETUP: "aws-ecs",
