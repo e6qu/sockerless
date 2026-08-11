@@ -9,6 +9,10 @@ set -u
 seconds="${FUZZTIME_SECONDS:-60}"
 target_concurrency="${FUZZ_TARGET_CONCURRENCY:-4}"
 fuzz_parallel="${FUZZ_PARALLEL:-1}"
+# Which slice of the discovered targets to run, so a group too large for the
+# job's time budget can be split across matrix entries. 1/1 runs everything.
+shard_index="${FUZZ_SHARD_INDEX:-1}"
+shard_total="${FUZZ_SHARD_TOTAL:-1}"
 artifact_dir=".fuzz-artifacts"
 work_dir="$(mktemp -d)"
 task_file="$work_dir/tasks"
@@ -17,13 +21,18 @@ status=0
 trap 'rm -rf "$work_dir"' EXIT
 rm -rf "$artifact_dir"
 
-for value_name in seconds target_concurrency fuzz_parallel; do
+for value_name in seconds target_concurrency fuzz_parallel shard_index shard_total; do
 	value="${!value_name}"
 	if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
 		echo "$value_name must be a positive integer, got: $value" >&2
 		exit 2
 	fi
 done
+
+if ((shard_index > shard_total)); then
+	echo "shard_index must not exceed shard_total, got: $shard_index of $shard_total" >&2
+	exit 2
+fi
 
 collect_new_crashers() {
 	local crasher destination
@@ -113,8 +122,37 @@ prebuild_packages() {
 	done < <(cut -f1,2 "$task_file" | sort -u)
 }
 
+# Keep only this shard's targets. Deal them round-robin rather than in
+# contiguous blocks so each shard gets a mix of packages: the targets are
+# discovered in file order, and slicing by block would hand one shard every
+# target of the slowest package.
+#
+# `idx` rather than `index`: index() is a built-in awk function, so -v index=1
+# is a syntax error. awk then writes nothing, the shard file is empty, and the
+# job fuzzes no targets at all and still exits 0 — a green run that tested
+# nothing. Hence the count check below: an empty shard is a bug in this filter,
+# never a legitimate outcome, so it fails loudly instead.
+select_shard() {
+	local kept selected
+	((shard_total > 1)) || return 0
+	kept="$work_dir/tasks.shard"
+	if ! awk -v idx="$shard_index" -v total="$shard_total" 'NR % total == idx % total' \
+		"$task_file" >"$kept"; then
+		echo "sharding failed to select targets" >&2
+		exit 2
+	fi
+	mv "$kept" "$task_file"
+	selected=$(wc -l <"$task_file" | tr -d ' ')
+	if ((selected == 0)); then
+		echo "shard $shard_index of $shard_total selected no targets" >&2
+		exit 2
+	fi
+	echo "=== shard $shard_index of $shard_total: $selected targets ==="
+}
+
 : >"$task_file"
 discover_targets "$@"
+select_shard
 prebuild_packages
 batch_pids=()
 batch_labels=()
