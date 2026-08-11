@@ -94,7 +94,11 @@ func TestMain(m *testing.M) {
 	requireExe("docker")
 	requireExe("go")
 
-	repoRoot := findModuleDir(".")
+	repoRoot, repoRootErr := filepath.Abs(findModuleDir("."))
+	if repoRootErr != nil {
+		fmt.Fprintf(os.Stderr, "failed to resolve repository root: %v\n", repoRootErr)
+		os.Exit(1)
+	}
 	var cleanups []func()
 	cleanup := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
