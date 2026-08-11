@@ -14,6 +14,11 @@ repository's DO_NEXT.md.
 
 In this repository:
 
+- sockerless-cloud releases with exactly one `vX.Y.Z` tag (release-please);
+  the bootstrap `v0.1.0` tags were deleted, so Go pins reference release
+  commits (pseudo-versions) and checkout/git-context pins reference the
+  release tag. v0.2.0 is the current pin everywhere.
+
 - Watch the first post-extraction CI run; the harness paths changed shape
   (sims build from the module cache instead of in-tree source, smoke images
   `go install` at the pinned version) and hosted runners are the first
@@ -23,8 +28,5 @@ In this repository:
   defaults across smoke/upstream/e2e Dockerfiles, the `context:` tag in
   `deploy/compose.build.yaml`, and the pinned ref in
   `.github/workflows/live-tests-lambda.yml`.
-- Branch protection still lists the removed simulator CI checks (sim, tf,
-  simulators-quality, firecracker, browser sim packages) as required; they
-  must be unrequired before this branch's PR can merge green.
 - BUG-2922 (Docker Engine advisories → moby/moby client migration) remains
   the largest open local item, now scoped here to the Docker backend.

@@ -30,7 +30,15 @@ to `tests/testdata/` (the backends' integration tests and runner harnesses
 use them). Simulator-side open bugs moved to sockerless-cloud's BUGS.md with
 IDs intact; sim CI jobs, hooks, badges, goreleaser entries, GHCR sim image
 publication, and the sim rows of the required-status-checks manifest were
-removed here (branch protection must drop the same checks at merge time).
+removed here, and `main`'s branch protection was reconciled to the pruned
+required-check manifest. A follow-up moved every pin to the v0.2.0
+release-please release: `tests/go.mod` records release-commit
+pseudo-versions (subdirectory modules cannot resolve a repository-root
+tag), the harness Dockerfiles carry the release commit in
+`ARG SOCKERLESS_CLOUD_VERSION`, the deploy compose and live-tests refs use
+the `v0.2.0` tag, and the dependency-freshness gate skips the first-party
+`github.com/e6qu/sockerless-cloud/*` modules whose proxy version list froze
+at the deleted bootstrap tags.
 
 ## 2026-08-08 — Certificate authorities and Cloud Map, by ARN and by name
 
