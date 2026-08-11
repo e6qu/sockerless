@@ -37,8 +37,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - group: aws
+          # aws is split because it does not fit the 15-minute budget: it holds
+          # 25 of the 51 targets (against 15 for azure and 11 for gcp), and one
+          # job running all of them takes about 21 minutes even with a warm
+          # cache. Halving it puts each shard alongside the other groups.
+          - group: aws-1of2
             modules: simulators/aws simulators/aws/shared
+            shard_index: 1
+            shard_total: 2
+          - group: aws-2of2
+            modules: simulators/aws simulators/aws/shared
+            shard_index: 2
+            shard_total: 2
           - group: gcp
             modules: simulators/gcp simulators/gcp/shared
           - group: azure
@@ -55,6 +65,8 @@ jobs:
       - name: Fuzz
         env:
           FUZZTIME_SECONDS: ${{ github.event.inputs.seconds || '90' }}
+          FUZZ_SHARD_INDEX: ${{ matrix.shard_index || 1 }}
+          FUZZ_SHARD_TOTAL: ${{ matrix.shard_total || 1 }}
         run: scripts/run-fuzz.sh ${{ matrix.modules }}
       - name: Upload crashers
         if: failure()
