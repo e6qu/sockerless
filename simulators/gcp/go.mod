@@ -17,11 +17,11 @@ require (
 	github.com/sockerless/simulator v0.0.0
 	github.com/sockerless/simulator-realexec v0.0.0
 	github.com/sockerless/simulator-ui-auth v0.0.0
-	google.golang.org/genproto v0.0.0-20260807164820-c8921c73eeea
-	google.golang.org/genproto/googleapis/api v0.0.0-20260807164820-c8921c73eeea
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260807164820-c8921c73eeea
+	google.golang.org/genproto v0.0.0-20260810153831-ec0a7760b754
+	google.golang.org/genproto/googleapis/api v0.0.0-20260810153831-ec0a7760b754
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260810153831-ec0a7760b754
 	google.golang.org/grpc v1.83.0
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.56.0
 )
 
@@ -74,7 +74,7 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
-	modernc.org/libc v1.75.1 // indirect
+	modernc.org/libc v1.75.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.0 // indirect
 )
