@@ -12,5 +12,3 @@
 **/*.tfstate.backup
 _tasks
 spec
-simulators/*/simulator-*
-simulators/*/*.test

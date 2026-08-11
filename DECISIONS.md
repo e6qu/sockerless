@@ -82,7 +82,7 @@ Architectural and implementation decisions, with the *why*. Referenced from [PLA
 
 **Self-contained.** Each simulator (AWS, GCP, Azure) implements enough cloud API for its backends — at cloud-API fidelity. Validated against official SDKs, CLIs, and Terraform providers. TLS via `SIM_TLS_CERT`/`SIM_TLS_KEY`.
 
-**Sim parity per commit.** Any new SDK call added to a backend must update [specs/SIM_PARITY_MATRIX.md](specs/SIM_PARITY_MATRIX.md) and add the sim handler in the same commit. Pre-commit hook enforces SDK + CLI + Terraform test coverage for every new endpoint.
+**Sim parity per commit.** Any new SDK call added to a backend must update [SIM_PARITY_MATRIX.md](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_PARITY_MATRIX.md) (sockerless-cloud) and add the sim handler in the same commit. Pre-commit hook enforces SDK + CLI + Terraform test coverage for every new endpoint.
 
 **Azure TLS.** azurestack provider hardcodes `https://`. Terraform tests generate self-signed TLS certs. Docker-only on Linux (macOS Go uses Security.framework, ignores `SSL_CERT_FILE`).
 

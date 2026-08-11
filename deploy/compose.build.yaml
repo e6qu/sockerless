@@ -151,8 +151,11 @@ services:
 
   simulator-aws:
     build:
-      context: ..
-      dockerfile: simulators/aws/Dockerfile
+      # The simulators live in the sockerless-cloud repository; build from its
+      # pinned tag so the deploy stack tracks the same version the test
+      # harnesses consume.
+      context: https://github.com/e6qu/sockerless-cloud.git#v0.1.0
+      dockerfile: simulator-aws/Dockerfile
     image: sockerless-deploy/simulator-aws:local
     environment:
       SIM_LISTEN_ADDR: :4566
@@ -192,8 +195,11 @@ services:
 
   simulator-gcp:
     build:
-      context: ..
-      dockerfile: simulators/gcp/Dockerfile
+      # The simulators live in the sockerless-cloud repository; build from its
+      # pinned tag so the deploy stack tracks the same version the test
+      # harnesses consume.
+      context: https://github.com/e6qu/sockerless-cloud.git#v0.1.0
+      dockerfile: simulator-gcp/Dockerfile
     image: sockerless-deploy/simulator-gcp:local
     environment:
       SIM_LISTEN_ADDR: :4567
@@ -231,8 +237,11 @@ services:
 
   simulator-azure-cloud:
     build:
-      context: ..
-      dockerfile: simulators/azure/Dockerfile
+      # The simulators live in the sockerless-cloud repository; build from its
+      # pinned tag so the deploy stack tracks the same version the test
+      # harnesses consume.
+      context: https://github.com/e6qu/sockerless-cloud.git#v0.1.0
+      dockerfile: simulator-azure/Dockerfile
     image: sockerless-deploy/simulator-azure:local
     environment:
       SIM_LISTEN_ADDR: :4568

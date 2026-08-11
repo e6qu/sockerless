@@ -195,7 +195,7 @@ Each cell's pipeline body covers (per the cell's
 - `probe-parameters` — getconf -a / ulimit / nproc / memory
 - `probe-localhost-peer` — postgres sidecar reachable via localhost (cells 5+6) or `postgres` alias (cells 7+8) — proves Phase 118d pod-overlay net-ns sharing
 - `clone-and-compile` — git clone sockerless + go build the
-  `simulators/testdata/eval-arithmetic` package
+  `tests/testdata/eval-arithmetic` package
 - `run-arithmetic` — exec the binary against five non-trivial
   expressions (`3 + 4 * 2` = 11, `(10 - 3) * 2` = 14, `100 / 5 + 1`
   = 21, `2 * (3 + 4) - 1` = 13, `1.5 + 2.5 * 2` = 6.5)

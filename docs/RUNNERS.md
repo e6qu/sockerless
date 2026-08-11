@@ -245,7 +245,7 @@ make e2e-real-runner-sim-arithmetic
 ```
 
 The GitHub workflow and GitLab pipeline both run in `golang:1.25-alpine`,
-execute `go test -count=1 ./simulators/testdata/eval-arithmetic`, and verify
+execute `go test -count=1 ./tests/testdata/eval-arithmetic`, and verify
 the CLI result for `(10 + 5) * 2`.
 
 Each test sub-run handles its own runner lifecycle (mint registration token → register → dispatch → poll → unregister → clean up). Failure modes (network, IAM, image pull) surface as the runner's own log lines + the harness's own assertions, not silent skips.

@@ -30,13 +30,12 @@ if [[ "$(grep -Fc "test \"\$MEDIA_TYPE\" = \"application/vnd.oci.image.index.v1+
 fi
 expect_count 1 "        run: ./scripts/prune-ghcr-images.sh \"${gha}{{ github.repository_owner }}\" \"${gha}{{ matrix.image }}\" 20"
 
-for image in sockerless-admin sockerless-simulator-aws sockerless-simulator-gcp sockerless-simulator-azure; do
-	count="$(grep -Fc -- "$image" "$workflow")"
-	if [[ "$count" != 3 ]]; then
-		echo "publication workflow expected $image in build, manifest, and retention matrices, found $count occurrence(s)" >&2
-		exit 1
-	fi
-done
+image=sockerless-admin
+count="$(grep -Fc -- "$image" "$workflow")"
+if [[ "$count" != 3 ]]; then
+	echo "publication workflow expected $image in build, manifest, and retention matrices, found $count occurrence(s)" >&2
+	exit 1
+fi
 
 if grep -Eiq 'tags?:[^#]*(:(latest|main))([[:space:]]|$)' "$workflow"; then
 	echo 'publication workflow must not publish latest or main image tags' >&2

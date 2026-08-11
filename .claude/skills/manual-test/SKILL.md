@@ -64,11 +64,12 @@ az --endpoint http://localhost:4568 containerapp list
 make stack-down
 ```
 
-### `simulators/{aws,gcp,azure}`
+### Simulators (from the pinned sockerless-cloud modules)
 
 ```bash
-# 1. Start
-cd simulators/<cloud> && make build && ./sockerless-simulator-<cloud> --addr :<port> &
+# 1. Build + start (version pinned in tests/go.mod)
+make install-simulators
+SIM_LISTEN_ADDR=:<port> tests/.build/simulator-<cloud> &
 
 # 2. Hit it with all three adaptor types
 aws --endpoint-url http://localhost:<port> <service> <verb>
@@ -76,8 +77,11 @@ aws --endpoint-url http://localhost:<port> <service> <verb>
 # Then via SDK in a one-off Go program; then via Terraform provider with endpoint override.
 
 # 3. Cleanup
-pkill -f sockerless-simulator-<cloud>
+pkill -f simulator-<cloud>
 ```
+
+Simulator *development* smokes live in the sockerless-cloud repository's copy
+of this skill.
 
 ### Bleephub consumer integration
 

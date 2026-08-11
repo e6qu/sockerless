@@ -24,7 +24,8 @@ RUN ARCH=${TARGETARCH:-$(dpkg --print-architecture)} && \
 WORKDIR /src
 COPY . .
 
-# Pre-download Go module dependencies for faster test runs
-RUN cd simulators/azure && GOWORK=off go mod download
+# Pre-download Go module dependencies for faster test runs (the simulators
+# come from the pinned sockerless-cloud modules in tests/go.mod).
+RUN cd tests && go mod download
 
 ENTRYPOINT ["/src/tests/terraform-integration/run-test.sh"]

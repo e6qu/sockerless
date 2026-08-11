@@ -37,22 +37,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # aws is split because it does not fit the 15-minute budget: it holds
-          # 25 of the 51 targets (against 15 for azure and 11 for gcp), and one
-          # job running all of them takes about 21 minutes even with a warm
-          # cache. Halving it puts each shard alongside the other groups.
-          - group: aws-1of2
-            modules: simulators/aws simulators/aws/shared
-            shard_index: 1
-            shard_total: 2
-          - group: aws-2of2
-            modules: simulators/aws simulators/aws/shared
-            shard_index: 2
-            shard_total: 2
-          - group: gcp
-            modules: simulators/gcp simulators/gcp/shared
-          - group: azure
-            modules: simulators/azure simulators/azure/shared
+          # The simulator fuzz groups run in the sockerless-cloud repository's
+          # own nightly workflow.
           - group: core-agent
             modules: backends/core backends/docker agent
     steps:

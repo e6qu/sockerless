@@ -23,7 +23,9 @@ case "$CLOUD" in
     *) echo "ERROR: Unknown cloud: $CLOUD"; exit 1 ;;
 esac
 
-SIM_DIR="$ROOT_DIR/simulators/$CLOUD"
+# Simulators come from the sockerless-cloud repository at the version pinned
+# in tests/go.mod (tool directives); build through that module.
+TESTS_DIR="$ROOT_DIR/tests"
 BUILD_DIR="$ROOT_DIR/.build"
 mkdir -p "$BUILD_DIR"
 
@@ -55,7 +57,7 @@ wait_for_url() {
 
 # --- Build and start shared simulator ---
 echo "=== Building $CLOUD simulator ==="
-(cd "$SIM_DIR" && GOWORK=off go build -tags noui -o "$BUILD_DIR/simulator-$CLOUD" .)
+(cd "$TESTS_DIR" && go build -tags noui -o "$BUILD_DIR/simulator-$CLOUD" "github.com/e6qu/sockerless-cloud/simulator-$CLOUD")
 
 echo "=== Starting shared $CLOUD simulator on :$SIM_PORT ==="
 SIM_LISTEN_ADDR=":$SIM_PORT" "$BUILD_DIR/simulator-$CLOUD" &

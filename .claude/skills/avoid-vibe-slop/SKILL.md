@@ -5,11 +5,11 @@ description: Project-local checklist that loads before any non-trivial code chan
 
 # Avoid vibe-coding slop
 
-Sockerless is a vibe-coded project with explicit countermeasures. Read [`docs/VIBE_CODING.md`](../../docs/VIBE_CODING.md) for the full catalogue. This skill is the **runtime checklist**: a small set of questions to answer *before each substantial edit*.
+Sockerless is a vibe-coded project with explicit countermeasures. Read [`docs/VIBE_CODING.md`](../../../docs/VIBE_CODING.md) for the full catalogue. This skill is the **runtime checklist**: a small set of questions to answer *before each substantial edit*.
 
 ## When this skill applies
 
-- Before writing or modifying a Go file under `backends/`, `simulators/`, or `cmd/`.
+- Before writing or modifying a Go file under `backends/`, `agent/`, or `cmd/`. (The simulators live in the sockerless-cloud repository, which carries its own copy of this checklist.)
 - Before writing or modifying a TypeScript file under `ui/packages/*/src/`.
 - Before adding a test.
 - Before staging a "fix" for a bug.
@@ -57,7 +57,7 @@ Stop after each "no" and resolve it before writing code.
 
 ### Destructive actions
 
-22. **Are you about to run `rm -rf`, `git push --force`, `terraform destroy`, drop a DB, or modify shared infrastructure?** Default: ask first. The agent-deleted-production-DB stories in [VIBE_CODING.md § 10](../../docs/VIBE_CODING.md#10-destructive-command-execution--agent-goes-rogue) are why.
+22. **Are you about to run `rm -rf`, `git push --force`, `terraform destroy`, drop a DB, or modify shared infrastructure?** Default: ask first. The agent-deleted-production-DB stories in [VIBE_CODING.md § 10](../../../docs/VIBE_CODING.md#10-destructive-command-execution--agent-goes-rogue) are why.
 
 ### Context, commit, and re-verification discipline
 

@@ -1,8 +1,36 @@
 # Sockerless - What We Built
 
-Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BUGS.md) - coverage [specs/SIM_TEST_COVERAGE_MATRIX.md](specs/SIM_TEST_COVERAGE_MATRIX.md).
+Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BUGS.md) - coverage [SIM_TEST_COVERAGE_MATRIX.md](https://github.com/e6qu/sockerless-cloud/blob/main/specs/SIM_TEST_COVERAGE_MATRIX.md) (sockerless-cloud).
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
+
+## Extracted the simulators into the sockerless-cloud repository
+
+Moved the three cloud simulators — with their SDK/CLI/Terraform test suites,
+console SPAs, vendored cloud API specifications, simulator gate
+scripts/pre-commit hooks, CI jobs (unit/SDK/CLI/Terraform shards, fuzz
+nightly groups, browser suites, quality gates), and the Firecracker/realexec
+harness — to [sockerless-cloud](https://github.com/e6qu/sockerless-cloud) as
+a fresh snapshot. There the per-cloud modules are installable
+(`go install github.com/e6qu/sockerless-cloud/simulator-<cloud>@<tag>`), each
+folding its former `shared/` module in as a package, with `realexec`,
+`ui-auth`, and `testutil` as tagged support modules and the built console
+`dist/` committed so installed binaries ship the console.
+
+This repository consumes the simulators as pinned modules: `tests/go.mod`
+pins the version via `tool` directives, the test harnesses, backend
+integration tests, ECS Terraform module test, `test-shauth-rps.sh`, and the
+stack targets build binaries from that pin into `tests/.build/`, harness
+Docker images (smoke, gitlab, upstream act/gitlab-ci-local, e2e runners)
+`go install` the modules at `ARG SOCKERLESS_CLOUD_VERSION`, the deploy
+compose builds sim images from the pinned sockerless-cloud git context, and
+`live-tests-lambda.yml` checks out the pinned tag for its live differential
+suites. The `eval-arithmetic` and `container-command` workload fixtures moved
+to `tests/testdata/` (the backends' integration tests and runner harnesses
+use them). Simulator-side open bugs moved to sockerless-cloud's BUGS.md with
+IDs intact; sim CI jobs, hooks, badges, goreleaser entries, GHCR sim image
+publication, and the sim rows of the required-status-checks manifest were
+removed here (branch protection must drop the same checks at merge time).
 
 ## 2026-08-08 — Certificate authorities and Cloud Map, by ARN and by name
 

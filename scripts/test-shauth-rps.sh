@@ -161,13 +161,15 @@ curl --fail --silent --show-error --request POST --header 'Content-Type: applica
   http://localhost:4445/admin/clients >/dev/null
 
 (cd "$repo_root/ui" && bun install --frozen-lockfile)
-for package in admin simulator-aws simulator-gcp simulator-azure; do
-  (cd "$repo_root/ui/packages/$package" && bun run build)
-done
+(cd "$repo_root/ui/packages/admin" && bun run build)
 make -C "$repo_root/cmd/sockerless-admin" build
-make -C "$repo_root/simulators/aws" build
-make -C "$repo_root/simulators/gcp" build
-make -C "$repo_root/simulators/azure" build
+# The simulators come from the sockerless-cloud repository at the version
+# pinned in tests/go.mod; their console SPAs ship inside the module (committed
+# dist/), so a plain module build embeds the consoles without a bun step.
+mkdir -p "$repo_root/tests/.build"
+for cloud in aws gcp azure; do
+  (cd "$repo_root/tests" && go build -o ".build/simulator-$cloud" "github.com/e6qu/sockerless-cloud/simulator-$cloud")
+done
 
 mkdir -p "$work_dir/admin-home"
 (
@@ -336,8 +338,8 @@ provision_aws_federation() {
   aws_sigv4_post "Action=PutRolePolicy&Version=2010-05-08&RoleName=console-federation-role&PolicyName=console-access&PolicyDocument=$(urlenc '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["acm:*","acm-pca:*","amplify:*","apigateway:*","autoscaling:*","batch:*","budgets:*","cloudfront:*","cloudtrail:*","cloudwatch:*","codebuild:*","dynamodb:*","ec2:*","ecr:*","ecs:*","elasticache:*","elasticfilesystem:*","elasticloadbalancing:*","events:*","firehose:*","glue:*","iam:*","kinesis:*","kms:*","lambda:*","logs:*","organizations:*","rds:*","route53:*","s3:*","scheduler:*","secretsmanager:*","servicediscovery:*","sns:*","sqs:*","ssm:*","states:*","sts:*","wafv2:*"],"Resource":"*"}]}')"
 }
 
-start_simulator "$repo_root/simulators/aws/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision" "$aws_federation_role"
-start_simulator "$repo_root/simulators/gcp/simulator-gcp" 29320 sockerless-gcp "$gcp_client_secret" "$work_dir/gcp.log" "$source_revision" "$gcp_workforce_provider"
+start_simulator "$repo_root/tests/.build/simulator-aws" 29310 sockerless-aws "$aws_client_secret" "$work_dir/aws.log" "$source_revision" "$aws_federation_role"
+start_simulator "$repo_root/tests/.build/simulator-gcp" 29320 sockerless-gcp "$gcp_client_secret" "$work_dir/gcp.log" "$source_revision" "$gcp_workforce_provider"
 
 wait_for_url http://localhost:29090/healthz "Sockerless Admin"
 wait_for_url http://localhost:29310/health "AWS simulator"
@@ -369,7 +371,7 @@ shauth_admin_subject=$(compose exec -T postgres psql -U shauth -d shauth -Atc \
 azure_console_cloud_port=29332
 azure_console_cloud=http://localhost:$azure_console_cloud_port
 SIM_LISTEN_ADDR=":$azure_console_cloud_port" \
-  "$repo_root/simulators/azure/simulator-azure" >"$work_dir/azure-cloud.log" 2>&1 &
+  "$repo_root/tests/.build/simulator-azure" >"$work_dir/azure-cloud.log" 2>&1 &
 pids+=("$!")
 wait_for_url "$azure_console_cloud/health" "Microsoft Azure console cloud"
 
@@ -439,7 +441,7 @@ SOCKERLESS_CONSOLE_LOGS_API_ENDPOINT="$azure_console_cloud" \
 SOCKERLESS_CONSOLE_FEDERATION_ENDPOINT="$azure_console_cloud" \
 SOCKERLESS_CONSOLE_FEDERATION_TENANT="$azure_tenant" \
 SOCKERLESS_CONSOLE_FEDERATION_CLIENT_ID="$azure_console_client_id" \
-  "$repo_root/simulators/azure/simulator-azure" >"$work_dir/azure.log" 2>&1 &
+  "$repo_root/tests/.build/simulator-azure" >"$work_dir/azure.log" 2>&1 &
 pids+=("$!")
 wait_for_url http://localhost:29330/health "Microsoft Azure simulator"
 
@@ -459,7 +461,7 @@ openssl req -x509 -newkey rsa:2048 -keyout "$work_dir/azure-cli-tls.key" \
 SIM_LISTEN_ADDR=":$azure_cli_port" \
 SIM_TLS_CERT="$work_dir/azure-cli-tls.crt" \
 SIM_TLS_KEY="$work_dir/azure-cli-tls.key" \
-  "$repo_root/simulators/azure/simulator-azure" >"$work_dir/azure-cli.log" 2>&1 &
+  "$repo_root/tests/.build/simulator-azure" >"$work_dir/azure-cli.log" 2>&1 &
 pids+=("$!")
 
 azure_curl() { curl --silent --show-error --fail --cacert "$work_dir/azure-cli-tls.crt" "$@"; }

@@ -1,6 +1,6 @@
 # github-runner-dispatcher-gcp
 
-GCP-native variant of [github-runner-dispatcher](../github-runner-dispatcher/) that creates Cloud Run Jobs directly via `cloud.google.com/go/run/apiv2` instead of shelling out to a docker daemon.
+GCP-native variant of [github-runner-dispatcher-aws](../github-runner-dispatcher-aws/) that creates Cloud Run Jobs directly via `cloud.google.com/go/run/apiv2` instead of shelling out to a docker daemon.
 
 ## When to use which
 

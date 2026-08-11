@@ -12,15 +12,15 @@ Runs Docker containers as Google Cloud Run Functions (2nd gen), with Cloud Loggi
 | | [GCP Go SDK](https://pkg.go.dev/cloud.google.com/go/functions) | v1.16+ | [Cloud Functions v2 REST API](https://cloud.google.com/functions/docs/reference/rest) calls (`functions.create`, `functions.invoke` via `serviceConfig.uri`). |
 | | [Terraform `google` provider](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/cloudfunctions2_function) | v6+ | `google_cloudfunctions2_function` provisions the function infra. |
 
-Local development replaces the backend-side upstream with [`simulators/gcp`](../../simulators/gcp/README.md). Container mode only (no native runtimes).
+Local development replaces the backend-side upstream with [`simulator-gcp`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-gcp) (sockerless-cloud repository, consumed here as a pinned Go module — `make install-simulators` builds it into `tests/.build/`). Container mode only (no native runtimes).
 
 ## Validation
 
 | Test path | What runs | Last green |
 |---|---|---|
 | `tests/` (Docker SDK against running backend, GCF profile) | Container lifecycle round-trip via Cloud Function invoke. | 2026-05-13 |
-| `simulators/gcp/sdk-tests/` Cloud Functions package | The v2 calls this backend issues, validated against the sim. | 2026-05-13 |
-| `simulators/gcp/terraform-tests/` | `google_cloudfunctions2_function` apply / destroy round-trip. | 2026-05-13 |
+| `simulator-gcp/sdk-tests/` Cloud Functions package (sockerless-cloud) | The v2 calls this backend issues, validated against the sim. | 2026-05-13 |
+| `simulator-gcp/terraform-tests/` (sockerless-cloud) | `google_cloudfunctions2_function` apply / destroy round-trip. | 2026-05-13 |
 | `SOCKERLESS_TEST_TARGET=sim go test -count=1 -run TestGCFContainerExec` in `backends/cloudrun-functions` | Builds the real bootstrap, overlay-wraps a stock image, starts the underlying Cloud Run Service path, waits for reverse-agent registration, and runs `docker exec` over WebSocket. | 2026-05-17 |
 | `make backends/cloudrun-functions/test` | Leaf-Makefile unit + integration suite. | 2026-05-17 |
 
@@ -71,7 +71,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-function bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no Path B fallback). |
 | `SOCKERLESS_GCF_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
 | `SOCKERLESS_GCF_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB). Memory is the default `Backing`; mismatched against `SOCKERLESS_GCF_MEMORY` → fail loud at startup. |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom GCP API endpoint, commonly the local [`simulators/gcp`](../../simulators/gcp/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom GCP API endpoint, commonly the local [`simulator-gcp`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-gcp) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_LOG_TIMEOUT` | `30s` | no | Cloud Logging query timeout |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent callback timeout |
@@ -111,4 +111,4 @@ None open for the GCF reverse-agent exec path. Same volume-rejection rule as the
 - The service account needs `cloudfunctions.developer` and `logging.viewer` roles.
 - Function timeout max is 3600 seconds (60 minutes) for 2nd gen functions.
 
-See also: [`backends/gcp-common`](../gcp-common/), [`simulators/gcp/README.md`](../../simulators/gcp/README.md), [`specs/CLOUD_RESOURCE_MAPPING.md`](../../specs/CLOUD_RESOURCE_MAPPING.md).
+See also: [`backends/gcp-common`](../gcp-common/), [`simulator-gcp/README.md`](https://github.com/e6qu/sockerless-cloud/blob/main/simulator-gcp/README.md) (sockerless-cloud), [`specs/CLOUD_RESOURCE_MAPPING.md`](../../specs/CLOUD_RESOURCE_MAPPING.md).

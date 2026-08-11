@@ -12,7 +12,7 @@ This skill is that scan.
 ## When this skill applies
 
 - Before merging any Go change — final pre-PR scan.
-- Periodically across the whole `simulators/` + `backends/` + `agent/` tree.
+- Periodically across the whole `backends/` + `agent/` tree (the simulators run the sockerless-cloud copy of this scan).
 - When a bug surfaces with the shape "the sim accepted my request, returned 200, but didn't actually persist X" — this is almost always a silent decode.
 - When auditing a service for the "no fallbacks" rule.
 
@@ -156,8 +156,8 @@ if _, err := io.Copy(w, rc); err != nil {
 - **BUG-1033** — Five `io.Copy` calls in image-streaming + build response paths swallowed mid-stream copy errors.
 - **BUG-1105** (Phase 174 round 1) — 23 silent `_ = sim.ReadJSON(r, &req)` sites across Phase 173 handlers (apim.go, servicebus.go, postgres_flexible.go, pubsub.go, memorystore_redis.go, apigateway.go, sqladmin.go, sqs.go).
 - **BUG-1106** — silent `_ = json.NewDecoder(r.Body).Decode(&body)` in `handleKVCreateCertificate`.
-- **(Phase 175)** — silent stacked `data, _ := io.ReadAll(r.Body)` + `_ = xml.Unmarshal(data, &req)` in `simulators/azure/storage_dataplane.go:505-507` — exact Pattern A2 shape introduced in Phase 174 round 2 (same PR that added the xml handler).
-- **(Phase 175)** — silent `_ = json.Unmarshal(decoded, &entrypoint)` in `simulators/azure/functions.go:666` + `:670` after base64 decode of `SOCKERLESS_ENTRYPOINT`/`SOCKERLESS_CMD` — BUG-1019 replay on a different env-var pair.
+- **(Phase 175)** — silent stacked `data, _ := io.ReadAll(r.Body)` + `_ = xml.Unmarshal(data, &req)` in the Azure simulator's `storage_dataplane.go:505-507` (now in sockerless-cloud) — exact Pattern A2 shape introduced in Phase 174 round 2 (same PR that added the xml handler).
+- **(Phase 175)** — silent `_ = json.Unmarshal(decoded, &entrypoint)` in the Azure simulator's `functions.go:666` (now in sockerless-cloud) + `:670` after base64 decode of `SOCKERLESS_ENTRYPOINT`/`SOCKERLESS_CMD` — BUG-1019 replay on a different env-var pair.
 
 Eight+ bugs across four phases — the recurrence rate justifies the dedicated scan. **Re-run the scan after every PR's own changes**, not just before — the BUG-1104 meta-shape is that helpers written in a PR get bypassed elsewhere in the same PR.
 

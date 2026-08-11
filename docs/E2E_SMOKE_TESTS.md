@@ -69,8 +69,8 @@ make e2e-github-sim-arithmetic
 
 That target registers a real ephemeral `actions/runner`, dispatches a workflow
 with `container: golang:1.25-alpine`, checks out this repo, runs
-`go test -count=1 ./simulators/testdata/eval-arithmetic`, and verifies
-`go run ./simulators/testdata/eval-arithmetic '(10 + 5) * 2'` returns `30`.
+`go test -count=1 ./tests/testdata/eval-arithmetic`, and verifies
+`go run ./tests/testdata/eval-arithmetic '(10 + 5) * 2'` returns `30`.
 
 The `smoke-test-*` targets run the Docker-CLI round-trip smoke images from
 [`smoke-tests/`](../smoke-tests/README.md) — the same build + run shape as the

@@ -29,42 +29,6 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}}
 
-  - id: simulator-aws
-    dir: simulators/aws
-    main: .
-    binary: simulator-aws
-    env:
-      - CGO_ENABLED=0
-      - GOWORK=off
-    goos: [linux, darwin]
-    goarch: [amd64, arm64]
-    ldflags:
-      - -s -w
-
-  - id: simulator-gcp
-    dir: simulators/gcp
-    main: .
-    binary: simulator-gcp
-    env:
-      - CGO_ENABLED=0
-      - GOWORK=off
-    goos: [linux, darwin]
-    goarch: [amd64, arm64]
-    ldflags:
-      - -s -w
-
-  - id: simulator-azure
-    dir: simulators/azure
-    main: .
-    binary: simulator-azure
-    env:
-      - CGO_ENABLED=0
-      - GOWORK=off
-    goos: [linux, darwin]
-    goarch: [amd64, arm64]
-    ldflags:
-      - -s -w
-
   - id: agent
     dir: agent
     main: ./cmd/sockerless-agent

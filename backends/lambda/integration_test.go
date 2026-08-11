@@ -96,12 +96,18 @@ func TestMain(m *testing.M) {
 	var endpointURL, roleARN, overlayImage, arch string
 	switch target {
 	case "sim":
-		simDir := repoRoot + "/simulators/aws"
-		simBinary := simDir + "/simulator-aws"
+		// The simulator lives in the sockerless-cloud repository; the tests
+		// module pins its version (see the tool directives in tests/go.mod),
+		// so build it through that module for a single source of truth.
+		simBinary := repoRoot + "/tests/.build/simulator-aws"
+		if err := os.MkdirAll(repoRoot+"/tests/.build", 0o755); err != nil {
+			failClean("ERROR: create tests/.build: %v\n", err)
+		}
 		fmt.Println("[sim] Building simulator-aws...")
-		build := exec.Command("go", "build", "-tags", "noui", "-o", "simulator-aws", ".")
-		build.Dir = simDir
-		build.Env = filterBuildEnv(os.Environ(), "GOWORK=off")
+		build := exec.Command("go", "build", "-tags", "noui", "-o", simBinary,
+			"github.com/e6qu/sockerless-cloud/simulator-aws")
+		build.Dir = repoRoot + "/tests"
+		build.Env = filterBuildEnv(os.Environ())
 		build.Stdout = os.Stderr
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {

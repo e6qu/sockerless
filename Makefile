@@ -46,7 +46,7 @@ endef
 # When a new app lands, add it to one of these lists. The fan-out and
 # delegation rules below pick it up automatically.
 
-# Go binaries with optional embedded UI (12).
+# Go binaries with optional embedded UI (8).
 GO_UI_APPS := \
   cmd/sockerless-admin \
   backends/docker \
@@ -55,22 +55,18 @@ GO_UI_APPS := \
   backends/cloudrun \
   backends/cloudrun-functions \
   backends/aca \
-  backends/azure-functions \
-  simulators/aws \
-  simulators/gcp \
-  simulators/azure
+  backends/azure-functions
 
-# Go binaries / libraries without UI (7).
+# Go binaries / libraries without UI (6).
 GO_APPS := \
   cmd/sockerless \
   agent \
   backends/aws-common \
-  simulators/realexec \
   github-runner-dispatcher-aws \
   github-runner-dispatcher-gcp \
   github-runner-dispatcher-azure
 
-# UI packages (15). Each consumed by the corresponding GO_UI_APPS entry
+# UI packages (9). Each consumed by the corresponding GO_UI_APPS entry
 # (except `core`, which is a shared library).
 UI_APPS := \
   ui/packages/admin \
@@ -81,9 +77,6 @@ UI_APPS := \
   ui/packages/backend-gcf \
   ui/packages/backend-aca \
   ui/packages/backend-azf \
-  ui/packages/simulator-aws \
-  ui/packages/simulator-gcp \
-  ui/packages/simulator-azure \
   ui/packages/core
 
 # Test-category Makefiles (sim-vs-backend SDK/CLI/Terraform tests +
@@ -91,9 +84,6 @@ UI_APPS := \
 TEST_DIRS := \
   tests \
   smoke-tests \
-  simulators/aws/sdk-tests simulators/aws/cli-tests simulators/aws/terraform-tests \
-  simulators/gcp/sdk-tests simulators/gcp/cli-tests simulators/gcp/terraform-tests \
-  simulators/azure/sdk-tests simulators/azure/cli-tests simulators/azure/terraform-tests \
   tests/runners/github tests/runners/gitlab tests/runners/gcp-cells tests/runners/internal
 
 ALL_APPS := $(GO_UI_APPS) $(GO_APPS) $(UI_APPS)
@@ -173,22 +163,20 @@ FORCE:
 %/install %/build %/build-noui %/embed %/run %/dev %/test %/test-integration %/test-faas-smoke %/lint %/clean %/preview %/help %/docker-test %/docker-test-build: FORCE
 	@$(MAKE) -s -C $* $(notdir $@)
 
-# ── Simulator Docker test harness ───────────────────────────────────
+# ── Simulator binaries (consumed from the sockerless-cloud repository) ──
+#
+# The simulators live in github.com/e6qu/sockerless-cloud; the tests module
+# pins their version (see the `tool` directives in tests/go.mod). This target
+# builds the pinned binaries into tests/.build/ for the stack targets and any
+# local workflow that needs a simulator on disk.
 
-SIMULATOR_APPS := simulators/aws simulators/gcp simulators/azure
-
-.PHONY: docker-test docker-test-build firecracker-test realexec-network-test
-docker-test-build: ## build Docker test images for all cloud simulators
-	@$(MAKE) -s _fanout TARGET=docker-test-build APPS="$(SIMULATOR_APPS)"
-
-docker-test: ## run SDK, CLI, and Terraform tests for all cloud simulators inside Docker
-	@$(MAKE) -s _fanout TARGET=docker-test APPS="$(SIMULATOR_APPS)"
-
-firecracker-test: ## boot a real Firecracker microVM and run Go arithmetic build/execution inside it
-	@bash tests/firecracker/run-arithmetic.sh
-
-realexec-network-test: ## create a real Linux bridge/netns/veth NIC path and verify cleanup
-	@bash tests/realexec/run-network-nic.sh
+.PHONY: install-simulators
+install-simulators: ## build the pinned simulator binaries into tests/.build/
+	@mkdir -p tests/.build
+	@for cloud in aws gcp azure; do \
+	  printf "$(COLOR_CYAN)▸ simulator-$$cloud: go build (pinned via tests/go.mod)$(COLOR_RESET)\n"; \
+	  (cd tests && go build -o .build/simulator-$$cloud github.com/e6qu/sockerless-cloud/simulator-$$cloud) || exit $$?; \
+	done
 
 # ── Stack orchestration ─────────────────────────────────────────────
 

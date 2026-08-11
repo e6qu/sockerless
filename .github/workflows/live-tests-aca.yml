@@ -64,11 +64,11 @@ jobs:
           apk add --no-cache git gcc musl-dev
           git clone --depth=1 --branch="${{ github.event.inputs.sockerless_ref || 'main' }}" \
             https://github.com/e6qu/sockerless /work/sockerless
-          cd /work/sockerless/simulators/testdata/eval-arithmetic
+          cd /work/sockerless/tests/testdata/eval-arithmetic
           GOTOOLCHAIN=auto GOWORK=off go build -v -o eval-arithmetic .
       - name: run-arithmetic
         run: |
-          cd /work/sockerless/simulators/testdata/eval-arithmetic
+          cd /work/sockerless/tests/testdata/eval-arithmetic
           set -e
           got1=$(./eval-arithmetic '3 + 4 * 2'); test "$got1" = "11" || { echo "expected 11 got $got1"; exit 1; }
           got2=$(./eval-arithmetic '(10 - 3) * 2'); test "$got2" = "14" || { echo "expected 14 got $got2"; exit 1; }

@@ -7,15 +7,17 @@ Every independently-buildable app in this repo has its own Makefile with a consi
 Per-app Makefiles keep build and run details beside the app they belong to. The top-level Makefile stays as a thin orchestrator:
 
 - Anyone hacking on `backends/ecs` runs `make build` from inside that dir, no `cd ../..; make build-ecs-with-ui` ceremony.
-- `simulators/azure/Makefile` documents how that one sim builds + runs, in the place a developer would look first.
+- `backends/aca/Makefile` documents how that one backend builds + runs, in the place a developer would look first.
 - The top-level Makefile is an explicit app list, fan-out helper, path delegation rule, and stack orchestration include.
-- New backends, simulators, UI packages, and test harnesses add a leaf Makefile plus one list entry in the top-level Makefile.
+- New backends, UI packages, and test harnesses add a leaf Makefile plus one list entry in the top-level Makefile.
+
+The cloud simulators live in the separate [sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud), which follows the same standard; this repo consumes them as pinned Go modules (`make install-simulators` builds the pinned binaries into `tests/.build/`).
 
 ## Inventory of independently-buildable apps
 
 The top-level app lists currently cover three kinds of independently buildable packages:
 
-### Go binaries with optional embedded UI (13)
+### Go binaries with optional embedded UI (8)
 
 | App | Binary | UI package consumed | Default port |
 |---|---|---|---|
@@ -27,29 +29,26 @@ The top-level app lists currently cover three kinds of independently buildable p
 | `backends/cloudrun-functions` | `sockerless-backend-gcf` | `ui/packages/backend-gcf` | `:3375` |
 | `backends/aca` | `sockerless-backend-aca` | `ui/packages/backend-aca` | `:3375` |
 | `backends/azure-functions` | `sockerless-backend-azf` | `ui/packages/backend-azf` | `:3375` |
-| `simulators/aws` | `simulator-aws` | `ui/packages/simulator-aws` | `:4566` |
-| `simulators/gcp` | `simulator-gcp` | `ui/packages/simulator-gcp` | `:4567` |
-| `simulators/azure` | `simulator-azure` | `ui/packages/simulator-azure` | `:4568` |
 
-### Go binaries / libraries (no UI) (7)
+(The `simulator-{aws,gcp,azure}` binaries and their `ui/packages/simulator-*` UIs live in the sockerless-cloud repository, on ports `:4566` / `:4567` / `:4568`.)
+
+### Go binaries / libraries (no UI) (6)
 
 | App | Binary |
 |---|---|
 | `cmd/sockerless` | `sockerless` (CLI) |
 | `agent` | `sockerless-agent`, `sockerless-lambda-bootstrap`, `sockerless-cloudrun-bootstrap`, `sockerless-gcf-bootstrap`, `sockerless-azf-bootstrap` |
 | `backends/aws-common` | Go library shared by the ECS + Lambda backends |
-| `simulators/realexec` | Go library for the shared real-execution substrate |
 | `github-runner-dispatcher-aws` | dispatcher binary |
 | `github-runner-dispatcher-gcp` | dispatcher binary |
 | `github-runner-dispatcher-azure` | dispatcher binary |
 
-### UI packages (14)
+### UI packages (9)
 
 | Package | Embeds into |
 |---|---|
 | `ui/packages/admin` | `cmd/sockerless-admin` |
 | `ui/packages/backend-{docker,ecs,lambda,cloudrun,gcf,aca,azf}` | corresponding backend |
-| `ui/packages/simulator-{aws,gcp,azure}` | corresponding simulator |
 | `ui/packages/core` | (shared lib — no embed) |
 
 ## Standard target surface
@@ -78,7 +77,7 @@ Optional targets, when meaningful:
 | `preview` | UI packages | `vite preview` — serve the built bundle locally. |
 | `start` / `stop` | Go binaries | Background daemonization with PID file. (Optional — see "stack" below.) |
 
-Simulator Makefiles additionally expose the per-suite test categories CI's sim jobs call directly: `unit-test` (the sim module's own package tests, including the spec-conformance gates against [`specs/cloud-api/`](../specs/cloud-api/README.md)), `shared-test`, `sdk-test`, `cli-test`, `terraform-test`, and `test-all` (all five), plus `docker-build` / `docker-run` / `docker-test`.
+Simulator Makefiles (in the sockerless-cloud repository) additionally expose the per-suite test categories its CI sim jobs call directly: `unit-test` (the sim module's own package tests, including the spec-conformance gates against [`specs/cloud-api/`](https://github.com/e6qu/sockerless-cloud/tree/main/specs/cloud-api)), `shared-test`, `sdk-test`, `cli-test`, `terraform-test`, and `test-all` (all five), plus `docker-build` / `docker-run` / `docker-test`.
 
 ## Per-app Makefile shape
 
@@ -106,16 +105,15 @@ include ../../../make/ui-app.mk
 ```
 
 ```make
-# simulators/aws/Makefile
+# simulator-aws/Makefile (sockerless-cloud repository — same shape)
 
 APP_NAME      := simulator-aws
 GO_PACKAGE    := .
 UI_PACKAGE    := simulator-aws
 DEFAULT_PORT  := 4566
-GO_FLAGS      := GOWORK=off       # this module is outside the workspace
 RUN_FLAGS     := -addr :$(DEFAULT_PORT)
 
-include ../../make/go-app.mk
+include ../make/go-app.mk
 ```
 
 Convention: leaf Makefiles only carry **data** (the table above). All recipe code lives in `make/*.mk`.
@@ -231,7 +229,6 @@ Per-app aliases were intentionally removed. Use the path-delegation form:
 ```sh
 make cmd/sockerless-admin/build
 make backends/ecs/test-integration
-make simulators/aws/sdk-tests/test
 make ui/packages/admin/test
 ```
 

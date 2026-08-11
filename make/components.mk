@@ -40,8 +40,10 @@ BACKEND_BUILD_DIR_aca      := backends/aca
 BACKEND_BUILD_DIR_azf      := backends/azure-functions
 
 # component-binary returns the on-disk binary path for KIND/CLOUD/BACKEND.
+# Simulator binaries are built from their pinned sockerless-cloud modules by
+# `make install-simulators` (see the root Makefile).
 define component-binary
-$(strip $(if $(filter sim,$(1)),simulators/$(2)/simulator-$(2), \
+$(strip $(if $(filter sim,$(1)),tests/.build/simulator-$(2), \
 $(if $(filter backend,$(1)),$(call backend-binary-path,$(3)), \
 $(error component-binary: unknown KIND $(1)))))
 endef
@@ -52,7 +54,7 @@ endef
 
 # component-build-dir returns the make -C directory for KIND/CLOUD/BACKEND.
 define component-build-dir
-$(strip $(if $(filter sim,$(1)),simulators/$(2), \
+$(strip $(if $(filter sim,$(1)),tests/.build, \
 $(if $(filter backend,$(1)),$(call backend-build-dir,$(3)), \
 $(error component-build-dir: unknown KIND $(1)))))
 endef
@@ -168,9 +170,14 @@ reload-component:
 # (+ CLOUD or BACKEND) determines which dir.
 rebuild-component:
 	@if [ -z "$(KIND)" ]; then echo "rebuild-component: KIND required"; exit 1; fi
-	@dir=$(call component-build-dir,$(KIND),$(CLOUD),$(BACKEND)); \
-	printf "$(COLOR_CYAN)▸ rebuild $(KIND) ($$dir)$(COLOR_RESET)\n"; \
-	$(MAKE) -s -C $$dir build
+	@if [ "$(KIND)" = "sim" ]; then \
+	  printf "$(COLOR_CYAN)▸ rebuild sim (pinned sockerless-cloud module)$(COLOR_RESET)\n"; \
+	  $(MAKE) -s install-simulators; \
+	else \
+	  dir=$(call component-build-dir,$(KIND),$(CLOUD),$(BACKEND)); \
+	  printf "$(COLOR_CYAN)▸ rebuild $(KIND) ($$dir)$(COLOR_RESET)\n"; \
+	  $(MAKE) -s -C $$dir build; \
+	fi
 
 # logs-component tails NAME's log. LINES (default 200) controls how
 # many lines from the tail.

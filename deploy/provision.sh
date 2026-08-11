@@ -81,7 +81,7 @@ log "computing Shauth bootstrap-apps registration"
 # Every URL, including backchannel_logout_uri, is the public https origin
 # through caddy: Shauth itself rejects a non-HTTPS, non-loopback bootstrap
 # app URL at startup (the same strict rule cmd/sockerless-admin/shauth.go and
-# simulators/ui-auth/auth.go enforce on the relying-party side), so
+# the sockerless-cloud repository's ui-auth/auth.go enforce on the relying-party side), so
 # backchannel_logout_uri cannot be a plain-HTTP internal Docker service
 # name. Ory Hydra therefore delivers backchannel logout through caddy too —
 # see deploy/README.md "Security" for how the hydra service trusts caddy's

@@ -12,15 +12,15 @@ Runs Docker containers as Azure Container Apps Jobs and Executions, with Log Ana
 | | [Azure SDK for Go](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers) | v3+ | The [Container Apps ARM REST API](https://learn.microsoft.com/en-us/rest/api/containerapps/) calls the backend issues. |
 | | [Terraform `azurerm` provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/container_app_job) | v4+ | `azurerm_container_app_job` provisions the job infra. |
 
-Local development replaces the backend-side upstream with [`simulators/azure`](../../simulators/azure/README.md). The container → ACA Job mapping is documented in [`docs/POD_MATERIALIZATION.md § Azure Container Apps`](../../docs/POD_MATERIALIZATION.md).
+Local development replaces the backend-side upstream with [`simulator-azure`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-azure) (sockerless-cloud repository, consumed here as a pinned Go module — `make install-simulators` builds it into `tests/.build/`). The container → ACA Job mapping is documented in [`docs/POD_MATERIALIZATION.md § Azure Container Apps`](../../docs/POD_MATERIALIZATION.md).
 
 ## Validation
 
 | Test path | What runs | Last green |
 |---|---|---|
 | `tests/` (Docker SDK against running backend, ACA profile) | Container lifecycle round-trip via ACA Job. | 2026-05-13 |
-| `simulators/azure/sdk-tests/` Container Apps package | ARM calls validated against the sim. | 2026-05-13 |
-| `simulators/azure/terraform-tests/` (Docker-only, TLS) | `azurerm_container_app_job` apply / destroy. | 2026-05-13 |
+| `simulator-azure/sdk-tests/` Container Apps package (sockerless-cloud) | ARM calls validated against the sim. | 2026-05-13 |
+| `simulator-azure/terraform-tests/` (sockerless-cloud; Docker-only, TLS) | `azurerm_container_app_job` apply / destroy. | 2026-05-13 |
 | `make backends/aca/test` | Leaf-Makefile unit + integration suite. | 2026-05-13 |
 
 ## Wiring the adaptor
@@ -74,7 +74,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_AZURE_BUILD_PLATFORM` | `linux/amd64` | no | Platform passed to ACR Tasks for ACA App overlay images. |
 | `SOCKERLESS_ACA_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
 | `SOCKERLESS_ACA_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB) for `Backing: memory` SharedVolumes. Memory is the default backing on ACA; the per-container memory default raised to `4Gi / 2.0 vCPU` to fit (ACA's CPU:memory 2:1 pairing rule). |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom Azure API endpoint, commonly the local [`simulators/azure`](../../simulators/azure/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom Azure API endpoint, commonly the local [`simulator-azure`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-azure) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 
@@ -99,7 +99,7 @@ $ az monitor log-analytics query \
 
 ## Known issues
 
-None open. Azure-specific gotchas (terraform-tests are Docker-only, ACR route conflicts driven by middleware ordering, go-azure-sdk expects 200 on sync creates, storage subdomain routing via dnsmasq) are documented in [`simulators/azure/README.md § Special handling`](../../simulators/azure/README.md).
+None open. Azure-specific gotchas (terraform-tests are Docker-only, ACR route conflicts driven by middleware ordering, go-azure-sdk expects 200 on sync creates, storage subdomain routing via dnsmasq) are documented in [`simulator-azure/README.md § Special handling`](https://github.com/e6qu/sockerless-cloud/blob/main/simulator-azure/README.md) (sockerless-cloud).
 
 ## What's out of scope
 
@@ -114,4 +114,4 @@ None open. Azure-specific gotchas (terraform-tests are Docker-only, ACR route co
 - App-backed exec, attach, and archive operations require the reverse-agent callback URL. Jobs remain the one-shot path.
 - Log Analytics workspace is needed for `docker logs` support.
 
-See also: [`backends/azure-common`](../azure-common/), [`simulators/azure/README.md`](../../simulators/azure/README.md), [`specs/CLOUD_RESOURCE_MAPPING.md § Azure Container Apps`](../../specs/CLOUD_RESOURCE_MAPPING.md).
+See also: [`backends/azure-common`](../azure-common/), [`simulator-azure/README.md`](https://github.com/e6qu/sockerless-cloud/blob/main/simulator-azure/README.md) (sockerless-cloud), [`specs/CLOUD_RESOURCE_MAPPING.md § Azure Container Apps`](../../specs/CLOUD_RESOURCE_MAPPING.md).

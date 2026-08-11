@@ -12,18 +12,13 @@
 __debug_bin*
 .gocache/
 
-# Simulator binaries (built by `go build` in simulators/)
-simulators/aws/simulator-aws
-simulators/gcp/simulator-gcp
-simulators/azure/simulator-azure
-
 # Test-helper + tool binaries built by `go build ./...` in these dirs. The
 # binaries are extensionless and named after their dir; every committed source
 # file carries an extension (.go/.mod/.md), so ignore the extensionless build
 # outputs and keep the sources. Covers current + future helpers without a
 # per-binary line (the explicit list previously drifted out of date).
-simulators/testdata/*/*
-!simulators/testdata/*/*.*
+tests/testdata/*/*
+!tests/testdata/*/*.*
 tools/*/*
 !tools/*/*.*
 
@@ -104,9 +99,6 @@ backends/aca/dist/
 backends/azure-functions/dist/
 backends/docker/dist/
 frontends/docker/dist/
-simulators/aws/dist/
-simulators/gcp/dist/
-simulators/azure/dist/
 cmd/sockerless-admin/dist/
 cmd/sockerless-admin/sockerless-admin
 cmd/sockerless-admin/admin
@@ -155,7 +147,6 @@ agent/sockerless-lambda-bootstrap
 agent/sockerless-azf-bootstrap
 agent/sockerless-azf-bootstrap-test
 backends/*/dist/
-simulators/*/dist/
 .stack-pids/
 temp/
 agent/sockerless-cloudrun-bootstrap-aca-test-*

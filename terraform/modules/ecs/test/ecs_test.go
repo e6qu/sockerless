@@ -26,16 +26,21 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	// Build the AWS simulator
-	simDir, err := filepath.Abs("../../../../simulators/aws")
+	// Build the AWS simulator from its pinned sockerless-cloud module (the
+	// tests module pins the version via the tool directives in tests/go.mod).
+	testsDir, err := filepath.Abs("../../../../tests")
 	if err != nil {
-		log.Fatalf("Failed to resolve simulator dir: %v", err)
+		log.Fatalf("Failed to resolve tests module dir: %v", err)
 	}
 
-	binaryPath = filepath.Join(simDir, "simulator-aws-tf-test")
-	build := exec.Command("go", "build", "-tags", "noui", "-o", binaryPath, ".")
-	build.Dir = simDir
-	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+	binaryPath = filepath.Join(testsDir, ".build", "simulator-aws-tf-test")
+	if err := os.MkdirAll(filepath.Join(testsDir, ".build"), 0o755); err != nil {
+		log.Fatalf("Failed to create tests/.build: %v", err)
+	}
+	build := exec.Command("go", "build", "-tags", "noui", "-o", binaryPath,
+		"github.com/e6qu/sockerless-cloud/simulator-aws")
+	build.Dir = testsDir
+	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
 	}

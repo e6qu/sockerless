@@ -8,9 +8,11 @@ It exists because "100% coverage" claims kept being wrong: audits read the *code
 (and inherited its blind spots) and graded themselves, with no authoritative
 checklist and no external oracle. The two techniques that actually work — an
 **enumerated checklist from spec** and a **differential against an external
-oracle** — are the backbone here. The AWS Identity and Access Management (IAM) policy engine is the worked example
-(`simulators/aws/iam_conformance_test.go`, `testdata/iam_conformance_vectors.json`,
-`sdk-tests/iam_conformance_differential_test.go`).
+oracle** — are the backbone here. The simulators live in the
+[sockerless-cloud repository](https://github.com/e6qu/sockerless-cloud); the AWS
+Identity and Access Management (IAM) policy engine is the worked example
+(`simulator-aws/iam_conformance_test.go`, `testdata/iam_conformance_vectors.json`,
+`sdk-tests/iam_conformance_differential_test.go` there).
 
 ## The protocol
 
@@ -66,7 +68,7 @@ oracle** — are the backbone here. The AWS Identity and Access Management (IAM)
 
 ## Measuring AWS service operation coverage
 
-`simulators/aws/service_conformance_test.go` measures every AWS service against its
+`simulator-aws/service_conformance_test.go` (sockerless-cloud) measures every AWS service against its
 vendored Smithy model. How a service's *implemented* op set is read depends on its
 wire protocol:
 
@@ -103,7 +105,7 @@ Two ratchet shapes lock the result:
 
 ## Applying it to a new service
 
-- Add `simulators/<cloud>/<svc>_conformance_test.go` with the catalog(s) + the three
+- Add `simulator-<cloud>/<svc>_conformance_test.go` (sockerless-cloud) with the catalog(s) + the three
   tests (coverage, golden-corpus, ratchet).
 - Add `testdata/<svc>_conformance_vectors.json` (shared corpus).
 - Add `sdk-tests/<svc>_conformance_differential_test.go` driving the public API,

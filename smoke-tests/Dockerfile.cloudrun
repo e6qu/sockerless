@@ -1,19 +1,18 @@
 FROM golang:1.25
 
+ARG SOCKERLESS_CLOUD_VERSION=v0.1.0
+
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
     && ARCH=$(uname -m) \
     && curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH}/docker-27.5.1.tgz" | tar xz -C /usr/local/bin --strip-components=1 docker/docker
 
-# Resilient module-download wrapper (retries proxy.golang.org blips).
+# Resilient module-download wrappers (retry proxy.golang.org blips).
 COPY smoke-tests/retry-go-build.sh /usr/local/bin/retry-go-build
-RUN chmod +x /usr/local/bin/retry-go-build
+COPY smoke-tests/retry-go-install.sh /usr/local/bin/retry-go-install
+RUN chmod +x /usr/local/bin/retry-go-build /usr/local/bin/retry-go-install
 
-# Build simulator (independent module, not in go.work)
-WORKDIR /sim
-COPY simulators/realexec/ /realexec/
-COPY simulators/ui-auth/ /ui-auth/
-COPY simulators/gcp/ /sim/
-RUN retry-go-build /usr/local/bin/simulator-gcp .
+# Install the pinned simulator from the sockerless-cloud repository.
+RUN GOBIN=/usr/local/bin retry-go-install github.com/e6qu/sockerless-cloud/simulator-gcp@${SOCKERLESS_CLOUD_VERSION}
 
 # Copy source and build backend
 WORKDIR /src

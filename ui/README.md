@@ -1,6 +1,6 @@
 # Sockerless UI
 
-Bun + Turborepo workspace. 14 packages share a single design system + API client; per-backend / per-simulator apps are thin (a couple of dozen lines apiece).
+Bun + Turborepo workspace. The packages share a single design system + API client; per-backend apps are thin (a couple of dozen lines apiece). The per-cloud simulator console SPAs live in the [sockerless-cloud](https://github.com/e6qu/sockerless-cloud) repository alongside the simulators they front.
 
 ## Packages
 
@@ -8,7 +8,6 @@ Bun + Turborepo workspace. 14 packages share a single design system + API client
 |---|---|
 | `core` | Design system (tokens, components), API client, TanStack Query hooks, `BackendApp` + `SimulatorApp` shells. Imported by every other UI package. |
 | `backend-{ecs,lambda,cloudrun,gcf,aca,azf,docker}` | Per-backend Vite apps. Each is `<BackendApp title="..." />` plus an `index.html` that loads the design-system fonts + index.css. |
-| `simulator-{aws,gcp,azure}` | Per-cloud simulator dashboards (sim-only routes). |
 | `admin` | Cross-backend admin dashboard: component health, containers, contexts, process lifecycle, topology lifecycle, logs, resources, cleanup, and make-command recovery panels. |
 
 ## Design system
