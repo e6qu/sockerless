@@ -62,6 +62,12 @@ while IFS= read -r mod_file; do
   while IFS=' ' read -r name pinned; do
     [[ -z "$name" ]] && continue
     if [[ "$name" == github.com/sockerless/* ]]; then continue; fi
+    # sockerless-cloud cuts one repository-root tag per release, so its
+    # subdirectory modules are pinned at release COMMITS (pseudo-versions).
+    # The proxy's version list for them is frozen at the deleted bootstrap
+    # tags and can only produce false drift; pin bumps are release-driven
+    # (AGENTS.md: bump every sockerless-cloud pin in one PR).
+    if [[ "$name" == github.com/e6qu/sockerless-cloud/* ]]; then continue; fi
     latest=$(GOFLAGS='' GOWORK=off go list -m -versions "$name" 2>/dev/null \
       | tr ' ' '\n' | tail -n +2 \
       | grep -vE '\-(beta|alpha|rc|dev|preview)' | tail -1 || true)
