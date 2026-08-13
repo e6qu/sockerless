@@ -30,7 +30,6 @@ require (
 	cloud.google.com/go/spanner v1.94.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-amqp v1.7.0 // indirect
-	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/HugoSmits86/nativewebp v1.3.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/PaesslerAG/gval v1.2.4 // indirect
@@ -42,6 +41,7 @@ require (
 	github.com/cloudflare/circl v1.6.5 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
+	github.com/containerd/log v0.1.0 // indirect
 	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.7.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
@@ -49,9 +49,9 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/e6qu/sockerless-cloud/realexec v0.1.0 // indirect
-	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20260811205528-3e333cfb3cbd // indirect
-	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20260811205528-3e333cfb3cbd // indirect
-	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20260811205528-3e333cfb3cbd // indirect
+	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20260813105354-43b1a9d18f91 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20260813105354-43b1a9d18f91 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20260813105354-43b1a9d18f91 // indirect
 	github.com/e6qu/sockerless-cloud/ui-auth v0.1.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
@@ -75,7 +75,10 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/sys/sequential v0.6.0 // indirect
+	github.com/moby/moby/api v1.55.0 // indirect
+	github.com/moby/moby/client v0.5.1 // indirect
+	github.com/moby/sys/atomicwriter v0.1.0 // indirect
+	github.com/morikuni/aec v1.1.0 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
@@ -103,10 +106,10 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/image v0.45.0 // indirect
 	golang.org/x/mod v0.39.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
