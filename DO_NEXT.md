@@ -17,7 +17,7 @@ In this repository:
 - sockerless-cloud releases with exactly one `vX.Y.Z` tag (release-please);
   the bootstrap `v0.1.0` tags were deleted, so Go pins reference release
   commits (pseudo-versions) and checkout/git-context pins reference the
-  release tag. v0.4.0 is the current pin everywhere.
+  release tag. v0.8.0 is the current pin everywhere.
 
 - Watch the first post-extraction CI run; the harness paths changed shape
   (sims build from the module cache instead of in-tree source, smoke images
