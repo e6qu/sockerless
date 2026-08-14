@@ -49,9 +49,9 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/e6qu/sockerless-cloud/realexec v0.1.0 // indirect
-	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20260813105354-43b1a9d18f91 // indirect
-	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20260813105354-43b1a9d18f91 // indirect
-	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20260813105354-43b1a9d18f91 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20260814091146-5d42187578de // indirect
+	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20260814091146-5d42187578de // indirect
+	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20260814091146-5d42187578de // indirect
 	github.com/e6qu/sockerless-cloud/ui-auth v0.1.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
@@ -126,6 +126,7 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.0 // indirect
 	modernc.org/sqlite v1.56.0 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
 
 replace github.com/sockerless/api => ../api
