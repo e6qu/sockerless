@@ -14,6 +14,13 @@ func TestACRAuthProvider_IsCloudRegistry_AzureCRSuffix(t *testing.T) {
 	if a.IsCloudRegistry("docker.io") {
 		t.Fatalf("docker.io must not be recognized as an ACR cloud registry")
 	}
+	// The sovereign clouds serve Azure Container Registry on their own
+	// login-server suffixes, and a registry in one of them is still ours.
+	for _, sovereign := range []string{"myacr.azurecr.cn", "myacr.azurecr.us"} {
+		if !a.IsCloudRegistry(sovereign) {
+			t.Fatalf("expected %s to be recognized as an Azure Container Registry", sovereign)
+		}
+	}
 }
 
 func TestACRAuthProvider_RegistryEndpoint_Coordinate(t *testing.T) {

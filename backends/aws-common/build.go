@@ -63,8 +63,9 @@ func (s *CodeBuildService) AssembleMultiArchManifest(ctx context.Context, opts c
 	if s.ecrAuth == nil {
 		return fmt.Errorf("AssembleMultiArchManifest: ECRAuthProvider not configured")
 	}
-	return core.AssembleMultiArchManifest(ctx, opts, func(reg string) (string, error) {
-		raw, err := s.ecrAuth.GetToken(reg)
+	return core.AssembleMultiArchManifest(ctx, opts, func(registryAndRepo string) (string, error) {
+		registry, repo, _ := strings.Cut(registryAndRepo, "/")
+		raw, err := s.ecrAuth.GetToken(registry, repo, core.ActionPull, core.ActionPush)
 		if err != nil {
 			return "", err
 		}

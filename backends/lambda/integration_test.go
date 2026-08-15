@@ -125,7 +125,13 @@ func TestMain(m *testing.M) {
 		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
 		fmt.Printf("[sim] Starting simulator-aws on %s...\n", simAddr)
 		simCmd := exec.Command(simBinary)
-		simCmd.Env = append(os.Environ(), "SIM_LISTEN_ADDR="+simAddr)
+		simCmd.Env = append(os.Environ(),
+			"SIM_LISTEN_ADDR="+simAddr,
+			// The Amazon Route 53 resolver's DNS listener. Its default port is
+			// the one a host's own mDNS responder already owns, so the
+			// simulator is given a coordinate the operating system picked.
+			fmt.Sprintf("SIM_DNS_PORT=%d", findFreeTCPUDPPort()),
+		)
 		simCmd.Stdout = os.Stderr
 		simCmd.Stderr = os.Stderr
 		if err := simCmd.Start(); err != nil {
@@ -150,7 +156,11 @@ FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /sockerless-lambda-bootstrap /usr/local/bin/sockerless-lambda-bootstrap
 ENTRYPOINT ["/usr/local/bin/sockerless-lambda-bootstrap"]
 `
-		agentBuild := exec.Command("docker", "build",
+		// --load puts the result in the container runtime's image store. A
+		// buildx builder that is not the docker driver leaves it in the build
+		// cache otherwise, and the image the function is told to run then
+		// cannot be pulled.
+		agentBuild := exec.Command("docker", "build", "--load",
 			"--platform", "linux/arm64",
 			"-t", agentTestImageName, "-f", "-", bootstrapModuleDir)
 		agentBuild.Stdin = strings.NewReader(agentDockerfile)
@@ -655,4 +665,25 @@ func filterBuildEnv(env []string, extra ...string) []string {
 		filtered = append(filtered, e)
 	}
 	return append(filtered, extra...)
+}
+
+// findFreeTCPUDPPort reserves a port that is free on both TCP and UDP. The AWS
+// simulator's Amazon Route 53 resolver binds its DNS listener on both, so a
+// port that is only free on one of them fails the simulator's startup.
+func findFreeTCPUDPPort() int {
+	for range 100 {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			panic(err)
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		u, uerr := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+		l.Close()
+		if uerr != nil {
+			continue
+		}
+		u.Close()
+		return port
+	}
+	panic("no port free on both TCP and UDP after 100 attempts")
 }

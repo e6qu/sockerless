@@ -2,7 +2,7 @@ FROM golang:1.25 AS builder
 
 # The v0.2.0 release commit; go install of a subdirectory module needs a
 # commit-ish, not the repository-root release tag.
-ARG SOCKERLESS_CLOUD_VERSION=5d42187578de750092a39160ede9f988d37418a4
+ARG SOCKERLESS_CLOUD_VERSION=723736a8a233e0f3ccb3d6ce0c209a94bfc9afc2
 
 # --- Build AWS simulator ---
 RUN GOBIN=/out go install -tags noui github.com/e6qu/sockerless-cloud/simulator-aws@${SOCKERLESS_CLOUD_VERSION}

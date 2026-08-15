@@ -19,6 +19,14 @@ type OCIPushOptions struct {
 	Repository string // e.g. "myproject/myrepo/myimage"
 	Tag        string // e.g. "latest"
 	AuthToken  string // Bearer token or empty
+	// Endpoint is the network coordinate the registry is reached at
+	// ("scheme://host"), when an operator has relocated it away from the host
+	// the image reference names — a sovereign-cloud registry, or one a harness
+	// reaches at a different address. Empty means the reference's own host
+	// over HTTPS. The reference is unchanged either way: only the destination
+	// the request is dialed at moves, and the Host header keeps naming the
+	// registry so it still routes to it.
+	Endpoint string
 	// LayerContent provides real layer data (keyed by digest).
 	LayerContent func(digest string) ([]byte, bool)
 	// ImageLayers is the ordered list of diff_ids (uncompressed layer
@@ -115,10 +123,10 @@ var ociPushClient = &http.Client{
 // `rootfs.diff_ids` in the config blob is built from `ImageLayers` so
 // it matches the manifest's layer list.
 func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
-	baseURL := fmt.Sprintf("https://%s/v2/%s", opts.Registry, opts.Repository)
+	baseURL := OCIRegistryBaseURL(opts.Endpoint, opts.Registry) + "/v2/" + opts.Repository
 
 	// 1. Check registry connectivity
-	if err := ociPing(baseURL, opts.AuthToken); err != nil {
+	if err := ociPing(baseURL, opts.Registry, opts.AuthToken); err != nil {
 		return nil, fmt.Errorf("registry ping failed: %w", err)
 	}
 
@@ -155,7 +163,7 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(configJSON))
 
 	// 3. Upload config blob
-	if err := ociUploadBlob(baseURL, opts.AuthToken, configDigest, configJSON, "application/vnd.docker.container.image.v1+json"); err != nil {
+	if err := ociUploadBlob(baseURL, opts.Registry, opts.AuthToken, configDigest, configJSON, "application/vnd.docker.container.image.v1+json"); err != nil {
 		return nil, fmt.Errorf("upload config blob: %w", err)
 	}
 
@@ -179,7 +187,7 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 		if gotDigest != ml.Digest {
 			return nil, fmt.Errorf("push failed: cached layer %s has wrong digest %s — manifest entry corrupted", ml.Digest, gotDigest)
 		}
-		if err := ociUploadBlob(baseURL, opts.AuthToken, ml.Digest, content, ml.MediaType); err != nil {
+		if err := ociUploadBlob(baseURL, opts.Registry, opts.AuthToken, ml.Digest, content, ml.MediaType); err != nil {
 			return nil, fmt.Errorf("upload layer blob %s: %w", ml.Digest, err)
 		}
 	}
@@ -227,6 +235,7 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 		return nil, fmt.Errorf("create manifest request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+	SetOCIHost(req, opts.Registry)
 	if opts.AuthToken != "" {
 		SetOCIAuth(req, opts.AuthToken)
 	}
@@ -260,7 +269,7 @@ func OCIPush(opts OCIPushOptions) (*OCIPushResult, error) {
 }
 
 // ociPing checks registry connectivity via GET /v2/.
-func ociPing(baseURL, authToken string) error {
+func ociPing(baseURL, registry, authToken string) error {
 	// Use the base registry URL (/v2/) for ping, not /v2/{repo}/
 	parts := strings.SplitN(baseURL, "/v2/", 2)
 	pingURL := parts[0] + "/v2/"
@@ -269,6 +278,7 @@ func ociPing(baseURL, authToken string) error {
 	if err != nil {
 		return err
 	}
+	SetOCIHost(req, registry)
 	if authToken != "" {
 		SetOCIAuth(req, authToken)
 	}
@@ -288,13 +298,14 @@ func ociPing(baseURL, authToken string) error {
 
 // ociUploadBlob uploads a blob via the two-step upload process:
 // POST /v2/{name}/blobs/uploads/ to initiate, then PUT with ?digest= to complete.
-func ociUploadBlob(baseURL, authToken, digest string, data []byte, contentType string) error {
+func ociUploadBlob(baseURL, registry, authToken, digest string, data []byte, contentType string) error {
 	// Step 1: Initiate upload
 	initiateURL := baseURL + "/blobs/uploads/"
 	req, err := http.NewRequest(http.MethodPost, initiateURL, nil)
 	if err != nil {
 		return fmt.Errorf("create initiate request: %w", err)
 	}
+	SetOCIHost(req, registry)
 	if authToken != "" {
 		SetOCIAuth(req, authToken)
 	}
@@ -335,6 +346,7 @@ func ociUploadBlob(baseURL, authToken, digest string, data []byte, contentType s
 		return fmt.Errorf("create complete request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
+	SetOCIHost(req, registry)
 	if authToken != "" {
 		SetOCIAuth(req, authToken)
 	}
@@ -354,13 +366,42 @@ func ociUploadBlob(baseURL, authToken, digest string, data []byte, contentType s
 }
 
 // SetOCIAuth sets the Authorization header for OCI registry requests.
-// Handles both "Bearer <token>" and raw token formats.
+// Handles both "Bearer <token>" and raw token formats. An empty token leaves
+// the request anonymous — a bare `Authorization: Bearer` with nothing after it
+// is a credential a registry rejects, not the absence of one.
 func SetOCIAuth(req *http.Request, token string) {
+	if token == "" {
+		return
+	}
 	if strings.HasPrefix(token, "Bearer ") || strings.HasPrefix(token, "Basic ") {
 		req.Header.Set("Authorization", token)
 	} else {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+}
+
+// OCIRegistryBaseURL returns the "scheme://host" an OCI registry's HTTP API is
+// dialed at: the operator-configured endpoint coordinate when one relocates
+// the registry away from the host its references name, and https://<registry>
+// otherwise.
+func OCIRegistryBaseURL(endpoint, registry string) string {
+	if ep := strings.TrimRight(strings.TrimSpace(endpoint), "/"); ep != "" {
+		return ep
+	}
+	return "https://" + registry
+}
+
+// SetOCIHost points a request at the registry it addresses. When an endpoint
+// coordinate has moved the network destination, the URL carries that
+// destination while the Host header keeps naming the registry — which is what
+// a registry serving several login servers behind one address routes on, and
+// what a registry's token service matches its `service` parameter against.
+func SetOCIHost(req *http.Request, registry string) {
+	registry = strings.TrimSpace(registry)
+	if registry == "" || registry == req.URL.Host {
+		return
+	}
+	req.Host = registry
 }
 
 // IsGCPRegistry returns true if the registry is a GCP Artifact Registry or GCR.

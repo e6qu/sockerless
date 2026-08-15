@@ -11,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
 )
@@ -27,6 +26,9 @@ type ACRAuthProvider struct {
 	// dialing the published `<acr>.azurecr.io` over the wrong scheme. Empty
 	// on the real public cloud.
 	endpointURL string
+	// tokens mints the registry's own access tokens, which is the only
+	// credential its /v2/ data plane accepts.
+	tokens *acrTokenService
 }
 
 // NewACRAuthProvider creates a new ACRAuthProvider. The registry endpoint
@@ -37,7 +39,7 @@ type ACRAuthProvider struct {
 // identical against cloud and sim; only the coordinate value differs. An
 // explicit endpointURL may be passed; if omitted the env coordinate is read.
 func NewACRAuthProvider(logger zerolog.Logger, endpointURL ...string) *ACRAuthProvider {
-	p := &ACRAuthProvider{Logger: logger}
+	p := &ACRAuthProvider{Logger: logger, tokens: newACRTokenService(nil)}
 	if len(endpointURL) > 0 && endpointURL[0] != "" {
 		p.endpointURL = endpointURL[0]
 	} else {
@@ -46,28 +48,55 @@ func NewACRAuthProvider(logger zerolog.Logger, endpointURL ...string) *ACRAuthPr
 	return p
 }
 
-// GetToken returns a Bearer token for the given ACR registry using DefaultAzureCredential.
-func (a *ACRAuthProvider) GetToken(registry string) (string, error) {
-	cred, err := azidentity.NewDefaultAzureCredential(nil)
-	if err != nil {
-		return "", err
-	}
-	scope := fmt.Sprintf("https://%s/.default", registry)
-	token, err := cred.GetToken(context.Background(), policy.TokenRequestOptions{Scopes: []string{scope}})
-	if err != nil {
-		return "", err
-	}
-	return "Bearer " + token.Token, nil
+// NewACRAuthProviderWithCredential creates an ACRAuthProvider that
+// authenticates as an already-resolved Microsoft Entra identity — the one the
+// rest of the backend's Azure clients hold — instead of resolving the ambient
+// one itself. The registry endpoint coordinate is honored exactly as in
+// NewACRAuthProvider.
+func NewACRAuthProviderWithCredential(logger zerolog.Logger, cred azcore.TokenCredential, endpointURL string) *ACRAuthProvider {
+	p := NewACRAuthProvider(logger, endpointURL)
+	p.tokens = newACRTokenService(cred)
+	return p
 }
 
+// GetToken returns the Bearer credential the registry's Docker Registry HTTP
+// API v2 data plane accepts for `repository` and `actions`.
+//
+// An Azure Container Registry does not accept a Microsoft Entra token on /v2/.
+// The Entra token is exchanged at the registry's own token service — Entra
+// token for an ACR refresh token at /oauth2/exchange, refresh token plus the
+// requested scope for a scoped ACR access token at /oauth2/token — and the
+// access token that comes back is the Bearer the data plane honours. The scope
+// is the access the operation needs: an empty repository addresses the
+// registry's catalog, and the actions are the Docker Registry HTTP API v2 ones
+// ("pull", "push", "delete", "metadata_read").
+func (a *ACRAuthProvider) GetToken(registry, repository string, actions ...string) (string, error) {
+	token, err := a.tokens.AccessToken(context.Background(), a.ociBaseURL(registry), registry,
+		ACRRegistryScope(repository, actions...))
+	if err != nil {
+		return "", err
+	}
+	return "Bearer " + token, nil
+}
+
+// acrLoginServerSuffixes are the login-server suffixes Azure Container
+// Registry serves on, one per cloud: the public cloud, Azure China and Azure
+// Government. A registry in any of them is ours and is reached with the
+// registry's own token, not anonymously.
+var acrLoginServerSuffixes = []string{".azurecr.io", ".azurecr.cn", ".azurecr.us"}
+
 // IsCloudRegistry returns true if the registry is an Azure Container Registry
-// (*.azurecr.io) — or the relocated ACR coordinate
-// (SOCKERLESS_AZURE_ACR_ENDPOINT) a sim harness sets, which carries
-// overlay/base refs on its own host rather than `<acr>.azurecr.io`. Mirrors
-// gcp-common's ARAuthProvider.IsCloudRegistry recognizing the overlay
-// coordinate.
+// — or the relocated ACR coordinate (SOCKERLESS_AZURE_ACR_ENDPOINT) a sim
+// harness sets, which carries overlay/base refs on its own host rather than
+// `<acr>.azurecr.io`. Mirrors gcp-common's ARAuthProvider.IsCloudRegistry
+// recognizing the overlay coordinate.
 func (a *ACRAuthProvider) IsCloudRegistry(registry string) bool {
-	return strings.HasSuffix(registry, ".azurecr.io") || a.isCoordinateRegistry(registry)
+	for _, suffix := range acrLoginServerSuffixes {
+		if strings.HasSuffix(registry, suffix) {
+			return true
+		}
+	}
+	return a.isCoordinateRegistry(registry)
 }
 
 // isCoordinateRegistry reports whether `registry` is the relocated ACR
@@ -113,38 +142,65 @@ func (a *ACRAuthProvider) ociBaseURL(registry string) string {
 	return "https://" + registry
 }
 
-// OnPush is a no-op for ACR — repositories are created implicitly on
-// first push and the actual blob upload is done by
-// BaseServer.ImagePush via core.OCIPush, which has access to the
-// image's layer data through the local store. OnPush used to also
-// call OCIPush here without layer data, which always failed.
+// OnPush is a no-op for ACR — repositories are created implicitly on first
+// push, and the blob upload itself is done by BaseServer.ImagePush via
+// core.OCIPush, which is the only place with access to the image's layer data.
 func (a *ACRAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 	return nil
+}
+
+// acrDo sends one registry request authenticated with an ACR access token for
+// `scope`, routed to the registry named by `registry` even when the endpoint
+// coordinate relocates the network destination. A registry that refuses the
+// token is the authority on it having gone stale, so a 401 drops the cached
+// token and the request is sent once more with a freshly minted one — the same
+// renewal the Azure SDK for Go's registry clients perform.
+func (a *ACRAuthProvider) acrDo(client *http.Client, registry, scope string, build func() (*http.Request, error)) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		token, err := a.tokens.AccessToken(context.Background(), a.ociBaseURL(registry), registry, scope)
+		if err != nil {
+			return nil, fmt.Errorf("ACR auth: %w", err)
+		}
+		req, err := build()
+		if err != nil {
+			return nil, err
+		}
+		core.SetOCIHost(req, registry)
+		core.SetOCIAuth(req, "Bearer "+token)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusUnauthorized || attempt > 0 {
+			return resp, nil
+		}
+		resp.Body.Close()
+		a.tokens.Invalidate(registry)
+	}
 }
 
 // OnTag syncs a tag to ACR by fetching the source manifest and re-putting it with the new tag.
 // Errors are returned to the caller (ImageManager) which aggregates
 // them and surfaces via HTTP error per the no-fallbacks rule.
 func (a *ACRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
-	token, err := a.GetToken(registry)
-	if err != nil {
-		return fmt.Errorf("ACR auth: %w", err)
-	}
-
 	client := &http.Client{Timeout: 30 * time.Second}
 	baseURL := a.ociBaseURL(registry)
+	// Reading a manifest pulls and writing one pushes, and a registry requires
+	// pull alongside push to accept a write.
+	scope := ACRRegistryScope(repo, core.ActionPull, core.ActionPush)
 
 	// Try to get existing manifest for the source image
 	srcDigest := strings.TrimPrefix(imageID, "sha256:")
 	manifestURL := fmt.Sprintf("%s/v2/%s/manifests/sha256:%s", baseURL, repo, srcDigest)
-	req, err := http.NewRequest("GET", manifestURL, nil)
-	if err != nil {
-		return fmt.Errorf("build manifest GET request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
-	core.SetOCIAuth(req, token)
-
-	resp, err := client.Do(req)
+	resp, err := a.acrDo(client, registry, scope, func() (*http.Request, error) {
+		req, rerr := http.NewRequest("GET", manifestURL, nil)
+		if rerr != nil {
+			return nil, fmt.Errorf("build manifest GET request: %w", rerr)
+		}
+		req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
+		return req, nil
+	})
 	if err != nil {
 		return fmt.Errorf("manifest fetch: %w", err)
 	}
@@ -154,7 +210,10 @@ func (a *ACRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 		return fmt.Errorf("source manifest not found in ACR: %d", resp.StatusCode)
 	}
 
-	manifestData, _ := io.ReadAll(resp.Body)
+	manifestData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read source manifest: %w", err)
+	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/vnd.docker.distribution.manifest.v2+json"
@@ -162,14 +221,14 @@ func (a *ACRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 
 	// PUT manifest with new tag
 	putURL := fmt.Sprintf("%s/v2/%s/manifests/%s", baseURL, repo, newTag)
-	putReq, err := http.NewRequest("PUT", putURL, bytes.NewReader(manifestData))
-	if err != nil {
-		return fmt.Errorf("build manifest PUT request: %w", err)
-	}
-	putReq.Header.Set("Content-Type", contentType)
-	core.SetOCIAuth(putReq, token)
-
-	putResp, err := client.Do(putReq)
+	putResp, err := a.acrDo(client, registry, scope, func() (*http.Request, error) {
+		req, rerr := http.NewRequest("PUT", putURL, bytes.NewReader(manifestData))
+		if rerr != nil {
+			return nil, fmt.Errorf("build manifest PUT request: %w", rerr)
+		}
+		req.Header.Set("Content-Type", contentType)
+		return req, nil
+	})
 	if err != nil {
 		return fmt.Errorf("manifest PUT: %w", err)
 	}
@@ -182,35 +241,30 @@ func (a *ACRAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 	return nil
 }
 
-// OnRemove deletes manifests from ACR. Graceful on 404/405 (already
-// gone / sim doesn't support DELETE). Aggregates per-tag failures and
-// surfaces them per the no-fallbacks rule (previously each per-tag
-// failure was logged + `continue`, so OnRemove returned nil success
-// even when some tags couldn't be removed and the ACR-side state
-// diverged from local).
+// OnRemove deletes manifests from ACR. A 404 means the manifest is already
+// gone and a 405 means the registry does not accept deletions, and neither is
+// a failure to remove something. Every other per-tag failure is aggregated and
+// returned, so a removal that left ACR holding tags the local store no longer
+// has reports it rather than answering success.
 func (a *ACRAuthProvider) OnRemove(registry, repo string, tags []string) error {
-	token, err := a.GetToken(registry)
-	if err != nil {
-		return fmt.Errorf("ACR auth: %w", err)
-	}
-
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	baseURL := a.ociBaseURL(registry)
+	// Reading the manifest to resolve its digest pulls; removing it deletes.
+	scope := ACRRegistryScope(repo, core.ActionPull, core.ActionDelete)
 
 	var failures []string
 	for _, tag := range tags {
 		// Try to get the manifest digest first.
 		manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", baseURL, repo, tag)
-		req, rerr := http.NewRequest("HEAD", manifestURL, nil)
-		if rerr != nil {
-			failures = append(failures, fmt.Sprintf("%s: build HEAD request: %v", tag, rerr))
-			continue
-		}
-		req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
-		core.SetOCIAuth(req, token)
-
-		headResp, err := client.Do(req)
+		headResp, err := a.acrDo(client, registry, scope, func() (*http.Request, error) {
+			req, rerr := http.NewRequest("HEAD", manifestURL, nil)
+			if rerr != nil {
+				return nil, fmt.Errorf("build HEAD request: %w", rerr)
+			}
+			req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
+			return req, nil
+		})
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: HEAD failed: %v", tag, err))
 			continue
@@ -233,14 +287,9 @@ func (a *ACRAuthProvider) OnRemove(registry, repo string, tags []string) error {
 
 		// DELETE manifest.
 		delURL := fmt.Sprintf("%s/v2/%s/manifests/%s", baseURL, repo, digest)
-		delReq, rerr := http.NewRequest("DELETE", delURL, nil)
-		if rerr != nil {
-			failures = append(failures, fmt.Sprintf("%s: build DELETE request: %v", tag, rerr))
-			continue
-		}
-		core.SetOCIAuth(delReq, token)
-
-		delResp, err := client.Do(delReq)
+		delResp, err := a.acrDo(client, registry, scope, func() (*http.Request, error) {
+			return http.NewRequest("DELETE", delURL, nil)
+		})
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: DELETE failed: %v", tag, err))
 			continue

@@ -289,21 +289,27 @@ func getRegistryToken(rc registryConfig, basicAuth string) (string, error) {
 		return "basic:" + basicAuth, nil
 	}
 
-	// GCP Artifact Registry / GCR: caller already has an OAuth2 access
-	// token (from ARAuthProvider via ADC). AR accepts the access token
-	// directly as `Authorization: Bearer …` on every registry call —
-	// no Www-Authenticate / token-endpoint exchange. ARAuthProvider.GetToken
-	// returns `"Bearer <token>"`; strip the prefix because setRegistryAuth
-	// re-adds it. Without this branch, the standard Bearer-exchange path
-	// re-issues our access token wrapped as `Basic <base64-of-Bearer-…>`,
-	// which AR's token endpoint rejects with 401.
-	if IsGCPRegistry(rc.Registry) && basicAuth != "" {
-		return strings.TrimPrefix(basicAuth, "Bearer "), nil
+	// A cloud AuthProvider that has already minted the registry's own Bearer
+	// credential hands it over with its scheme prefix — Google Artifact
+	// Registry's OAuth2 access token, which the registry accepts directly, and
+	// Azure Container Registry's access token, which its token service has
+	// already issued for the scope this operation needs. Either is the
+	// credential the registry wants; strip the prefix because setRegistryAuth
+	// re-adds it. Without this, the standard Bearer-exchange path re-issues
+	// the token wrapped as `Basic <base64-of-Bearer-…>`, which every one of
+	// those token endpoints rejects with 401.
+	if token, ok := strings.CutPrefix(basicAuth, "Bearer "); ok {
+		return token, nil
 	}
 
 	// Try to access the manifests endpoint first to discover auth
 	manifestURL := registryURL(rc, "manifests", rc.Tag)
-	resp, err := registryClient.Get(manifestURL)
+	discover, err := http.NewRequest(http.MethodGet, manifestURL, nil)
+	if err != nil {
+		return "", err
+	}
+	SetOCIHost(discover, rc.Registry)
+	resp, err := registryClient.Do(discover)
 	if err != nil {
 		return "", err
 	}
@@ -564,7 +570,7 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 	manifestURL := registryURL(rc, "manifests", rc.Tag)
 
 	// Try manifest list first (for multi-arch images)
-	body, mediaType, err := registryGet(manifestURL, token, []string{
+	body, mediaType, err := registryGet(manifestURL, rc.Registry, token, []string{
 		"application/vnd.oci.image.index.v1+json",
 		"application/vnd.docker.distribution.manifest.list.v2+json",
 		"application/vnd.oci.image.manifest.v1+json",
@@ -601,7 +607,7 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 
 		// Fetch the platform-specific manifest
 		platformURL := registryURL(rc, "manifests", digest)
-		body, _, err = registryGet(platformURL, token, []string{
+		body, _, err = registryGet(platformURL, rc.Registry, token, []string{
 			"application/vnd.oci.image.manifest.v1+json",
 			"application/vnd.docker.distribution.manifest.v2+json",
 		})
@@ -655,6 +661,7 @@ func FetchLayerBlob(rc registryConfig, token, digest string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create blob request: %w", err)
 	}
+	SetOCIHost(req, rc.Registry)
 	if token != "" {
 		setRegistryAuth(req, token)
 	}
@@ -683,7 +690,7 @@ func FetchLayerBlob(rc registryConfig, token, digest string) ([]byte, error) {
 func getFullConfigBlob(rc registryConfig, token, digest string) (*ociImageConfig, error) {
 	blobURL := registryURL(rc, "blobs", digest)
 
-	body, _, err := registryGet(blobURL, token, nil)
+	body, _, err := registryGet(blobURL, rc.Registry, token, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -705,12 +712,15 @@ func registryURL(rc registryConfig, kind, reference string) string {
 }
 
 // registryGet performs an authenticated GET request to a registry endpoint.
-func registryGet(url, token string, accept []string) ([]byte, string, error) {
+// `registry` names the registry the request addresses, which stays in the Host
+// header even when an endpoint coordinate moves where the request is dialed.
+func registryGet(url, registry, token string, accept []string) ([]byte, string, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, "", err
 	}
 
+	SetOCIHost(req, registry)
 	if token != "" {
 		setRegistryAuth(req, token)
 	}

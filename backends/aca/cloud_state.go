@@ -7,6 +7,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 	"github.com/sockerless/api"
+	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -266,14 +267,14 @@ func (p *acaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, er
 	if p.server.images == nil || p.server.images.Auth == nil {
 		return nil, nil
 	}
-	registry := p.server.config.ACRName + ".azurecr.io"
-	token, err := p.server.images.Auth.GetToken(registry)
-	if err != nil {
-		return nil, err
-	}
+	auth := p.server.images.Auth
+	registry := azurecommon.AzureRegistryHost(p.server.config.ACRName)
 	return core.OCIListImages(ctx, core.OCIListOptions{
-		Registry:  registry,
-		AuthToken: token,
+		Registry: registry,
+		Endpoint: core.RegistryEndpointFor(auth, registry),
+		TokenFor: func(repo string) (string, error) {
+			return auth.GetToken(registry, repo, core.ActionMetadataRead)
+		},
 	})
 }
 

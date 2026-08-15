@@ -30,14 +30,14 @@ func (p *gcfCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, er
 	if p.server.images == nil || p.server.images.Auth == nil {
 		return nil, nil
 	}
+	auth := p.server.images.Auth
 	registry := p.server.config.Region + "-docker.pkg.dev"
-	token, err := p.server.images.Auth.GetToken(registry)
-	if err != nil {
-		return nil, err
-	}
 	return core.OCIListImages(ctx, core.OCIListOptions{
-		Registry:  registry,
-		AuthToken: token,
+		Registry: registry,
+		Endpoint: core.RegistryEndpointFor(auth, registry),
+		TokenFor: func(repo string) (string, error) {
+			return auth.GetToken(registry, repo, core.ActionMetadataRead)
+		},
 	})
 }
 

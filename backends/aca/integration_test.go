@@ -203,6 +203,7 @@ COPY %s /usr/local/bin/%s
 ENTRYPOINT ["/usr/local/bin/%s"]
 `, binaryName, binaryName, binaryName)
 		imageBuild := exec.Command("docker", "build",
+			"--load",
 			"--platform", "linux/arm64",
 			"-t", imageName, "-f", "-", buildCtx)
 		imageBuild.Stdin = strings.NewReader(dockerfile)
