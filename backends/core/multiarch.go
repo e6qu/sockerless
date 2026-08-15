@@ -40,6 +40,7 @@ func AssembleMultiArchManifest(ctx context.Context, opts MultiArchManifestOption
 	// OCI distribution requires manifest-list entries to reference
 	// blobs within the same repository.
 	indexRC := parseImageRef(opts.Tag)
+	indexRC.Endpoint = opts.Endpoint
 	for _, t := range opts.PerArchTags {
 		rc := parseImageRef(t)
 		if rc.Registry != indexRC.Registry || rc.Repository != indexRC.Repository {
@@ -66,6 +67,7 @@ func AssembleMultiArchManifest(ctx context.Context, opts MultiArchManifestOption
 	entries := make([]entry, 0, len(opts.PerArchTags))
 	for _, t := range opts.PerArchTags {
 		rc := parseImageRef(t)
+		rc.Endpoint = opts.Endpoint
 		dig, sz, mt, err := fetchManifestDigest(ctx, rc, token)
 		if err != nil {
 			return fmt.Errorf("multiarch: fetch %s manifest: %w", t, err)
@@ -118,11 +120,12 @@ func AssembleMultiArchManifest(ctx context.Context, opts MultiArchManifestOption
 		return fmt.Errorf("multiarch: marshal index: %w", err)
 	}
 
-	url := fmt.Sprintf("https://%s/v2/%s/manifests/%s", indexRC.Registry, indexRC.Repository, indexRC.Tag)
+	url := registryURL(indexRC, "manifests", indexRC.Tag)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("multiarch: build PUT: %w", err)
 	}
+	SetOCIHost(req, indexRC.Registry)
 	req.Header.Set("Content-Type", index.MediaType)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
@@ -141,11 +144,12 @@ func AssembleMultiArchManifest(ctx context.Context, opts MultiArchManifestOption
 // returns the manifest's digest, size, and media type — the three
 // fields the index entry needs.
 func fetchManifestDigest(ctx context.Context, rc registryConfig, token string) (digest string, size int64, mediaType string, err error) {
-	url := fmt.Sprintf("https://%s/v2/%s/manifests/%s", rc.Registry, rc.Repository, rc.Tag)
+	url := registryURL(rc, "manifests", rc.Tag)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", 0, "", err
 	}
+	SetOCIHost(req, rc.Registry)
 	req.Header.Set("Accept", strings.Join([]string{
 		"application/vnd.docker.distribution.manifest.v2+json",
 		"application/vnd.oci.image.manifest.v1+json",
@@ -173,11 +177,12 @@ func fetchManifestDigest(ctx context.Context, rc registryConfig, token string) (
 // points at the config blob; the blob has top-level `architecture`
 // and `os` fields (per OCI image spec).
 func fetchPlatformFromConfig(ctx context.Context, rc registryConfig, token, manifestDigest string) (arch, osName string, err error) {
-	url := fmt.Sprintf("https://%s/v2/%s/manifests/%s", rc.Registry, rc.Repository, manifestDigest)
+	url := registryURL(rc, "manifests", manifestDigest)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", "", err
 	}
+	SetOCIHost(req, rc.Registry)
 	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json,application/vnd.oci.image.manifest.v1+json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
@@ -201,11 +206,12 @@ func fetchPlatformFromConfig(ctx context.Context, rc registryConfig, token, mani
 		return "", "", fmt.Errorf("manifest has no config.digest")
 	}
 
-	cfgURL := fmt.Sprintf("https://%s/v2/%s/blobs/%s", rc.Registry, rc.Repository, m.Config.Digest)
+	cfgURL := registryURL(rc, "blobs", m.Config.Digest)
 	cfgReq, err := http.NewRequestWithContext(ctx, http.MethodGet, cfgURL, nil)
 	if err != nil {
 		return "", "", err
 	}
+	SetOCIHost(cfgReq, rc.Registry)
 	cfgReq.Header.Set("Authorization", "Bearer "+token)
 	cfgResp, err := http.DefaultClient.Do(cfgReq)
 	if err != nil {

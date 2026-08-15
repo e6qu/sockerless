@@ -396,6 +396,13 @@ func (s *BaseServer) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (
 
 // ImagePush pushes an image to a registry via OCI protocol, or reports an error.
 func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadCloser, error) {
+	return s.ImagePushToEndpoint(name, tag, auth, "")
+}
+
+// ImagePushToEndpoint is ImagePush against a registry reached at `endpoint` —
+// the network coordinate an operator has relocated it to, away from the host
+// the image reference names. An empty endpoint dials the reference's own host.
+func (s *BaseServer) ImagePushToEndpoint(name string, tag string, auth string, endpoint string) (io.ReadCloser, error) {
 	img, ok := s.Store.ResolveImage(name)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "image", ID: name}
@@ -427,6 +434,7 @@ func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadClo
 				Repository:     repo,
 				Tag:            tag,
 				AuthToken:      auth,
+				Endpoint:       endpoint,
 				ImageLayers:    img.RootFS.Layers,
 				ManifestLayers: manifestLayers,
 				Architecture:   img.Architecture,

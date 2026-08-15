@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	core "github.com/sockerless/backend-core"
 	"golang.org/x/oauth2/google"
 )
 
@@ -46,13 +47,20 @@ func CheckTagExists(ctx context.Context, imageURI string) bool {
 	if err != nil {
 		return false
 	}
-	headURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, tag)
+	// The registry is reached at its endpoint coordinate, which an operator
+	// relocates away from `<region>-docker.pkg.dev` the same way the overlay
+	// build→push and workload→pull are relocated. Dialing the reference's own
+	// host regardless would make every probe against a relocated registry
+	// answer "absent" and rebuild an overlay that is already there.
+	headURL := fmt.Sprintf("%s/v2/%s/manifests/%s",
+		core.OCIRegistryBaseURL(OverlayRegistryEndpoint(), registry), repo, tag)
 	checkCtx, cancel := context.WithTimeout(ctx, CheckTagExistsTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(checkCtx, http.MethodHead, headURL, nil)
 	if err != nil {
 		return false
 	}
+	core.SetOCIHost(req, registry)
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json")
 	resp, err := http.DefaultClient.Do(req)

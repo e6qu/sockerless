@@ -4,6 +4,77 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## Gave Azure Container Registry the credential it actually accepts
+
+An Azure Container Registry does not accept a Microsoft Entra token on its
+Docker Registry HTTP API v2 surface, and sockerless was presenting one. The
+auth provider asked Microsoft Entra for `https://<registry>/.default` — an
+audience Microsoft Entra does not issue, because Azure Container Registry has
+no per-registry audience — and put the result straight on `/v2/` as a Bearer;
+the multi-architecture index writer did the same with an Azure Resource
+Manager token, beside a comment asserting that the token exchange was only
+needed by tools wanting long-lived credentials.
+
+The registry's documented flow now runs, all of it. A Microsoft Entra token is
+acquired for the container registry *service* audience,
+`https://containerregistry.azure.net/.default`; it is exchanged for an Azure
+Container Registry refresh token at `POST /oauth2/exchange`; that refresh token
+and the requested scope are traded for a scoped access token at
+`POST /oauth2/token`; and that access token is the Bearer the data plane
+honours. One token service behind the provider caches each hop until the `exp`
+claim of the JWT the registry issued says it expires — the token service
+reports no lifetime alongside its tokens, so the token itself is the only
+statement of when it stops working — re-authenticates when a registry answers
+401, and asks for exactly the access the operation needs in the Docker Registry
+HTTP API v2 scope grammar: `pull` to read a manifest, `pull,push` to write one,
+`pull,delete` to remove one, `metadata_read` to list a repository's tags, and
+`registry:catalog:*` for the registry itself.
+
+`core.AuthProvider.GetToken` carries the repository and the actions so that is
+possible at all. The AWS and Google Cloud providers document the two arguments
+as unused, because an Amazon Elastic Container Registry authorization token and
+a Google Artifact Registry access token are registry-wide and carry whatever
+the calling identity's policy allows.
+
+Around that fix, the paths that reach a registry became one path. The registry
+endpoint coordinate — the address an operator reaches a relocated registry at,
+without changing the host its references name — was honored by tag and delete
+and ignored by push, image listing, the multi-architecture index and the
+Artifact Registry tag probe; `core.OCIRegistryBaseURL` resolves it for all of
+them and `core.SetOCIHost` keeps the Host header naming the registry, which is
+what a registry serving several login servers behind one address routes on and
+what a token service matches its `service` parameter against. A failure to mint
+a credential is no longer swallowed and retried anonymously in pull, push,
+build or listing, because a registry that refuses the anonymous retry reports a
+missing image rather than the credential problem behind it. Azure Container
+Registry recognition covers the sovereign clouds' login servers rather than
+only `.azurecr.io`.
+
+The Azure Container Registry credential path is covered end to end against the
+Microsoft Azure simulator, in `backends/azure-common`: a registry provisioned
+through Azure Resource Manager, an image built as real gzipped layer bytes and
+pushed over `/v2/`, a second tag added through the provider's own sync path,
+the repository's tags read back with a `metadata_read`-scoped token, and both
+tags removed — with an assertion that the credential presented is not the
+Microsoft Entra token it was exchanged for, which is the defect stated as a
+test. The simulator is reached only by coordinates: the registry endpoint, the
+managed identity endpoint the Microsoft Entra token comes from, and the Azure
+Resource Manager endpoint.
+
+The Amazon Web Services simulator harnesses in `backends/ecs` and
+`backends/lambda` reserve their own Amazon Route 53 resolver port instead of
+leaving it on the default a host's own mDNS responder already owns, so they
+start on a developer machine rather than panicking before serving anything.
+Every harness image build passes `--load`, so its result reaches the container
+runtime's image store rather than staying in a build cache the workload cannot
+pull from — which had surfaced as five AWS Lambda tests timing out on a
+callback from a container that was never able to start.
+
+The simulators are pinned at the sockerless-cloud v0.9.2 release —
+`tests/go.mod` at its release commit, the twenty-three harness image build
+arguments at the same commit, and the git build context and live-test checkout
+at the tag.
+
 ## Extracted the simulators into the sockerless-cloud repository
 
 Moved the three cloud simulators — with their SDK/CLI/Terraform test suites,

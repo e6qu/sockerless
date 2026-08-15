@@ -34,7 +34,12 @@ func NewECRAuthProvider(ecrClient *ecr.Client, logger zerolog.Logger, ctxFn func
 
 // GetToken calls ECR GetAuthorizationToken and returns the raw base64 token
 // formatted as "Basic <token>".
-func (p *ECRAuthProvider) GetToken(registry string) (string, error) {
+//
+// The repository and actions are not part of the request: an Amazon Elastic
+// Container Registry authorization token is registry-wide and carries whatever
+// the calling identity's IAM policy allows on every repository in it, so there
+// is no per-resource token to ask for.
+func (p *ECRAuthProvider) GetToken(registry, repository string, actions ...string) (string, error) {
 	result, err := p.ecr.GetAuthorizationToken(p.ctx(), &ecr.GetAuthorizationTokenInput{})
 	if err != nil {
 		return "", err

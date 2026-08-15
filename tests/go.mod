@@ -3,7 +3,7 @@ module github.com/sockerless/tests
 go 1.25.8
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.43.5
+	github.com/aws/aws-sdk-go-v2 v1.43.6
 	github.com/docker/docker v28.5.2+incompatible
 )
 
@@ -35,7 +35,7 @@ require (
 	github.com/PaesslerAG/gval v1.2.4 // indirect
 	github.com/PaesslerAG/jsonpath v0.1.1 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
-	github.com/aws/smithy-go v1.27.7 // indirect
+	github.com/aws/smithy-go v1.27.8 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudflare/circl v1.6.5 // indirect
@@ -49,9 +49,9 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/e6qu/sockerless-cloud/realexec v0.1.0 // indirect
-	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20260814091146-5d42187578de // indirect
-	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20260814091146-5d42187578de // indirect
-	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20260814091146-5d42187578de // indirect
+	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20260815131143-723736a8a233 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20260815131143-723736a8a233 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20260815131143-723736a8a233 // indirect
 	github.com/e6qu/sockerless-cloud/ui-auth v0.1.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect

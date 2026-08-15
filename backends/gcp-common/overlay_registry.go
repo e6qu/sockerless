@@ -33,6 +33,22 @@ func overlayCoordinateHost() string {
 	return strings.TrimRight(ep, "/")
 }
 
+// OverlayRegistryEndpoint returns the SOCKERLESS_GCP_AR_ENDPOINT coordinate
+// with its scheme intact — the network destination registry HTTP is dialed at —
+// or "" when Artifact Registry is reached at its own host. The coordinate
+// defaults to https:// when it names a host without a scheme, because that is
+// what a registry host means.
+func OverlayRegistryEndpoint() string {
+	ep := strings.TrimRight(strings.TrimSpace(os.Getenv("SOCKERLESS_GCP_AR_ENDPOINT")), "/")
+	if ep == "" {
+		return ""
+	}
+	if !strings.HasPrefix(ep, "http://") && !strings.HasPrefix(ep, "https://") {
+		return "https://" + ep
+	}
+	return ep
+}
+
 // IsOverlayCoordinateRegistry reports whether `registry` is the relocated
 // Artifact Registry coordinate (SOCKERLESS_GCP_AR_ENDPOINT). When that
 // coordinate is set — a harness pointed at the simulator — overlay and base

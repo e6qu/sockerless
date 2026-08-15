@@ -12,7 +12,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
@@ -26,20 +25,23 @@ var _ core.CloudBuildService = (*ACRBuildService)(nil)
 
 // ACRBuildService builds Docker images using Azure Container Registry Tasks.
 type ACRBuildService struct {
-	acr              *armcontainerregistry.RegistriesClient
-	runs             *armcontainerregistry.RunsClient
-	blobClient       *azblob.Client
-	blobEndpoint     string // resolved blob service URL (public account URL or the account's ARM-advertised endpoint)
-	subscriptionID   string
-	resourceGroup    string
-	acrName          string
-	storageAccount   string
-	containerName    string // blob container for context upload
-	cred             azcore.TokenCredential
-	endpointURL      string             // custom/simulated Azure endpoint, "" for the public cloud
-	armOpts          *arm.ClientOptions // nil for the public cloud
-	registryEndpoint string             // overrides <acrName>.azurecr.io (sovereign/custom/simulated registry)
-	logger           zerolog.Logger
+	acr            *armcontainerregistry.RegistriesClient
+	runs           *armcontainerregistry.RunsClient
+	blobClient     *azblob.Client
+	blobEndpoint   string // resolved blob service URL (public account URL or the account's ARM-advertised endpoint)
+	subscriptionID string
+	resourceGroup  string
+	acrName        string
+	storageAccount string
+	containerName  string // blob container for context upload
+	cred           azcore.TokenCredential
+	endpointURL    string             // custom/simulated Azure endpoint, "" for the public cloud
+	armOpts        *arm.ClientOptions // nil for the public cloud
+	// acrAuth mints the registry's own access tokens for the OCI writes this
+	// service performs directly, as the same Microsoft Entra identity its ARM
+	// clients hold.
+	acrAuth *ACRAuthProvider
+	logger  zerolog.Logger
 }
 
 // NewACRBuildService creates an ACR Tasks-backed build service.
@@ -86,18 +88,18 @@ func NewACRBuildService(cred azcore.TokenCredential, subscriptionID, resourceGro
 	}
 
 	s := &ACRBuildService{
-		acr:              regClient,
-		runs:             runsClient,
-		subscriptionID:   subscriptionID,
-		resourceGroup:    resourceGroup,
-		acrName:          acrName,
-		storageAccount:   storageAccount,
-		containerName:    containerName,
-		cred:             cred,
-		endpointURL:      endpointURL,
-		armOpts:          armOpts,
-		registryEndpoint: os.Getenv("SOCKERLESS_AZURE_ACR_ENDPOINT"),
-		logger:           logger,
+		acr:            regClient,
+		runs:           runsClient,
+		subscriptionID: subscriptionID,
+		resourceGroup:  resourceGroup,
+		acrName:        acrName,
+		storageAccount: storageAccount,
+		containerName:  containerName,
+		cred:           cred,
+		endpointURL:    endpointURL,
+		armOpts:        armOpts,
+		acrAuth:        NewACRAuthProviderWithCredential(logger, cred, strings.TrimSpace(os.Getenv("SOCKERLESS_AZURE_ACR_ENDPOINT"))),
+		logger:         logger,
 	}
 
 	// Public cloud: the blob endpoint is the well-known account URL, so the
@@ -153,23 +155,18 @@ func (s *ACRBuildService) Available() bool {
 	return s.acrName != "" && s.storageAccount != ""
 }
 
-// AssembleMultiArchManifest delegates to the universal helper, with
-// the ACR bearer token (mints via the registry's `/oauth2/token`
-// exchange of an AAD access token). ACR honours the standard OCI
-// distribution v2 PUT /v2/<repo>/manifests/<tag> request.
+// AssembleMultiArchManifest delegates to the universal helper, with a bearer
+// token the registry's own token service issued for the repository the index
+// is written to. ACR honours the standard OCI distribution v2
+// PUT /v2/<repo>/manifests/<tag> request, but only with one of its own access
+// tokens: a Microsoft Entra token presented directly on /v2/ is refused, so the
+// credential comes from the same exchange every other ACR path here uses.
 func (s *ACRBuildService) AssembleMultiArchManifest(ctx context.Context, opts core.MultiArchManifestOptions) error {
-	return core.AssembleMultiArchManifest(ctx, opts, func(_ string) (string, error) {
-		tok, err := s.cred.GetToken(ctx, policy.TokenRequestOptions{
-			Scopes: []string{"https://management.azure.com/.default"},
-		})
-		if err != nil {
-			return "", fmt.Errorf("AAD token: %w", err)
-		}
-		// ACR's OCI v2 endpoint accepts AAD bearer tokens directly
-		// when the caller has AcrPush role. The /oauth2/token
-		// exchange (AAD → ACR refresh token → ACR access token) is
-		// only required for tools that need long-lived creds.
-		return tok.Token, nil
+	indexRegistry, _, _ := strings.Cut(strings.TrimPrefix(opts.Tag, "https://"), "/")
+	opts.Endpoint = s.acrAuth.RegistryEndpoint(indexRegistry)
+	return core.AssembleMultiArchManifest(ctx, opts, func(registryAndRepo string) (string, error) {
+		registry, repo, _ := strings.Cut(registryAndRepo, "/")
+		return s.acrAuth.GetToken(registry, repo, core.ActionPull, core.ActionPush)
 	})
 }
 
@@ -214,10 +211,7 @@ func (s *ACRBuildService) Build(ctx context.Context, opts core.CloudBuildOptions
 	// may override it (sovereign clouds with a different suffix, or a
 	// reachable local/simulated registry) via SOCKERLESS_AZURE_ACR_ENDPOINT;
 	// the image is then built, pushed, and pulled at that host.
-	registryHost := s.acrName + ".azurecr.io"
-	if s.registryEndpoint != "" {
-		registryHost = s.registryEndpoint
-	}
+	registryHost := AzureRegistryHost(s.acrName)
 	imageName := fmt.Sprintf("%s/%s:%s", registryHost, repo, tag)
 
 	// Build arguments

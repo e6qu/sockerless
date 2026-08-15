@@ -64,8 +64,10 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		MemTotal:        4294967296,
 	}, logger)
 	s.images = &core.ImageManager{
-		Base:   s.BaseServer,
-		Auth:   azurecommon.NewACRAuthProvider(logger),
+		Base: s.BaseServer,
+		// The registry's token service authenticates the same Microsoft Entra
+		// identity every other Azure client here holds.
+		Auth:   azurecommon.NewACRAuthProviderWithCredential(logger, azureClients.Cred, ""),
 		Logger: logger,
 	}
 	s.storageBackings = core.NewStorageBackingRegistry()

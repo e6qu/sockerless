@@ -140,6 +140,10 @@ func (s *GCPBuildService) Available() bool {
 // runtime probe — keeps the AR push token consistent with the token the
 // Cloud Build and Storage clients present.
 func (s *GCPBuildService) AssembleMultiArchManifest(ctx context.Context, opts core.MultiArchManifestOptions) error {
+	// Google Artifact Registry accepts the identity's own OAuth2 access token
+	// on every repository, so the resource the index is written to does not
+	// change which credential is presented.
+	opts.Endpoint = OverlayRegistryEndpoint()
 	return core.AssembleMultiArchManifest(ctx, opts, func(_ string) (string, error) {
 		ts := s.tokenSource
 		if ts == nil {

@@ -129,6 +129,7 @@ COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
 	evalImageBuild := exec.Command("docker", "build",
+		"--load",
 		"--platform", overlayPlatform,
 		"-t", evalImageName, "-f", "-", evalDir)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
@@ -152,6 +153,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	alpineARTag := "us-central1-docker.pkg.dev/sim-project/docker-hub/library/alpine:latest"
 	alpineDockerfile := "FROM public.ecr.aws/docker/library/alpine:latest\n"
 	alpineBuild := exec.Command("docker", "build",
+		"--load",
 		"--platform", overlayPlatform,
 		"-t", "alpine:latest",
 		"-t", alpineARTag,

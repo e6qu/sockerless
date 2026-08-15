@@ -32,7 +32,12 @@ func NewARAuthProvider(ctxFunc func() context.Context, logger zerolog.Logger, en
 }
 
 // GetToken returns a Bearer token for the given registry using Application Default Credentials.
-func (a *ARAuthProvider) GetToken(registry string) (string, error) {
+//
+// The repository and actions are not part of the request: Google Artifact
+// Registry accepts the identity's own OAuth2 access token on every call, and
+// what it authorizes is decided by that identity's IAM roles rather than by a
+// scope named when the token is minted.
+func (a *ARAuthProvider) GetToken(registry, repository string, actions ...string) (string, error) {
 	creds, err := google.FindDefaultCredentials(a.ctx(), "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		return "", fmt.Errorf("find default credentials: %w", err)
@@ -90,7 +95,7 @@ func (a *ARAuthProvider) OnTag(imageID, registry, repo, newTag string) error {
 // Gracefully handles 404 (already deleted) and 405 (not supported by registry/simulator).
 // The auth token is obtained internally via GetToken.
 func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error {
-	authToken, err := a.GetToken(registry)
+	authToken, err := a.GetToken(registry, repo, core.ActionPull, core.ActionDelete)
 	if err != nil {
 		return fmt.Errorf("get token for remove: %w", err)
 	}
@@ -112,6 +117,7 @@ func (a *ARAuthProvider) OnRemove(registry, repo string, tags []string) error {
 			failures = append(failures, fmt.Sprintf("%s: build request: %v", tag, rerr))
 			continue
 		}
+		core.SetOCIHost(req, registry)
 		core.SetOCIAuth(req, authToken)
 
 		client := &http.Client{Timeout: 30 * time.Second}

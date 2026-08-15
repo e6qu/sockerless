@@ -14,13 +14,35 @@ import (
 	"github.com/sockerless/api"
 )
 
+// Access actions of the Docker Registry HTTP API v2 token-scope grammar,
+// which is what an AuthProvider is told the operation about to run needs.
+// Reading a manifest or a blob pulls, writing one pushes, removing one
+// deletes, and listing a repository's tags reads its metadata.
+const (
+	ActionPull         = "pull"
+	ActionPush         = "push"
+	ActionDelete       = "delete"
+	ActionMetadataRead = "metadata_read"
+	ActionAll          = "*"
+)
+
 // AuthProvider provides cloud-specific registry authentication and lifecycle operations.
 // Implemented per-cloud (AWS, GCP, Azure) in shared cloud modules.
 type AuthProvider interface {
-	// GetToken returns an auth token for the given registry.
+	// GetToken returns an auth token for the given registry, carrying the
+	// access the operation about to run needs on it.
+	//
+	// `repository` is the repository the operation addresses, empty when it
+	// addresses the registry itself (its catalog), and `actions` are the
+	// Docker Registry HTTP API v2 actions it performs there — "pull", "push",
+	// "delete", "metadata_read". A registry whose credential is registry-wide
+	// (AWS Elastic Container Registry's authorization token, Google Artifact
+	// Registry's OAuth2 access token) carries every action on every
+	// repository and needs neither; a registry that issues per-resource
+	// tokens (Azure Container Registry) mints one for exactly this access.
+	//
 	// The token includes the scheme prefix (e.g. "Basic <token>" or "Bearer <token>").
-	// Returns ("", nil) if no cloud auth is available (fall through to anonymous/Www-Authenticate).
-	GetToken(registry string) (string, error)
+	GetToken(registry, repository string, actions ...string) (string, error)
 
 	// IsCloudRegistry returns true if the registry belongs to this cloud provider.
 	IsCloudRegistry(registry string) bool
@@ -44,6 +66,17 @@ type AuthProvider interface {
 // the registry hostname in the image reference.
 type RegistryEndpointProvider interface {
 	RegistryEndpoint(registry string) string
+}
+
+// RegistryEndpointFor returns the network coordinate `auth` reaches `registry`
+// at, and "" when the registry's own host in the image reference is also the
+// destination.
+func RegistryEndpointFor(auth AuthProvider, registry string) string {
+	provider, ok := auth.(RegistryEndpointProvider)
+	if !ok {
+		return ""
+	}
+	return provider.RegistryEndpoint(registry)
 }
 
 // CloudBuildService builds Docker images on cloud infrastructure.
@@ -79,6 +112,11 @@ type CloudBuildService interface {
 type MultiArchManifestOptions struct {
 	Tag         string   // base tag, e.g. "us-central1-docker.pkg.dev/proj/repo/runner:cloudrun"
 	PerArchTags []string // per-arch tags already pushed, e.g. ["...:cloudrun-amd64", "...:cloudrun-arm64"]
+	// Endpoint is the network coordinate the registry is reached at, when an
+	// operator has relocated it away from the host the tags name. Each
+	// per-cloud CloudBuildService fills it in from its own registry
+	// coordinate; empty dials the tag's own host over HTTPS.
+	Endpoint string
 }
 
 // CloudBuildOptions configures a cloud build.
@@ -143,15 +181,20 @@ type ImageManager struct {
 func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 	cloudAuthToken := ""
 	if m.Auth != nil {
-		registry, _, _ := splitImageRefRegistry(ref)
+		registry, repo, _ := splitImageRefRegistry(ref)
 		if m.Auth.IsCloudRegistry(registry) {
-			if token, err := m.Auth.GetToken(registry); err == nil {
-				cloudAuthToken = token
-				if auth == "" {
-					auth = token
-				}
-			} else {
-				m.Logger.Warn().Err(err).Str("registry", registry).Msg("cloud auth failed for pull, proceeding without")
+			// A cloud registry of ours is reached with our own credential, and
+			// an operation that cannot mint one fails: retrying it
+			// unauthenticated reaches a registry that refuses anonymous reads
+			// and reports a missing image instead of the credential problem
+			// that is actually in the way.
+			token, err := m.Auth.GetToken(registry, repo, ActionPull)
+			if err != nil {
+				return nil, fmt.Errorf("cloud registry auth for %s: %w", registry, err)
+			}
+			cloudAuthToken = token
+			if auth == "" {
+				auth = token
 			}
 		}
 	}
@@ -167,12 +210,7 @@ func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 	// breaks Docker Hub's token endpoint. Registry failures propagate
 	// as errors so the pull fails cleanly rather than producing a
 	// synthetic image record.
-	registryEndpoint := ""
-	if endpointProvider, ok := m.Auth.(RegistryEndpointProvider); ok {
-		registry, _, _ := splitImageRefRegistry(ref)
-		registryEndpoint = endpointProvider.RegistryEndpoint(registry)
-	}
-	meta, err := FetchImageMetadataWithEndpoint(ref, registryEndpoint, ecrBasicCredential(cloudAuthToken))
+	meta, err := FetchImageMetadataWithEndpoint(ref, m.registryEndpoint(ref), ecrBasicCredential(cloudAuthToken))
 	if err != nil {
 		return nil, err
 	}
@@ -259,14 +297,44 @@ func (m *ImageManager) Push(name string, tag string, auth string) (io.ReadCloser
 			// `X-Registry-Auth` JSON that is either absent, stale, or
 			// encoded as a Docker-style username/password wrapper that
 			// OCIPush.SetOCIAuth can't interpret as a Basic token.
-			// Fetching a fresh token here is authoritative.
-			if token, err := m.Auth.GetToken(registry); err == nil {
-				auth = token
+			// Fetching a fresh token here is authoritative, and a push that
+			// cannot mint one fails rather than being uploaded with a
+			// credential the registry rejects.
+			token, err := m.Auth.GetToken(registry, repo, ActionPull, ActionPush)
+			if err != nil {
+				return nil, fmt.Errorf("cloud registry auth for %s: %w", registry, err)
 			}
+			auth = token
 		}
 	}
 
-	return m.Base.ImagePush(name, tag, auth)
+	return m.Base.ImagePushToEndpoint(name, tag, auth, m.registryEndpoint(name))
+}
+
+// fetchCloudImageMetadata reads an image's real metadata back out of the
+// registry it lives in, with the same credential and the same coordinate every
+// other read of that registry uses. A cloud registry of ours refuses an
+// anonymous read, so a read without our credential reports a missing image
+// rather than the credential problem behind it.
+func (m *ImageManager) fetchCloudImageMetadata(ref string) (*ImageMetadataResult, error) {
+	registry, repo, _ := splitImageRefRegistry(ref)
+	token := ""
+	if m.Auth != nil && m.Auth.IsCloudRegistry(registry) {
+		cloudToken, err := m.Auth.GetToken(registry, repo, ActionPull)
+		if err != nil {
+			return nil, fmt.Errorf("cloud registry auth for %s: %w", registry, err)
+		}
+		token = cloudToken
+	}
+	return FetchImageMetadataWithEndpoint(ref, m.registryEndpoint(ref), ecrBasicCredential(token))
+}
+
+// registryEndpoint returns the network coordinate the registry of `ref` is
+// reached at when the auth provider relocates it away from the host in the
+// reference, and "" when the reference's own host is the destination.
+func (m *ImageManager) registryEndpoint(ref string) string {
+	registry, _, _ := splitImageRefRegistry(ref)
+	return RegistryEndpointFor(m.Auth, registry)
 }
 
 // Tag tags an image and syncs the new tag to the cloud registry.
@@ -408,7 +476,7 @@ func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (i
 		// logged loudly: a silently-skipped populate surfaces later as a
 		// confusing missing-local-metadata on `docker run <tag>`.
 		if result.ImageRef != "" {
-			meta, fetchErr := FetchImageMetadata(result.ImageRef)
+			meta, fetchErr := m.fetchCloudImageMetadata(result.ImageRef)
 			switch {
 			case fetchErr != nil:
 				m.Logger.Warn().Err(fetchErr).Str("ref", result.ImageRef).

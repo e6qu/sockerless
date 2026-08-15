@@ -91,6 +91,7 @@ func TestOCIListImages_HappyPath(t *testing.T) {
 
 	got, err := OCIListImages(context.Background(), OCIListOptions{
 		Registry: f.host(),
+		TokenFor: noRegistryToken,
 	})
 	if err != nil {
 		t.Fatalf("list: %v", err)
@@ -127,7 +128,7 @@ func TestOCIListImages_EmptyRegistry(t *testing.T) {
 	ociListClient = f.server.Client()
 	defer func() { ociListClient = old }()
 
-	got, err := OCIListImages(context.Background(), OCIListOptions{Registry: f.host()})
+	got, err := OCIListImages(context.Background(), OCIListOptions{Registry: f.host(), TokenFor: noRegistryToken})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,8 +150,8 @@ func TestOCIListImages_BearerTokenPropagated(t *testing.T) {
 
 	// Wrong token → 401 → catalog fails → OCIListImages returns error.
 	_, err := OCIListImages(context.Background(), OCIListOptions{
-		Registry:  f.host(),
-		AuthToken: "Bearer wrong-token",
+		Registry: f.host(),
+		TokenFor: constRegistryToken("Bearer wrong-token"),
 	})
 	if err == nil {
 		t.Fatal("expected error with wrong token")
@@ -158,8 +159,8 @@ func TestOCIListImages_BearerTokenPropagated(t *testing.T) {
 
 	// Correct token → 200 → success.
 	got, err := OCIListImages(context.Background(), OCIListOptions{
-		Registry:  f.host(),
-		AuthToken: token,
+		Registry: f.host(),
+		TokenFor: constRegistryToken(token),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error with correct token: %v", err)
@@ -169,10 +170,10 @@ func TestOCIListImages_BearerTokenPropagated(t *testing.T) {
 	}
 }
 
-// TestOCIListImages_PerRepoFailureSwallowed — when one repo's
-// tags/list returns 404, OCIListImages skips it and still emits
-// summaries for the other repos.
-func TestOCIListImages_PerRepoFailureSwallowed(t *testing.T) {
+// TestOCIListImages_PerRepoFailureSurfaces — when one repo's tags/list fails,
+// the listing reports the failure instead of returning the repositories it
+// could read as if they were the registry's whole contents.
+func TestOCIListImages_PerRepoFailureSurfaces(t *testing.T) {
 	// Build a custom mux where /v2/broken/tags/list returns 500.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/_catalog", func(w http.ResponseWriter, r *http.Request) {
@@ -190,13 +191,33 @@ func TestOCIListImages_PerRepoFailureSwallowed(t *testing.T) {
 	ociListClient = server.Client()
 	defer func() { ociListClient = old }()
 
-	got, err := OCIListImages(context.Background(), OCIListOptions{
+	_, err := OCIListImages(context.Background(), OCIListOptions{
 		Registry: strings.TrimPrefix(server.URL, "https://"),
+		TokenFor: noRegistryToken,
 	})
-	if err != nil {
-		t.Fatalf("expected catalog success + per-repo failure swallowed: %v", err)
+	if err == nil {
+		t.Fatal("expected the failing repository's tag listing to surface as an error")
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 summary from the healthy repo, got %d", len(got))
+	if !strings.Contains(err.Error(), "broken") {
+		t.Fatalf("error should name the repository that failed, got %v", err)
 	}
+}
+
+// TestOCIListImages_RequiresTokenProvider — a listing with no way to
+// authenticate is a programming error, not an anonymous read.
+func TestOCIListImages_RequiresTokenProvider(t *testing.T) {
+	_, err := OCIListImages(context.Background(), OCIListOptions{Registry: "example.azurecr.io"})
+	if err == nil || !strings.Contains(err.Error(), "TokenFor") {
+		t.Fatalf("expected a TokenFor requirement error, got %v", err)
+	}
+}
+
+// noRegistryToken is the anonymous credential: registries that need none are
+// read without one.
+func noRegistryToken(string) (string, error) { return "", nil }
+
+// constRegistryToken presents the same credential for every repository, which
+// is what a registry-wide credential does.
+func constRegistryToken(token string) func(string) (string, error) {
+	return func(string) (string, error) { return token, nil }
 }
