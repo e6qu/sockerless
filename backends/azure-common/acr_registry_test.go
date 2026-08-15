@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -432,10 +433,20 @@ func setEnvForRun(cleanups *[]func(), key, value string) {
 }
 
 func findRepoRoot() string {
+	// The path must be absolute. It is handed to `go build` as the `-o`
+	// destination while the build itself runs in the tests module directory, so
+	// a relative path would resolve against that directory instead of this
+	// test's working directory and write the binary outside the repository —
+	// where the simulator is then started from, and is not.
 	for _, candidate := range []string{"../..", "../../..", "."} {
-		if _, err := os.Stat(candidate + "/go.work"); err == nil {
-			return candidate
+		if _, err := os.Stat(candidate + "/go.work"); err != nil {
+			continue
 		}
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			log.Fatalf("resolve the repository root %q: %v", candidate, err)
+		}
+		return absolute
 	}
 	log.Fatal("could not locate the repository root (no go.work above the module)")
 	return ""
