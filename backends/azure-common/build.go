@@ -140,9 +140,30 @@ func (s *ACRBuildService) ensureBlobClient(ctx context.Context) error {
 		return fmt.Errorf("storage account %s advertises no blob endpoint", s.storageAccount)
 	}
 	blobEndpoint := *props.Properties.PrimaryEndpoints.Blob
-	// No-credential client: the custom/simulator endpoint does not enforce
-	// storage bearer auth, and azblob rejects bearer tokens over plain HTTP.
-	blobClient, err := azblob.NewClientWithNoCredential(blobEndpoint, nil)
+	// Shared-key client: the account key is the credential an administrator
+	// reads through ARM, and shared-key signing works over plain HTTP —
+	// azblob rejects bearer tokens there — so the same client reaches a
+	// sovereign, custom, or simulated endpoint that enforces storage
+	// authorization on every data-plane request.
+	keys, err := acctClient.ListKeys(ctx, s.resourceGroup, s.storageAccount, nil)
+	if err != nil {
+		return fmt.Errorf("list keys for storage account %s: %w", s.storageAccount, err)
+	}
+	var accountKey string
+	for _, key := range keys.Keys {
+		if key != nil && key.Value != nil && *key.Value != "" {
+			accountKey = *key.Value
+			break
+		}
+	}
+	if accountKey == "" {
+		return fmt.Errorf("storage account %s advertises no usable key", s.storageAccount)
+	}
+	sharedKey, err := azblob.NewSharedKeyCredential(s.storageAccount, accountKey)
+	if err != nil {
+		return fmt.Errorf("build shared-key credential for %s: %w", s.storageAccount, err)
+	}
+	blobClient, err := azblob.NewClientWithSharedKeyCredential(blobEndpoint, sharedKey, nil)
 	if err != nil {
 		return fmt.Errorf("create blob client for %s: %w", blobEndpoint, err)
 	}
