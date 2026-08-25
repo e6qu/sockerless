@@ -53,9 +53,21 @@ func TestMain(m *testing.M) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 
+	// The Route 53 DNS listener gets its own free port: the default :5353 is
+	// mDNS, which desktop browsers hold open, and a simulator that cannot
+	// bind it refuses to start.
+	dnsConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		log.Fatalf("Failed to find free DNS port: %v", err)
+	}
+	dnsPort := dnsConn.LocalAddr().(*net.UDPAddr).Port
+	dnsConn.Close()
+
 	// Start the simulator
 	simCmd = exec.Command(binaryPath)
-	simCmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port))
+	simCmd.Env = append(os.Environ(),
+		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port),
+		fmt.Sprintf("SIM_DNS_PORT=%d", dnsPort))
 	simCmd.Stdout = os.Stderr
 	simCmd.Stderr = os.Stderr
 	if err := simCmd.Start(); err != nil {
