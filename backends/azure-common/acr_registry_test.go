@@ -119,7 +119,7 @@ func runWithAzureSimulator(m *testing.M) (int, func()) {
 		// advertises `<name>.azurecr.io`; this is the same coordinate,
 		// configured on the simulator so it advertises the host its clients
 		// name — and reach through SOCKERLESS_AZURE_ACR_ENDPOINT.
-		`SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON={"acr":"https://{name}.azurecr.io/"}`,
+		fmt.Sprintf(`SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON={"acr":"https://{name}.azurecr.io/","storage":{"blob":"http://{account}.blob.shim.localhost:%d/"}}`, port),
 	)
 	sim.Stdout = os.Stderr
 	sim.Stderr = os.Stderr

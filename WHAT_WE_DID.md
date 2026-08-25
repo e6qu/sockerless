@@ -4,6 +4,26 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## Azure build-context blob client authenticates with the account's shared key
+
+The Azure Container Registry build service reached the build-context blob
+container with `azblob.NewClientWithNoCredential`, on a comment claiming the
+simulator "does not enforce storage bearer auth" — no longer true, so the
+client would be refused at the next simulator pin bump, and it was never
+right against a sovereign cloud either. The client now reads the storage
+account's key through the Azure Resource Manager (`ListKeys`, the way an
+administrator reads it) and signs with `NewSharedKeyCredential`, which works
+over plain HTTP where azblob rejects bearer tokens — the same code against
+the simulator and the real cloud, differing only in coordinates.
+
+Proven end to end by a new test in backends/azure-common that provisions a
+storage account through ARM against the pinned simulator, resolves the
+advertised blob endpoint, and round-trips a blob through the signed client.
+The blob host is a per-account name under .shim.localhost that a
+deployment's DNS resolves (dnsmasq in the Linux harness, systemd-resolved on
+CI); macOS cannot map it without root, the documented host-capability skip —
+Linux never skips.
+
 ## Gave Azure Container Registry the credential it actually accepts
 
 An Azure Container Registry does not accept a Microsoft Entra token on its
