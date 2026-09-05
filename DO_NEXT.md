@@ -46,6 +46,9 @@ defaults across the harness Dockerfiles, the `context:` tag in
 
 Remaining local items:
 
+- BUG-2955: the Terraform integration harness provisions no credential the
+  simulators accept; mint one through each simulator's IAM API the way the
+  backend harnesses do, then give it a CI job.
 - BUG-2922 (Docker Engine advisories → moby/moby client migration) is the
   largest open local item, scoped to the Docker passthrough backend.
 - BUG-2925 (the UI CI stall) stays open until its cause is proven.

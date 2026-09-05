@@ -69,9 +69,17 @@ The same run surfaced two smaller defects. The Azure backends had listed
 repository tags for `docker images` with `metadata_read`, an action of Azure
 Container Registry's own `/acr/v1/` surface; a `GET /v2/<repo>/tags/list` is a
 read of the repository the registry challenges for as `pull`, and both
-backends and the round trip now ask for that. And the Terraform integration
-harness image had been built without `--load`, so on a buildx driver the
-`docker run` that followed reached for Docker Hub instead.
+backends and the round trip now ask for that. And the `make tf-int-test-*` targets
+could not run at all — the image was built without `--load`, the entrypoint
+was handed a flag it does not take, and no Docker socket was mounted. With
+the registry coordinate alone deciding where registry HTTP is dialed, the CI
+smoke container also had to change shape: its simulator serves the registry
+at its own loopback address, and the host daemon that runs the workloads
+must share that loopback to pull from it, so the smoke and Terraform harness
+containers run with `--network host`, the topology the Linux integration
+harness already has. The Terraform harness then reaches Terragrunt apply and
+fails there: it provisions no credential the simulators verify, which no CI
+job had noticed (BUG-2955).
 
 ## One implementation per Docker behaviour across the six cloud backends
 
