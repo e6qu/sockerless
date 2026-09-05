@@ -31,6 +31,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	core "github.com/sockerless/backend-core"
 	"github.com/sockerless/gcp-common/registrytest"
 	"golang.org/x/oauth2/google"
 )
@@ -247,8 +248,12 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		// sim mirrors that. Harness wires both URLs explicitly to the
 		// backend via SOCKERLESS_ENDPOINT_URL +
 		// SOCKERLESS_GCP_LOGADMIN_ENDPOINT (no derivation).
-		simPort := findFreePort()
-		simGRPCPort := findFreePort()
+		// Both ports come from one reservation, so the gRPC listener
+		// cannot be handed the port just chosen for the REST API.
+		ports := core.NewPortReservation()
+		simPort := ports.TCP()
+		simGRPCPort := ports.TCP()
+		ports.Release()
 		simAddr := fmt.Sprintf(":%d", simPort)
 		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
 		step("starting simulator-gcp")

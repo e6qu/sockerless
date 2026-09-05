@@ -26,6 +26,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 - The unit suites of `backends/core` (including the private-registry credential test), `gcp-common` (coordinate, auth provider, resolver, probe), `cloudrun`, `cloudrun-functions`, `ecs`, `lambda`, `aca`, and `azure-functions` passed; the integration-tagged files of both Google backends compile.
 - The simulator-backed Amazon ECS, AWS Lambda, and Azure Functions integration suites passed on this macOS/Podman host against the pinned v0.9.2 simulators, and earlier against v0.30.3 (the ECS suite on its second run there; the first lost the simulator's VPC network mid-run, BUG-2950). The Cloud Run, Cloud Run Functions, and Azure Container Apps harnesses are Linux-CI-only on this host and run in the PR's CI.
 - `backends/azure-common` passed against the pinned simulator, including the Azure Container Registry round trip with the `pull`-scoped tag listing.
+- The `tests` module's e2e suite passed locally with every port of a harness reserved together (BUG-2956).
 - Both Google Terraform modules validate (`terraform validate`) with the added repositories. `make tf-int-test-cloudrun` and `make tf-int-test-gcf` now start the simulator and reach Terragrunt apply (BUG-2954), where the harness's missing credential fails them (BUG-2955); the modules' apply against the simulator is therefore not yet proven by that harness.
 
 ## Invariants

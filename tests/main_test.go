@@ -83,9 +83,14 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 	backendBin := backendDir + "/sockerless-backend-ecs"
 
-	// Find free ports
-	simPort := findFreePort()
-	backendPort := findFreePort()
+	// Every port comes from one reservation, held until all are chosen, so
+	// the simulator's DNS listener cannot be handed the port just chosen for
+	// the backend.
+	ports := newPortReservation()
+	simPort := ports.tcp()
+	backendPort := ports.tcp()
+	simDNSPort := ports.tcpAndUDP()
+	ports.release()
 
 	// Start AWS simulator. The Route 53 endpoint serves one coordinate over
 	// both TCP and UDP; its default 5353 collides with mDNS listeners on
@@ -95,7 +100,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	simCmd := exec.Command(simBin)
 	simCmd.Env = append(os.Environ(),
 		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort),
-		fmt.Sprintf("SIM_DNS_PORT=%d", findFreeTCPUDPPort()))
+		fmt.Sprintf("SIM_DNS_PORT=%d", simDNSPort))
 	simCmd.Stdout = os.Stderr
 	simCmd.Stderr = os.Stderr
 	if err := simCmd.Start(); err != nil {
@@ -247,19 +252,36 @@ func findModuleDir(rel string) string {
 }
 
 func findFreePort() int {
+	ports := newPortReservation()
+	defer ports.release()
+	return ports.tcp()
+}
+
+// portReservation hands the harness a set of distinct ports the operating
+// system reports free. Every listener stays open until release, so no two
+// of the harness's own choices coincide: a port probed and released early is
+// exactly what the next probe is handed back. The same helper serves the
+// backend harnesses as core.PortReservation; this module does not depend on
+// backend-core.
+type portReservation struct {
+	held []io.Closer
+}
+
+func newPortReservation() *portReservation { return &portReservation{} }
+
+func (r *portReservation) tcp() int {
 	l, err := net.Listen("tcp", ":0")
 	if err != nil {
 		panic(err)
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
-	return port
+	r.held = append(r.held, l)
+	return l.Addr().(*net.TCPAddr).Port
 }
 
-// findFreeTCPUDPPort reserves a coordinate that is free on both TCP and UDP,
-// for listeners (the AWS simulator's Route 53 DNS endpoint) that serve the
-// same port over both protocols.
-func findFreeTCPUDPPort() int {
+// tcpAndUDP reserves a port free on both TCP and UDP, for a listener (the
+// AWS simulator's Route 53 DNS endpoint) that serves one coordinate over
+// both protocols.
+func (r *portReservation) tcpAndUDP() int {
 	for range 100 {
 		l, err := net.Listen("tcp", ":0")
 		if err != nil {
@@ -267,14 +289,21 @@ func findFreeTCPUDPPort() int {
 		}
 		port := l.Addr().(*net.TCPAddr).Port
 		u, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
-		l.Close()
 		if err != nil {
+			_ = l.Close()
 			continue
 		}
-		u.Close()
+		r.held = append(r.held, l, u)
 		return port
 	}
 	panic("no port free on both TCP and UDP after 100 attempts")
+}
+
+func (r *portReservation) release() {
+	for _, c := range r.held {
+		_ = c.Close()
+	}
+	r.held = nil
 }
 
 func waitForReady(url string, timeout time.Duration) error {

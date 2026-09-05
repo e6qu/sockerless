@@ -79,7 +79,11 @@ must share that loopback to pull from it, so the smoke and Terraform harness
 containers run with `--network host`, the topology the Linux integration
 harness already has. The Terraform harness then reaches Terragrunt apply and
 fails there: it provisions no credential the simulators verify, which no CI
-job had noticed (BUG-2955).
+job had noticed (BUG-2955). And an e2e run lost a port race the harnesses
+had always been able to lose — each port probed and released before the
+next, so the simulator's DNS listener was handed the port just chosen for
+the backend; `core.PortReservation` now holds every port of a harness until
+the whole set is chosen.
 
 ## One implementation per Docker behaviour across the six cloud backends
 
