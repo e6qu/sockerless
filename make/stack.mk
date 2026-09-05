@@ -132,11 +132,13 @@ stack-up:
 	elif [ "$(STACK_BE)" = "cloudrun" ]; then \
 	  { \
 	    printf 'SOCKERLESS_GCR_PROJECT=sim-project\n'; \
+	    printf 'SOCKERLESS_GCP_AR_ENDPOINT=http://localhost:$(STACK_SIM_PORT_gcp)\n'; \
 	    printf 'SOCKERLESS_GCP_LOGADMIN_ENDPOINT=localhost:$(STACK_SIM_GRPC_PORT_gcp)\n'; \
 	  } > $(STACK_PID_DIR)/backend.env; \
 	elif [ "$(STACK_BE)" = "gcf" ]; then \
 	  { \
 	    printf 'SOCKERLESS_GCF_PROJECT=sim-project\n'; \
+	    printf 'SOCKERLESS_GCP_AR_ENDPOINT=http://localhost:$(STACK_SIM_PORT_gcp)\n'; \
 	  } > $(STACK_PID_DIR)/backend.env; \
 	elif [ "$(STACK_BE)" = "lambda" ]; then \
 	  { \

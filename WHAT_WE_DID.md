@@ -8,11 +8,16 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 
 sockerless-cloud v0.30.3 made Google Artifact Registry's data plane refuse
 what the real one refuses: an anonymous `/v2/` request, a credential it did
-not issue, and a push into a repository nobody created. Pinning that release
-here (every pin together, and the `ui-auth` support module with them —
-its deleted `v0.1.0` bootstrap tag outranks every pseudo-version, so a stale
-pin had been building the new simulators against the old package) turned
-three filed defects into failures, and this branch closed them.
+not issue, and a push into a repository nobody created. Building against that
+release (pinning `ui-auth` at the release commit too — its deleted `v0.1.0`
+bootstrap tag outranks every pseudo-version, so a stale pin had been
+building the new simulators against the old package) turned three filed
+defects into failures, and this branch closed them. The pin itself stays at
+v0.9.2: the CI run against v0.30.3 proved the provisioning — repositories
+created, the login accepted, the harness's pushes and the Cloud Build push of
+the overlay all succeeded — and then showed that release's own Cloud Run and
+Cloud Functions hosts pulling the workload image with no credential from the
+registry they now enforce (BUG-2951), which no harness can supply for them.
 
 The Artifact Registry coordinate had been two settings that agreed by
 accident: the auth provider took the Google Cloud API endpoint, while the
@@ -53,10 +58,20 @@ the harness's own that the simulator process inherits, because its Cloud
 Build executor and its Cloud Run host push and pull with the simulator's
 Docker CLI the way a Cloud Build worker and the Cloud Run service agent carry
 the project's registry credential. The backend's coordinate carries its
-scheme. The Terraform modules for both Google backends gained the
-`sockerless-overlay` repository the overlay path pushes to and the
-`gitlab-registry` remote repository the resolver names; neither existed for a
-live deployment before.
+scheme, and the smoke, GitLab, e2e, and `make stack-*` simulator stacks export
+it — the one registry coordinate now decides where registry HTTP is dialed,
+where before the API endpoint had quietly doubled as it. The Terraform
+modules for both Google backends gained the `sockerless-overlay` repository
+the overlay path pushes to and the `gitlab-registry` remote repository the
+resolver names; neither existed for a live deployment before.
+
+The same run surfaced two smaller defects. The Azure backends had listed
+repository tags for `docker images` with `metadata_read`, an action of Azure
+Container Registry's own `/acr/v1/` surface; a `GET /v2/<repo>/tags/list` is a
+read of the repository the registry challenges for as `pull`, and both
+backends and the round trip now ask for that. And the Terraform integration
+harness image had been built without `--load`, so on a buildx driver the
+`docker run` that followed reached for Docker Hub instead.
 
 ## One implementation per Docker behaviour across the six cloud backends
 

@@ -21,14 +21,15 @@ Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker C
 
 ## Active Branch Priorities
 
-1. Pinned the simulators at sockerless-cloud v0.30.3, whose Google Artifact Registry data plane authenticates every `/v2/` request and requires the repository to exist, with every pin moved together (`tests/go.mod` including the `ui-auth` support module, the harness Dockerfiles, the compose build context, the Lambda live-test checkout).
+1. Closed the registry defects that sockerless-cloud v0.30.3 — whose Google Artifact Registry data plane authenticates every `/v2/` request and requires the repository to exist — made real, proven against that release in CI; the pin stays at v0.9.2 until sockerless-cloud's Cloud Run and Cloud Functions hosts pull with a credential (BUG-2951).
 2. Made the Artifact Registry endpoint one coordinate on both Google backends: read once into `Config.ARRegistryEndpoint`, naming the host image references carry and the URL registry HTTP is dialed at for the auth provider, the tag probe, the multi-arch index, and the image resolver; the tag probe reports credential and transport failures instead of rebuilding.
 3. Made the shared image pull and push present the Docker client's credential: `X-Registry-Auth` decoded into the registry's `Authorization` value, an identity token refused rather than dropped, a `Basic` challenge answered directly.
-4. Made the Cloud Run and Cloud Run Functions harnesses provision Artifact Registry the way Terraform and the operator do — repositories through the API, `docker login -u oauth2accesstoken` with a token minted from the service-account key, in a Docker configuration the simulator's own Cloud Build and Cloud Run host inherit — and gave the Google Terraform modules the `sockerless-overlay` and `gitlab-registry` repositories the backends name.
+4. Made the Cloud Run and Cloud Run Functions harnesses provision Artifact Registry the way Terraform and the operator do — repositories through the API, `docker login -u oauth2accesstoken` with a token minted from the service-account key, in a Docker configuration the simulator's own Cloud Build and Cloud Run host inherit — pointed every simulator stack at the simulator's registry through the coordinate, and gave the Google Terraform modules the `sockerless-overlay` and `gitlab-registry` repositories the backends name.
+5. Requested the `pull` action for the Docker Registry HTTP API v2 tag listing on both Azure backends, and loaded the Terraform integration harness image into the daemon.
 
 ## Next
 
-- Watch the first CI run of the registry branch; the Cloud Run and Cloud Run Functions harnesses run there against the enforcing Artifact Registry for the first time.
+- In sockerless-cloud, once its open pull request lands: the Cloud Run and Cloud Functions hosts pull with the service agent's credential (BUG-2951), the Azure Container Apps file-share mount (BUG-2952), the cross-run VPC-network reclaim (BUG-2950), the Azure `/v2/_catalog` (BUG-2945); then bump the pin here.
 - BUG-2945 once the Azure simulator serves the repository catalog: read `docker images` through `core.OCIListImages` in the Azure Container Registry round trip.
 - BUG-2922: migrate the Docker passthrough backend from `github.com/docker/docker` to the `github.com/moby/moby` client and API modules.
 - BUG-1075: live-cloud validation beyond AWS Lambda.

@@ -93,11 +93,15 @@ get_backend_env() {
         cloudrun)
             sim_port=4567
             export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:${sim_port}"
+            # The simulator serves Artifact Registry's /v2/ at its own
+            # address; the registry coordinate names it, scheme included.
+            export SOCKERLESS_GCP_AR_ENDPOINT="http://127.0.0.1:${sim_port}"
             export SOCKERLESS_GCR_PROJECT="sim-project"
             ;;
         gcf)
             sim_port=4567
             export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:${sim_port}"
+            export SOCKERLESS_GCP_AR_ENDPOINT="http://127.0.0.1:${sim_port}"
             export SOCKERLESS_GCF_PROJECT="sim-project"
             export SOCKERLESS_GCF_SERVICE_ACCOUNT="sim@sim.iam.gserviceaccount.com"
             ;;

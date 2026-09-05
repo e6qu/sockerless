@@ -276,8 +276,8 @@ The pre-canned stack targets write `.stack-pids/backend.env` only when the selec
 |---|---|
 | ACA | `SOCKERLESS_ACA_SUBSCRIPTION_ID`, `SOCKERLESS_ACA_RESOURCE_GROUP`, `SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE`, `SOCKERLESS_CALLBACK_URL` |
 | Azure Functions | `SOCKERLESS_AZF_SUBSCRIPTION_ID`, `SOCKERLESS_AZF_RESOURCE_GROUP`, `SOCKERLESS_AZF_STORAGE_ACCOUNT`, `SOCKERLESS_CALLBACK_URL` |
-| Cloud Run | `SOCKERLESS_GCR_PROJECT`, `SOCKERLESS_GCP_LOGADMIN_ENDPOINT` |
-| Cloud Run Functions | `SOCKERLESS_GCF_PROJECT` |
+| Cloud Run | `SOCKERLESS_GCR_PROJECT`, `SOCKERLESS_GCP_AR_ENDPOINT` (the simulator's own address — it serves Artifact Registry's `/v2/`), `SOCKERLESS_GCP_LOGADMIN_ENDPOINT` |
+| Cloud Run Functions | `SOCKERLESS_GCF_PROJECT`, `SOCKERLESS_GCP_AR_ENDPOINT` |
 | Lambda | `SOCKERLESS_LAMBDA_ROLE_ARN`, `SOCKERLESS_CALLBACK_URL` |
 
 These are the same backend env vars an operator would pass by hand. No admin-specific env contract is introduced.

@@ -90,7 +90,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: e6qu/sockerless-cloud
-          ref: v0.30.3
+          ref: v0.9.2
           path: .test-deps/sockerless-cloud
       - name: Differential against real AWS Lambda and AWS Step Functions
         run: |

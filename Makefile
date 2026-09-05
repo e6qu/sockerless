@@ -250,7 +250,7 @@ faas-smoke-test-all:      faas-smoke-test-aws faas-smoke-test-gcp faas-smoke-tes
 TF_INT_IMAGE := sockerless-tf-int
 
 tf-int-build:
-	docker build -t $(TF_INT_IMAGE) -f tests/terraform-integration/Dockerfile .
+	docker build --load -t $(TF_INT_IMAGE) -f tests/terraform-integration/Dockerfile .
 
 tf-int-test-ecs: tf-int-build       ; docker run --rm $(TF_INT_IMAGE) --backend ecs
 tf-int-test-lambda: tf-int-build    ; docker run --rm $(TF_INT_IMAGE) --backend lambda
