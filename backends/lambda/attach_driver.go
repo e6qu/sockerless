@@ -55,13 +55,13 @@ func (d *lambdaStdinAttachDriver) Attach(dctx core.DriverContext, tty bool, conn
 	// LambdaState (CloudState's synthesised Container.Config doesn't
 	// carry stdin flags). Get-or-create a pipe so per-cycle restarts
 	// each get a fresh buffer.
-	var pipe *stdinPipe
+	var pipe *core.StdinPipe
 	lambdaState, _ := d.s.Lambda.Get(id)
 	if lambdaState.OpenStdin {
-		p := newStdinPipe()
+		p := core.NewStdinPipe()
 		actual, _ := d.s.stdinPipes.LoadOrStore(id, p)
 		var ok bool
-		pipe, ok = actual.(*stdinPipe)
+		pipe, ok = actual.(*core.StdinPipe)
 		if !ok {
 			return fmt.Errorf("lambda attach: stdin pipe for %s has unexpected type %T", id, actual)
 		}
@@ -77,7 +77,7 @@ func (d *lambdaStdinAttachDriver) Attach(dctx core.DriverContext, tty bool, conn
 	// Pump caller → stdin pipe (or discard if no pipe).
 	go func() {
 		if pipe != nil {
-			_, _ = io.Copy(stdinPipeWriter{p: pipe}, conn)
+			_, _ = io.Copy(pipe, conn)
 			_ = pipe.Close()
 		} else {
 			_, _ = io.Copy(io.Discard, conn)
@@ -101,7 +101,3 @@ func (d *lambdaStdinAttachDriver) Attach(dctx core.DriverContext, tty bool, conn
 	}
 	return err
 }
-
-type stdinPipeWriter struct{ p *stdinPipe }
-
-func (w stdinPipeWriter) Write(b []byte) (int, error) { return w.p.Write(b) }

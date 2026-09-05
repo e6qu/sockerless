@@ -53,13 +53,13 @@ func (d *ecsStdinAttachDriver) Attach(dctx core.DriverContext, tty bool, conn io
 	// stream → close stdin → wait → stop) each get a fresh buffer:
 	// launchAfterStdin removes the pipe after consuming it, so the
 	// subsequent attach lands on a freshly-created one.
-	var pipe *stdinPipe
+	var pipe *core.StdinPipe
 	ecsState, _ := d.s.ECS.Get(id)
 	if ecsState.OpenStdin {
-		p := newStdinPipe()
+		p := core.NewStdinPipe()
 		actual, _ := d.s.stdinPipes.LoadOrStore(id, p)
 		var ok bool
-		pipe, ok = actual.(*stdinPipe)
+		pipe, ok = actual.(*core.StdinPipe)
 		if !ok {
 			return fmt.Errorf("ecs attach: stdin pipe for %s has unexpected type %T", id, actual)
 		}
@@ -121,7 +121,7 @@ barrierDone:
 	// Pump caller → stdin pipe (or discard if no pipe).
 	go func() {
 		if pipe != nil {
-			_, _ = io.Copy(stdinPipeWriter{p: pipe}, conn)
+			_, _ = io.Copy(pipe, conn)
 			_ = pipe.Close()
 		} else {
 			_, _ = io.Copy(io.Discard, conn)
@@ -145,7 +145,3 @@ barrierDone:
 	}
 	return err
 }
-
-type stdinPipeWriter struct{ p *stdinPipe }
-
-func (w stdinPipeWriter) Write(b []byte) (int, error) { return w.p.Write(b) }

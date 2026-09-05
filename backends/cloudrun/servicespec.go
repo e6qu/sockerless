@@ -54,7 +54,7 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 			if _, done := volSeen[mp.Name]; done {
 				continue
 			}
-			vol, persist, err := s.buildVolumeForBind(ctx, mp.Name, mp.MountPath)
+			vol, persist, err := s.volumes.VolumeForBind(ctx, mp.Name, mp.MountPath)
 			if err != nil {
 				return nil, err
 			}
@@ -65,12 +65,12 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 			volSeen[mp.Name] = struct{}{}
 		}
 	}
-	injectPersistEnv(specs, persistEntries)
+	gcpcommon.InjectPersistEnv(specs, persistEntries)
 
 	// Network ID this revision's containers share (empty for non-network
 	// pods). Read from the main container's standard Docker network membership.
 	netID := ""
-	if id, ok := s.userDefinedNetworkID(*containers[0].Container); ok {
+	if id, ok := s.UserDefinedNetworkID(*containers[0].Container); ok {
 		netID = id
 	}
 
@@ -84,7 +84,7 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 		for _, ci := range containers {
 			members = append(members, *ci.Container)
 		}
-		aliases := hostAliasesForMembers(members, netID)
+		aliases := core.HostAliasesForMembers(members, netID)
 		if len(aliases) > 0 {
 			specs[0].Env = append(specs[0].Env, &runpb.EnvVar{
 				Name:   "SOCKERLESS_HOST_ALIASES",

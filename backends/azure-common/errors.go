@@ -1,36 +1,16 @@
 package azurecommon
 
-import (
-	"fmt"
-	"strings"
+import core "github.com/sockerless/backend-core"
 
-	"github.com/sockerless/api"
-)
-
-// MapAzureError converts common Azure SDK errors to api error types.
-func MapAzureError(err error, resource, id string) error {
-	if err == nil {
-		return nil
-	}
-	msg := err.Error()
-
-	switch {
-	case containsAny(msg, "not found", "NotFound", "ResourceNotFound"):
-		return &api.NotFoundError{Resource: resource, ID: id}
-	case containsAny(msg, "already exists", "Conflict"):
-		return &api.ConflictError{Message: fmt.Sprintf("%s %s already exists", resource, id)}
-	case containsAny(msg, "InvalidParameter", "BadRequest"):
-		return &api.InvalidParameterError{Message: msg}
-	default:
-		return fmt.Errorf("%s %s: %w", resource, id, err)
-	}
+// azureErrorPatterns are the Azure Resource Manager error codes and
+// phrases for each Docker error class.
+var azureErrorPatterns = core.CloudErrorPatterns{
+	NotFound: []string{"not found", "NotFound", "ResourceNotFound"},
+	Conflict: []string{"already exists", "Conflict"},
+	Invalid:  []string{"InvalidParameter", "BadRequest"},
 }
 
-func containsAny(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
+// MapAzureError converts an Azure SDK error to the Docker API error type.
+func MapAzureError(err error, resource, id string) error {
+	return core.MapCloudError(err, resource, id, azureErrorPatterns)
 }

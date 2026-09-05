@@ -1,13 +1,6 @@
 package aca
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"strings"
-
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
@@ -18,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
+	azurecommon "github.com/sockerless/azure-common"
 )
 
 // AzureClients holds all Azure SDK clients.
@@ -25,8 +19,7 @@ type AzureClients struct {
 	Jobs              *armappcontainers.JobsClient
 	Executions        *armappcontainers.JobsExecutionsClient
 	ContainerApps     *armappcontainers.ContainerAppsClient // used when Config.UseApp is true
-	Logs              *azquery.LogsClient
-	LogsHTTP          *httpLogsClient // Used when endpoint is HTTP (SDK rejects non-TLS bearer tokens)
+	Logs              azurecommon.LogsQuerier
 	PrivateDNSZones   *armprivatedns.PrivateZonesClient
 	PrivateDNSRecords *armprivatedns.RecordSetsClient
 	NSG               *armnetwork.SecurityGroupsClient
@@ -43,37 +36,6 @@ type AzureClients struct {
 	FileShares  *armstorage.FileSharesClient
 	EnvStorages *armappcontainers.ManagedEnvironmentsStoragesClient
 	Cred        azcore.TokenCredential
-}
-
-// httpLogsClient makes direct HTTP calls to Log Analytics when the Azure SDK's
-// BearerTokenPolicy rejects non-TLS endpoints. This is needed because azquery
-// v1.2.0 doesn't propagate InsecureAllowCredentialWithHTTP to its auth policy.
-type httpLogsClient struct {
-	endpoint string
-}
-
-func (c *httpLogsClient) QueryWorkspace(ctx context.Context, workspaceID string, body azquery.Body, _ *azquery.LogsClientQueryWorkspaceOptions) (azquery.LogsClientQueryWorkspaceResponse, error) {
-	reqBody, _ := json.Marshal(body)
-	// Same path the azquery SDK builds: the Log Analytics query endpoint
-	// is {host}/v1/workspaces/{id}/query (api.loganalytics.io/v1).
-	url := fmt.Sprintf("%s/v1/workspaces/%s/query", c.endpoint, workspaceID)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
-	if err != nil {
-		return azquery.LogsClientQueryWorkspaceResponse{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return azquery.LogsClientQueryWorkspaceResponse{}, err
-	}
-	defer resp.Body.Close()
-
-	var result azquery.LogsClientQueryWorkspaceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result.Results); err != nil {
-		return azquery.LogsClientQueryWorkspaceResponse{}, err
-	}
-	return result, nil
 }
 
 // NewAzureClients initializes Azure SDK clients.
@@ -135,9 +97,7 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		return nil, err
 	}
 
-	logsClient, err := azquery.NewLogsClient(cred, &azquery.LogsClientOptions{
-		ClientOptions: opts.ClientOptions,
-	})
+	logsClient, err := azurecommon.NewLogsQuerier(cred, &opts.ClientOptions, endpointURL)
 	if err != nil {
 		return nil, err
 	}
@@ -183,13 +143,6 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		Cred:              cred,
 	}
 
-	// azquery v1.2.0 doesn't propagate InsecureAllowCredentialWithHTTP to its
-	// BearerTokenPolicy, causing QueryWorkspace to fail over HTTP endpoints.
-	// Use a direct HTTP client for non-TLS endpoints.
-	if strings.HasPrefix(endpointURL, "http://") {
-		clients.LogsHTTP = &httpLogsClient{endpoint: endpointURL}
-	}
-
 	return clients, nil
 }
 
@@ -214,7 +167,7 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 		return nil, err
 	}
 
-	logsClient, err := azquery.NewLogsClient(cred, nil)
+	logsClient, err := azurecommon.NewLogsQuerier(cred, nil, "")
 	if err != nil {
 		return nil, err
 	}

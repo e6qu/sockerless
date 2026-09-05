@@ -60,8 +60,8 @@ func (s *Server) materializePodSite(members []api.Container) error {
 	funcAppName := "skls-" + id[:12]
 	ctx := s.ctx()
 
-	netID, _ := s.userDefinedNetworkID(main)
-	aliases := hostAliasesForMembers(members, netID)
+	netID, _ := s.UserDefinedNetworkID(main)
+	aliases := core.HostAliasesForMembers(members, netID)
 
 	// The main runs the overlay bootstrap; its app settings carry the
 	// reverse-agent wiring, the user entrypoint/cmd, and the host-aliases
@@ -326,7 +326,7 @@ func isAZFOverlaid(c api.Container) bool {
 	if base != "" && c.Config.Image != base {
 		return true
 	}
-	return hasAZFOverlayRepo(c.Config.Image)
+	return core.HasOverlayRepo(c.Config.Image)
 }
 
 // podMemberRawArgv recovers a member's original entrypoint+cmd (stashed

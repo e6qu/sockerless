@@ -1,36 +1,16 @@
 package gcpcommon
 
-import (
-	"fmt"
-	"strings"
+import core "github.com/sockerless/backend-core"
 
-	"github.com/sockerless/api"
-)
-
-// MapGCPError converts common GCP SDK errors to api error types.
-func MapGCPError(err error, resource, id string) error {
-	if err == nil {
-		return nil
-	}
-	msg := err.Error()
-
-	switch {
-	case containsAny(msg, "not found", "NotFound", "404"):
-		return &api.NotFoundError{Resource: resource, ID: id}
-	case containsAny(msg, "already exists", "AlreadyExists", "409"):
-		return &api.ConflictError{Message: fmt.Sprintf("%s %s already exists", resource, id)}
-	case containsAny(msg, "InvalidArgument", "invalid", "400"):
-		return &api.InvalidParameterError{Message: msg}
-	default:
-		return fmt.Errorf("%s %s: %w", resource, id, err)
-	}
+// gcpErrorPatterns are the Google Cloud status names and codes for each
+// Docker error class.
+var gcpErrorPatterns = core.CloudErrorPatterns{
+	NotFound: []string{"not found", "NotFound", "404"},
+	Conflict: []string{"already exists", "AlreadyExists", "409"},
+	Invalid:  []string{"InvalidArgument", "invalid", "400"},
 }
 
-func containsAny(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
+// MapGCPError converts a Google Cloud SDK error to the Docker API error type.
+func MapGCPError(err error, resource, id string) error {
+	return core.MapCloudError(err, resource, id, gcpErrorPatterns)
 }

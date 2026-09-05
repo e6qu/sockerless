@@ -36,7 +36,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		logger.Fatal().Msg("ACA backend requires SOCKERLESS_CALLBACK_URL — the in-App/Job bootstrap dials back here to register the reverse-agent WebSocket. Without it every exec fails (no fallback to management-API exec). Set the env var to a URL the App / Job can reach.")
 	}
 	if config.BootstrapBinaryHash == "" && config.BootstrapBinaryPath != "" {
-		if hash, err := hashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
+		if hash, err := core.HashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
 			config.BootstrapBinaryHash = hash
 			logger.Info().Str("path", config.BootstrapBinaryPath).Str("hash", hash).Msg("hashed aca bootstrap binary for overlay-tag invalidation")
 		} else {
@@ -59,7 +59,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		Driver:          "aca-jobs",
 		OperatingSystem: "Azure Container Apps",
 		OSType:          "linux",
-		Architecture:    azurecommon.ArchFromPlatform(config.BuildPlatform),
+		Architecture:    core.ArchFromPlatform(config.BuildPlatform),
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)

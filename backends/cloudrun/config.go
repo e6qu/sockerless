@@ -3,11 +3,11 @@ package cloudrun
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 )
 
 // Config holds Cloud Run backend configuration.
@@ -63,16 +63,13 @@ type Config struct {
 	// Set via `SOCKERLESS_ENABLE_COMMIT=1`.
 	EnableCommit bool
 
-	// SharedVolumes mirrors the ECS / Lambda backends' same-named
-	// field. When sockerless-backend-cloudrun runs inside a Cloud Run
-	// Job that has GCS volumes mounted at known paths, and the
-	// caller (e.g. github-actions-runner) does
+	// SharedVolumes are the Cloud Storage buckets the runner Cloud Run Job
+	// already mounts. When the caller (e.g. github-actions-runner) does
 	// `docker create -v /tmp/runner-work:/__w alpine`, sockerless
-	// translates the host bind mount into a named-volume reference
-	// whose GCS bucket is shared with the runner-task. Sub-tasks
-	// (spawned as further Cloud Run Jobs) mount the same bucket.
-	// Format: SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket=backing,name2=path2=bucket2=backing2"
-	SharedVolumes []SharedVolume
+	// translates the host bind mount into a named-volume reference whose
+	// bucket is shared with the runner task. Format:
+	// gcpcommon.SharedVolumeFormat, read from SOCKERLESS_GCP_SHARED_VOLUMES.
+	SharedVolumes core.SharedVolumes
 
 	// sharedVolumesErr carries a SOCKERLESS_GCP_SHARED_VOLUMES parse
 	// failure from ConfigFromEnv to Validate so misconfiguration fails
@@ -92,7 +89,7 @@ type Config struct {
 
 	// BootstrapBinaryHash is the SHA-256-prefix hash of the bootstrap
 	// binary at BootstrapBinaryPath. Computed once at server startup
-	// (NewServer hashes via gcpcommon.HashBootstrapBinary) and stamped
+	// (NewServer hashes via core.HashBootstrapBinary) and stamped
 	// into every OverlayImageSpec.BootstrapBinaryHash so updating the
 	// bootstrap binary on disk invalidates cached overlay images
 	// automatically. Without this, OverlayContentTag is computed only
@@ -116,50 +113,20 @@ type Config struct {
 	NetworkDiscovery api.NetworkDiscoveryKind
 }
 
-// SharedVolume describes a workspace volume mounted via GCS that the
-// caller (the runner Cloud Run Job spawned by github-runner-dispatcher-gcp)
-// shares with sockerless. When `docker create` sees a bind mount whose
-// source matches ContainerPath, the bind is rewritten to a named volume
-// named Name backed by the GCS bucket Bucket. Mirror of `ecs.SharedVolume`
-// + `lambda.SharedVolume`, but using GCS buckets as the volume backing
-// (Cloud Run Jobs natively support `Volume{Gcs{Bucket}}`).
-//
-// Backing is REQUIRED — no automatic fallback. Operators set it to
-// "gcs-sync" / "gcs-fuse" / "emptyDir" via the
-// SOCKERLESS_GCP_SHARED_VOLUMES env's 4-tuple format.
-type SharedVolume struct {
-	Name          string // logical volume name used in spawned sub-tasks
-	ContainerPath string // path inside the calling container (= the bind-mount source)
-	Bucket        string // GCS bucket backing this volume (no `gs://` prefix)
-	Backing       string // REQUIRED: "gcs-sync" / "gcs-fuse" / "emptyDir"
-}
-
-// AsRef returns the cloud-agnostic SharedVolumeRef the storage backing
-// driver consumes. Empty Backing flows through unchanged so the
-// registry's Resolve fails loudly on it.
-func (v SharedVolume) AsRef() core.SharedVolumeRef {
-	return core.SharedVolumeRef{
-		Name:          v.Name,
-		ContainerPath: v.ContainerPath,
-		Backing:       core.StorageBacking(v.Backing),
-		GCSBucket:     v.Bucket,
-	}
-}
-
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
-	sharedVolumes, sharedVolumesErr := parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES"))
+	sharedVolumes, sharedVolumesErr := core.ParseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES"), gcpcommon.SharedVolumeFormat)
 	return Config{
 		Project:             os.Getenv("SOCKERLESS_GCR_PROJECT"),
-		Region:              envOrDefault("SOCKERLESS_GCR_REGION", "us-central1"),
+		Region:              core.EnvOrDefault("SOCKERLESS_GCR_REGION", "us-central1"),
 		VPCConnector:        os.Getenv("SOCKERLESS_GCR_VPC_CONNECTOR"),
-		LogID:               envOrDefault("SOCKERLESS_GCR_LOG_ID", "sockerless"),
+		LogID:               core.EnvOrDefault("SOCKERLESS_GCR_LOG_ID", "sockerless"),
 		BuildBucket:         os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
-		BuildPlatform:       envOrDefault("SOCKERLESS_GCP_BUILD_PLATFORM", "linux/amd64"),
+		BuildPlatform:       core.EnvOrDefault("SOCKERLESS_GCP_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:         os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		LogAdminEndpoint:    os.Getenv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT"),
-		PollInterval:        parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		LogTimeout:          parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
+		PollInterval:        core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		LogTimeout:          core.DurationOrDefault(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
 		UseService:          os.Getenv("SOCKERLESS_GCR_USE_SERVICE") == "1",
 		CallbackURL:         os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		GCSWorkloadEndpoint: os.Getenv("SOCKERLESS_GCS_WORKLOAD_ENDPOINT"),
@@ -168,93 +135,8 @@ func ConfigFromEnv() Config {
 		sharedVolumesErr:    sharedVolumesErr,
 		BootstrapBinaryPath: os.Getenv("SOCKERLESS_CLOUDRUN_BOOTSTRAP"),
 		ServiceAccount:      os.Getenv("SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT"),
-		NetworkDiscovery:    networkDiscoveryFromEnv("SOCKERLESS_GCR_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
+		NetworkDiscovery:    core.NetworkDiscoveryFromEnv("SOCKERLESS_GCR_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
 	}
-}
-
-// networkDiscoveryFromEnv reads the operator's chosen kind from env or
-// returns `def`. Validation against the per-backend supported set
-// happens in Config.Validate (any out-of-set value fails loud).
-func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
-	v := strings.TrimSpace(os.Getenv(envVar))
-	if v == "" {
-		return def
-	}
-	return api.NetworkDiscoveryKind(v)
-}
-
-// parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES.
-//
-// Format: `name=path=bucket=backing,...` 4-tuples.
-// `backing` is REQUIRED — operators MUST explicitly choose
-// `gcs-sync` / `gcs-fuse` / `emptyDir` per the no-fallbacks directive.
-// Legacy 3-tuple format is no longer accepted. Malformed entries are a
-// hard error — the caller surfaces it via Config.Validate so the
-// operator's misconfiguration fails the backend startup instead of
-// silently dropping the volume mapping.
-func parseSharedVolumes(s string) ([]SharedVolume, error) {
-	if strings.TrimSpace(s) == "" {
-		return nil, nil
-	}
-	var out []SharedVolume
-	for _, entry := range strings.Split(s, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		parts := strings.Split(entry, "=")
-		if len(parts) != 4 {
-			return nil, fmt.Errorf("entry %q malformed: want name=containerPath=bucket=backing", entry)
-		}
-		sv := SharedVolume{
-			Name:          strings.TrimSpace(parts[0]),
-			ContainerPath: strings.TrimSpace(parts[1]),
-			Bucket:        strings.TrimSpace(parts[2]),
-			Backing:       strings.TrimSpace(parts[3]),
-		}
-		if sv.Name == "" || sv.ContainerPath == "" || sv.Bucket == "" || sv.Backing == "" {
-			return nil, fmt.Errorf("entry %q malformed: name, containerPath, bucket and backing must all be non-empty", entry)
-		}
-		out = append(out, sv)
-	}
-	return out, nil
-}
-
-// LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
-// ContainerPath equals the given path, or nil if none matches.
-func (c Config) LookupSharedVolumeBySourcePath(path string) *SharedVolume {
-	for i := range c.SharedVolumes {
-		if c.SharedVolumes[i].ContainerPath == path {
-			return &c.SharedVolumes[i]
-		}
-	}
-	return nil
-}
-
-// LookupSharedVolumeByName returns the SharedVolume entry whose Name
-// equals the given volume name, or nil if none matches.
-func (c Config) LookupSharedVolumeByName(name string) *SharedVolume {
-	for i := range c.SharedVolumes {
-		if c.SharedVolumes[i].Name == name {
-			return &c.SharedVolumes[i]
-		}
-	}
-	return nil
-}
-
-// isSubPathOfSharedVolume reports whether path is a strict sub-path
-// (descendant) of any SharedVolume's ContainerPath.
-func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
-	for i := range vols {
-		base := vols[i].ContainerPath
-		if base == "" {
-			continue
-		}
-		if strings.HasPrefix(path, base+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -281,7 +163,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 				c.LogID = cr.LogID
 			}
 			if cr.LogTimeout != "" {
-				c.LogTimeout = parseDuration(cr.LogTimeout, c.LogTimeout)
+				c.LogTimeout = core.DurationOrDefault(cr.LogTimeout, c.LogTimeout)
 			}
 		}
 	}
@@ -289,7 +171,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	c.LogAdminEndpoint = os.Getenv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT")
 	c.GCSWorkloadEndpoint = os.Getenv("SOCKERLESS_GCS_WORKLOAD_ENDPOINT")
 	if env.Common.PollInterval != "" {
-		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
+		c.PollInterval = core.DurationOrDefault(env.Common.PollInterval, c.PollInterval)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
@@ -297,8 +179,8 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 			c.LogAdminEndpoint = fmt.Sprintf("localhost:%d", sim.GRPCPort)
 		}
 	}
-	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_GCR_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
-	c.SharedVolumes, c.sharedVolumesErr = parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES"))
+	c.NetworkDiscovery = core.NetworkDiscoveryFromEnv("SOCKERLESS_GCR_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
+	c.SharedVolumes, c.sharedVolumesErr = core.ParseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES"), gcpcommon.SharedVolumeFormat)
 	return c
 }
 
@@ -330,22 +212,4 @@ func (c Config) Validate() error {
 		return fmt.Errorf("SOCKERLESS_GCR_NETWORK_DISCOVERY=%q not supported by cloudrun (one of cloud-dns, host-aliases, nat-gateway-only required)", c.NetworkDiscovery)
 	}
 	return nil
-}
-
-func parseDuration(s string, def time.Duration) time.Duration {
-	if s == "" {
-		return def
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return def
-	}
-	return d
-}
-
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }

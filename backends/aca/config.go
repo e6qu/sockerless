@@ -3,10 +3,10 @@ package aca
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/sockerless/api"
+	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -80,16 +80,14 @@ type Config struct {
 	// Set via SOCKERLESS_ACA_ACCESS_PRINCIPAL.
 	AccessPrincipal string
 
-	// SharedVolumes mirrors the ECS / Lambda / Cloud Run backends'
-	// same-named field. When sockerless runs inside an ACA job/app that
-	// has Azure Files shares mounted at known paths, and the caller
-	// (e.g. github-actions-runner) does
+	// SharedVolumes are the Azure Files shares the runner job or app
+	// already mounts. When the caller (e.g. github-actions-runner) does
 	// `docker create -v /home/runner/_work:/__w alpine`, sockerless
-	// translates the host bind mount into a named-volume reference
-	// whose Azure Files share is shared with the runner-task. Sub-tasks
-	// (spawned as further ACA jobs/apps) mount the same share.
-	// Format: SOCKERLESS_ACA_SHARED_VOLUMES="name=path=share=backing[=storageAccount],..."
-	SharedVolumes []SharedVolume
+	// translates the host bind mount into a named-volume reference whose
+	// share is shared with the runner task. Format:
+	// azurecommon.SharedVolumeFormat, read from SOCKERLESS_ACA_SHARED_VOLUMES;
+	// the storage account defaults to StorageAccount.
+	SharedVolumes core.SharedVolumes
 
 	// sharedVolumesErr carries a SOCKERLESS_ACA_SHARED_VOLUMES parse
 	// failure from ConfigFromEnv to Validate so misconfiguration fails
@@ -97,176 +95,32 @@ type Config struct {
 	sharedVolumesErr error
 }
 
-// SharedVolume describes a workspace volume mounted via Azure Files
-// that the caller (the runner ACA job/app) shares with sockerless.
-// When `docker create` sees a bind mount whose source matches
-// ContainerPath, the bind is rewritten to a named volume named Name
-// backed by the Azure Files share ShareName. Mirror of
-// `ecs.SharedVolume` + `cloudrun.SharedVolume`, but using Azure Files
-// shares as the volume backing (ACA jobs/apps natively mount shares
-// via ManagedEnvironmentsStorages).
-//
-// Backing is REQUIRED — no automatic fallback. Operators set it
-// (typically "azure-files-ephemeral") via the
-// SOCKERLESS_ACA_SHARED_VOLUMES env's 4/5-tuple format.
-type SharedVolume struct {
-	Name          string // logical volume name used in spawned sub-tasks
-	ContainerPath string // path inside the calling container (= the bind-mount source)
-	ShareName     string // Azure Files share backing this volume
-	Backing       string // REQUIRED: storage backing kind (e.g. "azure-files-ephemeral")
-	// StorageAccount hosting the share; defaults to Config.StorageAccount.
-	StorageAccount string
-}
-
-// AccountOrDefault returns the share's storage account, falling back
-// to the operator's configured default account when the volume entry
-// doesn't pin one explicitly.
-func (v SharedVolume) AccountOrDefault(def string) string {
-	if v.StorageAccount != "" {
-		return v.StorageAccount
-	}
-	return def
-}
-
-// AsRef returns the cloud-agnostic SharedVolumeRef the storage backing
-// driver consumes. Empty Backing flows through unchanged so the
-// registry's Resolve fails loudly on it.
-func (v SharedVolume) AsRef(defaultAccount string) core.SharedVolumeRef {
-	return core.SharedVolumeRef{
-		Name:                v.Name,
-		ContainerPath:       v.ContainerPath,
-		Backing:             core.StorageBacking(v.Backing),
-		AzureStorageAccount: v.AccountOrDefault(defaultAccount),
-		AzureShareName:      v.ShareName,
-	}
-}
-
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
-	sharedVolumes, sharedVolumesErr := parseSharedVolumes(os.Getenv("SOCKERLESS_ACA_SHARED_VOLUMES"))
+	sharedVolumes, sharedVolumesErr := core.ParseSharedVolumes(os.Getenv("SOCKERLESS_ACA_SHARED_VOLUMES"), azurecommon.SharedVolumeFormat)
 	return Config{
 		SubscriptionID:        os.Getenv("SOCKERLESS_ACA_SUBSCRIPTION_ID"),
 		ResourceGroup:         os.Getenv("SOCKERLESS_ACA_RESOURCE_GROUP"),
-		Environment:           envOrDefault("SOCKERLESS_ACA_ENVIRONMENT", "sockerless"),
-		Location:              envOrDefault("SOCKERLESS_ACA_LOCATION", "eastus"),
+		Environment:           core.EnvOrDefault("SOCKERLESS_ACA_ENVIRONMENT", "sockerless"),
+		Location:              core.EnvOrDefault("SOCKERLESS_ACA_LOCATION", "eastus"),
 		LogAnalyticsWorkspace: os.Getenv("SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE"),
 		StorageAccount:        os.Getenv("SOCKERLESS_ACA_STORAGE_ACCOUNT"),
 		ACRName:               os.Getenv("SOCKERLESS_AZURE_ACR_NAME"),
 		BuildStorageAccount:   os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
 		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
-		BuildPlatform:         envOrDefault("SOCKERLESS_AZURE_BUILD_PLATFORM", "linux/amd64"),
+		BuildPlatform:         core.EnvOrDefault("SOCKERLESS_AZURE_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
-		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		PollInterval:          core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		UseApp:                os.Getenv("SOCKERLESS_ACA_USE_APP") == "1",
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		BootstrapBinaryPath:   os.Getenv("SOCKERLESS_ACA_BOOTSTRAP"),
 		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
-		NetworkDiscovery:      networkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
-		Access:                accessFromEnv("SOCKERLESS_ACA_ACCESS", api.AccessMechanismNoneInternal),
+		NetworkDiscovery:      core.NetworkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
+		Access:                core.AccessFromEnv("SOCKERLESS_ACA_ACCESS", api.AccessMechanismNoneInternal),
 		AccessPrincipal:       os.Getenv("SOCKERLESS_ACA_ACCESS_PRINCIPAL"),
 		SharedVolumes:         sharedVolumes,
 		sharedVolumesErr:      sharedVolumesErr,
 	}
-}
-
-// parseSharedVolumes parses SOCKERLESS_ACA_SHARED_VOLUMES.
-//
-// Format: `name=containerPath=share=backing[=storageAccount],...`
-// `backing` is REQUIRED — operators MUST explicitly choose the storage
-// backing (typically `azure-files-ephemeral`) per the no-fallbacks
-// directive. The trailing storageAccount is optional — defaults to
-// Config.StorageAccount. Returns (nil, nil) for empty input. Malformed
-// entries are a hard error — the caller surfaces it via Config.Validate
-// so the operator's misconfiguration fails the backend startup instead
-// of silently dropping the volume mapping.
-func parseSharedVolumes(s string) ([]SharedVolume, error) {
-	if strings.TrimSpace(s) == "" {
-		return nil, nil
-	}
-	var out []SharedVolume
-	for _, entry := range strings.Split(s, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		parts := strings.Split(entry, "=")
-		if len(parts) < 4 || len(parts) > 5 {
-			return nil, fmt.Errorf("entry %q malformed: want name=containerPath=share=backing[=storageAccount]", entry)
-		}
-		sv := SharedVolume{
-			Name:          strings.TrimSpace(parts[0]),
-			ContainerPath: strings.TrimSpace(parts[1]),
-			ShareName:     strings.TrimSpace(parts[2]),
-			Backing:       strings.TrimSpace(parts[3]),
-		}
-		if len(parts) == 5 {
-			sv.StorageAccount = strings.TrimSpace(parts[4])
-		}
-		if sv.Name == "" || sv.ContainerPath == "" || sv.ShareName == "" || sv.Backing == "" {
-			return nil, fmt.Errorf("entry %q malformed: name, containerPath, share and backing must all be non-empty", entry)
-		}
-		out = append(out, sv)
-	}
-	return out, nil
-}
-
-// LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
-// ContainerPath equals the given path, or nil if none matches.
-func (c Config) LookupSharedVolumeBySourcePath(path string) *SharedVolume {
-	for i := range c.SharedVolumes {
-		if c.SharedVolumes[i].ContainerPath == path {
-			return &c.SharedVolumes[i]
-		}
-	}
-	return nil
-}
-
-// LookupSharedVolumeByName returns the SharedVolume entry whose Name
-// equals the given volume name, or nil if none matches.
-func (c Config) LookupSharedVolumeByName(name string) *SharedVolume {
-	for i := range c.SharedVolumes {
-		if c.SharedVolumes[i].Name == name {
-			return &c.SharedVolumes[i]
-		}
-	}
-	return nil
-}
-
-// isSubPathOfSharedVolume reports whether path is a strict sub-path
-// (descendant) of any SharedVolume's ContainerPath.
-func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
-	for i := range vols {
-		base := vols[i].ContainerPath
-		if base == "" {
-			continue
-		}
-		if strings.HasPrefix(path, base+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-// accessFromEnv reads the operator's chosen access mechanism from env
-// or returns `def`. Validation against the per-backend supported set
-// happens in Config.Validate.
-func accessFromEnv(envVar string, def api.AccessMechanism) api.AccessMechanism {
-	v := strings.TrimSpace(os.Getenv(envVar))
-	if v == "" {
-		return def
-	}
-	return api.AccessMechanism(v)
-}
-
-// networkDiscoveryFromEnv reads the operator's chosen kind from env or
-// returns `def`. Validation against the per-backend supported set
-// happens in Config.Validate.
-func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
-	v := strings.TrimSpace(os.Getenv(envVar))
-	if v == "" {
-		return def
-	}
-	return api.NetworkDiscoveryKind(v)
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -299,15 +153,15 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	}
 	c.EndpointURL = env.Common.EndpointURL
 	if env.Common.PollInterval != "" {
-		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
+		c.PollInterval = core.DurationOrDefault(env.Common.PollInterval, c.PollInterval)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
-	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
-	c.Access = accessFromEnv("SOCKERLESS_ACA_ACCESS", api.AccessMechanismNoneInternal)
+	c.NetworkDiscovery = core.NetworkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
+	c.Access = core.AccessFromEnv("SOCKERLESS_ACA_ACCESS", api.AccessMechanismNoneInternal)
 	c.AccessPrincipal = os.Getenv("SOCKERLESS_ACA_ACCESS_PRINCIPAL")
-	c.SharedVolumes, c.sharedVolumesErr = parseSharedVolumes(os.Getenv("SOCKERLESS_ACA_SHARED_VOLUMES"))
+	c.SharedVolumes, c.sharedVolumesErr = core.ParseSharedVolumes(os.Getenv("SOCKERLESS_ACA_SHARED_VOLUMES"), azurecommon.SharedVolumeFormat)
 	return c
 }
 
@@ -344,22 +198,4 @@ func (c Config) Validate() error {
 		return fmt.Errorf("SOCKERLESS_ACA_ACCESS=%q not supported by aca (one of none-internal, azure-ad required)", c.Access)
 	}
 	return nil
-}
-
-func parseDuration(s string, def time.Duration) time.Duration {
-	if s == "" {
-		return def
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return def
-	}
-	return d
-}
-
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }

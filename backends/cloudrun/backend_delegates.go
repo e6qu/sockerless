@@ -12,19 +12,6 @@ import (
 	gcpcommon "github.com/sockerless/gcp-common"
 )
 
-// bucketToVolume converts a sockerless-managed GCS BucketAttrs into a
-// Docker-API Volume entry.
-func bucketToVolume(dockerName string, b *storage.BucketAttrs) *api.Volume {
-	return &api.Volume{
-		Name:       dockerName,
-		Driver:     "gcs",
-		Mountpoint: "gs://" + b.Name,
-		Scope:      "local",
-		Options:    map[string]string{"bucket": b.Name},
-		CreatedAt:  b.Created.UTC().Format(time.RFC3339Nano),
-	}
-}
-
 // Container methods with resolution
 
 // ContainerChanges lists files modified since container boot via the
@@ -181,7 +168,7 @@ func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error)
 	if req == nil || req.Name == "" {
 		return nil, &api.InvalidParameterError{Message: "volume name is required"}
 	}
-	bucket, err := s.bucketForVolume(s.ctx(), req.Name)
+	bucket, err := s.volumes.BucketForVolume(s.ctx(), req.Name)
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("provision GCS bucket for %q: %v", req.Name, err)}
 	}
@@ -197,26 +184,21 @@ func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error)
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	buckets, err := s.listManagedBuckets(s.ctx())
+	buckets, err := s.volumes.Buckets.ListManaged(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
 	}
-	for _, b := range buckets {
-		if gcpcommon.BucketVolumeName(b) == gcpcommon.SanitiseLabelValue(name) {
-			return bucketToVolume(name, b), nil
-		}
-	}
-	return nil, &api.NotFoundError{Resource: "volume", ID: name}
+	return core.InspectManagedVolume(buckets, name, func(b *storage.BucketAttrs) bool {
+		return gcpcommon.BucketVolumeName(b) == gcpcommon.SanitiseLabelValue(name)
+	}, func(b *storage.BucketAttrs) *api.Volume { return gcpcommon.BucketToVolume(name, b) })
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	buckets, err := s.listManagedBuckets(s.ctx())
+	buckets, err := s.volumes.Buckets.ListManaged(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
 	}
-	vols := make([]*api.Volume, 0, len(buckets))
-	for _, b := range buckets {
-		vols = append(vols, bucketToVolume(gcpcommon.BucketVolumeName(b), b))
-	}
-	return &api.VolumeListResponse{Volumes: vols}, nil
+	return core.ListManagedVolumes(buckets, func(b *storage.BucketAttrs) *api.Volume {
+		return gcpcommon.BucketToVolume(gcpcommon.BucketVolumeName(b), b)
+	}), nil
 }

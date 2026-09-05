@@ -98,12 +98,7 @@ func (p *acaCloudState) CheckNameAvailable(ctx context.Context, name string) (bo
 	if err != nil {
 		return false, err
 	}
-	for _, c := range containers {
-		if c.Name == name || c.Name == "/"+name {
-			return false, nil
-		}
-	}
-	return true, nil
+	return !core.ContainerNameTaken(containers, name), nil
 }
 
 func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
@@ -131,7 +126,7 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 				resp, err := p.server.azure.Jobs.Get(ctx, p.server.config.ResourceGroup, jobName, nil)
 				if err == nil {
 					job := resp.Job
-					st := p.resolveJobState(ctx, &job, azureTagsToMap(job.Tags))
+					st := p.resolveJobState(ctx, &job, azurecommon.TagsToMap(job.Tags))
 					if !st.Running && st.Status == "exited" {
 						return st.ExitCode, nil
 					}
@@ -179,7 +174,7 @@ func (p *acaCloudState) ListPods(ctx context.Context) ([]*api.PodListEntry, erro
 	status := make(map[string]string)
 
 	walk := func(tagsPtr map[string]*string, createdAt string) {
-		tags := azureTagsToMap(tagsPtr)
+		tags := azurecommon.TagsToMap(tagsPtr)
 		if tags["sockerless-managed"] != "true" {
 			return
 		}
@@ -336,7 +331,7 @@ func (p *acaCloudState) resolveJobName(ctx context.Context, containerID string) 
 			if job.Tags == nil {
 				continue
 			}
-			tags := azureTagsToMap(job.Tags)
+			tags := azurecommon.TagsToMap(job.Tags)
 			if tags["sockerless-managed"] != "true" {
 				continue
 			}
@@ -421,7 +416,7 @@ func (p *acaCloudState) queryJobs(ctx context.Context) ([]api.Container, error) 
 				continue
 			}
 
-			tags := azureTagsToMap(job.Tags)
+			tags := azurecommon.TagsToMap(job.Tags)
 
 			// Only include sockerless-managed jobs
 			if tags["sockerless-managed"] != "true" {
@@ -679,15 +674,4 @@ func mapExecutionStatus(exec *armappcontainers.JobExecution) api.ContainerState 
 	default:
 		return api.ContainerState{Status: "unknown"}
 	}
-}
-
-// azureTagsToMap converts Azure SDK tag map to a plain map.
-func azureTagsToMap(tags map[string]*string) map[string]string {
-	m := make(map[string]string, len(tags))
-	for k, v := range tags {
-		if v != nil {
-			m[k] = *v
-		}
-	}
-	return m
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	azurecommon "github.com/sockerless/azure-common"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -74,7 +76,7 @@ func (p *acaCloudState) resolveAppName(ctx context.Context, containerID string) 
 			if app.Tags == nil {
 				continue
 			}
-			tags := azureTagsToMap(app.Tags)
+			tags := azurecommon.TagsToMap(app.Tags)
 			if tags["sockerless-managed"] != "true" {
 				continue
 			}
@@ -131,7 +133,7 @@ func (p *acaCloudState) queryApps(ctx context.Context) ([]api.Container, error) 
 			if app.Tags == nil {
 				continue
 			}
-			tags := azureTagsToMap(app.Tags)
+			tags := azurecommon.TagsToMap(app.Tags)
 			if tags["sockerless-managed"] != "true" {
 				continue
 			}

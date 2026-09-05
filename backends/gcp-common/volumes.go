@@ -6,7 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
-	"sync"
+
+	core "github.com/sockerless/backend-core"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
@@ -27,8 +28,7 @@ type BucketManager struct {
 	Project string
 	Region  string
 
-	mu    sync.Mutex
-	cache map[string]string // docker-name → bucket-name
+	buckets core.ProvisionCache // docker volume name → bucket name
 }
 
 // NewBucketManager wires a BucketManager against a storage client.
@@ -37,50 +37,42 @@ func NewBucketManager(client *storage.Client, project, region string) *BucketMan
 		Client:  client,
 		Project: project,
 		Region:  region,
-		cache:   make(map[string]string),
 	}
 }
 
+// Labels that mark a bucket as sockerless's and carry the Docker volume
+// name; the same keys every cloud backend uses. VolumeBucketPrefix starts
+// every managed bucket's name.
 const (
-	VolumeLabel        = "sockerless-managed"
-	VolumeLabelValue   = "true"
-	VolumeNameLabelKey = "sockerless-volume-name"
+	VolumeLabel        = core.ManagedVolumeTagKey
+	VolumeLabelValue   = core.ManagedVolumeTagValue
+	VolumeNameLabelKey = core.VolumeNameTagKey
 	VolumeBucketPrefix = "sockerless-volume-"
 )
 
-// ForVolume returns the bucket name bound to a Docker volume, provisioning
-// a new bucket on first call.
+// ForVolume returns the bucket backing the Docker volume, adopting an
+// existing sockerless-managed one by its volume-name label and otherwise
+// creating it. Concurrent callers for the same volume provision one bucket.
 func (m *BucketManager) ForVolume(ctx context.Context, volName string) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if name, ok := m.cache[volName]; ok {
-		return name, nil
-	}
-
-	if name, ok, err := m.findByVolumeNameLocked(ctx, volName); err != nil {
-		return "", err
-	} else if ok {
-		m.cache[volName] = name
-		return name, nil
-	}
-
-	bucket := BucketName(m.Project, volName)
-	attrs := &storage.BucketAttrs{
-		Location: m.Region,
-		Labels: map[string]string{
-			VolumeLabel:        VolumeLabelValue,
-			VolumeNameLabelKey: SanitiseLabelValue(volName),
-		},
-	}
-	if err := m.Client.Bucket(bucket).Create(ctx, m.Project, attrs); err != nil {
-		return "", fmt.Errorf("create bucket %q for volume %q: %w", bucket, volName, err)
-	}
-	m.cache[volName] = bucket
-	return bucket, nil
+	return m.buckets.Ensure(volName, func() (string, bool, error) {
+		return m.findByVolumeName(ctx, volName)
+	}, func() (string, error) {
+		bucket := BucketName(m.Project, volName)
+		attrs := &storage.BucketAttrs{
+			Location: m.Region,
+			Labels: map[string]string{
+				VolumeLabel:        VolumeLabelValue,
+				VolumeNameLabelKey: SanitiseLabelValue(volName),
+			},
+		}
+		if err := m.Client.Bucket(bucket).Create(ctx, m.Project, attrs); err != nil {
+			return "", fmt.Errorf("create bucket %q for volume %q: %w", bucket, volName, err)
+		}
+		return bucket, nil
+	})
 }
 
-func (m *BucketManager) findByVolumeNameLocked(ctx context.Context, volName string) (string, bool, error) {
+func (m *BucketManager) findByVolumeName(ctx context.Context, volName string) (string, bool, error) {
 	it := m.Client.Buckets(ctx, m.Project)
 	for {
 		b, err := it.Next()
@@ -96,42 +88,37 @@ func (m *BucketManager) findByVolumeNameLocked(ctx context.Context, volName stri
 	}
 }
 
-// DeleteForVolume removes the bucket backing a Docker volume. If `force`
-// is true, all objects are deleted first; otherwise a non-empty bucket
-// returns the underlying GCS error.
+// DeleteForVolume deletes the bucket backing the Docker volume. With force,
+// its objects are deleted first; a bucket that is not empty otherwise
+// refuses deletion, which is the cloud's own guard. A volume with no
+// bucket is already deleted.
 func (m *BucketManager) DeleteForVolume(ctx context.Context, volName string, force bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	name, ok, err := m.findByVolumeNameLocked(ctx, volName)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
-	}
-
-	bucket := m.Client.Bucket(name)
-	if force {
-		it := bucket.Objects(ctx, nil)
-		for {
-			attrs, err := it.Next()
-			if err == iterator.Done {
-				break
-			}
-			if err != nil {
-				return fmt.Errorf("list objects in bucket %q: %w", name, err)
-			}
-			if err := bucket.Object(attrs.Name).Delete(ctx); err != nil {
-				return fmt.Errorf("delete object %q: %w", attrs.Name, err)
+	return m.buckets.Forget(volName, func() error {
+		name, ok, err := m.findByVolumeName(ctx, volName)
+		if err != nil || !ok {
+			return err
+		}
+		bucket := m.Client.Bucket(name)
+		if force {
+			it := bucket.Objects(ctx, nil)
+			for {
+				attrs, err := it.Next()
+				if err == iterator.Done {
+					break
+				}
+				if err != nil {
+					return fmt.Errorf("list objects in bucket %q: %w", name, err)
+				}
+				if err := bucket.Object(attrs.Name).Delete(ctx); err != nil {
+					return fmt.Errorf("delete object %q: %w", attrs.Name, err)
+				}
 			}
 		}
-	}
-	if err := bucket.Delete(ctx); err != nil {
-		return fmt.Errorf("delete bucket %q: %w", name, err)
-	}
-	delete(m.cache, volName)
-	return nil
+		if err := bucket.Delete(ctx); err != nil {
+			return fmt.Errorf("delete bucket %q: %w", name, err)
+		}
+		return nil
+	})
 }
 
 // ListManaged returns every sockerless-managed bucket with a volume-name

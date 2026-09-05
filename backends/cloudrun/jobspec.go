@@ -11,6 +11,7 @@ import (
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
+	gcpcommon "github.com/sockerless/gcp-common"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -111,7 +112,7 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		// by name. Bind sources are pre-translated to SharedVolume.Name
 		// at ContainerCreate time — see cloudrun/backend_impl.go's
 		// overlay-bind translator. Look up by name here.
-		if sv := s.config.LookupSharedVolumeByName(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
+		if sv := s.config.SharedVolumes.ByName(parts[0]); sv != nil && sv.Backing == core.BackingGCSSync {
 			syncMountEntries = append(syncMountEntries, fmt.Sprintf("%s=%s", sv.Name, parts[1]))
 		}
 	}
@@ -214,7 +215,7 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 			if _, done := volSeen[mp.Name]; done {
 				continue
 			}
-			vol, persist, err := s.buildVolumeForBind(ctx, mp.Name, mp.MountPath)
+			vol, persist, err := s.volumes.VolumeForBind(ctx, mp.Name, mp.MountPath)
 			if err != nil {
 				return nil, err
 			}
@@ -225,7 +226,7 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 			volSeen[mp.Name] = struct{}{}
 		}
 	}
-	injectPersistEnv(specs, persistEntries)
+	gcpcommon.InjectPersistEnv(specs, persistEntries)
 
 	// Cloud-side cap on top of the bootstrap-side timer. Both layers
 	// share the same intent value (core.JobTimeoutDefault). Cloud Run

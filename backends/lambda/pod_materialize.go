@@ -104,14 +104,14 @@ func (s *Server) materializePodFunction(mainContainerID string, containers []api
 	awsTags["sockerless-overlay-hash"] = contentTag
 	awsTags["sockerless-allocation"] = shortAllocLabelLambda(mainContainerID)
 	if podName != "" {
-		awsTags["sockerless-pod"] = sanitizePodTagValue(podName)
+		awsTags["sockerless-pod"] = core.SanitizePodLabelValue(podName)
 	}
 
 	envVars := map[string]string{
 		"SOCKERLESS_CONTAINER_ID": mainContainerID,
 		"SOCKERLESS_POD_NAME":     podName,
 	}
-	if manifest, err := EncodePodManifest(podSpec.Members); err == nil {
+	if manifest, err := core.EncodePodManifest(podSpec.Members); err == nil {
 		envVars["SOCKERLESS_POD_CONTAINERS"] = manifest
 	}
 	if podSpec.MainName != "" {
@@ -306,15 +306,15 @@ func buildAndPushPodOverlay(ctx context.Context, spec PodOverlaySpec, destRef st
 // build-time PodOverlaySpec the renderer consumes. Member order is
 // preserved; the main is identified by mainID.
 func containersToPodOverlaySpec(agentPath, bootstrapPath, podName, mainID string, containers []api.Container) PodOverlaySpec {
-	members := make([]PodMemberSpec, 0, len(containers))
+	members := make([]core.PodMemberSpec, 0, len(containers))
 	mainName := ""
 	for _, c := range containers {
 		name := strings.TrimPrefix(c.Name, "/")
 		if name == "" {
 			name = c.ID[:12]
 		}
-		name = sanitizePodMemberName(name)
-		members = append(members, PodMemberSpec{
+		name = core.SanitizePodMemberName(name)
+		members = append(members, core.PodMemberSpec{
 			Name:         name,
 			ContainerID:  c.ID,
 			BaseImageRef: c.Config.Image,
@@ -334,44 +334,6 @@ func containersToPodOverlaySpec(agentPath, bootstrapPath, podName, mainID string
 		BootstrapBinaryPath: bootstrapPath,
 		Members:             members,
 	}
-}
-
-// sanitizePodMemberName lowercases and strips characters outside
-// [a-z0-9-]. Safe for chroot subdir + AWS tag fragment.
-func sanitizePodMemberName(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= '0' && r <= '9',
-			r == '-':
-			b.WriteRune(r)
-		case r == '_', r == '.':
-			b.WriteRune('-')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		out = "x"
-	}
-	return out
-}
-
-// sanitizePodTagValue applies the AWS tag-value charset (loose: letters,
-// digits, plus -_./=+:@ and space) but we restrict to [a-z0-9_-] for
-// cross-cloud consistency with the gcf path. Empty result leads to the
-// caller dropping the tag.
-func sanitizePodTagValue(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= '0' && r <= '9',
-			r == '-', r == '_':
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // newReadSeeker wraps a byte slice as a *bytes.Reader for the

@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sockerless/agent/envelope"
+
 	"github.com/sockerless/api"
-	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -83,7 +84,7 @@ func (s *Server) runACAStageInvoke(id string, c api.Container, stdin []byte) {
 // with the App's LatestRevisionFqdn carried as the Host header — the same
 // virtual-host shape azf's invokeURLForHost uses. The bootstrap runs argv with
 // the (optional) stdin piped in, and returns the captured stdout/stderr/exit.
-func (s *Server) invokeStageHTTP(id string, c api.Container, argv []string, stdin []byte) (*azurecommon.ExecResult, error) {
+func (s *Server) invokeStageHTTP(id string, c api.Container, argv []string, stdin []byte) (*envelope.Result, error) {
 	appState, ok := s.resolveAppACAState(s.ctx(), id)
 	if !ok || appState.AppName == "" {
 		return nil, fmt.Errorf("no ACA App resolved for container %s", id[:12])
@@ -110,10 +111,10 @@ func (s *Server) invokeStageHTTP(id string, c api.Container, argv []string, stdi
 	defer cancel()
 
 	client := &http.Client{Timeout: timeout + runBudget}
-	return azurecommon.PostExecEnvelope(ctx, client, acaInvokeURL(s.config.EndpointURL, fqdn), fqdn, azurecommon.ExecEnvelopeExec{
+	return envelope.Post(ctx, client, acaInvokeURL(s.config.EndpointURL, fqdn), envelope.PostOptions{Host: fqdn}, envelope.Exec{
 		Argv:    argv,
 		Workdir: c.Config.WorkingDir,
-		Stdin:   azurecommon.EncodeStdin(stdin),
+		Stdin:   envelope.EncodeStdin(stdin),
 	})
 }
 
@@ -171,23 +172,11 @@ func acaCommandRunsViaAgent(c api.Container) bool {
 	return hasUserCommand && !runsAtStartup
 }
 
+// captureACAStdin returns the script a buffered attach piped into the
+// container, once the caller signalled EOF. The second result is false
+// when no attach was registered, so the container's own command runs.
 func (s *Server) captureACAStdin(id string) ([]byte, bool) {
-	v, ok := s.stdinPipes.LoadAndDelete(id)
-	if !ok {
-		return nil, false
-	}
-	pipe, isPipe := v.(*stdinPipe)
-	if !isPipe {
-		return nil, false
-	}
-	select {
-	case <-pipe.Done():
-	case <-time.After(30 * time.Second):
-		s.Logger.Warn().Str("container", id).Msg("ACA stdin pipe Done timeout; proceeding with captured bytes")
-	case <-s.ctx().Done():
-		return nil, true
-	}
-	return pipe.Bytes(), true
+	return core.CaptureBufferedStdin(s.ctx(), &s.stdinPipes, id, 30*time.Second, s.Logger)
 }
 
 func (s *Server) finishACAInitialStdinStage(id string, inv core.InvocationResult, stdout, stderr []byte) {
@@ -196,11 +185,7 @@ func (s *Server) finishACAInitialStdinStage(id string, inv core.InvocationResult
 		s.Store.LogBuffers.Store(id, combined)
 	}
 	s.Store.PutInvocationResult(id, inv)
-	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-		if as, isStream := v.(*attachStream); isStream {
-			as.publishAttachResponse(stdout, stderr)
-		}
-	}
+	core.PublishBufferedAttachResponse(&s.attachStreams, id, stdout, stderr)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		if wc, isCh := ch.(chan struct{}); isCh {
 			close(wc)

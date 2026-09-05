@@ -2,14 +2,11 @@ package cloudrun
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"cloud.google.com/go/logging/logadmin"
@@ -21,15 +18,6 @@ import (
 
 // Compile-time check that Server implements api.Backend.
 var _ api.Backend = (*Server)(nil)
-
-func isImplicitDockerNetwork(networkID string) bool {
-	switch strings.TrimSpace(networkID) {
-	case "", "default", "bridge", "host", "none":
-		return true
-	default:
-		return false
-	}
-}
 
 // ContainerCreate creates a container backed by a Cloud Run Job.
 func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.ContainerCreateResponse, error) {
@@ -92,12 +80,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// env vars.
 	originalImage := config.Image
 	if s.useOverlayPath(originalImage) {
-		spec := gcpcommon.OverlayImageSpec{
+		spec := core.OverlayImageSpec{
 			BaseImageRef:        originalImage,
 			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 		}
-		contentTag := gcpcommon.OverlayContentTag("cloudrun-", spec)
+		contentTag := core.OverlayContentTag("cloudrun-", spec)
 		overlayURI, err := s.ensureOverlayImage(s.ctx(), spec, contentTag)
 		if err != nil {
 			return nil, fmt.Errorf("ensure cloudrun overlay image: %w", err)
@@ -107,7 +95,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		// build-time `ENV SOCKERLESS_USER_*` baking — keeping these out
 		// of the image content means the overlay tag stays stable across
 		// containers that share the same base image + bootstrap pair.
-		userEnv := overlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)
+		userEnv := core.OverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)
 		config.Env = append(config.Env, userEnv...)
 		// Inject SOCKERLESS_JOB_TIMEOUT_SECONDS so the bootstrap arms
 		// its timeout timer. User's per-job override
@@ -137,7 +125,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// bind-mount model: named volumes pass through, mapped host binds
 	// rewrite to named-volume references, sub-paths + docker.sock drop,
 	// anything else rejects loudly).
-	translatedBinds, droppedBinds, err := translateSharedVolumeBinds(s.config, hostConfig.Binds)
+	translatedBinds, droppedBinds, err := core.TranslateSharedVolumeBinds(s.config.SharedVolumes, hostConfig.Binds, gcpcommon.HostBindPolicy("Google Cloud Run"))
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +306,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// container Service revision"). Pure standard-Docker signal: network
 	// membership + Container.Config.OpenStdin. No runner-specific code.
 	netDefer, netMembers := s.shouldDeferOrMaterializeNetworkPod(c)
-	netID, _ := s.userDefinedNetworkID(c)
+	netID, _ := s.UserDefinedNetworkID(c)
 	s.Logger.Info().
 		Str("container", id).
 		Str("image", c.Config.Image).
@@ -802,7 +790,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 				if err := cd.DeregisterContainerCNAME(s.ctx(), ep.NetworkID, hostname); err != nil {
 					s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister CNAME from Cloud DNS")
 				}
-			} else if err := cd.DeregisterContainerARecord(ep.NetworkID, hostname); err != nil {
+			} else if err := cd.DeregisterContainerARecord(s.ctx(), ep.NetworkID, hostname); err != nil {
 				s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to deregister from Cloud DNS")
 			}
 		} else if err := s.NetworkDiscovery.DeregisterContainer(s.ctx(), ep.NetworkID, hostname, id); err != nil {
@@ -812,7 +800,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && !isImplicitDockerNetwork(ep.NetworkID) {
+		if ep != nil && !core.IsBuiltinNetwork(ep.NetworkID) {
 			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
 			}
@@ -945,7 +933,7 @@ func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 			if err != nil {
 				break
 			}
-			line := extractLogLine(entry)
+			line := gcpcommon.ExtractLogLine(entry)
 			if line == "" {
 				continue
 			}
@@ -1078,24 +1066,16 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
-// agent.
+// ContainerPause suspends the container's main process through the
+// reverse agent.
 func (s *Server) ContainerPause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
+	return s.PauseViaReverseAgent(s.reverseAgents, ref)
 }
 
-// ContainerUnpause sends SIGCONT to the user subprocess via the
-// reverse-agent.
+// ContainerUnpause resumes the container's main process through the
+// reverse agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
+	return s.UnpauseViaReverseAgent(s.reverseAgents, ref)
 }
 
 // ImagePull rewrites the image ref to the Artifact Registry remote
@@ -1150,7 +1130,7 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	if name == "" {
 		return &api.InvalidParameterError{Message: "volume name is required"}
 	}
-	if err := s.deleteBucketForVolume(s.ctx(), name, force); err != nil {
+	if err := s.volumes.Buckets.DeleteForVolume(s.ctx(), name, force); err != nil {
 		return &api.ServerError{Message: fmt.Sprintf("delete GCS bucket for %q: %v", name, err)}
 	}
 	return nil
@@ -1218,68 +1198,18 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	if postExec == nil {
 		return rwc, nil
 	}
-	return &execPostHook{ReadWriteCloser: rwc, once: &sync.Once{}, hook: postExec}, nil
+	return core.NewExecPostHook(rwc, postExec), nil
 }
 
-// gcsSyncPreExec runs GCSSyncDriver.PreExec for every configured gcs-sync
-// SharedVolume: it tars the runner-side workspace (the volume's host source)
-// to a per-exec GCS object and injects a SOCKERLESS_SYNC_VOLUMES hint into the
-// exec instance's env so the bootstrap restores it into the job container's
-// tmpfs before running the command (the workspace mount is otherwise an empty
-// tmpfs). It returns a closure that pulls each volume's modifications back to
-// the runner-side path after the exec, or nil when no gcs-sync volume applies.
+// gcsSyncPreExec stages every gcs-sync shared volume for the exec and
+// returns the sync-back to run when the exec stream closes; nil when no
+// gcs-sync volume is declared.
 func (s *Server) gcsSyncPreExec(execID string) (func(), error) {
-	var vols []SharedVolume
-	for _, sv := range s.config.SharedVolumes {
-		if core.StorageBacking(sv.Backing) == core.BackingGCSSync {
-			vols = append(vols, sv)
-		}
-	}
-	if len(vols) == 0 {
-		return nil, nil
-	}
-	driver, err := s.storageBackings.Resolve(core.BackingGCSSync)
-	if err != nil {
-		return nil, err
-	}
-	var pairs []string
-	for _, sv := range vols {
-		hints, err := driver.PreExec(s.ctx(), sv.AsRef(), execID, sv.ContainerPath, "")
-		if err != nil {
-			return nil, fmt.Errorf("volume %q: %w", sv.Name, err)
-		}
-		pairs = append(pairs, hints["SOCKERLESS_SYNC_VOLUMES"]...)
-	}
-	if len(pairs) > 0 {
-		entry := "SOCKERLESS_SYNC_VOLUMES=" + strings.Join(pairs, ",")
+	return gcpcommon.GCSSyncPreExec(s.ctx(), s.config.SharedVolumes, s.storageBackings, execID, func(entry string) {
 		s.Store.Execs.Update(execID, func(e *api.ExecInstance) {
 			e.ProcessConfig.Env = append(e.ProcessConfig.Env, entry)
 		})
-	}
-	volsCopy := vols
-	return func() {
-		for _, sv := range volsCopy {
-			if perr := driver.PostExec(s.ctx(), sv.AsRef(), execID, sv.ContainerPath); perr != nil {
-				s.Logger.Warn().Err(perr).Str("volume", sv.Name).Str("exec", execID).
-					Msg("gcs-sync PostExec failed — runner-side workspace may be stale for this step")
-			}
-		}
-	}, nil
-}
-
-// execPostHook wraps an exec stream so the gcs-sync PostExec sync-back runs
-// exactly once when the caller closes the stream — by which point the exec has
-// finished and the bootstrap has uploaded its workspace modifications.
-type execPostHook struct {
-	io.ReadWriteCloser
-	once *sync.Once
-	hook func()
-}
-
-func (e *execPostHook) Close() error {
-	err := e.ReadWriteCloser.Close()
-	e.once.Do(e.hook)
-	return err
+	}, s.Logger)
 }
 
 // materializeDeferredNetworkPodForExec lazily deploys a network-pod
@@ -1298,7 +1228,7 @@ func (s *Server) materializeDeferredNetworkPodForExec(id string) error {
 	if !ok {
 		return nil // already materialized, or not a deferred container
 	}
-	netID, _ := s.userDefinedNetworkID(c)
+	netID, _ := s.UserDefinedNetworkID(c)
 	// The job container is main (index 0); deferred service siblings on
 	// the same network become sidecars.
 	members := []api.Container{c}
@@ -1321,21 +1251,10 @@ func (s *Server) materializeDeferredNetworkPodForExec(id string) error {
 	return s.startSingleContainerService(id, c, crState, exitCh, true)
 }
 
-// ContainerExport streams the container's rootfs as tar via the
-// reverse-agent.
+// ContainerExport streams the container's root filesystem through the
+// reverse agent.
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
-	if err == core.ErrNoReverseAgent {
-		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
-	}
-	if err != nil {
-		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
-	}
-	return rc, nil
+	return s.ExportViaReverseAgent(s.reverseAgents, ref, "container")
 }
 
 // ContainerCommit is not supported by Cloud Run backend.
@@ -1349,124 +1268,25 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	return core.CommitContainerRequestViaAgent(s.BaseServer, s.reverseAgents, req)
 }
 
-// PodStart starts all containers in a pod by calling ContainerStart for each.
-// This triggers the Cloud Run Job creation via the deferred-start mechanism.
+// PodStart starts every member through the cloud-aware ContainerStart.
 func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || c.State.Running {
-			continue
-		}
-		if err := s.ContainerStart(cid); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", cid, err))
-		}
-	}
-
-	s.Store.Pods.SetStatus(pod.ID, "running")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStart(name, s.ContainerStart)
 }
 
-// PodStop stops all containers in a pod by calling ContainerStop for each.
-// This cancels the Cloud Run executions.
+// PodStop stops every running member through the cloud-aware ContainerStop.
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerStop(cid, timeout); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", cid, err))
-		}
-	}
-
-	s.Store.Pods.SetStatus(pod.ID, "stopped")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStop(name, timeout, s.ContainerStop)
 }
 
-// PodKill sends a signal to all containers in a pod by calling ContainerKill for each.
-// This cancels the Cloud Run executions.
+// PodKill signals every running member through the cloud-aware ContainerKill.
 func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	if signal == "" {
-		signal = "SIGKILL"
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerKill(cid, signal); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", cid, err))
-		}
-	}
-
-	s.Store.Pods.SetStatus(pod.ID, "exited")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodKill(name, signal, s.ContainerKill)
 }
 
-// PodRemove removes a pod and its containers by calling ContainerRemove for each.
-// This deletes the Cloud Run Jobs.
+// PodRemove removes every member through the cloud-aware ContainerRemove,
+// so no Cloud Run job or service is orphaned, then deletes the pod.
 func (s *Server) PodRemove(name string, force bool) error {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	// Without force, reject if any containers are running
-	if !force {
-		for _, cid := range pod.ContainerIDs {
-			c, ok := s.ResolveContainerAuto(context.Background(), cid)
-			if ok && c.State.Running {
-				return &api.ConflictError{
-					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
-				}
-			}
-		}
-	}
-
-	// Remove each container via the typed method (cleans up Cloud Run
-	// resources). Remove ALL members even if one fails, then surface the joined
-	// error — a failed member delete orphans a live Cloud Run resource and must
-	// not be reported as a successful pod removal.
-	var errs []error
-	for _, cid := range pod.ContainerIDs {
-		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
-			continue
-		}
-		if err := s.ContainerRemove(cid, force); err != nil {
-			errs = append(errs, fmt.Errorf("remove pod member %s: %w", cid, err))
-		}
-	}
-
-	s.Store.Pods.DeletePod(pod.ID)
-	return errors.Join(errs...)
+	return s.CloudPodRemove(name, force, s.ContainerRemove)
 }
 
 // Info returns system information enriched with GCP project/region metadata.
@@ -1518,10 +1338,10 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 		Str("image", c.Config.Image).
 		Bool("stdin", opts.Stdin).
 		Bool("stdout", opts.Stdout).
-		Bool("overlay", hasSockerlessOverlayRepo(c.Config.Image)).
+		Bool("overlay", core.HasOverlayRepo(c.Config.Image)).
 		Msg("ContainerAttach: hit")
-	if opts.Stdin && hasSockerlessOverlayRepo(c.Config.Image) {
-		p := newStdinPipe()
+	if opts.Stdin && core.HasOverlayRepo(c.Config.Image) {
+		p := core.NewStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
 		pipe := asStdinPipe(actual)
 		if pipe == nil {
@@ -1650,64 +1470,14 @@ func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
 	return s.BaseServer.AuthLogin(req)
 }
 
-// VolumePrune deletes every sockerless-managed GCS bucket that isn't
-// currently referenced by a pending container's binds. Bucket labels
-// already carry the `sockerless-managed` marker so this path only
-// touches buckets provisioned by sockerless.
+// VolumePrune deletes every sockerless-managed bucket whose volume is not
+// referenced by a created-but-unstarted container.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	buckets, err := s.listManagedBuckets(s.ctx())
+	buckets, err := s.volumes.Buckets.ListManaged(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
 	}
-	in := s.inUseVolumeNames()
-	resp := &api.VolumePruneResponse{}
-	for _, b := range buckets {
-		name := gcpcommon.BucketVolumeName(b)
-		if _, busy := in[name]; busy {
-			continue
-		}
-		if err := s.deleteBucketForVolume(s.ctx(), name, true); err != nil {
-			return nil, &api.ServerError{Message: fmt.Sprintf("delete GCS bucket for %q: %v", name, err)}
-		}
-		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
-	}
-	return resp, nil
-}
-
-// inUseVolumeNames returns the set of Docker volume names currently
-// referenced by pending Cloud Run jobs.
-func (s *Server) inUseVolumeNames() map[string]struct{} {
-	in := make(map[string]struct{})
-	for _, c := range s.PendingCreates.List() {
-		for _, b := range c.HostConfig.Binds {
-			parts := strings.SplitN(b, ":", 3)
-			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
-				in[parts[0]] = struct{}{}
-			}
-		}
-	}
-	return in
-}
-
-// overlayUserEnv returns the SOCKERLESS_USER_* env entries that the
-// cloudrun bootstrap reads at request time to assemble the user's
-// argv + workdir. Replaces the build-time `ENV` baking so pool entries
-// with the same (image, bootstrap) can be reused across containers
-// with different entrypoint/cmd/workdir tuples.
-func overlayUserEnv(entrypoint, cmd []string, workdir string) []string {
-	var out []string
-	if len(entrypoint) > 0 {
-		if b, err := json.Marshal(entrypoint); err == nil {
-			out = append(out, "SOCKERLESS_USER_ENTRYPOINT="+base64.StdEncoding.EncodeToString(b))
-		}
-	}
-	if len(cmd) > 0 {
-		if b, err := json.Marshal(cmd); err == nil {
-			out = append(out, "SOCKERLESS_USER_CMD="+base64.StdEncoding.EncodeToString(b))
-		}
-	}
-	if workdir != "" {
-		out = append(out, "SOCKERLESS_USER_WORKDIR="+workdir)
-	}
-	return out
+	return core.PruneManagedVolumes(buckets, gcpcommon.BucketVolumeName, core.InUseVolumeNames(s.PendingCreates.List()), func(name string) error {
+		return s.volumes.Buckets.DeleteForVolume(s.ctx(), name, true)
+	}, "GCS bucket")
 }

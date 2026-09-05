@@ -42,11 +42,11 @@ type azureVolumeState struct {
 // storage linkage is still ensured (idempotent CreateOrUpdate) so the
 // spawned job/app can reference the share by name.
 func (s *Server) shareForVolume(ctx context.Context, volName string) (string, error) {
-	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
-		if err := s.ensureEnvStorage(ctx, sv.ShareName, sv.AccountOrDefault(s.config.StorageAccount)); err != nil {
+	if sv := s.config.SharedVolumes.ByName(volName); sv != nil {
+		if err := s.ensureEnvStorage(ctx, sv.AzureShareName, sv.AzureAccountOrDefault(s.config.StorageAccount)); err != nil {
 			return "", err
 		}
-		return sv.ShareName, nil
+		return sv.AzureShareName, nil
 	}
 	shareName, err := s.shares.EnsureShare(ctx, volName)
 	if err != nil {
@@ -84,7 +84,7 @@ func (s *Server) ensureEnvStorage(ctx context.Context, shareName, accountName st
 // Operator-declared SharedVolumes are operator-owned — sockerless never
 // deletes their shares.
 func (s *Server) deleteShareForVolume(ctx context.Context, volName string) error {
-	if s.config.LookupSharedVolumeByName(volName) != nil {
+	if s.config.SharedVolumes.ByName(volName) != nil {
 		return nil
 	}
 	shareName := azurecommon.ShareName(volName)

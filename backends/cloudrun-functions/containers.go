@@ -3,13 +3,14 @@ package gcf
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/sockerless/agent/envelope"
 )
 
 // bootstrapReadyPath cold-starts a scale-to-zero Service instance without
@@ -46,23 +47,6 @@ func (s *Server) warmBootstrap(ctx context.Context, audienceURL string) error {
 	return nil
 }
 
-// execEnvelope mirrors the bootstrap's expected request body for the
-// "Path B" exec route. Sending entrypoint/cmd/workdir/env in the
-// request body lets pool-claimed Functions execute the right user
-// command WITHOUT requiring an UpdateService rollout: the Cloud Run
-// regional CPU quota only debits on revision creation, not on invoke,
-// so envelope-driven dispatch keeps the warm pool warm.
-type execEnvelope struct {
-	Sockerless struct {
-		Exec struct {
-			Argv    []string `json:"argv"`
-			Workdir string   `json:"workdir,omitempty"`
-			Env     []string `json:"env,omitempty"`
-			Stdin   string   `json:"stdin,omitempty"`
-		} `json:"exec"`
-	} `json:"sockerless"`
-}
-
 // invokeFunction does an authenticated HTTPS POST to the function's
 // underlying Cloud Run Service URL. Cloud Run requires a Google ID
 // token in the Authorization header (audience = service URL). idtoken
@@ -91,14 +75,12 @@ func (s *Server) invokeFunction(ctx context.Context, audienceURL string, argv []
 
 	var body []byte
 	if len(argv) > 0 {
-		var env_ execEnvelope
-		env_.Sockerless.Exec.Argv = argv
-		env_.Sockerless.Exec.Workdir = workdir
-		env_.Sockerless.Exec.Env = env
-		if stdin != nil {
-			env_.Sockerless.Exec.Stdin = base64.StdEncoding.EncodeToString(stdin)
-		}
-		body, err = json.Marshal(&env_)
+		body, err = json.Marshal(envelope.NewRequest(envelope.Exec{
+			Argv:    argv,
+			Workdir: workdir,
+			Env:     env,
+			Stdin:   envelope.EncodeStdin(stdin),
+		}))
 		if err != nil {
 			return nil, fmt.Errorf("marshal exec envelope: %w", err)
 		}

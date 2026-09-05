@@ -37,6 +37,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sockerless/agent/envelope"
+
 	"github.com/gorilla/websocket"
 
 	"github.com/sockerless/agent"
@@ -228,34 +230,6 @@ func handleOneInvocation(base string, raConn *websocket.Conn, raMu *sync.Mutex) 
 	return postResult(base, requestID, "/response", stdout)
 }
 
-// execEnvelope is the JSON shape sockerless's lambda backend uses to
-// dispatch `docker exec` via `lambda.Invoke` when the reverse-agent
-// path isn't wired (e.g. in-Lambda sockerless with no fronting API
-// Gateway). Documented in `specs/CLOUD_RESOURCE_MAPPING.md` § Lambda
-// exec semantics — Path B.
-type execEnvelope struct {
-	Sockerless struct {
-		Exec *struct {
-			Argv    []string `json:"argv"`
-			Tty     bool     `json:"tty,omitempty"`
-			Workdir string   `json:"workdir,omitempty"`
-			Env     []string `json:"env,omitempty"`
-			Stdin   string   `json:"stdin,omitempty"` // base64-encoded
-		} `json:"exec,omitempty"`
-	} `json:"sockerless,omitempty"`
-}
-
-// execResult is the JSON shape the bootstrap returns when the Invoke
-// payload was an exec envelope. Matches `specs/CLOUD_RESOURCE_MAPPING.md`
-// § Lambda exec semantics — Path B response shape.
-type execResult struct {
-	SockerlessExecResult struct {
-		ExitCode int    `json:"exitCode"`
-		Stdout   string `json:"stdout"` // base64-encoded
-		Stderr   string `json:"stderr"` // base64-encoded
-	} `json:"sockerlessExecResult"`
-}
-
 // runUserInvocation runs the user's declared entrypoint+cmd with the
 // invocation payload piped on stdin. Captures stdout + stderr and
 // returns the exit code. Cancelled by the deadline context.
@@ -329,22 +303,10 @@ func truncateBytes(b []byte, n int) []byte {
 	return b
 }
 
-// parseExecEnvelope decodes payload as an exec envelope. Returns
-// (envelope, true) when the payload is valid JSON containing a
-// non-nil sockerless.exec object; (zero, false) otherwise so callers
-// fall through to the standard "user entrypoint" path.
-func parseExecEnvelope(payload []byte) (execEnvelope, bool) {
-	if len(payload) == 0 || payload[0] != '{' {
-		return execEnvelope{}, false
-	}
-	var env execEnvelope
-	if err := json.Unmarshal(payload, &env); err != nil {
-		return execEnvelope{}, false
-	}
-	if env.Sockerless.Exec == nil || len(env.Sockerless.Exec.Argv) == 0 {
-		return execEnvelope{}, false
-	}
-	return env, true
+// parseExecEnvelope decodes payload as an exec envelope. false means the
+// payload is an ordinary invocation event and the user entrypoint runs.
+func parseExecEnvelope(payload []byte) (envelope.Exec, bool) {
+	return envelope.Parse(payload)
 }
 
 // runExecInvocation handles a Path B exec request. The argv runs as a
@@ -352,8 +314,7 @@ func parseExecEnvelope(payload []byte) (execEnvelope, bool) {
 // returned as a JSON `execResult` to the Lambda Runtime API so
 // sockerless's lambda backend can decode + tunnel into the docker exec
 // attach connection.
-func runExecInvocation(ctx context.Context, env execEnvelope) (stdout, stderr []byte, exitCode int) {
-	spec := env.Sockerless.Exec
+func runExecInvocation(ctx context.Context, spec envelope.Exec) (stdout, stderr []byte, exitCode int) {
 	fmt.Fprintf(os.Stderr, "bootstrap exec: argv=%v workdir=%q env=%d-vars stdin=%d-bytes\n", spec.Argv, spec.Workdir, len(spec.Env), len(spec.Stdin))
 	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...)
 	cmd.Env = os.Environ()
@@ -401,11 +362,7 @@ func runExecInvocation(ctx context.Context, env execEnvelope) (stdout, stderr []
 
 	// Encode the result as JSON so the lambda backend's exec-attach
 	// adapter can recover it from the `lambda.Invoke` response.
-	res := execResult{}
-	res.SockerlessExecResult.ExitCode = code
-	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(outBuf.Bytes())
-	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderrBytes)
-	body, _ := json.Marshal(res)
+	body, _ := json.Marshal(envelope.NewResponse(code, outBuf.Bytes(), stderrBytes))
 	// Lambda's invocation contract returns one body — we put the JSON
 	// response in stdout (the /response payload), leave stderr empty,
 	// and set the function-level exit code to 0 so Lambda doesn't

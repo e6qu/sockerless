@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	core "github.com/sockerless/backend-core"
+
 	"github.com/sockerless/api"
 )
 
@@ -66,8 +68,8 @@ func TestSanitizePodMemberNameLambda(t *testing.T) {
 		"abc.123_xyz": "abc-123-xyz",
 	}
 	for in, want := range cases {
-		if got := sanitizePodMemberName(in); got != want {
-			t.Errorf("sanitizePodMemberName(%q) = %q want %q", in, got, want)
+		if got := core.SanitizePodMemberName(in); got != want {
+			t.Errorf("core.SanitizePodMemberName(%q) = %q want %q", in, got, want)
 		}
 	}
 }
@@ -81,8 +83,8 @@ func TestSanitizePodTagValueLambda(t *testing.T) {
 		"UPPER":    "upper",
 	}
 	for in, want := range cases {
-		if got := sanitizePodTagValue(in); got != want {
-			t.Errorf("sanitizePodTagValue(%q) = %q want %q", in, got, want)
+		if got := core.SanitizePodLabelValue(in); got != want {
+			t.Errorf("core.SanitizePodLabelValue(%q) = %q want %q", in, got, want)
 		}
 	}
 }
@@ -93,7 +95,7 @@ func TestRenderPodOverlayDockerfileLambda(t *testing.T) {
 		MainName:            "main",
 		AgentBinaryPath:     "/tmp/agent",
 		BootstrapBinaryPath: "/tmp/bootstrap",
-		Members: []PodMemberSpec{
+		Members: []core.PodMemberSpec{
 			{Name: "main", BaseImageRef: "729079515331.dkr.ecr.eu-west-1.amazonaws.com/alpine:latest", Cmd: []string{"echo", "hi"}},
 			{Name: "postgres", BaseImageRef: "729079515331.dkr.ecr.eu-west-1.amazonaws.com/postgres:16", Cmd: []string{"postgres"}},
 		},
@@ -130,7 +132,7 @@ func TestPodOverlayContentTagLambda(t *testing.T) {
 		AgentBinaryPath:     "/tmp/agent",
 		BootstrapBinaryPath: "/tmp/bootstrap",
 		MainName:            "main",
-		Members: []PodMemberSpec{
+		Members: []core.PodMemberSpec{
 			{Name: "main", BaseImageRef: "alpine:latest", Cmd: []string{"echo", "hi"}},
 			{Name: "postgres", BaseImageRef: "postgres:16"},
 		},
@@ -151,15 +153,15 @@ func TestPodOverlayContentTagLambda(t *testing.T) {
 }
 
 func TestEncodeDecodePodManifestLambda(t *testing.T) {
-	members := []PodMemberSpec{
+	members := []core.PodMemberSpec{
 		{Name: "postgres", ContainerID: "11111", BaseImageRef: "postgres:16", Cmd: []string{"postgres"}},
 		{Name: "main", ContainerID: "22222", BaseImageRef: "alpine", Entrypoint: []string{"sh", "-c"}, Cmd: []string{"echo hi"}},
 	}
-	enc, err := EncodePodManifest(members)
+	enc, err := core.EncodePodManifest(members)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	got, err := DecodePodManifest(enc)
+	got, err := core.DecodePodManifest(enc)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}

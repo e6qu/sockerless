@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	core "github.com/sockerless/backend-core"
 )
 
 func TestEncodePodManifestRoundtrip(t *testing.T) {
-	members := []PodMemberSpec{
+	members := []core.PodMemberSpec{
 		{Name: "postgres", BaseImageRef: "postgres:16", Cmd: []string{"postgres"}},
 		{Name: "main", BaseImageRef: "alpine:latest", Cmd: []string{"echo", "hi"}, Workdir: "/work"},
 	}
-	enc, err := EncodePodManifest(members)
+	enc, err := core.EncodePodManifest(members)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -20,7 +22,7 @@ func TestEncodePodManifestRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("base64 decode: %v", err)
 	}
-	var got []PodMemberJSON
+	var got []core.PodMemberJSON
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
@@ -43,7 +45,7 @@ func TestRenderPodOverlayDockerfile(t *testing.T) {
 		PodName:             "ci-pod",
 		MainName:            "main",
 		BootstrapBinaryPath: "/tmp/bootstrap",
-		Members: []PodMemberSpec{
+		Members: []core.PodMemberSpec{
 			{Name: "main", BaseImageRef: "us-central1-docker.pkg.dev/p/r/alpine:latest", Cmd: []string{"echo", "hi"}},
 			{Name: "postgres", BaseImageRef: "us-central1-docker.pkg.dev/p/r/postgres:16", Cmd: []string{"postgres"}},
 		},
@@ -77,19 +79,19 @@ func TestRenderPodOverlayDockerfileRejectsEmpty(t *testing.T) {
 		t.Fatal("expected error on empty Members")
 	}
 	if _, err := RenderPodOverlayDockerfile(PodOverlaySpec{
-		Members: []PodMemberSpec{{Name: "x", BaseImageRef: "alpine"}},
+		Members: []core.PodMemberSpec{{Name: "x", BaseImageRef: "alpine"}},
 	}); err == nil {
 		t.Fatal("expected error on empty BootstrapBinaryPath")
 	}
 	if _, err := RenderPodOverlayDockerfile(PodOverlaySpec{
 		BootstrapBinaryPath: "/x",
-		Members:             []PodMemberSpec{{Name: "x"}},
+		Members:             []core.PodMemberSpec{{Name: "x"}},
 	}); err == nil {
 		t.Fatal("expected error on missing BaseImageRef")
 	}
 	if _, err := RenderPodOverlayDockerfile(PodOverlaySpec{
 		BootstrapBinaryPath: "/x",
-		Members:             []PodMemberSpec{{BaseImageRef: "alpine"}},
+		Members:             []core.PodMemberSpec{{BaseImageRef: "alpine"}},
 	}); err == nil {
 		t.Fatal("expected error on missing Name")
 	}
@@ -99,7 +101,7 @@ func TestPodOverlayContentTagStableAcrossOrder(t *testing.T) {
 	a := PodOverlaySpec{
 		BootstrapBinaryPath: "/tmp/bootstrap",
 		MainName:            "main",
-		Members: []PodMemberSpec{
+		Members: []core.PodMemberSpec{
 			{Name: "postgres", BaseImageRef: "postgres:16"},
 			{Name: "main", BaseImageRef: "alpine:latest", Cmd: []string{"echo", "hi"}},
 		},
@@ -109,7 +111,7 @@ func TestPodOverlayContentTagStableAcrossOrder(t *testing.T) {
 		t.Error("expected identical specs to produce identical tags")
 	}
 	c := a
-	c.Members = []PodMemberSpec{
+	c.Members = []core.PodMemberSpec{
 		{Name: "main", BaseImageRef: "alpine:latest", Cmd: []string{"echo", "hi"}},
 		{Name: "postgres", BaseImageRef: "postgres:16"},
 	}

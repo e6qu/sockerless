@@ -26,6 +26,12 @@ See [ARCHITECTURE.md](../ARCHITECTURE.md) for forward/reverse mode diagrams.
 agent/
 ├── cmd/sockerless-agent/   CLI entrypoint
 │   └── main.go
+├── cmd/sockerless-{lambda,cloudrun,gcf,azf}-bootstrap/
+│                           In-workload bootstraps that run the user's
+│                           command per invocation and serve exec
+├── envelope/               Exec-envelope wire contract shared by the
+│                           bootstraps and the FaaS backends (Request,
+│                           Exec, Response, Post, Parse)
 ├── server.go               Server, Config, ListenAndServe, ReverseConnect
 ├── message.go              Message type and constants
 ├── router.go               Incoming message dispatcher

@@ -79,7 +79,7 @@ func NewGCPBuildService(ctx context.Context, project, bucket, arRepo, endpointUR
 	var tokenSource oauth2.TokenSource
 	var storageOpts []option.ClientOption
 	if endpointURL != "" {
-		if host, err := urlHost(endpointURL); err == nil {
+		if host, err := URLHost(endpointURL); err == nil {
 			_ = os.Setenv("GCE_METADATA_HOST", host)
 			_ = os.Setenv("STORAGE_EMULATOR_HOST", host)
 		}
@@ -113,10 +113,10 @@ func NewGCPBuildService(ctx context.Context, project, bucket, arRepo, endpointUR
 	}, nil
 }
 
-// urlHost returns "host:port" from a URL, or an error if malformed. Used
-// to point GCE_METADATA_HOST / STORAGE_EMULATOR_HOST at a non-default
+// URLHost returns "host:port" from a URL, or an error if malformed. It
+// points GCE_METADATA_HOST / STORAGE_EMULATOR_HOST at a non-default
 // endpoint host.
-func urlHost(rawURL string) (string, error) {
+func URLHost(rawURL string) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return "", err

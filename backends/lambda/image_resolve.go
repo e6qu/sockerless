@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	ecrtypes "github.com/aws/aws-sdk-go-v2/service/ecr/types"
+	awscommon "github.com/sockerless/aws-common"
+	core "github.com/sockerless/backend-core"
 )
 
 // resolveImageURI converts a Docker image reference to a registry that
@@ -34,15 +34,15 @@ import (
 //     who need such an image should `docker push` it to their ECR
 //     repo first.
 func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error) {
-	if strings.Contains(ref, ".dkr.ecr.") && strings.Contains(ref, ".amazonaws.com") {
+	if awscommon.IsECRImageURI(ref) {
 		return ref, nil
 	}
 
 	// Digest-only refs (`sha256:...` with no preceding name) — resolve
 	// via the local image Store. gitlab-runner's volume-permission
 	// helper references images by digest after a prior pull; without
-	// this lookup parseDockerRef would split `sha256:hex` into
-	// repo="sha256" tag="hex" and the resulting Dockerfile FROM
+	// this lookup the reference would split into repo="sha256" tag="hex"
+	// and the resulting Dockerfile FROM
 	// `…/public-ecr-aws/docker/library/sha256:hex` 404s in CodeBuild.
 	if strings.HasPrefix(ref, "sha256:") && !strings.ContainsAny(ref, "/@") {
 		if img, ok := s.Store.ResolveImage(ref); ok && len(img.RepoTags) > 0 {
@@ -60,12 +60,10 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	// Decompose the reference. For public.ecr.aws/<path> we treat it
 	// the same as any registry-prefixed ref so it goes through a
 	// pull-through cache (Lambda needs single-arch ECR-hosted images).
-	registry, repo, tag := parseDockerRef(ref)
+	registry, repo, tag := core.SplitDockerRef(ref)
 
-	var cachePrefix string
-	var upstreamURL string
+	var cachePrefix, upstreamURL string
 	var upstreamKind ecrtypes.UpstreamRegistry
-
 	switch registry {
 	case "", "docker.io", "registry-1.docker.io":
 		// Library images live on AWS Public Gallery as `docker/library/<name>`.
@@ -80,100 +78,28 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		upstreamURL = "public.ecr.aws"
 		upstreamKind = ecrtypes.UpstreamRegistryEcrPublic
 		repo = "docker/library/" + repo
-		cachePrefix = strings.ReplaceAll(upstreamURL, ".", "-")
 	case "public.ecr.aws":
 		upstreamURL = "public.ecr.aws"
 		upstreamKind = ecrtypes.UpstreamRegistryEcrPublic
-		cachePrefix = strings.ReplaceAll(upstreamURL, ".", "-")
 	default:
-		cachePrefix = strings.ReplaceAll(registry, ".", "-")
 		upstreamURL = registry
-		upstreamKind = upstreamRegistryFor(registry)
+		upstreamKind = awscommon.UpstreamRegistryFor(registry)
 	}
+	cachePrefix = awscommon.PullThroughCachePrefix(upstreamURL)
 
-	if err := s.ensurePullThroughCache(ctx, cachePrefix, upstreamURL, upstreamKind); err != nil {
+	cache := awscommon.ECRPullThroughCache{Client: s.aws.ECR, Logger: s.Logger}
+	if err := cache.Ensure(ctx, cachePrefix, upstreamURL, upstreamKind); err != nil {
 		return ref, fmt.Errorf("ECR pull-through cache setup for %q: %w", cachePrefix, err)
 	}
 
-	accountID := extractAccountID(s.config.RoleARN)
+	accountID := awscommon.ExtractAccountID(s.config.RoleARN)
 	if accountID == "" {
 		return "", fmt.Errorf("cannot determine AWS account ID from role ARN %q", s.config.RoleARN)
 	}
 
-	ecrURI := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s/%s:%s", accountID, s.config.Region, cachePrefix, repo, tag)
+	ecrURI := awscommon.PullThroughCacheURI(accountID, s.config.Region, cachePrefix, repo, tag)
 	s.Logger.Info().Str("original", ref).Str("ecr", ecrURI).Msg("resolved image to ECR pull-through cache URI")
 	return ecrURI, nil
-}
-
-// upstreamRegistryFor maps a hostname to ECR's UpstreamRegistry enum.
-func upstreamRegistryFor(registry string) ecrtypes.UpstreamRegistry {
-	switch registry {
-	case "ghcr.io":
-		return ecrtypes.UpstreamRegistryGitHubContainerRegistry
-	case "quay.io":
-		return ecrtypes.UpstreamRegistryQuay
-	case "registry.k8s.io", "k8s.gcr.io":
-		return ecrtypes.UpstreamRegistryK8s
-	case "mcr.microsoft.com":
-		return ecrtypes.UpstreamRegistryAzureContainerRegistry
-	case "public.ecr.aws":
-		return ecrtypes.UpstreamRegistryEcrPublic
-	default:
-		return ecrtypes.UpstreamRegistryEcrPublic
-	}
-}
-
-// ensurePullThroughCache creates an ECR pull-through cache rule if it
-// doesn't exist. No CredentialArn is set — sockerless only routes
-// public registries through pull-through cache (Docker Hub library
-// refs go via AWS Public Gallery, see resolveImageURI). Operators who
-// need authenticated upstreams should provision the rule and the
-// secret out of band; sockerless will pick up the existing rule via
-// the describe call above and use it as-is.
-func (s *Server) ensurePullThroughCache(ctx context.Context, prefix, upstreamURL string, upstreamKind ecrtypes.UpstreamRegistry) error {
-	rules, err := s.aws.ECR.DescribePullThroughCacheRules(ctx, &ecr.DescribePullThroughCacheRulesInput{
-		EcrRepositoryPrefixes: []string{prefix},
-	})
-	if err == nil && len(rules.PullThroughCacheRules) > 0 {
-		return nil
-	}
-
-	in := &ecr.CreatePullThroughCacheRuleInput{
-		EcrRepositoryPrefix: aws.String(prefix),
-		UpstreamRegistryUrl: aws.String(upstreamURL),
-		UpstreamRegistry:    upstreamKind,
-	}
-	if _, err := s.aws.ECR.CreatePullThroughCacheRule(ctx, in); err != nil {
-		if strings.Contains(err.Error(), "PullThroughCacheRuleAlreadyExists") {
-			return nil
-		}
-		return fmt.Errorf("create pull-through cache rule: %w", err)
-	}
-	s.Logger.Info().Str("prefix", prefix).Str("upstream", upstreamURL).Msg("created ECR pull-through cache rule")
-	return nil
-}
-
-// parseDockerRef splits "nginx:alpine" into ("", "nginx", "alpine").
-func parseDockerRef(ref string) (registry, repo, tag string) {
-	tag = "latest"
-
-	// Check for explicit registry (contains. or:port before /)
-	if i := strings.IndexByte(ref, '/'); i > 0 {
-		prefix := ref[:i]
-		if strings.ContainsAny(prefix, ".:") {
-			registry = prefix
-			ref = ref[i+1:]
-		}
-	}
-
-	// Split repo:tag
-	if i := strings.LastIndexByte(ref, ':'); i > 0 {
-		repo = ref[:i]
-		tag = ref[i+1:]
-	} else {
-		repo = ref
-	}
-	return
 }
 
 // overlayECRRepo returns the fully-qualified ECR repo (no tag) where
@@ -187,19 +113,9 @@ func (s *Server) overlayECRRepo() (string, error) {
 	if s.config.OverlayECRRepo != "" {
 		return s.config.OverlayECRRepo, nil
 	}
-	accountID := extractAccountID(s.config.RoleARN)
+	accountID := awscommon.ExtractAccountID(s.config.RoleARN)
 	if accountID == "" {
 		return "", fmt.Errorf("cannot determine AWS account ID from role ARN %q for overlay ECR repo (set SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO to override)", s.config.RoleARN)
 	}
 	return fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/sockerless-live-lambda", accountID, s.config.Region), nil
-}
-
-// extractAccountID returns the AWS account ID from an IAM ARN.
-// "arn:aws:iam::123456789012:role/name" → "123456789012"
-func extractAccountID(arn string) string {
-	parts := strings.Split(arn, ":")
-	if len(parts) >= 5 {
-		return parts[4]
-	}
-	return ""
 }

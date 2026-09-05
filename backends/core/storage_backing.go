@@ -117,6 +117,11 @@ type SharedVolumeRef struct {
 	// efs-ephemeral fields
 	EFSFileSystemID  string
 	EFSAccessPointID string
+	// EFSSubpath is the directory under the access point's root where the
+	// volume's data lives; empty means the root. AWS Lambda mounts one
+	// access point per function, so volumes that share it are told apart
+	// by sub-path.
+	EFSSubpath string
 
 	// azure-files-ephemeral fields
 	AzureStorageAccount string

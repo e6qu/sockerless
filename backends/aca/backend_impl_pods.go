@@ -10,125 +10,25 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// PodStart starts all containers in a pod by calling ContainerStart for each.
-// This triggers ACA Job creation via the deferred-start mechanism.
+// PodStart starts every member through the cloud-aware ContainerStart.
 func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		// Check PendingCreates (containers between create and start)
-		if c, ok := s.PendingCreates.Get(cid); ok {
-			if c.State.Running {
-				continue
-			}
-		} else {
-			// Check CloudState for already-running containers
-			if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
-				continue
-			}
-		}
-		if err := s.ContainerStart(cid); err != nil {
-			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-		}
-	}
-	if len(errs) == 0 {
-		s.Store.Pods.SetStatus(pod.ID, "running")
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStart(name, s.ContainerStart)
 }
 
-// PodStop stops all containers in a pod by calling ContainerStop for each.
-// This stops ACA Job executions for each container.
+// PodStop stops every running member through the cloud-aware ContainerStop.
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerStop(cid, timeout); err != nil {
-			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-		}
-	}
-	s.Store.Pods.SetStatus(pod.ID, "stopped")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStop(name, timeout, s.ContainerStop)
 }
 
-// PodKill sends a signal to all containers in a pod by calling ContainerKill for each.
+// PodKill signals every running member through the cloud-aware ContainerKill.
 func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	if signal == "" {
-		signal = "SIGKILL"
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerKill(cid, signal); err != nil {
-			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-		}
-	}
-	s.Store.Pods.SetStatus(pod.ID, "exited")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodKill(name, signal, s.ContainerKill)
 }
 
-// PodRemove removes a pod and all its containers by calling ContainerRemove for each.
-// This deletes ACA Jobs and cleans up Azure resources.
+// PodRemove removes every member through the cloud-aware ContainerRemove,
+// so no Container Apps job or app is orphaned, then deletes the pod.
 func (s *Server) PodRemove(name string, force bool) error {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	// Without force, reject if any containers are running
-	if !force {
-		for _, cid := range pod.ContainerIDs {
-			if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
-				return &api.ConflictError{
-					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
-				}
-			}
-		}
-	}
-
-	// Remove each container through the ACA-aware ContainerRemove method.
-	// Take a copy of ContainerIDs since ContainerRemove modifies the pod.
-	cids := make([]string, len(pod.ContainerIDs))
-	copy(cids, pod.ContainerIDs)
-	for _, cid := range cids {
-		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
-			continue
-		}
-		if err := s.ContainerRemove(cid, force); err != nil {
-			s.Logger.Warn().Err(err).Str("container", cid[:12]).Msg("failed to remove pod container")
-		}
-	}
-
-	s.Store.Pods.DeletePod(pod.ID)
-	return nil
+	return s.CloudPodRemove(name, force, s.ContainerRemove)
 }
 
 // ExecCreate creates an exec instance. ExecStart requires the
@@ -205,9 +105,9 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	// the runner loops recreating the container. The stdin script always
 	// belongs on the buffered-invoke stdinPipe path (runACAInitialStdinStage).
 	if opts.Stdin && s.config.UseApp {
-		p := newStdinPipe()
+		p := core.NewStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
-		pipe, isPipe := actual.(*stdinPipe)
+		pipe, isPipe := actual.(*core.StdinPipe)
 		if !isPipe {
 			return nil, &api.ServerError{Message: fmt.Sprintf("ContainerAttach %s: stdin pipe map held unexpected type %T", c.ID, actual)}
 		}
@@ -232,21 +132,10 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	return s.BaseServer.ContainerAttach(cid, opts)
 }
 
-// ContainerExport streams the container's rootfs as tar via the
-// reverse-agent.
+// ContainerExport streams the container's root filesystem through the
+// reverse agent.
 func (s *Server) ContainerExport(ref string) (io.ReadCloser, error) {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
-	if err == core.ErrNoReverseAgent {
-		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the container (SOCKERLESS_CALLBACK_URL); no session registered"}
-	}
-	if err != nil {
-		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
-	}
-	return rc, nil
+	return s.ExportViaReverseAgent(s.reverseAgents, ref, "container")
 }
 
 // ContainerCommit is not supported by the ACA backend.

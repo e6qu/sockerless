@@ -268,12 +268,11 @@ func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
 	}
-	for _, sh := range shares {
-		if azurecommon.ShareVolumeName(sh) == azurecommon.SanitiseMetaValue(name) {
-			return shareToVolume(name, s.config.StorageAccount, s.config.Environment, sh), nil
-		}
-	}
-	return nil, &api.NotFoundError{Resource: "volume", ID: name}
+	return core.InspectManagedVolume(shares, name, func(sh *armstorage.FileShareItem) bool {
+		return azurecommon.ShareVolumeName(sh) == azurecommon.SanitiseMetaValue(name)
+	}, func(sh *armstorage.FileShareItem) *api.Volume {
+		return shareToVolume(name, s.config.StorageAccount, s.config.Environment, sh)
+	})
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
@@ -281,9 +280,7 @@ func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListRespons
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
 	}
-	vols := make([]*api.Volume, 0, len(shares))
-	for _, sh := range shares {
-		vols = append(vols, shareToVolume(azurecommon.ShareVolumeName(sh), s.config.StorageAccount, s.config.Environment, sh))
-	}
-	return &api.VolumeListResponse{Volumes: vols}, nil
+	return core.ListManagedVolumes(shares, func(sh *armstorage.FileShareItem) *api.Volume {
+		return shareToVolume(azurecommon.ShareVolumeName(sh), s.config.StorageAccount, s.config.Environment, sh)
+	}), nil
 }

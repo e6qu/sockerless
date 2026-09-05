@@ -10,12 +10,13 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
+	azurecommon "github.com/sockerless/azure-common"
 )
 
 // AzureClients holds all Azure SDK clients for the Azure Functions backend.
 type AzureClients struct {
 	WebApps *armappservice.WebAppsClient
-	Logs    *azquery.LogsClient
+	Logs    azurecommon.LogsQuerier
 	Cred    azcore.TokenCredential
 
 	// FileShares provisions sockerless-managed Azure Files shares
@@ -90,9 +91,7 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		return nil, err
 	}
 
-	logsClient, err := azquery.NewLogsClient(cred, &azquery.LogsClientOptions{
-		ClientOptions: opts.ClientOptions,
-	})
+	logsClient, err := azurecommon.NewLogsQuerier(cred, &opts.ClientOptions, endpointURL)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +150,7 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 		return nil, err
 	}
 
-	logsClient, err := azquery.NewLogsClient(cred, nil)
+	logsClient, err := azurecommon.NewLogsQuerier(cred, nil, "")
 	if err != nil {
 		return nil, err
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
@@ -361,12 +360,11 @@ func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
 	}
-	for _, sh := range shares {
-		if azurecommon.ShareVolumeName(sh) == azurecommon.SanitiseMetaValue(name) {
-			return shareToVolume(name, s.config.StorageAccount, sh), nil
-		}
-	}
-	return nil, &api.NotFoundError{Resource: "volume", ID: name}
+	return core.InspectManagedVolume(shares, name, func(sh *armstorage.FileShareItem) bool {
+		return azurecommon.ShareVolumeName(sh) == azurecommon.SanitiseMetaValue(name)
+	}, func(sh *armstorage.FileShareItem) *api.Volume {
+		return shareToVolume(name, s.config.StorageAccount, sh)
+	})
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
@@ -374,11 +372,9 @@ func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListRespons
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
 	}
-	vols := make([]*api.Volume, 0, len(shares))
-	for _, sh := range shares {
-		vols = append(vols, shareToVolume(azurecommon.ShareVolumeName(sh), s.config.StorageAccount, sh))
-	}
-	return &api.VolumeListResponse{Volumes: vols}, nil
+	return core.ListManagedVolumes(shares, func(sh *armstorage.FileShareItem) *api.Volume {
+		return shareToVolume(azurecommon.ShareVolumeName(sh), s.config.StorageAccount, sh)
+	}), nil
 }
 
 // VolumeRemove deletes the Azure Files share backing a Docker volume.
@@ -393,39 +389,14 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// VolumePrune deletes every sockerless-managed Azure Files share that
-// isn't currently referenced by a pending container's binds.
+// VolumePrune deletes every sockerless-managed Azure Files share whose
+// volume is not referenced by a created-but-unstarted container.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
 	shares, err := s.listManagedShares(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
 	}
-	in := s.inUseVolumeNames()
-	resp := &api.VolumePruneResponse{}
-	for _, sh := range shares {
-		name := azurecommon.ShareVolumeName(sh)
-		if _, busy := in[name]; busy {
-			continue
-		}
-		if err := s.deleteShareForVolume(s.ctx(), name); err != nil {
-			return nil, &api.ServerError{Message: fmt.Sprintf("delete Azure Files share for %q: %v", name, err)}
-		}
-		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
-	}
-	return resp, nil
-}
-
-// inUseVolumeNames returns Docker volume names currently referenced by
-// pending container binds.
-func (s *Server) inUseVolumeNames() map[string]struct{} {
-	in := make(map[string]struct{})
-	for _, c := range s.PendingCreates.List() {
-		for _, b := range c.HostConfig.Binds {
-			parts := strings.SplitN(b, ":", 3)
-			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
-				in[parts[0]] = struct{}{}
-			}
-		}
-	}
-	return in
+	return core.PruneManagedVolumes(shares, azurecommon.ShareVolumeName, core.InUseVolumeNames(s.PendingCreates.List()), func(name string) error {
+		return s.deleteShareForVolume(s.ctx(), name)
+	}, "Azure Files share")
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sockerless/api"
+	awscommon "github.com/sockerless/aws-common"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -47,9 +48,9 @@ type Config struct {
 	// shared with the runner-task — both the runner-task and the
 	// spawned sub-task see the same workspace via EFS.
 	//
-	// Format: SOCKERLESS_ECS_SHARED_VOLUMES="name1=containerPath1=fsap-XXXX[=efsFilesystemID],name2=containerPath2=fsap-YYYY[=efsFilesystemID]"
-	// The trailing efsFilesystemID is optional — defaults to AgentEFSID.
-	SharedVolumes []SharedVolume
+	// Format: awscommon.ECSSharedVolumeFormat, read from
+	// SOCKERLESS_ECS_SHARED_VOLUMES. The file system defaults to AgentEFSID.
+	SharedVolumes core.SharedVolumes
 
 	// sharedVolumesErr carries a SOCKERLESS_ECS_SHARED_VOLUMES parse
 	// failure from ConfigFromEnv to Validate so misconfiguration fails
@@ -64,125 +65,28 @@ type Config struct {
 	NetworkDiscovery api.NetworkDiscoveryKind
 }
 
-// SharedVolume describes a workspace volume mounted via EFS that the
-// caller (running in another ECS task) shares with sockerless. When
-// docker create sees a bind mount whose source matches ContainerPath,
-// the bind mount is rewritten to a named volume named Name backed by
-// the EFS access point AccessPointID.
-type SharedVolume struct {
-	Name          string // logical volume name used in spawned sub-tasks
-	ContainerPath string // path inside the calling container (= the bind-mount source)
-	AccessPointID string // EFS access point ID (fsap-...)
-	FileSystemID  string // EFS filesystem ID (fs-...); defaults to Config.AgentEFSID
-	Backing       string // optional storage-backing kind; empty defaults to "efs-ephemeral" (only backing ECS supports today)
-}
-
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
-	sharedVolumes, sharedVolumesErr := parseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES"))
+	sharedVolumes, sharedVolumesErr := core.ParseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES"), awscommon.ECSSharedVolumeFormat)
 	return Config{
-		Region:           envOrDefault("AWS_REGION", "us-east-1"),
-		Cluster:          envOrDefault("SOCKERLESS_ECS_CLUSTER", "sockerless"),
-		Subnets:          splitCSV(os.Getenv("SOCKERLESS_ECS_SUBNETS")),
-		SecurityGroups:   splitCSV(os.Getenv("SOCKERLESS_ECS_SECURITY_GROUPS")),
+		Region:           core.EnvOrDefault("AWS_REGION", "us-east-1"),
+		Cluster:          core.EnvOrDefault("SOCKERLESS_ECS_CLUSTER", "sockerless"),
+		Subnets:          core.SplitCSV(os.Getenv("SOCKERLESS_ECS_SUBNETS")),
+		SecurityGroups:   core.SplitCSV(os.Getenv("SOCKERLESS_ECS_SECURITY_GROUPS")),
 		TaskRoleARN:      os.Getenv("SOCKERLESS_ECS_TASK_ROLE_ARN"),
 		ExecutionRoleARN: os.Getenv("SOCKERLESS_ECS_EXECUTION_ROLE_ARN"),
-		LogGroup:         envOrDefault("SOCKERLESS_ECS_LOG_GROUP", "/sockerless"),
+		LogGroup:         core.EnvOrDefault("SOCKERLESS_ECS_LOG_GROUP", "/sockerless"),
 		AgentEFSID:       os.Getenv("SOCKERLESS_AGENT_EFS_ID"),
 		AssignPublicIP:   os.Getenv("SOCKERLESS_ECS_PUBLIC_IP") == "true",
 		CodeBuildProject: os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
 		BuildBucket:      os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		CpuArchitecture:  os.Getenv("SOCKERLESS_ECS_CPU_ARCHITECTURE"),
-		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		PollInterval:     core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		SharedVolumes:    sharedVolumes,
 		sharedVolumesErr: sharedVolumesErr,
-		NetworkDiscovery: networkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh),
+		NetworkDiscovery: core.NetworkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh),
 	}
-}
-
-// networkDiscoveryFromEnv reads the operator's chosen kind from env or
-// returns `def`. Validation against the per-backend supported set
-// happens in Config.Validate.
-func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
-	v := strings.TrimSpace(os.Getenv(envVar))
-	if v == "" {
-		return def
-	}
-	return api.NetworkDiscoveryKind(v)
-}
-
-// parseSharedVolumes parses the SOCKERLESS_ECS_SHARED_VOLUMES env-var
-// shape (`name=containerPath=fsap-XXXX[=fs-YYYY],name2=...`) into a
-// slice of SharedVolume entries. Returns (nil, nil) for empty input.
-// Malformed entries are a hard error — the caller surfaces it via
-// Config.Validate so the operator's misconfiguration fails the backend
-// startup instead of silently dropping the volume mapping.
-func parseSharedVolumes(s string) ([]SharedVolume, error) {
-	if strings.TrimSpace(s) == "" {
-		return nil, nil
-	}
-	var out []SharedVolume
-	for _, entry := range strings.Split(s, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		parts := strings.Split(entry, "=")
-		if len(parts) < 3 || len(parts) > 4 {
-			return nil, fmt.Errorf("entry %q malformed: want name=containerPath=fsap-XXXX[=fs-YYYY]", entry)
-		}
-		sv := SharedVolume{
-			Name:          strings.TrimSpace(parts[0]),
-			ContainerPath: strings.TrimSpace(parts[1]),
-			AccessPointID: strings.TrimSpace(parts[2]),
-		}
-		if len(parts) == 4 {
-			sv.FileSystemID = strings.TrimSpace(parts[3])
-		}
-		if sv.Name == "" || sv.ContainerPath == "" || sv.AccessPointID == "" {
-			return nil, fmt.Errorf("entry %q malformed: name, containerPath and access-point ID must all be non-empty", entry)
-		}
-		out = append(out, sv)
-	}
-	return out, nil
-}
-
-// LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
-// ContainerPath equals the given path, or nil if none matches.
-func (c Config) LookupSharedVolumeBySourcePath(path string) *SharedVolume {
-	for i := range c.SharedVolumes {
-		if c.SharedVolumes[i].ContainerPath == path {
-			return &c.SharedVolumes[i]
-		}
-	}
-	return nil
-}
-
-// LookupSharedVolumeByName returns the SharedVolume entry whose Name
-// equals the given volume name, or nil if none matches.
-func (c Config) LookupSharedVolumeByName(name string) *SharedVolume {
-	for i := range c.SharedVolumes {
-		if c.SharedVolumes[i].Name == name {
-			return &c.SharedVolumes[i]
-		}
-	}
-	return nil
-}
-
-// isSubPathOfSharedVolume reports whether path is a strict sub-path
-// (descendant) of any SharedVolume's ContainerPath.
-func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
-	for i := range vols {
-		base := vols[i].ContainerPath
-		if base == "" {
-			continue
-		}
-		if strings.HasPrefix(path, base+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -217,13 +121,13 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	}
 	c.EndpointURL = env.Common.EndpointURL
 	if env.Common.PollInterval != "" {
-		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
+		c.PollInterval = core.DurationOrDefault(env.Common.PollInterval, c.PollInterval)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
-	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh)
-	c.SharedVolumes, c.sharedVolumesErr = parseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES"))
+	c.NetworkDiscovery = core.NetworkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh)
+	c.SharedVolumes, c.sharedVolumesErr = core.ParseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES"), awscommon.ECSSharedVolumeFormat)
 	return c
 }
 
@@ -260,37 +164,4 @@ func (c Config) Validate() error {
 		return fmt.Errorf("SOCKERLESS_ECS_NETWORK_DISCOVERY=%q not supported by ecs (one of service-mesh, host-aliases, nat-gateway-only required)", c.NetworkDiscovery)
 	}
 	return nil
-}
-
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func parseDuration(s string, def time.Duration) time.Duration {
-	if s == "" {
-		return def
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return def
-	}
-	return d
-}
-
-func splitCSV(s string) []string {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, ",")
-	result := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
-		}
-	}
-	return result
 }

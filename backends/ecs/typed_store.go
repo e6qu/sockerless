@@ -1,5 +1,9 @@
 package ecs
 
+import (
+	core "github.com/sockerless/backend-core"
+)
+
 // Typed accessors for values stored in the sync.Map-backed stores
 // (Store.WaitChs, Store.TmpfsDirs, stdinPipes). Each store only ever holds
 // one concrete type, so a failed assertion indicates a programming error;
@@ -42,8 +46,8 @@ func (s *Server) finishWaitCycle(containerID string, exitCh chan struct{}) {
 }
 
 // asStdinPipe returns the stdin pipe pulled from stdinPipes, or nil.
-func asStdinPipe(v any) *stdinPipe {
-	p, _ := v.(*stdinPipe)
+func asStdinPipe(v any) *core.StdinPipe {
+	p, _ := v.(*core.StdinPipe)
 	return p
 }
 

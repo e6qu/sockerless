@@ -34,6 +34,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sockerless/agent/envelope"
+
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
@@ -80,12 +82,12 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 		go func(idx int, container api.Container) {
 			defer wg.Done()
 			imageRef := gcpcommon.ResolveGCPImageURI(container.Config.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
-			spec := OverlayImageSpec{
+			spec := core.OverlayImageSpec{
 				BaseImageRef:        imageRef,
 				BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 				BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 			}
-			tag := OverlayContentTag(spec)
+			tag := core.OverlayContentTag("gcf-", spec)
 			uri, err := s.ensureOverlayImage(ctx, spec, tag)
 			resultsCh <- overlayResult{index: idx, uri: uri, err: err}
 		}(i, c)
@@ -130,7 +132,7 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 	if err != nil {
 		return err
 	}
-	injectPodPersistEnv(specs, persistEntries)
+	gcpcommon.InjectPersistEnv(specs, persistEntries)
 	injectPodHostAliases(specs, containers, s.userDefinedNetworkIDOrEmpty(containers[0]))
 	injectMainLabelsEnv(specs, containers[0].Config.Labels)
 
@@ -179,7 +181,7 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 	gcpLabels["sockerless_managed"] = "true"
 	gcpLabels["sockerless_allocation"] = shortAllocLabel(mainContainerID)
 	if podName != "" {
-		gcpLabels["sockerless_pod"] = sanitizePodLabelValue(podName)
+		gcpLabels["sockerless_pod"] = core.SanitizePodLabelValue(podName)
 	}
 	if owner := gcpcommon.OwnerRunnerTaskLabelValue(); owner != "" {
 		gcpLabels[gcpcommon.OwnerRunnerTaskLabel] = owner
@@ -307,12 +309,12 @@ func (s *Server) buildPodServiceParent() string {
 // finds it by allocation label.
 func (s *Server) deployContainerService(ctx context.Context, id string, container api.Container) error {
 	imageRef := gcpcommon.ResolveGCPImageURI(container.Config.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
-	spec := OverlayImageSpec{
+	spec := core.OverlayImageSpec{
 		BaseImageRef:        imageRef,
 		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 		BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 	}
-	tag := OverlayContentTag(spec)
+	tag := core.OverlayContentTag("gcf-", spec)
 	overlayURI, err := s.ensureOverlayImage(ctx, spec, tag)
 	if err != nil {
 		return fmt.Errorf("ensure overlay image: %w", err)
@@ -331,7 +333,7 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 		if _, done := volSeen[mp.Name]; done {
 			continue
 		}
-		vol, persist, verr := s.buildVolumeForBindGCF(ctx, mp.Name, mp.MountPath)
+		vol, persist, verr := s.volumes.VolumeForBind(ctx, mp.Name, mp.MountPath)
 		if verr != nil {
 			return verr
 		}
@@ -341,7 +343,7 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 		}
 		volSeen[mp.Name] = struct{}{}
 	}
-	injectPodPersistEnv(specs, persistEntries)
+	gcpcommon.InjectPersistEnv(specs, persistEntries)
 	injectMainLabelsEnv(specs, container.Config.Labels)
 
 	revTemplate := &runpb.RevisionTemplate{
@@ -443,7 +445,7 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 // SOCKERLESS_HOST_ALIASES injection — empty network ID means the
 // hostAliasesForMembers helper falls back to per-container aliases.
 func (s *Server) userDefinedNetworkIDOrEmpty(c api.Container) string {
-	if id, ok := s.userDefinedNetworkID(c); ok {
+	if id, ok := s.UserDefinedNetworkID(c); ok {
 		return id
 	}
 	return ""
@@ -486,7 +488,7 @@ func (s *Server) buildPodContainerSpecs(ctx context.Context, containers []api.Co
 			if _, done := volSeen[mp.Name]; done {
 				continue
 			}
-			vol, persist, verr := s.buildVolumeForBindGCF(ctx, mp.Name, mp.MountPath)
+			vol, persist, verr := s.volumes.VolumeForBind(ctx, mp.Name, mp.MountPath)
 			if verr != nil {
 				return nil, nil, nil, verr
 			}
@@ -605,7 +607,7 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 		// (`runner-workspace`) — see backend_impl.go::overlayHostConfig.
 		// So at materialize time parts[0] IS already the SharedVolume
 		// name; look up directly by name.
-		if sv := s.config.LookupSharedVolumeByName(parts[0]); sv != nil && core.StorageBacking(sv.Backing) == core.BackingGCSSync {
+		if sv := s.config.SharedVolumes.ByName(parts[0]); sv != nil && sv.Backing == core.BackingGCSSync {
 			syncMountEntries = append(syncMountEntries, fmt.Sprintf("%s=%s", sv.Name, parts[1]))
 		}
 	}
@@ -691,57 +693,6 @@ func sanitizeServiceContainerName(name string) string {
 	return out
 }
 
-// buildVolumeForBindGCF mirrors the cloudrun buildVolumeForBind
-// helper. Operator-pinned SharedVolume entries route through the
-// storage backing driver (gcs-fuse / gcs-sync per the
-// SharedVolume.Backing field); ad-hoc binds (no SharedVolume entry) get
-// Volume_EmptyDir{MEMORY} + a SOCKERLESS_PERSIST_VOLUMES entry for the
-// bootstrap's tar-pack persistence.
-func (s *Server) buildVolumeForBindGCF(ctx context.Context, volName, mountPath string) (*runpb.Volume, string, error) {
-	bucket, err := s.bucketForVolume(ctx, volName)
-	if err != nil {
-		return nil, "", fmt.Errorf("provision GCS bucket for volume %q: %w", volName, err)
-	}
-	if shared := s.config.LookupSharedVolumeByName(volName); shared != nil {
-		// Route through the storage backing driver. The driver's
-		// CloudSpec returns a cloud-agnostic BackingSpec; the
-		// translator emits the runpb.Volume. Empty Backing on a
-		// SharedVolume falls through to gcs-fuse (legacy default for
-		// cells 7+8 — see SharedVolume.AsRef).
-		vol := *shared
-		if vol.Bucket == "" {
-			vol.Bucket = bucket
-		}
-		runVol, err := s.cloudRunVolumeFromBacking(vol)
-		if err != nil {
-			return nil, "", err
-		}
-		return runVol, "", nil
-	}
-	// Ad-hoc bind: in-memory tmpfs + tar-pack persist hint.
-	return &runpb.Volume{
-		Name: volName,
-		VolumeType: &runpb.Volume_EmptyDir{
-			EmptyDir: &runpb.EmptyDirVolumeSource{
-				Medium: runpb.EmptyDirVolumeSource_MEMORY,
-			},
-		},
-	}, fmt.Sprintf("%s=%s=%s", volName, mountPath, bucket), nil
-}
-
-// injectPodPersistEnv appends SOCKERLESS_PERSIST_VOLUMES to the main
-// (index 0) container so the bootstrap's tar-pack module restores +
-// saves bind volumes across exec boundaries.
-func injectPodPersistEnv(specs []*runpb.Container, entries []string) {
-	if len(entries) == 0 || len(specs) == 0 {
-		return
-	}
-	specs[0].Env = append(specs[0].Env, &runpb.EnvVar{
-		Name:   "SOCKERLESS_PERSIST_VOLUMES",
-		Values: &runpb.EnvVar_Value{Value: strings.Join(entries, ",")},
-	})
-}
-
 // injectMainLabelsEnv carries the main (index 0) container's Docker labels as
 // the single authoritative SOCKERLESS_LABELS env var (core.LabelsEnvVar) so
 // cloud_state reconstructs them — the same carrier cloudrun jobs/services use.
@@ -766,7 +717,7 @@ func injectPodHostAliases(specs []*runpb.Container, members []api.Container, net
 	if len(specs) == 0 || len(members) <= 1 {
 		return
 	}
-	aliases := hostAliasesForMembers(members, netID)
+	aliases := core.HostAliasesForMembers(members, netID)
 	if len(aliases) == 0 {
 		return
 	}
@@ -827,7 +778,7 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		}
 	}
 	if v, ok := s.stdinPipes.LoadAndDelete(mainID); ok {
-		pipe, isPipe := v.(*stdinPipe)
+		pipe, isPipe := v.(*core.StdinPipe)
 		if !isPipe {
 			s.Logger.Error().Str("main", mainID).Msgf("invokePodServiceMain: stdin pipe map held unexpected type %T", v)
 			return
@@ -871,9 +822,9 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 			inv.Error = err.Error()
 		} else {
 			client.Timeout = 10 * time.Minute
-			res, err := gcpcommon.PostExecEnvelope(ctx, client, url, "", gcpcommon.ExecEnvelopeExec{
+			res, err := envelope.Post(ctx, client, url, envelope.PostOptions{}, envelope.Exec{
 				Argv:  []string{"/bin/sh"},
-				Stdin: gcpcommon.EncodeStdin(capturedStdin),
+				Stdin: envelope.EncodeStdin(capturedStdin),
 			})
 			if err != nil {
 				s.Logger.Error().Err(err).Str("main", mainID).Msg("pod service envelope POST failed")
@@ -1008,7 +959,7 @@ func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Conta
 		s.Logger.Warn().Str("main", mainID).Msg("invokeRunningRunnerStage: no stdinPipe registered (race)")
 		return
 	}
-	pipe, isPipe := v.(*stdinPipe)
+	pipe, isPipe := v.(*core.StdinPipe)
 	if !isPipe {
 		s.Logger.Error().Str("main", mainID).Msgf("invokeRunningRunnerStage: stdin pipe map held unexpected type %T", v)
 		return
@@ -1043,13 +994,10 @@ func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Conta
 	}
 	client.Timeout = 10 * time.Minute
 
-	envelope := gcpcommon.ExecEnvelopeExec{
-		Argv: []string{"/bin/sh"},
-	}
-	if len(capturedStdin) > 0 {
-		envelope.Stdin = gcpcommon.EncodeStdin(capturedStdin)
-	}
-	res, err := gcpcommon.PostExecEnvelope(ctx, client, url, "", envelope)
+	res, err := envelope.Post(ctx, client, url, envelope.PostOptions{}, envelope.Exec{
+		Argv:  []string{"/bin/sh"},
+		Stdin: envelope.EncodeStdin(capturedStdin),
+	})
 	if err != nil {
 		s.Logger.Error().Err(err).Str("main", mainID).Msg("invokeRunningRunnerStage: envelope POST failed")
 		s.publishGCFAttachResponse(mainID, nil, []byte(err.Error()))

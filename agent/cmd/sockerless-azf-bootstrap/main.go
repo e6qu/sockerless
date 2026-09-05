@@ -21,31 +21,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sockerless/agent/envelope"
+
 	"github.com/gorilla/websocket"
 	"github.com/sockerless/agent"
 )
-
-type execEnvelopeRequest struct {
-	Sockerless struct {
-		Exec execEnvelopeExec `json:"exec"`
-	} `json:"sockerless"`
-}
-
-type execEnvelopeExec struct {
-	Argv    []string `json:"argv"`
-	Tty     bool     `json:"tty,omitempty"`
-	Workdir string   `json:"workdir,omitempty"`
-	Env     []string `json:"env,omitempty"`
-	Stdin   string   `json:"stdin,omitempty"`
-}
-
-type execEnvelopeResponse struct {
-	SockerlessExecResult struct {
-		ExitCode int    `json:"exitCode"`
-		Stdout   string `json:"stdout"`
-		Stderr   string `json:"stderr"`
-	} `json:"sockerlessExecResult"`
-}
 
 const (
 	envPort           = "PORT"
@@ -249,22 +229,13 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	writeTextResult(w, exitCode, responseBody)
 }
 
-func parseExecEnvelope(body []byte) (execEnvelopeExec, bool) {
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 || body[0] != '{' {
-		return execEnvelopeExec{}, false
-	}
-	var req execEnvelopeRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return execEnvelopeExec{}, false
-	}
-	if len(req.Sockerless.Exec.Argv) == 0 {
-		return execEnvelopeExec{}, false
-	}
-	return req.Sockerless.Exec, true
+// parseExecEnvelope decodes body as an exec envelope. false means the
+// request carries no command and the default invoke path runs.
+func parseExecEnvelope(body []byte) (envelope.Exec, bool) {
+	return envelope.Parse(body)
 }
 
-func runExecEnvelope(w http.ResponseWriter, parent context.Context, env execEnvelopeExec) {
+func runExecEnvelope(w http.ResponseWriter, parent context.Context, env envelope.Exec) {
 	ctx := parent
 	if timeout := jobTimeout(); timeout > 0 {
 		var cancel context.CancelFunc
@@ -309,11 +280,7 @@ func runExecEnvelope(w http.ResponseWriter, parent context.Context, env execEnve
 		}
 	}
 
-	var res execEnvelopeResponse
-	res.SockerlessExecResult.ExitCode = exitCode
-	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(stdout.Bytes())
-	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderr.Bytes())
-	payload, err := json.Marshal(res)
+	payload, err := json.Marshal(envelope.NewResponse(exitCode, stdout.Bytes(), stderr.Bytes()))
 	if err != nil {
 		http.Error(w, "marshal exec envelope response: "+err.Error(), http.StatusInternalServerError)
 		return

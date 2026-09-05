@@ -6,7 +6,6 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -100,10 +99,10 @@ func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
 		}
 		fmt.Fprintf(&b, "RUN mkdir -p %s && ln -sfn %s %s\n", shellQuote(filepath.Dir(dst)), shellQuote(target), shellQuote(dst))
 	}
-	if ep := joinForEnv(spec.UserEntrypoint); ep != "" {
+	if ep := core.JoinForEnv(spec.UserEntrypoint); ep != "" {
 		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_ENTRYPOINT=%s\n", ep)
 	}
-	if cmd := joinForEnv(spec.UserCmd); cmd != "" {
+	if cmd := core.JoinForEnv(spec.UserCmd); cmd != "" {
 		fmt.Fprintf(&b, "ENV SOCKERLESS_USER_CMD=%s\n", cmd)
 	}
 	fmt.Fprintln(&b, `ENTRYPOINT ["/opt/sockerless/sockerless-lambda-bootstrap"]`)
@@ -125,77 +124,7 @@ type PodOverlaySpec struct {
 	AgentBinaryPath     string
 	BootstrapBinaryPath string
 	BindLinks           []string
-	Members             []PodMemberSpec
-}
-
-// PodMemberSpec is one container inside a pod overlay. ContainerID is
-// carried so the lambda backend's cloud_state can reconstruct per-member
-// `docker ps` rows from the pod Function's SOCKERLESS_POD_CONTAINERS env.
-type PodMemberSpec struct {
-	Name         string
-	ContainerID  string
-	BaseImageRef string
-	Entrypoint   []string
-	Cmd          []string
-	Workdir      string
-	Env          []string
-}
-
-// PodMemberJSON is the wire shape the lambda bootstrap consumes via
-// SOCKERLESS_POD_CONTAINERS. ContainerID + Image carry per-member
-// metadata cloud_state needs to reconstruct each member's `docker ps`
-// row after a backend restart; the bootstrap ignores both fields.
-type PodMemberJSON struct {
-	Name        string   `json:"name"`
-	Root        string   `json:"root"`
-	Entrypoint  []string `json:"entrypoint,omitempty"`
-	Cmd         []string `json:"cmd,omitempty"`
-	Env         []string `json:"env,omitempty"`
-	Workdir     string   `json:"workdir,omitempty"`
-	ContainerID string   `json:"container_id,omitempty"`
-	Image       string   `json:"image,omitempty"`
-}
-
-// EncodePodManifest returns the base64(JSON) blob the lambda bootstrap
-// expects in SOCKERLESS_POD_CONTAINERS. Each member's Root is set to
-// the merged-rootfs subdir (`/containers/<name>`).
-func EncodePodManifest(members []PodMemberSpec) (string, error) {
-	out := make([]PodMemberJSON, len(members))
-	for i, m := range members {
-		out[i] = PodMemberJSON{
-			Name:        m.Name,
-			Root:        "/containers/" + m.Name,
-			Entrypoint:  m.Entrypoint,
-			Cmd:         m.Cmd,
-			Env:         m.Env,
-			Workdir:     m.Workdir,
-			ContainerID: m.ContainerID,
-			Image:       m.BaseImageRef,
-		}
-	}
-	raw, err := json.Marshal(out)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(raw), nil
-}
-
-// DecodePodManifest inverts EncodePodManifest. Used by cloud_state to
-// reconstruct per-member container rows from the pod Function's
-// SOCKERLESS_POD_CONTAINERS env var without holding any local state.
-func DecodePodManifest(b64 string) ([]PodMemberJSON, error) {
-	if b64 == "" {
-		return nil, nil
-	}
-	raw, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		return nil, fmt.Errorf("base64 decode: %w", err)
-	}
-	var out []PodMemberJSON
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("json unmarshal: %w", err)
-	}
-	return out, nil
+	Members             []core.PodMemberSpec
 }
 
 // RenderPodOverlayDockerfile returns the Dockerfile content for a pod
@@ -221,7 +150,7 @@ func RenderPodOverlayDockerfile(spec PodOverlaySpec) (string, error) {
 			return "", fmt.Errorf("member %q: BaseImageRef is required", m.Name)
 		}
 	}
-	manifest, err := EncodePodManifest(spec.Members)
+	manifest, err := core.EncodePodManifest(spec.Members)
 	if err != nil {
 		return "", fmt.Errorf("encode pod manifest: %w", err)
 	}
@@ -297,13 +226,13 @@ func TarPodOverlayContext(spec PodOverlaySpec) ([]byte, error) {
 	var raw bytes.Buffer
 	gz := gzip.NewWriter(&raw)
 	tw := tar.NewWriter(gz)
-	if err := writeTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
+	if err := core.WriteTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
 		return nil, err
 	}
-	if err := writeTarFile(tw, spec.AgentBinaryPath, overlayAgentContextName); err != nil {
+	if err := core.WriteTarFile(tw, spec.AgentBinaryPath, overlayAgentContextName); err != nil {
 		return nil, err
 	}
-	if err := writeTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
+	if err := core.WriteTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
 		return nil, err
 	}
 	if err := tw.Close(); err != nil {
@@ -313,24 +242,6 @@ func TarPodOverlayContext(spec PodOverlaySpec) ([]byte, error) {
 		return nil, err
 	}
 	return raw.Bytes(), nil
-}
-
-// joinForEnv encodes a []string as base64-wrapped JSON for env-var
-// transport. Empty input returns empty string so the ENV line can be
-// omitted entirely. Base64 produces an alphabet (A-Z a-z 0-9 + / =)
-// that needs no Dockerfile quoting and no shell escaping, so colons,
-// quotes, newlines, and any other byte round-trip exactly through
-// `ENV KEY=VALUE`. Matches the decoder in
-// agent/cmd/sockerless-lambda-bootstrap/main.go::parseUserArgv.
-func joinForEnv(parts []string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	b, err := json.Marshal(parts)
-	if err != nil {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString(b)
 }
 
 // OverlayBuildResult is what BuildAndPushOverlayImage returns — the
@@ -501,13 +412,13 @@ func TarOverlayContext(spec OverlayImageSpec) ([]byte, error) {
 	var raw bytes.Buffer
 	gz := gzip.NewWriter(&raw)
 	tw := tar.NewWriter(gz)
-	if err := writeTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
+	if err := core.WriteTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
 		return nil, err
 	}
-	if err := writeTarFile(tw, spec.AgentBinaryPath, overlayAgentContextName); err != nil {
+	if err := core.WriteTarFile(tw, spec.AgentBinaryPath, overlayAgentContextName); err != nil {
 		return nil, err
 	}
-	if err := writeTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
+	if err := core.WriteTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
 		return nil, err
 	}
 	if err := tw.Close(); err != nil {
@@ -534,38 +445,5 @@ func copyFile(src, dst string) error {
 	}
 	defer out.Close()
 	_, err = io.Copy(out, in)
-	return err
-}
-
-func writeTarEntry(tw *tar.Writer, name string, data []byte, mode int64) error {
-	if err := tw.WriteHeader(&tar.Header{
-		Name: name,
-		Mode: mode,
-		Size: int64(len(data)),
-	}); err != nil {
-		return err
-	}
-	_, err := tw.Write(data)
-	return err
-}
-
-func writeTarFile(tw *tar.Writer, src, name string) error {
-	info, err := os.Stat(src)
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", src, err)
-	}
-	f, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := tw.WriteHeader(&tar.Header{
-		Name: name,
-		Mode: 0o755,
-		Size: info.Size(),
-	}); err != nil {
-		return err
-	}
-	_, err = io.Copy(tw, f)
 	return err
 }

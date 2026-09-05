@@ -199,6 +199,6 @@ The runner pattern: `gitlab-runner` polls GitLab, then per stage does `docker cr
 | Multi-container materialization (cloudrun/gcf) | `backends/cloudrun/network_pod.go::shouldDeferOrMaterializeNetworkPod`; `backends/cloudrun-functions/pod_service.go::materializePodService` |
 | Storage drivers | `backends/aws-common/volumes.go::EFSManager`; `backends/gcp-common/storage_gcssync.go`; `backends/azure-common/volumes.go::AzureFilesEphemeralDriver` |
 | Exec dispatch | `backends/ecs/exec_cloud.go`; `backends/core/reverse_agent.go`; `backends/lambda/exec_driver.go`; `backends/<faas>/server.go` reverse-agent driver wiring; `backends/<faas>/backend_impl*.go` / `backend_delegates.go` `ExecStart` paths |
-| Stdin pipe machinery | `backends/<cloud>/stdin_pipe.go` (ECS, Lambda) |
+| Stdin pipe machinery | `backends/core/stdin_pipe.go` (`StdinPipe`) and `backends/core/buffered_attach.go` (`BufferedAttachStream`), shared by every cloud backend |
 | Bootstrap binaries | `agent/cmd/sockerless-{cloudrun,gcf,lambda,azf}-bootstrap/ (ACA reuses the cloudrun bootstrap via SOCKERLESS_ACA_BOOTSTRAP)` |
 | Authoritative cloud-side mapping | `specs/CLOUD_RESOURCE_MAPPING.md` |

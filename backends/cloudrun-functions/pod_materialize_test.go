@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	core "github.com/sockerless/backend-core"
+
 	"github.com/sockerless/api"
 )
 
@@ -77,8 +79,8 @@ func TestSanitizePodMemberName(t *testing.T) {
 		"abc.123_xyz": "abc-123-xyz",
 	}
 	for in, want := range cases {
-		if got := sanitizePodMemberName(in); got != want {
-			t.Errorf("sanitizePodMemberName(%q) = %q want %q", in, got, want)
+		if got := core.SanitizePodMemberName(in); got != want {
+			t.Errorf("core.SanitizePodMemberName(%q) = %q want %q", in, got, want)
 		}
 	}
 }
@@ -92,8 +94,8 @@ func TestSanitizePodLabelValue(t *testing.T) {
 		"UPPER":    "upper",
 	}
 	for in, want := range cases {
-		if got := sanitizePodLabelValue(in); got != want {
-			t.Errorf("sanitizePodLabelValue(%q) = %q want %q", in, got, want)
+		if got := core.SanitizePodLabelValue(in); got != want {
+			t.Errorf("core.SanitizePodLabelValue(%q) = %q want %q", in, got, want)
 		}
 	}
 }

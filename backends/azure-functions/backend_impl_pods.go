@@ -1,222 +1,26 @@
 package azf
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"strings"
-
 	"github.com/sockerless/api"
-	core "github.com/sockerless/backend-core"
 )
 
-// PodStart starts all containers in a pod by calling ContainerStart for each,
-// which triggers the Azure Function App HTTP invocation.
+// PodStart starts every member through the cloud-aware ContainerStart.
 func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	// A multi-container pod is assembled as ONE App Service site whose
-	// sitecontainers share a network namespace (localhost between members),
-	// the Azure analog of an ECS multi-container task / Cloud Run multi-
-	// container revision.
-	if len(pod.ContainerIDs) > 1 {
-		members := s.resolvePodMembers(pod)
-		if len(members) > 1 {
-			if err := s.materializePodSite(members); err != nil {
-				s.Store.Pods.SetStatus(pod.ID, "exited")
-				return &api.PodActionResponse{ID: pod.ID, Errs: []string{err.Error()}}, nil
-			}
-			s.Store.Pods.SetStatus(pod.ID, "running")
-			return &api.PodActionResponse{ID: pod.ID, Errs: []string{}}, nil
-		}
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || c.State.Running {
-			continue
-		}
-		if err := s.ContainerStart(cid); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %s", cid[:12], err.Error()))
-		}
-	}
-
-	if len(errs) == 0 {
-		s.Store.Pods.SetStatus(pod.ID, "running")
-	}
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStart(name, s.ContainerStart)
 }
 
-// PodStop stops all running containers in a pod.
+// PodStop stops every running member through the cloud-aware ContainerStop.
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		s.StopHealthCheck(cid)
-		// Close wait channel so ContainerWait unblocks
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
-			if wc, isCh := ch.(chan struct{}); isCh {
-				close(wc)
-			}
-		}
-		// `pod stop` sends SIGTERM → exit 143.
-		stopExitCode := core.SignalToExitCode("SIGTERM")
-		s.EmitEvent("container", "die", cid, map[string]string{
-			"exitCode": fmt.Sprintf("%d", stopExitCode),
-			"name":     strings.TrimPrefix(c.Name, "/"),
-		})
-		s.EmitEvent("container", "stop", cid, map[string]string{
-			"name": strings.TrimPrefix(c.Name, "/"),
-		})
-	}
-
-	s.Store.Pods.SetStatus(pod.ID, "stopped")
-	return &api.PodActionResponse{ID: pod.ID, Errs: []string{}}, nil
+	return s.CloudPodStop(name, timeout, s.ContainerStop)
 }
 
-// PodKill sends a signal to all running containers in a pod.
+// PodKill signals every running member through the cloud-aware ContainerKill.
 func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	if signal == "" {
-		signal = "SIGKILL"
-	}
-	exitCode := core.SignalToExitCode(signal)
-
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		s.StopHealthCheck(cid)
-
-		s.EmitEvent("container", "kill", cid, map[string]string{
-			"name": strings.TrimPrefix(c.Name, "/"),
-		})
-		s.EmitEvent("container", "die", cid, map[string]string{
-			"exitCode": fmt.Sprintf("%d", exitCode),
-			"name":     strings.TrimPrefix(c.Name, "/"),
-		})
-
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
-			if wc, isCh := ch.(chan struct{}); isCh {
-				close(wc)
-			}
-		}
-	}
-
-	s.Store.Pods.SetStatus(pod.ID, "exited")
-	return &api.PodActionResponse{ID: pod.ID, Errs: []string{}}, nil
+	return s.CloudPodKill(name, signal, s.ContainerKill)
 }
 
-// PodRemove removes a pod and all its containers, cleaning up Azure Function
-// App resources.
+// PodRemove removes every member through the cloud-aware ContainerRemove,
+// so no Function App is orphaned, then deletes the pod.
 func (s *Server) PodRemove(name string, force bool) error {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	ctx := context.Background()
-
-	// Without force, reject if any containers are running
-	if !force {
-		for _, cid := range pod.ContainerIDs {
-			c, ok := s.ResolveContainerAuto(ctx, cid)
-			if ok && c.State.Running {
-				return &api.ConflictError{
-					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
-				}
-			}
-		}
-	}
-
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(ctx, cid)
-		if !ok {
-			continue
-		}
-
-		if force && c.State.Running {
-			// `pod rm -f` is SIGKILL → exit 137.
-			killExitCode := core.SignalToExitCode("SIGKILL")
-			s.EmitEvent("container", "kill", cid, map[string]string{
-				"name": strings.TrimPrefix(c.Name, "/"),
-			})
-			s.EmitEvent("container", "die", cid, map[string]string{
-				"exitCode": fmt.Sprintf("%d", killExitCode),
-				"name":     strings.TrimPrefix(c.Name, "/"),
-			})
-			if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
-				if wc, isCh := ch.(chan struct{}); isCh {
-					close(wc)
-				}
-			}
-		}
-
-		s.StopHealthCheck(cid)
-
-		// Delete Function App (best-effort)
-		azfState, _ := s.AZF.Get(cid)
-		if azfState.FunctionAppName != "" {
-			_, err := s.azure.WebApps.Delete(ctx, s.config.ResourceGroup, azfState.FunctionAppName, nil)
-			if err != nil {
-				s.Logger.Debug().Err(err).Str("functionApp", azfState.FunctionAppName).Msg("failed to delete Function App during pod remove")
-			}
-		}
-		if azfState.ResourceID != "" {
-			s.Registry.MarkCleanedUp(azfState.ResourceID)
-		}
-
-		// Clean up network associations
-		for _, ep := range c.NetworkSettings.Networks {
-			if ep != nil && ep.NetworkID != "" {
-				_ = s.Drivers.Network.Disconnect(ctx, ep.NetworkID, cid)
-			}
-		}
-
-		s.PendingCreates.Delete(cid)
-		s.AZF.Delete(cid)
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
-			if wc, isCh := ch.(chan struct{}); isCh {
-				close(wc)
-			}
-		}
-		s.Store.LogBuffers.Delete(cid)
-		s.Store.StagingDirs.Delete(cid)
-		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(cid); ok {
-			if dl, isList := dirs.([]string); isList {
-				for _, d := range dl {
-					os.RemoveAll(d)
-				}
-			}
-		}
-		for _, eid := range c.ExecIDs {
-			s.Store.Execs.Delete(eid)
-		}
-
-		s.EmitEvent("container", "destroy", cid, map[string]string{
-			"name": strings.TrimPrefix(c.Name, "/"),
-		})
-	}
-
-	s.Store.Pods.DeletePod(pod.ID)
-	return nil
+	return s.CloudPodRemove(name, force, s.ContainerRemove)
 }

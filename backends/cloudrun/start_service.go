@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sockerless/agent/envelope"
+
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -237,9 +239,7 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 		inv.Error = err.Error()
 		s.Store.PutInvocationResult(id, inv)
 		// Fan-out failure to attached caller too so it doesn't block.
-		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-			asAttachStream(v).publishAttachResponse(nil, []byte(err.Error()))
-		}
+		core.PublishBufferedAttachResponse(&s.attachStreams, id, nil, []byte(err.Error()))
 		return
 	}
 	logEvt := s.Logger.Info().Str("container", id).Int("exit", res.ExitCode).Int("stdout", len(res.Stdout)).Int("stderr", len(res.Stderr))
@@ -261,9 +261,7 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 	s.Store.PutInvocationResult(id, inv)
 
 	// Fan-out stdout+stderr to the attached gitlab-runner (if any).
-	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-		asAttachStream(v).publishAttachResponse(res.Stdout, res.Stderr)
-	}
+	core.PublishBufferedAttachResponse(&s.attachStreams, id, res.Stdout, res.Stderr)
 }
 
 func warmBootstrap(ctx context.Context, client *http.Client, serviceURL string) error {
@@ -330,18 +328,14 @@ func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 	url, ok := s.serviceInvokeURL(ctx, id)
 	if !ok || url == "" {
 		s.Logger.Error().Str("container", id).Msg("invokeRunningRunnerStage: no service URL")
-		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-			asAttachStream(v).publishAttachResponse(nil, []byte("no service URL"))
-		}
+		core.PublishBufferedAttachResponse(&s.attachStreams, id, nil, []byte("no service URL"))
 		return
 	}
 
 	client, err := s.Access.AuthenticatedClient(ctx, url)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("invokeRunningRunnerStage: access client")
-		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-			asAttachStream(v).publishAttachResponse(nil, []byte(err.Error()))
-		}
+		core.PublishBufferedAttachResponse(&s.attachStreams, id, nil, []byte(err.Error()))
 		return
 	}
 	client.Timeout = 10 * time.Minute
@@ -349,16 +343,12 @@ func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 	res, err := s.postBootstrap(client, url, capturedStdin)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("invokeRunningRunnerStage: envelope POST failed")
-		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-			asAttachStream(v).publishAttachResponse(nil, []byte(err.Error()))
-		}
+		core.PublishBufferedAttachResponse(&s.attachStreams, id, nil, []byte(err.Error()))
 		return
 	}
 	s.Logger.Info().Str("container", id).Int("exit", res.ExitCode).Int("stdout", len(res.Stdout)).Int("stderr", len(res.Stderr)).Msg("invokeRunningRunnerStage: bootstrap response")
 
-	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-		asAttachStream(v).publishAttachResponse(res.Stdout, res.Stderr)
-	}
+	core.PublishBufferedAttachResponse(&s.attachStreams, id, res.Stdout, res.Stderr)
 
 	// Fan-out exit code via WaitChs. gitlab-runner does
 	// /containers/{id}/wait?condition=not-running between stages — close
@@ -386,11 +376,11 @@ func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 //
 // Both shapes return ExecResult with exitCode/stdout/stderr — the
 // default-invoke path's response is plain bytes (we pack into Stdout).
-func (s *Server) postBootstrap(client *http.Client, url string, stdin []byte) (*gcpcommon.ExecResult, error) {
+func (s *Server) postBootstrap(client *http.Client, url string, stdin []byte) (*envelope.Result, error) {
 	if len(stdin) > 0 {
-		return gcpcommon.PostExecEnvelope(s.ctx(), client, url, "", gcpcommon.ExecEnvelopeExec{
+		return envelope.Post(s.ctx(), client, url, envelope.PostOptions{}, envelope.Exec{
 			Argv:  []string{"/bin/sh"},
-			Stdin: gcpcommon.EncodeStdin(stdin),
+			Stdin: envelope.EncodeStdin(stdin),
 		})
 	}
 	// Default-invoke path — empty POST. The bootstrap returns a
@@ -417,7 +407,7 @@ func (s *Server) postBootstrap(client *http.Client, url string, stdin []byte) (*
 	} else {
 		exitCode = core.HTTPStatusToExitCode(resp.StatusCode)
 	}
-	return &gcpcommon.ExecResult{ExitCode: exitCode, Stdout: body}, nil
+	return &envelope.Result{ExitCode: exitCode, Stdout: body}, nil
 }
 
 // startMultiContainerServiceTyped provisions a single Cloud Run Service

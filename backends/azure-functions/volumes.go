@@ -40,8 +40,8 @@ type azfVolumeState struct {
 // land on the SAME pre-provisioned share without sockerless creating a
 // fresh one per docker run.
 func (s *Server) shareForVolume(ctx context.Context, volName string) (string, error) {
-	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
-		return sv.ShareName, nil
+	if sv := s.config.SharedVolumes.ByName(volName); sv != nil {
+		return sv.AzureShareName, nil
 	}
 	return s.shares.EnsureShare(ctx, volName)
 }
@@ -50,7 +50,7 @@ func (s *Server) shareForVolume(ctx context.Context, volName string) (string, er
 // Operator-declared SharedVolumes are operator-owned — sockerless
 // never deletes their shares.
 func (s *Server) deleteShareForVolume(ctx context.Context, volName string) error {
-	if s.config.LookupSharedVolumeByName(volName) != nil {
+	if s.config.SharedVolumes.ByName(volName) != nil {
 		return nil
 	}
 	return s.shares.DeleteShare(ctx, volName)
@@ -105,8 +105,8 @@ func (s *Server) attachVolumesToFunctionSite(ctx context.Context, siteName strin
 			return fmt.Errorf("provision share for %q: %w", volName, err)
 		}
 		account := s.config.StorageAccount
-		if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
-			account = sv.AccountOrDefault(s.config.StorageAccount)
+		if sv := s.config.SharedVolumes.ByName(volName); sv != nil {
+			account = sv.AzureAccountOrDefault(s.config.StorageAccount)
 		}
 		accessKey, err := keyForAccount(account)
 		if err != nil {

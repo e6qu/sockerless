@@ -39,8 +39,8 @@ func (s *Server) accessPointForVolume(ctx context.Context, volName string) (stri
 	// share a workspace via EFS without sockerless having to provision
 	// a fresh access point per docker run. Mirror of the ECS backend's
 	// same-named function.
-	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
-		return sv.AccessPointID, nil
+	if sv := s.config.SharedVolumes.ByName(volName); sv != nil {
+		return sv.EFSAccessPointID, nil
 	}
 	return s.efs.AccessPointForVolume(ctx, volName)
 }
@@ -112,16 +112,16 @@ func (s *Server) fileSystemConfigsForBinds(ctx context.Context, binds []string) 
 			continue
 		}
 		var subpath string
-		if strings.HasPrefix(volName, "/") || strings.HasPrefix(volName, ".") {
-			if sv := s.config.LookupSharedVolumeBySourcePath(volName); sv != nil {
+		if core.IsHostBindSource(volName) {
+			if sv := s.config.SharedVolumes.BySourcePath(volName); sv != nil {
 				volName = sv.Name
 				subpath = sv.EFSSubpath
-			} else if isSubPathOfSharedVolume(volName, s.config.SharedVolumes) {
+			} else if s.config.SharedVolumes.IsSubPath(volName) {
 				continue
 			} else {
 				return nil, nil, fmt.Errorf("host-path binds are not supported on Lambda; use a named volume or configure SOCKERLESS_LAMBDA_SHARED_VOLUMES")
 			}
-		} else if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+		} else if sv := s.config.SharedVolumes.ByName(volName); sv != nil {
 			subpath = sv.EFSSubpath
 		} else if len(s.config.SharedVolumes) > 0 {
 			// No matching SharedVolume: collapse onto the FIRST

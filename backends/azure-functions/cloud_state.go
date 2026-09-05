@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	azurecommon "github.com/sockerless/azure-common"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v5"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -86,12 +88,7 @@ func (p *azfCloudState) CheckNameAvailable(ctx context.Context, name string) (bo
 	if err != nil {
 		return false, err
 	}
-	for _, c := range containers {
-		if c.Name == name || c.Name == "/"+name {
-			return false, nil
-		}
-	}
-	return true, nil
+	return !core.ContainerNameTaken(containers, name), nil
 }
 
 func (p *azfCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
@@ -344,7 +341,7 @@ func (p *azfCloudState) expandPodSite(site *armappservice.Site, membersTag strin
 	}
 
 	created := derefTag(site.Tags["sockerless-created-at"])
-	dockerLabels := core.ParseLabelsFromTags(azureTagsToMap(site.Tags))
+	dockerLabels := core.ParseLabelsFromTags(azurecommon.TagsToMap(site.Tags))
 	if dockerLabels == nil {
 		dockerLabels = make(map[string]string)
 	}
@@ -432,7 +429,7 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 	}
 
 	// Parse Docker labels from tags (Azure tags use hyphens, matching ParseLabelsFromTags directly)
-	hyphenTags := azureTagsToMap(tags)
+	hyphenTags := azurecommon.TagsToMap(tags)
 	dockerLabels := core.ParseLabelsFromTags(hyphenTags)
 	if dockerLabels == nil {
 		dockerLabels = make(map[string]string)
@@ -468,17 +465,6 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 		Platform: "linux",
 		Driver:   "azure-functions",
 	}, nil
-}
-
-// azureTagsToMap converts Azure ptr-based tags to a plain string map.
-func azureTagsToMap(tags map[string]*string) map[string]string {
-	m := make(map[string]string, len(tags))
-	for k, v := range tags {
-		if v != nil {
-			m[k] = *v
-		}
-	}
-	return m
 }
 
 // derefTag safely dereferences an Azure tag pointer.

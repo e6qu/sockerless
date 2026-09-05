@@ -82,7 +82,7 @@ Each pattern maps to one of nine categories defined at the bottom; patterns are 
 **Description**: Tests are derived by reading the implementation and writing assertions that match what the code currently does — rather than what it should do per spec.
 **Example**: A test that asserts `validate_payment(10.0, 'USD') == True` because the code currently returns True for that input.
 **Why it's bad**: The test passes for any future regression that preserves the broken behaviour. The test can't detect that the implementation is wrong because it was derived from the implementation.
-**Sockerless instance**: Why `specs/BLEEPHUB_GITHUB_API_PARITY.md` is the authoritative reference: tests measure against the GitHub spec, not against what bleephub happens to do today.
+**Sockerless instance**: Why Bleephub's `specs/BLEEPHUB_GITHUB_API_PARITY.md` is the authoritative reference: tests measure against the GitHub spec, not against what bleephub happens to do today.
 **Source**: [shekhar14.medium.com](https://shekhar14.medium.com/unmasking-the-flaws-why-ai-generated-unit-tests-fall-short-in-real-codebases-71e394581a8e) — *"AI generates tests by looking at the implementation and writing assertions that match what the code does, which is fundamentally backwards—tests should verify what the code should do, regardless of how it currently does it."*
 
 ### 4. Slopsquatting — hallucinated package names
@@ -215,7 +215,7 @@ Each pattern maps to one of nine categories defined at the bottom; patterns are 
 **Description**: Agents generate queries and serialisers against *imagined* schemas rather than the real one.
 **Example**: Code that runs fine against fixtures, then crashes against production. "Passes functional tests but misses indexes, uses inefficient joins, brings systems down under load."
 **Why it's bad**: The model "thought it knew" the schema. Production says otherwise.
-**Sockerless instance**: The "reference adaptor" framing (`specs/BLEEPHUB_GITHUB_API_PARITY.md`, the per-component READMEs after Phase 157) addresses this — every backend's schema is measured against the *real* cloud SDK's request shape, not against an imagined one.
+**Sockerless instance**: The "reference adaptor" framing (Bleephub's `specs/BLEEPHUB_GITHUB_API_PARITY.md`, the per-component READMEs after Phase 157) addresses this — every backend's schema is measured against the *real* cloud SDK's request shape, not against an imagined one.
 **Source**: [Augment](https://www.augmentcode.com/guides/debugging-ai-generated-code-8-failure-patterns-and-fixes) pattern 7 and [Stack Overflow blog](https://stackoverflow.blog/2026/01/02/a-new-worst-coder-has-entered-the-chat-vibe-coding-without-code-knowledge/).
 
 ### 23. AI-slop security reports / bogus PRs
