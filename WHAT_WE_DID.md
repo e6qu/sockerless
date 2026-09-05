@@ -52,6 +52,13 @@ and the variable each backend reads). AGENTS.md carries the placement rule
 ("Shared code has three homes"), and the documentation links the Bleephub
 extraction had left dangling now point at the Bleephub repository (BUG-2937).
 
+Bundling the dependency drift the freshness gate reported moved the Go
+toolchain forward: the latest `google.golang.org/api` and `golang.org/x/crypto`
+require Go 1.26, so the modules that pull them declare `go 1.26.0`, and every
+`actions/setup-go` pin, harness image, and smoke image builds with Go 1.26.
+`setup-go` runs with `GOTOOLCHAIN=local`, so a runner left on 1.25 fails every
+job at module load rather than downloading the toolchain.
+
 ## Azure build-context blob client authenticates with the account's shared key
 
 The Azure Container Registry build service reached the build-context blob
