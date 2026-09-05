@@ -67,7 +67,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 
 	// Resolve Docker Hub images to Artifact Registry remote repository URIs
-	config.Image = gcpcommon.ResolveGCPImageURI(config.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
+	config.Image = gcpcommon.ResolveGCPImageURI(config.Image, s.config.Project, s.config.Region, s.config.ARRegistryEndpoint)
 
 	// When BootstrapBinaryPath is configured, COPY the
 	// sockerless-cloudrun-bootstrap into the user's image via Cloud
@@ -1096,7 +1096,7 @@ func (s *Server) ContainerUnpause(ref string) error {
 // it on Create but NOT on Pull — gitlab-runner pre-pulls images via
 // /images/create which bypassed the rewrite.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region, s.config.EndpointURL)
+	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region, s.config.ARRegistryEndpoint)
 	if resolved == ref {
 		return s.images.Pull(resolved, auth)
 	}

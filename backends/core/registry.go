@@ -330,6 +330,15 @@ func getRegistryToken(rc registryConfig, basicAuth string) (string, error) {
 		return "", fmt.Errorf("no Www-Authenticate header in 401 response")
 	}
 
+	// A registry that challenges with Basic takes the credential directly on
+	// every request; there is no token service to exchange it at.
+	if scheme, _, _ := strings.Cut(authHeader, " "); strings.EqualFold(scheme, "Basic") {
+		if basicAuth == "" {
+			return "", fmt.Errorf("registry %s requires basic authentication and no credential was supplied", rc.Registry)
+		}
+		return "basic:" + basicAuth, nil
+	}
+
 	realm, params := parseWWWAuthenticate(authHeader)
 	if realm == "" {
 		return "", fmt.Errorf("no realm in Www-Authenticate header")

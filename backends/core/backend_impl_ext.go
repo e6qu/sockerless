@@ -407,6 +407,13 @@ func (s *BaseServer) ImagePushToEndpoint(name string, tag string, auth string, e
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "image", ID: name}
 	}
+	// `auth` is either a registry credential a cloud AuthProvider minted or
+	// the Docker client's X-Registry-Auth; both become the Authorization
+	// value the registry accepts.
+	auth, err := RegistryAuthorizationFromDockerAuth(auth)
+	if err != nil {
+		return nil, &api.InvalidParameterError{Message: err.Error()}
+	}
 
 	if tag == "" {
 		tag = "latest"

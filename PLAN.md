@@ -21,13 +21,14 @@ Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker C
 
 ## Active Branch Priorities
 
-1. Consolidated the code the six cloud backends and three `*-common` modules had been carrying as copies (about 2,100 identical lines after normalising cloud names, and as much again in near-copies): shared-volume configuration, bind translation, and environment readers; buffered stdin and attach; the bootstrap overlay image and pod manifest; pod lifecycle loops; network-pod materialisation; managed-volume shaping; cloud-error mapping; image reference splitting; the DNS-zone discovery skeleton; the exec-envelope wire contract (once in `agent/envelope`, spoken by the four bootstraps and the four FaaS backends); and, per cloud family, AWS SDK configuration and ECR pull-through routing, the Cloud Run volume mapper and gcs-sync exec staging, and the Azure Log Analytics reader and tag flattening.
-2. Fixed the divergences the comparison exposed: the unbounded Cloud Run / Cloud Run Functions attach read, and the Azure Container Apps Log Analytics client that queried over plain HTTP with no credential.
-3. Documented the placement rule so the copies do not grow back, and repointed the documentation links the Bleephub extraction had left dangling.
+1. Pinned the simulators at sockerless-cloud v0.30.3, whose Google Artifact Registry data plane authenticates every `/v2/` request and requires the repository to exist, with every pin moved together (`tests/go.mod` including the `ui-auth` support module, the harness Dockerfiles, the compose build context, the Lambda live-test checkout).
+2. Made the Artifact Registry endpoint one coordinate on both Google backends: read once into `Config.ARRegistryEndpoint`, naming the host image references carry and the URL registry HTTP is dialed at for the auth provider, the tag probe, the multi-arch index, and the image resolver; the tag probe reports credential and transport failures instead of rebuilding.
+3. Made the shared image pull and push present the Docker client's credential: `X-Registry-Auth` decoded into the registry's `Authorization` value, an identity token refused rather than dropped, a `Basic` challenge answered directly.
+4. Made the Cloud Run and Cloud Run Functions harnesses provision Artifact Registry the way Terraform and the operator do — repositories through the API, `docker login -u oauth2accesstoken` with a token minted from the service-account key, in a Docker configuration the simulator's own Cloud Build and Cloud Run host inherit — and gave the Google Terraform modules the `sockerless-overlay` and `gitlab-registry` repositories the backends name.
 
 ## Next
 
-- Watch the first CI run of the consolidated branch; every backend's unit suite, lint, and the integration harnesses run there against the pinned simulators.
-- Registry items in order: BUG-2943 (Google Cloud harnesses push anonymously into repositories they never create) with BUG-2946 (the Artifact Registry endpoint coordinate is split), then BUG-2945 once the Azure simulator serves the repository catalog.
+- Watch the first CI run of the registry branch; the Cloud Run and Cloud Run Functions harnesses run there against the enforcing Artifact Registry for the first time.
+- BUG-2945 once the Azure simulator serves the repository catalog: read `docker images` through `core.OCIListImages` in the Azure Container Registry round trip.
 - BUG-2922: migrate the Docker passthrough backend from `github.com/docker/docker` to the `github.com/moby/moby` client and API modules.
 - BUG-1075: live-cloud validation beyond AWS Lambda.

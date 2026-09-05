@@ -19,6 +19,15 @@ type Config struct {
 	BuildBucket   string // GCS bucket for Cloud Build context upload
 	BuildPlatform string // Docker build platform for overlay images
 	EndpointURL   string // Custom endpoint URL (sim/emulator) for run.googleapis.com peers
+	// ARRegistryEndpoint is the Artifact Registry endpoint coordinate. Empty
+	// on real Google Cloud, where the registry is `<region>-docker.pkg.dev`;
+	// an operator relocates it — a harness points it at the simulator's
+	// `/v2/` address — and the overlay build→push, the workload→pull
+	// reference, the tag probe, and every registry request then target that
+	// coordinate. Its host is what image references carry; its URL (https://
+	// when it names a bare host) is what registry HTTP is dialed at. Set via
+	// `SOCKERLESS_GCP_AR_ENDPOINT`.
+	ARRegistryEndpoint string
 	// LogAdminEndpoint is the host:port for Cloud Logging admin gRPC.
 	// In real GCP this is logging.googleapis.com:443; in sim mode this
 	// points at the simulator's gRPC listener. Required whenever
@@ -124,6 +133,7 @@ func ConfigFromEnv() Config {
 		BuildBucket:         os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
 		BuildPlatform:       core.EnvOrDefault("SOCKERLESS_GCP_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:         os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		ARRegistryEndpoint:  os.Getenv("SOCKERLESS_GCP_AR_ENDPOINT"),
 		LogAdminEndpoint:    os.Getenv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT"),
 		PollInterval:        core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		LogTimeout:          core.DurationOrDefault(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
@@ -168,6 +178,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		}
 	}
 	c.EndpointURL = env.Common.EndpointURL
+	c.ARRegistryEndpoint = os.Getenv("SOCKERLESS_GCP_AR_ENDPOINT")
 	c.LogAdminEndpoint = os.Getenv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT")
 	c.GCSWorkloadEndpoint = os.Getenv("SOCKERLESS_GCS_WORKLOAD_ENDPOINT")
 	if env.Common.PollInterval != "" {

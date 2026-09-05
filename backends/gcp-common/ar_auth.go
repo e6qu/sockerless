@@ -14,21 +14,26 @@ import (
 )
 
 // ARAuthProvider handles Artifact Registry authentication and OCI operations
-// for GCP cloud registries (*.gcr.io, *-docker.pkg.dev).
-// Implements core.AuthProvider.
+// for Google Cloud registries (*.gcr.io, *-docker.pkg.dev, and the relocated
+// Artifact Registry coordinate). Implements core.AuthProvider.
 type ARAuthProvider struct {
-	ctx         func() context.Context
-	logger      zerolog.Logger
-	endpointURL string
+	ctx    func() context.Context
+	logger zerolog.Logger
+	// registryEndpoint is the Artifact Registry endpoint coordinate
+	// (Config.ARRegistryEndpoint, from SOCKERLESS_GCP_AR_ENDPOINT): "" when
+	// the registry is reached at the host its references name, else the
+	// coordinate whose host those references carry and whose URL registry
+	// HTTP is dialed at.
+	registryEndpoint string
 }
 
-// NewARAuthProvider creates a new ARAuthProvider.
-func NewARAuthProvider(ctxFunc func() context.Context, logger zerolog.Logger, endpointURL ...string) *ARAuthProvider {
-	p := &ARAuthProvider{ctx: ctxFunc, logger: logger}
-	if len(endpointURL) > 0 {
-		p.endpointURL = endpointURL[0]
-	}
-	return p
+// NewARAuthProvider creates an ARAuthProvider for the Artifact Registry
+// reached at `registryEndpoint` — the same coordinate the overlay build
+// pushes to and image references are resolved against, so a reference that
+// carries the coordinate's host is recognised as a cloud-registry reference
+// and dialed at the coordinate. Empty means the real `<region>-docker.pkg.dev`.
+func NewARAuthProvider(ctxFunc func() context.Context, logger zerolog.Logger, registryEndpoint string) *ARAuthProvider {
+	return &ARAuthProvider{ctx: ctxFunc, logger: logger, registryEndpoint: registryEndpoint}
 }
 
 // GetToken returns a Bearer token for the given registry using Application Default Credentials.
@@ -49,34 +54,31 @@ func (a *ARAuthProvider) GetToken(registry, repository string, actions ...string
 	return "Bearer " + token.AccessToken, nil
 }
 
-// IsCloudRegistry returns true if the registry is a GCP Artifact Registry or
-// GCR — or the relocated AR coordinate (SOCKERLESS_GCP_AR_ENDPOINT) a sim
-// harness sets, which carries overlay/base refs on its own host rather than
-// `<region>-docker.pkg.dev`.
+// IsCloudRegistry returns true if the registry is a Google Artifact Registry or
+// Container Registry host, or the relocated Artifact Registry coordinate — a
+// reference that carries the coordinate's host instead of
+// `<region>-docker.pkg.dev` is the same registry under another address.
 func (a *ARAuthProvider) IsCloudRegistry(registry string) bool {
-	return core.IsGCPRegistry(registry) || IsOverlayCoordinateRegistry(registry)
+	return core.IsGCPRegistry(registry) || IsRelocatedRegistry(registry, a.registryEndpoint)
 }
 
-// RegistryEndpoint returns the Artifact Registry endpoint override (the
-// backend's reachable sim/cloud endpoint), if any, for a cloud-registry ref.
-// The image reference itself remains the cloud AR/GCR (or relocated-coordinate)
-// reference; only the network destination of registry HTTP changes — so a
-// metadata fetch for a coordinate ref like `127.0.0.1:5000/...` is routed to the
-// backend-reachable sim endpoint instead of dialing the published coordinate
-// host (unreachable from inside the backend's container, and over the wrong
-// scheme).
+// RegistryEndpoint returns the URL registry HTTP is dialed at for a
+// cloud-registry reference: the relocated coordinate when one is set, "" when
+// the reference's own host is the destination. The reference itself is
+// unchanged; only the network destination — and its scheme — comes from the
+// coordinate, so a reference carrying `127.0.0.1:5000/...` is dialed at
+// `http://127.0.0.1:5000` when that is what the coordinate says.
 func (a *ARAuthProvider) RegistryEndpoint(registry string) string {
 	if !a.IsCloudRegistry(registry) {
 		return ""
 	}
-	return a.endpointURL
+	return RegistryEndpointURL(a.registryEndpoint)
 }
 
-// OnPush is a no-op for Artifact Registry — repositories are created
-// implicitly on first push, and the actual blob upload is done by
-// BaseServer.ImagePush via core.OCIPush, which has access to the
-// image's layer data through the local store. OnPush used to also
-// call OCIPush here without layer data, which always failed.
+// OnPush is a no-op for Artifact Registry: the blob and manifest upload is
+// done by BaseServer.ImagePush via core.OCIPush, which has the image's layer
+// data through the local store. The repository the push lands in is operator
+// infrastructure (Terraform creates it), as it is for the real service.
 func (a *ARAuthProvider) OnPush(imageID, registry, repo, tag string) error {
 	return nil
 }

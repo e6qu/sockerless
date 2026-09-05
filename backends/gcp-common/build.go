@@ -36,7 +36,11 @@ type GCPBuildService struct {
 	// manifest push and Cloud Build calls use Application Default
 	// Credentials directly.
 	tokenSource oauth2.TokenSource
-	logger      zerolog.Logger
+	// registryEndpoint is the Artifact Registry endpoint coordinate
+	// (Config.ARRegistryEndpoint); the multi-arch index is written to the
+	// registry at that coordinate, where the per-platform builds pushed.
+	registryEndpoint string
+	logger           zerolog.Logger
 }
 
 // NewGCPBuildService creates a Cloud Build-backed build service.
@@ -70,7 +74,11 @@ type GCPBuildService struct {
 // to still present a bearer against an enforcing endpoint the Storage
 // client is handed an *http.Client whose transport injects the same
 // metadata token.
-func NewGCPBuildService(ctx context.Context, project, bucket, arRepo, endpointURL string, logger zerolog.Logger) (*GCPBuildService, error) {
+//
+// `registryEndpoint` is the Artifact Registry endpoint coordinate
+// (Config.ARRegistryEndpoint) — distinct from `endpointURL`, the Google Cloud
+// API endpoint — at which the multi-arch index is written.
+func NewGCPBuildService(ctx context.Context, project, bucket, arRepo, endpointURL, registryEndpoint string, logger zerolog.Logger) (*GCPBuildService, error) {
 	if project == "" || bucket == "" {
 		return nil, nil
 	}
@@ -103,13 +111,14 @@ func NewGCPBuildService(ctx context.Context, project, bucket, arRepo, endpointUR
 	}
 
 	return &GCPBuildService{
-		cloudbuild:  cb,
-		gcs:         gcs,
-		tokenSource: tokenSource,
-		project:     project,
-		bucket:      bucket,
-		arRepo:      arRepo,
-		logger:      logger,
+		cloudbuild:       cb,
+		gcs:              gcs,
+		tokenSource:      tokenSource,
+		project:          project,
+		bucket:           bucket,
+		arRepo:           arRepo,
+		registryEndpoint: registryEndpoint,
+		logger:           logger,
 	}, nil
 }
 
@@ -143,7 +152,7 @@ func (s *GCPBuildService) AssembleMultiArchManifest(ctx context.Context, opts co
 	// Google Artifact Registry accepts the identity's own OAuth2 access token
 	// on every repository, so the resource the index is written to does not
 	// change which credential is presented.
-	opts.Endpoint = OverlayRegistryEndpoint()
+	opts.Endpoint = RegistryEndpointURL(s.registryEndpoint)
 	return core.AssembleMultiArchManifest(ctx, opts, func(_ string) (string, error) {
 		ts := s.tokenSource
 		if ts == nil {

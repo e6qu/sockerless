@@ -199,6 +199,55 @@ resource "google_artifact_registry_repository" "docker_hub" {
   depends_on = [google_project_service.artifactregistry]
 }
 
+# Standard repository named exactly `sockerless-overlay` — the backend's
+# overlay images (the user's image with the sockerless bootstrap layered on,
+# built once per content hash by Cloud Build) are pushed to and pulled from
+# `{region}-docker.pkg.dev/{project}/sockerless-overlay/<backend>:<contentTag>`.
+# Artifact Registry does not create repositories on first push, so without
+# this repository every overlay build fails at the push.
+resource "google_artifact_registry_repository" "sockerless_overlay" {
+  project       = var.project_id
+  location      = var.region
+  repository_id = "sockerless-overlay"
+  format        = "DOCKER"
+  description   = "sockerless overlay images (user image + bootstrap), one tag per content hash"
+
+  cleanup_policies {
+    id     = "delete-untagged"
+    action = "DELETE"
+
+    condition {
+      tag_state  = "UNTAGGED"
+      older_than = "604800s" # 7 days
+    }
+  }
+
+  depends_on = [google_project_service.artifactregistry]
+}
+
+# Remote repository named exactly `gitlab-registry` — `gcpcommon.ResolveGCPImageURI`
+# rewrites `registry.gitlab.com/...` references (the gitlab-runner helper
+# image) to `{region}-docker.pkg.dev/{project}/gitlab-registry/{repo}:{tag}`.
+resource "google_artifact_registry_repository" "gitlab_registry" {
+  project       = var.project_id
+  location      = var.region
+  repository_id = "gitlab-registry"
+  format        = "DOCKER"
+  mode          = "REMOTE_REPOSITORY"
+  description   = "registry.gitlab.com proxy for sockerless image-resolve"
+
+  remote_repository_config {
+    description = "Proxies registry.gitlab.com"
+    docker_repository {
+      custom_repository {
+        uri = "https://registry.gitlab.com"
+      }
+    }
+  }
+
+  depends_on = [google_project_service.artifactregistry]
+}
+
 # =============================================================================
 # IAM — Service Account
 # =============================================================================
