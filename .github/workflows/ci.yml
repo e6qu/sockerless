@@ -440,20 +440,23 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
+      # Host networking: the simulator inside the smoke container serves its
+      # registry at its own loopback address, and the host daemon that runs
+      # the workloads must reach that same loopback to pull from it.
       - name: Smoke test (ecs)
         run: |
           docker build -t smoke-ecs -f smoke-tests/Dockerfile.ecs .
-          docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-ecs
+          docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-ecs
         timeout-minutes: 5
       - name: Smoke test (cloudrun)
         run: |
           docker build -t smoke-cloudrun -f smoke-tests/Dockerfile.cloudrun .
-          docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-cloudrun
+          docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-cloudrun
         timeout-minutes: 5
       - name: Smoke test (aca)
         run: |
           docker build -t smoke-aca -f smoke-tests/Dockerfile.aca .
-          docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-aca
+          docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-aca
         timeout-minutes: 5
 
   terraform:
