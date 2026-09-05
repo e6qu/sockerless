@@ -3,7 +3,7 @@ module github.com/sockerless/tests
 go 1.25.8
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.43.7
+	github.com/aws/aws-sdk-go-v2 v1.46.0
 	github.com/docker/docker v28.5.2+incompatible
 )
 
@@ -35,7 +35,7 @@ require (
 	github.com/PaesslerAG/gval v1.2.4 // indirect
 	github.com/PaesslerAG/jsonpath v0.1.1 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
-	github.com/aws/smithy-go v1.27.9 // indirect
+	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudflare/circl v1.6.5 // indirect

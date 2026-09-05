@@ -59,12 +59,7 @@ func (p *lambdaCloudState) CheckNameAvailable(ctx context.Context, name string) 
 	if err != nil {
 		return false, err
 	}
-	for _, c := range containers {
-		if c.Name == name || c.Name == "/"+name {
-			return false, nil
-		}
-	}
-	return true, nil
+	return !core.ContainerNameTaken(containers, name), nil
 }
 
 func (p *lambdaCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
@@ -383,7 +378,7 @@ func podMembersFromLambda(ctx context.Context, srv *Server, funcName string, fn 
 		return nil
 	}
 	enc := out.Configuration.Environment.Variables["SOCKERLESS_POD_CONTAINERS"]
-	members, err := DecodePodManifest(enc)
+	members, err := core.DecodePodManifest(enc)
 	if err != nil || len(members) == 0 {
 		return nil
 	}

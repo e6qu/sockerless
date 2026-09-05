@@ -1,13 +1,13 @@
 module github.com/sockerless/github-runner-dispatcher-gcp
 
-go 1.25.8
+go 1.26.0
 
 require (
 	cloud.google.com/go/run v1.22.0
 	cloud.google.com/go/secretmanager v1.21.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/sockerless/github-runner-dispatcher-aws v0.0.0
-	google.golang.org/api v0.293.0
+	google.golang.org/api v0.297.0
 	google.golang.org/protobuf v1.36.12
 )
 
@@ -42,7 +42,7 @@ require (
 	google.golang.org/genproto v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
-	google.golang.org/grpc v1.83.1 // indirect
+	google.golang.org/grpc v1.83.2 // indirect
 )
 
 replace github.com/sockerless/github-runner-dispatcher-aws => ../github-runner-dispatcher-aws

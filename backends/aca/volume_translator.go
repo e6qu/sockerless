@@ -39,10 +39,10 @@ func (s *Server) resolveVolumeForName(ctx context.Context, volName string) (*arm
 	// each container its own empty mount (e.g. a gitlab-runner build container
 	// couldn't see the workspace its helper container cloned into /builds).
 	requested := core.BackingAzureFilesEphemeral
-	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+	if sv := s.config.SharedVolumes.ByName(volName); sv != nil {
 		// Explicit Backing, no default — empty/unknown fails loudly in
 		// Resolve per the no-fallbacks directive.
-		ref = sv.AsRef(s.config.StorageAccount)
+		ref = sv.WithAzureAccountDefault(s.config.StorageAccount)
 		requested = ref.Backing
 	}
 	driver, err := s.storageBackings.Resolve(requested)

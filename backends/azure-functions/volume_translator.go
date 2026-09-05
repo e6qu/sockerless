@@ -25,8 +25,8 @@ import (
 // unknown values fail loudly per the no-fallbacks directive.
 func (s *Server) resolveStorageInfoForVolume(volName, mountPath, shareName, account, accessKey string) (*armappservice.AzureStorageInfoValue, error) {
 	backing := core.BackingAzureFilesEphemeral
-	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
-		backing = core.StorageBacking(sv.Backing)
+	if sv := s.config.SharedVolumes.ByName(volName); sv != nil {
+		backing = sv.Backing
 	}
 	driver, err := s.storageBackings.Resolve(backing)
 	if err != nil {

@@ -71,7 +71,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// the AR overlay cache hits forever and updates to the bootstrap
 	// (e.g. SOCKERLESS_SYNC_MOUNTS support) never reach the JOB pod-Service.
 	if config.BootstrapBinaryHash == "" && config.BootstrapBinaryPath != "" {
-		if hash, err := gcpcommon.HashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
+		if hash, err := core.HashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
 			config.BootstrapBinaryHash = hash
 			logger.Info().Str("path", config.BootstrapBinaryPath).Str("hash", hash).Msg("hashed cloudrun bootstrap binary for overlay-tag invalidation")
 		} else {
@@ -79,11 +79,10 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		}
 	}
 	s := &Server{
-		config:         config,
-		gcp:            gcpClients,
-		CloudRun:       core.NewStateStore[CloudRunState](),
-		NetworkState:   core.NewStateStore[NetworkState](),
-		gcsVolumeState: gcsVolumeState{buckets: gcpcommon.NewBucketManager(gcpClients.Storage, config.Project, config.Region)},
+		config:       config,
+		gcp:          gcpClients,
+		CloudRun:     core.NewStateStore[CloudRunState](),
+		NetworkState: core.NewStateStore[NetworkState](),
 	}
 	s.ipCounter.Store(2)
 
@@ -98,7 +97,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		// backend's host arch — reported in docker /version so a client (e.g.
 		// gitlab-runner) selects a matching helper image rather than the wrong
 		// arch's.
-		Architecture: gcpcommon.ArchFromPlatform(config.BuildPlatform),
+		Architecture: core.ArchFromPlatform(config.BuildPlatform),
 		NCPU:         1,
 		MemTotal:     536870912,
 	}, logger)
@@ -162,6 +161,12 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// directive: SharedVolumes with an unrecognized Backing fail at resolve
 	// time rather than silently selecting a default.
 	s.storageBackings = core.NewStorageBackingRegistry()
+	s.volumes = &gcpcommon.RunVolumes{
+		Buckets:  gcpcommon.NewBucketManager(gcpClients.Storage, config.Project, config.Region),
+		Shared:   config.SharedVolumes,
+		Backings: s.storageBackings,
+		Platform: "Cloud Run",
+	}
 	if syncDriver, err := gcpcommon.NewGCSSyncDriver(context.Background()); err == nil {
 		s.storageBackings.Register(syncDriver)
 		logger.Info().Str("backing", "gcs-sync").Msg("registered storage backing driver")

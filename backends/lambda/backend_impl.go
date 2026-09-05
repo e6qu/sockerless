@@ -637,7 +637,7 @@ func (s *Server) ContainerStart(ref string) error {
 		// pipe shows up by then assume this isn't an OpenStdin caller
 		// after all (or it crashed before attaching) and fall through
 		// to an empty-payload Invoke.
-		var stdinP *stdinPipe
+		var stdinP *core.StdinPipe
 		if lambdaState.OpenStdin {
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
@@ -1209,24 +1209,16 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
-// agent.
+// ContainerPause suspends the invocation's main process through the
+// reverse agent.
 func (s *Server) ContainerPause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
+	return s.PauseViaReverseAgent(s.reverseAgents, ref)
 }
 
-// ContainerUnpause sends SIGCONT to the user subprocess via the
-// reverse-agent.
+// ContainerUnpause resumes the invocation's main process through the
+// reverse agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
+	return s.UnpauseViaReverseAgent(s.reverseAgents, ref)
 }
 
 // ImagePull pulls an image, using ECR cloud auth when available.

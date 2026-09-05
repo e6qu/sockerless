@@ -120,7 +120,7 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 					if err := cd.DeregisterContainerCNAME(s.ctx(), net.ID, hostname); err != nil {
 						s.Logger.Warn().Err(err).Msg("failed to deregister CNAME from Cloud DNS")
 					}
-				} else if err := cd.DeregisterContainerARecord(net.ID, hostname); err != nil {
+				} else if err := cd.DeregisterContainerARecord(s.ctx(), net.ID, hostname); err != nil {
 					s.Logger.Warn().Err(err).Msg("failed to deregister from Cloud DNS")
 				}
 			} else if err := s.NetworkDiscovery.DeregisterContainer(s.ctx(), net.ID, hostname, containerID); err != nil {

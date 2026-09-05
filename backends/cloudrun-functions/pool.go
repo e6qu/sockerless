@@ -19,7 +19,7 @@ import (
 // Cache check uses Cloud Build's Source-deduplication and AR's
 // content-addressed tag scheme: a content-tag mismatch always rebuilds,
 // a content-tag match short-circuits.
-func (s *Server) ensureOverlayImage(ctx context.Context, spec OverlayImageSpec, contentTag string) (string, error) {
+func (s *Server) ensureOverlayImage(ctx context.Context, spec core.OverlayImageSpec, contentTag string) (string, error) {
 	imageURI := fmt.Sprintf(
 		"%s/%s/sockerless-overlay/gcf:%s",
 		gcpcommon.OverlayRegistryHost(s.config.Region), s.config.Project, contentTag,
@@ -35,7 +35,7 @@ func (s *Server) ensureOverlayImage(ctx context.Context, spec OverlayImageSpec, 
 	if s.images.BuildService == nil {
 		return "", fmt.Errorf("cloud Build service is required for gcf overlay image (set SOCKERLESS_GCP_BUILD_BUCKET)")
 	}
-	contextTar, err := TarOverlayContext(spec)
+	contextTar, err := core.TarOverlayContext(spec)
 	if err != nil {
 		return "", fmt.Errorf("tar overlay context: %w", err)
 	}
@@ -312,12 +312,12 @@ func (s *Server) prewarmOverlay(ctx context.Context, entry PrewarmOverlay) error
 		return nil
 	}
 	resolved := gcpcommon.ResolveGCPImageURI(entry.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
-	spec := OverlayImageSpec{
+	spec := core.OverlayImageSpec{
 		BaseImageRef:        resolved,
 		BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 		BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 	}
-	contentTag := OverlayContentTag(spec)
+	contentTag := core.OverlayContentTag("gcf-", spec)
 	overlayURI, err := s.ensureOverlayImage(ctx, spec, contentTag)
 	if err != nil {
 		return fmt.Errorf("ensure overlay image: %w", err)

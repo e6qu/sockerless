@@ -1,4 +1,4 @@
-FROM golang:1.25 AS builder
+FROM golang:1.26 AS builder
 
 # The v0.2.0 release commit; go install of a subdirectory module needs a
 # commit-ish, not the repository-root release tag.

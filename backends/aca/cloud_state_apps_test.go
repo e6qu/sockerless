@@ -3,6 +3,8 @@ package aca
 import (
 	"testing"
 
+	azurecommon "github.com/sockerless/azure-common"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -119,7 +121,7 @@ func TestAppToContainer_Shape(t *testing.T) {
 			},
 		},
 	}
-	mapped := azureTagsToMap(app.Tags)
+	mapped := azurecommon.TagsToMap(app.Tags)
 	got := p.appToContainer(app, mapped)
 	if got.ID != "abcdef012345" {
 		t.Errorf("ID = %q", got.ID)

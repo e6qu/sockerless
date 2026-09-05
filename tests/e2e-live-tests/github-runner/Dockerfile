@@ -1,4 +1,4 @@
-FROM golang:1.25 AS builder
+FROM golang:1.26 AS builder
 
 # The v0.2.0 release commit; go install of a subdirectory module needs a
 # commit-ish, not the repository-root release tag.
@@ -50,7 +50,7 @@ RUN cd agent && GOWORK=off go mod download && \
     GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent
 
 # --- Runtime stage ---
-FROM golang:1.25
+FROM golang:1.26
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 RUN go install github.com/nektos/act@latest

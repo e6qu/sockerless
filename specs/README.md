@@ -56,4 +56,4 @@ These specs moved with the simulators to the [sockerless-cloud repository](https
 | Doc | Summary |
 |---|---|
 | [`COMPARISONS.md`](COMPARISONS.md) | Per-operation comparison of what Docker does natively vs the API calls, CLI commands, and cloud services each backend uses for the same result. |
-| [`BLEEPHUB_GITHUB_API_PARITY.md`](BLEEPHUB_GITHUB_API_PARITY.md) | bleephub ↔ GitHub API signature parity: every bleephub endpoint matches real GitHub's path + request + response shapes modulo base domain. |
+| [`BLEEPHUB_GITHUB_API_PARITY.md`](https://github.com/e6qu/bleephub/blob/main/specs/BLEEPHUB_GITHUB_API_PARITY.md) (Bleephub repository) | bleephub ↔ GitHub API signature parity: every bleephub endpoint matches real GitHub's path + request + response shapes modulo base domain. |

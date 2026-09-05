@@ -81,16 +81,11 @@ func (p *gcfCloudState) ListContainers(ctx context.Context, all bool, filters ma
 }
 
 func (p *gcfCloudState) CheckNameAvailable(ctx context.Context, name string) (bool, error) {
-	containers, err := p.queryFunctions(ctx)
+	containers, err := p.ListContainers(ctx, true, nil)
 	if err != nil {
 		return false, err
 	}
-	for _, c := range containers {
-		if c.Name == name || c.Name == "/"+name {
-			return false, nil
-		}
-	}
-	return true, nil
+	return !core.ContainerNameTaken(containers, name), nil
 }
 
 func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {
@@ -498,7 +493,7 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) (api.Container,
 // manifest means the writing backend produced garbage — return the decode
 // error so the caller surfaces the inconsistency rather than silently
 // dropping every pod member from `docker ps`.
-func podMembersFromFunction(fn *functionspb.Function) ([]PodMemberJSON, error) {
+func podMembersFromFunction(fn *functionspb.Function) ([]core.PodMemberJSON, error) {
 	if fn.ServiceConfig == nil {
 		return nil, nil
 	}
@@ -506,7 +501,7 @@ func podMembersFromFunction(fn *functionspb.Function) ([]PodMemberJSON, error) {
 	if enc == "" {
 		return nil, nil
 	}
-	members, err := DecodePodManifest(enc)
+	members, err := core.DecodePodManifest(enc)
 	if err != nil {
 		return nil, fmt.Errorf("malformed SOCKERLESS_POD_CONTAINERS on function %q: %w", fn.Name, err)
 	}
@@ -519,7 +514,7 @@ func podMembersFromFunction(fn *functionspb.Function) ([]PodMemberJSON, error) {
 // surface the spec's "shared-degraded" honesty so operators detecting
 // the field can choose a non-FaaS backend (cloudrun-jobs / aca) when
 // they need real per-container isolation.
-func podMemberToContainer(fn *functionspb.Function, labels map[string]string, m PodMemberJSON) api.Container {
+func podMemberToContainer(fn *functionspb.Function, labels map[string]string, m core.PodMemberJSON) api.Container {
 	name := "/" + m.Name
 	if m.ContainerID != "" && m.Name == "" {
 		name = "/" + m.ContainerID[:12]

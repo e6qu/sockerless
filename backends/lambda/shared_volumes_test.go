@@ -16,53 +16,6 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-func TestParseSharedVolumes(t *testing.T) {
-	t.Run("empty input", func(t *testing.T) {
-		for _, in := range []string{"", "   ", " , "} {
-			vols, err := parseSharedVolumes(in)
-			if err != nil {
-				t.Fatalf("parseSharedVolumes(%q) error: %v", in, err)
-			}
-			if len(vols) != 0 {
-				t.Fatalf("parseSharedVolumes(%q) = %v, want empty", in, vols)
-			}
-		}
-	})
-
-	t.Run("valid 3- to 5-tuples", func(t *testing.T) {
-		vols, err := parseSharedVolumes("ws=/home/runner/_work=fsap-1, ext=/home/runner/externals=fsap-1==externals, tool=/opt/tool=fsap-1=fs-9=tooldir")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(vols) != 3 {
-			t.Fatalf("got %d volumes, want 3", len(vols))
-		}
-		if vols[0].Name != "ws" || vols[0].AccessPointID != "fsap-1" || vols[0].EFSSubpath != "" {
-			t.Errorf("vols[0] = %+v", vols[0])
-		}
-		if vols[1].FileSystemID != "" || vols[1].EFSSubpath != "externals" {
-			t.Errorf("vols[1] = %+v", vols[1])
-		}
-		if vols[2].FileSystemID != "fs-9" || vols[2].EFSSubpath != "tooldir" {
-			t.Errorf("vols[2] = %+v", vols[2])
-		}
-	})
-
-	t.Run("malformed entries error", func(t *testing.T) {
-		for _, in := range []string{
-			"ws=/home/runner/_work",           // too few fields
-			"ws=/p=fsap-1=fs-1=subpath=extra", // too many fields
-			"=/home/runner/_work=fsap-1",      // empty name
-			"ws=/home/runner/_work=",          // empty access point
-			"ok=/a=fsap-1,ws=/home/runner",    // one valid + one malformed
-		} {
-			if _, err := parseSharedVolumes(in); err == nil {
-				t.Errorf("parseSharedVolumes(%q) = nil error, want parse error", in)
-			}
-		}
-	})
-}
-
 func TestValidateSurfacesSharedVolumesParseError(t *testing.T) {
 	cfg := Config{
 		RoleARN:          "arn:aws:iam::000000000000:role/x",
@@ -113,8 +66,8 @@ func newSharedVolumeTestServer(t *testing.T) *Server {
 		config: Config{
 			SubnetIDs:  []string{"subnet-1"},
 			AgentEFSID: "fs-1",
-			SharedVolumes: []SharedVolume{
-				{Name: "ws", ContainerPath: "/home/runner/_work", AccessPointID: "fsap-1"},
+			SharedVolumes: core.SharedVolumes{
+				{Name: "ws", ContainerPath: "/home/runner/_work", EFSAccessPointID: "fsap-1"},
 			},
 		},
 	}

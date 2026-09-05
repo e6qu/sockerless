@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/sockerless/api"
+	core "github.com/sockerless/backend-core"
 )
 
 // materializePodFunction collapses a multi-container pod into a single
@@ -42,7 +43,7 @@ import (
 // preserved so the pod's main container (the one whose ContainerStart
 // triggered materialisation) lands as MainName.
 func containersToPodOverlaySpec(bootstrapPath, podName, mainID string, containers []api.Container) PodOverlaySpec {
-	members := make([]PodMemberSpec, 0, len(containers))
+	members := make([]core.PodMemberSpec, 0, len(containers))
 	mainName := ""
 	for _, c := range containers {
 		// Member name = container's docker name (without leading slash)
@@ -54,9 +55,9 @@ func containersToPodOverlaySpec(bootstrapPath, podName, mainID string, container
 		}
 		// Sanitise to lowercase alnum + dash so it's safe for both the
 		// chroot path and the GCP label slot if we end up writing it.
-		name = sanitizePodMemberName(name)
+		name = core.SanitizePodMemberName(name)
 
-		members = append(members, PodMemberSpec{
+		members = append(members, core.PodMemberSpec{
 			Name:         name,
 			ContainerID:  c.ID,
 			BaseImageRef: c.Config.Image,
@@ -75,44 +76,4 @@ func containersToPodOverlaySpec(bootstrapPath, podName, mainID string, container
 		BootstrapBinaryPath: bootstrapPath,
 		Members:             members,
 	}
-}
-
-// sanitizePodMemberName lowercases and strips characters outside
-// [a-z0-9-]. The result is safe for use as a chroot subdir AND a GCP
-// label fragment. Empty results fall back to "x" so we never end up
-// with /containers// or an empty member identifier.
-func sanitizePodMemberName(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= '0' && r <= '9',
-			r == '-':
-			b.WriteRune(r)
-		case r == '_', r == '.':
-			b.WriteRune('-')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		out = "x"
-	}
-	return out
-}
-
-// sanitizePodLabelValue applies the GCP label-value charset to a pod
-// name (lowercase letters + digits + `_-` only). Pods named with chars
-// outside that set get the unsafe chars stripped; if the result would
-// be empty we drop the label entirely (callers check for "").
-func sanitizePodLabelValue(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= '0' && r <= '9',
-			r == '-', r == '_':
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }

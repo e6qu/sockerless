@@ -109,12 +109,7 @@ func (p *ecsCloudState) CheckNameAvailable(ctx context.Context, name string) (bo
 	if err != nil {
 		return false, err
 	}
-	for _, c := range containers {
-		if c.Name == name || c.Name == "/"+name {
-			return false, nil
-		}
-	}
-	return true, nil
+	return !core.ContainerNameTaken(containers, name), nil
 }
 
 func (p *ecsCloudState) WaitForExit(ctx context.Context, containerID string) (int, error) {

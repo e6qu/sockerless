@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sockerless/agent/envelope"
 )
 
 func TestParseExecEnvelope(t *testing.T) {
@@ -40,13 +42,13 @@ func TestParseExecEnvelope(t *testing.T) {
 }
 
 func TestRunExecEnvelope_StdoutCapture(t *testing.T) {
-	env := execEnvelopeExec{Argv: []string{"echo", "hello-from-bootstrap"}}
+	env := envelope.Exec{Argv: []string{"echo", "hello-from-bootstrap"}}
 	w := httptest.NewRecorder()
 	runExecEnvelope(w, env)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	var res execEnvelopeResponse
+	var res envelope.Response
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -60,10 +62,10 @@ func TestRunExecEnvelope_StdoutCapture(t *testing.T) {
 }
 
 func TestRunExecEnvelope_NonZeroExit(t *testing.T) {
-	env := execEnvelopeExec{Argv: []string{"sh", "-c", "exit 7"}}
+	env := envelope.Exec{Argv: []string{"sh", "-c", "exit 7"}}
 	w := httptest.NewRecorder()
 	runExecEnvelope(w, env)
-	var res execEnvelopeResponse
+	var res envelope.Response
 	_ = json.Unmarshal(w.Body.Bytes(), &res)
 	if res.SockerlessExecResult.ExitCode != 7 {
 		t.Fatalf("exitCode = %d, want 7", res.SockerlessExecResult.ExitCode)
@@ -71,13 +73,13 @@ func TestRunExecEnvelope_NonZeroExit(t *testing.T) {
 }
 
 func TestRunExecEnvelope_StdinPiped(t *testing.T) {
-	env := execEnvelopeExec{
+	env := envelope.Exec{
 		Argv:  []string{"sh", "-c", "cat"},
 		Stdin: base64.StdEncoding.EncodeToString([]byte("piped-input-bytes\n")),
 	}
 	w := httptest.NewRecorder()
 	runExecEnvelope(w, env)
-	var res execEnvelopeResponse
+	var res envelope.Response
 	_ = json.Unmarshal(w.Body.Bytes(), &res)
 	stdoutBytes, _ := base64.StdEncoding.DecodeString(res.SockerlessExecResult.Stdout)
 	if !strings.Contains(string(stdoutBytes), "piped-input-bytes") {
@@ -130,7 +132,7 @@ func TestHandleInvoke_DispatchesEnvelopeVsDefault(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	r2 := httptest.NewRequest("POST", "/", strings.NewReader(envBody))
 	handleInvoke(w2, r2)
-	var res execEnvelopeResponse
+	var res envelope.Response
 	_ = json.Unmarshal(w2.Body.Bytes(), &res)
 	stdoutBytes, _ := base64.StdEncoding.DecodeString(res.SockerlessExecResult.Stdout)
 	if !strings.Contains(string(stdoutBytes), "ENVELOPE") {

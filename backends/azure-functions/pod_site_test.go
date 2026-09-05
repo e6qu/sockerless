@@ -38,12 +38,12 @@ func testServer() *Server {
 
 func TestIsBuiltinNetwork(t *testing.T) {
 	for _, n := range []string{"", "default", "bridge", "host", "none", "BRIDGE"} {
-		if !isBuiltinNetwork(n) {
+		if !core.IsBuiltinNetwork(n) {
 			t.Errorf("%q should be builtin", n)
 		}
 	}
 	for _, n := range []string{"buildnet", "github_network_x", "skls-foo"} {
-		if isBuiltinNetwork(n) {
+		if core.IsBuiltinNetwork(n) {
 			t.Errorf("%q should NOT be builtin", n)
 		}
 	}
@@ -207,7 +207,7 @@ func TestHostAliasesForMembers(t *testing.T) {
 		networkedContainer("a", "build", "net1", true),
 		networkedContainer("b", "redis", "net1", false, "redis", "cache"),
 	}
-	got := hostAliasesForMembers(members, "net1")
+	got := core.HostAliasesForMembers(members, "net1")
 	want := map[string]bool{"redis": true, "cache": true}
 	for _, a := range got {
 		delete(want, a)

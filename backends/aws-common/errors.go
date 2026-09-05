@@ -1,36 +1,16 @@
 package awscommon
 
-import (
-	"fmt"
-	"strings"
+import core "github.com/sockerless/backend-core"
 
-	"github.com/sockerless/api"
-)
-
-// MapAWSError converts common AWS SDK errors to api error types.
-func MapAWSError(err error, resource, id string) error {
-	if err == nil {
-		return nil
-	}
-	msg := err.Error()
-
-	switch {
-	case containsAny(msg, "not found", "does not exist", "ResourceNotFoundException"):
-		return &api.NotFoundError{Resource: resource, ID: id}
-	case containsAny(msg, "already exists", "ConflictException", "ResourceConflictException"):
-		return &api.ConflictError{Message: fmt.Sprintf("%s %s already exists", resource, id)}
-	case containsAny(msg, "InvalidParameterValueException", "ValidationException"):
-		return &api.InvalidParameterError{Message: msg}
-	default:
-		return fmt.Errorf("%s %s: %w", resource, id, err)
-	}
+// awsErrorPatterns are the AWS SDK exception names and phrases for each
+// Docker error class.
+var awsErrorPatterns = core.CloudErrorPatterns{
+	NotFound: []string{"not found", "does not exist", "ResourceNotFoundException"},
+	Conflict: []string{"already exists", "ConflictException", "ResourceConflictException"},
+	Invalid:  []string{"InvalidParameterValueException", "ValidationException"},
 }
 
-func containsAny(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
+// MapAWSError converts an AWS SDK error to the Docker API error type.
+func MapAWSError(err error, resource, id string) error {
+	return core.MapCloudError(err, resource, id, awsErrorPatterns)
 }

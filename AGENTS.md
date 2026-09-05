@@ -205,6 +205,16 @@ Sockerless backends are **providers of the Docker + Podman REST API assembled ou
 - Never describe a Docker concept as having "no cloud analog" / "no equivalent" / "impossible on this backend." A gap is *not-yet-assembled* — name the cloud primitive(s) + agent path that would compose it, and stage hard ones across PLAN.md phases.
 - `docker network create` on a cloud backend records docker-shaped metadata (the `SyntheticNetworkDriver`); the real networking is provisioned by that backend's `NetworkCreate` cloud wrapper — never a local Linux kernel netns. AZF maps `NetworkCreate` to an Azure Private DNS zone exactly as ACA does. The authoritative per-cloud mapping lives in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) § Universal rules.
 
+## Shared code has three homes — never a per-cloud copy
+
+Code that more than one backend needs lives in exactly one of these places, chosen by what it depends on:
+
+- **`backends/core`** — anything cloud-neutral: Docker-shaped behaviour assembled from cloud state (shared-volume configuration and bind translation, buffered stdin/attach, the bootstrap overlay image renderer, pod manifests, network-pod materialisation, pod lifecycle loops, managed-volume shaping, the DNS-zone discovery skeleton, cloud-error mapping, environment-variable readers). Every backend and every `*-common` module imports core, so core is the only place a helper can be shared across cloud families.
+- **`agent/envelope`** — the exec-envelope wire contract the backends and the bootstrap binaries both speak. Both sides import the `agent` module; the shape is defined once and neither side re-declares it.
+- **`backends/{aws,gcp,azure}-common`** — code shared *within* one cloud family only: SDK client construction, the cloud's storage manager, image resolution against the cloud's registry, the shared-volume tuple format, the cloud's record operations behind the shared DNS skeleton, Log Analytics / Cloud Logging readers.
+
+The per-cloud `*-common` modules **never import each other**. When two of them need the same code, that code is cloud-neutral by definition and moves to core; copying it "under the no-cross-import rule" is the defect this rule exists to prevent. A backend keeps only what is specific to its own cloud primitive; a function whose body would be identical in a sibling backend after renaming the cloud belongs in one of the three homes above.
+
 ## Cloud backends must be stateless
 
 Cloud backends (ECS, Lambda, Cloud Run, Cloud Run Functions, ACA, Azure Functions) maintain **zero local state** for containers, pods, networks, or volumes. The cloud provider is the single source of truth.

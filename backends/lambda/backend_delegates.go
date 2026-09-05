@@ -2,39 +2,15 @@ package lambda
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/sockerless/api"
 	awscommon "github.com/sockerless/aws-common"
 	core "github.com/sockerless/backend-core"
 )
-
-// accessPointToVolume converts an EFS AccessPointDescription into the
-// Docker-API volume shape. Mirrors ECS's helper.
-func accessPointToVolume(ap efstypes.AccessPointDescription) *api.Volume {
-	name := awscommon.APVolumeName(ap)
-	root := ""
-	if ap.RootDirectory != nil {
-		root = aws.ToString(ap.RootDirectory.Path)
-	}
-	return &api.Volume{
-		Name:       name,
-		Driver:     "efs",
-		Mountpoint: root,
-		Scope:      "local",
-		Options: map[string]string{
-			"accessPointId": aws.ToString(ap.AccessPointId),
-			"fileSystemId":  aws.ToString(ap.FileSystemId),
-		},
-		CreatedAt: "",
-	}
-}
 
 // --- Container methods requiring resolution ---
 
@@ -320,110 +296,25 @@ func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
 // no cloud work — for a stateless cloud backend that silently leaks the
 // underlying Lambda function. These mirror the ECS/Cloud Run/ACA overrides.
 
+// PodStart starts every member through the cloud-aware ContainerStart.
 func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		if c, ok := s.PendingCreates.Get(cid); ok {
-			if c.State.Running {
-				continue
-			}
-		} else if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
-			continue
-		}
-		if err := s.ContainerStart(cid); err != nil {
-			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-		}
-	}
-	if errs == nil {
-		errs = []string{}
-	}
-	if len(errs) == 0 {
-		s.Store.Pods.SetStatus(pod.ID, "running")
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStart(name, s.ContainerStart)
 }
 
+// PodStop stops every running member through the cloud-aware ContainerStop.
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerStop(cid, timeout); err != nil {
-			if _, ok := err.(*api.NotModifiedError); !ok {
-				errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-			}
-		}
-	}
-	s.Store.Pods.SetStatus(pod.ID, "stopped")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStop(name, timeout, s.ContainerStop)
 }
 
+// PodKill signals every running member through the cloud-aware ContainerKill.
 func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-	if signal == "" {
-		signal = "SIGKILL"
-	}
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerKill(cid, signal); err != nil {
-			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-		}
-	}
-	s.Store.Pods.SetStatus(pod.ID, "exited")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodKill(name, signal, s.ContainerKill)
 }
 
+// PodRemove removes every member through the cloud-aware ContainerRemove,
+// so no AWS Lambda function is orphaned, then deletes the pod.
 func (s *Server) PodRemove(name string, force bool) error {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return &api.NotFoundError{Resource: "pod", ID: name}
-	}
-	if !force {
-		for _, cid := range pod.ContainerIDs {
-			if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
-				return &api.ConflictError{
-					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
-				}
-			}
-		}
-	}
-	// Remove ALL members even if one fails, then surface the joined error — a
-	// failed member delete orphans a live Lambda function and must not read as a
-	// successful pod removal.
-	var errs []error
-	for _, cid := range pod.ContainerIDs {
-		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
-			continue
-		}
-		if err := s.ContainerRemove(cid, force); err != nil {
-			errs = append(errs, fmt.Errorf("remove pod member %s: %w", cid, err))
-		}
-	}
-	s.Store.Pods.DeletePod(pod.ID)
-	return errors.Join(errs...)
+	return s.CloudPodRemove(name, force, s.ContainerRemove)
 }
 
 func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {
@@ -470,12 +361,9 @@ func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
 	}
-	for _, ap := range aps {
-		if awscommon.APVolumeName(ap) == name {
-			return accessPointToVolume(ap), nil
-		}
-	}
-	return nil, &api.NotFoundError{Resource: "volume", ID: name}
+	return core.InspectManagedVolume(aps, name, func(ap efstypes.AccessPointDescription) bool {
+		return awscommon.APVolumeName(ap) == name
+	}, awscommon.AccessPointToVolume)
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
@@ -483,11 +371,7 @@ func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListRespons
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
 	}
-	vols := make([]*api.Volume, 0, len(aps))
-	for _, ap := range aps {
-		vols = append(vols, accessPointToVolume(ap))
-	}
-	return &api.VolumeListResponse{Volumes: vols}, nil
+	return core.ListManagedVolumes(aps, awscommon.AccessPointToVolume), nil
 }
 
 // VolumeRemove deletes the EFS access point backing a volume. The
@@ -499,39 +383,14 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// VolumePrune deletes every sockerless-managed access point not
-// referenced by a pending container's binds.
+// VolumePrune deletes every sockerless-managed EFS access point whose
+// volume is not referenced by a created-but-unstarted container.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
 	aps, err := s.listManagedAccessPoints(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
 	}
-	in := s.inUseVolumeNames()
-	resp := &api.VolumePruneResponse{}
-	for _, ap := range aps {
-		name := awscommon.APVolumeName(ap)
-		if _, busy := in[name]; busy {
-			continue
-		}
-		if err := s.deleteAccessPointForVolume(s.ctx(), name); err != nil {
-			return nil, &api.ServerError{Message: fmt.Sprintf("delete EFS access point for %q: %v", name, err)}
-		}
-		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
-	}
-	return resp, nil
-}
-
-// inUseVolumeNames returns Docker volume names currently referenced by
-// pending container binds.
-func (s *Server) inUseVolumeNames() map[string]struct{} {
-	in := make(map[string]struct{})
-	for _, c := range s.PendingCreates.List() {
-		for _, b := range c.HostConfig.Binds {
-			parts := strings.SplitN(b, ":", 3)
-			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
-				in[parts[0]] = struct{}{}
-			}
-		}
-	}
-	return in
+	return core.PruneManagedVolumes(aps, awscommon.APVolumeName, core.InUseVolumeNames(s.PendingCreates.List()), func(name string) error {
+		return s.deleteAccessPointForVolume(s.ctx(), name)
+	}, "EFS access point")
 }

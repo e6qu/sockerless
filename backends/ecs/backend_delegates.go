@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	core "github.com/sockerless/backend-core"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
@@ -16,28 +18,6 @@ import (
 	"github.com/sockerless/api"
 	awscommon "github.com/sockerless/aws-common"
 )
-
-// accessPointToVolume converts an EFS AccessPointDescription into the
-// Docker-API volume shape clients expect from `docker volume inspect`
-// and `docker volume ls`.
-func accessPointToVolume(ap efstypes.AccessPointDescription) *api.Volume {
-	name := awscommon.APVolumeName(ap)
-	root := ""
-	if ap.RootDirectory != nil {
-		root = aws.ToString(ap.RootDirectory.Path)
-	}
-	return &api.Volume{
-		Name:       name,
-		Driver:     "efs",
-		Mountpoint: root,
-		Scope:      "local",
-		Options: map[string]string{
-			"accessPointId": aws.ToString(ap.AccessPointId),
-			"fileSystemId":  aws.ToString(ap.FileSystemId),
-		},
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-	}
-}
 
 // --- Container methods requiring resolution ---
 
@@ -265,12 +245,9 @@ func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
 	}
-	for _, ap := range aps {
-		if awscommon.APVolumeName(ap) == name {
-			return accessPointToVolume(ap), nil
-		}
-	}
-	return nil, &api.NotFoundError{Resource: "volume", ID: name}
+	return core.InspectManagedVolume(aps, name, func(ap efstypes.AccessPointDescription) bool {
+		return awscommon.APVolumeName(ap) == name
+	}, awscommon.AccessPointToVolume)
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
@@ -278,9 +255,5 @@ func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListRespons
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
 	}
-	vols := make([]*api.Volume, 0, len(aps))
-	for _, ap := range aps {
-		vols = append(vols, accessPointToVolume(ap))
-	}
-	return &api.VolumeListResponse{Volumes: vols}, nil
+	return core.ListManagedVolumes(aps, awscommon.AccessPointToVolume), nil
 }

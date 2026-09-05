@@ -17,33 +17,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sockerless/agent/envelope"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v5"
 	"github.com/sockerless/api"
 	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
-
-type azfExecEnvelopeRequest struct {
-	Sockerless struct {
-		Exec azfExecEnvelopeExec `json:"exec"`
-	} `json:"sockerless"`
-}
-
-type azfExecEnvelopeExec struct {
-	Argv    []string `json:"argv"`
-	Tty     bool     `json:"tty,omitempty"`
-	Workdir string   `json:"workdir,omitempty"`
-	Env     []string `json:"env,omitempty"`
-	Stdin   string   `json:"stdin,omitempty"`
-}
-
-type azfExecEnvelopeResponse struct {
-	SockerlessExecResult struct {
-		ExitCode int    `json:"exitCode"`
-		Stdout   string `json:"stdout"`
-		Stderr   string `json:"stderr"`
-	} `json:"sockerlessExecResult"`
-}
 
 // Compile-time check that Server implements api.Backend.
 var _ api.Backend = (*Server)(nil)
@@ -135,25 +115,25 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config.Labels[labelBaseCmd] = base64.StdEncoding.EncodeToString(b)
 	}
 	if s.useAZFOverlayPath(originalImage) {
-		spec := azfOverlaySpec{
+		spec := core.OverlayImageSpec{
 			BaseImageRef:        overlayBaseRef,
 			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 		}
-		contentTag := azfOverlayContentTag("azf-", spec)
+		contentTag := core.OverlayContentTag("azf-", spec)
 		overlayURI, err := s.ensureAZFOverlayImage(s.ctx(), spec, contentTag)
 		if err != nil {
 			return nil, fmt.Errorf("ensure azf overlay image: %w", err)
 		}
-		config.Env = append(config.Env, azfOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+		config.Env = append(config.Env, core.OverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
 		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
 			config.Env = append(config.Env, jt)
 		}
 		config.Image = overlayURI
 		config.Entrypoint = nil
 		config.Cmd = nil
-	} else if hasAZFOverlayRepo(originalImage) {
-		config.Env = append(config.Env, azfOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+	} else if core.HasOverlayRepo(originalImage) {
+		config.Env = append(config.Env, core.OverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
 		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
 			config.Env = append(config.Env, jt)
 		}
@@ -176,7 +156,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// anything else rejects loudly). Named-volume binds attach to the
 	// function site via WebApps.UpdateAzureStorageAccounts after
 	// BeginCreateOrUpdate returns.
-	translatedBinds, droppedBinds, err := translateSharedVolumeBinds(s.config, hostConfig.Binds)
+	translatedBinds, droppedBinds, err := core.TranslateSharedVolumeBinds(s.config.SharedVolumes, hostConfig.Binds, azurecommon.HostBindPolicy("Azure Functions", "SOCKERLESS_AZF_SHARED_VOLUMES"))
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +253,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// creation: ContainerStart assembles the whole pod as ONE site whose
 	// sitecontainers share a loopback. Single-container (bridge/default)
 	// workloads create their site eagerly here.
-	if _, onUserNet := s.userDefinedNetworkID(container); onUserNet {
+	if _, onUserNet := s.UserDefinedNetworkID(container); onUserNet {
 		s.PendingCreates.Put(id, container)
 		s.EmitEvent("container", "create", id, map[string]string{
 			"name":  strings.TrimPrefix(name, "/"),
@@ -509,7 +489,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Private DNS zone. This is the faithful Azure model (separate sites + VNet
 	// + Private DNS), distinct from the host-aliases sitecontainer-pod below.
 	if s.config.NetworkDiscovery == api.NetworkDiscoveryCloudDNS {
-		if netID, ok := s.userDefinedNetworkID(c); ok {
+		if netID, ok := s.UserDefinedNetworkID(c); ok {
 			return s.startCloudDNSSite(id, c, netID)
 		}
 	}
@@ -754,7 +734,7 @@ func (s *Server) captureAZFStdin(id string, expectStdin bool) ([]byte, bool) {
 		defer tick.Stop()
 		for {
 			if v, ok := s.stdinPipes.Load(id); ok {
-				if sp, isPipe := v.(*stdinPipe); isPipe && sp.IsOpen() {
+				if sp, isPipe := v.(*core.StdinPipe); isPipe && sp.IsOpen() {
 					break
 				}
 			}
@@ -770,7 +750,7 @@ func (s *Server) captureAZFStdin(id string, expectStdin bool) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	pipe, isPipe := v.(*stdinPipe)
+	pipe, isPipe := v.(*core.StdinPipe)
 	if !isPipe {
 		return nil, false
 	}
@@ -782,40 +762,35 @@ func (s *Server) captureAZFStdin(id string, expectStdin bool) ([]byte, bool) {
 	return pipe.Bytes(), true
 }
 
+// publishAZFAttachResponse hands the invocation's output to the buffered
+// attach reader, if any.
 func (s *Server) publishAZFAttachResponse(id string, stdout, stderr []byte) {
-	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-		if as, isStream := v.(*attachStream); isStream {
-			as.publishAttachResponse(stdout, stderr)
-		}
-	}
+	core.PublishBufferedAttachResponse(&s.attachStreams, id, stdout, stderr)
 }
 
+// azfExecEnvelopeBody is the buffered-invoke body: the captured attach
+// script piped into /bin/sh inside the function.
 func azfExecEnvelopeBody(stdin []byte) io.Reader {
-	var req azfExecEnvelopeRequest
-	req.Sockerless.Exec.Argv = []string{"/bin/sh"}
-	req.Sockerless.Exec.Stdin = base64.StdEncoding.EncodeToString(stdin)
-	body, _ := json.Marshal(req)
+	body, _ := json.Marshal(envelope.NewRequest(envelope.Exec{
+		Argv:  []string{"/bin/sh"},
+		Stdin: envelope.EncodeStdin(stdin),
+	}))
 	return bytes.NewReader(body)
 }
 
+// azfParseExecEnvelopeResponse decodes the bootstrap's exec envelope into
+// the invocation result and the two output streams. false means the body
+// is not an envelope.
 func azfParseExecEnvelopeResponse(body []byte) (core.InvocationResult, []byte, []byte, bool) {
-	var resp azfExecEnvelopeResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return core.InvocationResult{}, nil, nil, false
-	}
-	stdout, err := base64.StdEncoding.DecodeString(resp.SockerlessExecResult.Stdout)
+	res, err := envelope.ParseResult(body)
 	if err != nil {
 		return core.InvocationResult{}, nil, nil, false
 	}
-	stderr, err := base64.StdEncoding.DecodeString(resp.SockerlessExecResult.Stderr)
-	if err != nil {
-		return core.InvocationResult{}, nil, nil, false
-	}
-	inv := core.InvocationResult{ExitCode: resp.SockerlessExecResult.ExitCode}
+	inv := core.InvocationResult{ExitCode: res.ExitCode}
 	if inv.ExitCode != 0 {
 		inv.Error = fmt.Sprintf("subprocess exit %d", inv.ExitCode)
 	}
-	return inv, stdout, stderr, true
+	return inv, res.Stdout, res.Stderr, true
 }
 
 func azfBootstrapExitCode(resp *http.Response) int {
@@ -1009,44 +984,10 @@ func (s *Server) buildCloudLogsFetcher(ref string) core.CloudLogFetchFunc {
 	)
 }
 
-// ContainerRestart stops and then starts a container.
+// ContainerRestart records the running invocation as stopped and launches
+// the container again through the cloud-aware ContainerStart.
 func (s *Server) ContainerRestart(ref string, timeout *int) error {
-	c, ok := s.ResolveContainerAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	id := c.ID
-
-	if c.State.Running {
-		s.StopHealthCheck(id)
-		// `docker restart` sends SIGTERM → exit 143. Record the stop
-		// outcome before unblocking waiters so a `docker wait` racing the
-		// restart sees 143, not the channel-close failure sentinel.
-		stopExitCode := core.SignalToExitCode("SIGTERM")
-		s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: stopExitCode})
-		// Close wait channel so ContainerWait unblocks
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			if wc, isCh := ch.(chan struct{}); isCh {
-				close(wc)
-			}
-		}
-		s.EmitEvent("container", "die", id, map[string]string{
-			"exitCode": fmt.Sprintf("%d", stopExitCode),
-			"name":     strings.TrimPrefix(c.Name, "/"),
-		})
-		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
-	}
-
-	// Re-add to PendingCreates so ContainerStart can find and launch it.
-	s.PendingCreates.Put(id, c)
-
-	// Start the container directly via typed method
-	if err := s.ContainerStart(id); err != nil {
-		return err
-	}
-
-	s.EmitEvent("container", "restart", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
-	return nil
+	return s.RestartCloudContainer(ref, s.ContainerStart)
 }
 
 // ContainerPrune removes all stopped containers and their AZF state.
@@ -1122,24 +1063,16 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
-// agent.
+// ContainerPause suspends the function's main process through the
+// reverse agent.
 func (s *Server) ContainerPause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
+	return s.PauseViaReverseAgent(s.reverseAgents, ref)
 }
 
-// ContainerUnpause sends SIGCONT to the user subprocess via the
-// reverse-agent.
+// ContainerUnpause resumes the function's main process through the
+// reverse agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
+	return s.UnpauseViaReverseAgent(s.reverseAgents, ref)
 }
 
 // ImagePull delegates to ImageManager for unified cloud image handling.
@@ -1161,21 +1094,10 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 	return info, nil
 }
 
-// ContainerExport streams the function container's rootfs as tar via
-// the reverse-agent.
+// ContainerExport streams the container's root filesystem through the
+// reverse agent.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
-	if err == core.ErrNoReverseAgent {
-		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
-	}
-	if err != nil {
-		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
-	}
-	return rc, nil
+	return s.ExportViaReverseAgent(s.reverseAgents, id, "function container")
 }
 
 // ContainerCommit builds a new image from the function container's
@@ -1206,10 +1128,10 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	// over the reverse-agent routing below — the agent registers no main process,
 	// so a stdin attach routed to it fails; the script belongs on the
 	// buffered-invoke stdinPipe path (drained + POSTed by invokeFunctionAsync).
-	if opts.Stdin && hasAZFOverlayRepo(c.Config.Image) {
-		p := newStdinPipe()
+	if opts.Stdin && core.HasOverlayRepo(c.Config.Image) {
+		p := core.NewStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
-		pipe, isPipe := actual.(*stdinPipe)
+		pipe, isPipe := actual.(*core.StdinPipe)
 		if !isPipe {
 			return nil, &api.ServerError{Message: fmt.Sprintf("ContainerAttach %s: stdin pipe map held unexpected type %T", c.ID, actual)}
 		}

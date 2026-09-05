@@ -36,8 +36,8 @@ func (s *Server) resolveBindToVolume(ctx context.Context, bind, fsID string) (*e
 	readOnly := len(parts) == 3 && parts[2] == "ro"
 
 	backing := core.BackingEFSEphemeral
-	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil && sv.Backing != "" {
-		backing = core.StorageBacking(sv.Backing)
+	if sv := s.config.SharedVolumes.ByName(volName); sv != nil && sv.Backing != "" {
+		backing = sv.Backing
 	}
 	driver, err := s.storageBackings.Resolve(backing)
 	if err != nil {

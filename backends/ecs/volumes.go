@@ -33,8 +33,8 @@ func (s *Server) accessPointForVolume(ctx context.Context, volName string) (stri
 	// directly — that's how the calling task and the spawned sub-task
 	// share a workspace via EFS without sockerless having to provision
 	// a fresh access point per docker run.
-	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
-		return sv.AccessPointID, nil
+	if sv := s.config.SharedVolumes.ByName(volName); sv != nil {
+		return sv.EFSAccessPointID, nil
 	}
 	return s.efs.AccessPointForVolume(ctx, volName)
 }

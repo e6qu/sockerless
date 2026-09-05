@@ -37,7 +37,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		logger.Fatal().Msg("AZF backend requires SOCKERLESS_CALLBACK_URL — the function bootstrap dials back here to register the reverse-agent WebSocket. Without it every exec fails (no fallback). Set the env var to a URL the function can reach from inside the Function App.")
 	}
 	if config.BootstrapBinaryHash == "" && config.BootstrapBinaryPath != "" {
-		if hash, err := hashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
+		if hash, err := core.HashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
 			config.BootstrapBinaryHash = hash
 			logger.Info().Str("path", config.BootstrapBinaryPath).Str("hash", hash).Msg("hashed azf bootstrap binary for overlay-tag invalidation")
 		} else {
@@ -60,7 +60,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		Driver:          "azure-functions",
 		OperatingSystem: "Azure Functions",
 		OSType:          "linux",
-		Architecture:    azurecommon.ArchFromPlatform(config.BuildPlatform),
+		Architecture:    core.ArchFromPlatform(config.BuildPlatform),
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)

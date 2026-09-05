@@ -26,7 +26,7 @@ import (
 // that sockerless can `docker exec` into via Path B HTTP POST.
 // See specs/CLOUD_RESOURCE_MAPPING.md § Lesson 8 for the design
 // rationale.
-func (s *Server) ensureOverlayImage(ctx context.Context, spec gcpcommon.OverlayImageSpec, contentTag string) (string, error) {
+func (s *Server) ensureOverlayImage(ctx context.Context, spec core.OverlayImageSpec, contentTag string) (string, error) {
 	imageURI := fmt.Sprintf(
 		"%s/%s/sockerless-overlay/cloudrun:%s",
 		gcpcommon.OverlayRegistryHost(s.config.Region), s.config.Project, contentTag,
@@ -42,7 +42,7 @@ func (s *Server) ensureOverlayImage(ctx context.Context, spec gcpcommon.OverlayI
 	if s.images.BuildService == nil {
 		return "", fmt.Errorf("cloud Build service is required for cloudrun overlay image (set SOCKERLESS_GCP_BUILD_BUCKET)")
 	}
-	contextTar, err := gcpcommon.TarOverlayContext(spec)
+	contextTar, err := core.TarOverlayContext(spec)
 	if err != nil {
 		return "", fmt.Errorf("tar overlay context: %w", err)
 	}
@@ -68,7 +68,7 @@ func (s *Server) useOverlayPath(image string) bool {
 	}
 	// Avoid double-overlay: if the image URI is already in the
 	// sockerless-overlay AR repo, the bootstrap is already baked in.
-	if hasSockerlessOverlayRepo(image) {
+	if core.HasOverlayRepo(image) {
 		return false
 	}
 	return true
@@ -87,22 +87,8 @@ func (s *Server) useServicePath(c *api.Container) bool {
 	if c == nil {
 		return false
 	}
-	if hasSockerlessOverlayRepo(c.Config.Image) {
+	if core.HasOverlayRepo(c.Config.Image) {
 		return true
 	}
 	return isRunnerPattern(c)
-}
-
-func hasSockerlessOverlayRepo(image string) bool {
-	// Format: <region>-docker.pkg.dev/<project>/sockerless-overlay/...
-	return contains(image, "/sockerless-overlay/")
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

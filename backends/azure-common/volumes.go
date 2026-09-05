@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
+
+	core "github.com/sockerless/backend-core"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
@@ -30,8 +31,7 @@ type FileShareManager struct {
 	ResourceGroup  string
 	StorageAccount string
 
-	mu    sync.Mutex
-	cache map[string]string // docker-name → share-name
+	shares core.ProvisionCache // docker volume name → share name
 }
 
 // NewFileShareManager wires a FileShareManager against a shares client.
@@ -40,75 +40,66 @@ func NewFileShareManager(client *armstorage.FileSharesClient, resourceGroup, sto
 		Client:         client,
 		ResourceGroup:  resourceGroup,
 		StorageAccount: storageAccount,
-		cache:          make(map[string]string),
 	}
 }
 
+// Metadata keys that mark a share as sockerless's and carry the Docker
+// volume name; the same keys every cloud backend uses. ShareNamePrefix
+// starts every managed share's name.
 const (
-	VolumeManagedTag  = "sockerless-managed"
-	VolumeShareTagVal = "true"
-	VolumeNameTag     = "sockerless-volume-name"
+	VolumeManagedTag  = core.ManagedVolumeTagKey
+	VolumeShareTagVal = core.ManagedVolumeTagValue
+	VolumeNameTag     = core.VolumeNameTagKey
 	ShareNamePrefix   = "sockerless-volume-"
 )
 
-// EnsureShare provisions the Azure Files share backing a Docker volume,
-// idempotently. Returns the share name.
+// EnsureShare returns the share backing the Docker volume, adopting an
+// existing one under the derived name and otherwise creating it.
+// Concurrent callers for the same volume provision one share.
 func (m *FileShareManager) EnsureShare(ctx context.Context, volName string) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if name, ok := m.cache[volName]; ok {
-		return name, nil
-	}
 	if m.StorageAccount == "" {
 		return "", fmt.Errorf("sockerless storage account must be configured to provision Azure Files shares for volumes")
 	}
-
 	shareName := ShareName(volName)
-	existing, err := m.Client.Get(ctx, m.ResourceGroup, m.StorageAccount, shareName, nil)
-	if err == nil && existing.ID != nil {
-		m.cache[volName] = shareName
-		return shareName, nil
-	}
-	_, err = m.Client.Create(ctx, m.ResourceGroup, m.StorageAccount, shareName,
-		armstorage.FileShare{
-			FileShareProperties: &armstorage.FileShareProperties{
-				Metadata: map[string]*string{
-					VolumeManagedTag: to.Ptr(VolumeShareTagVal),
-					VolumeNameTag:    to.Ptr(SanitiseMetaValue(volName)),
+	return m.shares.Ensure(volName, func() (string, bool, error) {
+		existing, err := m.Client.Get(ctx, m.ResourceGroup, m.StorageAccount, shareName, nil)
+		if err == nil && existing.ID != nil {
+			return shareName, true, nil
+		}
+		return "", false, nil
+	}, func() (string, error) {
+		_, err := m.Client.Create(ctx, m.ResourceGroup, m.StorageAccount, shareName,
+			armstorage.FileShare{
+				FileShareProperties: &armstorage.FileShareProperties{
+					Metadata: map[string]*string{
+						VolumeManagedTag: to.Ptr(VolumeShareTagVal),
+						VolumeNameTag:    to.Ptr(SanitiseMetaValue(volName)),
+					},
 				},
-			},
-		}, nil)
-	if err != nil {
-		return "", fmt.Errorf("create file share %q: %w", shareName, err)
-	}
-	m.cache[volName] = shareName
-	return shareName, nil
+			}, nil)
+		if err != nil {
+			return "", fmt.Errorf("create file share %q: %w", shareName, err)
+		}
+		return shareName, nil
+	})
 }
 
-// DeleteShare removes the Azure Files share backing a Docker volume. The
-// backend-specific mount-attach resource (env-storage / site-config)
-// must be deleted first — FileShareManager does not know about either.
+// DeleteShare deletes the share backing the Docker volume.
 func (m *FileShareManager) DeleteShare(ctx context.Context, volName string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	shareName := ShareName(volName)
-	_, err := m.Client.Delete(ctx, m.ResourceGroup, m.StorageAccount, shareName, nil)
-	if err != nil {
-		return fmt.Errorf("delete file share %q: %w", shareName, err)
-	}
-	delete(m.cache, volName)
-	return nil
+	return m.shares.Forget(volName, func() error {
+		shareName := ShareName(volName)
+		if _, err := m.Client.Delete(ctx, m.ResourceGroup, m.StorageAccount, shareName, nil); err != nil {
+			return fmt.Errorf("delete file share %q: %w", shareName, err)
+		}
+		return nil
+	})
 }
 
-// InvalidateCache forgets a cached docker-name → share-name binding so a
-// subsequent EnsureShare call re-checks the backing share. Useful after a
-// backend-specific attach step fails and the caller wants to retry.
+// InvalidateCache forgets the share provisioned for volName so the next
+// EnsureShare looks it up again; used when a step after share creation
+// failed and both must be retried.
 func (m *FileShareManager) InvalidateCache(volName string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.cache, volName)
+	m.shares.Invalidate(volName)
 }
 
 // ListManaged returns every file share in the configured storage account

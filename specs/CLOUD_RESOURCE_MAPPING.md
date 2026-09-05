@@ -603,7 +603,7 @@ The driver abstraction exists so we can swap any of these without backend refact
 1. Define `api.StorageBacking` enum (`emptyDir`, `gcs-sync`, `gcs-fuse`) + `SharedVolume.Backing` field. New SharedVolumes default to `gcs-sync`; unset `Backing` resolves to `gcs-fuse` for backwards-compat with cells 7+8.
 2. Define `core.StorageBackingDriver` interface + `BackingSpec` + `EmptyDirDriver` + `Registry`.
 3. Implement `gcs-fuse` (legacy) and `gcs-sync` (new) drivers in `backends/gcp-common/`.
-4. Per-backend translator: `backends/cloudrun-functions/volume_translator.go`, `backends/cloudrun/volume_translator.go`. Replace inline literals with translator calls.
+4. Shared translator: `backends/gcp-common/run_volumes.go` (`RunVolumes`, `RunVolumeFromBackingSpec`) serves both Cloud Run and Cloud Run Functions. Replace inline literals with translator calls.
 5. Wire registry into `Server` for both backends; `materializePodService` and friends call `s.StorageBackings.Resolve(...).CloudSpec(...)` then `cloudRunVolumeFromSpec(...)`.
 6. ExecStart wrapper in both backends: iterate volumes, call `PreExec` to collect envelope hints, attach to envelope, dispatch; on response, call `PostExec`.
 7. Bootstrap-side envelope handler: extend `runExecEnvelope` to recognise `WORKSPACE_OBJECT` env hint, restore from GCS pre-subprocess, save to GCS post-subprocess. Reuses `persist.go`'s `gcsGet/gcsPut/tarFrom/untarInto` helpers — no new I/O code.
@@ -1867,7 +1867,7 @@ ECS (cells 1+3 GREEN against live AWS) and Lambda (cells 2+4 GREEN) are the exis
 
 Combining the lessons, the proper fix path for cells 5-8 is:
 
-1. **Lift `image_inject.go` to `gcp-common`**: shared overlay renderer + Cloud Build trigger for cloudrun + gcf. New binary: `sockerless-cloudrun-bootstrap` (parallel to `sockerless-lambda-bootstrap`), with the bootstrap registering a reverse-agent session before exec is accepted.
+1. **Share the overlay renderer**: `backends/core/overlay_image.go` renders, tars, and content-tags the bootstrap overlay for every FaaS backend (Cloud Run, Cloud Run Functions, Azure Container Apps, Azure Functions); the Cloud Build trigger stays in `gcp-common`. New binary: `sockerless-cloudrun-bootstrap` (parallel to `sockerless-lambda-bootstrap`), with the bootstrap registering a reverse-agent session before exec is accepted.
 2. **Cloudrun**: ALL long-lived runner containers route to Cloud Run **Service**. Service is overlay-imaged (Lesson 6 revised). `docker exec` = reverse-agent WebSocket through `/v1/cloudrun/reverse`; the Service URL is only the startup/invoke surface that gets the bootstrap process running.
 3. **Gcf**: Identical to cloudrun at exec time: overlay-imaged Function / underlying Service (`OverlayContentTag` cache); `docker exec` = reverse-agent WebSocket through `/v1/gcf/reverse`. Pool-reuse already implemented; verify hot path < 10s for second invocation of same content-hash.
 4. **Both**: ContainerStart → claim free pool entry OR overlay-build + deploy. ContainerStop → release back to pool (clear `sockerless_allocation` label) up to pool cap. ContainerRemove → delete from pool above cap.

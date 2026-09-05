@@ -1,6 +1,10 @@
 package gcpcommon
 
-import "strings"
+import (
+	"strings"
+
+	core "github.com/sockerless/backend-core"
+)
 
 // ResolveGCPImageURI converts a Docker image reference to an Artifact Registry URI
 // that Cloud Run and Cloud Run Functions can use.
@@ -52,7 +56,7 @@ func ResolveGCPImageURI(ref, project, region, endpointURL string) string {
 	}
 
 	// Parse the Docker reference
-	registry, repo, tag := parseDockerRef(ref)
+	registry, repo, tag := core.SplitDockerRef(ref)
 
 	// Cloud Run only accepts images from gcr.io / docker.pkg.dev /
 	// docker.io. Other registries must be mirrored via AR remote
@@ -82,46 +86,4 @@ func ResolveGCPImageURI(ref, project, region, endpointURL string) string {
 	// image through the sim's docker-hub pull-through; real cloud is
 	// unchanged when SOCKERLESS_GCP_AR_ENDPOINT is unset.
 	return OverlayRegistryHost(region) + "/" + project + "/" + arRepo + "/" + repo + ":" + tag
-}
-
-// parseDockerRef splits a Docker image reference into registry, repo, and tag.
-// "nginx:alpine" → ("", "nginx", "alpine")
-// "docker.io/library/alpine:3.18" → ("docker.io", "library/alpine", "3.18")
-func parseDockerRef(ref string) (registry, repo, tag string) {
-	tag = "latest"
-
-	// Check for explicit registry (contains . or :port before first /)
-	if i := strings.IndexByte(ref, '/'); i > 0 {
-		prefix := ref[:i]
-		if strings.ContainsAny(prefix, ".:") {
-			registry = prefix
-			ref = ref[i+1:]
-		}
-	}
-
-	// Split repo:tag
-	if i := strings.LastIndexByte(ref, ':'); i > 0 {
-		repo = ref[:i]
-		tag = ref[i+1:]
-	} else {
-		repo = ref
-	}
-	return
-}
-
-// ArchFromPlatform extracts the docker arch ("arm64"/"amd64") from a
-// "linux/<arch>" build platform — the architecture Cloud Run / Cloud Run
-// Functions tasks run at and the value the backend reports in docker
-// /version (so a client like gitlab-runner selects a matching helper image).
-// Defaults to amd64.
-func ArchFromPlatform(platform string) string {
-	if i := strings.LastIndex(platform, "/"); i >= 0 {
-		platform = platform[i+1:]
-	}
-	switch strings.ToLower(strings.TrimSpace(platform)) {
-	case "arm64", "aarch64":
-		return "arm64"
-	default:
-		return "amd64"
-	}
 }

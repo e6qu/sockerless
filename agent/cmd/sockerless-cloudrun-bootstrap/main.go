@@ -42,6 +42,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sockerless/agent/envelope"
+
 	"github.com/gorilla/websocket"
 
 	"github.com/sockerless/agent"
@@ -117,31 +119,6 @@ const (
 	// Matches GNU `timeout(1)`.
 	jobTimeoutExitCode = 124
 )
-
-// execEnvelopeRequest is the JSON shape the cloudrun backend POSTs for
-// each `docker exec`. Identical to the lambda backend's envelope so the
-// wire format is cross-cloud consistent.
-type execEnvelopeRequest struct {
-	Sockerless struct {
-		Exec execEnvelopeExec `json:"exec"`
-	} `json:"sockerless"`
-}
-
-type execEnvelopeExec struct {
-	Argv    []string `json:"argv"`
-	Tty     bool     `json:"tty,omitempty"`
-	Workdir string   `json:"workdir,omitempty"`
-	Env     []string `json:"env,omitempty"`
-	Stdin   string   `json:"stdin,omitempty"` // base64
-}
-
-type execEnvelopeResponse struct {
-	SockerlessExecResult struct {
-		ExitCode int    `json:"exitCode"`
-		Stdout   string `json:"stdout"` // base64
-		Stderr   string `json:"stderr"` // base64
-	} `json:"sockerlessExecResult"`
-}
 
 // invokeMu serializes invocations. Cloud Run instances may serve
 // concurrent requests when concurrency > 1; sockerless's docker model
@@ -407,12 +384,10 @@ func extractSyncVolumesEnv(env []string) string {
 // → text body with X-Sockerless-Exit-Code=1 header. HTTP status stays
 // 200 in both cases so the backend's ExitCode parsing (envelope JSON
 // or X-Sockerless-Exit-Code header) is the single source of truth.
-func writeSaveFailure(w http.ResponseWriter, err error, envelope bool) {
+func writeSaveFailure(w http.ResponseWriter, err error, asEnvelope bool) {
 	msg := "sockerless-cloudrun-bootstrap: persist save: " + err.Error()
-	if envelope {
-		var res execEnvelopeResponse
-		res.SockerlessExecResult.ExitCode = 1
-		res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString([]byte(msg))
+	if asEnvelope {
+		res := envelope.NewResponse(1, nil, []byte(msg))
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Sockerless-Exit-Code", "1")
 		w.WriteHeader(http.StatusOK)
@@ -449,29 +424,16 @@ func (b *bufferedResponse) flushTo(w http.ResponseWriter) {
 	_, _ = w.Write(b.body.Bytes())
 }
 
-// parseExecEnvelope returns the parsed envelope when the body is a
-// well-formed JSON object with `sockerless.exec.argv` non-empty.
-// Anything else (empty body, raw bytes, JSON without the envelope
-// shape) → false so the default invoke path runs.
-func parseExecEnvelope(body []byte) (execEnvelopeExec, bool) {
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 || body[0] != '{' {
-		return execEnvelopeExec{}, false
-	}
-	var req execEnvelopeRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return execEnvelopeExec{}, false
-	}
-	if len(req.Sockerless.Exec.Argv) == 0 {
-		return execEnvelopeExec{}, false
-	}
-	return req.Sockerless.Exec, true
+// parseExecEnvelope decodes body as an exec envelope. false means the
+// request carries no command and the default invoke path runs.
+func parseExecEnvelope(body []byte) (envelope.Exec, bool) {
+	return envelope.Parse(body)
 }
 
 // runExecEnvelope runs envelope.argv with envelope.stdin piped to the
 // subprocess and returns {exitCode, stdout, stderr} (base64) in the
 // response body. Used by the cloudrun backend's Path B docker exec.
-func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
+func runExecEnvelope(w http.ResponseWriter, env envelope.Exec) {
 	shellLine := strings.Join(quoteArgv(env.Argv), " ")
 	cmd := exec.Command("/bin/sh", "-c", shellLine) //nolint:gosec // argv operator-controlled
 	if env.Workdir != "" {
@@ -513,10 +475,7 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 		stderrBytes = agent.AnnotateENOSPC(stderrBytes, "cloudrun")
 	}
 
-	var res execEnvelopeResponse
-	res.SockerlessExecResult.ExitCode = exitCode
-	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(stdout.Bytes())
-	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderrBytes)
+	res := envelope.NewResponse(exitCode, stdout.Bytes(), stderrBytes)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))

@@ -3,7 +3,7 @@ stages:
 
 lint:
   stage: test
-  image: golang:1.25
+  image: golang:1.26
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'

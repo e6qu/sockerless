@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	core "github.com/sockerless/backend-core"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
@@ -37,8 +39,7 @@ type EFSManager struct {
 	efsCachedID  string
 	efsEnsureErr error
 
-	apMu    sync.Mutex
-	apCache map[string]string // docker-name → access-point-id
+	accessPoints core.ProvisionCache // docker volume name → access-point id
 }
 
 // EFSManagerConfig wires per-backend knobs into a manager. Callers pass
@@ -65,14 +66,15 @@ func NewEFSManager(client *efs.Client, cfg EFSManagerConfig) *EFSManager {
 		SecurityGroups: cfg.SecurityGroups,
 		PollInterval:   poll,
 		InstanceID:     cfg.InstanceID,
-		apCache:        make(map[string]string),
 	}
 }
 
+// Tag keys that mark an EFS filesystem or access point as sockerless's and
+// carry the Docker volume name; the same keys every cloud backend uses.
 const (
-	VolumeManagedTagKey   = "sockerless-managed"
-	VolumeManagedTagValue = "true"
-	VolumeNameTagKey      = "sockerless-volume-name"
+	VolumeManagedTagKey   = core.ManagedVolumeTagKey
+	VolumeManagedTagValue = core.ManagedVolumeTagValue
+	VolumeNameTagKey      = core.VolumeNameTagKey
 )
 
 // EnsureFilesystem returns the ID of a sockerless-owned EFS filesystem,
@@ -166,32 +168,30 @@ func (m *EFSManager) ensureMountTargets(ctx context.Context, fsID string) error 
 	return nil
 }
 
-// AccessPointForVolume returns the access-point ID bound to a Docker
-// volume name, creating one if needed. Safe for concurrent callers.
+// AccessPointForVolume returns the access point backing the Docker volume,
+// adopting an existing sockerless-managed one by its volume-name tag and
+// otherwise creating it on the managed filesystem. Concurrent callers for
+// the same volume provision one access point.
 func (m *EFSManager) AccessPointForVolume(ctx context.Context, volName string) (string, error) {
-	m.apMu.Lock()
-	defer m.apMu.Unlock()
+	return m.accessPoints.Ensure(volName, func() (string, bool, error) {
+		fsID, err := m.EnsureFilesystem(ctx)
+		if err != nil {
+			return "", false, err
+		}
+		return m.findAccessPointByVolumeName(ctx, fsID, volName)
+	}, func() (string, error) {
+		fsID, err := m.EnsureFilesystem(ctx)
+		if err != nil {
+			return "", err
+		}
+		return m.createAccessPoint(ctx, fsID, volName)
+	})
+}
 
-	if id, ok := m.apCache[volName]; ok {
-		return id, nil
-	}
-
-	fsID, err := m.EnsureFilesystem(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	if id, ok, err := m.findAccessPointByVolumeNameLocked(ctx, fsID, volName); err != nil {
-		return "", err
-	} else if ok {
-		m.apCache[volName] = id
-		return id, nil
-	}
-
-	// AWS EFS rejects rootDirectory.path > 100 chars. Volume names from
-	// gitlab-runner (`runner-<id>-project-<id>-concurrent-<n>-<hex>-cache-<sha>`)
-	// regularly exceed that. Fall back to a SHA256-hashed short path
-	// when the full sanitised form would overflow.
+// createAccessPoint creates the access point for volName under its own
+// root directory. EFS caps the root path at 100 bytes, so a long volume
+// name is replaced by a hash of it.
+func (m *EFSManager) createAccessPoint(ctx context.Context, fsID, volName string) (string, error) {
 	const efsRootPathMax = 100
 	rootDir := "/sockerless/volumes/" + SanitiseVolumePath(volName)
 	if len(rootDir) > efsRootPathMax {
@@ -217,12 +217,10 @@ func (m *EFSManager) AccessPointForVolume(ctx context.Context, volName string) (
 	if err != nil {
 		return "", fmt.Errorf("create access point for %q: %w", volName, err)
 	}
-	id := aws.ToString(created.AccessPointId)
-	m.apCache[volName] = id
-	return id, nil
+	return aws.ToString(created.AccessPointId), nil
 }
 
-func (m *EFSManager) findAccessPointByVolumeNameLocked(ctx context.Context, fsID, volName string) (string, bool, error) {
+func (m *EFSManager) findAccessPointByVolumeName(ctx context.Context, fsID, volName string) (string, bool, error) {
 	out, err := m.Client.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{FileSystemId: aws.String(fsID)})
 	if err != nil {
 		return "", false, fmt.Errorf("describe access points: %w", err)
@@ -235,28 +233,23 @@ func (m *EFSManager) findAccessPointByVolumeNameLocked(ctx context.Context, fsID
 	return "", false, nil
 }
 
-// DeleteAccessPointForVolume removes the access point bound to a volume
-// name. The filesystem is left in place so other volumes keep working.
+// DeleteAccessPointForVolume deletes the access point backing the Docker
+// volume. A volume with no access point is already deleted.
 func (m *EFSManager) DeleteAccessPointForVolume(ctx context.Context, volName string) error {
-	m.apMu.Lock()
-	defer m.apMu.Unlock()
-
-	fsID, err := m.EnsureFilesystem(ctx)
-	if err != nil {
-		return err
-	}
-	id, ok, err := m.findAccessPointByVolumeNameLocked(ctx, fsID, volName)
-	if err != nil {
-		return err
-	}
-	if !ok {
+	return m.accessPoints.Forget(volName, func() error {
+		fsID, err := m.EnsureFilesystem(ctx)
+		if err != nil {
+			return err
+		}
+		id, ok, err := m.findAccessPointByVolumeName(ctx, fsID, volName)
+		if err != nil || !ok {
+			return err
+		}
+		if _, err := m.Client.DeleteAccessPoint(ctx, &efs.DeleteAccessPointInput{AccessPointId: aws.String(id)}); err != nil {
+			return fmt.Errorf("delete access point %s: %w", id, err)
+		}
 		return nil
-	}
-	if _, err := m.Client.DeleteAccessPoint(ctx, &efs.DeleteAccessPointInput{AccessPointId: aws.String(id)}); err != nil {
-		return fmt.Errorf("delete access point %s: %w", id, err)
-	}
-	delete(m.apCache, volName)
-	return nil
+	})
 }
 
 // DescribeAccessPoint returns the EFS access point with the given ID,

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sockerless/agent/envelope"
+
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
 	"cloud.google.com/go/logging/logadmin"
 	"github.com/sockerless/api"
@@ -18,15 +20,6 @@ import (
 
 // Compile-time check that Server implements api.Backend.
 var _ api.Backend = (*Server)(nil)
-
-func isImplicitDockerNetwork(networkID string) bool {
-	switch strings.TrimSpace(networkID) {
-	case "", "default", "bridge", "host", "none":
-		return true
-	default:
-		return false
-	}
-}
 
 // ContainerCreate creates a container backed by a Cloud Run Function.
 func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.ContainerCreateResponse, error) {
@@ -91,7 +84,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// bind-mount model: named volumes pass through, mapped host binds
 	// rewrite to named-volume references, sub-paths + docker.sock drop,
 	// anything else rejects loudly).
-	translatedBinds, droppedBinds, err := translateSharedVolumeBinds(s.config, hostConfig.Binds)
+	translatedBinds, droppedBinds, err := core.TranslateSharedVolumeBinds(s.config.SharedVolumes, hostConfig.Binds, gcpcommon.HostBindPolicy("Google Cloud Run Functions"))
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +544,7 @@ func (s *Server) ContainerStart(ref string) error {
 				// `{"sockerlessExecResult":{"exitCode":N,"stdout":"<b64>","stderr":"<b64>"}}`.
 				// Anything else is a bug in the bootstrap or the
 				// transport — fail loudly rather than guess.
-				execResult, perr := gcpcommon.ParseExecResult(body)
+				execResult, perr := envelope.ParseResult(body)
 				if perr != nil {
 					if !c.Config.OpenStdin {
 						if _, hasAgent := s.reverseAgents.Resolve(id); hasAgent {
@@ -628,31 +621,17 @@ func (s *Server) ContainerStart(ref string) error {
 	return nil
 }
 
+// captureGCFStdin returns the script a buffered attach piped into the
+// container, once the caller signalled EOF. The second result is false
+// when no attach was registered, so the container's own command runs.
 func (s *Server) captureGCFStdin(id string) ([]byte, bool) {
-	v, ok := s.stdinPipes.LoadAndDelete(id)
-	if !ok {
-		return nil, false
-	}
-	pipe, isPipe := v.(*stdinPipe)
-	if !isPipe {
-		return nil, false
-	}
-	select {
-	case <-pipe.Done():
-	case <-time.After(30 * time.Second):
-		s.Logger.Warn().Str("container", id).Msg("GCF stdin pipe Done timeout; proceeding with captured bytes")
-	case <-s.ctx().Done():
-		return nil, true
-	}
-	return pipe.Bytes(), true
+	return core.CaptureBufferedStdin(s.ctx(), &s.stdinPipes, id, 30*time.Second, s.Logger)
 }
 
+// publishGCFAttachResponse hands the invocation's output to the buffered
+// attach reader, if any.
 func (s *Server) publishGCFAttachResponse(id string, stdout, stderr []byte) {
-	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-		if as, isStream := v.(*attachStream); isStream {
-			as.publishAttachResponse(stdout, stderr)
-		}
-	}
+	core.PublishBufferedAttachResponse(&s.attachStreams, id, stdout, stderr)
 }
 
 func isReverseAgentInvokeTransportError(errText string) bool {
@@ -801,7 +780,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && !isImplicitDockerNetwork(ep.NetworkID) {
+		if ep != nil && !core.IsBuiltinNetwork(ep.NetworkID) {
 			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
 			}
@@ -901,7 +880,7 @@ func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 			if err != nil {
 				break
 			}
-			line := extractLogLine(entry)
+			line := gcpcommon.ExtractLogLine(entry)
 			if line == "" {
 				continue
 			}
@@ -920,45 +899,10 @@ func (s *Server) cloudLoggingFetch(baseFilter string) core.CloudLogFetchFunc {
 	}
 }
 
-// ContainerRestart stops and then starts a container.
+// ContainerRestart records the running invocation as stopped and launches
+// the container again through the cloud-aware ContainerStart.
 func (s *Server) ContainerRestart(ref string, timeout *int) error {
-	c, ok := s.ResolveContainerAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	id := c.ID
-
-	if c.State.Running {
-		s.StopHealthCheck(id)
-		// `docker restart` sends SIGTERM → exit 143. Record the stop
-		// outcome before unblocking waiters so a `docker wait` racing the
-		// restart sees 143, not the channel-close failure sentinel.
-		stopExitCode := core.SignalToExitCode("SIGTERM")
-		s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: stopExitCode})
-		// Close wait channel so ContainerWait unblocks
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			if wc, isCh := ch.(chan struct{}); isCh {
-				close(wc)
-			}
-		}
-		s.EmitEvent("container", "die", id, map[string]string{
-			"exitCode": fmt.Sprintf("%d", stopExitCode),
-			"name":     strings.TrimPrefix(c.Name, "/"),
-		})
-		s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
-	}
-
-	// Re-add to PendingCreates so ContainerStart can find and launch it.
-	// ContainerStart re-creates the WaitCh and clears the recorded result.
-	s.PendingCreates.Put(id, c)
-
-	// Start the container directly via typed method
-	if err := s.ContainerStart(id); err != nil {
-		return err
-	}
-
-	s.EmitEvent("container", "restart", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
-	return nil
+	return s.RestartCloudContainer(ref, s.ContainerStart)
 }
 
 // ContainerPrune removes all stopped containers and their GCF state.
@@ -1036,24 +980,16 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
-// agent.
+// ContainerPause suspends the function's main process through the
+// reverse agent.
 func (s *Server) ContainerPause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
+	return s.PauseViaReverseAgent(s.reverseAgents, ref)
 }
 
-// ContainerUnpause sends SIGCONT to the user subprocess via the
-// reverse-agent.
+// ContainerUnpause resumes the function's main process through the
+// reverse agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
+	return s.UnpauseViaReverseAgent(s.reverseAgents, ref)
 }
 
 // ImagePull delegates to ImageManager which handles cloud auth and config fetching.
@@ -1081,46 +1017,15 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	return s.images.Load(r)
 }
 
-// PodStart starts all containers in a pod by calling ContainerStart for each,
-// which triggers the GCF HTTP invocation. The BaseServer implementation only
-// sets container state to "running" without invoking the function.
+// PodStart starts every member through the cloud-aware ContainerStart.
 func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || c.State.Running {
-			continue
-		}
-		if err := s.ContainerStart(cid); err != nil {
-			errs = append(errs, err.Error())
-		}
-	}
-	if errs == nil {
-		errs = []string{}
-	}
-	s.Store.Pods.SetStatus(pod.ID, "running")
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStart(name, s.ContainerStart)
 }
 
-// ContainerExport streams the function container's rootfs as tar via
-// the reverse-agent.
+// ContainerExport streams the container's root filesystem through the
+// reverse agent.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-	rc, err := core.RunContainerExportViaAgent(s.reverseAgents, cid)
-	if err == core.ErrNoReverseAgent {
-		return nil, &api.NotImplementedError{Message: "docker export requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
-	}
-	if err != nil {
-		return nil, &api.ServerError{Message: fmt.Sprintf("export via reverse-agent: %v", err)}
-	}
-	return rc, nil
+	return s.ExportViaReverseAgent(s.reverseAgents, id, "function container")
 }
 
 // ContainerCommit builds a new image from the function container's
@@ -1178,9 +1083,9 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	// (or about-to-be-created via materialize).
 	if opts.Stdin {
 		s.Logger.Info().Str("container", c.ID).Str("image", c.Config.Image).Msg("ContainerAttach: registering stdinPipe + attachStream")
-		p := newStdinPipe()
+		p := core.NewStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
-		pipe, isPipe := actual.(*stdinPipe)
+		pipe, isPipe := actual.(*core.StdinPipe)
 		if !isPipe {
 			return nil, &api.ServerError{Message: fmt.Sprintf("ContainerAttach %s: stdin pipe map held unexpected type %T", c.ID, actual)}
 		}

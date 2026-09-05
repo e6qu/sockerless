@@ -244,7 +244,7 @@ make e2e-gitlab-sim-arithmetic
 make e2e-real-runner-sim-arithmetic
 ```
 
-The GitHub workflow and GitLab pipeline both run in `golang:1.25-alpine`,
+The GitHub workflow and GitLab pipeline both run in `golang:1.26-alpine`,
 execute `go test -count=1 ./tests/testdata/eval-arithmetic`, and verify
 the CLI result for `(10 + 5) * 2`.
 

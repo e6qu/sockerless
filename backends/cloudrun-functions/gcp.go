@@ -3,13 +3,13 @@ package gcf
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 
 	functions "cloud.google.com/go/functions/apiv2"
 	"cloud.google.com/go/logging/logadmin"
 	run "cloud.google.com/go/run/apiv2"
 	"cloud.google.com/go/storage"
+	gcpcommon "github.com/sockerless/gcp-common"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
@@ -53,15 +53,6 @@ func NewGCPClients(ctx context.Context, project, endpointURL, logAdminEndpoint s
 	return newGCPClientsDefault(ctx, project)
 }
 
-// urlHost returns "host:port" from a URL, or an error if malformed.
-func urlHost(rawURL string) (string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-	return u.Host, nil
-}
-
 func newGCPClientsWithEndpoint(ctx context.Context, project, endpointURL, logAdminEndpoint string) (*GCPClients, error) {
 	// The REST data plane (Cloud Run Functions, Cloud Run, Storage,
 	// Artifact Registry, Cloud Build) verifies an OAuth2 bearer on every
@@ -77,7 +68,7 @@ func newGCPClientsWithEndpoint(ctx context.Context, project, endpointURL, logAdm
 	// metadata + API coordinates differ. `ComputeTokenSource` short-circuits
 	// on `metadata.OnGCE()`, which returns true once `GCE_METADATA_HOST` is
 	// set, so set it before creating any client.
-	if host, err := urlHost(endpointURL); err == nil {
+	if host, err := gcpcommon.URLHost(endpointURL); err == nil {
 		_ = os.Setenv("GCE_METADATA_HOST", host)
 	}
 	tokenSource := google.ComputeTokenSource("")
@@ -130,7 +121,7 @@ func newGCPClientsWithEndpoint(ctx context.Context, project, endpointURL, logAdm
 	storageOpts := []option.ClientOption{
 		option.WithHTTPClient(oauth2.NewClient(ctx, tokenSource)),
 	}
-	if host, err := urlHost(endpointURL); err == nil {
+	if host, err := gcpcommon.URLHost(endpointURL); err == nil {
 		_ = os.Setenv("STORAGE_EMULATOR_HOST", host)
 	}
 	storageClient, err := storage.NewClient(ctx, storageOpts...)

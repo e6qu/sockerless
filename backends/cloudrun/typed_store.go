@@ -1,5 +1,9 @@
 package cloudrun
 
+import (
+	core "github.com/sockerless/backend-core"
+)
+
 // Typed accessors for values stored in the sync.Map-backed stores
 // (Store.WaitChs, Store.TmpfsDirs, stdinPipes, attachStreams,
 // networkServices). Each store only ever holds one concrete type, so a
@@ -16,15 +20,9 @@ func closeWaitCh(v any) {
 }
 
 // asStdinPipe returns the stdin pipe pulled from stdinPipes, or nil.
-func asStdinPipe(v any) *stdinPipe {
-	p, _ := v.(*stdinPipe)
+func asStdinPipe(v any) *core.StdinPipe {
+	p, _ := v.(*core.StdinPipe)
 	return p
-}
-
-// asAttachStream returns the attach stream pulled from attachStreams, or nil.
-func asAttachStream(v any) *attachStream {
-	a, _ := v.(*attachStream)
-	return a
 }
 
 // asStringSlice returns the string slice pulled from Store.TmpfsDirs or

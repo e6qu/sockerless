@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sockerless/agent/envelope"
 )
 
 func TestParseExecEnvelope(t *testing.T) {
@@ -33,7 +35,7 @@ func TestParseExecEnvelope(t *testing.T) {
 }
 
 func TestRunExecEnvelope_StdinPiped(t *testing.T) {
-	env := execEnvelopeExec{
+	env := envelope.Exec{
 		Argv:  []string{"sh", "-c", "cat"},
 		Stdin: base64.StdEncoding.EncodeToString([]byte("azf-stdin-ok\n")),
 	}
@@ -42,7 +44,7 @@ func TestRunExecEnvelope_StdinPiped(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", w.Code, w.Body.String())
 	}
-	var res execEnvelopeResponse
+	var res envelope.Response
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -60,7 +62,7 @@ func TestRunExecEnvelope_StdinPiped(t *testing.T) {
 
 func TestRunExecEnvelope_EnvAndWorkdir(t *testing.T) {
 	dir := canonicalTempDir(t)
-	env := execEnvelopeExec{
+	env := envelope.Exec{
 		Argv:    []string{"sh", "-c", "printf '%s:%s' \"$AZF_TEST_VALUE\" \"$(pwd)\""},
 		Workdir: dir,
 		Env:     []string{"AZF_TEST_VALUE=from-env"},
@@ -70,7 +72,7 @@ func TestRunExecEnvelope_EnvAndWorkdir(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", w.Code, w.Body.String())
 	}
-	var res execEnvelopeResponse
+	var res envelope.Response
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -88,7 +90,7 @@ func TestRunExecEnvelope_EnvAndWorkdir(t *testing.T) {
 }
 
 func TestRunExecEnvelope_InvalidStdin(t *testing.T) {
-	env := execEnvelopeExec{
+	env := envelope.Exec{
 		Argv:  []string{"sh", "-c", "cat"},
 		Stdin: "not-base64",
 	}

@@ -7,41 +7,16 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"cloud.google.com/go/storage"
-	gcpcommon "github.com/sockerless/gcp-common"
+	core "github.com/sockerless/backend-core"
 )
 
-// OverlayImageSpec, RenderOverlayDockerfile, OverlayContentTag, and
-// TarOverlayContext live in gcp-common so cloudrun + gcf share one
-// renderer. The gcf-specific aliases below preserve the existing call
-// sites without forcing every callsite to qualify.
-
-// OverlayImageSpec aliases gcpcommon.OverlayImageSpec for in-package use.
-type OverlayImageSpec = gcpcommon.OverlayImageSpec
-
 const overlayBootstrapContextName = "sockerless-gcf-bootstrap"
-
-// RenderOverlayDockerfile delegates to gcpcommon.RenderOverlayDockerfile.
-func RenderOverlayDockerfile(spec OverlayImageSpec) (string, error) {
-	return gcpcommon.RenderOverlayDockerfile(spec)
-}
-
-// OverlayContentTag delegates to gcpcommon.OverlayContentTag with the
-// `gcf-` prefix so the AR tag namespace stays per-cloud.
-func OverlayContentTag(spec OverlayImageSpec) string {
-	return gcpcommon.OverlayContentTag("gcf-", spec)
-}
-
-// TarOverlayContext delegates to gcpcommon.TarOverlayContext.
-func TarOverlayContext(spec OverlayImageSpec) ([]byte, error) {
-	return gcpcommon.TarOverlayContext(spec)
-}
 
 // PodOverlaySpec describes the merged-rootfs pod overlay built when
 // sockerless materialises a multi-container pod into one Cloud Run
@@ -70,95 +45,7 @@ type PodOverlaySpec struct {
 	BootstrapBinaryPath string
 	// Members lists the pod's containers in the order sockerless saw
 	// them join the pod. Last entry defaults as the main.
-	Members []PodMemberSpec
-}
-
-// PodMemberSpec is one container inside a pod overlay. Mirrors the
-// runtime PodMember type the gcf bootstrap parses out of
-// SOCKERLESS_POD_CONTAINERS — kept in lock-step so the wire shape is
-// stable across the build/runtime split.
-type PodMemberSpec struct {
-	// Name is the container's name inside the pod. Used as the
-	// chroot subdir (`/containers/<Name>`) AND in the `[<Name>]`
-	// supervisor log prefix.
-	Name string
-	// ContainerID is the sockerless container ID this pod member
-	// represents. Round-trips through the Function's pod manifest env
-	// so cloud_state can reconstruct per-member `docker ps` rows
-	// without any local state.
-	ContainerID string
-	// BaseImageRef is the user's image for this pod member, already
-	// resolved via gcpcommon.ResolveGCPImageURI to an AR-routable ref.
-	BaseImageRef string
-	// Entrypoint / Cmd / Workdir / Env are the docker-create-time
-	// overrides (or, when empty, the image's defaults — the gcf
-	// backend merges those in before calling the renderer).
-	Entrypoint []string
-	Cmd        []string
-	Workdir    string
-	Env        []string
-}
-
-// PodMemberJSON is the wire shape the bootstrap consumes via
-// SOCKERLESS_POD_CONTAINERS. Kept distinct from PodMemberSpec so the
-// renderer-side spec can grow build-time fields (e.g. labels) without
-// breaking the runtime payload.
-//
-// ContainerID + Image carry per-member metadata cloud_state needs to
-// reconstruct each member's `docker ps` row after a backend restart
-// (the Function's labels alone only point at the pod's main container).
-// The bootstrap ignores both fields.
-type PodMemberJSON struct {
-	Name        string   `json:"name"`
-	Root        string   `json:"root"`
-	Entrypoint  []string `json:"entrypoint,omitempty"`
-	Cmd         []string `json:"cmd,omitempty"`
-	Env         []string `json:"env,omitempty"`
-	Workdir     string   `json:"workdir,omitempty"`
-	ContainerID string   `json:"container_id,omitempty"`
-	Image       string   `json:"image,omitempty"`
-}
-
-// EncodePodManifest returns the base64(JSON) blob the gcf bootstrap
-// expects in SOCKERLESS_POD_CONTAINERS. Each member's Root is set to
-// the merged-rootfs subdir (`/containers/<name>`).
-func EncodePodManifest(members []PodMemberSpec) (string, error) {
-	out := make([]PodMemberJSON, len(members))
-	for i, m := range members {
-		out[i] = PodMemberJSON{
-			Name:        m.Name,
-			Root:        "/containers/" + m.Name,
-			Entrypoint:  m.Entrypoint,
-			Cmd:         m.Cmd,
-			Env:         m.Env,
-			Workdir:     m.Workdir,
-			ContainerID: m.ContainerID,
-			Image:       m.BaseImageRef,
-		}
-	}
-	raw, err := json.Marshal(out)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(raw), nil
-}
-
-// DecodePodManifest inverts EncodePodManifest. Used by cloud_state to
-// reconstruct per-member container rows from the pod Function's
-// SOCKERLESS_POD_CONTAINERS env var without holding any local state.
-func DecodePodManifest(b64 string) ([]PodMemberJSON, error) {
-	if b64 == "" {
-		return nil, nil
-	}
-	raw, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		return nil, fmt.Errorf("base64 decode: %w", err)
-	}
-	var out []PodMemberJSON
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("json unmarshal: %w", err)
-	}
-	return out, nil
+	Members []core.PodMemberSpec
 }
 
 // RenderPodOverlayDockerfile returns the Dockerfile content for a pod
@@ -185,7 +72,7 @@ func RenderPodOverlayDockerfile(spec PodOverlaySpec) (string, error) {
 			return "", fmt.Errorf("member %q: BaseImageRef is required", m.Name)
 		}
 	}
-	manifest, err := EncodePodManifest(spec.Members)
+	manifest, err := core.EncodePodManifest(spec.Members)
 	if err != nil {
 		return "", fmt.Errorf("encode pod manifest: %w", err)
 	}
@@ -258,10 +145,10 @@ func TarPodOverlayContext(spec PodOverlaySpec) ([]byte, error) {
 	var raw bytes.Buffer
 	gz := gzip.NewWriter(&raw)
 	tw := tar.NewWriter(gz)
-	if err := gcpcommon.WriteTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
+	if err := core.WriteTarEntry(tw, "Dockerfile", []byte(dockerfile), 0o644); err != nil {
 		return nil, err
 	}
-	if err := gcpcommon.WriteTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
+	if err := core.WriteTarFile(tw, spec.BootstrapBinaryPath, overlayBootstrapContextName); err != nil {
 		return nil, err
 	}
 	if err := tw.Close(); err != nil {

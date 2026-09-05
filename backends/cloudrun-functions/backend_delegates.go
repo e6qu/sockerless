@@ -2,11 +2,8 @@ package gcf
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"strings"
-	"sync"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -14,19 +11,6 @@ import (
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
 )
-
-// bucketToVolume converts a sockerless-managed GCS BucketAttrs into a
-// Docker-API Volume entry. Mirrors Cloud Run's helper.
-func bucketToVolume(dockerName string, b *storage.BucketAttrs) *api.Volume {
-	return &api.Volume{
-		Name:       dockerName,
-		Driver:     "gcs",
-		Mountpoint: "gs://" + b.Name,
-		Scope:      "local",
-		Options:    map[string]string{"bucket": b.Name},
-		CreatedAt:  b.Created.UTC().Format(time.RFC3339Nano),
-	}
-}
 
 // Auth methods (pass-through)
 
@@ -256,7 +240,7 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	if postExec == nil {
 		return rwc, nil
 	}
-	return &execPostHook{ReadWriteCloser: rwc, once: &sync.Once{}, hook: postExec}, nil
+	return core.NewExecPostHook(rwc, postExec), nil
 }
 
 // Image methods (pass-through via ImageManager)
@@ -339,83 +323,20 @@ func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
 // silently leaks the pod's Cloud Run Service. (PodStart is already overridden
 // in backend_impl.go.) These mirror the ECS/Cloud Run/ACA overrides.
 
+// PodStop stops every running member through the cloud-aware ContainerStop.
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerStop(cid, timeout); err != nil {
-			if _, ok := err.(*api.NotModifiedError); !ok {
-				errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-			}
-		}
-	}
-	s.Store.Pods.SetStatus(pod.ID, "stopped")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStop(name, timeout, s.ContainerStop)
 }
 
+// PodKill signals every running member through the cloud-aware ContainerKill.
 func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-	if signal == "" {
-		signal = "SIGKILL"
-	}
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerKill(cid, signal); err != nil {
-			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-		}
-	}
-	s.Store.Pods.SetStatus(pod.ID, "exited")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodKill(name, signal, s.ContainerKill)
 }
 
+// PodRemove removes every member through the cloud-aware ContainerRemove,
+// so no function is orphaned, then deletes the pod.
 func (s *Server) PodRemove(name string, force bool) error {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return &api.NotFoundError{Resource: "pod", ID: name}
-	}
-	if !force {
-		for _, cid := range pod.ContainerIDs {
-			if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
-				return &api.ConflictError{
-					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
-				}
-			}
-		}
-	}
-	// Remove ALL members even if one fails, then surface the joined error — a
-	// failed member delete orphans a live cloud resource and must not read as a
-	// successful pod removal.
-	var errs []error
-	for _, cid := range pod.ContainerIDs {
-		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
-			continue
-		}
-		if err := s.ContainerRemove(cid, force); err != nil {
-			errs = append(errs, fmt.Errorf("remove pod member %s: %w", cid, err))
-		}
-	}
-	s.Store.Pods.DeletePod(pod.ID)
-	return errors.Join(errs...)
+	return s.CloudPodRemove(name, force, s.ContainerRemove)
 }
 
 // System methods (pass-through)
@@ -440,7 +361,7 @@ func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error)
 	if req == nil || req.Name == "" {
 		return nil, &api.InvalidParameterError{Message: "volume name is required"}
 	}
-	bucket, err := s.bucketForVolume(s.ctx(), req.Name)
+	bucket, err := s.volumes.BucketForVolume(s.ctx(), req.Name)
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("provision GCS bucket for %q: %v", req.Name, err)}
 	}
@@ -456,71 +377,41 @@ func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error)
 }
 
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	buckets, err := s.listManagedBuckets(s.ctx())
+	buckets, err := s.volumes.Buckets.ListManaged(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
 	}
-	for _, b := range buckets {
-		if gcpcommon.BucketVolumeName(b) == gcpcommon.SanitiseLabelValue(name) {
-			return bucketToVolume(name, b), nil
-		}
-	}
-	return nil, &api.NotFoundError{Resource: "volume", ID: name}
+	return core.InspectManagedVolume(buckets, name, func(b *storage.BucketAttrs) bool {
+		return gcpcommon.BucketVolumeName(b) == gcpcommon.SanitiseLabelValue(name)
+	}, func(b *storage.BucketAttrs) *api.Volume { return gcpcommon.BucketToVolume(name, b) })
 }
 
 func (s *Server) VolumeList(filters map[string][]string) (*api.VolumeListResponse, error) {
-	buckets, err := s.listManagedBuckets(s.ctx())
+	buckets, err := s.volumes.Buckets.ListManaged(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
 	}
-	vols := make([]*api.Volume, 0, len(buckets))
-	for _, b := range buckets {
-		vols = append(vols, bucketToVolume(gcpcommon.BucketVolumeName(b), b))
-	}
-	return &api.VolumeListResponse{Volumes: vols}, nil
+	return core.ListManagedVolumes(buckets, func(b *storage.BucketAttrs) *api.Volume {
+		return gcpcommon.BucketToVolume(gcpcommon.BucketVolumeName(b), b)
+	}), nil
 }
 
 // VolumeRemove deletes the GCS bucket backing a Docker volume.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	if err := s.deleteBucketForVolume(s.ctx(), name, force); err != nil {
+	if err := s.volumes.Buckets.DeleteForVolume(s.ctx(), name, force); err != nil {
 		return &api.ServerError{Message: fmt.Sprintf("delete GCS bucket for %q: %v", name, err)}
 	}
 	return nil
 }
 
-// VolumePrune deletes every sockerless-managed GCS bucket that isn't
-// currently referenced by a pending container's binds.
+// VolumePrune deletes every sockerless-managed bucket whose volume is not
+// referenced by a created-but-unstarted container.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
-	buckets, err := s.listManagedBuckets(s.ctx())
+	buckets, err := s.volumes.Buckets.ListManaged(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed GCS buckets: %v", err)}
 	}
-	in := s.inUseVolumeNames()
-	resp := &api.VolumePruneResponse{}
-	for _, b := range buckets {
-		name := gcpcommon.BucketVolumeName(b)
-		if _, busy := in[name]; busy {
-			continue
-		}
-		if err := s.deleteBucketForVolume(s.ctx(), name, true); err != nil {
-			return nil, &api.ServerError{Message: fmt.Sprintf("delete GCS bucket for %q: %v", name, err)}
-		}
-		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
-	}
-	return resp, nil
-}
-
-// inUseVolumeNames returns Docker volume names currently referenced by
-// pending container binds.
-func (s *Server) inUseVolumeNames() map[string]struct{} {
-	in := make(map[string]struct{})
-	for _, c := range s.PendingCreates.List() {
-		for _, b := range c.HostConfig.Binds {
-			parts := strings.SplitN(b, ":", 3)
-			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
-				in[parts[0]] = struct{}{}
-			}
-		}
-	}
-	return in
+	return core.PruneManagedVolumes(buckets, gcpcommon.BucketVolumeName, core.InUseVolumeNames(s.PendingCreates.List()), func(name string) error {
+		return s.volumes.Buckets.DeleteForVolume(s.ctx(), name, true)
+	}, "GCS bucket")
 }

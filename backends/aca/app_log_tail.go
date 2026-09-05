@@ -14,13 +14,7 @@ func (s *Server) recentACAAppLogTail(id string) string {
 	}
 	query := fmt.Sprintf(`ContainerAppConsoleLogs_CL | where ContainerAppName_s == "%s" | project TimeGenerated, Log_s`, state.AppName)
 	body := azquery.Body{Query: &query}
-	var resp azquery.LogsClientQueryWorkspaceResponse
-	var err error
-	if s.azure.LogsHTTP != nil {
-		resp, err = s.azure.LogsHTTP.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, body, nil)
-	} else {
-		resp, err = s.azure.Logs.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, body, nil)
-	}
+	resp, err := s.azure.Logs.QueryWorkspace(s.ctx(), s.config.LogAnalyticsWorkspace, body, nil)
 	if err != nil {
 		return fmt.Sprintf(" Recent ACA app log query failed: %v.", err)
 	}

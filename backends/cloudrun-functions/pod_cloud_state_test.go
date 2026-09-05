@@ -40,7 +40,7 @@ func TestServiceToPodMemberContainer_LabelsFromEnv(t *testing.T) {
 // encoded into a Function's SOCKERLESS_POD_CONTAINERS env var decodes
 // back into the same per-member specs cloud_state needs for `docker ps`.
 func TestPodMembersFromFunctionRoundtrip(t *testing.T) {
-	members := []PodMemberSpec{
+	members := []core.PodMemberSpec{
 		{
 			Name:         "postgres",
 			ContainerID:  "11111111111111111111111111111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -56,7 +56,7 @@ func TestPodMembersFromFunctionRoundtrip(t *testing.T) {
 			Cmd:          []string{"echo hi"},
 		},
 	}
-	enc, err := EncodePodManifest(members)
+	enc, err := core.EncodePodManifest(members)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestPodMemberToContainerSurfacesDegradation(t *testing.T) {
 		"sockerless_pod":        "ci-pod",
 		"sockerless_created_at": "2026-05-02T10:00:00Z",
 	}
-	m := PodMemberJSON{
+	m := core.PodMemberJSON{
 		Name:        "main",
 		ContainerID: "11111111111111111111111111111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Image:       "alpine:latest",

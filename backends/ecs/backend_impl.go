@@ -2,7 +2,6 @@ package ecs
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -96,11 +95,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 
 	// Validate + rewrite mount specs up-front via the shared-volume
-	// translator (see shared_volumes.go for the full Fargate bind-mount
-	// model: named volumes pass through, mapped host binds rewrite to
+	// translator: named volumes pass through, mapped host binds rewrite to
 	// named-volume references, sub-paths + docker.sock drop, anything
-	// else rejects loudly).
-	translatedBinds, droppedBinds, err := translateSharedVolumeBinds(s.config, hostConfig.Binds)
+	// else rejects loudly (Fargate has no host filesystem).
+	translatedBinds, droppedBinds, err := core.TranslateSharedVolumeBinds(s.config.SharedVolumes, hostConfig.Binds, awscommon.ECSHostBindPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -1006,127 +1004,25 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	return s.cloudExecStart(&exec, &c, tty)
 }
 
-// PodStart starts all containers in a pod by calling ContainerStart for each.
+// PodStart starts every member through the cloud-aware ContainerStart.
 func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		// Check PendingCreates (containers between create and start)
-		if c, ok := s.PendingCreates.Get(cid); ok {
-			if c.State.Running {
-				continue
-			}
-		} else {
-			// Check CloudState for already-running containers
-			if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
-				continue
-			}
-		}
-		if err := s.ContainerStart(cid); err != nil {
-			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-		}
-	}
-	if len(errs) == 0 {
-		s.Store.Pods.SetStatus(pod.ID, "running")
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStart(name, s.ContainerStart)
 }
 
-// PodStop stops all containers in a pod by calling ContainerStop for each.
+// PodStop stops every running member through the cloud-aware ContainerStop.
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerStop(cid, timeout); err != nil {
-			// NotModifiedError is not a real error — container was already stopped
-			if _, ok := err.(*api.NotModifiedError); !ok {
-				errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-			}
-		}
-	}
-	s.Store.Pods.SetStatus(pod.ID, "stopped")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodStop(name, timeout, s.ContainerStop)
 }
 
-// PodKill sends a signal to all containers in a pod by calling ContainerKill for each.
+// PodKill signals every running member through the cloud-aware ContainerKill.
 func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return nil, &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	if signal == "" {
-		signal = "SIGKILL"
-	}
-
-	var errs []string
-	for _, cid := range pod.ContainerIDs {
-		c, ok := s.ResolveContainerAuto(context.Background(), cid)
-		if !ok || !c.State.Running {
-			continue
-		}
-		if err := s.ContainerKill(cid, signal); err != nil {
-			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
-		}
-	}
-	s.Store.Pods.SetStatus(pod.ID, "exited")
-	if errs == nil {
-		errs = []string{}
-	}
-	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+	return s.CloudPodKill(name, signal, s.ContainerKill)
 }
 
-// PodRemove removes a pod and all its containers by calling ContainerRemove for each.
+// PodRemove removes every member through the cloud-aware ContainerRemove,
+// so no Amazon ECS task is orphaned, then deletes the pod.
 func (s *Server) PodRemove(name string, force bool) error {
-	pod, ok := s.Store.Pods.GetPod(name)
-	if !ok {
-		return &api.NotFoundError{Resource: "pod", ID: name}
-	}
-
-	// Without force, reject if any containers are running
-	if !force {
-		for _, cid := range pod.ContainerIDs {
-			c, ok := s.ResolveContainerAuto(context.Background(), cid)
-			if ok && c.State.Running {
-				return &api.ConflictError{
-					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
-				}
-			}
-		}
-	}
-
-	// Remove each container through our ContainerRemove (handles ECS cleanup).
-	// Remove ALL members even if one fails, then surface the joined error — a
-	// failed member delete orphans a live ECS task and must not read as a
-	// successful pod removal.
-	var errs []error
-	for _, cid := range pod.ContainerIDs {
-		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
-			continue
-		}
-		if err := s.ContainerRemove(cid, force); err != nil {
-			errs = append(errs, fmt.Errorf("remove pod member %s: %w", cid, err))
-		}
-	}
-
-	s.Store.Pods.DeletePod(pod.ID)
-	return errors.Join(errs...)
+	return s.CloudPodRemove(name, force, s.ContainerRemove)
 }
 
 // Info returns system information, enriched with real ECS cluster stats.
@@ -1238,45 +1134,19 @@ func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.Containe
 	return nil, &api.NotImplementedError{Message: "docker commit is not implemented on ECS — Fargate exposes no host filesystem to snapshot from, and ECS doesn't run a sockerless bootstrap that could capture a rootfs diff over SSM exec"}
 }
 
-// VolumePrune deletes all sockerless-managed EFS access points that
-// aren't currently referenced by any ECS task definition. The filter
-// map is accepted for Docker API parity but currently unused — access
-// points have no labels beyond the `sockerless-managed` + volume-name
-// tags, so filter-by-label would be a no-op.
+// VolumePrune deletes every sockerless-managed EFS access point whose
+// volume is not referenced by a created-but-unstarted container. The
+// filter map is accepted for Docker API parity; access points carry no
+// labels beyond the managed and volume-name tags, so filter-by-label
+// would be a no-op.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
 	aps, err := s.listManagedAccessPoints(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list EFS access points: %v", err)}
 	}
-	in := s.inUseVolumeNames()
-	resp := &api.VolumePruneResponse{}
-	for _, ap := range aps {
-		name := awscommon.APVolumeName(ap)
-		if _, busy := in[name]; busy {
-			continue
-		}
-		if err := s.deleteAccessPointForVolume(s.ctx(), name); err != nil {
-			return nil, &api.ServerError{Message: fmt.Sprintf("delete EFS access point for %q: %v", name, err)}
-		}
-		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
-	}
-	return resp, nil
-}
-
-// inUseVolumeNames returns the set of Docker volume names currently
-// referenced by running or pending ECS tasks — used by VolumePrune
-// to avoid deleting access points out from under a live container.
-func (s *Server) inUseVolumeNames() map[string]struct{} {
-	in := make(map[string]struct{})
-	for _, c := range s.PendingCreates.List() {
-		for _, b := range c.HostConfig.Binds {
-			parts := strings.SplitN(b, ":", 3)
-			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
-				in[parts[0]] = struct{}{}
-			}
-		}
-	}
-	return in
+	return core.PruneManagedVolumes(aps, awscommon.APVolumeName, core.InUseVolumeNames(s.PendingCreates.List()), func(name string) error {
+		return s.deleteAccessPointForVolume(s.ctx(), name)
+	}, "EFS access point")
 }
 
 // launchAfterStdin runs the deferred-RunTask flow used by containers
@@ -1298,7 +1168,7 @@ func (s *Server) inUseVolumeNames() map[string]struct{} {
 // /start; /start can win the race just ahead of the attach handler opening the
 // pipe, so this closes that window without blocking a never-attached container
 // for more than `timeout`.
-func (s *Server) waitForOpenStdinPipe(id string, timeout time.Duration) *stdinPipe {
+func (s *Server) waitForOpenStdinPipe(id string, timeout time.Duration) *core.StdinPipe {
 	deadline := time.After(timeout)
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
@@ -1316,7 +1186,7 @@ func (s *Server) waitForOpenStdinPipe(id string, timeout time.Duration) *stdinPi
 	}
 }
 
-func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, exitCh chan struct{}) {
+func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *core.StdinPipe, exitCh chan struct{}) {
 	s.Logger.Info().Str("container", id[:12]).Msg("launchAfterStdin: entered, waiting for stdin EOF")
 	defer func() {
 		s.Logger.Info().Str("container", id[:12]).Msg("launchAfterStdin: returning")

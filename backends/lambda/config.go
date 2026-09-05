@@ -3,11 +3,11 @@ package lambda
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/sockerless/api"
+	awscommon "github.com/sockerless/aws-common"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -22,7 +22,6 @@ type Config struct {
 	SecurityGroupIDs []string
 	// AgentEFSID (optional) lets operators reuse an existing EFS filesystem
 	// for Lambda volumes instead of sockerless provisioning a fresh one.
-	// Mirrors SOCKERLESS_ECS_AGENT_EFS_ID on the ECS backend.
 	AgentEFSID       string
 	CodeBuildProject string        // AWS CodeBuild project for docker build
 	BuildBucket      string        // S3 bucket for build context upload
@@ -76,17 +75,17 @@ type Config struct {
 	// server is the cloud workload). Set via SOCKERLESS_LAMBDA_ARCHITECTURE.
 	Architecture string
 
-	// SharedVolumes mirrors the ECS backend's same-named field. When
-	// sockerless runs inside a Lambda invocation that already has EFS
-	// access points mounted at known paths (via FileSystemConfigs on
-	// the Lambda function), and the runner inside the invocation does
+	// SharedVolumes are the EFS access points the runner-Lambda already
+	// mounts (via FileSystemConfigs on the Lambda function). When the
+	// runner inside the invocation does
 	// `docker create -v /home/runner/_work:/__w alpine`, sockerless
-	// translates the host bind mount into a named-volume reference
-	// whose EFS access point is shared with the runner-Lambda. Sub-
-	// tasks (spawned via the ECS backend, since Lambda can't easily
-	// dispatch to itself recursively) mount the same access point.
-	// Format identical to ECS: SOCKERLESS_LAMBDA_SHARED_VOLUMES=name=path=fsap-XXX[=fs-YYY],...
-	SharedVolumes []SharedVolume
+	// translates the host bind mount into a named-volume reference whose
+	// EFS access point is shared with the runner-Lambda. Format:
+	// awscommon.LambdaSharedVolumeFormat, read from
+	// SOCKERLESS_LAMBDA_SHARED_VOLUMES. Lambda allows one FileSystemConfig
+	// per function, so volumes sharing an access point are told apart by
+	// EFSSubpath.
+	SharedVolumes core.SharedVolumes
 
 	// sharedVolumesErr carries a SOCKERLESS_LAMBDA_SHARED_VOLUMES parse
 	// failure from ConfigFromEnv to Validate so misconfiguration fails
@@ -116,151 +115,34 @@ type Config struct {
 	NetworkDiscovery api.NetworkDiscoveryKind
 }
 
-// SharedVolume describes a workspace volume mounted via EFS that the
-// caller (the runner-Lambda) shares with sockerless. When docker
-// create sees a bind mount whose source matches ContainerPath, the
-// bind is rewritten to a named volume named Name backed by the EFS
-// access point AccessPointID. Mirror of `ecs.SharedVolume`.
-//
-// EFSSubpath is the relative path (under the access-point root) where
-// this volume's content lives. When multiple SharedVolumes share an
-// AccessPointID, EFSSubpath disambiguates which directory each volume
-// maps to inside the AP. Used by the Lambda backend to collapse
-// duplicate-ARN binds into a single FileSystemConfig and emit a set
-// of `<container-target>=/mnt/<mount>/<subpath>` symlink mappings the
-// in-Lambda bootstrap creates before the user entrypoint runs (Lambda
-// allows at most one FileSystemConfig and only `/mnt/...` mount paths).
-type SharedVolume struct {
-	Name          string // logical volume name used in spawned sub-tasks
-	ContainerPath string // path inside the calling container (= the bind-mount source)
-	AccessPointID string // EFS access point ID (fsap-...)
-	FileSystemID  string // EFS filesystem ID (fs-...); defaults to Config.AgentEFSID
-	EFSSubpath    string // sub-directory under the AP root where this volume's data lives ("" = AP root)
-}
-
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
-	sharedVolumes, sharedVolumesErr := parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES"))
+	sharedVolumes, sharedVolumesErr := core.ParseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES"), awscommon.LambdaSharedVolumeFormat)
 	return Config{
-		Region:               envOrDefault("AWS_REGION", "us-east-1"),
+		Region:               core.EnvOrDefault("AWS_REGION", "us-east-1"),
 		RoleARN:              os.Getenv("SOCKERLESS_LAMBDA_ROLE_ARN"),
-		LogGroup:             envOrDefault("SOCKERLESS_LAMBDA_LOG_GROUP", "/sockerless/lambda"),
-		MemorySize:           envOrDefaultInt("SOCKERLESS_LAMBDA_MEMORY_SIZE", 1024),
-		Timeout:              envOrDefaultInt("SOCKERLESS_LAMBDA_TIMEOUT", 900),
-		SubnetIDs:            splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
-		SecurityGroupIDs:     splitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
-		AgentEFSID:           firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_AGENT_EFS_ID"), os.Getenv("SOCKERLESS_AGENT_EFS_ID")),
-		CodeBuildProject:     firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_CODEBUILD_PROJECT"), os.Getenv("SOCKERLESS_CODEBUILD_PROJECT"), os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT")),
-		BuildBucket:          firstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_BUILD_BUCKET"), os.Getenv("SOCKERLESS_BUILD_BUCKET"), os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET")),
+		LogGroup:             core.EnvOrDefault("SOCKERLESS_LAMBDA_LOG_GROUP", "/sockerless/lambda"),
+		MemorySize:           core.EnvOrDefaultInt("SOCKERLESS_LAMBDA_MEMORY_SIZE", 1024),
+		Timeout:              core.EnvOrDefaultInt("SOCKERLESS_LAMBDA_TIMEOUT", 900),
+		SubnetIDs:            core.SplitCSV(os.Getenv("SOCKERLESS_LAMBDA_SUBNETS")),
+		SecurityGroupIDs:     core.SplitCSV(os.Getenv("SOCKERLESS_LAMBDA_SECURITY_GROUPS")),
+		AgentEFSID:           core.FirstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_AGENT_EFS_ID"), os.Getenv("SOCKERLESS_AGENT_EFS_ID")),
+		CodeBuildProject:     core.FirstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_CODEBUILD_PROJECT"), os.Getenv("SOCKERLESS_CODEBUILD_PROJECT"), os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT")),
+		BuildBucket:          core.FirstNonEmpty(os.Getenv("SOCKERLESS_LAMBDA_BUILD_BUCKET"), os.Getenv("SOCKERLESS_BUILD_BUCKET"), os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET")),
 		EndpointURL:          os.Getenv("SOCKERLESS_ENDPOINT_URL"),
-		PollInterval:         parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		PollInterval:         core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		CallbackURL:          os.Getenv("SOCKERLESS_CALLBACK_URL"),
-		AgentBinaryPath:      envOrDefault("SOCKERLESS_AGENT_BINARY", "/opt/sockerless/sockerless-agent"),
-		BootstrapBinaryPath:  envOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
+		AgentBinaryPath:      core.EnvOrDefault("SOCKERLESS_AGENT_BINARY", "/opt/sockerless/sockerless-agent"),
+		BootstrapBinaryPath:  core.EnvOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
 		PrebuiltOverlayImage: os.Getenv("SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE"),
 		OverlayECRRepo:       os.Getenv("SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO"),
 		EnableCommit:         os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		Architecture:         os.Getenv("SOCKERLESS_LAMBDA_ARCHITECTURE"),
 		SharedVolumes:        sharedVolumes,
 		sharedVolumesErr:     sharedVolumesErr,
-		PoolMax:              envOrDefaultInt("SOCKERLESS_LAMBDA_POOL_MAX", 10),
-		NetworkDiscovery:     networkDiscoveryFromEnv("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly),
+		PoolMax:              core.EnvOrDefaultInt("SOCKERLESS_LAMBDA_POOL_MAX", 10),
+		NetworkDiscovery:     core.NetworkDiscoveryFromEnv("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly),
 	}
-}
-
-// networkDiscoveryFromEnv reads the operator's chosen kind from env or
-// returns `def`. Validation against the per-backend supported set
-// happens in Config.Validate.
-func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
-	v := strings.TrimSpace(os.Getenv(envVar))
-	if v == "" {
-		return def
-	}
-	return api.NetworkDiscoveryKind(v)
-}
-
-// parseSharedVolumes parses the SOCKERLESS_LAMBDA_SHARED_VOLUMES
-// env-var. Each comma-separated entry is `=`-split into 3-5 parts:
-//
-//	name=containerPath=fsap-XXXX                            (3 parts)
-//	name=containerPath=fsap-XXXX=fs-YYYY                    (4 parts; explicit FS)
-//	name=containerPath=fsap-XXXX==subpath                   (5 parts; subpath only)
-//	name=containerPath=fsap-XXXX=fs-YYYY=subpath            (5 parts; FS + subpath)
-//
-// `subpath` is the directory under the AP root where the volume's
-// content lives. Required when multiple SharedVolumes share an
-// AccessPointID; otherwise optional. Mirror of `ecs.parseSharedVolumes`.
-// Malformed entries are a hard error — the caller surfaces it via
-// Config.Validate so the operator's misconfiguration fails the backend
-// startup instead of silently dropping the volume mapping.
-func parseSharedVolumes(s string) ([]SharedVolume, error) {
-	if strings.TrimSpace(s) == "" {
-		return nil, nil
-	}
-	var out []SharedVolume
-	for _, entry := range strings.Split(s, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		parts := strings.Split(entry, "=")
-		if len(parts) < 3 || len(parts) > 5 {
-			return nil, fmt.Errorf("entry %q malformed: want name=containerPath=fsap-XXXX[=fs-YYYY[=subpath]]", entry)
-		}
-		sv := SharedVolume{
-			Name:          strings.TrimSpace(parts[0]),
-			ContainerPath: strings.TrimSpace(parts[1]),
-			AccessPointID: strings.TrimSpace(parts[2]),
-		}
-		if len(parts) >= 4 {
-			sv.FileSystemID = strings.TrimSpace(parts[3])
-		}
-		if len(parts) == 5 {
-			sv.EFSSubpath = strings.Trim(strings.TrimSpace(parts[4]), "/")
-		}
-		if sv.Name == "" || sv.ContainerPath == "" || sv.AccessPointID == "" {
-			return nil, fmt.Errorf("entry %q malformed: name, containerPath and access-point ID must all be non-empty", entry)
-		}
-		out = append(out, sv)
-	}
-	return out, nil
-}
-
-// LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
-// ContainerPath equals the given path, or nil if none matches.
-func (c Config) LookupSharedVolumeBySourcePath(path string) *SharedVolume {
-	for i := range c.SharedVolumes {
-		if c.SharedVolumes[i].ContainerPath == path {
-			return &c.SharedVolumes[i]
-		}
-	}
-	return nil
-}
-
-// LookupSharedVolumeByName returns the SharedVolume entry whose Name
-// equals the given volume name, or nil if none matches.
-func (c Config) LookupSharedVolumeByName(name string) *SharedVolume {
-	for i := range c.SharedVolumes {
-		if c.SharedVolumes[i].Name == name {
-			return &c.SharedVolumes[i]
-		}
-	}
-	return nil
-}
-
-// isSubPathOfSharedVolume reports whether path is a strict sub-path
-// (descendant) of any SharedVolume's ContainerPath.
-func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
-	for i := range vols {
-		base := vols[i].ContainerPath
-		if base == "" {
-			continue
-		}
-		if strings.HasPrefix(path, base+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -295,13 +177,13 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	}
 	c.EndpointURL = env.Common.EndpointURL
 	if env.Common.PollInterval != "" {
-		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
+		c.PollInterval = core.DurationOrDefault(env.Common.PollInterval, c.PollInterval)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
-	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly)
-	c.SharedVolumes, c.sharedVolumesErr = parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES"))
+	c.NetworkDiscovery = core.NetworkDiscoveryFromEnv("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly)
+	c.SharedVolumes, c.sharedVolumesErr = core.ParseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES"), awscommon.LambdaSharedVolumeFormat)
 	return c
 }
 
@@ -335,55 +217,4 @@ func (c Config) Validate() error {
 		return fmt.Errorf("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY=service-mesh requires SOCKERLESS_LAMBDA_SUBNETS — Cloud Map private DNS namespaces are bound to a VPC, resolved from the first configured subnet")
 	}
 	return nil
-}
-
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-func envOrDefaultInt(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}
-
-func parseDuration(s string, def time.Duration) time.Duration {
-	if s == "" {
-		return def
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return def
-	}
-	return d
-}
-
-func splitCSV(s string) []string {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, ",")
-	result := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
-		}
-	}
-	return result
 }

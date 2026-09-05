@@ -9,7 +9,7 @@ COPY ui/packages ./packages
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile
 RUN cd packages/admin && bun run build
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY . .
 COPY --from=web /src/ui/packages/admin/dist ./cmd/sockerless-admin/dist

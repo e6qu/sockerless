@@ -93,17 +93,17 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			return nil, &api.ServerError{Message: "SOCKERLESS_ACA_USE_APP=1 requires SOCKERLESS_ACA_BOOTSTRAP so ACA Apps run an image with the reverse-agent bootstrap baked in"}
 		}
 		originalImage := config.Image
-		spec := acaOverlaySpec{
+		spec := core.OverlayImageSpec{
 			BaseImageRef:        originalImage,
 			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 		}
-		contentTag := acaOverlayContentTag("aca-", spec)
+		contentTag := core.OverlayContentTag("aca-", spec)
 		overlayURI, err := s.ensureACAOverlayImage(s.ctx(), spec, contentTag)
 		if err != nil {
 			return nil, fmt.Errorf("ensure aca overlay image: %w", err)
 		}
-		config.Env = append(config.Env, acaOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+		config.Env = append(config.Env, core.OverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
 		if serviceLike {
 			// Run the service's own workload (nginx, postgres, …) at startup
 			// so the container actually serves; the bootstrap still serves the
@@ -131,7 +131,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// model: named volumes pass through, mapped host binds rewrite to
 	// named-volume references, sub-paths + docker.sock drop, anything
 	// else rejects loudly).
-	translatedBinds, droppedBinds, err := translateSharedVolumeBinds(s.config, hostConfig.Binds)
+	translatedBinds, droppedBinds, err := core.TranslateSharedVolumeBinds(s.config.SharedVolumes, hostConfig.Binds, azurecommon.HostBindPolicy("Azure Container Apps", "SOCKERLESS_ACA_SHARED_VOLUMES"))
 	if err != nil {
 		return nil, err
 	}
@@ -937,24 +937,16 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 	}, nil
 }
 
-// ContainerPause sends SIGSTOP to the user subprocess via the reverse-
-// agent.
+// ContainerPause suspends the container's main process through the
+// reverse agent.
 func (s *Server) ContainerPause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerPauseViaAgent(s.reverseAgents, cid))
+	return s.PauseViaReverseAgent(s.reverseAgents, ref)
 }
 
-// ContainerUnpause sends SIGCONT to the user subprocess via the
-// reverse-agent.
+// ContainerUnpause resumes the container's main process through the
+// reverse agent.
 func (s *Server) ContainerUnpause(ref string) error {
-	cid, ok := s.ResolveContainerIDAuto(context.Background(), ref)
-	if !ok {
-		return &api.NotFoundError{Resource: "container", ID: ref}
-	}
-	return core.MapPauseErr(core.RunContainerUnpauseViaAgent(s.reverseAgents, cid))
+	return s.UnpauseViaReverseAgent(s.reverseAgents, ref)
 }
 
 // ImagePull delegates to ImageManager for unified cloud image handling.
@@ -1000,39 +992,14 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// VolumePrune deletes every sockerless-managed Azure Files share that
-// isn't currently referenced by a pending container's binds.
+// VolumePrune deletes every sockerless-managed Azure Files share whose
+// volume is not referenced by a created-but-unstarted container.
 func (s *Server) VolumePrune(filters map[string][]string) (*api.VolumePruneResponse, error) {
 	shares, err := s.listManagedShares(s.ctx())
 	if err != nil {
 		return nil, &api.ServerError{Message: fmt.Sprintf("list managed Azure Files shares: %v", err)}
 	}
-	in := s.inUseVolumeNames()
-	resp := &api.VolumePruneResponse{}
-	for _, sh := range shares {
-		name := azurecommon.ShareVolumeName(sh)
-		if _, busy := in[name]; busy {
-			continue
-		}
-		if err := s.deleteShareForVolume(s.ctx(), name); err != nil {
-			return nil, &api.ServerError{Message: fmt.Sprintf("delete Azure Files share for %q: %v", name, err)}
-		}
-		resp.VolumesDeleted = append(resp.VolumesDeleted, name)
-	}
-	return resp, nil
-}
-
-// inUseVolumeNames returns the set of Docker volume names currently
-// referenced by pending ACA jobs.
-func (s *Server) inUseVolumeNames() map[string]struct{} {
-	in := make(map[string]struct{})
-	for _, c := range s.PendingCreates.List() {
-		for _, b := range c.HostConfig.Binds {
-			parts := strings.SplitN(b, ":", 3)
-			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "/") {
-				in[parts[0]] = struct{}{}
-			}
-		}
-	}
-	return in
+	return core.PruneManagedVolumes(shares, azurecommon.ShareVolumeName, core.InUseVolumeNames(s.PendingCreates.List()), func(name string) error {
+		return s.deleteShareForVolume(s.ctx(), name)
+	}, "Azure Files share")
 }
