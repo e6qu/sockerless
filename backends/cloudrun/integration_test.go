@@ -30,6 +30,8 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	core "github.com/sockerless/backend-core"
+	"github.com/sockerless/gcp-common/registrytest"
 	"golang.org/x/oauth2/google"
 )
 
@@ -195,13 +197,28 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		// the sim mirrors that. The harness wires both URLs explicitly
 		// to the backend via SOCKERLESS_ENDPOINT_URL +
 		// SOCKERLESS_GCP_LOGADMIN_ENDPOINT (no derivation).
-		simPort := findFreePort()
-		simGRPCPort := findFreePort()
+		// Both ports come from one reservation, so the gRPC listener
+		// cannot be handed the port just chosen for the REST API.
+		ports := core.NewPortReservation()
+		simPort := ports.TCP()
+		simGRPCPort := ports.TCP()
+		ports.Release()
 		simAddr := fmt.Sprintf(":%d", simPort)
 		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
+		// The simulator's Cloud Build executor pushes the overlay image, and
+		// its Cloud Run host pulls it, with the Docker CLI of the simulator
+		// process — the way a Cloud Build worker and the Cloud Run service
+		// agent carry the project's registry credential. That credential is
+		// the harness's `docker login` below, in a Docker configuration
+		// directory the simulator inherits and every push here uses.
+		dockerConfigDir, err := registrytest.NewDockerConfigDir()
+		if err != nil {
+			failClean("ERROR: create Docker configuration directory: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { _ = os.RemoveAll(dockerConfigDir) })
 		fmt.Printf("[sim] Starting simulator-gcp on %s (gRPC :%d)...\n", simAddr, simGRPCPort)
 		simCmd := exec.Command(simBinary)
-		simCmd.Env = append(os.Environ(),
+		simCmd.Env = append(registrytest.Env(dockerConfigDir),
 			"SIM_LISTEN_ADDR="+simAddr,
 			fmt.Sprintf("SIM_GCP_GRPC_PORT=%d", simGRPCPort),
 			"PATH="+os.Getenv("PATH"),
@@ -228,28 +245,14 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		endpointURL = simURL
 		// The simulator serves its Artifact Registry /v2/ at its own address
 		// (127.0.0.1:<port>, which Docker auto-trusts as insecure), so the
-		// overlay build→push→pull round-trips against the sim.
-		arRegistryEndpoint = fmt.Sprintf("127.0.0.1:%d", simPort)
+		// overlay build→push→pull round-trips against the sim. The backend's
+		// coordinate carries the scheme it dials the registry at; the Docker
+		// CLI takes the bare host.
+		arRegistryHost := fmt.Sprintf("127.0.0.1:%d", simPort)
+		arRegistryEndpoint = "http://" + arRegistryHost
 		logAdminEndpoint = fmt.Sprintf("127.0.0.1:%d", simGRPCPort)
 		project = "sim-project"
 		buildBucket = "sockerless-test-build"
-
-		// Push the locally-built test images into the sim's /v2/ registry so
-		// the backend pulls them faithfully over the registry API instead of
-		// relying on the ImageLoad local-daemon shortcut.
-		if err := pushLocalImageToRegistryCloudrun(evalImageName, arRegistryEndpoint, project); err != nil {
-			failClean("ERROR: push eval-arithmetic to sim registry: %v\n", err)
-		}
-		if err := pushLocalImageToRegistryCloudrun("alpine:latest", arRegistryEndpoint, project); err != nil {
-			failClean("ERROR: push alpine to sim registry: %v\n", err)
-		}
-
-		// Pre-create the GCS bucket the backend uses for Cloud Build
-		// context uploads (overlay path). Real GCS doesn't auto-create
-		// buckets; the backend doesn't either.
-		if err := createGCSBucketCloudrun(simURL, project, buildBucket); err != nil {
-			failClean("ERROR: create GCS bucket %s: %v\n", buildBucket, err)
-		}
 
 		// Provision the backend's SA credential through the real IAM API
 		// (create account + mint key) so the sim's token endpoint accepts
@@ -261,6 +264,32 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 			failClean("ERROR: mint SA JSON: %v\n", saErr)
 		}
 		cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
+
+		// Artifact Registry refuses an anonymous push and a push into a
+		// repository that does not exist, so the harness does what Terraform
+		// and the operator do against the real service: create the
+		// repositories through the Artifact Registry API and log the Docker
+		// CLI in with an access token minted from the service-account key.
+		if err := provisionArtifactRegistryCloudrun(simURL, saJSONPath, project, dockerConfigDir, arRegistryHost); err != nil {
+			failClean("ERROR: provision Artifact Registry: %v\n", err)
+		}
+
+		// Push the locally-built test images into the sim's /v2/ registry so
+		// the backend pulls them faithfully over the registry API instead of
+		// relying on the ImageLoad local-daemon shortcut.
+		if err := pushLocalImageToRegistryCloudrun(evalImageName, arRegistryHost, project, dockerConfigDir); err != nil {
+			failClean("ERROR: push eval-arithmetic to sim registry: %v\n", err)
+		}
+		if err := pushLocalImageToRegistryCloudrun("alpine:latest", arRegistryHost, project, dockerConfigDir); err != nil {
+			failClean("ERROR: push alpine to sim registry: %v\n", err)
+		}
+
+		// Pre-create the GCS bucket the backend uses for Cloud Build
+		// context uploads (overlay path). Real GCS doesn't auto-create
+		// buckets; the backend doesn't either.
+		if err := createGCSBucketCloudrun(simURL, project, buildBucket); err != nil {
+			failClean("ERROR: create GCS bucket %s: %v\n", buildBucket, err)
+		}
 
 		if os.Getenv(cloudRunExecE2EEnv) == "1" {
 			bootstrapPath = filepath.Join(repoRoot, "agent", fmt.Sprintf("sockerless-cloudrun-bootstrap-test-%d", os.Getpid()))
@@ -957,19 +986,50 @@ func mintSimAccessTokenCloudrun(simURL string) (string, error) {
 // the tar and registers the image with full Config in Store.Images,
 // so subsequent overlay-path Container Creates preserve the image's
 // ENTRYPOINT/CMD. Mirror of cloudrun-functions/preloadImageIntoBackend.
+// provisionArtifactRegistryCloudrun creates the repositories the backend
+// resolves images into — `docker-hub`, where the harness pushes the images a
+// Docker Hub remote repository would serve, and `sockerless-overlay`, where
+// Cloud Build pushes the overlay — and logs the Docker CLI configured in
+// `dockerConfigDir` in to the registry with an access token minted from the
+// service-account key, the exchange `gcloud auth configure-docker` performs.
+func provisionArtifactRegistryCloudrun(apiEndpoint, saJSONPath, project, dockerConfigDir, registryHost string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	key, err := os.ReadFile(saJSONPath)
+	if err != nil {
+		return err
+	}
+	token, err := registrytest.AccessToken(ctx, key)
+	if err != nil {
+		return err
+	}
+	for _, repo := range []string{"docker-hub", "sockerless-overlay"} {
+		if err := registrytest.CreateDockerRepository(ctx, apiEndpoint, token, project, "us-central1", repo); err != nil {
+			return err
+		}
+	}
+	return registrytest.DockerLogin(ctx, dockerConfigDir, registryHost, token)
+}
+
 // pushLocalImageToRegistryCloudrun tags a locally-built image with its
-// Artifact-Registry-remote-repository form at the sim registry and pushes it,
-// then removes the local tag so later pulls must come from the registry.
-func pushLocalImageToRegistryCloudrun(ref, registryHost, project string) error {
+// Artifact-Registry-remote-repository form at the sim registry and pushes it
+// with the logged-in Docker CLI configured in `dockerConfigDir`, then removes
+// the local tag so later pulls must come from the registry.
+func pushLocalImageToRegistryCloudrun(ref, registryHost, project, dockerConfigDir string) error {
 	arRef := fmt.Sprintf("%s/%s/docker-hub/library/%s", registryHost, project, ref)
-	if out, err := exec.Command("docker", "tag", ref, arRef).CombinedOutput(); err != nil {
+	docker := func(args ...string) ([]byte, error) {
+		cmd := exec.Command("docker", args...)
+		cmd.Env = registrytest.Env(dockerConfigDir)
+		return cmd.CombinedOutput()
+	}
+	if out, err := docker("tag", ref, arRef); err != nil {
 		return fmt.Errorf("docker tag %s -> %s: %w: %s", ref, arRef, err, out)
 	}
-	if out, err := exec.Command("docker", "push", arRef).CombinedOutput(); err != nil {
+	if out, err := docker("push", arRef); err != nil {
 		return fmt.Errorf("docker push %s: %w: %s", arRef, err, out)
 	}
 	// Best-effort: drop the local registry tag so the backend cannot fall
 	// back to the daemon copy. The source image (e.g. alpine:latest) remains.
-	_, _ = exec.Command("docker", "rmi", "-f", arRef).CombinedOutput()
+	_, _ = docker("rmi", "-f", arRef)
 	return nil
 }

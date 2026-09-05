@@ -642,6 +642,7 @@ cloud.google.com/go/spanner v1.91.0 h1:XwXfcZ0kc1NT9Uu2IsThFiWtYptB+WgLn/KZEZcyz
 cloud.google.com/go/spanner v1.91.0/go.mod h1:8NB5a7qgwIhGD19Ly+vkpKffPL78vIG9RcrgsuREha0=
 cloud.google.com/go/spanner v1.92.0/go.mod h1:rCDPfWXNX0h+t484r+crCEaaMKbJfoWkHRDKU3H3+oY=
 cloud.google.com/go/spanner v1.93.0/go.mod h1:ywpqBwFGEG3jBgqTPqo2KDWL2GzmZ6w5plQdO6iTvM4=
+cloud.google.com/go/spanner v1.95.0 h1:qIffeZvIZLBOA0Dvvi/6YwVtIxb8P61kEf3uqFQxU2o=
 cloud.google.com/go/spanner v1.95.0/go.mod h1:Z2+83J5oVDmd1n5ntVMmjEuiNoXOpAyNeG7y1tuEHk0=
 cloud.google.com/go/speech v1.26.0/go.mod h1:78bqDV2SgwFlP/M4n3i3PwLthFq6ta7qmyG6lUV7UCA=
 cloud.google.com/go/speech v1.30.0/go.mod h1:F2+NJujR8uzDLd6bwy5kgtVycxvEq06nzvzz5eQ/gMo=

@@ -22,13 +22,17 @@ import (
 func (s *Server) ensureOverlayImage(ctx context.Context, spec core.OverlayImageSpec, contentTag string) (string, error) {
 	imageURI := fmt.Sprintf(
 		"%s/%s/sockerless-overlay/gcf:%s",
-		gcpcommon.OverlayRegistryHost(s.config.Region), s.config.Project, contentTag,
+		gcpcommon.OverlayRegistryHost(s.config.Region, s.config.ARRegistryEndpoint), s.config.Project, contentTag,
 	)
 	// AR tag-existence precheck: HEAD /v2/<repo>/manifests/<tag>. On
 	// cache hit (the common case for prewarmed overlays + same-revision
 	// rebuilds) we skip Cloud Build's ~25-30s tag-rebuild overhead. The
 	// HEAD takes well under a second.
-	if gcpcommon.CheckTagExists(ctx, imageURI) {
+	present, err := gcpcommon.CheckTagExists(ctx, s.config.ARRegistryEndpoint, imageURI)
+	if err != nil {
+		return "", fmt.Errorf("probe overlay image %s: %w", imageURI, err)
+	}
+	if present {
 		s.Logger.Info().Str("image", imageURI).Msg("ensureOverlayImage: AR tag already present — skipping Cloud Build")
 		return imageURI, nil
 	}
@@ -311,7 +315,7 @@ func (s *Server) prewarmOverlay(ctx context.Context, entry PrewarmOverlay) error
 	if entry.Size <= 0 || entry.Image == "" {
 		return nil
 	}
-	resolved := gcpcommon.ResolveGCPImageURI(entry.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
+	resolved := gcpcommon.ResolveGCPImageURI(entry.Image, s.config.Project, s.config.Region, s.config.ARRegistryEndpoint)
 	spec := core.OverlayImageSpec{
 		BaseImageRef:        resolved,
 		BootstrapBinaryPath: s.config.BootstrapBinaryPath,

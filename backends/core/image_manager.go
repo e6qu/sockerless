@@ -142,32 +142,6 @@ type CloudBuildResult struct {
 	LogStream string        // URL or ARN for build logs
 }
 
-// ecrBasicCredential extracts the base64-encoded credential portion
-// from an ECRAuthProvider.GetToken response (`"Basic <b64>"`) so it
-// can be passed to `FetchImageMetadata` as the basic-auth parameter
-// (which expects raw base64 — `Basic ` is added by `getRegistryToken`
-// downstream when it hits a token-exchange endpoint, or by
-// `setRegistryAuth` for ECR's basic-auth-direct path). Empty input =
-// empty output (anonymous).
-func ecrBasicCredential(token string) string {
-	if token == "" {
-		return ""
-	}
-	if rest, ok := stripPrefix(token, "Basic "); ok {
-		return rest
-	}
-	return token
-}
-
-// stripPrefix is a small utility to avoid pulling in a strings import
-// solely for this helper.
-func stripPrefix(s, prefix string) (string, bool) {
-	if len(s) >= len(prefix) && s[:len(prefix)] == prefix {
-		return s[len(prefix):], true
-	}
-	return s, false
-}
-
 // ImageManager handles all 12 image methods, delegating base logic to BaseServer
 // and adding cloud-specific auth and sync via an AuthProvider.
 type ImageManager struct {
@@ -177,9 +151,15 @@ type ImageManager struct {
 	Logger       zerolog.Logger
 }
 
-// Pull pulls an image, using cloud auth if available.
+// Pull pulls an image. A reference on one of our cloud registries is read
+// with the backend's own credential; any other reference is read with the
+// credential the Docker client sent in X-Registry-Auth, or anonymously when
+// it sent none.
 func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
-	cloudAuthToken := ""
+	authorization, err := RegistryAuthorizationFromDockerAuth(auth)
+	if err != nil {
+		return nil, &api.InvalidParameterError{Message: err.Error()}
+	}
 	if m.Auth != nil {
 		registry, repo, _ := splitImageRefRegistry(ref)
 		if m.Auth.IsCloudRegistry(registry) {
@@ -192,25 +172,20 @@ func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 			if err != nil {
 				return nil, fmt.Errorf("cloud registry auth for %s: %w", registry, err)
 			}
-			cloudAuthToken = token
+			authorization = token
 			if auth == "" {
 				auth = token
 			}
 		}
 	}
 
-	// Fetch real metadata from registry. For ECR (and other Basic-auth
-	// registries) we pass the pre-computed cloud auth token so the
-	// manifest endpoint authenticates correctly — without it the
-	// generic Bearer-flow code in `getRegistryToken` parses ECR's
-	// `Basic realm=` challenge and either fails outright or POSTs the
-	// token-exchange against the registry itself, neither of which is
-	// the right shape. Docker client auth (X-Registry-Auth, base64-
-	// encoded JSON) is still NOT passed for non-cloud registries — it
-	// breaks Docker Hub's token endpoint. Registry failures propagate
-	// as errors so the pull fails cleanly rather than producing a
+	// Fetch real metadata from the registry with that credential. For a
+	// Basic-auth registry (Amazon ECR) the credential is the registry-level
+	// one and `getRegistryToken` presents it directly; for a token-service
+	// registry it is presented on the token exchange. Registry failures
+	// propagate as errors so the pull fails cleanly rather than producing a
 	// synthetic image record.
-	meta, err := FetchImageMetadataWithEndpoint(ref, m.registryEndpoint(ref), ecrBasicCredential(cloudAuthToken))
+	meta, err := FetchImageMetadataWithEndpoint(ref, m.registryEndpoint(ref), registryCredential(authorization))
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +301,7 @@ func (m *ImageManager) fetchCloudImageMetadata(ref string) (*ImageMetadataResult
 		}
 		token = cloudToken
 	}
-	return FetchImageMetadataWithEndpoint(ref, m.registryEndpoint(ref), ecrBasicCredential(token))
+	return FetchImageMetadataWithEndpoint(ref, m.registryEndpoint(ref), registryCredential(token))
 }
 
 // registryEndpoint returns the network coordinate the registry of `ref` is

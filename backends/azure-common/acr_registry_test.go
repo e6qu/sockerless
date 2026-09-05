@@ -254,7 +254,7 @@ func TestACRAuthProviderScopesTokenToTheOperation(t *testing.T) {
 		{"pull a repository", "team/app", []string{core.ActionPull}, "repository:team/app:pull"},
 		{"write a repository", "team/app", []string{core.ActionPull, core.ActionPush}, "repository:team/app:pull,push"},
 		{"remove from a repository", "team/app", []string{core.ActionPull, core.ActionDelete}, "repository:team/app:pull,delete"},
-		{"read a repository's tags", "team/app", []string{core.ActionMetadataRead}, "repository:team/app:metadata_read"},
+		{"read a repository's metadata through /acr/v1/", "team/app", []string{core.ActionMetadataRead}, "repository:team/app:metadata_read"},
 		{"the registry's catalog", "", nil, "registry:catalog:*"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -349,7 +349,10 @@ func TestACRRegistryRoundTrip(t *testing.T) {
 // core.OCIListImages.
 func listRepositoryTags(t *testing.T, provider *ACRAuthProvider, registry, repository string) map[string]bool {
 	t.Helper()
-	token, err := provider.GetToken(registry, repository, core.ActionMetadataRead)
+	// `/v2/<repo>/tags/list` is a read of the repository: the registry
+	// challenges for `pull`, the action every Docker Registry HTTP API v2
+	// client asks for before listing tags.
+	token, err := provider.GetToken(registry, repository, core.ActionPull)
 	if err != nil {
 		t.Fatalf("GetToken for tag listing: %v", err)
 	}

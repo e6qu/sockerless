@@ -103,10 +103,17 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	}, logger)
 	s.images = &core.ImageManager{
 		Base:   s.BaseServer,
-		Auth:   gcpcommon.NewARAuthProvider(s.ctx, logger, config.EndpointURL),
+		Auth:   gcpcommon.NewARAuthProvider(s.ctx, logger, config.ARRegistryEndpoint),
 		Logger: logger,
 	}
-	if svc, err := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", config.EndpointURL, logger); err == nil && svc != nil {
+	// The build service is nil when no build bucket is configured; a bucket
+	// that is configured but whose clients cannot be constructed is a startup
+	// defect, not a backend without a build service.
+	svc, err := gcpcommon.NewGCPBuildService(context.Background(), config.Project, config.BuildBucket, "", config.EndpointURL, config.ARRegistryEndpoint, logger)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Cloud Run backend: Cloud Build service could not be constructed")
+	}
+	if svc != nil {
 		s.images.BuildService = svc
 	}
 	s.SetSelf(s)

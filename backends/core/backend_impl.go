@@ -1238,9 +1238,16 @@ func (s *BaseServer) ExecInspect(id string) (*api.ExecInstance, error) {
 }
 
 // ImagePull pulls an image and stores it in the in-memory image store.
-// Fetches real registry metadata and fails if the registry can't be reached.
+// The registry metadata is fetched with the credential the client sent in
+// X-Registry-Auth (`auth`), so a private image the user logged in for is
+// read as that user; a registry that cannot be reached, or that refuses the
+// credential, fails the pull.
 func (s *BaseServer) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	meta, err := FetchImageMetadata(ref)
+	authorization, err := RegistryAuthorizationFromDockerAuth(auth)
+	if err != nil {
+		return nil, &api.InvalidParameterError{Message: err.Error()}
+	}
+	meta, err := FetchImageMetadata(ref, registryCredential(authorization))
 	if err != nil {
 		return nil, err
 	}

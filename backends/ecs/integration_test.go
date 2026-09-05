@@ -22,6 +22,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	core "github.com/sockerless/backend-core"
 )
 
 var dockerClient *client.Client
@@ -148,17 +149,22 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		}
 		cleanups = append(cleanups, func() { os.Remove(simBinary) })
 
-		simPort := findFreePort()
+		// Both of the simulator's ports come from one reservation, so the
+		// DNS listener cannot be handed the port just chosen for the API.
+		ports := core.NewPortReservation()
+		simPort := ports.TCP()
+		// The Amazon Route 53 resolver's DNS listener. Its default port is
+		// the one a host's own mDNS responder already owns, so the simulator
+		// is given a coordinate the operating system picked.
+		simDNSPort := ports.TCPAndUDP()
+		ports.Release()
 		simAddr := fmt.Sprintf(":%d", simPort)
 		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
 		fmt.Printf("[sim] Starting simulator-aws on %s...\n", simAddr)
 		simCmd := exec.Command(simBinary)
 		simCmd.Env = append(os.Environ(),
 			"SIM_LISTEN_ADDR="+simAddr,
-			// The Amazon Route 53 resolver's DNS listener. Its default port is
-			// the one a host's own mDNS responder already owns, so the
-			// simulator is given a coordinate the operating system picked.
-			fmt.Sprintf("SIM_DNS_PORT=%d", findFreeTCPUDPPort()),
+			fmt.Sprintf("SIM_DNS_PORT=%d", simDNSPort),
 			"PATH="+os.Getenv("PATH"),
 		)
 		simCmd.Stdout = os.Stderr
@@ -717,25 +723,4 @@ func filterBuildEnv(env []string, extra ...string) []string {
 		filtered = append(filtered, e)
 	}
 	return append(filtered, extra...)
-}
-
-// findFreeTCPUDPPort reserves a port that is free on both TCP and UDP. The AWS
-// simulator's Amazon Route 53 resolver binds its DNS listener on both, so a
-// port that is only free on one of them fails the simulator's startup.
-func findFreeTCPUDPPort() int {
-	for range 100 {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			panic(err)
-		}
-		port := l.Addr().(*net.TCPAddr).Port
-		u, uerr := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
-		l.Close()
-		if uerr != nil {
-			continue
-		}
-		u.Close()
-		return port
-	}
-	panic("no port free on both TCP and UDP after 100 attempts")
 }

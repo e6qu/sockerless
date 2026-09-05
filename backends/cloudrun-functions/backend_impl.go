@@ -69,7 +69,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 
 	// Resolve Docker Hub images to Artifact Registry remote repository URIs
-	config.Image = gcpcommon.ResolveGCPImageURI(config.Image, s.config.Project, s.config.Region, s.config.EndpointURL)
+	config.Image = gcpcommon.ResolveGCPImageURI(config.Image, s.config.Project, s.config.Region, s.config.ARRegistryEndpoint)
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
@@ -998,7 +998,7 @@ func (s *Server) ContainerUnpause(ref string) error {
 // the caller's auth — it was scoped to the original registry and is invalid for
 // AR; ImageManager.Pull's cloud-auth path mints an AR token via ARAuthProvider.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region, s.config.EndpointURL)
+	resolved := gcpcommon.ResolveGCPImageURI(ref, s.config.Project, s.config.Region, s.config.ARRegistryEndpoint)
 	if resolved == ref {
 		return s.images.Pull(resolved, auth)
 	}

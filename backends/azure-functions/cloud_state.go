@@ -38,8 +38,12 @@ func (p *azfCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, er
 	return core.OCIListImages(ctx, core.OCIListOptions{
 		Registry: registry,
 		Endpoint: core.RegistryEndpointFor(auth, registry),
+		// The Docker Registry HTTP API v2 tag listing is a read of the
+		// repository, which the registry challenges for as `pull`; the
+		// `metadata_read` action belongs to Azure Container Registry's own
+		// `/acr/v1/` metadata surface.
 		TokenFor: func(repo string) (string, error) {
-			return auth.GetToken(registry, repo, core.ActionMetadataRead)
+			return auth.GetToken(registry, repo, core.ActionPull)
 		},
 	})
 }

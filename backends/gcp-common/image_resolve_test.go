@@ -45,10 +45,24 @@ func TestResolveGCPImageURI_NoTag(t *testing.T) {
 	}
 }
 
-func TestResolveGCPImageURI_CustomEndpointKeepsCloudSemantics(t *testing.T) {
+// TestResolveGCPImageURI_RelocatedRegistry: a relocated registry coordinate
+// puts its host — never its scheme — into the reference the workload pulls,
+// so the same rewrite reaches the docker-hub remote repository at that
+// registry.
+func TestResolveGCPImageURI_RelocatedRegistry(t *testing.T) {
 	got := ResolveGCPImageURI("alpine:latest", "sim-project", "us-central1", "http://127.0.0.1:4567")
-	want := "us-central1-docker.pkg.dev/sim-project/docker-hub/library/alpine:latest"
+	want := "127.0.0.1:4567/sim-project/docker-hub/library/alpine:latest"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+	// A reference that already names a registry — the real host or a
+	// relocated one — is left alone.
+	for _, ref := range []string{
+		"us-central1-docker.pkg.dev/sim-project/sockerless-overlay/cloudrun:abc",
+		"gcr.io/sim-project/img:1",
+	} {
+		if got := ResolveGCPImageURI(ref, "sim-project", "us-central1", "http://127.0.0.1:4567"); got != ref {
+			t.Errorf("%s: rewritten to %q", ref, got)
+		}
 	}
 }

@@ -4,6 +4,87 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact history.
 
+## The registry checks credentials now, and so does every path that reaches it
+
+sockerless-cloud v0.30.3 made Google Artifact Registry's data plane refuse
+what the real one refuses: an anonymous `/v2/` request, a credential it did
+not issue, and a push into a repository nobody created. Building against that
+release (pinning `ui-auth` at the release commit too — its deleted `v0.1.0`
+bootstrap tag outranks every pseudo-version, so a stale pin had been
+building the new simulators against the old package) turned three filed
+defects into failures, and this branch closed them. The pin itself stays at
+v0.9.2: the CI run against v0.30.3 proved the provisioning — repositories
+created, the login accepted, the harness's pushes and the Cloud Build push of
+the overlay all succeeded — and then showed that release's own Cloud Run and
+Cloud Functions hosts pulling the workload image with no credential from the
+registry they now enforce (BUG-2951), which no harness can supply for them.
+
+The Artifact Registry coordinate had been two settings that agreed by
+accident: the auth provider took the Google Cloud API endpoint, while the
+overlay host, the tag probe, and the resolver each read
+`SOCKERLESS_GCP_AR_ENDPOINT` from the environment on their own, and the probe
+defaulted a bare `127.0.0.1:<port>` to `https://`, failed, and reported the
+failure as a cache miss — a silent Cloud Build on every overlay start. Both
+Google backends now read the coordinate once into `Config.ARRegistryEndpoint`
+and pass it everywhere: `gcpcommon.OverlayRegistryHost` names the host
+references carry, `gcpcommon.RegistryEndpointURL` the URL registry HTTP is
+dialed at, `IsRelocatedRegistry` lets the auth provider recognise the
+relocated host as its own registry, and `CheckTagExists` answers
+`(bool, error)` with only 200 and 404 as answers. A Cloud Build service that
+cannot be constructed fails the backend at startup instead of vanishing.
+
+The shared `BaseServer.ImagePull` had fetched metadata anonymously with an
+`auth` parameter it ignored, `ImageManager.Pull` passed the client's
+credential nowhere for a registry that is not the backend's own, and
+`ImagePushToEndpoint` passed it verbatim as if it were a token. One decoder,
+`core.RegistryAuthorizationFromDockerAuth`, turns the Engine API `AuthConfig`
+in `X-Registry-Auth` into the `Authorization` value the registry accepts —
+username and password to a Basic credential presented to the token service
+the way the Docker CLI presents it, `registrytoken` to the registry's Bearer,
+`identitytoken` refused rather than downgraded, a minted cloud token passed
+through — and a registry that challenges with `Basic` gets the credential
+directly. A core test runs a TLS registry with a token service and a
+Basic-only repository and pulls a private image with the client's credential
+after the anonymous pull fails.
+
+The Cloud Run and Cloud Run Functions harnesses had pushed with no login into
+repositories that did not exist. They now provision the way Terraform and the
+operator do against the real service, through `gcp-common/registrytest`: the
+service-account key first, an access token minted from it by the JWT-bearer
+grant at the key's own `token_uri`, the `docker-hub` and `sockerless-overlay`
+repositories through the Artifact Registry API, and `docker login -u
+oauth2accesstoken --password-stdin` — in a Docker configuration directory of
+the harness's own that the simulator process inherits, because its Cloud
+Build executor and its Cloud Run host push and pull with the simulator's
+Docker CLI the way a Cloud Build worker and the Cloud Run service agent carry
+the project's registry credential. The backend's coordinate carries its
+scheme, and the smoke, GitLab, e2e, and `make stack-*` simulator stacks export
+it — the one registry coordinate now decides where registry HTTP is dialed,
+where before the API endpoint had quietly doubled as it. The Terraform
+modules for both Google backends gained the `sockerless-overlay` repository
+the overlay path pushes to and the `gitlab-registry` remote repository the
+resolver names; neither existed for a live deployment before.
+
+The same run surfaced two smaller defects. The Azure backends had listed
+repository tags for `docker images` with `metadata_read`, an action of Azure
+Container Registry's own `/acr/v1/` surface; a `GET /v2/<repo>/tags/list` is a
+read of the repository the registry challenges for as `pull`, and both
+backends and the round trip now ask for that. And the `make tf-int-test-*` targets
+could not run at all — the image was built without `--load`, the entrypoint
+was handed a flag it does not take, and no Docker socket was mounted. With
+the registry coordinate alone deciding where registry HTTP is dialed, the CI
+smoke container also had to change shape: its simulator serves the registry
+at its own loopback address, and the host daemon that runs the workloads
+must share that loopback to pull from it, so the smoke and Terraform harness
+containers run with `--network host`, the topology the Linux integration
+harness already has. The Terraform harness then reaches Terragrunt apply and
+fails there: it provisions no credential the simulators verify, which no CI
+job had noticed (BUG-2955). And an e2e run lost a port race the harnesses
+had always been able to lose — each port probed and released before the
+next, so the simulator's DNS listener was handed the port just chosen for
+the backend; `core.PortReservation` now holds every port of a harness until
+the whole set is chosen.
+
 ## One implementation per Docker behaviour across the six cloud backends
 
 The six cloud backends and the three per-cloud common modules had grown by

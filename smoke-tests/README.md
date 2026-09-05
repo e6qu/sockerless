@@ -21,7 +21,7 @@ The shared test script baked into every `Dockerfile.*` image as the entrypoint. 
 
 Two behaviours worth knowing:
 
-- The simulators execute workloads on the **host Docker daemon** (the socket is mounted in), so the script first pulls `alpine:latest` on the host daemon as well as through the backend.
+- The simulators execute workloads on the **host Docker daemon** (the socket is mounted in), so the script first pulls `alpine:latest` on the host daemon as well as through the backend. The smoke container runs with `--network host`: the simulator serves its registry (`/v2/`) at its own loopback address and the backend names it through the registry coordinate (`SOCKERLESS_GCP_AR_ENDPOINT`), so the daemon that pulls the workload image must share that loopback — a container on its own bridge network would put `127.0.0.1:4567` out of the daemon's reach.
 - The `docker run --rm` attach-path test only runs for ECS — Cloud Run and ACA have no container-level attach primitive.
 
 ## Dockerfile variants

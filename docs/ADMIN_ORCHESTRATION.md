@@ -23,6 +23,7 @@ projects:
           port: 3376, sim: gcp-sim,
           config:
             SOCKERLESS_GCR_PROJECT: sim-project
+            SOCKERLESS_GCP_AR_ENDPOINT: http://localhost:4567
             SOCKERLESS_GCP_LOGADMIN_ENDPOINT: localhost:4568 }
 
 ports:
@@ -107,8 +108,8 @@ The legacy `make stack-aws-ecs` / `stack-gcp-cloudrun` / etc. now compose `rebui
 |---|---|
 | ACA | `SOCKERLESS_ACA_SUBSCRIPTION_ID`, `SOCKERLESS_ACA_RESOURCE_GROUP`, `SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE`, `SOCKERLESS_CALLBACK_URL` |
 | AZF | `SOCKERLESS_AZF_SUBSCRIPTION_ID`, `SOCKERLESS_AZF_RESOURCE_GROUP`, `SOCKERLESS_AZF_STORAGE_ACCOUNT`, `SOCKERLESS_CALLBACK_URL` |
-| Cloud Run | `SOCKERLESS_GCR_PROJECT`, `SOCKERLESS_GCP_LOGADMIN_ENDPOINT` |
-| GCF | `SOCKERLESS_GCF_PROJECT` |
+| Cloud Run | `SOCKERLESS_GCR_PROJECT`, `SOCKERLESS_GCP_AR_ENDPOINT` (the simulator's own address — it serves Artifact Registry's `/v2/`), `SOCKERLESS_GCP_LOGADMIN_ENDPOINT` |
+| GCF | `SOCKERLESS_GCF_PROJECT`, `SOCKERLESS_GCP_AR_ENDPOINT` |
 | Lambda | `SOCKERLESS_LAMBDA_ROLE_ARN`, `SOCKERLESS_CALLBACK_URL` |
 
 These are the same component env vars an operator would pass by hand; the stack target just makes the local simulator shortcut runnable without hand-authoring an env file first.
