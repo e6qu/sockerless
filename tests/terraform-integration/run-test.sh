@@ -282,7 +282,7 @@ callback_host() {
 }
 
 # Common: simulator endpoint
-export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:$SIM_PORT"
+export SOCKERLESS_ENDPOINT_URL="$SIM_SCHEME://127.0.0.1:$SIM_PORT"
 
 case "$BACKEND" in
     ecs)
