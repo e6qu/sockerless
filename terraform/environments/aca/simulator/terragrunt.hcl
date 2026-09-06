@@ -29,14 +29,16 @@ provider "azurerm" {
   # Point at the local Azure simulator.
   # The simulator must run with TLS (SIM_TLS_CERT/SIM_TLS_KEY).
   # Set ARM_METADATA_HOST=localhost:4568 and SSL_CERT_FILE to the CA cert.
-  skip_provider_registration = true
+  resource_provider_registrations = "none"
   use_cli                    = false
   use_msi                    = false
 
-  tenant_id       = "00000000-0000-0000-0000-000000000000"
-  subscription_id = "00000000-0000-0000-0000-000000000000"
-  client_id       = "00000000-0000-0000-0000-000000000000"
-  client_secret   = "test"
+  # The simulator's bootstrap application registration and tenant — the
+  # client credential every Azure client of the simulator presents.
+  tenant_id       = "11111111-1111-1111-1111-111111111111"
+  subscription_id = "00000000-0000-0000-0000-000000000001"
+  client_id       = "test-client-id"
+  client_secret   = "test-client-secret"
 }
 EOF
 }

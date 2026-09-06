@@ -76,10 +76,11 @@ func (s *Server) invokeFunction(ctx context.Context, audienceURL string, argv []
 	var body []byte
 	if len(argv) > 0 {
 		body, err = json.Marshal(envelope.NewRequest(envelope.Exec{
-			Argv:    argv,
-			Workdir: workdir,
-			Env:     env,
-			Stdin:   envelope.EncodeStdin(stdin),
+			Argv:     argv,
+			Workdir:  workdir,
+			Env:      env,
+			Stdin:    envelope.EncodeStdin(stdin),
+			Workload: true,
 		}))
 		if err != nil {
 			return nil, fmt.Errorf("marshal exec envelope: %w", err)

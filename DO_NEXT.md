@@ -4,21 +4,30 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Next
 
-The branch `bump-sockerless-cloud-v0.30.3-registry-fixes` closed the three
-registry defects that sockerless-cloud v0.30.3 — the release whose Google
-Artifact Registry data plane authenticates every `/v2/` request and requires
-the repository to exist — made real: the split Artifact Registry coordinate
-(BUG-2946), the anonymous metadata fetch in the shared `ImagePull`
-(BUG-2944), and the Google harnesses that pushed anonymously into
-repositories they never created (BUG-2943). The pin itself stays at v0.9.2:
-against v0.30.3 the harness provisioning worked end to end, but that release's
-own Cloud Run and Cloud Functions hosts pull workload images with no
-credential from the registry they now enforce (BUG-2951), and its Azure
-Container Apps file-share mount fails the shared-volume writer (BUG-2952).
+The branch `tf-int-harness-credentials` made the Terraform integration
+harness run every environment against its simulator in CI, and its cells
+found four defects the other harnesses had never reached — the reverse-agent
+`docker cp` destination (BUG-2959), the Amazon ECS `docker exec` exit status
+(BUG-2960), the working directory of a Cloud Run pod Service before its
+workload runs (BUG-2961) and an ECS exec whose working directory is missing
+(BUG-2962) — plus the simulator's dropped ECS `workingDirectory`
+(sockerless-cloud BUG-2981) — and, at v0.30.7, three more: Cloud Build's
+and Azure Container Registry Tasks' docker steps pulling and pushing
+anonymously and a bucket without its default IAM bindings (sockerless-cloud
+BUG-2983, 2985, 2984). The pin moved from v0.9.2 to v0.30.8, which carries
+all of those plus the Cloud Run and Cloud Functions hosts pulling as the
+project's service agent (BUG-2951), the owner-aware subnet reclaim
+(BUG-2950) and Azure Container Registry's `GET /v2/_catalog` (BUG-2945).
 When the branch merges:
 
-- Watch its CI run; every harness runs against v0.9.2 with the coordinate
-  and credential changes.
+- Watch its CI run; every harness runs against v0.30.8, and the
+  `terraform-integration` job applies each Terraform environment against its
+  simulator — a red cell there is a module or harness defect, not a flake.
+  The Google and Azure cells wait on the sockerless-cloud release after
+  v0.30.8: the build services' docker configuration names its registries
+  for the legacy builder (sockerless-cloud BUG-2987) and the Azure workload
+  hosts pull with the credential the workload declares (BUG-2986); bump the
+  pin to that release the moment it is complete.
 - Keep the coordinate rule: a backend reads a registry coordinate once into
   its `Config` and every registry operation takes it from there; no helper
   reads `SOCKERLESS_*_ENDPOINT` from the environment on its own. Every
@@ -26,29 +35,17 @@ When the branch merges:
   `SOCKERLESS_GCP_AR_ENDPOINT` pointing at the simulator, scheme included.
 
 Simulator-side work, in sockerless-cloud (one open pull request there at a
-time; another agent's is open now):
+time):
 
-- BUG-2951: the Cloud Run and Cloud Functions hosts pull with the
-  credential the simulator's own token service issues for the project's
-  service agent, passed as the Docker SDK's `RegistryAuth`.
-- BUG-2952: the Azure Container Apps file-share mount at v0.30.3.
-- BUG-2950: `reclaimOrphanedSubnet` removes only networks of a dead run.
-- BUG-2945: serve `GET /v2/_catalog` on the Azure simulator.
-
-Then bump the pin here — `tests/go.mod` (the three simulators and `ui-auth`
-at the release commit; the deleted `v0.1.0` bootstrap tag outranks every
-pseudo-version, so a `ui-auth` pin left at `v0.1.0` builds the new
-simulators against the old package), the `ARG SOCKERLESS_CLOUD_VERSION`
-defaults across the harness Dockerfiles, the `context:` tag in
-`deploy/compose.build.yaml`, and the pinned ref in
-`.github/workflows/live-tests-lambda.yml` — and read `docker images` through
-`core.OCIListImages` in the Azure Container Registry round trip.
+- BUG-2952: retest the Azure Container Apps file-share mount at v0.30.8.
+- BUG-2945: read `docker images` through `core.OCIListImages` in the Azure
+  round trip now that the catalog is served.
+- BUG-2957: the Lambda host pulls its image from the simulator's own ECR
+  instead of resolving a pull-through-cache reference to a local name; then
+  the Lambda cell rejoins the `terraform-integration` matrix.
 
 Remaining local items:
 
-- BUG-2955: the Terraform integration harness provisions no credential the
-  simulators accept; mint one through each simulator's IAM API the way the
-  backend harnesses do, then give it a CI job.
 - BUG-2922 (Docker Engine advisories → moby/moby client migration) is the
   largest open local item, scoped to the Docker passthrough backend.
 - BUG-2925 (the UI CI stall) stays open until its cause is proven.
@@ -58,8 +55,8 @@ Remaining local items:
 
 Simulator pins: sockerless-cloud releases with exactly one `vX.Y.Z` tag
 (release-please); Go pins reference release commits (pseudo-versions) and
-checkout/git-context pins reference the tag. v0.9.2 (commit
-`723736a8a233e0f3ccb3d6ce0c209a94bfc9afc2`) is the current pin everywhere.
+checkout/git-context pins reference the tag. v0.30.8 (commit
+`0904c6aaf3a9590df97cb0474adf66d2b245f25a`) is the current pin everywhere.
 Verify a release with sockerless-cloud's
 `scripts/verify-release-complete.sh <tag>` before pinning it, and bump every
 pin in one PR.

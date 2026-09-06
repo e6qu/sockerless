@@ -252,12 +252,12 @@ TF_INT_IMAGE := sockerless-tf-int
 tf-int-build:
 	docker build --load -t $(TF_INT_IMAGE) -f tests/terraform-integration/Dockerfile .
 
-tf-int-test-ecs: tf-int-build       ; docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) ecs
-tf-int-test-lambda: tf-int-build    ; docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) lambda
-tf-int-test-cloudrun: tf-int-build  ; docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) cloudrun
-tf-int-test-gcf: tf-int-build       ; docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) gcf
-tf-int-test-aca: tf-int-build       ; docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) aca
-tf-int-test-azf: tf-int-build       ; docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) azf
+tf-int-test-ecs: tf-int-build       ; docker run --rm --network host --pid host --privileged --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) ecs
+tf-int-test-lambda: tf-int-build    ; docker run --rm --network host --pid host --privileged --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) lambda
+tf-int-test-cloudrun: tf-int-build  ; docker run --rm --network host --pid host --privileged --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) cloudrun
+tf-int-test-gcf: tf-int-build       ; docker run --rm --network host --pid host --privileged --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) gcf
+tf-int-test-aca: tf-int-build       ; docker run --rm --network host --pid host --privileged --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) aca
+tf-int-test-azf: tf-int-build       ; docker run --rm --network host --pid host --privileged --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock $(TF_INT_IMAGE) azf
 tf-int-test-aws:   tf-int-test-ecs tf-int-test-lambda
 tf-int-test-gcp:   tf-int-test-cloudrun tf-int-test-gcf
 tf-int-test-azure: tf-int-test-aca tf-int-test-azf

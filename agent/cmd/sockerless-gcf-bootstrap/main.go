@@ -150,6 +150,14 @@ var persistVols []persistVolume
 var syncMounts map[string]string
 
 func main() {
+	// Docker creates a container's configured working directory when the
+	// container is created, before any exec runs in it; the bootstrap does
+	// the same at startup, so an exec that names that directory runs
+	// whether or not the workload has started (a pod Service is only
+	// warmed for docker exec until stdin arrives).
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		agent.EnsureWorkdir(wd)
+	}
 	// Same shape as cloudrun bootstrap — emit to BOTH stdout and stderr
 	// at the very top of main() so Cloud Logging captures the binary's
 	// first instruction even if one stream is lost. Sidecar mode
@@ -457,7 +465,7 @@ func runDefaultInvoke(w http.ResponseWriter) {
 	cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
 	cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 
 	timeout := jobTimeoutFromEnv()
@@ -555,6 +563,9 @@ func runExecEnvelope(w http.ResponseWriter, env envelope.Exec) {
 	cmd := exec.Command("/bin/sh", "-c", shellLine) //nolint:gosec // argv operator-controlled
 	if env.Workdir != "" {
 		cmd.Dir = env.Workdir
+		if env.Workload {
+			agent.EnsureWorkdir(env.Workdir)
+		}
 	}
 	if len(env.Env) > 0 {
 		cmd.Env = append(append([]string{}, os.Environ()...), env.Env...)
@@ -935,7 +946,7 @@ func runSidecar() {
 	}
 	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // operator-controlled argv
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -43,7 +43,7 @@ func (s *Server) runViaSSMOrNotImpl(containerID, cmd string, stdin []byte) (stdo
 	if taskARN == "" {
 		return nil, nil, -1, &api.NotImplementedError{Message: "ECS operation requires a running task; container has no active execution"}
 	}
-	wrapped := "sh -c " + shellQuote(cmd+`; printf "__SOCKEXIT:%d:__" $?`)
+	wrapped := "sh -c " + shellQuote(cmd+ssmExitMarkerCommand)
 	out, errOut, _, err := s.RunCommandViaSSM(taskARN, wrapped, stdin)
 	if err != nil {
 		return nil, nil, -1, &api.ServerError{Message: fmt.Sprintf("SSM exec: %v", err)}
@@ -61,14 +61,12 @@ func (s *Server) runViaSSMOrNotImpl(containerID, cmd string, stdin []byte) (stdo
 // crashed before the wrapping printf ran — caller treats as an SSM
 // error rather than masking exit=0).
 func extractSSMExitMarker(out []byte) ([]byte, int, bool) {
-	const prefix = "__SOCKEXIT:"
-	const suffix = ":__"
-	idx := strings.LastIndex(string(out), prefix)
+	idx := strings.LastIndex(string(out), ssmExitMarkerPrefix)
 	if idx < 0 {
 		return out, 0, false
 	}
-	rest := string(out[idx+len(prefix):])
-	end := strings.Index(rest, suffix)
+	rest := string(out[idx+len(ssmExitMarkerPrefix):])
+	end := strings.Index(rest, ssmExitMarkerSuffix)
 	if end < 0 {
 		return out, 0, false
 	}

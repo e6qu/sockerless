@@ -218,6 +218,16 @@ resource "azurerm_storage_share" "this" {
 }
 
 # ---------------------------------------------------------------------------
+# Build-context container — the backend uploads an overlay image's build
+# context here and Azure Container Registry Tasks builds from it
+# ---------------------------------------------------------------------------
+resource "azurerm_storage_container" "build_context" {
+  name                  = "build-context"
+  storage_account_id    = azurerm_storage_account.this.id
+  container_access_type = "private"
+}
+
+# ---------------------------------------------------------------------------
 # Azure Container Registry
 # ---------------------------------------------------------------------------
 resource "azurerm_container_registry" "this" {

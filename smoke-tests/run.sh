@@ -92,6 +92,41 @@ aws_sigv4_post() {
         -d "$payload"
 }
 
+# The Google project and the Artifact Registry repositories the backend works
+# in — `docker-hub`, which the registry serves Docker Hub's images through,
+# and `sockerless-overlay`, which the overlay build pushes into — exist before
+# the backend starts, created through the Cloud Resource Manager and Artifact
+# Registry APIs the way an operator creates them, with an access token the
+# simulator's OAuth 2.0 token endpoint issued for the JWT-bearer grant. A
+# resource that already exists is the state asked for.
+provision_google_project() {
+    local endpoint="$1" project="$2" location="$3" token status repo
+    token=$(curl -sf -X POST "$endpoint/token" \
+        --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+        | sed -n 's/.*"access_token" *: *"\([^"]*\)".*/\1/p')
+    if [ -z "$token" ]; then
+        echo "ERROR: the simulator's token endpoint issued no access token" >&2
+        exit 1
+    fi
+    status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$endpoint/v1/projects" \
+        -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+        -d "{\"projectId\":\"$project\",\"name\":\"$project\"}")
+    case "$status" in
+        200|409) ;;
+        *) echo "ERROR: create project $project: HTTP $status" >&2; exit 1 ;;
+    esac
+    for repo in docker-hub sockerless-overlay; do
+        status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            "$endpoint/v1/projects/$project/locations/$location/repositories?repositoryId=$repo" \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            -d '{"format":"DOCKER"}')
+        case "$status" in
+            200|409) ;;
+            *) echo "ERROR: create repository $repo in $project: HTTP $status" >&2; exit 1 ;;
+        esac
+    done
+}
+
 callback_host() {
     if [ -n "${SOCKERLESS_SMOKE_CALLBACK_HOST:-}" ]; then
         printf '%s\n' "$SOCKERLESS_SMOKE_CALLBACK_HOST"
@@ -136,6 +171,7 @@ case "$BACKEND_TYPE" in
         export SOCKERLESS_GCP_AR_ENDPOINT="http://127.0.0.1:4567"
         export SOCKERLESS_GCP_LOGADMIN_ENDPOINT="127.0.0.1:4568"
         export SOCKERLESS_GCR_PROJECT="sim-project"
+        provision_google_project "http://127.0.0.1:4567" "$SOCKERLESS_GCR_PROJECT" us-central1
         SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/cloudrun/reverse"
         export SOCKERLESS_CALLBACK_URL
         BACKEND_BIN="/usr/local/bin/sockerless-backend-cloudrun"

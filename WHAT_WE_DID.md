@@ -77,9 +77,73 @@ smoke container also had to change shape: its simulator serves the registry
 at its own loopback address, and the host daemon that runs the workloads
 must share that loopback to pull from it, so the smoke and Terraform harness
 containers run with `--network host`, the topology the Linux integration
-harness already has. The Terraform harness then reaches Terragrunt apply and
-fails there: it provisions no credential the simulators verify, which no CI
-job had noticed (BUG-2955). And an e2e run lost a port race the harnesses
+harness already has. The Terraform harness then reached Terragrunt apply and
+failed there, and the repair kept going: the provider's token minted from the
+simulator's own token endpoint and handed over as the provider's
+`GOOGLE_OAUTH_ACCESS_TOKEN`, the project created through the Cloud Resource
+Manager API, every client of the provider routed at the simulator (the IAM
+beta client `google_service_account` speaks through had reached the real
+service), every coordinate the backends require exported from the outputs and
+the host, the Lambda environment standing alone instead of reading the live
+ECS environment's state from a real bucket, and an image that carries `act`,
+the Docker and AWS CLIs and the bootstrap binaries with a workflow to run.
+Amazon ECS runs end to end on this host; a `terraform-integration` CI job now
+applies every environment, so the harness cannot decay unseen again
+(BUG-2955). Its Google cells found a bootstrap defect no other harness had:
+act starts its job container in a working directory the image does not
+hold, Docker creates such a directory at start, and the bootstraps did not,
+so the workload died at `chdir` and every exec after it was refused. The
+bootstraps now create it (BUG-2958). The same cells then found that the
+reverse-agent `docker cp` into a container required the destination to
+exist, where Docker and the ECS SSM path create it; act copies into
+`/var/run/act/` unprepared, and the put-archive exec now runs `mkdir -p`
+first (BUG-2959). With that in place act ran its step, and the harness
+showed the ECS cell had been green on a falsehood: `docker exec` on Amazon
+ECS reported exit 0 whatever the command returned, because the ExecuteCommand
+stream decoder ended the session without recording a status. A non-TTY exec
+now prints the exit marker the one-shot SSM path already used and the decoder
+strips it before the client sees it; a TTY exec takes the session's
+exit-code frame (BUG-2960). The same run showed act starts every step with
+`bash` on a platform image, so the smoke workflow names `sh`, the shell
+alpine has, and that the pinned simulator drops an ECS container definition's
+`workingDirectory` — fixed in sockerless-cloud, so the ECS cell passes again
+once the pin carries it. The Cloud Run cell then showed the other side of
+the same directory: a pod Service is only warmed for `docker exec` until
+stdin arrives, so nothing had created the container's working directory
+when act exec'd into it; every bootstrap now creates it at startup, as
+Docker does at container creation (BUG-2961). The ECS cell had stayed green
+through the simulator's missing directory because its exec script let a
+failed `cd` fall through to the command; the script now fails the exec
+with status 126 as Docker does, so that cell is red until the pin carries
+the simulator fix (BUG-2962). sockerless-cloud shipped that fix in v0.30.7,
+and the Cloud Build, Azure Container Registry Tasks and bucket-policy fixes
+the v0.30.7 cells found in v0.30.8, where the pin moved from v0.9.2 — the release also carries the Google
+hosts pulling as the service agent, the owner-aware subnet reclaim and the
+Azure v2 catalog. The Azure cells, back in the matrix at that pin, found the
+harness had given their backends no credential; it now exports the
+managed-identity coordinate the platform injects, at the scheme the
+simulator serves (BUG-2963). The same pin showed the Cloud Run smoke stacks
+had never created the Artifact Registry repositories the backend works in
+(BUG-2965) and that an ECS container definition carried no stop grace, so a
+stop waited ECS's thirty seconds where Docker waits ten (BUG-2964), that the
+harness ran Azure Container Apps containers as plain Jobs, which carry no
+bootstrap for act to exec into, where the runbook prescribes the Container
+Apps mode (BUG-2966), and that the public
+mirror throttles five cells pulling at once, which the harness now waits
+out (BUG-2967). The Azure modules provision the build-context container an
+overlay build needs and the harness passes its coordinates, the registry
+endpoint among them (BUG-2968); and the Azure Functions backend takes a
+registry's name from its login server's first label rather than by
+stripping one domain (BUG-2969). The console browser jobs give Playwright's
+web server the minutes a cold compile of a newly pinned simulator takes
+(BUG-2970). At v0.30.8 the Azure cells reached the pull and showed the
+backends had declared no identity and no registry credential on the
+resources they create, so the platform pulled anonymously; a Container
+App, a Job and a Function App now run with the user-assigned identity the
+modules grant AcrPull and declare it for the overlay registry (BUG-2971), a
+Functions start reports a failed invocation at once instead of waiting the
+bootstrap timeout (BUG-2972), and the harness's failure diagnostics, which
+`set -e` had always skipped, run (BUG-2973). And an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until

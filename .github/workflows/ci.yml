@@ -244,7 +244,11 @@ jobs:
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Run tests
-        run: cd tests && go test -v -timeout 5m ./...
+        # A stop on the Amazon ECS simulator now waits the container's
+        # ten-second grace, as it does on Docker and ECS, so the suite runs
+        # longer than the two and a half minutes it took when the simulator
+        # stopped a task at once.
+        run: cd tests && go test -v -timeout 10m ./...
 
   ui:
     runs-on: ubuntu-latest
@@ -458,6 +462,27 @@ jobs:
           docker build -t smoke-aca -f smoke-tests/Dockerfile.aca .
           docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-aca
         timeout-minutes: 5
+
+  # terraform-integration: applies a deployable Terraform environment against
+  # its simulator with the credential the harness mints, starts the backend on
+  # the outputs, and runs the act smoke workflow through it — the Terraform
+  # modules' apply against the simulators is proven nowhere else.
+  terraform-integration:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The Lambda cell returns when the simulator's Lambda host pulls
+        # its image from the simulator's own ECR, where the pull-through cache
+        # serves it, instead of resolving the cached reference to a local
+        # name the engine does not hold.
+        backend: [ecs, cloudrun, gcf, aca, azf]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Terraform integration (${{ matrix.backend }})
+        run: make tf-int-test-${{ matrix.backend }}
+        timeout-minutes: 14
 
   terraform:
     runs-on: ubuntu-latest

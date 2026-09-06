@@ -201,5 +201,15 @@ func (s *Server) ctx() context.Context {
 func azfACRName(registry string) string {
 	registry = strings.TrimPrefix(registry, "https://")
 	registry = strings.TrimPrefix(registry, "http://")
-	return strings.TrimSuffix(registry, ".azurecr.io")
+	registry = strings.TrimSuffix(registry, "/")
+	// A registry's login server is its name followed by the cloud's
+	// registry domain — `<name>.azurecr.io`, a sovereign cloud's suffix, or
+	// a data endpoint under it — so the name is the host's first label.
+	if name, _, found := strings.Cut(registry, "."); found {
+		return name
+	}
+	if name, _, found := strings.Cut(registry, ":"); found {
+		return name
+	}
+	return registry
 }

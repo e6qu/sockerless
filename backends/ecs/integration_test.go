@@ -515,6 +515,43 @@ func TestECSContainerExec(t *testing.T) {
 	if !strings.Contains(string(output), "exec-output") {
 		t.Errorf("expected exec output to contain 'exec-output', got %q", string(output))
 	}
+	if strings.Contains(string(output), "__SOCKEXIT") {
+		t.Errorf("exit marker reached the client: %q", string(output))
+	}
+	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		t.Fatalf("exec inspect failed: %v", err)
+	}
+	if inspect.Running || inspect.ExitCode != 0 {
+		t.Errorf("echo exec: running=%v exit=%d, want finished with 0", inspect.Running, inspect.ExitCode)
+	}
+
+	// A failing command's status must reach ExecInspect, as it does on
+	// Docker: CI runners decide a step's outcome from it.
+	failing, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+		Cmd:          []string{"sh", "-c", "echo before-failure; exit 7"},
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		t.Fatalf("exec create failed: %v", err)
+	}
+	hijacked, err = dockerClient.ContainerExecAttach(ctx, failing.ID, container.ExecStartOptions{})
+	if err != nil {
+		t.Fatalf("exec start failed: %v", err)
+	}
+	output, _ = io.ReadAll(hijacked.Reader)
+	hijacked.Close()
+	if !strings.Contains(string(output), "before-failure") || strings.Contains(string(output), "__SOCKEXIT") {
+		t.Errorf("failing exec output %q", string(output))
+	}
+	inspect, err = dockerClient.ContainerExecInspect(ctx, failing.ID)
+	if err != nil {
+		t.Fatalf("exec inspect failed: %v", err)
+	}
+	if inspect.Running || inspect.ExitCode != 7 {
+		t.Errorf("failing exec: running=%v exit=%d, want finished with 7", inspect.Running, inspect.ExitCode)
+	}
 
 	// Stop container
 	timeout := 5

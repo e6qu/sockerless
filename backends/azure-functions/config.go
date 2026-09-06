@@ -28,11 +28,18 @@ type Config struct {
 	// Set via SOCKERLESS_AZF_ATTACH_TIMEOUT_SEC.
 	AttachTimeout         int
 	LogAnalyticsWorkspace string
-	BuildStorageAccount   string        // Storage account for ACR build context
-	BuildContainer        string        // Blob container for ACR build context
-	BuildPlatform         string        // Docker build platform for overlay images
-	EndpointURL           string        // Custom endpoint URL
-	PollInterval          time.Duration // Cloud API poll interval (default 2s)
+	BuildStorageAccount   string // Storage account for ACR build context
+	BuildContainer        string // Blob container for ACR build context
+	// ManagedIdentityID and ManagedIdentityClientID name the user-assigned
+	// identity a Function App runs with and pulls its image from the
+	// registry as — the resource ID the site's identity block carries and
+	// the client ID its site config names; empty means the platform pulls
+	// with no identity.
+	ManagedIdentityID       string
+	ManagedIdentityClientID string
+	BuildPlatform           string        // Docker build platform for overlay images
+	EndpointURL             string        // Custom endpoint URL
+	PollInterval            time.Duration // Cloud API poll interval (default 2s)
 
 	// CallbackURL is the reverse-agent WebSocket URL injected into the
 	// function app container env so a bootstrap inside can dial back
@@ -101,28 +108,30 @@ type Config struct {
 func ConfigFromEnv() Config {
 	sharedVolumes, sharedVolumesErr := core.ParseSharedVolumes(os.Getenv("SOCKERLESS_AZF_SHARED_VOLUMES"), azurecommon.SharedVolumeFormat)
 	return Config{
-		SubscriptionID:        os.Getenv("SOCKERLESS_AZF_SUBSCRIPTION_ID"),
-		ResourceGroup:         os.Getenv("SOCKERLESS_AZF_RESOURCE_GROUP"),
-		Location:              core.EnvOrDefault("SOCKERLESS_AZF_LOCATION", "eastus"),
-		StorageAccount:        os.Getenv("SOCKERLESS_AZF_STORAGE_ACCOUNT"),
-		Registry:              os.Getenv("SOCKERLESS_AZF_REGISTRY"),
-		AppServicePlan:        os.Getenv("SOCKERLESS_AZF_APP_SERVICE_PLAN"),
-		Timeout:               core.EnvOrDefaultInt("SOCKERLESS_AZF_TIMEOUT", 600),
-		AttachTimeout:         core.EnvOrDefaultInt("SOCKERLESS_AZF_ATTACH_TIMEOUT_SEC", core.EnvOrDefaultInt("SOCKERLESS_AZF_TIMEOUT", 600)),
-		LogAnalyticsWorkspace: os.Getenv("SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE"),
-		BuildStorageAccount:   os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
-		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
-		BuildPlatform:         core.EnvOrDefault("SOCKERLESS_AZURE_BUILD_PLATFORM", "linux/amd64"),
-		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
-		PollInterval:          core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
-		BootstrapBinaryPath:   os.Getenv("SOCKERLESS_AZF_BOOTSTRAP"),
-		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
-		NetworkDiscovery:      core.NetworkDiscoveryFromEnv("SOCKERLESS_AZF_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly),
-		Access:                core.AccessFromEnv("SOCKERLESS_AZF_ACCESS", api.AccessMechanismNoneInternal),
-		AccessPrincipal:       os.Getenv("SOCKERLESS_AZF_ACCESS_PRINCIPAL"),
-		SharedVolumes:         sharedVolumes,
-		sharedVolumesErr:      sharedVolumesErr,
+		SubscriptionID:          os.Getenv("SOCKERLESS_AZF_SUBSCRIPTION_ID"),
+		ResourceGroup:           os.Getenv("SOCKERLESS_AZF_RESOURCE_GROUP"),
+		Location:                core.EnvOrDefault("SOCKERLESS_AZF_LOCATION", "eastus"),
+		StorageAccount:          os.Getenv("SOCKERLESS_AZF_STORAGE_ACCOUNT"),
+		Registry:                os.Getenv("SOCKERLESS_AZF_REGISTRY"),
+		AppServicePlan:          os.Getenv("SOCKERLESS_AZF_APP_SERVICE_PLAN"),
+		Timeout:                 core.EnvOrDefaultInt("SOCKERLESS_AZF_TIMEOUT", 600),
+		AttachTimeout:           core.EnvOrDefaultInt("SOCKERLESS_AZF_ATTACH_TIMEOUT_SEC", core.EnvOrDefaultInt("SOCKERLESS_AZF_TIMEOUT", 600)),
+		LogAnalyticsWorkspace:   os.Getenv("SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE"),
+		BuildStorageAccount:     os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
+		BuildContainer:          os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
+		ManagedIdentityID:       os.Getenv("SOCKERLESS_AZF_MANAGED_IDENTITY_ID"),
+		ManagedIdentityClientID: os.Getenv("SOCKERLESS_AZF_MANAGED_IDENTITY_CLIENT_ID"),
+		BuildPlatform:           core.EnvOrDefault("SOCKERLESS_AZURE_BUILD_PLATFORM", "linux/amd64"),
+		EndpointURL:             os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		PollInterval:            core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		CallbackURL:             os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		BootstrapBinaryPath:     os.Getenv("SOCKERLESS_AZF_BOOTSTRAP"),
+		EnableCommit:            os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
+		NetworkDiscovery:        core.NetworkDiscoveryFromEnv("SOCKERLESS_AZF_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly),
+		Access:                  core.AccessFromEnv("SOCKERLESS_AZF_ACCESS", api.AccessMechanismNoneInternal),
+		AccessPrincipal:         os.Getenv("SOCKERLESS_AZF_ACCESS_PRINCIPAL"),
+		SharedVolumes:           sharedVolumes,
+		sharedVolumesErr:        sharedVolumesErr,
 	}
 }
 

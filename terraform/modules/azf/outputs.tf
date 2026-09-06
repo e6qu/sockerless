@@ -21,6 +21,11 @@ output "storage_account_name" {
   value       = azurerm_storage_account.main.name
 }
 
+output "build_container_name" {
+  description = "Name of the blob container the backend uploads overlay build contexts to"
+  value       = azurerm_storage_container.build_context.name
+}
+
 # =============================================================================
 # App Service Plan
 # =============================================================================
