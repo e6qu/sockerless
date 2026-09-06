@@ -472,8 +472,10 @@ jobs:
         # The Lambda cell returns when the simulator's Lambda host pulls
         # its image from the simulator's own ECR, where the pull-through cache
         # serves it, instead of resolving the cached reference to a local
-        # name the engine does not hold.
-        backend: [ecs, cloudrun, gcf, aca, azf]
+        # name the engine does not hold. The Azure cells return with the
+        # simulator pin that serves the storage-account migration status the
+        # azurerm provider reads on every storage account.
+        backend: [ecs, cloudrun, gcf]
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Terraform integration (${{ matrix.backend }})

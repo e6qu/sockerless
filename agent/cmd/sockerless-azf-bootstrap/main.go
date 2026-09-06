@@ -245,6 +245,9 @@ func runExecEnvelope(w http.ResponseWriter, parent context.Context, env envelope
 	cmd := exec.CommandContext(ctx, env.Argv[0], env.Argv[1:]...)
 	if env.Workdir != "" {
 		cmd.Dir = env.Workdir
+		if env.Workload {
+			agent.EnsureWorkdir(env.Workdir)
+		}
 	} else if wd := os.Getenv(envUserWorkdir); wd != "" {
 		cmd.Dir = agent.EnsureWorkdir(wd)
 	}

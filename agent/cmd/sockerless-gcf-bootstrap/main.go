@@ -555,6 +555,9 @@ func runExecEnvelope(w http.ResponseWriter, env envelope.Exec) {
 	cmd := exec.Command("/bin/sh", "-c", shellLine) //nolint:gosec // argv operator-controlled
 	if env.Workdir != "" {
 		cmd.Dir = env.Workdir
+		if env.Workload {
+			agent.EnsureWorkdir(env.Workdir)
+		}
 	}
 	if len(env.Env) > 0 {
 		cmd.Env = append(append([]string{}, os.Environ()...), env.Env...)

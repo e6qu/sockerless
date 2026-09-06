@@ -397,12 +397,22 @@ if [ "${SKIP_SMOKE_TEST:-}" != "1" ]; then
     env -u DOCKER_HOST docker tag public.ecr.aws/docker/library/alpine:latest alpine:latest
     export DOCKER_HOST="tcp://$BACKEND_ADDR"
 
+    # --reuse keeps the job container after the run, so a failure can show
+    # the workload's own output below.
     act push \
         --workflows "$WORKFLOW_DIR/" \
         -P ubuntu-latest=alpine:latest \
         --container-daemon-socket "tcp://$BACKEND_ADDR" \
+        --reuse \
         2>&1 | tee /tmp/act-tf-int-output.log
     ACT_EXIT=${PIPESTATUS[0]}
+    if [ "$ACT_EXIT" -ne 0 ]; then
+        echo "--- act job container logs ---"
+        for c in $(docker ps -a --filter name=act- --format '{{.ID}}'); do
+            docker logs "$c" 2>&1 | tail -40 || true
+        done
+    fi
+    docker ps -a --filter name=act- --format '{{.ID}}' | xargs -r docker rm -f >/dev/null 2>&1 || true
 
     echo ""
     if [ $ACT_EXIT -eq 0 ]; then

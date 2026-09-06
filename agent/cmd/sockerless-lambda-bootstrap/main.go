@@ -326,6 +326,9 @@ func runExecInvocation(ctx context.Context, spec envelope.Exec) (stdout, stderr 
 	}
 	if spec.Workdir != "" {
 		cmd.Dir = spec.Workdir
+		if spec.Workload {
+			agent.EnsureWorkdir(spec.Workdir)
+		}
 	} else if wd := os.Getenv(envUserWorkdir); wd != "" {
 		cmd.Dir = agent.EnsureWorkdir(wd)
 	}

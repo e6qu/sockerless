@@ -40,6 +40,11 @@ type Exec struct {
 	Workdir string   `json:"workdir,omitempty"`
 	Env     []string `json:"env,omitempty"`
 	Stdin   string   `json:"stdin,omitempty"` // base64
+	// Workload marks the container's own command, started as Docker starts a
+	// container: Workdir is the container's configured working directory and
+	// the bootstrap creates it when it does not exist. An exec's working
+	// directory has to exist, as it has to for Docker.
+	Workload bool `json:"workload,omitempty"`
 }
 
 // Response is the JSON body the bootstrap answers with. Stdout and
