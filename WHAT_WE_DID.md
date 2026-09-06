@@ -93,7 +93,11 @@ applies every environment, so the harness cannot decay unseen again
 act starts its job container in a working directory the image does not
 hold, Docker creates such a directory at start, and the bootstraps did not,
 so the workload died at `chdir` and every exec after it was refused. The
-bootstraps now create it (BUG-2958). And an e2e run lost a port race the harnesses
+bootstraps now create it (BUG-2958). The same cells then found that the
+reverse-agent `docker cp` into a container required the destination to
+exist, where Docker and the ECS SSM path create it; act copies into
+`/var/run/act/` unprepared, and the put-archive exec now runs `mkdir -p`
+first (BUG-2959). And an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until

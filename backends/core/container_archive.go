@@ -44,10 +44,20 @@ func RunContainerGetArchiveViaAgent(reg *ReverseAgentRegistry, containerID, srcP
 	}, nil
 }
 
+// putArchiveArgv is the in-container command that extracts a tar body
+// read from stdin into dstPath. The Docker daemon creates a missing
+// destination directory before extracting (act copies its runtime files
+// into `/var/run/act/` without creating it first), so the command does
+// the same. dstPath travels as a positional parameter, never spliced
+// into the shell text, so no quoting is needed.
+func putArchiveArgv(dstPath string) []string {
+	return []string{"sh", "-c", `mkdir -p "$1" && tar -xf - -C "$1"`, "sh", dstPath}
+}
+
 // RunContainerPutArchiveViaAgent implements `docker cp /host/src CONTAINER:/dst`
 // by reading the tar body into memory and streaming it as stdin to a
-// `tar -xf - -C <dst>` exec running inside the container. Buffered in
-// memory — same tradeoff as GetArchive.
+// `mkdir -p <dst> && tar -xf - -C <dst>` exec running inside the
+// container. Buffered in memory — same tradeoff as GetArchive.
 func RunContainerPutArchiveViaAgent(reg *ReverseAgentRegistry, containerID, dstPath string, body io.Reader) error {
 	if reg == nil {
 		return ErrNoReverseAgent
@@ -56,7 +66,7 @@ func RunContainerPutArchiveViaAgent(reg *ReverseAgentRegistry, containerID, dstP
 	if err != nil {
 		return fmt.Errorf("read archive body: %w", err)
 	}
-	argv := []string{"tar", "-xf", "-", "-C", dstPath}
+	argv := putArchiveArgv(dstPath)
 	stdout, stderr, exit, err := reg.RunAndCaptureWithStdin(containerID, "putarchive-"+containerID, argv, nil, "", data)
 	if err != nil {
 		return err
