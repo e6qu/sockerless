@@ -136,7 +136,14 @@ endpoint among them (BUG-2968); and the Azure Functions backend takes a
 registry's name from its login server's first label rather than by
 stripping one domain (BUG-2969). The console browser jobs give Playwright's
 web server the minutes a cold compile of a newly pinned simulator takes
-(BUG-2970). And an e2e run lost a port race the harnesses
+(BUG-2970). At v0.30.8 the Azure cells reached the pull and showed the
+backends had declared no identity and no registry credential on the
+resources they create, so the platform pulled anonymously; a Container
+App, a Job and a Function App now run with the user-assigned identity the
+modules grant AcrPull and declare it for the overlay registry (BUG-2971), a
+Functions start reports a failed invocation at once instead of waiting the
+bootstrap timeout (BUG-2972), and the harness's failure diagnostics, which
+`set -e` had always skipped, run (BUG-2973). And an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until

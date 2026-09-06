@@ -390,6 +390,9 @@ case "$BACKEND" in
         # carry that host, and the build's push and the workload's pull
         # reach it there.
         export SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://$(tf_output acr_login_server)"
+        # The user-assigned identity the environment grants AcrPull, which
+        # a Container App runs with and pulls its image as.
+        export SOCKERLESS_ACA_MANAGED_IDENTITY_ID="$(tf_output managed_identity_id)"
         export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/aca/reverse"
         export SOCKERLESS_ACA_BOOTSTRAP="/opt/sockerless/sockerless-cloudrun-bootstrap"
         # act keeps its job container alive and execs every step into it,
@@ -418,6 +421,10 @@ case "$BACKEND" in
         export SOCKERLESS_AZURE_BUILD_CONTAINER="$(tf_output build_container_name)"
         # The registry endpoint coordinate, as for Container Apps above.
         export SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://$(tf_output acr_login_server)"
+        # The user-assigned identity the environment grants AcrPull, which
+        # a Function App runs with and pulls its image as.
+        export SOCKERLESS_AZF_MANAGED_IDENTITY_ID="$(tf_output managed_identity_id)"
+        export SOCKERLESS_AZF_MANAGED_IDENTITY_CLIENT_ID="$(tf_output managed_identity_client_id)"
         export SOCKERLESS_AZF_APP_SERVICE_PLAN="$(tf_output app_service_plan_id)"
         export SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE="$(tf_output log_analytics_workspace_id)"
         export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/azf/reverse"
@@ -457,13 +464,16 @@ if [ "${SKIP_SMOKE_TEST:-}" != "1" ]; then
 
     # --reuse keeps the job container after the run, so a failure can show
     # the workload's own output below.
+    # The pipeline's status is act's (pipefail); capturing it with `||`
+    # keeps a failing act from ending the script under `set -e` before the
+    # diagnostics below run.
+    ACT_EXIT=0
     act push \
         --workflows "$WORKFLOW_DIR/" \
         -P ubuntu-latest=alpine:latest \
         --container-daemon-socket "tcp://$BACKEND_ADDR" \
         --reuse \
-        2>&1 | tee /tmp/act-tf-int-output.log
-    ACT_EXIT=${PIPESTATUS[0]}
+        2>&1 | tee /tmp/act-tf-int-output.log || ACT_EXIT=$?
     if [ "$ACT_EXIT" -ne 0 ]; then
         echo "--- act job container logs ---"
         for c in $(docker ps -a --filter name=act- --format '{{.ID}}'); do

@@ -177,11 +177,13 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 	return armappcontainers.Job{
 		Location: ptr(s.config.Location),
 		Tags:     azureTags,
+		Identity: s.workloadIdentity(),
 		Properties: &armappcontainers.JobProperties{
 			EnvironmentID: ptr(environmentID),
 			Configuration: &armappcontainers.JobConfiguration{
 				TriggerType:    &triggerType,
 				ReplicaTimeout: &replicaTimeout,
+				Registries:     s.registryCredentials(),
 				ManualTriggerConfig: &armappcontainers.JobConfigurationManualTriggerConfig{
 					Parallelism:            ptr(int32(1)),
 					ReplicaCompletionCount: ptr(int32(1)),

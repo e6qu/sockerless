@@ -18,12 +18,16 @@ type Config struct {
 	Location              string
 	LogAnalyticsWorkspace string
 	StorageAccount        string
-	ACRName               string        // Azure Container Registry name for builds
-	BuildStorageAccount   string        // Storage account for ACR build context
-	BuildContainer        string        // Blob container for ACR build context
-	BuildPlatform         string        // Docker build platform for overlay images
-	EndpointURL           string        // Custom endpoint URL
-	PollInterval          time.Duration // Cloud API poll interval (default 2s)
+	ACRName               string // Azure Container Registry name for builds
+	BuildStorageAccount   string // Storage account for ACR build context
+	BuildContainer        string // Blob container for ACR build context
+	// ManagedIdentityID is the resource ID of the user-assigned identity a
+	// Container App or Job runs with and pulls its image from the registry
+	// as; empty means the platform pulls anonymously.
+	ManagedIdentityID string
+	BuildPlatform     string        // Docker build platform for overlay images
+	EndpointURL       string        // Custom endpoint URL
+	PollInterval      time.Duration // Cloud API poll interval (default 2s)
 
 	// UseApp switches container execution from ACA Jobs to ACA Apps
 	// with internal ingress. Required for: Jobs don't have
@@ -108,6 +112,7 @@ func ConfigFromEnv() Config {
 		ACRName:               os.Getenv("SOCKERLESS_AZURE_ACR_NAME"),
 		BuildStorageAccount:   os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
 		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
+		ManagedIdentityID:     os.Getenv("SOCKERLESS_ACA_MANAGED_IDENTITY_ID"),
 		BuildPlatform:         core.EnvOrDefault("SOCKERLESS_AZURE_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),

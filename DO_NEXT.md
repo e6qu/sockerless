@@ -23,6 +23,11 @@ When the branch merges:
 - Watch its CI run; every harness runs against v0.30.8, and the
   `terraform-integration` job applies each Terraform environment against its
   simulator — a red cell there is a module or harness defect, not a flake.
+  The Google and Azure cells wait on the sockerless-cloud release after
+  v0.30.8: the build services' docker configuration names its registries
+  for the legacy builder (sockerless-cloud BUG-2987) and the Azure workload
+  hosts pull with the credential the workload declares (BUG-2986); bump the
+  pin to that release the moment it is complete.
 - Keep the coordinate rule: a backend reads a registry coordinate once into
   its `Config` and every registry operation takes it from there; no helper
   reads `SOCKERLESS_*_ENDPOINT` from the environment on its own. Every
