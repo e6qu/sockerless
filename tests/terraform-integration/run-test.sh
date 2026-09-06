@@ -281,6 +281,26 @@ callback_host() {
     hostname -I | awk '{print $1}'
 }
 
+# pull_host_image pulls an image on the host engine, waiting out the
+# registry's rate limit: each refused attempt waits longer than the last,
+# and the fifth refusal fails the run.
+pull_host_image() {
+    local image="$1" attempt wait=5 output
+    for attempt in 1 2 3 4 5; do
+        if output=$(env -u DOCKER_HOST docker pull -q "$image" 2>&1); then
+            return 0
+        fi
+        printf '%s\n' "$output" >&2
+        if [ "$attempt" = 5 ]; then
+            echo "ERROR: pull $image failed after $attempt attempts" >&2
+            return 1
+        fi
+        echo "pull $image refused (attempt $attempt); retrying in ${wait}s" >&2
+        sleep "$wait"
+        wait=$((wait * 3))
+    done
+}
+
 # Common: simulator endpoint
 export SOCKERLESS_ENDPOINT_URL="$SIM_SCHEME://127.0.0.1:$SIM_PORT"
 
@@ -404,8 +424,11 @@ if [ "${SKIP_SMOKE_TEST:-}" != "1" ]; then
     echo "=== Running act smoke test (backend=$BACKEND) ==="
     # The simulator serves the workflow's image from what the host engine
     # holds under the upstream's own name — the way the smoke tests pull it on
-    # the host first — from the Docker Library mirror that does not throttle.
-    env -u DOCKER_HOST docker pull -q public.ecr.aws/docker/library/alpine:latest
+    # the host first — from the Docker Library mirror on the Amazon ECR
+    # Public Gallery, which rate-limits anonymous pulls from one address;
+    # five cells pull it at once, so a throttled pull is retried with a
+    # growing wait.
+    pull_host_image public.ecr.aws/docker/library/alpine:latest
     env -u DOCKER_HOST docker tag public.ecr.aws/docker/library/alpine:latest alpine:latest
     export DOCKER_HOST="tcp://$BACKEND_ADDR"
 
@@ -422,6 +445,14 @@ if [ "${SKIP_SMOKE_TEST:-}" != "1" ]; then
         echo "--- act job container logs ---"
         for c in $(docker ps -a --filter name=act- --format '{{.ID}}'); do
             docker logs "$c" 2>&1 | tail -40 || true
+        done
+        # The workloads the simulator ran are containers on the host engine,
+        # labelled with the simulator's host; their own output shows what a
+        # bootstrap did before or instead of dialling back.
+        echo "--- simulator workload containers on the host engine ---"
+        for c in $(env -u DOCKER_HOST docker ps -a --filter label=sockerless-sim-host --format '{{.ID}}'); do
+            env -u DOCKER_HOST docker inspect --format '{{.Id}} {{.Name}} {{.Config.Image}} {{.State.Status}} exit={{.State.ExitCode}}' "$c" 2>&1 || true
+            env -u DOCKER_HOST docker logs "$c" 2>&1 | tail -40 || true
         done
     fi
     docker ps -a --filter name=act- --format '{{.ID}}' | xargs -r docker rm -f >/dev/null 2>&1 || true

@@ -422,7 +422,10 @@ func (s *Server) ContainerStart(ref string) error {
 	// Start background poller to detect execution exit
 	go s.pollExecutionExit(id, jobName, executionName, exitCh)
 
-	return nil
+	if c.Config.OpenStdin {
+		return nil
+	}
+	return s.waitForJobAgentOrExit(id, exitCh)
 }
 
 // startMultiContainerJobTyped creates and runs an ACA Job with all pod containers.
