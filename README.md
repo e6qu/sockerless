@@ -10,7 +10,7 @@
 
 [![Go](https://img.shields.io/badge/Go-86.3k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-12.9k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-44.8k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-44.9k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-25-informational)](#module-sizes)
 
