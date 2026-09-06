@@ -29,7 +29,7 @@ provider "azurerm" {
   # Point at the local Azure simulator.
   # The simulator must run with TLS (SIM_TLS_CERT/SIM_TLS_KEY).
   # Set ARM_METADATA_HOST=localhost:4568 and SSL_CERT_FILE to the CA cert.
-  skip_provider_registration = true
+  resource_provider_registrations = "none"
   use_cli                    = false
   use_msi                    = false
 

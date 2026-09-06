@@ -155,10 +155,13 @@ if [ -z "${SIM_PID_EXTERNAL:-}" ]; then
         # needed even though libnss-myhostname might be available.
         echo "=== Starting dnsmasq for *.localhost resolution ==="
         ORIG_NS=$(grep -m1 nameserver /etc/resolv.conf | awk '{print $2}')
-        dnsmasq --listen-address=127.0.0.1 \
+        # On the host network the host's own resolver holds 127.0.0.1:53;
+        # dnsmasq answers on the next loopback address, still resolving every
+        # *.localhost name to 127.0.0.1.
+        dnsmasq --listen-address=127.0.0.2 --bind-interfaces \
                 --address=/localhost/127.0.0.1 \
                 --server="${ORIG_NS:-8.8.8.8}"
-        echo "nameserver 127.0.0.1" > /etc/resolv.conf
+        echo "nameserver 127.0.0.2" > /etc/resolv.conf
     fi
 
     echo "=== Starting $CLOUD simulator on :$SIM_PORT ==="
@@ -382,6 +385,11 @@ if [ "${SKIP_SMOKE_TEST:-}" != "1" ]; then
     # --- Step 7: Run act smoke test ---
     echo ""
     echo "=== Running act smoke test (backend=$BACKEND) ==="
+    # The simulator serves the workflow's image from what the host engine
+    # holds under the upstream's own name — the way the smoke tests pull it on
+    # the host first — from the Docker Library mirror that does not throttle.
+    env -u DOCKER_HOST docker pull -q public.ecr.aws/docker/library/alpine:latest
+    env -u DOCKER_HOST docker tag public.ecr.aws/docker/library/alpine:latest alpine:latest
     export DOCKER_HOST="tcp://$BACKEND_ADDR"
 
     act push \

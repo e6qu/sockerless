@@ -2,7 +2,7 @@ FROM golang:1.26-bookworm
 
 # Install terraform, terragrunt, and utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl jq openssl unzip dnsmasq git \
+        curl jq openssl unzip dnsmasq git iproute2 nftables \
     && rm -rf /var/lib/apt/lists/*
 
 # The Docker CLI the simulators' build slices (Cloud Build, ACR Tasks,
