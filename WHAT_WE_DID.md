@@ -115,8 +115,9 @@ Docker does at container creation (BUG-2961). The ECS cell had stayed green
 through the simulator's missing directory because its exec script let a
 failed `cd` fall through to the command; the script now fails the exec
 with status 126 as Docker does, so that cell is red until the pin carries
-the simulator fix (BUG-2962). sockerless-cloud shipped that fix in v0.30.7
-and the pin moved there from v0.9.2 — the release also carries the Google
+the simulator fix (BUG-2962). sockerless-cloud shipped that fix in v0.30.7,
+and the Cloud Build, Azure Container Registry Tasks and bucket-policy fixes
+the v0.30.7 cells found in v0.30.8, where the pin moved from v0.9.2 — the release also carries the Google
 hosts pulling as the service agent, the owner-aware subnet reclaim and the
 Azure v2 catalog. The Azure cells, back in the matrix at that pin, found the
 harness had given their backends no credential; it now exports the

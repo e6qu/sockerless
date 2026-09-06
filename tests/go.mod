@@ -48,12 +48,12 @@ require (
 	github.com/docker/go-connections v0.8.1 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/e6qu/sockerless-cloud/realexec v0.0.0-20260906141515-a0155d2fbc7a // indirect
-	github.com/e6qu/sockerless-cloud/sim v0.0.0-20260906050712-3656fc3fd8f6 // indirect
-	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20260906141515-a0155d2fbc7a // indirect
-	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20260906141515-a0155d2fbc7a // indirect
-	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20260906141515-a0155d2fbc7a // indirect
-	github.com/e6qu/sockerless-cloud/ui-auth v0.0.0-20260906141515-a0155d2fbc7a // indirect
+	github.com/e6qu/sockerless-cloud/realexec v0.0.0-20260906194758-0904c6aaf3a9 // indirect
+	github.com/e6qu/sockerless-cloud/sim v0.0.0-20260906181310-bd26b6e5e029 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20260906194758-0904c6aaf3a9 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20260906194758-0904c6aaf3a9 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20260906194758-0904c6aaf3a9 // indirect
+	github.com/e6qu/sockerless-cloud/ui-auth v0.0.0-20260906194758-0904c6aaf3a9 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
