@@ -237,6 +237,11 @@ case "$CLOUD" in
         export ARM_CLIENT_ID="test-client-id"
         export ARM_CLIENT_SECRET="test-client-secret"
         export SSL_CERT_FILE="$CERT_DIR/ca.pem"
+        # The simulator serves Azure Container Registry's /v2/ at its own
+        # address; the backend names it through the registry coordinate,
+        # scheme included, so overlay image references carry that host and
+        # the build, the push and the pull reach it there.
+        export SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://127.0.0.1:$SIM_PORT"
         ;;
 esac
 
