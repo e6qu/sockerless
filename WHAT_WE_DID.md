@@ -97,7 +97,17 @@ bootstraps now create it (BUG-2958). The same cells then found that the
 reverse-agent `docker cp` into a container required the destination to
 exist, where Docker and the ECS SSM path create it; act copies into
 `/var/run/act/` unprepared, and the put-archive exec now runs `mkdir -p`
-first (BUG-2959). And an e2e run lost a port race the harnesses
+first (BUG-2959). With that in place act ran its step, and the harness
+showed the ECS cell had been green on a falsehood: `docker exec` on Amazon
+ECS reported exit 0 whatever the command returned, because the ExecuteCommand
+stream decoder ended the session without recording a status. A non-TTY exec
+now prints the exit marker the one-shot SSM path already used and the decoder
+strips it before the client sees it; a TTY exec takes the session's
+exit-code frame (BUG-2960). The same run showed act starts every step with
+`bash` on a platform image, so the smoke workflow names `sh`, the shell
+alpine has, and that the pinned simulator drops an ECS container definition's
+`workingDirectory` — fixed in sockerless-cloud, so the ECS cell passes again
+once the pin carries it. And an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until

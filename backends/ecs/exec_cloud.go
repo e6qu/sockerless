@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,14 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 		}
 		parts = append(parts, args...)
 		script = cdPrefix + envPrefix + strings.Join(parts, " ")
+	}
+	// A non-TTY exec prints the shell's `$?` as a marker after the
+	// command's own output; the decoder strips it and reports it as
+	// the exec's exit code. A TTY exec cannot carry a marker (it would
+	// reach the terminal), so its exit code comes from the session's
+	// exit-code frame alone.
+	if !tty {
+		script += ssmExitMarkerCommand
 	}
 	// Real AWS ECS ExecuteCommand exec()s argv[0] directly — without a
 	// shell wrapper, anything that uses shell builtins / redirections /
@@ -173,6 +182,15 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 	// headers since `docker exec` expects that framing.
 	dec := newSSMDecoder(bridge)
 	dec.capture = openSSMCapture(ecsState.TaskARN, cmd)
+	dec.markerScan = !tty
+	execID := exec.ID
+	dec.onExit = func(code int) {
+		if code < 0 {
+			s.Logger.Warn().Str("exec", execID).Str("container", c.ID[:12]).
+				Msg("ECS exec session ended without an exit code")
+		}
+		s.Store.Execs.Update(execID, func(e *api.ExecInstance) { e.ExitCode = code })
+	}
 	if !tty {
 		return &muxBridge{rwc: dec}, nil
 	}
@@ -226,12 +244,67 @@ type ssmDecoder struct {
 	closeErr error
 	debug    bool // when true, fprintf'd to stderr
 	capture  *ssmFrameCapture
+
+	// markerScan is set for a non-TTY exec whose command prints the
+	// exit marker after its output: stdout bytes that could begin the
+	// marker are held back until the next stdout frame or the end of
+	// the session, so the marker never reaches the Docker client.
+	markerScan bool
+	held       bytes.Buffer // trailing stdout bytes that could begin a marker
+	exitCode   int          // -1 until the session reports one
+	finished   bool
+	onExit     func(code int) // called once, when the session ends
 }
 
 func newSSMDecoder(wire io.ReadWriteCloser) *ssmDecoder {
 	return &ssmDecoder{
-		wire:  wire,
-		debug: os.Getenv("SOCKERLESS_SSM_DEBUG") == "1",
+		wire:     wire,
+		debug:    os.Getenv("SOCKERLESS_SSM_DEBUG") == "1",
+		exitCode: -1,
+	}
+}
+
+// finish ends the session exactly once: releases the held stdout tail
+// (taking the exit marker out of it when present), makes further Reads
+// return closeErr, and reports the exit code.
+func (d *ssmDecoder) finish() {
+	if d.finished {
+		return
+	}
+	d.finished = true
+	if d.held.Len() > 0 {
+		clean, code, ok := splitTrailingSSMExitMarker(d.held.Bytes())
+		if ok {
+			d.exitCode = code
+		}
+		d.held.Reset()
+		if len(clean) > 0 {
+			d.lastTag = 1
+			d.pending.Write(clean)
+		}
+	}
+	if d.closeErr == nil {
+		d.closeErr = io.EOF
+	}
+	if d.onExit != nil {
+		d.onExit(d.exitCode)
+	}
+}
+
+// stdoutFrame surfaces a stdout payload. With markerScan the payload
+// joins the held tail and everything that cannot be the start of an
+// exit marker is released to the caller.
+func (d *ssmDecoder) stdoutFrame(payload []byte) {
+	if !d.markerScan {
+		d.lastTag = 1
+		d.pending.Write(payload)
+		return
+	}
+	d.held.Write(payload)
+	release := d.held.Len() - ssmExitMarkerHoldback(d.held.Bytes())
+	if release > 0 {
+		d.lastTag = 1
+		d.pending.Write(d.held.Next(release))
 	}
 }
 
@@ -246,6 +319,7 @@ func (d *ssmDecoder) Read(p []byte) (int, error) {
 		hdr := make([]byte, ssmFixedHeaderLen)
 		if _, err := io.ReadFull(d.wire, hdr); err != nil {
 			d.closeErr = err
+			d.finish()
 			continue
 		}
 		payloadLen := binary.BigEndian.Uint32(hdr[116:120])
@@ -254,6 +328,7 @@ func (d *ssmDecoder) Read(p []byte) (int, error) {
 			body := make([]byte, payloadLen)
 			if _, err := io.ReadFull(d.wire, body); err != nil {
 				d.closeErr = err
+				d.finish()
 				continue
 			}
 			raw = append(hdr, body...)
@@ -274,11 +349,18 @@ func (d *ssmDecoder) Read(p []byte) (int, error) {
 		switch f.MessageType {
 		case ssmMTOutputStreamData:
 			if streamID, ok := ssmTextStreamID(f); ok {
-				d.lastTag = streamID
-				d.pending.Write(f.Payload)
+				if streamID == 1 {
+					d.stdoutFrame(f.Payload)
+				} else {
+					d.lastTag = streamID
+					d.pending.Write(f.Payload)
+				}
 			}
 			if f.PayloadType == ssmPayloadExitCode {
-				d.closeErr = io.EOF
+				if code, cerr := strconv.Atoi(strings.TrimSpace(string(f.Payload))); cerr == nil {
+					d.exitCode = code
+				}
+				d.finish()
 			}
 			if ack, aerr := buildSSMAck(f); aerr == nil {
 				if d.debug {
@@ -292,7 +374,7 @@ func (d *ssmDecoder) Read(p []byte) (int, error) {
 				fmt.Fprintf(os.Stderr, "[ssm] buildSSMAck err: %v\n", aerr)
 			}
 		case ssmMTChannelClosed:
-			d.closeErr = io.EOF
+			d.finish()
 		case ssmMTAcknowledge, ssmMTStartPublication, ssmMTPausePublication:
 			// flow-control / handshake — nothing to surface
 		}

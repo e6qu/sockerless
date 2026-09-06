@@ -18,9 +18,13 @@ Container Apps file-share mount fails the shared-volume writer (BUG-2952).
 When the branch merges:
 
 - Watch its CI run; every harness runs against v0.9.2 with the coordinate
-  and credential changes, and the new `terraform-integration` job applies
-  each Terraform environment against its simulator for the first time in
-  CI — a red cell there is a module or harness defect, not a flake.
+  and credential changes, and the `terraform-integration` job applies each
+  Terraform environment against its simulator — a red cell there is a
+  module or harness defect, not a flake. Its ECS cell stays red at v0.9.2:
+  that simulator drops an ECS container definition's `workingDirectory`, so
+  act's `cd /src` fails in the job container (sockerless-cloud BUG-2981,
+  fixed on its open pull request); the cell passes once the pin carries
+  the fix.
 - Keep the coordinate rule: a backend reads a registry coordinate once into
   its `Config` and every registry operation takes it from there; no helper
   reads `SOCKERLESS_*_ENDPOINT` from the environment on its own. Every
@@ -28,19 +32,22 @@ When the branch merges:
   `SOCKERLESS_GCP_AR_ENDPOINT` pointing at the simulator, scheme included.
 
 Simulator-side work, in sockerless-cloud (one open pull request there at a
-time; another agent's is open now):
+time). Its open pull request carries the Cloud Run and Cloud Functions hosts
+pulling as the project's service agent (BUG-2951), the owner-aware subnet
+reclaim (BUG-2950), the Azure `GET /v2/_catalog` (BUG-2945) and the ECS
+`workingDirectory` (BUG-2981). When it merges and a release is cut:
 
-- BUG-2951: the Cloud Run and Cloud Functions hosts pull with the
-  credential the simulator's own token service issues for the project's
-  service agent, passed as the Docker SDK's `RegistryAuth`.
-- BUG-2952: the Azure Container Apps file-share mount at v0.30.3.
-- BUG-2950: `reclaimOrphanedSubnet` removes only networks of a dead run.
+- Bump the pin here — `tests/go.mod` (three simulators and `ui-auth`), the
+  Dockerfile `ARG SOCKERLESS_CLOUD_VERSION` defaults, `deploy/compose.build.yaml`,
+  `.github/workflows/live-tests-*.yml` — and watch the ECS cell go green.
+- BUG-2952: retest the Azure Container Apps file-share mount at that pin.
+- BUG-2945: read `docker images` through `core.OCIListImages` in the Azure
+  round trip now that the catalog is served.
 - BUG-2957: the Lambda host pulls its image from the simulator's own ECR
   instead of resolving a pull-through-cache reference to a local name; then
   the Lambda cell rejoins the `terraform-integration` matrix, and the Azure
   cells with it (the pinned simulator serves no storage-account migration
   status, which azurerm 4 reads).
-- BUG-2945: serve `GET /v2/_catalog` on the Azure simulator.
 
 Then bump the pin here — `tests/go.mod` (the three simulators and `ui-auth`
 at the release commit; the deleted `v0.1.0` bootstrap tag outranks every

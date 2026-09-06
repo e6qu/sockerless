@@ -8,6 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: arithmetic
+        # act runs a step with bash on any platform image, where a real
+        # runner falls back to sh when bash is absent; the image here is
+        # alpine, so the step names the shell it has.
+        shell: sh
         run: |
           result=$((6 * 7))
           echo "result=$result"
