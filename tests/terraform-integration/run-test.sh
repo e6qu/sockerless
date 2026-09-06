@@ -32,6 +32,9 @@ esac
 
 SIM_PORT="${SIM_PORT:-$SIM_DEFAULT_PORT}"
 BACKEND_ADDR="127.0.0.1:3375"
+# The backend listens on every interface: the workload containers' reverse-agent
+# bootstraps dial it back at this host's address, not at loopback.
+BACKEND_LISTEN_ADDR="0.0.0.0:3375"
 
 # Paths
 # Simulators come from the sockerless-cloud repository at the version pinned
@@ -227,10 +230,12 @@ case "$CLOUD" in
         export SOCKERLESS_AZURE_BUILD_PLATFORM="$WORKLOAD_PLATFORM"
         # azurerm v3 uses ARM_METADATA_HOSTNAME (not ARM_METADATA_HOST which is for azurestack)
         export ARM_METADATA_HOSTNAME="localhost:$SIM_PORT"
-        export ARM_TENANT_ID="00000000-0000-0000-0000-000000000000"
-        export ARM_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000000"
-        export ARM_CLIENT_ID="00000000-0000-0000-0000-000000000000"
-        export ARM_CLIENT_SECRET="test"
+        # The simulator's bootstrap application registration and tenant, the
+        # client credential every Azure client of the simulator presents.
+        export ARM_TENANT_ID="11111111-1111-1111-1111-111111111111"
+        export ARM_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000001"
+        export ARM_CLIENT_ID="test-client-id"
+        export ARM_CLIENT_SECRET="test-client-secret"
         export SSL_CERT_FILE="$CERT_DIR/ca.pem"
         ;;
 esac
@@ -377,7 +382,7 @@ if [ "${SKIP_SMOKE_TEST:-}" != "1" ]; then
     (cd "$ROOT_DIR" && go build -tags noui -o "$BUILD_DIR/$BACKEND_BIN_NAME" "$BACKEND_PKG")
 
     echo "=== Starting $BACKEND backend on $BACKEND_ADDR ==="
-    "$BUILD_DIR/$BACKEND_BIN_NAME" --addr "$BACKEND_ADDR" --log-level debug &
+    "$BUILD_DIR/$BACKEND_BIN_NAME" --addr "$BACKEND_LISTEN_ADDR" --log-level debug &
     BACKEND_PID=$!
     wait_for_url "http://$BACKEND_ADDR/_ping"
     echo "$BACKEND backend ready (PID=$BACKEND_PID)"
