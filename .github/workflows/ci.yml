@@ -459,6 +459,23 @@ jobs:
           docker run --rm --network host --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-aca
         timeout-minutes: 5
 
+  # terraform-integration: applies a deployable Terraform environment against
+  # its simulator with the credential the harness mints, starts the backend on
+  # the outputs, and runs the act smoke workflow through it — the Terraform
+  # modules' apply against the simulators is proven nowhere else.
+  terraform-integration:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [ecs, lambda, cloudrun, gcf, aca, azf]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Terraform integration (${{ matrix.backend }})
+        run: make tf-int-test-${{ matrix.backend }}
+        timeout-minutes: 14
+
   terraform:
     runs-on: ubuntu-latest
     timeout-minutes: 15

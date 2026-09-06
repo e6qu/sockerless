@@ -18,7 +18,9 @@ Container Apps file-share mount fails the shared-volume writer (BUG-2952).
 When the branch merges:
 
 - Watch its CI run; every harness runs against v0.9.2 with the coordinate
-  and credential changes.
+  and credential changes, and the new `terraform-integration` job applies
+  each Terraform environment against its simulator for the first time in
+  CI — a red cell there is a module or harness defect, not a flake.
 - Keep the coordinate rule: a backend reads a registry coordinate once into
   its `Config` and every registry operation takes it from there; no helper
   reads `SOCKERLESS_*_ENDPOINT` from the environment on its own. Every
@@ -46,9 +48,6 @@ defaults across the harness Dockerfiles, the `context:` tag in
 
 Remaining local items:
 
-- BUG-2955: the Terraform integration harness provisions no credential the
-  simulators accept; mint one through each simulator's IAM API the way the
-  backend harnesses do, then give it a CI job.
 - BUG-2922 (Docker Engine advisories → moby/moby client migration) is the
   largest open local item, scoped to the Docker passthrough backend.
 - BUG-2925 (the UI CI stall) stays open until its cause is proven.

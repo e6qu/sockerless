@@ -1,0 +1,14 @@
+# The workflow act runs through a sockerless backend after the environment
+# applies: one job whose container the backend starts on the cloud the
+# environment stood up, doing arithmetic the log proves ran.
+name: terraform-integration-smoke
+on: push
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: arithmetic
+        run: |
+          result=$((6 * 7))
+          echo "result=$result"
+          test "$result" = "42"

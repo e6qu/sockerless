@@ -77,9 +77,19 @@ smoke container also had to change shape: its simulator serves the registry
 at its own loopback address, and the host daemon that runs the workloads
 must share that loopback to pull from it, so the smoke and Terraform harness
 containers run with `--network host`, the topology the Linux integration
-harness already has. The Terraform harness then reaches Terragrunt apply and
-fails there: it provisions no credential the simulators verify, which no CI
-job had noticed (BUG-2955). And an e2e run lost a port race the harnesses
+harness already has. The Terraform harness then reached Terragrunt apply and
+failed there, and the repair kept going: the provider's token minted from the
+simulator's own token endpoint and handed over as the provider's
+`GOOGLE_OAUTH_ACCESS_TOKEN`, the project created through the Cloud Resource
+Manager API, every client of the provider routed at the simulator (the IAM
+beta client `google_service_account` speaks through had reached the real
+service), every coordinate the backends require exported from the outputs and
+the host, the Lambda environment standing alone instead of reading the live
+ECS environment's state from a real bucket, and an image that carries `act`,
+the Docker and AWS CLIs and the bootstrap binaries with a workflow to run.
+Amazon ECS runs end to end on this host; a `terraform-integration` CI job now
+applies every environment, so the harness cannot decay unseen again
+(BUG-2955). And an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until
