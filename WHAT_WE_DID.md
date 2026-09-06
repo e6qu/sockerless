@@ -124,11 +124,14 @@ managed-identity coordinate the platform injects, at the scheme the
 simulator serves (BUG-2963). The same pin showed the Cloud Run smoke stacks
 had never created the Artifact Registry repositories the backend works in
 (BUG-2965) and that an ECS container definition carried no stop grace, so a
-stop waited ECS's thirty seconds where Docker waits ten (BUG-2964), that an
-Azure Container Apps Job's start returned before its bootstrap had dialled
-back, so act's first exec found no agent (BUG-2966), and that the public
+stop waited ECS's thirty seconds where Docker waits ten (BUG-2964), that the
+harness ran Azure Container Apps containers as plain Jobs, which carry no
+bootstrap for act to exec into, where the runbook prescribes the Container
+Apps mode (BUG-2966), and that the public
 mirror throttles five cells pulling at once, which the harness now waits
-out (BUG-2967). And an e2e run lost a port race the harnesses
+out (BUG-2967). The Azure modules provision the build-context container an
+overlay build needs and the harness passes its coordinates (BUG-2968). And
+an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until

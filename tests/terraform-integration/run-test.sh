@@ -378,8 +378,19 @@ case "$BACKEND" in
         export SOCKERLESS_ACA_LOCATION="$(tf_output location)"
         export SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="$(tf_output log_analytics_workspace_name)"
         export SOCKERLESS_ACA_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
+        # The registry the overlay build lands in and the blob container its
+        # build context is uploaded to, which Azure Container Registry Tasks
+        # builds from.
+        export SOCKERLESS_AZURE_ACR_NAME="$(tf_output acr_name)"
+        export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
+        export SOCKERLESS_AZURE_BUILD_CONTAINER="$(tf_output build_container_name)"
         export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/aca/reverse"
         export SOCKERLESS_ACA_BOOTSTRAP="/opt/sockerless/sockerless-cloudrun-bootstrap"
+        # act keeps its job container alive and execs every step into it,
+        # which needs the bootstrap in the container; the backend runs
+        # containers as Container Apps with the bootstrap baked in, as the
+        # GitHub Actions runbook prescribes, rather than as plain Jobs.
+        export SOCKERLESS_ACA_USE_APP=1
         BACKEND_BIN_NAME="sockerless-backend-aca"
         BACKEND_PKG="./backends/aca/cmd/sockerless-backend-aca"
         ;;
@@ -395,6 +406,10 @@ case "$BACKEND" in
         export SOCKERLESS_AZF_LOCATION="$(tf_output location)"
         export SOCKERLESS_AZF_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
         export SOCKERLESS_AZF_REGISTRY="$(tf_output acr_login_server)"
+        # The blob container the overlay build context is uploaded to, which
+        # Azure Container Registry Tasks builds from.
+        export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
+        export SOCKERLESS_AZURE_BUILD_CONTAINER="$(tf_output build_container_name)"
         export SOCKERLESS_AZF_APP_SERVICE_PLAN="$(tf_output app_service_plan_id)"
         export SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE="$(tf_output log_analytics_workspace_id)"
         export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/azf/reverse"
