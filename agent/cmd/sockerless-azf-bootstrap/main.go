@@ -200,7 +200,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	cmd.Env = os.Environ()
 
@@ -246,7 +246,7 @@ func runExecEnvelope(w http.ResponseWriter, parent context.Context, env envelope
 	if env.Workdir != "" {
 		cmd.Dir = env.Workdir
 	} else if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	if len(env.Env) > 0 {
 		cmd.Env = append(append([]string{}, os.Environ()...), env.Env...)
@@ -307,7 +307,7 @@ func runSidecarService() {
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	cmd.Env = os.Environ()
 	cmd.Stdout = os.Stdout

@@ -89,7 +89,11 @@ ECS environment's state from a real bucket, and an image that carries `act`,
 the Docker and AWS CLIs and the bootstrap binaries with a workflow to run.
 Amazon ECS runs end to end on this host; a `terraform-integration` CI job now
 applies every environment, so the harness cannot decay unseen again
-(BUG-2955). And an e2e run lost a port race the harnesses
+(BUG-2955). Its Google cells found a bootstrap defect no other harness had:
+act starts its job container in a working directory the image does not
+hold, Docker creates such a directory at start, and the bootstraps did not,
+so the workload died at `chdir` and every exec after it was refused. The
+bootstraps now create it (BUG-2958). And an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until

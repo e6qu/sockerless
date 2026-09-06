@@ -510,7 +510,7 @@ func runDefaultInvoke(w http.ResponseWriter) {
 	cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
 	cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 
 	timeout := jobTimeoutFromEnv()
@@ -574,7 +574,7 @@ func launchUserWorkloadBackground() {
 	}
 	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // operator-controlled argv
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -603,7 +603,7 @@ func runSidecar() {
 	}
 	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // operator-controlled argv
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

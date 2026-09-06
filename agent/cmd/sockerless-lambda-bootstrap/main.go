@@ -266,7 +266,7 @@ func runUserInvocation(ctx context.Context, payload []byte) (stdout, stderr []by
 	cmd.Env = os.Environ()
 	cmd.Stdin = bytes.NewReader(payload)
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	// Tee the subprocess's output into two places: the buffer that
 	// becomes the /response body, and the bootstrap's own
@@ -327,7 +327,7 @@ func runExecInvocation(ctx context.Context, spec envelope.Exec) (stdout, stderr 
 	if spec.Workdir != "" {
 		cmd.Dir = spec.Workdir
 	} else if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	if spec.Stdin != "" {
 		stdinBytes, err := base64.StdEncoding.DecodeString(spec.Stdin)
