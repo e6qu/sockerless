@@ -34,7 +34,7 @@ provider "azurerm" {
   use_msi                    = false
 
   tenant_id       = "00000000-0000-0000-0000-000000000000"
-  subscription_id = "00000000-0000-0000-0000-000000000000"
+  subscription_id = "00000000-0000-0000-0000-000000000001"
   client_id       = "00000000-0000-0000-0000-000000000000"
   client_secret   = "test"
 }

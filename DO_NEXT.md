@@ -35,6 +35,9 @@ time; another agent's is open now):
   service agent, passed as the Docker SDK's `RegistryAuth`.
 - BUG-2952: the Azure Container Apps file-share mount at v0.30.3.
 - BUG-2950: `reclaimOrphanedSubnet` removes only networks of a dead run.
+- BUG-2957: the Lambda host pulls its image from the simulator's own ECR
+  instead of resolving a pull-through-cache reference to a local name; then
+  the Lambda cell rejoins the `terraform-integration` matrix.
 - BUG-2945: serve `GET /v2/_catalog` on the Azure simulator.
 
 Then bump the pin here — `tests/go.mod` (the three simulators and `ui-auth`
