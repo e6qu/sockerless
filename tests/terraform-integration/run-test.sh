@@ -237,11 +237,6 @@ case "$CLOUD" in
         export ARM_CLIENT_ID="test-client-id"
         export ARM_CLIENT_SECRET="test-client-secret"
         export SSL_CERT_FILE="$CERT_DIR/ca.pem"
-        # The simulator serves Azure Container Registry's /v2/ at its own
-        # address; the backend names it through the registry coordinate,
-        # scheme included, so overlay image references carry that host and
-        # the build, the push and the pull reach it there.
-        export SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://127.0.0.1:$SIM_PORT"
         ;;
 esac
 
@@ -389,6 +384,12 @@ case "$BACKEND" in
         export SOCKERLESS_AZURE_ACR_NAME="$(tf_output acr_name)"
         export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
         export SOCKERLESS_AZURE_BUILD_CONTAINER="$(tf_output build_container_name)"
+        # The registry endpoint coordinate: the login server the registry
+        # advertises, which the simulator serves its /v2/ at and routes to
+        # this registry by host, scheme included. Overlay image references
+        # carry that host, and the build's push and the workload's pull
+        # reach it there.
+        export SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://$(tf_output acr_login_server)"
         export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/aca/reverse"
         export SOCKERLESS_ACA_BOOTSTRAP="/opt/sockerless/sockerless-cloudrun-bootstrap"
         # act keeps its job container alive and execs every step into it,
@@ -415,6 +416,8 @@ case "$BACKEND" in
         # Azure Container Registry Tasks builds from.
         export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
         export SOCKERLESS_AZURE_BUILD_CONTAINER="$(tf_output build_container_name)"
+        # The registry endpoint coordinate, as for Container Apps above.
+        export SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://$(tf_output acr_login_server)"
         export SOCKERLESS_AZF_APP_SERVICE_PLAN="$(tf_output app_service_plan_id)"
         export SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE="$(tf_output log_analytics_workspace_id)"
         export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/azf/reverse"

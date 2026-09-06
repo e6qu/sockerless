@@ -133,7 +133,9 @@ out (BUG-2967). The Azure modules provision the build-context container an
 overlay build needs and the harness passes its coordinates, the registry
 endpoint among them (BUG-2968); and the Azure Functions backend takes a
 registry's name from its login server's first label rather than by
-stripping one domain (BUG-2969). And an e2e run lost a port race the harnesses
+stripping one domain (BUG-2969). The console browser jobs give Playwright's
+web server the minutes a cold compile of a newly pinned simulator takes
+(BUG-2970). And an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until
