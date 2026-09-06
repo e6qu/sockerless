@@ -346,6 +346,12 @@ case "$BACKEND" in
         BACKEND_PKG="./backends/cloudrun-functions/cmd/sockerless-backend-gcf"
         ;;
     aca)
+        # The managed-identity coordinate the Azure platform injects into a
+        # Container Apps or Functions container; the backend's
+        # DefaultAzureCredential acquires a real bearer from it — here the
+        # simulator's /msi/token, against real Azure the platform's own.
+        export IDENTITY_ENDPOINT="$SOCKERLESS_ENDPOINT_URL/msi/token"
+        export IDENTITY_HEADER="sim-identity-header"
         export SOCKERLESS_ACA_SUBSCRIPTION_ID="${ARM_SUBSCRIPTION_ID:-00000000-0000-0000-0000-000000000000}"
         export SOCKERLESS_ACA_RESOURCE_GROUP="$(tf_output resource_group_name)"
         export SOCKERLESS_ACA_ENVIRONMENT="$(tf_output managed_environment_name)"
@@ -358,6 +364,12 @@ case "$BACKEND" in
         BACKEND_PKG="./backends/aca/cmd/sockerless-backend-aca"
         ;;
     azf)
+        # The managed-identity coordinate the Azure platform injects into a
+        # Container Apps or Functions container; the backend's
+        # DefaultAzureCredential acquires a real bearer from it — here the
+        # simulator's /msi/token, against real Azure the platform's own.
+        export IDENTITY_ENDPOINT="$SOCKERLESS_ENDPOINT_URL/msi/token"
+        export IDENTITY_HEADER="sim-identity-header"
         export SOCKERLESS_AZF_SUBSCRIPTION_ID="${ARM_SUBSCRIPTION_ID:-00000000-0000-0000-0000-000000000000}"
         export SOCKERLESS_AZF_RESOURCE_GROUP="$(tf_output resource_group_name)"
         export SOCKERLESS_AZF_LOCATION="$(tf_output location)"

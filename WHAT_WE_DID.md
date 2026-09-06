@@ -118,7 +118,9 @@ with status 126 as Docker does, so that cell is red until the pin carries
 the simulator fix (BUG-2962). sockerless-cloud shipped that fix in v0.30.7
 and the pin moved there from v0.9.2 — the release also carries the Google
 hosts pulling as the service agent, the owner-aware subnet reclaim and the
-Azure v2 catalog — so every cell is green. And an e2e run lost a port race the harnesses
+Azure v2 catalog. The Azure cells, back in the matrix at that pin, found the
+harness had given their backends no credential; it now exports the
+managed-identity coordinate the platform injects (BUG-2963). And an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until
