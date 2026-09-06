@@ -42,44 +42,11 @@ func (s *Server) cloudExecStart(exec *api.ExecInstance, c *api.Container, tty bo
 		cluster = ecsState.ClusterARN
 	}
 
-	// Build the full command string from the exec process config.
-	// ECS ExecuteCommand takes a single command string that the simulator
-	// wraps in sh -c. We must produce a valid shell command.
-	var envPrefix string
-	for _, e := range exec.ProcessConfig.Env {
-		envPrefix += fmt.Sprintf("export %s; ", e)
-	}
-
-	// Reconstruct the command preserving sh -c script quoting.
-	// Input: Entrypoint="sh", Arguments=["-c", "echo $VAR"]
-	// Must produce: "export VAR=val; echo $VAR" (unwrap sh -c since simulator wraps again)
-	entrypoint := exec.ProcessConfig.Entrypoint
-	args := exec.ProcessConfig.Arguments
-
-	// Add working directory change if specified
 	workDir := exec.ProcessConfig.WorkingDir
 	if workDir == "" {
 		workDir = c.Config.WorkingDir
 	}
-	var cdPrefix string
-	if workDir != "" {
-		cdPrefix = fmt.Sprintf("cd %s && ", workDir)
-	}
-
-	var script string
-	if (entrypoint == "sh" || entrypoint == "/bin/sh" || entrypoint == "bash" || entrypoint == "/bin/bash") && len(args) >= 2 && args[0] == "-c" {
-		// sh -c "script" — use the user's script verbatim plus the cd
-		// and env-export prefixes.
-		script = cdPrefix + envPrefix + strings.Join(args[1:], " ")
-	} else {
-		// Regular command — join all parts as the script body.
-		parts := []string{}
-		if entrypoint != "" {
-			parts = append(parts, entrypoint)
-		}
-		parts = append(parts, args...)
-		script = cdPrefix + envPrefix + strings.Join(parts, " ")
-	}
+	script := ssmExecScript(exec.ProcessConfig.Entrypoint, exec.ProcessConfig.Arguments, exec.ProcessConfig.Env, workDir)
 	// A non-TTY exec prints the shell's `$?` as a marker after the
 	// command's own output; the decoder strips it and reports it as
 	// the exec's exit code. A TTY exec cannot carry a marker (it would
@@ -475,3 +442,29 @@ func (w *wsBridge) Close() error {
 // LocalAddr satisfies net.Conn if needed (returns nil).
 func (w *wsBridge) LocalAddr() net.Addr  { return nil }
 func (w *wsBridge) RemoteAddr() net.Addr { return nil }
+
+// ssmExecScript builds the shell script an ECS ExecuteCommand session
+// runs for a docker exec: the working directory change, the exported
+// environment, then the command. ECS ExecuteCommand takes a single
+// command string, so an `sh -c "<script>"` exec contributes its script
+// verbatim rather than a nested shell. A working directory the container
+// does not hold fails the exec with status 126, as Docker's chdir does,
+// instead of running the command somewhere else.
+func ssmExecScript(entrypoint string, args, env []string, workDir string) string {
+	var prefix string
+	if workDir != "" {
+		prefix = fmt.Sprintf("cd %s || exit 126; ", shellQuote(workDir))
+	}
+	for _, e := range env {
+		prefix += fmt.Sprintf("export %s; ", e)
+	}
+	if (entrypoint == "sh" || entrypoint == "/bin/sh" || entrypoint == "bash" || entrypoint == "/bin/bash") && len(args) >= 2 && args[0] == "-c" {
+		return prefix + strings.Join(args[1:], " ")
+	}
+	parts := []string{}
+	if entrypoint != "" {
+		parts = append(parts, entrypoint)
+	}
+	parts = append(parts, args...)
+	return prefix + strings.Join(parts, " ")
+}

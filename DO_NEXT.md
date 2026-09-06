@@ -20,11 +20,12 @@ When the branch merges:
 - Watch its CI run; every harness runs against v0.9.2 with the coordinate
   and credential changes, and the `terraform-integration` job applies each
   Terraform environment against its simulator — a red cell there is a
-  module or harness defect, not a flake. Its ECS cell stays red at v0.9.2:
-  that simulator drops an ECS container definition's `workingDirectory`, so
-  act's `cd /src` fails in the job container (sockerless-cloud BUG-2981,
-  fixed on its open pull request); the cell passes once the pin carries
-  the fix.
+  module or harness defect, not a flake. Its ECS cell is red at v0.9.2 by
+  design: that simulator drops an ECS container definition's
+  `workingDirectory`, so act's step exec into `/src` fails with status 126
+  as it would on Docker (sockerless-cloud BUG-2981, fixed on its pull
+  request https://github.com/e6qu/sockerless-cloud/pull/126); the cell
+  passes once the pin carries the fix.
 - Keep the coordinate rule: a backend reads a registry coordinate once into
   its `Config` and every registry operation takes it from there; no helper
   reads `SOCKERLESS_*_ENDPOINT` from the environment on its own. Every

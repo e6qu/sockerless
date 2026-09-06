@@ -2,6 +2,9 @@ package ecs
 
 import (
 	"io"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -104,5 +107,26 @@ func TestSplitTrailingSSMExitMarker(t *testing.T) {
 	}
 	if _, _, ok := splitTrailingSSMExitMarker([]byte("no marker")); ok {
 		t.Fatal("absent marker reported")
+	}
+}
+
+// The exec script fails when the working directory is missing, as Docker
+// refuses an exec whose chdir fails, rather than running the command
+// from the image's directory. Run against a real shell.
+func TestSSMExecScriptMissingWorkdirFails(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent")
+	script := ssmExecScript("sh", []string{"-c", "echo ran"}, []string{"A=1"}, missing)
+	out, err := exec.Command("sh", "-c", script).CombinedOutput()
+	if err == nil || !strings.Contains(err.Error(), "126") {
+		t.Fatalf("want exit 126, got err=%v out=%q", err, out)
+	}
+	if strings.Contains(string(out), "ran") {
+		t.Fatalf("command ran despite the missing directory: %q", out)
+	}
+	present := t.TempDir()
+	script = ssmExecScript("sh", []string{"-c", "pwd; echo $A"}, []string{"A=1"}, present)
+	out, err = exec.Command("sh", "-c", script).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), present) || !strings.HasSuffix(strings.TrimSpace(string(out)), "1") {
+		t.Fatalf("err=%v out=%q", err, out)
 	}
 }
