@@ -37,7 +37,9 @@ time; another agent's is open now):
 - BUG-2950: `reclaimOrphanedSubnet` removes only networks of a dead run.
 - BUG-2957: the Lambda host pulls its image from the simulator's own ECR
   instead of resolving a pull-through-cache reference to a local name; then
-  the Lambda cell rejoins the `terraform-integration` matrix.
+  the Lambda cell rejoins the `terraform-integration` matrix, and the Azure
+  cells with it (the pinned simulator serves no storage-account migration
+  status, which azurerm 4 reads).
 - BUG-2945: serve `GET /v2/_catalog` on the Azure simulator.
 
 Then bump the pin here — `tests/go.mod` (the three simulators and `ui-auth`
