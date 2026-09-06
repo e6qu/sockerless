@@ -107,7 +107,11 @@ exit-code frame (BUG-2960). The same run showed act starts every step with
 `bash` on a platform image, so the smoke workflow names `sh`, the shell
 alpine has, and that the pinned simulator drops an ECS container definition's
 `workingDirectory` — fixed in sockerless-cloud, so the ECS cell passes again
-once the pin carries it. And an e2e run lost a port race the harnesses
+once the pin carries it. The Cloud Run cell then showed the other side of
+the same directory: a pod Service is only warmed for `docker exec` until
+stdin arrives, so nothing had created the container's working directory
+when act exec'd into it; every bootstrap now creates it at startup, as
+Docker does at container creation (BUG-2961). And an e2e run lost a port race the harnesses
 had always been able to lose — each port probed and released before the
 next, so the simulator's DNS listener was handed the port just chosen for
 the backend; `core.PortReservation` now holds every port of a harness until

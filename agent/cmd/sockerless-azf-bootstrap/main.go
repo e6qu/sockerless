@@ -47,6 +47,14 @@ const (
 )
 
 func main() {
+	// Docker creates a container's configured working directory when the
+	// container is created, before any exec runs in it; the bootstrap does
+	// the same at startup, so an exec that names that directory runs
+	// whether or not the workload has started (a pod Service is only
+	// warmed for docker exec until stdin arrives).
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		agent.EnsureWorkdir(wd)
+	}
 	fmt.Fprintf(os.Stdout, "sockerless-azf-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q WEBSITES_PORT=%q\n",
 		os.Getpid(), os.Args, os.Getenv(envPort), os.Getenv(envWebsitesPort))
 	fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q WEBSITES_PORT=%q\n",

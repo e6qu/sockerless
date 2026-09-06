@@ -150,6 +150,14 @@ var persistVols []persistVolume
 var syncMounts map[string]string
 
 func main() {
+	// Docker creates a container's configured working directory when the
+	// container is created, before any exec runs in it; the bootstrap does
+	// the same at startup, so an exec that names that directory runs
+	// whether or not the workload has started (a pod Service is only
+	// warmed for docker exec until stdin arrives).
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		agent.EnsureWorkdir(wd)
+	}
 	// Same shape as cloudrun bootstrap — emit to BOTH stdout and stderr
 	// at the very top of main() so Cloud Logging captures the binary's
 	// first instruction even if one stream is lost. Sidecar mode

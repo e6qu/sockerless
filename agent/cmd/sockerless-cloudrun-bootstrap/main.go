@@ -137,6 +137,14 @@ var persistVols []persistVolume
 var syncMounts map[string]string
 
 func main() {
+	// Docker creates a container's configured working directory when the
+	// container is created, before any exec runs in it; the bootstrap does
+	// the same at startup, so an exec that names that directory runs
+	// whether or not the workload has started (a pod Service is only
+	// warmed for docker exec until stdin arrives).
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		agent.EnsureWorkdir(wd)
+	}
 	// Emit to BOTH stdout and stderr at the very top of main() so
 	// Cloud Logging captures *something* from the binary even if
 	// stderr is being lost. Without this, failing pod-Service revisions

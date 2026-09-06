@@ -105,6 +105,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "bootstrap: materialise bind links: %v\n", err)
 		os.Exit(1)
 	}
+	// Docker creates a container's configured working directory when the
+	// container is created, before any exec runs in it; the bootstrap does
+	// the same at startup (after the bind links, which the directory may
+	// live under), so an exec that names that directory runs whether or
+	// not the workload has started.
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		agent.EnsureWorkdir(wd)
+	}
 
 	// Pod mode: when SOCKERLESS_POD_CONTAINERS is set the bootstrap
 	// runs as a supervisor for the merged-rootfs overlay. Sidecars
