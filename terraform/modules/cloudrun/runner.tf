@@ -23,6 +23,16 @@ resource "google_storage_bucket" "runner_workspace" {
   labels                      = local.common_labels
   force_destroy               = true
 
+  versioning {
+    enabled = true
+  }
+  logging {
+    log_bucket = google_storage_bucket.logs.name
+  }
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.storage.id
+  }
+
   lifecycle_rule {
     condition {
       age = 1

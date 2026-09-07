@@ -79,7 +79,7 @@ variable "log_retention_days" {
 variable "storage_account_replication_type" {
   description = "Replication type for the storage account (LRS, GRS, RAGRS, ZRS)"
   type        = string
-  default     = "LRS"
+  default     = "GRS"
 
   validation {
     condition     = contains(["LRS", "GRS", "RAGRS", "ZRS"], var.storage_account_replication_type)

@@ -13,11 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // startBackendWithEnv spawns an additional sockerless-backend-aca
@@ -51,7 +49,7 @@ func startBackendWithEnv(t *testing.T, extraEnv ...string) *client.Client {
 	if err := waitForReady(fmt.Sprintf("http://localhost:%d/internal/v1/info", port), 15*time.Second); err != nil {
 		t.Fatalf("backend with env %v not ready: %v", extraEnv, err)
 	}
-	cli, err := client.NewClientWithOpts(
+	cli, err := client.New(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", port)),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -66,7 +64,7 @@ func startBackendWithEnv(t *testing.T, extraEnv ...string) *client.Client {
 // need `sh`.
 func pullAlpine(t *testing.T, cli *client.Client) {
 	t.Helper()
-	rc, err := cli.ImagePull(context.Background(), "alpine:latest", image.PullOptions{})
+	rc, err := cli.ImagePull(context.Background(), "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -84,25 +82,26 @@ func pullAlpine(t *testing.T, cli *client.Client) {
 func sharedVolRun(t *testing.T, cli *client.Client, name, script string, binds []string) string {
 	t.Helper()
 	ctx := context.Background()
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:      "alpine:latest",
 		Entrypoint: []string{"sh", "-c", script},
-	}, &container.HostConfig{Binds: binds}, nil, nil, name)
+	}, HostConfig: &container.HostConfig{Binds: binds}, Name: name})
 	if err != nil {
 		t.Fatalf("container create (%s) failed: %v", name, err)
 	}
 	t.Cleanup(func() {
-		cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 	})
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start (%s) failed: %v", name, err)
 	}
-	waitCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := cli.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
 			out := ""
-			if logRC, lerr := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true}); lerr == nil {
+			if logRC, lerr := cli.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true}); lerr == nil {
 				var b bytes.Buffer
 				_, _ = stdcopy.StdCopy(&b, &b, logRC)
 				logRC.Close()
@@ -115,7 +114,7 @@ func sharedVolRun(t *testing.T, cli *client.Client, name, script string, binds [
 	case <-time.After(5 * time.Minute):
 		t.Fatalf("timeout waiting for container %s", name)
 	}
-	logRC, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	logRC, err := cli.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
 		t.Fatalf("logs (%s) failed: %v", name, err)
 	}
@@ -144,12 +143,13 @@ func TestACASharedVolumeWorkspaceSharing(t *testing.T) {
 	// Provision the shared workspace share through the primary
 	// backend's real volume path — no fixture shortcuts.
 	volName := "shared-ws-" + generateTestID()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	volCreated, err := dockerClient.VolumeCreate(ctx, client.VolumeCreateOptions{Name: volName})
+	vol := volCreated.Volume
 	if err != nil {
 		t.Fatalf("volume create failed: %v", err)
 	}
 	t.Cleanup(func() {
-		dockerClient.VolumeRemove(ctx, volName, true)
+		_, _ = dockerClient.VolumeRemove(ctx, volName, client.VolumeRemoveOptions{Force: true})
 	})
 	shareName := vol.Options["shareName"]
 	if shareName == "" {
@@ -191,10 +191,10 @@ func TestACASharedVolumeWorkspaceSharing(t *testing.T) {
 
 	// Unmapped host bind must reject with the configure-this hint, not
 	// silently convert.
-	_, err = cli.ContainerCreate(ctx, &container.Config{
+	_, err = cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:      evalImageName,
 		Entrypoint: []string{"true"},
-	}, &container.HostConfig{Binds: []string{"/not/mapped:/x"}}, nil, nil, "shared-vol-reject-"+generateTestID())
+	}, HostConfig: &container.HostConfig{Binds: []string{"/not/mapped:/x"}}, Name: "shared-vol-reject-" + generateTestID()})
 	if err == nil {
 		t.Fatal("container create with unmapped host bind succeeded, want rejection")
 	}

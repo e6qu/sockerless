@@ -984,7 +984,7 @@ sockerless/
 |---|--------|------------|----------------------|
 | 1 | `api/` | *(library — no binary)* | None (stdlib only) |
 | 3 | `backends/core/` | *(library — no binary)* | `api/`, `agent/`, `gorilla/websocket` |
-| 4 | `backends/docker/` | `sockerless-backend-docker` | `api/`, `github.com/docker/docker` client SDK |
+| 4 | `backends/docker/` | `sockerless-backend-docker` | `api/`, `github.com/moby/moby/client` SDK |
 | 6 | `backends/ecs/` | `sockerless-backend-ecs` | `api/`, `core/`, AWS SDK v2 |
 | 7 | `backends/lambda/` | `sockerless-backend-lambda` | `api/`, `core/`, AWS SDK v2 |
 | 8 | `backends/cloudrun/` | `sockerless-backend-cloudrun` | `api/`, `core/`, GCP SDK |

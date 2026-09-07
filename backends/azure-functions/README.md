@@ -6,7 +6,7 @@ Runs Docker containers as Azure Function Apps with custom container images, with
 
 | Direction | Adaptor | Min version | What it proves |
 |---|---|---|---|
-| **Frontend (Docker API)** | [Docker Go SDK](https://pkg.go.dev/github.com/docker/docker/client) | v25+ | `docker run` → Function invoke via `tcp://localhost:3375`. |
+| **Frontend (Docker API)** | [Moby Go SDK](https://pkg.go.dev/github.com/moby/moby/client) | v0.6+| v25+ | `docker run` → Function invoke via `tcp://localhost:3375`. |
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | **Backend (Azure API)** | [`az` CLI](https://learn.microsoft.com/en-us/cli/azure/functionapp) | 2.60+ | `az functionapp show`, `az monitor app-insights query`. |
 | | [Azure SDK for Go](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice) | v1.6+ | The [App Service ARM REST API](https://learn.microsoft.com/en-us/rest/api/appservice/) (`Sites`) and Application Insights queries the backend issues. |

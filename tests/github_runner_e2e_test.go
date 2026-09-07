@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 )
 
 // TestGitHubRunnerContainerJob simulates a GitHub Actions container job.
@@ -33,7 +33,7 @@ func TestGitHubRunnerContainerJob(t *testing.T) {
 
 			// === Step 1: Version check ===
 			t.Log("Step 1: Version check")
-			_, err := c.Ping(ctx)
+			_, err := c.Ping(ctx, client.PingOptions{})
 			if err != nil {
 				t.Fatalf("ping failed: %v", err)
 			}
@@ -41,7 +41,7 @@ func TestGitHubRunnerContainerJob(t *testing.T) {
 			// === Step 2: Create network ===
 			t.Log("Step 2: Create network")
 			netName := "github_network_" + testID
-			netResp, err := c.NetworkCreate(ctx, netName, network.CreateOptions{
+			netResp, err := c.NetworkCreate(ctx, netName, client.NetworkCreateOptions{
 				Driver: "bridge",
 				Labels: map[string]string{
 					"github-runner": testID,
@@ -50,11 +50,13 @@ func TestGitHubRunnerContainerJob(t *testing.T) {
 			if err != nil {
 				t.Fatalf("network create failed: %v", err)
 			}
-			defer c.NetworkRemove(ctx, netResp.ID)
+			defer c.NetworkRemove(ctx, netResp.ID, client.
 
-			// === Step 3: Pull image ===
+				// === Step 3: Pull image ===
+				NetworkRemoveOptions{})
+
 			t.Log("Step 3: Pull image")
-			rc, err := c.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+			rc, err := c.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 			if err != nil {
 				t.Fatalf("image pull failed: %v", err)
 			}
@@ -64,32 +66,30 @@ func TestGitHubRunnerContainerJob(t *testing.T) {
 			// === Step 4: Create container with tail -f /dev/null (idle pattern) ===
 			t.Log("Step 4: Create container")
 			containerName := "github_runner_" + testID
-			resp, err := c.ContainerCreate(ctx,
-				&container.Config{
-					Image: "alpine:latest",
-					Cmd:   []string{"tail", "-f", "/dev/null"},
-					Labels: map[string]string{
-						"github-runner": testID,
-					},
+			resp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+				Image: "alpine:latest",
+				Cmd:   []string{"tail", "-f", "/dev/null"},
+				Labels: map[string]string{
+					"github-runner": testID,
 				},
-				&container.HostConfig{
-					NetworkMode: container.NetworkMode(netName),
-				},
-				nil, nil, containerName,
+			}, HostConfig: &container.HostConfig{
+				NetworkMode: container.NetworkMode(netName),
+			}, Name: containerName},
 			)
 			if err != nil {
 				t.Fatalf("container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 			// === Step 5: Start container ===
 			t.Log("Step 5: Start container")
-			if err := c.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+			if _, err := c.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 				t.Fatalf("container start failed: %v", err)
 			}
 
 			// Verify running
-			info, err := c.ContainerInspect(ctx, resp.ID)
+			inspected, err := c.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+			info := inspected.Container
 			if err != nil {
 				t.Fatalf("container inspect failed: %v", err)
 			}
@@ -101,7 +101,7 @@ func TestGitHubRunnerContainerJob(t *testing.T) {
 			t.Log("Step 6: Execute steps")
 
 			// Step 6a: Run a simple command
-			execResp, err := c.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+			execResp, err := c.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 				Cmd:          []string{"echo", "hello from github runner"},
 				AttachStdout: true,
 				AttachStderr: true,
@@ -110,7 +110,7 @@ func TestGitHubRunnerContainerJob(t *testing.T) {
 				t.Fatalf("exec create failed: %v", err)
 			}
 
-			hijacked, err := c.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
+			hijacked, err := c.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 			if err != nil {
 				t.Fatalf("exec start failed: %v", err)
 			}
@@ -126,7 +126,7 @@ func TestGitHubRunnerContainerJob(t *testing.T) {
 
 			// === Step 7: Collect logs ===
 			t.Log("Step 7: Collect logs")
-			logReader, err := c.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+			logReader, err := c.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{
 				ShowStdout: true,
 				ShowStderr: true,
 			})
@@ -139,13 +139,13 @@ func TestGitHubRunnerContainerJob(t *testing.T) {
 
 			// === Step 8: Force-remove container ===
 			t.Log("Step 8: Force-remove container")
-			if err := c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}); err != nil {
+			if _, err := c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
 				t.Fatalf("container remove failed: %v", err)
 			}
 
 			// === Step 9: Remove network ===
 			t.Log("Step 9: Remove network")
-			if err := c.NetworkRemove(ctx, netResp.ID); err != nil {
+			if _, err := c.NetworkRemove(ctx, netResp.ID, client.NetworkRemoveOptions{}); err != nil {
 				t.Logf("network remove (may be already removed): %v", err)
 			}
 		})
@@ -161,32 +161,31 @@ func TestGitHubRunnerContainerAction(t *testing.T) {
 			testID := generateTestID(name)
 
 			// Pull and create
-			rc, err := c.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+			rc, err := c.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 			if err != nil {
 				t.Fatalf("image pull failed: %v", err)
 			}
 			io.Copy(io.Discard, rc)
 			rc.Close()
 
-			resp, err := c.ContainerCreate(ctx,
-				&container.Config{
-					Image:      "alpine:latest",
-					Entrypoint: []string{"echo", "action output"},
-				},
-				nil, nil, nil, "action_"+testID,
+			resp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+				Image:      "alpine:latest",
+				Entrypoint: []string{"echo", "action output"},
+			}, Name: "action_" + testID},
 			)
 			if err != nil {
 				t.Fatalf("container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 			// Start
-			if err := c.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+			if _, err := c.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 				t.Fatalf("container start failed: %v", err)
 			}
 
 			// Wait for completion
-			waitCh, errCh := c.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+			waited := c.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+			waitCh, errCh := waited.Result, waited.Error
 			select {
 			case result := <-waitCh:
 				if result.StatusCode != 0 {
@@ -208,33 +207,31 @@ func TestGitHubRunnerMultiStep(t *testing.T) {
 			ctx := context.Background()
 			testID := generateTestID(name)
 
-			rc, err := c.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+			rc, err := c.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 			if err != nil {
 				t.Fatalf("image pull failed: %v", err)
 			}
 			io.Copy(io.Discard, rc)
 			rc.Close()
 
-			resp, err := c.ContainerCreate(ctx,
-				&container.Config{
-					Image: "alpine:latest",
-					Cmd:   []string{"tail", "-f", "/dev/null"},
-				},
-				nil, nil, nil, "multi_step_"+testID,
+			resp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+				Image: "alpine:latest",
+				Cmd:   []string{"tail", "-f", "/dev/null"},
+			}, Name: "multi_step_" + testID},
 			)
 			if err != nil {
 				t.Fatalf("container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-			if err := c.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+			if _, err := c.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 				t.Fatalf("container start failed: %v", err)
 			}
 
 			// Step 1: Run with env
 			execStep := func(cmd []string, env []string, workDir string) string {
 				t.Helper()
-				execResp, err := c.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+				execResp, err := c.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 					Cmd:          cmd,
 					Env:          env,
 					WorkingDir:   workDir,
@@ -244,7 +241,7 @@ func TestGitHubRunnerMultiStep(t *testing.T) {
 				if err != nil {
 					t.Fatalf("exec create failed: %v", err)
 				}
-				hijacked, err := c.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
+				hijacked, err := c.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 				if err != nil {
 					t.Fatalf("exec start failed: %v", err)
 				}

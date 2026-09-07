@@ -6,7 +6,7 @@ Runs Docker containers as Google Cloud Run Jobs/Executions or long-running Cloud
 
 | Direction | Adaptor | Min version | What it proves |
 |---|---|---|---|
-| **Frontend (Docker API)** | [Docker Go SDK](https://pkg.go.dev/github.com/docker/docker/client) | v25+ | `docker run` → Cloud Run Job execution via `tcp://localhost:3375`. |
+| **Frontend (Docker API)** | [Moby Go SDK](https://pkg.go.dev/github.com/moby/moby/client) | v0.6+| v25+ | `docker run` → Cloud Run Job execution via `tcp://localhost:3375`. |
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | **Backend (GCP API)** | [`gcloud` CLI](https://cloud.google.com/sdk/gcloud/reference/run/jobs) | 480+ | `gcloud run jobs describe`, `gcloud logging read` — operators inspect job state. |
 | | [GCP Go SDK](https://pkg.go.dev/cloud.google.com/go/run) | v1.6+ | The [Cloud Run Admin v2 REST API](https://cloud.google.com/run/docs/reference/rest) (`jobs.create`, `jobs.run`, `executions.get`) the backend issues. |

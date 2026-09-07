@@ -4,23 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/moby/moby/client"
 	"io"
+	"net"
+	"net/netip"
 	"os"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/go-connections/nat"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
 	"github.com/sockerless/api"
 )
 
@@ -61,11 +57,14 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config.ArgsEscaped = cc.ArgsEscaped
 		config.NetworkDisabled = cc.NetworkDisabled
 		config.OnBuild = cc.OnBuild
-		config.MacAddress = cc.MacAddress
 		if len(cc.ExposedPorts) > 0 {
-			config.ExposedPorts = make(nat.PortSet, len(cc.ExposedPorts))
+			config.ExposedPorts = make(network.PortSet, len(cc.ExposedPorts))
 			for p := range cc.ExposedPorts {
-				config.ExposedPorts[nat.Port(p)] = struct{}{}
+				port, err := network.ParsePort(p)
+				if err != nil {
+					return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid exposed port %q: %v", p, err)}
+				}
+				config.ExposedPorts[port] = struct{}{}
 			}
 		}
 		if cc.Healthcheck != nil {
@@ -80,13 +79,36 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		}
 	}
 
-	hostConfig := mapHostConfigToDocker(req.HostConfig)
-	networkingConfig := mapNetworkingConfigToDocker(req.NetworkingConfig)
+	hostConfig, err := mapHostConfigToDocker(req.HostConfig)
+	if err != nil {
+		return nil, err
+	}
+	networkingConfig, err := mapNetworkingConfigToDocker(req.NetworkingConfig)
+	if err != nil {
+		return nil, err
+	}
+	if req.ContainerConfig != nil && req.MacAddress != "" {
+		// The Docker API carries a container's MAC address on its network
+		// endpoints; a container-wide address applies to every endpoint it
+		// joins, the default one when it names none.
+		mac, err := net.ParseMAC(req.MacAddress)
+		if err != nil {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid MAC address %q: %v", req.MacAddress, err)}
+		}
+		if networkingConfig == nil {
+			networkingConfig = &network.NetworkingConfig{}
+		}
+		if len(networkingConfig.EndpointsConfig) == 0 {
+			networkingConfig.EndpointsConfig = map[string]*network.EndpointSettings{"default": {}}
+		}
+		for _, endpoint := range networkingConfig.EndpointsConfig {
+			endpoint.MacAddress = network.HardwareAddr(mac)
+		}
+	}
 
 	// Auto-pull image if needed
-	_, _, err := s.docker.ImageInspectWithRaw(ctx, config.Image)
-	if err != nil {
-		rc, pullErr := s.docker.ImagePull(ctx, config.Image, image.PullOptions{})
+	if _, err := s.docker.ImageInspect(ctx, config.Image); err != nil {
+		rc, pullErr := s.docker.ImagePull(ctx, config.Image, client.ImagePullOptions{})
 		if pullErr != nil {
 			// Preserve the real status (401 auth, registry 5xx, network)
 			// instead of masking every failure as a 404.
@@ -103,8 +125,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		rc.Close()
 	}
 
-	name := req.Name
-	resp, err := s.docker.ContainerCreate(ctx, config, hostConfig, networkingConfig, (*ocispec.Platform)(nil), name)
+	resp, err := s.docker.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:           config,
+		HostConfig:       hostConfig,
+		NetworkingConfig: networkingConfig,
+		Name:             req.Name,
+	})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
@@ -122,22 +148,22 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 // ContainerInspect returns container details.
 func (s *Server) ContainerInspect(id string) (*api.Container, error) {
-	info, err := s.docker.ContainerInspect(context.Background(), id)
+	info, err := s.docker.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	c := ConvertContainerJSON(info)
+	c := ConvertContainerJSON(info.Container)
 	return &c, nil
 }
 
 // ContainerList lists containers.
 func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
-	listOpts := container.ListOptions{
+	listOpts := client.ContainerListOptions{
 		All:   opts.All,
 		Limit: opts.Limit,
 	}
 	if len(opts.Filters) > 0 {
-		listOpts.Filters = filters.NewArgs()
+		listOpts.Filters = client.Filters{}
 		for k, vals := range opts.Filters {
 			for _, v := range vals {
 				listOpts.Filters.Add(k, v)
@@ -150,8 +176,8 @@ func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerS
 		return nil, mapDockerError(err)
 	}
 
-	result := make([]*api.ContainerSummary, 0, len(containers))
-	for _, c := range containers {
+	result := make([]*api.ContainerSummary, 0, len(containers.Items))
+	for _, c := range containers.Items {
 		result = append(result, ConvertContainerSummary(c))
 	}
 	return result, nil
@@ -159,12 +185,14 @@ func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerS
 
 // ContainerStart starts a container.
 func (s *Server) ContainerStart(id string) error {
-	return mapDockerError(s.docker.ContainerStart(context.Background(), id, container.StartOptions{}))
+	_, err := s.docker.ContainerStart(context.Background(), id, client.ContainerStartOptions{})
+	return mapDockerError(err)
 }
 
 // ContainerStop stops a container.
 func (s *Server) ContainerStop(id string, timeout *int) error {
-	return mapDockerError(s.docker.ContainerStop(context.Background(), id, container.StopOptions{Timeout: timeout}))
+	_, err := s.docker.ContainerStop(context.Background(), id, client.ContainerStopOptions{Timeout: timeout})
+	return mapDockerError(err)
 }
 
 // ContainerKill sends a signal to a container.
@@ -172,17 +200,19 @@ func (s *Server) ContainerKill(id string, signal string) error {
 	if signal == "" {
 		signal = "SIGKILL"
 	}
-	return mapDockerError(s.docker.ContainerKill(context.Background(), id, signal))
+	_, err := s.docker.ContainerKill(context.Background(), id, client.ContainerKillOptions{Signal: signal})
+	return mapDockerError(err)
 }
 
 // ContainerRemove removes a container.
 func (s *Server) ContainerRemove(id string, force bool) error {
-	return mapDockerError(s.docker.ContainerRemove(context.Background(), id, container.RemoveOptions{Force: force}))
+	_, err := s.docker.ContainerRemove(context.Background(), id, client.ContainerRemoveOptions{Force: force})
+	return mapDockerError(err)
 }
 
 // ContainerLogs returns container logs as a stream.
 func (s *Server) ContainerLogs(id string, opts api.ContainerLogsOptions) (io.ReadCloser, error) {
-	rc, err := s.docker.ContainerLogs(context.Background(), id, container.LogsOptions{
+	rc, err := s.docker.ContainerLogs(context.Background(), id, client.ContainerLogsOptions{
 		ShowStdout: opts.ShowStdout,
 		ShowStderr: opts.ShowStderr,
 		Follow:     opts.Follow,
@@ -211,15 +241,15 @@ func (s *Server) ContainerWaitCtx(ctx context.Context, id string, condition stri
 	if condition == "" {
 		condition = "not-running"
 	}
-	waitCh, errCh := s.docker.ContainerWait(ctx, id, container.WaitCondition(condition))
+	wait := s.docker.ContainerWait(ctx, id, client.ContainerWaitOptions{Condition: container.WaitCondition(condition)})
 	select {
-	case result := <-waitCh:
+	case result := <-wait.Result:
 		resp := &api.ContainerWaitResponse{StatusCode: int(result.StatusCode)}
 		if result.Error != nil {
 			resp.Error = &api.WaitError{Message: result.Error.Message}
 		}
 		return resp, nil
-	case err := <-errCh:
+	case err := <-wait.Error:
 		return nil, mapDockerError(err)
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -228,7 +258,7 @@ func (s *Server) ContainerWaitCtx(ctx context.Context, id string, condition stri
 
 // ContainerAttach attaches to a container's stdio.
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
-	resp, err := s.docker.ContainerAttach(context.Background(), id, container.AttachOptions{
+	resp, err := s.docker.ContainerAttach(context.Background(), id, client.ContainerAttachOptions{
 		Stream:     opts.Stream,
 		Stdin:      opts.Stdin,
 		Stdout:     opts.Stdout,
@@ -239,12 +269,13 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	return &hijackedRWC{resp}, nil
+	return &hijackedRWC{resp.HijackedResponse}, nil
 }
 
 // ContainerRestart restarts a container.
 func (s *Server) ContainerRestart(id string, timeout *int) error {
-	return mapDockerError(s.docker.ContainerRestart(context.Background(), id, container.StopOptions{Timeout: timeout}))
+	_, err := s.docker.ContainerRestart(context.Background(), id, client.ContainerRestartOptions{Timeout: timeout})
+	return mapDockerError(err)
 }
 
 // ContainerTop returns the running processes inside a container.
@@ -252,7 +283,7 @@ func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopRespon
 	if psArgs == "" {
 		psArgs = "-ef"
 	}
-	top, err := s.docker.ContainerTop(context.Background(), id, []string{psArgs})
+	top, err := s.docker.ContainerTop(context.Background(), id, client.ContainerTopOptions{Arguments: []string{psArgs}})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
@@ -264,11 +295,11 @@ func (s *Server) ContainerTop(id string, psArgs string) (*api.ContainerTopRespon
 
 // ContainerPrune removes stopped containers.
 func (s *Server) ContainerPrune(f map[string][]string) (*api.ContainerPruneResponse, error) {
-	args := filtersFromMap(f)
-	report, err := s.docker.ContainersPrune(context.Background(), args)
+	pruned, err := s.docker.ContainerPrune(context.Background(), client.ContainerPruneOptions{Filters: filtersFromMap(f)})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
+	report := pruned.Report
 	deleted := report.ContainersDeleted
 	if deleted == nil {
 		deleted = []string{}
@@ -281,7 +312,7 @@ func (s *Server) ContainerPrune(f map[string][]string) (*api.ContainerPruneRespo
 
 // ContainerStats returns resource usage stats for a container.
 func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
-	stats, err := s.docker.ContainerStats(context.Background(), id, stream)
+	stats, err := s.docker.ContainerStats(context.Background(), id, client.ContainerStatsOptions{Stream: stream})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
@@ -290,26 +321,29 @@ func (s *Server) ContainerStats(id string, stream bool) (io.ReadCloser, error) {
 
 // ContainerRename renames a container.
 func (s *Server) ContainerRename(id string, newName string) error {
-	return mapDockerError(s.docker.ContainerRename(context.Background(), id, newName))
+	_, err := s.docker.ContainerRename(context.Background(), id, client.ContainerRenameOptions{NewName: newName})
+	return mapDockerError(err)
 }
 
 // ContainerPause pauses a container.
 func (s *Server) ContainerPause(id string) error {
-	return mapDockerError(s.docker.ContainerPause(context.Background(), id))
+	_, err := s.docker.ContainerPause(context.Background(), id, client.ContainerPauseOptions{})
+	return mapDockerError(err)
 }
 
 // ContainerUnpause unpauses a container.
 func (s *Server) ContainerUnpause(id string) error {
-	return mapDockerError(s.docker.ContainerUnpause(context.Background(), id))
+	_, err := s.docker.ContainerUnpause(context.Background(), id, client.ContainerUnpauseOptions{})
+	return mapDockerError(err)
 }
 
 // ExecCreate creates an exec instance in a container.
 func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
-	resp, err := s.docker.ContainerExecCreate(context.Background(), containerID, container.ExecOptions{
+	resp, err := s.docker.ExecCreate(context.Background(), containerID, client.ExecCreateOptions{
 		AttachStdin:  req.AttachStdin,
 		AttachStdout: req.AttachStdout,
 		AttachStderr: req.AttachStderr,
-		Tty:          req.Tty,
+		TTY:          req.Tty,
 		Cmd:          req.Cmd,
 		Env:          req.Env,
 		WorkingDir:   req.WorkingDir,
@@ -326,9 +360,9 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 // ExecStart starts an exec instance and returns a read-write stream.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	if opts.Detach {
-		err := s.docker.ContainerExecStart(context.Background(), id, container.ExecStartOptions{
+		_, err := s.docker.ExecStart(context.Background(), id, client.ExecStartOptions{
 			Detach: true,
-			Tty:    opts.Tty,
+			TTY:    opts.Tty,
 		})
 		if err != nil {
 			return nil, mapDockerError(err)
@@ -336,30 +370,29 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		return &nopRWC{}, nil
 	}
 
-	resp, err := s.docker.ContainerExecAttach(context.Background(), id, container.ExecAttachOptions{
-		Detach: opts.Detach,
-		Tty:    opts.Tty,
+	resp, err := s.docker.ExecAttach(context.Background(), id, client.ExecAttachOptions{
+		TTY: opts.Tty,
 	})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	return &hijackedRWC{resp}, nil
+	return &hijackedRWC{resp.HijackedResponse}, nil
 }
 
 // ExecInspect returns info about an exec instance.
 func (s *Server) ExecInspect(id string) (*api.ExecInstance, error) {
 	ctx := context.Background()
-	resp, err := s.docker.ContainerExecInspect(ctx, id)
+	resp, err := s.docker.ExecInspect(ctx, id, client.ExecInspectOptions{})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
 
 	exec := &api.ExecInstance{
-		ID:          resp.ExecID,
+		ID:          resp.ID,
 		ContainerID: resp.ContainerID,
 		Running:     resp.Running,
 		ExitCode:    resp.ExitCode,
-		Pid:         resp.Pid,
+		Pid:         resp.PID,
 		CanRemove:   !resp.Running,
 	}
 
@@ -392,7 +425,7 @@ func (s *Server) ExecInspect(id string) (*api.ExecInstance, error) {
 
 // ImagePull pulls an image and returns a progress stream.
 func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
-	rc, err := s.docker.ImagePull(context.Background(), ref, image.PullOptions{RegistryAuth: auth})
+	rc, err := s.docker.ImagePull(context.Background(), ref, client.ImagePullOptions{RegistryAuth: auth})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
@@ -401,11 +434,11 @@ func (s *Server) ImagePull(ref string, auth string) (io.ReadCloser, error) {
 
 // ImageInspect returns detailed info about an image.
 func (s *Server) ImageInspect(name string) (*api.Image, error) {
-	info, _, err := s.docker.ImageInspectWithRaw(context.Background(), name)
+	info, err := s.docker.ImageInspect(context.Background(), name)
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	img := ConvertImageInspect(info)
+	img := ConvertImageInspect(info.InspectResponse)
 	return &img, nil
 }
 
@@ -415,7 +448,7 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	return resp.Body, nil
+	return resp, nil
 }
 
 // ImageTag tags an image.
@@ -424,12 +457,13 @@ func (s *Server) ImageTag(source string, repo string, tag string) error {
 	if tag != "" {
 		ref = repo + ":" + tag
 	}
-	return mapDockerError(s.docker.ImageTag(context.Background(), source, ref))
+	_, err := s.docker.ImageTag(context.Background(), client.ImageTagOptions{Source: source, Target: ref})
+	return mapDockerError(err)
 }
 
 // ImageList lists images.
 func (s *Server) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, error) {
-	listOpts := image.ListOptions{All: opts.All}
+	listOpts := client.ImageListOptions{All: opts.All}
 	if len(opts.Filters) > 0 {
 		listOpts.Filters = filtersFromMap(opts.Filters)
 	}
@@ -437,8 +471,8 @@ func (s *Server) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, erro
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	result := make([]*api.ImageSummary, 0, len(images))
-	for _, img := range images {
+	result := make([]*api.ImageSummary, 0, len(images.Items))
+	for _, img := range images.Items {
 		s := conv.ConvertImageSummary(img)
 		result = append(result, &s)
 	}
@@ -447,15 +481,15 @@ func (s *Server) ImageList(opts api.ImageListOptions) ([]*api.ImageSummary, erro
 
 // ImageRemove removes an image.
 func (s *Server) ImageRemove(name string, force bool, prune bool) ([]*api.ImageDeleteResponse, error) {
-	items, err := s.docker.ImageRemove(context.Background(), name, image.RemoveOptions{
+	removed, err := s.docker.ImageRemove(context.Background(), name, client.ImageRemoveOptions{
 		Force:         force,
 		PruneChildren: prune,
 	})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	result := make([]*api.ImageDeleteResponse, 0, len(items))
-	for _, item := range items {
+	result := make([]*api.ImageDeleteResponse, 0, len(removed.Items))
+	for _, item := range removed.Items {
 		r := conv.ConvertImageDeleteResponseItem(item)
 		result = append(result, &r)
 	}
@@ -468,8 +502,8 @@ func (s *Server) ImageHistory(name string) ([]*api.ImageHistoryEntry, error) {
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	result := make([]*api.ImageHistoryEntry, 0, len(history))
-	for _, h := range history {
+	result := make([]*api.ImageHistoryEntry, 0, len(history.Items))
+	for _, h := range history.Items {
 		entry := conv.ConvertImageHistoryResponseItem(h)
 		result = append(result, &entry)
 	}
@@ -478,11 +512,11 @@ func (s *Server) ImageHistory(name string) ([]*api.ImageHistoryEntry, error) {
 
 // ImagePrune removes unused images.
 func (s *Server) ImagePrune(f map[string][]string) (*api.ImagePruneResponse, error) {
-	args := filtersFromMap(f)
-	report, err := s.docker.ImagesPrune(context.Background(), args)
+	pruned, err := s.docker.ImagePrune(context.Background(), client.ImagePruneOptions{Filters: filtersFromMap(f)})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
+	report := pruned.Report
 	var deleted []*api.ImageDeleteResponse
 	for _, img := range report.ImagesDeleted {
 		r := conv.ConvertImageDeleteResponseItem(img)
@@ -499,22 +533,23 @@ func (s *Server) ImagePrune(f map[string][]string) (*api.ImagePruneResponse, err
 
 // AuthLogin authenticates with a Docker registry.
 func (s *Server) AuthLogin(req *api.AuthRequest) (*api.AuthResponse, error) {
-	resp, err := s.docker.RegistryLogin(context.Background(), registry.AuthConfig{
+	// The registry login carries a username and password (the email a
+	// Docker client may still send is not part of the credential).
+	resp, err := s.docker.RegistryLogin(context.Background(), client.RegistryLoginOptions{
 		Username:      req.Username,
 		Password:      req.Password,
-		Email:         req.Email,
 		ServerAddress: req.ServerAddress,
 	})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	r := conv.ConvertAuthResponse(resp)
+	r := conv.ConvertAuthResponse(resp.Auth)
 	return &r, nil
 }
 
 // NetworkCreate creates a network.
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
-	opts := network.CreateOptions{
+	opts := client.NetworkCreateOptions{
 		Driver:     req.Driver,
 		Internal:   req.Internal,
 		Attachable: req.Attachable,
@@ -527,11 +562,11 @@ func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreat
 	if req.IPAM != nil {
 		ipamConfigs := make([]network.IPAMConfig, len(req.IPAM.Config))
 		for i, c := range req.IPAM.Config {
-			ipamConfigs[i] = network.IPAMConfig{
-				Subnet:  c.Subnet,
-				IPRange: c.IPRange,
-				Gateway: c.Gateway,
+			cfg, err := ipamConfigToDocker(c)
+			if err != nil {
+				return nil, err
 			}
+			ipamConfigs[i] = cfg
 		}
 		opts.IPAM = &network.IPAM{
 			Driver:  req.IPAM.Driver,
@@ -547,13 +582,13 @@ func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreat
 
 	return &api.NetworkCreateResponse{
 		ID:      resp.ID,
-		Warning: resp.Warning,
+		Warning: strings.Join(resp.Warning, "\n"),
 	}, nil
 }
 
 // NetworkList lists networks.
 func (s *Server) NetworkList(f map[string][]string) ([]*api.Network, error) {
-	opts := network.ListOptions{}
+	opts := client.NetworkListOptions{}
 	if len(f) > 0 {
 		opts.Filters = filtersFromMap(f)
 	}
@@ -562,8 +597,8 @@ func (s *Server) NetworkList(f map[string][]string) ([]*api.Network, error) {
 		return nil, mapDockerError(err)
 	}
 
-	result := make([]*api.Network, 0, len(networks))
-	for _, n := range networks {
+	result := make([]*api.Network, 0, len(networks.Items))
+	for _, n := range networks.Items {
 		net := ConvertNetworkSummary(n)
 		result = append(result, &net)
 	}
@@ -572,41 +607,43 @@ func (s *Server) NetworkList(f map[string][]string) ([]*api.Network, error) {
 
 // NetworkInspect returns details about a network.
 func (s *Server) NetworkInspect(id string) (*api.Network, error) {
-	n, err := s.docker.NetworkInspect(context.Background(), id, network.InspectOptions{})
+	n, err := s.docker.NetworkInspect(context.Background(), id, client.NetworkInspectOptions{})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	net := ConvertNetworkResource(n)
+	net := ConvertNetworkResource(n.Network)
 	return &net, nil
 }
 
 // NetworkConnect connects a container to a network.
 func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error {
-	var epConfig *network.EndpointSettings
-	if req.EndpointConfig != nil {
-		epConfig = APIEndpointToDocker(req.EndpointConfig)
+	epConfig, err := APIEndpointToDocker(req.EndpointConfig)
+	if err != nil {
+		return err
 	}
-	return mapDockerError(s.docker.NetworkConnect(context.Background(), id, req.Container, epConfig))
+	_, err = s.docker.NetworkConnect(context.Background(), id, client.NetworkConnectOptions{Container: req.Container, EndpointConfig: epConfig})
+	return mapDockerError(err)
 }
 
 // NetworkDisconnect disconnects a container from a network.
 func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest) error {
-	return mapDockerError(s.docker.NetworkDisconnect(context.Background(), id, req.Container, req.Force))
+	_, err := s.docker.NetworkDisconnect(context.Background(), id, client.NetworkDisconnectOptions{Container: req.Container, Force: req.Force})
+	return mapDockerError(err)
 }
 
 // NetworkRemove removes a network.
 func (s *Server) NetworkRemove(id string) error {
-	return mapDockerError(s.docker.NetworkRemove(context.Background(), id))
+	_, err := s.docker.NetworkRemove(context.Background(), id, client.NetworkRemoveOptions{})
+	return mapDockerError(err)
 }
 
 // NetworkPrune removes unused networks.
 func (s *Server) NetworkPrune(f map[string][]string) (*api.NetworkPruneResponse, error) {
-	args := filtersFromMap(f)
-	report, err := s.docker.NetworksPrune(context.Background(), args)
+	pruned, err := s.docker.NetworkPrune(context.Background(), client.NetworkPruneOptions{Filters: filtersFromMap(f)})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	deleted := report.NetworksDeleted
+	deleted := pruned.Report.NetworksDeleted
 	if deleted == nil {
 		deleted = []string{}
 	}
@@ -617,7 +654,7 @@ func (s *Server) NetworkPrune(f map[string][]string) (*api.NetworkPruneResponse,
 
 // VolumeCreate creates a volume.
 func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error) {
-	vol, err := s.docker.VolumeCreate(context.Background(), volume.CreateOptions{
+	vol, err := s.docker.VolumeCreate(context.Background(), client.VolumeCreateOptions{
 		Name:       req.Name,
 		Driver:     req.Driver,
 		DriverOpts: req.DriverOpts,
@@ -626,13 +663,13 @@ func (s *Server) VolumeCreate(req *api.VolumeCreateRequest) (*api.Volume, error)
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	v := conv.ConvertVolume(vol)
+	v := conv.ConvertVolume(vol.Volume)
 	return &v, nil
 }
 
 // VolumeList lists volumes.
 func (s *Server) VolumeList(f map[string][]string) (*api.VolumeListResponse, error) {
-	opts := volume.ListOptions{}
+	opts := client.VolumeListOptions{}
 	if len(f) > 0 {
 		opts.Filters = filtersFromMap(f)
 	}
@@ -642,38 +679,43 @@ func (s *Server) VolumeList(f map[string][]string) (*api.VolumeListResponse, err
 	}
 
 	result := make([]*api.Volume, 0)
-	for _, v := range vols.Volumes {
-		vol := conv.ConvertVolume(*v)
+	for _, v := range vols.Items {
+		vol := conv.ConvertVolume(v)
 		result = append(result, &vol)
+	}
+	warnings := vols.Warnings
+	if warnings == nil {
+		warnings = []string{}
 	}
 	return &api.VolumeListResponse{
 		Volumes:  result,
-		Warnings: []string{},
+		Warnings: warnings,
 	}, nil
 }
 
 // VolumeInspect returns details about a volume.
 func (s *Server) VolumeInspect(name string) (*api.Volume, error) {
-	vol, err := s.docker.VolumeInspect(context.Background(), name)
+	vol, err := s.docker.VolumeInspect(context.Background(), name, client.VolumeInspectOptions{})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
-	v := conv.ConvertVolume(vol)
+	v := conv.ConvertVolume(vol.Volume)
 	return &v, nil
 }
 
 // VolumeRemove removes a volume.
 func (s *Server) VolumeRemove(name string, force bool) error {
-	return mapDockerError(s.docker.VolumeRemove(context.Background(), name, force))
+	_, err := s.docker.VolumeRemove(context.Background(), name, client.VolumeRemoveOptions{Force: force})
+	return mapDockerError(err)
 }
 
 // VolumePrune removes unused volumes.
 func (s *Server) VolumePrune(f map[string][]string) (*api.VolumePruneResponse, error) {
-	args := filtersFromMap(f)
-	report, err := s.docker.VolumesPrune(context.Background(), args)
+	pruned, err := s.docker.VolumePrune(context.Background(), client.VolumePruneOptions{Filters: filtersFromMap(f)})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
+	report := pruned.Report
 	deleted := report.VolumesDeleted
 	if deleted == nil {
 		deleted = []string{}
@@ -696,7 +738,7 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 // api.Backend.SystemEvents signature is unchanged, the handler reaches the
 // cancellable path through the optional SystemEventsCtx interface.
 func (s *Server) SystemEventsCtx(ctx context.Context, opts api.EventsOptions) (io.ReadCloser, error) {
-	listOpts := events.ListOptions{
+	listOpts := client.EventsListOptions{
 		Since: opts.Since,
 		Until: opts.Until,
 	}
@@ -704,7 +746,8 @@ func (s *Server) SystemEventsCtx(ctx context.Context, opts api.EventsOptions) (i
 		listOpts.Filters = filtersFromMap(opts.Filters)
 	}
 
-	eventsCh, errCh := s.docker.Events(ctx, listOpts)
+	stream := s.docker.Events(ctx, listOpts)
+	eventsCh, errCh := stream.Messages, stream.Err
 
 	pr, pw := io.Pipe()
 	go func() {
@@ -740,62 +783,40 @@ func (s *Server) SystemEventsCtx(ctx context.Context, opts api.EventsOptions) (i
 
 // SystemDf returns disk usage information.
 func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {
-	du, err := s.docker.DiskUsage(context.Background(), types.DiskUsageOptions{})
+	du, err := s.docker.DiskUsage(context.Background(), client.DiskUsageOptions{
+		Containers: true,
+		Images:     true,
+		Volumes:    true,
+		BuildCache: true,
+		Verbose:    true,
+	})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
 
-	var containers []*api.ContainerSummary
-	for _, c := range du.Containers {
-		if c == nil {
-			continue
-		}
-		containers = append(containers, ConvertContainerSummary(*c))
+	containers := make([]*api.ContainerSummary, 0, len(du.Containers.Items))
+	for _, c := range du.Containers.Items {
+		containers = append(containers, ConvertContainerSummary(c))
 	}
-	if containers == nil {
-		containers = []*api.ContainerSummary{}
-	}
-
-	var images []*api.ImageSummary
-	for _, img := range du.Images {
-		if img == nil {
-			continue
-		}
-		s := conv.ConvertImageSummary(*img)
+	images := make([]*api.ImageSummary, 0, len(du.Images.Items))
+	for _, img := range du.Images.Items {
+		s := conv.ConvertImageSummary(img)
 		images = append(images, &s)
 	}
-	if images == nil {
-		images = []*api.ImageSummary{}
+	volumes := make([]*api.Volume, 0, len(du.Volumes.Items))
+	for _, v := range du.Volumes.Items {
+		vol := conv.ConvertVolume(v)
+		volumes = append(volumes, &vol)
 	}
-
-	var volumes []*api.Volume
-	if du.Volumes != nil {
-		for _, v := range du.Volumes {
-			if v == nil {
-				continue
-			}
-			vol := conv.ConvertVolume(*v)
-			volumes = append(volumes, &vol)
-		}
-	}
-	if volumes == nil {
-		volumes = []*api.Volume{}
-	}
-
-	var buildCache []*api.BuildCache
-	for _, bc := range du.BuildCache {
-		if bc == nil {
-			continue
-		}
-		entry := ConvertBuildCache(*bc)
+	buildCache := make([]*api.BuildCache, 0, len(du.BuildCache.Items))
+	for _, bc := range du.BuildCache.Items {
+		entry := ConvertBuildCache(bc)
 		buildCache = append(buildCache, &entry)
 	}
-	if buildCache == nil {
-		buildCache = []*api.BuildCache{}
-	}
 
+	// The Docker API's LayersSize is the images' total size.
 	return &api.DiskUsageResponse{
-		LayersSize: du.LayersSize,
+		LayersSize: du.Images.TotalSize,
 		Images:     images,
 		Containers: containers,
 		Volumes:    volumes,
@@ -807,7 +828,7 @@ func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {
 
 // hijackedRWC wraps a Docker HijackedResponse as an io.ReadWriteCloser.
 type hijackedRWC struct {
-	resp types.HijackedResponse
+	resp client.HijackedResponse
 }
 
 func (h *hijackedRWC) Read(p []byte) (int, error)  { return h.resp.Reader.Read(p) }
@@ -821,9 +842,9 @@ func (n *nopRWC) Read([]byte) (int, error)  { return 0, io.EOF }
 func (n *nopRWC) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 func (n *nopRWC) Close() error              { return nil }
 
-// filtersFromMap converts a map[string][]string to filters.Args.
-func filtersFromMap(f map[string][]string) filters.Args {
-	args := filters.NewArgs()
+// filtersFromMap converts a map[string][]string to the client's Filters.
+func filtersFromMap(f map[string][]string) client.Filters {
+	args := client.Filters{}
 	for k, vals := range f {
 		for _, v := range vals {
 			args.Add(k, v)
@@ -833,9 +854,13 @@ func filtersFromMap(f map[string][]string) filters.Args {
 }
 
 // mapHostConfigToDocker converts api.HostConfig to Docker SDK container.HostConfig.
-func mapHostConfigToDocker(hc *api.HostConfig) *container.HostConfig {
+func mapHostConfigToDocker(hc *api.HostConfig) (*container.HostConfig, error) {
 	if hc == nil {
-		return nil
+		return nil, nil
+	}
+	dns, err := parseAddrs("DNS server", hc.DNS)
+	if err != nil {
+		return nil, err
 	}
 	hostConfig := &container.HostConfig{
 		NetworkMode: container.NetworkMode(hc.NetworkMode),
@@ -855,7 +880,7 @@ func mapHostConfigToDocker(hc *api.HostConfig) *container.HostConfig {
 			Name:              container.RestartPolicyMode(hc.RestartPolicy.Name),
 			MaximumRetryCount: hc.RestartPolicy.MaximumRetryCount,
 		},
-		DNS:        hc.DNS,
+		DNS:        dns,
 		DNSSearch:  hc.DNSSearch,
 		DNSOptions: hc.DNSOptions,
 		Resources: container.Resources{
@@ -888,13 +913,25 @@ func mapHostConfigToDocker(hc *api.HostConfig) *container.HostConfig {
 		hostConfig.ConsoleSize = *hc.ConsoleSize
 	}
 	if len(hc.PortBindings) > 0 {
-		hostConfig.PortBindings = make(nat.PortMap, len(hc.PortBindings))
+		hostConfig.PortBindings = make(network.PortMap, len(hc.PortBindings))
 		for port, bindings := range hc.PortBindings {
-			var nb []nat.PortBinding
-			for _, b := range bindings {
-				nb = append(nb, nat.PortBinding{HostIP: b.HostIP, HostPort: b.HostPort})
+			parsed, err := network.ParsePort(port)
+			if err != nil {
+				return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid port binding %q: %v", port, err)}
 			}
-			hostConfig.PortBindings[nat.Port(port)] = nb
+			var nb []network.PortBinding
+			for _, b := range bindings {
+				binding := network.PortBinding{HostPort: b.HostPort}
+				if b.HostIP != "" {
+					hostIP, err := netip.ParseAddr(b.HostIP)
+					if err != nil {
+						return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid host address %q for port %s: %v", b.HostIP, port, err)}
+					}
+					binding.HostIP = hostIP
+				}
+				nb = append(nb, binding)
+			}
+			hostConfig.PortBindings[parsed] = nb
 		}
 	}
 	if hc.LogConfig.Type != "" {
@@ -936,76 +973,93 @@ func mapHostConfigToDocker(hc *api.HostConfig) *container.HostConfig {
 		}
 		hostConfig.Mounts = append(hostConfig.Mounts, dm)
 	}
-	return hostConfig
+	return hostConfig, nil
 }
 
 // mapNetworkingConfigToDocker converts api.NetworkingConfig to Docker SDK network.NetworkingConfig.
-func mapNetworkingConfigToDocker(nc *api.NetworkingConfig) *network.NetworkingConfig {
+func mapNetworkingConfigToDocker(nc *api.NetworkingConfig) (*network.NetworkingConfig, error) {
 	if nc == nil || len(nc.EndpointsConfig) == 0 {
-		return nil
+		return nil, nil
 	}
 	networkingConfig := &network.NetworkingConfig{
 		EndpointsConfig: make(map[string]*network.EndpointSettings, len(nc.EndpointsConfig)),
 	}
 	for name, ep := range nc.EndpointsConfig {
-		es := &network.EndpointSettings{
-			NetworkID:           ep.NetworkID,
-			EndpointID:          ep.EndpointID,
-			Gateway:             ep.Gateway,
-			IPAddress:           ep.IPAddress,
-			IPPrefixLen:         ep.IPPrefixLen,
-			IPv6Gateway:         ep.IPv6Gateway,
-			GlobalIPv6Address:   ep.GlobalIPv6Address,
-			GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
-			MacAddress:          ep.MacAddress,
-			Aliases:             ep.Aliases,
-			DNSNames:            ep.DNSNames,
-			Links:               ep.Links,
-			DriverOpts:          ep.DriverOpts,
-		}
-		if ep.IPAMConfig != nil {
-			es.IPAMConfig = &network.EndpointIPAMConfig{
-				IPv4Address:  ep.IPAMConfig.IPv4Address,
-				IPv6Address:  ep.IPAMConfig.IPv6Address,
-				LinkLocalIPs: ep.IPAMConfig.LinkLocalIPs,
-			}
+		es, err := APIEndpointToDocker(ep)
+		if err != nil {
+			return nil, err
 		}
 		networkingConfig.EndpointsConfig[name] = es
 	}
-	return networkingConfig
+	return networkingConfig, nil
+}
+
+// parseAddr parses one address a client sent as text; an empty string is
+// the zero address.
+func parseAddr(what, value string) (netip.Addr, error) {
+	if value == "" {
+		return netip.Addr{}, nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Addr{}, &api.InvalidParameterError{Message: fmt.Sprintf("invalid %s %q: %v", what, value, err)}
+	}
+	return addr, nil
+}
+
+// parseAddrs parses the addresses a client sent as text.
+func parseAddrs(what string, values []string) ([]netip.Addr, error) {
+	if values == nil {
+		return nil, nil
+	}
+	out := make([]netip.Addr, 0, len(values))
+	for _, v := range values {
+		addr, err := parseAddr(what, v)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, addr)
+	}
+	return out, nil
 }
 
 // ---methods ---
 
 // ContainerResize resizes the TTY of a container.
 func (s *Server) ContainerResize(id string, h, w int) error {
-	return mapDockerError(s.docker.ContainerResize(context.Background(), id, container.ResizeOptions{
+	_, err := s.docker.ContainerResize(context.Background(), id, client.ContainerResizeOptions{
 		Height: uint(h),
 		Width:  uint(w),
-	}))
+	})
+	return mapDockerError(err)
 }
 
 // ExecResize resizes the TTY of an exec instance.
 func (s *Server) ExecResize(id string, h, w int) error {
-	return mapDockerError(s.docker.ContainerExecResize(context.Background(), id, container.ResizeOptions{
+	_, err := s.docker.ExecResize(context.Background(), id, client.ExecResizeOptions{
 		Height: uint(h),
 		Width:  uint(w),
-	}))
+	})
+	return mapDockerError(err)
 }
 
 // ContainerPutArchive uploads a tar archive to a container path.
 func (s *Server) ContainerPutArchive(id string, path string, noOverwriteDirNonDir bool, body io.Reader) error {
-	return mapDockerError(s.docker.CopyToContainer(context.Background(), id, path, body, container.CopyToContainerOptions{
+	_, err := s.docker.CopyToContainer(context.Background(), id, client.CopyToContainerOptions{
+		DestinationPath:           path,
+		Content:                   body,
 		AllowOverwriteDirWithFile: !noOverwriteDirNonDir,
-	}))
+	})
+	return mapDockerError(err)
 }
 
 // ContainerStatPath returns stat info for a path in a container.
 func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathStat, error) {
-	stat, err := s.docker.ContainerStatPath(context.Background(), id, path)
+	result, err := s.docker.ContainerStatPath(context.Background(), id, client.ContainerStatPathOptions{Path: path})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
+	stat := result.Stat
 	return &api.ContainerPathStat{
 		Name:       stat.Name,
 		Size:       stat.Size,
@@ -1017,10 +1071,11 @@ func (s *Server) ContainerStatPath(id string, path string) (*api.ContainerPathSt
 
 // ContainerGetArchive downloads a tar archive from a container path.
 func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArchiveResponse, error) {
-	rc, stat, err := s.docker.CopyFromContainer(context.Background(), id, path)
+	copied, err := s.docker.CopyFromContainer(context.Background(), id, client.CopyFromContainerOptions{SourcePath: path})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
+	stat, rc := copied.Stat, copied.Content
 	return &api.ContainerArchiveResponse{
 		Stat: api.ContainerPathStat{
 			Name:       stat.Name,
@@ -1035,8 +1090,8 @@ func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArch
 
 // ContainerUpdate updates resource limits on a container.
 func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*api.ContainerUpdateResponse, error) {
-	updateConfig := container.UpdateConfig{
-		Resources: container.Resources{
+	updateConfig := client.ContainerUpdateOptions{
+		Resources: &container.Resources{
 			Memory:            req.Memory,
 			MemorySwap:        req.MemorySwap,
 			MemoryReservation: req.MemoryReservation,
@@ -1049,7 +1104,7 @@ func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*a
 			PidsLimit:         req.PidsLimit,
 			OomKillDisable:    req.OomKillDisable,
 		},
-		RestartPolicy: container.RestartPolicy{
+		RestartPolicy: &container.RestartPolicy{
 			Name:              container.RestartPolicyMode(req.RestartPolicy.Name),
 			MaximumRetryCount: req.RestartPolicy.MaximumRetryCount,
 		},
@@ -1063,12 +1118,12 @@ func (s *Server) ContainerUpdate(id string, req *api.ContainerUpdateRequest) (*a
 
 // ContainerChanges returns filesystem changes in a container.
 func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) {
-	changes, err := s.docker.ContainerDiff(context.Background(), id)
+	diff, err := s.docker.ContainerDiff(context.Background(), id, client.ContainerDiffOptions{})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
 	var result []api.ContainerChangeItem
-	for _, c := range changes {
+	for _, c := range diff.Changes {
 		result = append(result, conv.ConvertContainerChange(c))
 	}
 	if result == nil {
@@ -1079,7 +1134,7 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 
 // ContainerExport exports a container's filesystem as a tar stream.
 func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
-	rc, err := s.docker.ContainerExport(context.Background(), id)
+	rc, err := s.docker.ContainerExport(context.Background(), id, client.ContainerExportOptions{})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
@@ -1088,7 +1143,7 @@ func (s *Server) ContainerExport(id string) (io.ReadCloser, error) {
 
 // ImageBuild builds an image from a Dockerfile and build context.
 func (s *Server) ImageBuild(opts api.ImageBuildOptions, buildContext io.Reader) (io.ReadCloser, error) {
-	dockerOpts := types.ImageBuildOptions{
+	dockerOpts := client.ImageBuildOptions{
 		Tags:       opts.Tags,
 		Dockerfile: opts.Dockerfile,
 		BuildArgs:  opts.BuildArgs,
@@ -1114,7 +1169,7 @@ func (s *Server) ImagePush(name string, tag string, auth string) (io.ReadCloser,
 	}
 	ref := name + ":" + tag
 
-	resp, err := s.docker.ImagePush(context.Background(), ref, image.PushOptions{
+	resp, err := s.docker.ImagePush(context.Background(), ref, client.ImagePushOptions{
 		RegistryAuth: auth,
 	})
 	if err != nil {
@@ -1134,15 +1189,16 @@ func (s *Server) ImageSave(names []string) (io.ReadCloser, error) {
 
 // ImageSearch searches Docker Hub for images.
 func (s *Server) ImageSearch(term string, limit int, searchFilters map[string][]string) ([]*api.ImageSearchResult, error) {
-	results, err := s.docker.ImageSearch(context.Background(), term, registry.SearchOptions{
-		Limit: limit,
+	results, err := s.docker.ImageSearch(context.Background(), term, client.ImageSearchOptions{
+		Limit:   limit,
+		Filters: filtersFromMap(searchFilters),
 	})
 	if err != nil {
 		return nil, mapDockerError(err)
 	}
 
-	mapped := make([]*api.ImageSearchResult, 0, len(results))
-	for _, r := range results {
+	mapped := make([]*api.ImageSearchResult, 0, len(results.Items))
+	for _, r := range results.Items {
 		mapped = append(mapped, &api.ImageSearchResult{
 			Name:        r.Name,
 			Description: r.Description,
@@ -1156,11 +1212,10 @@ func (s *Server) ImageSearch(term string, limit int, searchFilters map[string][]
 
 // ContainerCommit creates a new image from a container's changes.
 func (s *Server) ContainerCommit(req *api.ContainerCommitRequest) (*api.ContainerCommitResponse, error) {
-	pause := req.Pause
-	commitOpts := container.CommitOptions{
+	commitOpts := client.ContainerCommitOptions{
 		Comment: req.Comment,
 		Author:  req.Author,
-		Pause:   pause,
+		NoPause: !req.Pause,
 		Changes: req.Changes,
 	}
 	if req.Tag != "" {
@@ -1217,7 +1272,7 @@ func (s *Server) PodInspect(name string) (*api.PodInspectResponse, error) {
 		if c.State == "running" {
 			state = "running"
 		}
-		infos = append(infos, api.PodContainerInfo{ID: c.ID, Name: nameFromDocker(c), State: c.State})
+		infos = append(infos, api.PodContainerInfo{ID: c.ID, Name: nameFromDocker(c), State: string(c.State)})
 	}
 	created := ""
 	if len(containers) > 0 {
@@ -1260,15 +1315,15 @@ func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
 	}
 	// Pods synthesised from container labels for anything Store.Pods
 	// doesn't know about (post-restart reconstruction).
-	containers, err := s.docker.ContainerList(context.Background(), container.ListOptions{
+	containers, err := s.docker.ContainerList(context.Background(), client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", "sockerless-pod")),
+		Filters: client.Filters{}.Add("label", "sockerless-pod"),
 	})
 	if err != nil {
 		return result, nil
 	}
-	groups := make(map[string][]types.Container)
-	for _, c := range containers {
+	groups := make(map[string][]container.Summary)
+	for _, c := range containers.Items {
 		podName := c.Labels["sockerless-pod"]
 		if podName == "" || seen[podName] {
 			continue
@@ -1282,7 +1337,7 @@ func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
 			if c.State == "running" {
 				state = "running"
 			}
-			infos = append(infos, api.PodContainerInfo{ID: c.ID, Name: nameFromDocker(c), State: c.State})
+			infos = append(infos, api.PodContainerInfo{ID: c.ID, Name: nameFromDocker(c), State: string(c.State)})
 		}
 		result = append(result, &api.PodListEntry{
 			ID:         podName,
@@ -1303,7 +1358,7 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 	ctx := context.Background()
 	var errs []string
 	for _, id := range ids {
-		if err := s.docker.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+		if _, err := s.docker.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
@@ -1322,7 +1377,7 @@ func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, err
 	ctx := context.Background()
 	var errs []string
 	for _, id := range ids {
-		if err := s.docker.ContainerStop(ctx, id, container.StopOptions{Timeout: timeout}); err != nil {
+		if _, err := s.docker.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: timeout}); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
@@ -1344,7 +1399,7 @@ func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, er
 	ctx := context.Background()
 	var errs []string
 	for _, id := range ids {
-		if err := s.docker.ContainerKill(ctx, id, signal); err != nil {
+		if _, err := s.docker.ContainerKill(ctx, id, client.ContainerKillOptions{Signal: signal}); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
@@ -1363,7 +1418,7 @@ func (s *Server) PodRemove(name string, force bool) error {
 	}
 	ctx := context.Background()
 	for _, id := range ids {
-		if err := s.docker.ContainerRemove(ctx, id, container.RemoveOptions{Force: force}); err != nil {
+		if _, err := s.docker.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: force}); err != nil {
 			return mapDockerError(err)
 		}
 	}
@@ -1396,15 +1451,19 @@ func (s *Server) podContainerIDs(ctx context.Context, name string) ([]string, er
 
 // dockerContainersByPodLabel queries the Docker daemon for containers
 // tagged with `sockerless-pod=<name>`.
-func (s *Server) dockerContainersByPodLabel(ctx context.Context, name string) ([]types.Container, error) {
-	return s.docker.ContainerList(ctx, container.ListOptions{
+func (s *Server) dockerContainersByPodLabel(ctx context.Context, name string) ([]container.Summary, error) {
+	listed, err := s.docker.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", "sockerless-pod="+name)),
+		Filters: client.Filters{}.Add("label", "sockerless-pod="+name),
 	})
+	if err != nil {
+		return nil, err
+	}
+	return listed.Items, nil
 }
 
 // nameFromDocker returns the first Docker name (trimmed of leading "/").
-func nameFromDocker(c types.Container) string {
+func nameFromDocker(c container.Summary) string {
 	if len(c.Names) == 0 {
 		return c.ID[:12]
 	}
@@ -1417,3 +1476,26 @@ var (
 	_ = sort.Slice
 	_ = strings.Contains
 )
+
+// ipamConfigToDocker parses an IPAM configuration's addresses into the
+// typed prefixes and address the Docker API carries.
+func ipamConfigToDocker(c api.IPAMConfig) (network.IPAMConfig, error) {
+	var cfg network.IPAMConfig
+	var err error
+	if c.Subnet != "" {
+		if cfg.Subnet, err = netip.ParsePrefix(c.Subnet); err != nil {
+			return cfg, &api.InvalidParameterError{Message: fmt.Sprintf("invalid IPAM subnet %q: %v", c.Subnet, err)}
+		}
+	}
+	if c.IPRange != "" {
+		if cfg.IPRange, err = netip.ParsePrefix(c.IPRange); err != nil {
+			return cfg, &api.InvalidParameterError{Message: fmt.Sprintf("invalid IPAM range %q: %v", c.IPRange, err)}
+		}
+	}
+	if c.Gateway != "" {
+		if cfg.Gateway, err = netip.ParseAddr(c.Gateway); err != nil {
+			return cfg, &api.InvalidParameterError{Message: fmt.Sprintf("invalid IPAM gateway %q: %v", c.Gateway, err)}
+		}
+	}
+	return cfg, nil
+}

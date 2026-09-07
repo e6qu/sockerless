@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 var (
@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 	// If --socket flag is provided, connect to an external system
 	if socket := os.Getenv("SOCKERLESS_SOCKET"); socket != "" {
 		var err error
-		dockerClient, err = client.NewClientWithOpts(
+		dockerClient, err = client.New(
 			client.WithHost("unix://"+socket),
 			client.WithAPIVersionNegotiation(),
 		)
@@ -178,7 +178,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	fmt.Println("Backend is ready (serving Docker API)")
 
 	// Create Docker SDK client pointing directly at backend
-	dockerClient, err = client.NewClientWithOpts(
+	dockerClient, err = client.New(
 		client.WithHost("tcp://"+serverAddr),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -325,7 +325,7 @@ func waitForReady(url string, timeout time.Duration) error {
 // Docker API. The host daemon used to build the fixture is deliberately not
 // authoritative for a cloud backend's image catalog.
 func loadImageThroughDockerAPI(host, imageName string) error {
-	c, err := client.NewClientWithOpts(
+	c, err := client.New(
 		client.WithHost(host),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -351,8 +351,8 @@ func loadImageThroughDockerAPI(host, imageName string) error {
 		_ = save.Wait()
 		return fmt.Errorf("load %s through %s: %w", imageName, host, err)
 	}
-	loadOutput, readErr := io.ReadAll(loaded.Body)
-	closeErr := loaded.Body.Close()
+	loadOutput, readErr := io.ReadAll(loaded)
+	closeErr := loaded.Close()
 	saveErr := save.Wait()
 	if readErr != nil {
 		return fmt.Errorf("read image-load response for %s through %s: %w", imageName, host, readErr)

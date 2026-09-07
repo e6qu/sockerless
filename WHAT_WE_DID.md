@@ -4,6 +4,37 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact history.
 
+## Remaining bugs closed in one pass (2026-09-07)
+
+With every harness green at sockerless-cloud v0.30.9, the open bugs went in
+one branch. Two had been fixed upstream and only needed the pin to say so:
+the simulator's subnet reclaim (BUG-2950) and the Azure Files mount the
+shared-volume writer works against (BUG-2952). The Azure Container Registry
+round trip now lists the registry through `core.OCIListImages`, the catalog
+path the backends serve `docker images` by, which the simulator has served
+since v0.30.5 (BUG-2945). The six deployable Terraform modules follow the
+Snyk infrastructure rules that are mechanical — buckets versioned, logged
+and encrypted with customer-managed keys, flow logs, KMS on log groups and
+registries, Lambda tracing, TLS 1.2, geo-redundant storage — and `.snyk`
+records, per resource, each rule the deployment deliberately does not
+follow and why (BUG-2923). The Google modules' storage key ring lives in the
+bucket location under Cloud KMS's lowercase spelling, and the Cloud Run and
+Cloud Run Functions harness cells route Cloud KMS to the simulator like
+every other service (BUG-2974). The harness image's module downloads retry
+a stream the module proxy or checksum database dropped (BUG-2975). An
+Azure Functions site's tags carry the container's name, labels and tty, so
+`docker ps --filter name=` resolves a started container from the cloud
+(BUG-2976); and the Azure modules' destroy-time sweep runs an Azure CLI
+the harness image installs and logs in against the simulator, failing the
+destroy rather than sweeping nothing when the CLI is missing (BUG-2977). The Docker passthrough backend, the
+cross-backend e2e suite and the six cloud backends' integration tests moved
+from `github.com/docker/docker` — whose two Engine advisories had no fix in
+any published version — to `github.com/moby/moby/client` v0.6.0 and
+`github.com/moby/moby/api` v1.56.0: each call takes an options value and
+returns a result value, the goverter converters map the per-domain types
+and `netip` addresses, and no module depends on the Engine module any more
+(BUG-2922).
+
 ## The registry checks credentials now, and so does every path that reaches it
 
 sockerless-cloud v0.30.3 made Google Artifact Registry's data plane refuse

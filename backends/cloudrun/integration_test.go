@@ -24,12 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	core "github.com/sockerless/backend-core"
 	"github.com/sockerless/gcp-common/registrytest"
 	"golang.org/x/oauth2/google"
@@ -384,7 +381,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	fmt.Printf("[backend] ready on %s\n", backendAddr)
 
 	var err error
-	dockerClient, err = client.NewClientWithOpts(
+	dockerClient, err = client.New(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -398,7 +395,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	// exercises the same pull path production uses and gives
 	// ContainerCreate the metadata it needs to merge defaults.
 	pullCtx, pullCancel := context.WithTimeout(context.Background(), 60*time.Second)
-	if rc, err := dockerClient.ImagePull(pullCtx, evalImageName, image.PullOptions{}); err != nil {
+	if rc, err := dockerClient.ImagePull(pullCtx, evalImageName, client.ImagePullOptions{}); err != nil {
 		failClean("ERROR: pull %s through backend: %v\n", evalImageName, err)
 	} else {
 		_, _ = io.Copy(io.Discard, rc)
@@ -419,7 +416,7 @@ func TestCloudRunContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Pull image
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -429,21 +426,20 @@ func TestCloudRunContainerLifecycle(t *testing.T) {
 	testID := generateTestID()
 
 	// Create
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image:     "alpine:latest",
-			Cmd:       []string{"tail", "-f", "/dev/null"},
-			OpenStdin: true,
-		},
-		nil, nil, nil, "cloudrun_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image:     "alpine:latest",
+		Cmd:       []string{"tail", "-f", "/dev/null"},
+		OpenStdin: true,
+	}, Name: "cloudrun_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 	// Inspect (should be created)
-	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info := inspected.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -454,12 +450,13 @@ func TestCloudRunContainerLifecycle(t *testing.T) {
 	// Start (may take longer for Cloud Run — 5 min timeout)
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
 	// Verify running
-	info, err = dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected2, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info = inspected2.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -469,12 +466,13 @@ func TestCloudRunContainerLifecycle(t *testing.T) {
 
 	// Stop
 	timeout := 10
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatalf("container stop failed: %v", err)
 	}
 
 	// Verify stopped
-	info, err = dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected3, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info = inspected3.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -483,7 +481,7 @@ func TestCloudRunContainerLifecycle(t *testing.T) {
 	}
 
 	// Remove
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+	if _, err := dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{}); err != nil {
 		t.Fatalf("container remove failed: %v", err)
 	}
 }
@@ -491,7 +489,7 @@ func TestCloudRunContainerLifecycle(t *testing.T) {
 func TestCloudRunContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -499,29 +497,27 @@ func TestCloudRunContainerLogs(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image:      "alpine:latest",
-			Entrypoint: []string{"sh", "-c", "echo hello-cloudrun && sleep 5"},
-			OpenStdin:  true,
-		},
-		nil, nil, nil, "cloudrun_logs_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image:      "alpine:latest",
+		Entrypoint: []string{"sh", "-c", "echo hello-cloudrun && sleep 5"},
+		OpenStdin:  true,
+	}, Name: "cloudrun_logs_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
 	// Wait for log ingestion (Cloud Logging can have 1-5s delay)
 	time.Sleep(5 * time.Second)
 
-	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})
@@ -536,25 +532,24 @@ func TestCloudRunContainerLogs(t *testing.T) {
 		t.Log("note: log may not yet be available due to Cloud Logging ingestion delay")
 	}
 
-	dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	_, _ = dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 }
 
 func TestCloudRunContainerList(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-		},
-		nil, nil, nil, "cloudrun_list_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+	}, Name: "cloudrun_list_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{All: true})
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{All: true})
+	containers := listed.Items
 	if err != nil {
 		t.Fatalf("container list failed: %v", err)
 	}
@@ -584,7 +579,7 @@ func TestCloudRunContainerExec(t *testing.T) {
 
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -592,25 +587,23 @@ func TestCloudRunContainerExec(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"tail", "-f", "/dev/null"},
-		},
-		nil, nil, nil, "cloudrun_exec_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"tail", "-f", "/dev/null"},
+	}, Name: "cloudrun_exec_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 		Cmd:          []string{"sh", "-c", "printf cloudrun-exec-ok"},
 		AttachStdout: true,
 		AttachStderr: true,
@@ -619,7 +612,7 @@ func TestCloudRunContainerExec(t *testing.T) {
 		t.Fatalf("exec create failed: %v", err)
 	}
 
-	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	hijacked, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec attach failed: %v", err)
 	}
@@ -633,7 +626,7 @@ func TestCloudRunContainerExec(t *testing.T) {
 		t.Fatalf("exec stdout = %q, stderr = %q", got, stderr.String())
 	}
 
-	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	inspect, err := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
 		t.Fatalf("exec inspect failed: %v", err)
 	}
@@ -649,16 +642,19 @@ func TestCloudRunNetworkOperations(t *testing.T) {
 	netName := "cloudrun_net_" + testID
 
 	// Create
-	netResp, err := dockerClient.NetworkCreate(ctx, netName, network.CreateOptions{
+	netResp, err := dockerClient.NetworkCreate(ctx, netName, client.NetworkCreateOptions{
 		Driver: "bridge",
 	})
 	if err != nil {
 		t.Fatalf("network create failed: %v", err)
 	}
-	defer dockerClient.NetworkRemove(ctx, netResp.ID)
+	defer dockerClient.NetworkRemove(ctx, netResp.ID, client.
 
-	// Inspect
-	net, err := dockerClient.NetworkInspect(ctx, netResp.ID, network.InspectOptions{})
+		// Inspect
+		NetworkRemoveOptions{})
+
+	netInspected, err := dockerClient.NetworkInspect(ctx, netResp.ID, client.NetworkInspectOptions{})
+	net := netInspected.Network
 	if err != nil {
 		t.Fatalf("network inspect failed: %v", err)
 	}
@@ -667,7 +663,7 @@ func TestCloudRunNetworkOperations(t *testing.T) {
 	}
 
 	// Remove
-	if err := dockerClient.NetworkRemove(ctx, netResp.ID); err != nil {
+	if _, err := dockerClient.NetworkRemove(ctx, netResp.ID, client.NetworkRemoveOptions{}); err != nil {
 		t.Fatalf("network remove failed: %v", err)
 	}
 }
@@ -679,7 +675,8 @@ func TestCloudRunVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
 	volName := "cloudrun_vol_" + generateTestID()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	volCreated, err := dockerClient.VolumeCreate(ctx, client.VolumeCreateOptions{Name: volName})
+	vol := volCreated.Volume
 	if err != nil {
 		t.Fatalf("VolumeCreate: %v", err)
 	}
@@ -693,7 +690,8 @@ func TestCloudRunVolumeOperations(t *testing.T) {
 		t.Errorf("Volume.Options missing bucket: %+v", vol.Options)
 	}
 
-	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	volInspected, err := dockerClient.VolumeInspect(ctx, volName, client.VolumeInspectOptions{})
+	inspected := volInspected.Volume
 	if err != nil {
 		t.Fatalf("VolumeInspect: %v", err)
 	}
@@ -701,25 +699,25 @@ func TestCloudRunVolumeOperations(t *testing.T) {
 		t.Errorf("inspect Name = %q, want %q", inspected.Name, volName)
 	}
 
-	listed, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	listed, err := dockerClient.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		t.Fatalf("VolumeList: %v", err)
 	}
 	found := false
-	for _, v := range listed.Volumes {
+	for _, v := range listed.Items {
 		if v.Name == volName {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("VolumeList did not return %q; got %d volumes", volName, len(listed.Volumes))
+		t.Errorf("VolumeList did not return %q; got %d volumes", volName, len(listed.Items))
 	}
 
-	if err := dockerClient.VolumeRemove(ctx, volName, true); err != nil {
+	if _, err := dockerClient.VolumeRemove(ctx, volName, client.VolumeRemoveOptions{Force: true}); err != nil {
 		t.Fatalf("VolumeRemove: %v", err)
 	}
-	if _, err := dockerClient.VolumeInspect(ctx, volName); err == nil {
+	if _, err := dockerClient.VolumeInspect(ctx, volName, client.VolumeInspectOptions{}); err == nil {
 		t.Error("VolumeInspect after remove: expected error, got success")
 	}
 }

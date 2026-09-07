@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestContainerStats(t *testing.T) {
@@ -22,12 +23,12 @@ func TestContainerStats(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	if err := dockerClient.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
 	// Get stats (non-streaming)
-	resp, err := dockerClient.ContainerStats(ctx, id, false)
+	resp, err := dockerClient.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: false})
 	if err != nil {
 		t.Fatalf("stats failed: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestContainerStatsStream(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	if err := dockerClient.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
@@ -86,7 +87,7 @@ func TestContainerStatsStream(t *testing.T) {
 	streamCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	resp, err := dockerClient.ContainerStats(streamCtx, id, true)
+	resp, err := dockerClient.ContainerStats(streamCtx, id, client.ContainerStatsOptions{Stream: true})
 	if err == nil {
 		resp.Body.Close()
 		t.Fatal("expected streaming stats to return NotImplemented on cloud backends, got success")
@@ -105,7 +106,7 @@ func TestContainerStatsNotRunning(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	resp, err := dockerClient.ContainerStats(ctx, id, false)
+	resp, err := dockerClient.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: false})
 	if err != nil {
 		t.Fatalf("expected stats snapshot for non-running container, got error: %v", err)
 	}
@@ -131,15 +132,18 @@ func TestContainerTop(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	if err := dockerClient.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
 	// Container top requires an agent connection.
 	// Without an agent, it returns NotImplemented (501).
-	top, err := dockerClient.ContainerTop(ctx, id, nil)
-	if err != nil {
+	top, err := dockerClient.ContainerTop(ctx, id, client.ContainerTopOptions{
+
 		// Expected when no agent is connected
+	})
+	if err != nil {
+
 		t.Logf("top returned expected error (no agent): %v", err)
 		return
 	}
@@ -163,7 +167,7 @@ func TestContainerTopNotRunning(t *testing.T) {
 	defer removeContainer(t, id)
 
 	// Don't start — top should fail
-	_, err := dockerClient.ContainerTop(ctx, id, nil)
+	_, err := dockerClient.ContainerTop(ctx, id, client.ContainerTopOptions{})
 	if err == nil {
 		t.Error("expected error for top on non-running container")
 	}
@@ -178,17 +182,17 @@ func TestSystemDf(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	du, err := dockerClient.DiskUsage(ctx, types.DiskUsageOptions{})
+	du, err := dockerClient.DiskUsage(ctx, client.DiskUsageOptions{Containers: true, Images: true, Volumes: true, BuildCache: true, Verbose: true})
 	if err != nil {
 		t.Fatalf("disk usage failed: %v", err)
 	}
 
-	if len(du.Images) == 0 {
+	if len(du.Images.Items) == 0 {
 		t.Error("disk usage returned no images")
 	}
 
 	found := false
-	for _, c := range du.Containers {
+	for _, c := range du.Containers.Items {
 		if c.ID == id {
 			found = true
 			break
@@ -214,20 +218,20 @@ func TestSystemDfWithRunningContainer(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	if err := dockerClient.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
 	// Give container time to start and create rootfs
 	time.Sleep(200 * time.Millisecond)
 
-	du, err := dockerClient.DiskUsage(ctx, types.DiskUsageOptions{})
+	du, err := dockerClient.DiskUsage(ctx, client.DiskUsageOptions{Containers: true, Images: true, Volumes: true, BuildCache: true, Verbose: true})
 	if err != nil {
 		t.Fatalf("disk usage failed: %v", err)
 	}
 
 	// Find our container and check its size
-	for _, c := range du.Containers {
+	for _, c := range du.Containers.Items {
 		if c.ID == id {
 			// Running container should have non-zero SizeRw
 			if c.SizeRw > 0 {

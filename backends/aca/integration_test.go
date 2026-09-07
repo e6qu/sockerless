@@ -17,11 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 var dockerClient *client.Client
@@ -111,7 +109,7 @@ func requireExe(name string) {
 }
 
 func reverseAgentCallbackHost(ctx context.Context, runtimeClient *client.Client) string {
-	version, err := runtimeClient.ServerVersion(ctx)
+	version, err := runtimeClient.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[backend] WARNING: docker server version unavailable, using host.docker.internal for reverse-agent callback: %v\n", err)
 		return "host.docker.internal"
@@ -405,7 +403,7 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 		cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 	}
 
-	runtimeClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	runtimeClient, err := client.New(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		failClean("ERROR: docker runtime client: %v\n", err)
 	}
@@ -462,7 +460,7 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 
 	// The ACA backend serves the Docker API directly. Point the docker
 	// SDK at the backend's TCP port.
-	dockerClient, err = client.NewClientWithOpts(
+	dockerClient, err = client.New(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -481,20 +479,19 @@ func TestACAContainerLifecycle(t *testing.T) {
 	testID := generateTestID()
 
 	// Create
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: commandImageName,
-			Cmd:   []string{"hold"},
-		},
-		nil, nil, nil, "aca_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: commandImageName,
+		Cmd:   []string{"hold"},
+	}, Name: "aca_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 	// Inspect (should be created)
-	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info := inspected.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -505,12 +502,13 @@ func TestACAContainerLifecycle(t *testing.T) {
 	// Start (ACA may take longer — 10 min timeout)
 	startCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
 	// Verify running
-	info, err = dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected2, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info = inspected2.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -520,12 +518,13 @@ func TestACAContainerLifecycle(t *testing.T) {
 
 	// Stop
 	timeout := 10
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatalf("container stop failed: %v", err)
 	}
 
 	// Verify stopped
-	info, err = dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected3, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info = inspected3.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -534,7 +533,7 @@ func TestACAContainerLifecycle(t *testing.T) {
 	}
 
 	// Remove
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+	if _, err := dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{}); err != nil {
 		t.Fatalf("container remove failed: %v", err)
 	}
 }
@@ -543,28 +542,26 @@ func TestACAContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: commandImageName,
-			Cmd:   []string{"log", "hello-aca", "5"},
-		},
-		nil, nil, nil, "aca_logs_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: commandImageName,
+		Cmd:   []string{"log", "hello-aca", "5"},
+	}, Name: "aca_logs_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 	startCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
 	// Wait for log ingestion (Azure Monitor can have 2-10s delay)
 	time.Sleep(10 * time.Second)
 
-	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})
@@ -579,25 +576,24 @@ func TestACAContainerLogs(t *testing.T) {
 		t.Log("note: log may not yet be available due to Azure Monitor ingestion delay")
 	}
 
-	dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	_, _ = dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 }
 
 func TestACAContainerList(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: commandImageName,
-		},
-		nil, nil, nil, "aca_list_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: commandImageName,
+	}, Name: "aca_list_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{All: true})
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{All: true})
+	containers := listed.Items
 	if err != nil {
 		t.Fatalf("container list failed: %v", err)
 	}
@@ -636,23 +632,21 @@ func TestACAGitLabRunnerAttachStdin(t *testing.T) {
 	// gitlab-runner helper's own entrypoint reads stdin in a private protocol and
 	// ignores a raw script). So the captured stdin is a shell command, mirroring
 	// the gcf/cloudrun equivalents.
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image:        acaOverlayImageName,
-			Cmd:          []string{"sh"},
-			OpenStdin:    true,
-			AttachStdin:  true,
-			AttachStdout: true,
-			AttachStderr: true,
-		},
-		nil, nil, nil, "aca_gitlab_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image:        acaOverlayImageName,
+		Cmd:          []string{"sh"},
+		OpenStdin:    true,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	}, Name: "aca_gitlab_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	hijacked, err := dockerClient.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+	hijacked, err := dockerClient.ContainerAttach(ctx, resp.ID, client.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  true,
 		Stdout: true,
@@ -672,7 +666,7 @@ func TestACAGitLabRunnerAttachStdin(t *testing.T) {
 
 	startCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
@@ -695,7 +689,8 @@ func TestACAGitLabRunnerAttachStdin(t *testing.T) {
 		t.Fatalf("attach stdout = %q stderr = %q", stdout.String(), stderr.String())
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -715,16 +710,19 @@ func TestACANetworkOperations(t *testing.T) {
 	netName := "aca_net_" + testID
 
 	// Create
-	netResp, err := dockerClient.NetworkCreate(ctx, netName, network.CreateOptions{
+	netResp, err := dockerClient.NetworkCreate(ctx, netName, client.NetworkCreateOptions{
 		Driver: "bridge",
 	})
 	if err != nil {
 		t.Fatalf("network create failed: %v", err)
 	}
-	defer dockerClient.NetworkRemove(ctx, netResp.ID)
+	defer dockerClient.NetworkRemove(ctx, netResp.ID, client.
 
-	// Inspect
-	net, err := dockerClient.NetworkInspect(ctx, netResp.ID, network.InspectOptions{})
+		// Inspect
+		NetworkRemoveOptions{})
+
+	netInspected, err := dockerClient.NetworkInspect(ctx, netResp.ID, client.NetworkInspectOptions{})
+	net := netInspected.Network
 	if err != nil {
 		t.Fatalf("network inspect failed: %v", err)
 	}
@@ -733,7 +731,7 @@ func TestACANetworkOperations(t *testing.T) {
 	}
 
 	// Remove
-	if err := dockerClient.NetworkRemove(ctx, netResp.ID); err != nil {
+	if _, err := dockerClient.NetworkRemove(ctx, netResp.ID, client.NetworkRemoveOptions{}); err != nil {
 		t.Fatalf("network remove failed: %v", err)
 	}
 }
@@ -745,7 +743,8 @@ func TestACAVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
 	volName := "aca_vol_" + generateTestID()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	volCreated, err := dockerClient.VolumeCreate(ctx, client.VolumeCreateOptions{Name: volName})
+	vol := volCreated.Volume
 	if err != nil {
 		t.Fatalf("VolumeCreate: %v", err)
 	}
@@ -759,7 +758,8 @@ func TestACAVolumeOperations(t *testing.T) {
 		t.Errorf("Volume.Options missing shareName: %+v", vol.Options)
 	}
 
-	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	volInspected, err := dockerClient.VolumeInspect(ctx, volName, client.VolumeInspectOptions{})
+	inspected := volInspected.Volume
 	if err != nil {
 		t.Fatalf("VolumeInspect: %v", err)
 	}
@@ -767,25 +767,25 @@ func TestACAVolumeOperations(t *testing.T) {
 		t.Errorf("inspect Name = %q, want %q", inspected.Name, volName)
 	}
 
-	listed, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	listed, err := dockerClient.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		t.Fatalf("VolumeList: %v", err)
 	}
 	found := false
-	for _, v := range listed.Volumes {
+	for _, v := range listed.Items {
 		if v.Name == volName {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("VolumeList did not return %q; got %d volumes", volName, len(listed.Volumes))
+		t.Errorf("VolumeList did not return %q; got %d volumes", volName, len(listed.Items))
 	}
 
-	if err := dockerClient.VolumeRemove(ctx, volName, true); err != nil {
+	if _, err := dockerClient.VolumeRemove(ctx, volName, client.VolumeRemoveOptions{Force: true}); err != nil {
 		t.Fatalf("VolumeRemove: %v", err)
 	}
-	if _, err := dockerClient.VolumeInspect(ctx, volName); err == nil {
+	if _, err := dockerClient.VolumeInspect(ctx, volName, client.VolumeInspectOptions{}); err == nil {
 		t.Error("VolumeInspect after remove: expected error, got success")
 	}
 }

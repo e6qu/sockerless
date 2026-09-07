@@ -8,7 +8,7 @@ This backend is a translator. The **frontend** adaptors are the Docker clients t
 
 | Direction | Adaptor | Min version | What it proves |
 |---|---|---|---|
-| **Frontend (Docker API)** | [Docker Go SDK](https://pkg.go.dev/github.com/docker/docker/client) | v25+ | Anything the Docker SDK does against `unix:///var/run/docker.sock` must work against this backend over `tcp://localhost:3375`. Covered by `tests/`. |
+| **Frontend (Docker API)** | [Moby Go SDK](https://pkg.go.dev/github.com/moby/moby/client) | v0.6+| v25+ | Anything the Docker SDK does against `unix:///var/run/docker.sock` must work against this backend over `tcp://localhost:3375`. Covered by `tests/`. |
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | | `podman` CLI | 5.x | Docker-compat shim (`podman --url tcp://localhost:3375 …`). |
 | **Backend (AWS API)** | [`aws` CLI](https://docs.aws.amazon.com/cli/latest/reference/ecs/) | v2.17+ | `aws ecs describe-tasks`, `aws logs filter-log-events`, etc. — operators verify task state the same way they would against real ECS. |

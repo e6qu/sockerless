@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestCloudRunFaaSE2ESmoke(t *testing.T) {
@@ -29,7 +30,7 @@ func TestCloudRunFaaSE2ESmoke(t *testing.T) {
 
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -45,30 +46,29 @@ func TestCloudRunFaaSE2ESmoke(t *testing.T) {
 	// `kill 1` from inside the exec, which killed PID 1 before the
 	// exec process could report its exit status (Docker then reported
 	// the exec as exit code -1).
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sh", "-c", "trap 'exit 0' TERM; sleep 600 & wait"},
-		},
-		nil, nil, nil, "cloudrun_faas_smoke_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"sh", "-c", "trap 'exit 0' TERM; sleep 600 & wait"},
+	}, Name: "cloudrun_faas_smoke_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	t.Cleanup(func() { _ = dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) })
+	t.Cleanup(func() { _, _ = dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true}) })
 
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
 	runCloudRunSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf cloudrun-step-1"}, "cloudrun-step-1")
 	runCloudRunSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf cloudrun-step-2"}, "cloudrun-step-2")
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	stopTimeout := 2
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &stopTimeout}); err != nil {
 		t.Fatalf("container stop failed: %v", err)
 	}
 	select {
@@ -91,7 +91,7 @@ func TestCloudRunFaaSE2ESmoke(t *testing.T) {
 func runCloudRunSmokeExec(t *testing.T, ctx context.Context, containerID string, cmd []string, wantStdout string) {
 	t.Helper()
 
-	execResp, err := dockerClient.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -103,7 +103,7 @@ func runCloudRunSmokeExec(t *testing.T, ctx context.Context, containerID string,
 		t.Fatal("expected non-empty exec ID")
 	}
 
-	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	hijacked, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec attach failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func runCloudRunSmokeExec(t *testing.T, ctx context.Context, containerID string,
 		t.Fatalf("exec stdout = %q, want %q, stderr = %q", got, wantStdout, stderr.String())
 	}
 
-	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	inspect, err := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
 		t.Fatalf("exec inspect failed: %v", err)
 	}

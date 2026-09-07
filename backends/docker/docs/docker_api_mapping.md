@@ -4,7 +4,7 @@ The Docker backend is a direct passthrough to a local Docker daemon via the Dock
 
 ## Overview
 
-Unlike the cloud backends which use `core.BaseServer`, the Docker backend implements all route handlers directly using `github.com/docker/docker/client`. No agent, driver chain, or synthetic fallback is involved — operations go straight to the Docker daemon.
+Unlike the cloud backends which use `core.BaseServer`, the Docker backend implements all route handlers directly using `github.com/moby/moby/client`. No agent, driver chain, or synthetic fallback is involved — operations go straight to the Docker daemon.
 
 ## Container Lifecycle
 

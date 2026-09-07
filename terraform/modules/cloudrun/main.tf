@@ -138,6 +138,12 @@ resource "google_compute_subnetwork" "connector" {
   region        = var.region
   network       = google_compute_network.main.id
   ip_cidr_range = "10.8.0.0/28"
+
+  log_config {
+    aggregation_interval = "INTERVAL_5_SEC"
+    flow_sampling        = 0.5
+    metadata             = "INCLUDE_ALL_METADATA"
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -242,6 +248,16 @@ resource "google_storage_bucket" "volumes" {
   labels                      = local.common_labels
   force_destroy               = true
 
+  versioning {
+    enabled = true
+  }
+  logging {
+    log_bucket = google_storage_bucket.logs.name
+  }
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.storage.id
+  }
+
   lifecycle_rule {
     condition {
       age = var.gcs_lifecycle_days
@@ -251,7 +267,7 @@ resource "google_storage_bucket" "volumes" {
     }
   }
 
-  depends_on = [google_project_service.storage]
+  depends_on = [google_project_service.storage, google_kms_crypto_key_iam_member.storage_agent]
 }
 
 # ---------------------------------------------------------------------------
@@ -276,6 +292,16 @@ resource "google_storage_bucket" "build_context" {
   labels                      = local.common_labels
   force_destroy               = true
 
+  versioning {
+    enabled = true
+  }
+  logging {
+    log_bucket = google_storage_bucket.logs.name
+  }
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.storage.id
+  }
+
   lifecycle_rule {
     condition {
       age = 1
@@ -285,7 +311,7 @@ resource "google_storage_bucket" "build_context" {
     }
   }
 
-  depends_on = [google_project_service.storage]
+  depends_on = [google_project_service.storage, google_kms_crypto_key_iam_member.storage_agent]
 }
 
 # ---------------------------------------------------------------------------
@@ -487,4 +513,67 @@ resource "google_project_iam_member" "runner_logging_viewer" {
   project = var.project_id
   role    = "roles/logging.viewer"
   member  = "serviceAccount:${google_service_account.runner.email}"
+}
+
+# ---------------------------------------------------------------------------
+# Bucket hardening: every bucket keeps object versions, writes its access
+# logs to the logs bucket, and encrypts with a customer-managed key the
+# Cloud Storage service agent may use.
+# ---------------------------------------------------------------------------
+resource "google_project_service" "cloudkms" {
+  project            = var.project_id
+  service            = "cloudkms.googleapis.com"
+  disable_on_destroy = false
+}
+
+data "google_storage_project_service_account" "gcs" {
+  project    = var.project_id
+  depends_on = [google_project_service.storage]
+}
+
+# Cloud KMS names a multi-region in lowercase ("us") where Cloud Storage
+# spells it "US"; the key ring lives in the bucket's location under the KMS
+# spelling so the key can encrypt the buckets.
+resource "google_kms_key_ring" "storage" {
+  project    = var.project_id
+  name       = "${local.name_prefix}-storage"
+  location   = lower(var.gcs_location)
+  depends_on = [google_project_service.cloudkms]
+}
+
+resource "google_kms_crypto_key" "storage" {
+  name            = "${local.name_prefix}-storage"
+  key_ring        = google_kms_key_ring.storage.id
+  rotation_period = "7776000s" # 90 days
+}
+
+resource "google_kms_crypto_key_iam_member" "storage_agent" {
+  crypto_key_id = google_kms_crypto_key.storage.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${data.google_storage_project_service_account.gcs.email_address}"
+}
+
+resource "google_storage_bucket" "logs" {
+  project                     = var.project_id
+  name                        = "${local.name_prefix}-access-logs"
+  location                    = var.gcs_location
+  uniform_bucket_level_access = true
+  labels                      = local.common_labels
+  force_destroy               = true
+
+  versioning {
+    enabled = true
+  }
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.storage.id
+  }
+  lifecycle_rule {
+    condition {
+      age = var.gcs_lifecycle_days
+    }
+    action {
+      type = "Delete"
+    }
+  }
+  depends_on = [google_project_service.storage, google_kms_crypto_key_iam_member.storage_agent]
 }

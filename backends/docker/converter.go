@@ -1,18 +1,18 @@
 package docker
 
 import (
+	"net"
+	"net/netip"
 	"os"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/events"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/registry"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/sockerless/api"
 )
 
@@ -52,14 +52,21 @@ import (
 // goverter:extend EndpointSettingsToAPI
 // goverter:extend EndpointSettingsMapToAPI
 // goverter:extend EndpointIPAMToAPI
+// goverter:extend AddrToString
+// goverter:extend AddrsToStrings
+// goverter:extend PrefixToString
+// goverter:extend AddrMapToStrings
+// goverter:extend HardwareAddrToString
+// goverter:extend ContainerStateToString
+// goverter:useZeroValueOnPointerInconsistency
 type Converter interface {
 	// goverter:ignore Config HostConfig NetworkSettings Mounts State AgentAddress AgentToken
 	// goverter:map . State | MapContainerState
-	ConvertContainerBase(source types.ContainerJSONBase) api.Container
+	ConvertContainerBase(source container.InspectResponse) api.Container
 
-	ConvertContainerState(source types.ContainerState) api.ContainerState
+	ConvertContainerState(source container.State) api.ContainerState
 
-	// goverter:ignore Healthcheck ExposedPorts
+	// goverter:ignore Healthcheck ExposedPorts MacAddress
 	ConvertContainerConfig(source container.Config) api.ContainerConfig
 
 	ConvertHealthcheckConfig(source container.HealthConfig) api.HealthcheckConfig
@@ -68,39 +75,40 @@ type Converter interface {
 
 	ConvertRestartPolicy(source container.RestartPolicy) api.RestartPolicy
 
+	// goverter:ignore VirtualSize
 	ConvertImageSummary(source image.Summary) api.ImageSummary
 
-	// goverter:ignore Config RootFS Metadata
-	ConvertImageBase(source types.ImageInspect) api.Image
+	// goverter:ignore Config RootFS Metadata Parent DockerVersion VirtualSize
+	ConvertImageBase(source image.InspectResponse) api.Image
 
 	ConvertVolume(source volume.Volume) api.Volume
 
 	ConvertEndpointResource(source network.EndpointResource) api.EndpointResource
 
-	// goverter:ignore AuxiliaryAddresses
+	// goverter:map AuxAddress AuxiliaryAddresses
 	ConvertIPAMConfig(source network.IPAMConfig) api.IPAMConfig
 
 	ConvertEventMessage(source events.Message) api.Event
 
 	ConvertContainerChange(source container.FilesystemChange) api.ContainerChangeItem
 
-	ConvertPort(source types.Port) api.Port
+	ConvertPort(source container.PortSummary) api.Port
 
 	ConvertImageDeleteResponseItem(source image.DeleteResponse) api.ImageDeleteResponse
 
 	ConvertImageHistoryResponseItem(source image.HistoryResponseItem) api.ImageHistoryEntry
 
-	ConvertAuthResponse(source registry.AuthenticateOKBody) api.AuthResponse
+	ConvertAuthResponse(source registry.AuthResponse) api.AuthResponse
 }
 
 // MapContainerState extracts ContainerState from ContainerJSONBase.
 // This function exists to handle the pointer-to-value conversion.
-func MapContainerState(source types.ContainerJSONBase) api.ContainerState {
+func MapContainerState(source container.InspectResponse) api.ContainerState {
 	if source.State == nil {
 		return api.ContainerState{}
 	}
 	return api.ContainerState{
-		Status:     source.State.Status,
+		Status:     string(source.State.Status),
 		Running:    source.State.Running,
 		Paused:     source.State.Paused,
 		Restarting: source.State.Restarting,
@@ -202,20 +210,20 @@ func EventActorToAPI(a events.Actor) api.EventActor {
 
 // --- Extend functions: complex type conversions ---
 
-func PortSetToMap(ports nat.PortSet) map[string]struct{} {
+func PortSetToMap(ports network.PortSet) map[string]struct{} {
 	if len(ports) == 0 {
 		return nil
 	}
 	result := make(map[string]struct{}, len(ports))
 	for port := range ports {
-		result[string(port)] = struct{}{}
+		result[port.String()] = struct{}{}
 	}
 	return result
 }
 
-// StringSetToMap is the docker/docker v28 variant of PortSetToMap —
+// StringSetToMap is the raw-string variant of PortSetToMap —
 // ImageInspect.Config.ExposedPorts is map[string]struct{} (keys are
-// raw `port/proto` strings) instead of nat.PortSet.
+// raw `port/proto` strings) instead of network.PortSet.
 func StringSetToMap(ports map[string]struct{}) map[string]struct{} {
 	if len(ports) == 0 {
 		return nil
@@ -227,7 +235,7 @@ func StringSetToMap(ports map[string]struct{}) map[string]struct{} {
 	return out
 }
 
-func PortMapToBindings(pm nat.PortMap) map[string][]api.PortBinding {
+func PortMapToBindings(pm network.PortMap) map[string][]api.PortBinding {
 	if len(pm) == 0 {
 		return nil
 	}
@@ -236,27 +244,81 @@ func PortMapToBindings(pm nat.PortMap) map[string][]api.PortBinding {
 		var mapped []api.PortBinding
 		for _, b := range bindings {
 			mapped = append(mapped, api.PortBinding{
-				HostIP:   b.HostIP,
+				HostIP:   AddrToString(b.HostIP),
 				HostPort: b.HostPort,
 			})
 		}
-		result[string(port)] = mapped
+		result[port.String()] = mapped
 	}
 	return result
 }
 
-func HealthToState(h *types.Health) *api.HealthState {
+// AddrToString renders an address the API carries typed as the text a
+// Docker client reads; the zero address is the empty string.
+func AddrToString(a netip.Addr) string {
+	if !a.IsValid() {
+		return ""
+	}
+	return a.String()
+}
+
+// AddrsToStrings renders addresses as text.
+func AddrsToStrings(addrs []netip.Addr) []string {
+	if addrs == nil {
+		return nil
+	}
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, AddrToString(a))
+	}
+	return out
+}
+
+// PrefixToString renders a prefix as text; the zero prefix is the empty string.
+func PrefixToString(p netip.Prefix) string {
+	if !p.IsValid() {
+		return ""
+	}
+	return p.String()
+}
+
+// AddrMapToStrings renders a map of named addresses as text.
+func AddrMapToStrings(m map[string]netip.Addr) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, a := range m {
+		out[k] = AddrToString(a)
+	}
+	return out
+}
+
+// HardwareAddrToString renders a MAC address as text.
+func HardwareAddrToString(a network.HardwareAddr) string {
+	if len(a) == 0 {
+		return ""
+	}
+	return net.HardwareAddr(a).String()
+}
+
+// ContainerStateToString renders a container's state name.
+func ContainerStateToString(state container.ContainerState) string {
+	return string(state)
+}
+
+func HealthToState(h *container.Health) *api.HealthState {
 	if h == nil {
 		return nil
 	}
 	return &api.HealthState{
-		Status:        h.Status,
+		Status:        string(h.Status),
 		FailingStreak: h.FailingStreak,
 		Log:           HealthResultsToLogs(h.Log),
 	}
 }
 
-func HealthResultsToLogs(results []*types.HealthcheckResult) []api.HealthLog {
+func HealthResultsToLogs(results []*container.HealthcheckResult) []api.HealthLog {
 	logs := make([]api.HealthLog, 0, len(results))
 	for _, r := range results {
 		if r != nil {
@@ -266,7 +328,7 @@ func HealthResultsToLogs(results []*types.HealthcheckResult) []api.HealthLog {
 	return logs
 }
 
-func HealthResultToLog(r types.HealthcheckResult) api.HealthLog {
+func HealthResultToLog(r container.HealthcheckResult) api.HealthLog {
 	return api.HealthLog{
 		Start:    r.Start.Format(time.RFC3339Nano),
 		End:      r.End.Format(time.RFC3339Nano),
@@ -275,7 +337,7 @@ func HealthResultToLog(r types.HealthcheckResult) api.HealthLog {
 	}
 }
 
-func MountPointToAPI(m types.MountPoint) api.MountPoint {
+func MountPointToAPI(m container.MountPoint) api.MountPoint {
 	return api.MountPoint{
 		Type:        string(m.Type),
 		Name:        m.Name,
@@ -288,7 +350,7 @@ func MountPointToAPI(m types.MountPoint) api.MountPoint {
 	}
 }
 
-func MountPointsToAPI(mounts []types.MountPoint) []api.MountPoint {
+func MountPointsToAPI(mounts []container.MountPoint) []api.MountPoint {
 	result := make([]api.MountPoint, 0, len(mounts))
 	for _, m := range mounts {
 		result = append(result, MountPointToAPI(m))
@@ -353,9 +415,9 @@ func EndpointIPAMToAPI(c *network.EndpointIPAMConfig) *api.EndpointIPAMConfig {
 		return nil
 	}
 	return &api.EndpointIPAMConfig{
-		IPv4Address:  c.IPv4Address,
-		IPv6Address:  c.IPv6Address,
-		LinkLocalIPs: c.LinkLocalIPs,
+		IPv4Address:  AddrToString(c.IPv4Address),
+		IPv6Address:  AddrToString(c.IPv6Address),
+		LinkLocalIPs: AddrsToStrings(c.LinkLocalIPs),
 	}
 }
 
@@ -367,13 +429,13 @@ func EndpointSettingsToAPI(ep *network.EndpointSettings) *api.EndpointSettings {
 		IPAMConfig:          EndpointIPAMToAPI(ep.IPAMConfig),
 		NetworkID:           ep.NetworkID,
 		EndpointID:          ep.EndpointID,
-		Gateway:             ep.Gateway,
-		IPAddress:           ep.IPAddress,
+		Gateway:             AddrToString(ep.Gateway),
+		IPAddress:           AddrToString(ep.IPAddress),
 		IPPrefixLen:         ep.IPPrefixLen,
-		IPv6Gateway:         ep.IPv6Gateway,
-		GlobalIPv6Address:   ep.GlobalIPv6Address,
+		IPv6Gateway:         AddrToString(ep.IPv6Gateway),
+		GlobalIPv6Address:   AddrToString(ep.GlobalIPv6Address),
 		GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
-		MacAddress:          ep.MacAddress,
+		MacAddress:          HardwareAddrToString(ep.MacAddress),
 		Aliases:             ep.Aliases,
 		DNSNames:            ep.DNSNames,
 		Links:               ep.Links,
@@ -391,10 +453,3 @@ func EndpointSettingsMapToAPI(m map[string]*network.EndpointSettings) map[string
 	}
 	return result
 }
-
-// Prevent unused import errors
-var (
-	_ = events.Message{}
-	_ = image.Summary{}
-	_ = volume.Volume{}
-)

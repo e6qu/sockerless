@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestACAFaaSE2ESmoke(t *testing.T) {
@@ -31,30 +33,29 @@ func TestACAFaaSE2ESmoke(t *testing.T) {
 
 	ctx := context.Background()
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: acaOverlayImageName,
-			Cmd:   []string{"/opt/sockerless/container-command", "hold"},
-		},
-		nil, nil, nil, "aca_faas_smoke_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: acaOverlayImageName,
+		Cmd:   []string{"/opt/sockerless/container-command", "hold"},
+	}, Name: "aca_faas_smoke_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	t.Cleanup(func() { _ = dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) })
+	t.Cleanup(func() { _, _ = dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true}) })
 
 	startCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
 	runACASmokeExec(t, ctx, resp.ID, []string{"/opt/sockerless/container-command", "print", "aca-step-1"}, "aca-step-1")
 	runACASmokeExec(t, ctx, resp.ID, []string{"/opt/sockerless/container-command", "print", "aca-step-2"}, "aca-step-2")
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	timeout := 1
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatalf("container stop failed: %v", err)
 	}
 	select {
@@ -68,7 +69,7 @@ func TestACAFaaSE2ESmoke(t *testing.T) {
 		t.Fatal("timeout waiting for container exit")
 	}
 
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+	if _, err := dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{}); err != nil {
 		t.Fatalf("container remove failed: %v", err)
 	}
 }
@@ -76,7 +77,7 @@ func TestACAFaaSE2ESmoke(t *testing.T) {
 func runACASmokeExec(t *testing.T, ctx context.Context, containerID string, cmd []string, wantStdout string) {
 	t.Helper()
 
-	execResp, err := dockerClient.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -88,7 +89,7 @@ func runACASmokeExec(t *testing.T, ctx context.Context, containerID string, cmd 
 		t.Fatal("expected non-empty exec ID")
 	}
 
-	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	hijacked, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec attach failed: %v", err)
 	}
@@ -102,7 +103,7 @@ func runACASmokeExec(t *testing.T, ctx context.Context, containerID string, cmd 
 		t.Fatalf("exec stdout = %q, want %q, stderr = %q", got, wantStdout, stderr.String())
 	}
 
-	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	inspect, err := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
 		t.Fatalf("exec inspect failed: %v", err)
 	}

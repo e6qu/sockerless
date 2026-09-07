@@ -376,6 +376,7 @@ resource "aws_security_group_rule" "efs_inbound_nfs" {
 resource "aws_cloudwatch_log_group" "main" {
   name              = "/${var.project_name}/${var.environment}/containers"
   retention_in_days = var.log_retention_days
+  kms_key_id        = aws_kms_key.logs.arn
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-log-group"
@@ -410,6 +411,11 @@ resource "aws_ecr_repository" "main" {
   # has to manually batch-delete every image — exactly the kind of
   # extra-step-after-destroy the project rules forbid.
   force_delete = true
+
+  encryption_configuration {
+    encryption_type = "KMS"
+    kms_key         = aws_kms_key.ecr.arn
+  }
 
   image_scanning_configuration {
     scan_on_push = true
@@ -634,4 +640,46 @@ resource "aws_security_group_rule" "task_all_egress" {
   protocol          = "-1"
   cidr_blocks       = ["0.0.0.0/0"]
   security_group_id = aws_security_group.task[0].id
+}
+
+# ---------------------------------------------------------------------------
+# Encryption keys: the log group and the registry encrypt with
+# customer-managed keys the services may use.
+# ---------------------------------------------------------------------------
+data "aws_region" "current_kms" {}
+
+resource "aws_kms_key" "logs" {
+  description             = "${local.name_prefix} CloudWatch Logs"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AccountAdministration"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "CloudWatchLogs"
+        Effect    = "Allow"
+        Principal = { Service = "logs.${data.aws_region.current_kms.region}.amazonaws.com" }
+        Action    = ["kms:Encrypt*", "kms:Decrypt*", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:Describe*"]
+        Resource  = "*"
+        Condition = {
+          ArnLike = { "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current_kms.region}:${data.aws_caller_identity.current.account_id}:log-group:*" }
+        }
+      }
+    ]
+  })
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-logs-key" })
+}
+
+resource "aws_kms_key" "ecr" {
+  description             = "${local.name_prefix} container registry"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+  tags                    = merge(local.common_tags, { Name = "${local.name_prefix}-ecr-key" })
 }

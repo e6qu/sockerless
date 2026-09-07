@@ -6,7 +6,7 @@ Runs Docker containers as AWS Lambda functions using container images, with Clou
 
 | Direction | Adaptor | Min version | What it proves |
 |---|---|---|---|
-| **Frontend (Docker API)** | [Docker Go SDK](https://pkg.go.dev/github.com/docker/docker/client) | v25+ | `docker run` → Lambda invoke round-trip via `tcp://localhost:3375`. |
+| **Frontend (Docker API)** | [Moby Go SDK](https://pkg.go.dev/github.com/moby/moby/client) | v0.6+| v25+ | `docker run` → Lambda invoke round-trip via `tcp://localhost:3375`. |
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | **Backend (AWS API)** | [`aws` CLI](https://docs.aws.amazon.com/cli/latest/reference/lambda/) | v2.17+ | `aws lambda invoke`, `aws lambda get-function`, `aws logs tail` — operators inspect function state. |
 | | [AWS Go SDK v2](https://github.com/aws/aws-sdk-go-v2/tree/main/service/lambda) | v1.50+ | `lambda.CreateFunction`, `lambda.Invoke` with `LogType=Tail`. The Invoke-diagnostics pattern uses `LogType=Tail` plus a payload dump on crashes. |

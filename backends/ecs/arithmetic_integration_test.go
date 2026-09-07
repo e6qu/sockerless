@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 )
 
 // readContainerLogs reads Docker multiplexed logs for a container, retrying up to 10s
@@ -21,7 +22,7 @@ func readContainerLogs(t *testing.T, id string) string {
 	ctx := context.Background()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		rc, err := dockerClient.ContainerLogs(ctx, id, container.LogsOptions{
+		rc, err := dockerClient.ContainerLogs(ctx, id, client.ContainerLogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 		})
@@ -43,20 +44,21 @@ func readContainerLogs(t *testing.T, id string) string {
 func TestECSArithmeticSuccess(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"3 + 4 * 2"},
-	}, nil, nil, nil, "ecs-arith-success")
+	}, Name: "ecs-arith-success"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -77,20 +79,21 @@ func TestECSArithmeticSuccess(t *testing.T) {
 func TestECSArithmeticParentheses(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"(3 + 4) * 2"},
-	}, nil, nil, nil, "ecs-arith-parens")
+	}, Name: "ecs-arith-parens"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited2 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited2.Result, waited2.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -111,20 +114,21 @@ func TestECSArithmeticParentheses(t *testing.T) {
 func TestECSArithmeticInvalid(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"3 +"},
-	}, nil, nil, nil, "ecs-arith-invalid")
+	}, Name: "ecs-arith-invalid"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited3 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited3.Result, waited3.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 1 {
@@ -145,20 +149,21 @@ func TestECSArithmeticInvalid(t *testing.T) {
 func TestECSArithmeticDivision(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"10 / 3"},
-	}, nil, nil, nil, "ecs-arith-div")
+	}, Name: "ecs-arith-div"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited4 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited4.Result, waited4.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -179,21 +184,22 @@ func TestECSArithmeticDivision(t *testing.T) {
 func TestECSArithmeticWithLabels(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:  evalImageName,
 		Cmd:    []string{"100 - 42"},
 		Labels: map[string]string{"arith-test": "ecs"},
-	}, nil, nil, nil, "ecs-arith-labels")
+	}, Name: "ecs-arith-labels"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited5 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited5.Result, waited5.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -211,10 +217,11 @@ func TestECSArithmeticWithLabels(t *testing.T) {
 	}
 
 	// Verify label filter finds the container
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", "arith-test=ecs")),
+		Filters: client.Filters{}.Add("label", "arith-test=ecs"),
 	})
+	containers := listed.Items
 	if err != nil {
 		t.Fatalf("list with filter failed: %v", err)
 	}
@@ -233,21 +240,22 @@ func TestECSArithmeticWithLabels(t *testing.T) {
 func TestECSArithmeticEnvVar(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"(3 + 4) * 2"},
 		Env:   []string{"EXPR=(3 + 4) * 2"},
-	}, nil, nil, nil, "ecs-arith-env")
+	}, Name: "ecs-arith-env"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited6 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited6.Result, waited6.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {

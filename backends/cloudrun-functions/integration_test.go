@@ -25,12 +25,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	core "github.com/sockerless/backend-core"
 	"github.com/sockerless/gcp-common/registrytest"
 	"golang.org/x/oauth2/google"
@@ -468,7 +465,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	// frontend binary — in-process wiring per post-P67 architecture).
 	// Point the docker SDK at the backend's TCP address.
 	var err error
-	dockerClient, err = client.NewClientWithOpts(
+	dockerClient, err = client.New(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -485,7 +482,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	// ContainerCreate the metadata it needs to merge defaults.
 	step("pull eval-arithmetic through backend")
 	pullCtx, pullCancel := context.WithTimeout(context.Background(), 60*time.Second)
-	if rc, err := dockerClient.ImagePull(pullCtx, evalImageName, image.PullOptions{}); err != nil {
+	if rc, err := dockerClient.ImagePull(pullCtx, evalImageName, client.ImagePullOptions{}); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to pull %s through backend: %v\n", evalImageName, err)
 		pullCancel()
 		cleanup()
@@ -509,7 +506,7 @@ func testOverlayPlatformGCF() string {
 func TestGCFContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -517,25 +514,24 @@ func TestGCFContainerLogs(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"echo", "hello-gcf-logs"},
-		},
-		nil, nil, nil, "gcf_logs_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"echo", "hello-gcf-logs"},
+	}, Name: "gcf_logs_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 	// Register the in-function bootstrap callback so ContainerStart's
 	// WaitForAgent observes the same reverse-agent readiness signal the
 	// overlay path emits.
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 
 	// Wait for exit
-	waitCh, _ := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, _ := waited.Result, waited.Error
 	select {
 	case <-waitCh:
 	case <-time.After(5 * time.Minute):
@@ -543,7 +539,7 @@ func TestGCFContainerLogs(t *testing.T) {
 	}
 
 	// Get logs
-	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})
@@ -563,18 +559,17 @@ func TestGCFContainerList(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-		},
-		nil, nil, nil, "gcf_list_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+	}, Name: "gcf_list_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{All: true})
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{All: true})
+	containers := listed.Items
 	if err != nil {
 		t.Fatalf("container list failed: %v", err)
 	}
@@ -594,7 +589,7 @@ func TestGCFContainerList(t *testing.T) {
 func TestGCFContainerStopNoOp(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -602,23 +597,21 @@ func TestGCFContainerStopNoOp(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sleep", "30"},
-		},
-		nil, nil, nil, "gcf_stop_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"sleep", "30"},
+	}, Name: "gcf_stop_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 
 	// Stop should succeed as no-op
 	timeout := 5
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatalf("container stop failed (should be no-op): %v", err)
 	}
 }
@@ -636,7 +629,7 @@ func TestGCFContainerExec(t *testing.T) {
 
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -644,23 +637,21 @@ func TestGCFContainerExec(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"tail", "-f", "/dev/null"},
-		},
-		nil, nil, nil, "gcf_exec_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"tail", "-f", "/dev/null"},
+	}, Name: "gcf_exec_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 		Cmd:          []string{"sh", "-c", "printf gcf-exec-ok"},
 		AttachStdout: true,
 		AttachStderr: true,
@@ -673,7 +664,7 @@ func TestGCFContainerExec(t *testing.T) {
 		t.Error("expected non-empty exec ID")
 	}
 
-	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	hijacked, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec attach failed: %v", err)
 	}
@@ -687,7 +678,7 @@ func TestGCFContainerExec(t *testing.T) {
 		t.Fatalf("exec stdout = %q, stderr = %q", got, stderr.String())
 	}
 
-	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	inspect, err := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
 		t.Fatalf("exec inspect failed: %v", err)
 	}
@@ -709,7 +700,7 @@ func TestGCFGitLabRunnerAttachStdin(t *testing.T) {
 
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -717,23 +708,21 @@ func TestGCFGitLabRunnerAttachStdin(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image:        "alpine:latest",
-			Cmd:          []string{"sh"},
-			OpenStdin:    true,
-			AttachStdin:  true,
-			AttachStdout: true,
-			AttachStderr: true,
-		},
-		nil, nil, nil, "gcf_gitlab_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image:        "alpine:latest",
+		Cmd:          []string{"sh"},
+		OpenStdin:    true,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	}, Name: "gcf_gitlab_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	hijacked, err := dockerClient.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+	hijacked, err := dockerClient.ContainerAttach(ctx, resp.ID, client.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  true,
 		Stdout: true,
@@ -751,7 +740,7 @@ func TestGCFGitLabRunnerAttachStdin(t *testing.T) {
 		t.Fatalf("close attach stdin: %v", err)
 	}
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
@@ -774,7 +763,8 @@ func TestGCFGitLabRunnerAttachStdin(t *testing.T) {
 		t.Fatalf("attach stdout = %q stderr = %q", stdout.String(), stderr.String())
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited2 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited2.Result, waited2.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -793,13 +783,14 @@ func TestGCFNetworkOperations(t *testing.T) {
 	testID := generateTestID()
 
 	// Network create should succeed
-	netResp, err := dockerClient.NetworkCreate(ctx, "gcf-net-"+testID, network.CreateOptions{})
+	netResp, err := dockerClient.NetworkCreate(ctx, "gcf-net-"+testID, client.NetworkCreateOptions{})
 	if err != nil {
 		t.Fatalf("network create failed: %v", err)
 	}
 
 	// Network inspect
-	net, err := dockerClient.NetworkInspect(ctx, netResp.ID, network.InspectOptions{})
+	netInspected, err := dockerClient.NetworkInspect(ctx, netResp.ID, client.NetworkInspectOptions{})
+	net := netInspected.Network
 	if err != nil {
 		t.Fatalf("network inspect failed: %v", err)
 	}
@@ -808,7 +799,7 @@ func TestGCFNetworkOperations(t *testing.T) {
 	}
 
 	// Network remove
-	if err := dockerClient.NetworkRemove(ctx, netResp.ID); err != nil {
+	if _, err := dockerClient.NetworkRemove(ctx, netResp.ID, client.NetworkRemoveOptions{}); err != nil {
 		t.Fatalf("network remove failed: %v", err)
 	}
 }
@@ -823,7 +814,8 @@ func TestGCFVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
 	volName := "gcf_vol_" + generateTestID()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	volCreated, err := dockerClient.VolumeCreate(ctx, client.VolumeCreateOptions{Name: volName})
+	vol := volCreated.Volume
 	if err != nil {
 		t.Fatalf("VolumeCreate: %v", err)
 	}
@@ -837,7 +829,8 @@ func TestGCFVolumeOperations(t *testing.T) {
 		t.Errorf("Volume.Options missing bucket: %+v", vol.Options)
 	}
 
-	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	volInspected, err := dockerClient.VolumeInspect(ctx, volName, client.VolumeInspectOptions{})
+	inspected := volInspected.Volume
 	if err != nil {
 		t.Fatalf("VolumeInspect: %v", err)
 	}
@@ -845,13 +838,13 @@ func TestGCFVolumeOperations(t *testing.T) {
 		t.Errorf("inspected.Name = %q, want %q", inspected.Name, volName)
 	}
 
-	list, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	list, err := dockerClient.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		t.Fatalf("VolumeList: %v", err)
 	}
 	found := false
-	for _, v := range list.Volumes {
-		if v != nil && v.Name == volName {
+	for _, v := range list.Items {
+		if v.Name == volName {
 			found = true
 			break
 		}
@@ -860,7 +853,7 @@ func TestGCFVolumeOperations(t *testing.T) {
 		t.Errorf("VolumeList did not surface %q", volName)
 	}
 
-	if err := dockerClient.VolumeRemove(ctx, volName, false); err != nil {
+	if _, err := dockerClient.VolumeRemove(ctx, volName, client.VolumeRemoveOptions{Force: false}); err != nil {
 		t.Fatalf("VolumeRemove: %v", err)
 	}
 }
@@ -925,7 +918,7 @@ func generateTestID(parts ...string) string {
 func TestGCFContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -933,23 +926,22 @@ func TestGCFContainerLifecycle(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"echo", "hello from gcf"},
-		},
-		nil, nil, nil, "gcf_lc_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"echo", "hello from gcf"},
+	}, Name: "gcf_lc_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited3 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited3.Result, waited3.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -961,7 +953,8 @@ func TestGCFContainerLifecycle(t *testing.T) {
 		t.Fatal("timeout waiting for container")
 	}
 
-	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info := inspected.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -969,7 +962,7 @@ func TestGCFContainerLifecycle(t *testing.T) {
 		t.Errorf("expected status 'exited', got %q", info.State.Status)
 	}
 
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+	if _, err := dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{}); err != nil {
 		t.Fatalf("container remove failed: %v", err)
 	}
 }

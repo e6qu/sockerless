@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 )
 
 // readContainerLogs reads Docker multiplexed logs for a container, retrying up to 10s
@@ -25,7 +27,7 @@ func readContainerLogs(t *testing.T, id string) string {
 	ctx := context.Background()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		rc, err := dockerClient.ContainerLogs(ctx, id, container.LogsOptions{
+		rc, err := dockerClient.ContainerLogs(ctx, id, client.ContainerLogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 		})
@@ -47,21 +49,22 @@ func readContainerLogs(t *testing.T, id string) string {
 func TestCloudRunArithmeticSuccess(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:     evalImageName,
 		Cmd:       []string{"3 + 4 * 2"},
 		OpenStdin: true,
-	}, nil, nil, nil, "cr-arith-success")
+	}, Name: "cr-arith-success"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -82,21 +85,22 @@ func TestCloudRunArithmeticSuccess(t *testing.T) {
 func TestCloudRunArithmeticParentheses(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:     evalImageName,
 		Cmd:       []string{"(3 + 4) * 2"},
 		OpenStdin: true,
-	}, nil, nil, nil, "cr-arith-parens")
+	}, Name: "cr-arith-parens"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited2 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited2.Result, waited2.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -117,21 +121,22 @@ func TestCloudRunArithmeticParentheses(t *testing.T) {
 func TestCloudRunArithmeticInvalid(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:     evalImageName,
 		Cmd:       []string{"3 +"},
 		OpenStdin: true,
-	}, nil, nil, nil, "cr-arith-invalid")
+	}, Name: "cr-arith-invalid"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited3 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited3.Result, waited3.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 1 {
@@ -152,21 +157,22 @@ func TestCloudRunArithmeticInvalid(t *testing.T) {
 func TestCloudRunArithmeticDivision(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:     evalImageName,
 		Cmd:       []string{"10 / 3"},
 		OpenStdin: true,
-	}, nil, nil, nil, "cr-arith-div")
+	}, Name: "cr-arith-div"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited4 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited4.Result, waited4.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -187,22 +193,23 @@ func TestCloudRunArithmeticDivision(t *testing.T) {
 func TestCloudRunArithmeticWithLabels(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:     evalImageName,
 		Cmd:       []string{"100 - 42"},
 		OpenStdin: true,
 		Labels:    map[string]string{"arith-test": "cloudrun"},
-	}, nil, nil, nil, "cr-arith-labels")
+	}, Name: "cr-arith-labels"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited5 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited5.Result, waited5.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -221,7 +228,8 @@ func TestCloudRunArithmeticWithLabels(t *testing.T) {
 
 	// Labels round-trip via GCP annotations since their JSON
 	// representation fails the label-value charset.
-	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info := inspected.Container
 	if err != nil {
 		t.Fatalf("inspect failed: %v", err)
 	}
@@ -233,22 +241,23 @@ func TestCloudRunArithmeticWithLabels(t *testing.T) {
 func TestCloudRunArithmeticEnvVar(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:     evalImageName,
 		Cmd:       []string{"(3 + 4) * 2"},
 		OpenStdin: true,
 		Env:       []string{"EXPR=(3 + 4) * 2"},
-	}, nil, nil, nil, "cr-arith-env")
+	}, Name: "cr-arith-env"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited6 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited6.Result, waited6.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {

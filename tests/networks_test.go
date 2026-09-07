@@ -3,8 +3,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 func TestNetworkCreate(t *testing.T) {
@@ -20,7 +19,8 @@ func TestNetworkInspect(t *testing.T) {
 	id := createNetwork(t, "test-net-inspect")
 	defer removeNetwork(t, id)
 
-	net, err := dockerClient.NetworkInspect(ctx, id, network.InspectOptions{})
+	netInspected, err := dockerClient.NetworkInspect(ctx, id, client.NetworkInspectOptions{})
+	net := netInspected.Network
 	if err != nil {
 		t.Fatalf("network inspect failed: %v", err)
 	}
@@ -38,7 +38,8 @@ func TestNetworkList(t *testing.T) {
 	id := createNetwork(t, "test-net-list")
 	defer removeNetwork(t, id)
 
-	networks, err := dockerClient.NetworkList(ctx, network.ListOptions{})
+	netListed, err := dockerClient.NetworkList(ctx, client.NetworkListOptions{})
+	networks := netListed.Items
 	if err != nil {
 		t.Fatalf("network list failed: %v", err)
 	}
@@ -58,12 +59,12 @@ func TestNetworkList(t *testing.T) {
 func TestNetworkRemove(t *testing.T) {
 	id := createNetwork(t, "test-net-remove")
 
-	if err := dockerClient.NetworkRemove(ctx, id); err != nil {
+	if _, err := dockerClient.NetworkRemove(ctx, id, client.NetworkRemoveOptions{}); err != nil {
 		t.Fatalf("network remove failed: %v", err)
 	}
 
 	// Inspect should fail
-	_, err := dockerClient.NetworkInspect(ctx, id, network.InspectOptions{})
+	_, err := dockerClient.NetworkInspect(ctx, id, client.NetworkInspectOptions{})
 	if err == nil {
 		t.Error("expected error inspecting removed network")
 	}
@@ -73,7 +74,8 @@ func TestNetworkPrune(t *testing.T) {
 	id := createNetwork(t, "test-net-prune")
 	_ = id
 
-	report, err := dockerClient.NetworksPrune(ctx, filters.Args{})
+	pruned, err := dockerClient.NetworkPrune(ctx, client.NetworkPruneOptions{Filters: client.Filters{}})
+	report := pruned.Report
 	if err != nil {
 		t.Fatalf("network prune failed: %v", err)
 	}

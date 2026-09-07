@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 // TestLambdaAgentE2E_ReverseAgent is the end-to-end proof: drive the
@@ -36,19 +38,17 @@ func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
 	// The simulator's Lambda invocation path runs the container with
 	// sleep-long enough to keep the reverse-agent session alive while
 	// we run the exec round-trip.
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sleep", "300"},
-		},
-		nil, nil, nil, "agent_e2e_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"sleep", "300"},
+	}, Name: "agent_e2e_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	t.Cleanup(func() { _ = dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) })
+	t.Cleanup(func() { _, _ = dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true}) })
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
@@ -60,7 +60,7 @@ func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
 	var lastExitCode int
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		exec, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+		exec, err := dockerClient.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 			Cmd:          []string{"echo", "hello-from-exec"},
 			AttachStdout: true,
 			AttachStderr: true,
@@ -69,7 +69,7 @@ func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
-		hr, err := dockerClient.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
+		hr, err := dockerClient.ExecAttach(ctx, exec.ID, client.ExecAttachOptions{})
 		if err != nil {
 			time.Sleep(500 * time.Millisecond)
 			continue
@@ -80,7 +80,7 @@ func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
 		// raw is Docker-multiplexed stdout+stderr; demux to get just stdout.
 		gotStdout = demuxDockerStream(raw)
 
-		inspect, err := dockerClient.ContainerExecInspect(ctx, exec.ID)
+		inspect, err := dockerClient.ExecInspect(ctx, exec.ID, client.ExecInspectOptions{})
 		if err != nil {
 			time.Sleep(500 * time.Millisecond)
 			continue
@@ -103,7 +103,7 @@ func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
 	// Post-kill path: stop the container → reverse-agent drops →
 	// subsequent exec returns an error (or exit 126) since no session.
 	stopTimeout := 1
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &stopTimeout}); err != nil {
 		// Stop may report error on already-stopped; OK to proceed.
 		t.Logf("container stop returned %v (continuing — may have already exited)", err)
 	}
@@ -114,7 +114,7 @@ func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
 	// sleep races a loaded runner where the registry drop hasn't propagated.
 	pollDeadline := time.Now().Add(30 * time.Second)
 	for {
-		afterExec, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+		afterExec, err := dockerClient.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 			Cmd:          []string{"echo", "should-not-succeed"},
 			AttachStdout: true,
 		})
@@ -125,11 +125,11 @@ func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
 			}
 			t.Fatalf("post-stop exec create returned unexpected error: %v", err)
 		}
-		if hr2, aerr := dockerClient.ContainerExecAttach(ctx, afterExec.ID, container.ExecAttachOptions{}); aerr == nil {
+		if hr2, aerr := dockerClient.ExecAttach(ctx, afterExec.ID, client.ExecAttachOptions{}); aerr == nil {
 			io.Copy(io.Discard, hr2.Reader)
 			hr2.Close()
 		}
-		if inspect2, _ := dockerClient.ContainerExecInspect(ctx, afterExec.ID); inspect2.ExitCode != 0 {
+		if inspect2, _ := dockerClient.ExecInspect(ctx, afterExec.ID, client.ExecInspectOptions{}); inspect2.ExitCode != 0 {
 			return // expected: the exec failed (agent session gone)
 		}
 		if time.Now().After(pollDeadline) {

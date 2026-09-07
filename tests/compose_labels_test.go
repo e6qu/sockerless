@@ -3,9 +3,9 @@ package tests
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestComposeContainerLabelFilter(t *testing.T) {
@@ -38,12 +38,13 @@ func TestComposeContainerLabelFilter(t *testing.T) {
 	defer removeContainer(t, id3)
 
 	// Filter by project label
-	f := filters.NewArgs()
+	f := client.Filters{}
 	f.Add("label", "com.docker.compose.project=myapp")
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: f,
 	})
+	containers := listed.Items
 	if err != nil {
 		t.Fatalf("container list failed: %v", err)
 	}
@@ -74,12 +75,13 @@ func TestComposeKeyOnlyLabelFilter(t *testing.T) {
 	defer removeContainer(t, id2)
 
 	// Filter by key-only label (just check existence)
-	f := filters.NewArgs()
+	f := client.Filters{}
 	f.Add("label", "com.docker.compose.project")
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{
+	listed2, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: f,
 	})
+	containers := listed2.Items
 	if err != nil {
 		t.Fatalf("container list failed: %v", err)
 	}
@@ -91,7 +93,7 @@ func TestComposeKeyOnlyLabelFilter(t *testing.T) {
 
 func TestComposeNetworkLabelFilter(t *testing.T) {
 	// Create networks with labels
-	resp1, err := dockerClient.NetworkCreate(ctx, "compose-net-1", network.CreateOptions{
+	resp1, err := dockerClient.NetworkCreate(ctx, "compose-net-1", client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{
 			"com.docker.compose.project": "myapp",
@@ -103,7 +105,7 @@ func TestComposeNetworkLabelFilter(t *testing.T) {
 	}
 	defer removeNetwork(t, resp1.ID)
 
-	resp2, err := dockerClient.NetworkCreate(ctx, "compose-net-2", network.CreateOptions{
+	resp2, err := dockerClient.NetworkCreate(ctx, "compose-net-2", client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{
 			"com.docker.compose.project": "other",
@@ -115,11 +117,12 @@ func TestComposeNetworkLabelFilter(t *testing.T) {
 	defer removeNetwork(t, resp2.ID)
 
 	// Filter by label
-	f := filters.NewArgs()
+	f := client.Filters{}
 	f.Add("label", "com.docker.compose.project=myapp")
-	networks, err := dockerClient.NetworkList(ctx, network.ListOptions{
+	netListed, err := dockerClient.NetworkList(ctx, client.NetworkListOptions{
 		Filters: f,
 	})
+	networks := netListed.Items
 	if err != nil {
 		t.Fatalf("network list failed: %v", err)
 	}
@@ -140,7 +143,7 @@ func TestComposeNetworkLabelFilter(t *testing.T) {
 
 func TestComposeNetworkPruneWithLabels(t *testing.T) {
 	// Create a network with compose labels
-	resp, err := dockerClient.NetworkCreate(ctx, "compose-prune-net", network.CreateOptions{
+	resp, err := dockerClient.NetworkCreate(ctx, "compose-prune-net", client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{
 			"com.docker.compose.project": "prune-test",
@@ -151,9 +154,10 @@ func TestComposeNetworkPruneWithLabels(t *testing.T) {
 	}
 
 	// Prune with label filter
-	f := filters.NewArgs()
+	f := client.Filters{}
 	f.Add("label", "com.docker.compose.project=prune-test")
-	report, err := dockerClient.NetworksPrune(ctx, f)
+	pruned, err := dockerClient.NetworkPrune(ctx, client.NetworkPruneOptions{Filters: f})
+	report := pruned.Report
 	if err != nil {
 		t.Fatalf("network prune failed: %v", err)
 	}
@@ -173,7 +177,7 @@ func TestComposeLifecycle(t *testing.T) {
 	projectName := "compose-lifecycle"
 
 	// Create network
-	netResp, err := dockerClient.NetworkCreate(ctx, projectName+"_default", network.CreateOptions{
+	netResp, err := dockerClient.NetworkCreate(ctx, projectName+"_default", client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{
 			"com.docker.compose.project": projectName,
@@ -209,12 +213,13 @@ func TestComposeLifecycle(t *testing.T) {
 	defer removeContainer(t, id2)
 
 	// List by project
-	f := filters.NewArgs()
+	f := client.Filters{}
 	f.Add("label", "com.docker.compose.project="+projectName)
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{
+	listed3, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: f,
 	})
+	containers := listed3.Items
 	if err != nil {
 		t.Fatalf("container list failed: %v", err)
 	}
@@ -224,11 +229,12 @@ func TestComposeLifecycle(t *testing.T) {
 	}
 
 	// List networks by project
-	nf := filters.NewArgs()
+	nf := client.Filters{}
 	nf.Add("label", "com.docker.compose.project="+projectName)
-	networks, err := dockerClient.NetworkList(ctx, network.ListOptions{
+	netListed2, err := dockerClient.NetworkList(ctx, client.NetworkListOptions{
 		Filters: nf,
 	})
+	networks := netListed2.Items
 	if err != nil {
 		t.Fatalf("network list failed: %v", err)
 	}

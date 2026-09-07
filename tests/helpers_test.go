@@ -6,10 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // availableRunnerClients returns all runner-capable backends currently reachable.
@@ -31,7 +29,7 @@ func availableRunnerClients(t *testing.T) map[string]*client.Client {
 			if !strings.HasPrefix(host, "unix://") && !strings.HasPrefix(host, "tcp://") {
 				host = "unix://" + host
 			}
-			c, err := client.NewClientWithOpts(
+			c, err := client.New(
 				client.WithHost(host),
 				client.WithAPIVersionNegotiation(),
 			)
@@ -56,7 +54,7 @@ func generateTestID(parts ...string) string {
 // pullImage pulls an image and waits for completion.
 func pullImage(t *testing.T, ref string) {
 	t.Helper()
-	rc, err := dockerClient.ImagePull(ctx, ref, image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, ref, client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -74,7 +72,7 @@ func pullImage(t *testing.T, ref string) {
 // createContainer creates a container and returns its ID.
 func createContainer(t *testing.T, name string, config *container.Config, hostConfig *container.HostConfig) string {
 	t.Helper()
-	resp, err := dockerClient.ContainerCreate(ctx, config, hostConfig, nil, nil, name)
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: config, HostConfig: hostConfig, Name: name})
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
@@ -84,13 +82,13 @@ func createContainer(t *testing.T, name string, config *container.Config, hostCo
 // removeContainer removes a container with force.
 func removeContainer(t *testing.T, id string) {
 	t.Helper()
-	dockerClient.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})
+	_, _ = dockerClient.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 }
 
 // createNetwork creates a network and returns its ID.
 func createNetwork(t *testing.T, name string) string {
 	t.Helper()
-	resp, err := dockerClient.NetworkCreate(ctx, name, network.CreateOptions{
+	resp, err := dockerClient.NetworkCreate(ctx, name, client.NetworkCreateOptions{
 		Driver: "bridge",
 	})
 	if err != nil {
@@ -102,5 +100,5 @@ func createNetwork(t *testing.T, name string) string {
 // removeNetwork removes a network.
 func removeNetwork(t *testing.T, id string) {
 	t.Helper()
-	dockerClient.NetworkRemove(ctx, id)
+	_, _ = dockerClient.NetworkRemove(ctx, id, client.NetworkRemoveOptions{})
 }
