@@ -3,7 +3,9 @@ package tests
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestExecCreateAndInspect(t *testing.T) {
@@ -17,10 +19,10 @@ func TestExecCreateAndInspect(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 
 	// Create exec
-	execResp, err := dockerClient.ContainerExecCreate(ctx, id, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, id, client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          []string{"echo", "exec-output"},
@@ -34,7 +36,7 @@ func TestExecCreateAndInspect(t *testing.T) {
 	}
 
 	// Inspect exec
-	execInfo, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	execInfo, err := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
 		t.Fatalf("exec inspect failed: %v", err)
 	}
@@ -55,9 +57,9 @@ func TestExecStart(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 
-	execResp, err := dockerClient.ContainerExecCreate(ctx, id, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, id, client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          []string{"echo", "hello-exec"},
@@ -67,7 +69,7 @@ func TestExecStart(t *testing.T) {
 	}
 
 	// Start exec
-	resp, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	resp, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec start failed: %v", err)
 	}

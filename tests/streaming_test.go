@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestContainerLogs(t *testing.T) {
@@ -19,10 +21,11 @@ func TestContainerLogs(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 
 	// Wait for container to exit
-	waitCh, errCh := dockerClient.ContainerWait(ctx, id, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	select {
 	case <-waitCh:
 	case err := <-errCh:
@@ -46,7 +49,7 @@ func TestContainerAttach(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	resp, err := dockerClient.ContainerAttach(ctx, id, container.AttachOptions{
+	resp, err := dockerClient.ContainerAttach(ctx, id, client.ContainerAttachOptions{
 		Stream: true,
 		Stdout: true,
 		Stderr: true,
@@ -57,7 +60,7 @@ func TestContainerAttach(t *testing.T) {
 	defer resp.Close()
 
 	// Start the container after attach
-	dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 
 	// Read output
 	var stdout, stderr bytes.Buffer
@@ -86,16 +89,17 @@ func TestContainerLogsWithTimestamps(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, id, container.WaitConditionNotRunning)
+	waited2 := dockerClient.ContainerWait(ctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited2.Result, waited2.Error
 	select {
 	case <-waitCh:
 	case err := <-errCh:
 		t.Fatalf("wait failed: %v", err)
 	}
 
-	rc, err := dockerClient.ContainerLogs(ctx, id, container.LogsOptions{
+	rc, err := dockerClient.ContainerLogs(ctx, id, client.ContainerLogsOptions{
 		ShowStdout: true,
 		Timestamps: true,
 	})

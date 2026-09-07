@@ -8,7 +8,7 @@ The Docker REST API on its `:3375` port is exercised by three external tools:
 
 | Adaptor | Min version | What it proves |
 |---|---|---|
-| **Docker Go SDK** (`github.com/docker/docker/client`) | v25+ | Full SDK compatibility — used by `tests/` and `actions/runner`. |
+| **Moby Go SDK** (`github.com/moby/moby/client`) | v0.6+ | Full SDK compatibility — used by `tests/` and `actions/runner`. |
 | **`docker` CLI** | 29.x | Wire-level Docker REST v1.44. `docker run` round-trips end-to-end since BUG-991 (Phase 158). |
 | **`podman` CLI** | 5.x | Docker-compat shim (`podman --url tcp://…`). Same wire as `docker`. |
 

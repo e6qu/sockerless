@@ -17,11 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 var dockerClient *client.Client
@@ -328,7 +327,7 @@ ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 	fmt.Printf("[backend] ready on %s\n", backendAddr)
 
 	var err error
-	dockerClient, err = client.NewClientWithOpts(
+	dockerClient, err = client.New(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -345,21 +344,20 @@ func TestAZFContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: alpineImageName,
-			Cmd:   []string{"echo", "hello-azf-logs"},
-		},
-		nil, nil, nil, "azf_logs_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: alpineImageName,
+		Cmd:   []string{"echo", "hello-azf-logs"},
+	}, Name: "azf_logs_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+	_, _ = dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 
 	// Wait for exit
-	waitCh, _ := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, _ := waited.Result, waited.Error
 	select {
 	case <-waitCh:
 	case <-time.After(5 * time.Minute):
@@ -367,7 +365,7 @@ func TestAZFContainerLogs(t *testing.T) {
 	}
 
 	// Get logs
-	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})
@@ -387,18 +385,17 @@ func TestAZFContainerList(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: alpineImageName,
-		},
-		nil, nil, nil, "azf_list_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: alpineImageName,
+	}, Name: "azf_list_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{All: true})
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{All: true})
+	containers := listed.Items
 	if err != nil {
 		t.Fatalf("container list failed: %v", err)
 	}
@@ -419,23 +416,21 @@ func TestAZFContainerStopNoOp(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: alpineImageName,
-			Cmd:   []string{"sleep", "30"},
-		},
-		nil, nil, nil, "azf_stop_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: alpineImageName,
+		Cmd:   []string{"sleep", "30"},
+	}, Name: "azf_stop_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 
 	// Stop should succeed as no-op
 	timeout := 5
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatalf("container stop failed (should be no-op): %v", err)
 	}
 }
@@ -444,23 +439,21 @@ func TestAZFContainerExec(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: alpineImageName,
-			Cmd:   []string{"tail", "-f", "/dev/null"},
-		},
-		nil, nil, nil, "azf_exec_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: alpineImageName,
+		Cmd:   []string{"tail", "-f", "/dev/null"},
+	}, Name: "azf_exec_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 		Cmd:          []string{"sh", "-c", "printf azf-exec-ok"},
 		AttachStdout: true,
 		AttachStderr: true,
@@ -473,7 +466,7 @@ func TestAZFContainerExec(t *testing.T) {
 		t.Error("expected non-empty exec ID")
 	}
 
-	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	hijacked, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec attach failed: %v", err)
 	}
@@ -487,7 +480,7 @@ func TestAZFContainerExec(t *testing.T) {
 		t.Fatalf("exec stdout = %q, stderr = %q", got, stderr.String())
 	}
 
-	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	inspect, err := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
 		t.Fatalf("exec inspect failed: %v", err)
 	}
@@ -500,23 +493,21 @@ func TestAZFGitLabRunnerAttachStdin(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image:        alpineImageName,
-			Cmd:          []string{"sh"},
-			OpenStdin:    true,
-			AttachStdin:  true,
-			AttachStdout: true,
-			AttachStderr: true,
-		},
-		nil, nil, nil, "azf_gitlab_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image:        alpineImageName,
+		Cmd:          []string{"sh"},
+		OpenStdin:    true,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	}, Name: "azf_gitlab_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	hijacked, err := dockerClient.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+	hijacked, err := dockerClient.ContainerAttach(ctx, resp.ID, client.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  true,
 		Stdout: true,
@@ -534,7 +525,7 @@ func TestAZFGitLabRunnerAttachStdin(t *testing.T) {
 		t.Fatalf("close attach stdin: %v", err)
 	}
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
@@ -557,7 +548,8 @@ func TestAZFGitLabRunnerAttachStdin(t *testing.T) {
 		t.Fatalf("attach stdout = %q stderr = %q", stdout.String(), stderr.String())
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited2 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited2.Result, waited2.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -581,11 +573,11 @@ func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
 	testID := generateTestID()
 
 	netName := "azf-pod-net-" + testID
-	netResp, err := dockerClient.NetworkCreate(ctx, netName, network.CreateOptions{})
+	netResp, err := dockerClient.NetworkCreate(ctx, netName, client.NetworkCreateOptions{})
 	if err != nil {
 		t.Fatalf("network create failed: %v", err)
 	}
-	defer dockerClient.NetworkRemove(ctx, netResp.ID)
+	defer dockerClient.NetworkRemove(ctx, netResp.ID, client.NetworkRemoveOptions{})
 
 	netCfg := func(aliases ...string) *network.NetworkingConfig {
 		return &network.NetworkingConfig{
@@ -603,16 +595,12 @@ func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
 
 	// 1. Job container (the main): overlay image, reachable via the reverse
 	//    agent. Created + started FIRST — defers until its service arrives.
-	jobResp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{Image: alpineImageName, Cmd: []string{"tail", "-f", "/dev/null"}},
-		&container.HostConfig{NetworkMode: container.NetworkMode(netName), Binds: bind},
-		netCfg("job"), nil, "azf_pod_job_"+testID,
-	)
+	jobResp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{Image: alpineImageName, Cmd: []string{"tail", "-f", "/dev/null"}}, HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(netName), Binds: bind}, NetworkingConfig: netCfg("job"), Name: "azf_pod_job_" + testID})
 	if err != nil {
 		t.Fatalf("job create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, jobResp.ID, container.RemoveOptions{Force: true})
-	if err := dockerClient.ContainerStart(ctx, jobResp.ID, container.StartOptions{}); err != nil {
+	defer dockerClient.ContainerRemove(ctx, jobResp.ID, client.ContainerRemoveOptions{Force: true})
+	if _, err := dockerClient.ContainerStart(ctx, jobResp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("job start (deferred) failed: %v", err)
 	}
 
@@ -622,19 +610,16 @@ func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
 	// Use the overlay image (bootstrap baked in) so the sidecar runs in
 	// sidecar mode + registers a reverse-agent (per-sidecar exec). In a real
 	// deployment the backend builds this overlay from the raw service image.
-	svcResp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: alpineImageName,
-			Cmd:   []string{"sh", "-c", "echo vol-shared-ok > /shared/from-svc; while true; do printf 'sidecar-ok' | nc -l -p 9099; done"},
-		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(netName), Binds: bind},
-		netCfg("svc"), nil, "azf_pod_svc_"+testID,
+	svcResp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: alpineImageName,
+		Cmd:   []string{"sh", "-c", "echo vol-shared-ok > /shared/from-svc; while true; do printf 'sidecar-ok' | nc -l -p 9099; done"},
+	}, HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(netName), Binds: bind}, NetworkingConfig: netCfg("svc"), Name: "azf_pod_svc_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("service create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, svcResp.ID, container.RemoveOptions{Force: true})
-	if err := dockerClient.ContainerStart(ctx, svcResp.ID, container.StartOptions{}); err != nil {
+	defer dockerClient.ContainerRemove(ctx, svcResp.ID, client.ContainerRemoveOptions{Force: true})
+	if _, err := dockerClient.ContainerStart(ctx, svcResp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("service start (materialize) failed: %v", err)
 	}
 
@@ -645,21 +630,21 @@ func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
 		if target == "DIAG" {
 			cmd = "cat /etc/hosts; echo '---ports---'; (netstat -ltn 2>/dev/null || ss -ltn 2>/dev/null); echo '---ps---'; ps -ef 2>/dev/null | head"
 		}
-		execResp, err := dockerClient.ContainerExecCreate(ctx, jobResp.ID, container.ExecOptions{
+		execResp, err := dockerClient.ExecCreate(ctx, jobResp.ID, client.ExecCreateOptions{
 			Cmd:          []string{"sh", "-c", cmd},
 			AttachStdout: true, AttachStderr: true,
 		})
 		if err != nil {
 			t.Fatalf("exec create (%s) failed: %v", target, err)
 		}
-		hj, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+		hj, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 		if err != nil {
 			t.Fatalf("exec attach (%s) failed: %v", target, err)
 		}
 		defer hj.Close()
 		var stdout, stderr bytes.Buffer
 		_, _ = stdcopy.StdCopy(&stdout, &stderr, hj.Reader)
-		insp, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+		insp, err := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 		if err != nil {
 			t.Fatalf("exec inspect (%s) failed: %v", target, err)
 		}
@@ -691,21 +676,21 @@ func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
 	// Shared workspace volume: the main reads the marker the sidecar wrote to
 	// the volume both mount at /shared.
 	readShared := func() (string, int) {
-		execResp, err := dockerClient.ContainerExecCreate(ctx, jobResp.ID, container.ExecOptions{
+		execResp, err := dockerClient.ExecCreate(ctx, jobResp.ID, client.ExecCreateOptions{
 			Cmd:          []string{"sh", "-c", "cat /shared/from-svc 2>/dev/null"},
 			AttachStdout: true, AttachStderr: true,
 		})
 		if err != nil {
 			t.Fatalf("shared-vol exec create failed: %v", err)
 		}
-		hj, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+		hj, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 		if err != nil {
 			t.Fatalf("shared-vol exec attach failed: %v", err)
 		}
 		defer hj.Close()
 		var so, se bytes.Buffer
 		_, _ = stdcopy.StdCopy(&so, &se, hj.Reader)
-		insp, _ := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+		insp, _ := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 		return strings.TrimSpace(so.String()), insp.ExitCode
 	}
 	var shared string
@@ -722,20 +707,20 @@ func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
 	// Per-sidecar exec: the sidecar runs the overlay in sidecar mode, so it
 	// registers its own reverse-agent and `docker exec <sidecar>` works.
 	execSidecar := func() (string, int) {
-		ex, err := dockerClient.ContainerExecCreate(ctx, svcResp.ID, container.ExecOptions{
+		ex, err := dockerClient.ExecCreate(ctx, svcResp.ID, client.ExecCreateOptions{
 			Cmd: []string{"sh", "-c", "printf sidecar-exec-ok"}, AttachStdout: true, AttachStderr: true,
 		})
 		if err != nil {
 			t.Fatalf("sidecar exec create failed: %v", err)
 		}
-		hj, err := dockerClient.ContainerExecAttach(ctx, ex.ID, container.ExecAttachOptions{})
+		hj, err := dockerClient.ExecAttach(ctx, ex.ID, client.ExecAttachOptions{})
 		if err != nil {
 			return err.Error(), 1
 		}
 		defer hj.Close()
 		var so, se bytes.Buffer
 		_, _ = stdcopy.StdCopy(&so, &se, hj.Reader)
-		insp, _ := dockerClient.ContainerExecInspect(ctx, ex.ID)
+		insp, _ := dockerClient.ExecInspect(ctx, ex.ID, client.ExecInspectOptions{})
 		return so.String(), insp.ExitCode
 	}
 	var sx string
@@ -757,13 +742,14 @@ func TestAZFNetworkOperations(t *testing.T) {
 	testID := generateTestID()
 
 	// Network create should succeed
-	netResp, err := dockerClient.NetworkCreate(ctx, "azf-net-"+testID, network.CreateOptions{})
+	netResp, err := dockerClient.NetworkCreate(ctx, "azf-net-"+testID, client.NetworkCreateOptions{})
 	if err != nil {
 		t.Fatalf("network create failed: %v", err)
 	}
 
 	// Network inspect
-	net, err := dockerClient.NetworkInspect(ctx, netResp.ID, network.InspectOptions{})
+	netInspected, err := dockerClient.NetworkInspect(ctx, netResp.ID, client.NetworkInspectOptions{})
+	net := netInspected.Network
 	if err != nil {
 		t.Fatalf("network inspect failed: %v", err)
 	}
@@ -772,7 +758,7 @@ func TestAZFNetworkOperations(t *testing.T) {
 	}
 
 	// Network remove
-	if err := dockerClient.NetworkRemove(ctx, netResp.ID); err != nil {
+	if _, err := dockerClient.NetworkRemove(ctx, netResp.ID, client.NetworkRemoveOptions{}); err != nil {
 		t.Fatalf("network remove failed: %v", err)
 	}
 }
@@ -786,7 +772,8 @@ func TestAZFVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
 	volName := "azf_vol_" + generateTestID()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	volCreated, err := dockerClient.VolumeCreate(ctx, client.VolumeCreateOptions{Name: volName})
+	vol := volCreated.Volume
 	if err != nil {
 		t.Fatalf("VolumeCreate: %v", err)
 	}
@@ -800,7 +787,8 @@ func TestAZFVolumeOperations(t *testing.T) {
 		t.Errorf("Volume.Options missing share: %+v", vol.Options)
 	}
 
-	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	volInspected, err := dockerClient.VolumeInspect(ctx, volName, client.VolumeInspectOptions{})
+	inspected := volInspected.Volume
 	if err != nil {
 		t.Fatalf("VolumeInspect: %v", err)
 	}
@@ -808,13 +796,13 @@ func TestAZFVolumeOperations(t *testing.T) {
 		t.Errorf("inspected.Name = %q, want %q", inspected.Name, volName)
 	}
 
-	list, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	list, err := dockerClient.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		t.Fatalf("VolumeList: %v", err)
 	}
 	found := false
-	for _, v := range list.Volumes {
-		if v != nil && v.Name == volName {
+	for _, v := range list.Items {
+		if v.Name == volName {
 			found = true
 			break
 		}
@@ -823,7 +811,7 @@ func TestAZFVolumeOperations(t *testing.T) {
 		t.Errorf("VolumeList did not surface %q", volName)
 	}
 
-	if err := dockerClient.VolumeRemove(ctx, volName, false); err != nil {
+	if _, err := dockerClient.VolumeRemove(ctx, volName, client.VolumeRemoveOptions{Force: false}); err != nil {
 		t.Fatalf("VolumeRemove: %v", err)
 	}
 }
@@ -880,23 +868,22 @@ func TestAZFContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: alpineImageName,
-			Cmd:   []string{"echo", "hello from azf"},
-		},
-		nil, nil, nil, "azf_lc_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: alpineImageName,
+		Cmd:   []string{"echo", "hello from azf"},
+	}, Name: "azf_lc_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited3 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited3.Result, waited3.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -908,7 +895,8 @@ func TestAZFContainerLifecycle(t *testing.T) {
 		t.Fatal("timeout waiting for container")
 	}
 
-	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info := inspected.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -916,7 +904,7 @@ func TestAZFContainerLifecycle(t *testing.T) {
 		t.Errorf("expected status 'exited', got %q", info.State.Status)
 	}
 
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+	if _, err := dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{}); err != nil {
 		t.Fatalf("container remove failed: %v", err)
 	}
 }

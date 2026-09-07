@@ -6,7 +6,7 @@ Runs Docker containers as Azure Container Apps Jobs and Executions, with Log Ana
 
 | Direction | Adaptor | Min version | What it proves |
 |---|---|---|---|
-| **Frontend (Docker API)** | [Docker Go SDK](https://pkg.go.dev/github.com/docker/docker/client) | v25+ | `docker run` → ACA Job execution via `tcp://localhost:3375`. |
+| **Frontend (Docker API)** | [Moby Go SDK](https://pkg.go.dev/github.com/moby/moby/client) | v0.6+| v25+ | `docker run` → ACA Job execution via `tcp://localhost:3375`. |
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | **Backend (Azure API)** | [`az` CLI](https://learn.microsoft.com/en-us/cli/azure/containerapp/job) | 2.60+ | `az containerapp job execution show`, `az monitor log-analytics query` — operators inspect job state. |
 | | [Azure SDK for Go](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers) | v3+ | The [Container Apps ARM REST API](https://learn.microsoft.com/en-us/rest/api/containerapps/) calls the backend issues. |

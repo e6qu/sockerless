@@ -17,7 +17,14 @@ Snyk infrastructure rules that are mechanical — buckets versioned, logged
 and encrypted with customer-managed keys, flow logs, KMS on log groups and
 registries, Lambda tracing, TLS 1.2, geo-redundant storage — and `.snyk`
 records, per resource, each rule the deployment deliberately does not
-follow and why (BUG-2923).
+follow and why (BUG-2923). The Docker passthrough backend, the
+cross-backend e2e suite and the six cloud backends' integration tests moved
+from `github.com/docker/docker` — whose two Engine advisories had no fix in
+any published version — to `github.com/moby/moby/client` v0.6.0 and
+`github.com/moby/moby/api` v1.56.0: each call takes an options value and
+returns a result value, the goverter converters map the per-domain types
+and `netip` addresses, and no module depends on the Engine module any more
+(BUG-2922).
 
 ## The registry checks credentials now, and so does every path that reaches it
 

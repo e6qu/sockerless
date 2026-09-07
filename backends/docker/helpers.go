@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/moby/moby/client"
+	"net"
 	"net/http"
 	"strings"
 
@@ -60,10 +62,11 @@ func parseDockerNotFound(msg string) (resource, id string) {
 
 // getInfo queries the Docker daemon for system information.
 func (s *Server) getInfo(ctx context.Context) (*api.BackendInfo, error) {
-	info, err := s.docker.Info(ctx)
+	result, err := s.docker.Info(ctx, client.InfoOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("docker info: %w", err)
 	}
+	info := result.Info
 	return &api.BackendInfo{
 		ID:                info.ID,
 		Name:              info.Name,
@@ -88,7 +91,13 @@ func (s *Server) httpGet(ctx context.Context, path string) (*http.Response, erro
 	host := s.docker.DaemonHost()
 	scheme := "http"
 	httpHost := host
-	httpClient := s.docker.HTTPClient()
+	// The request rides the client's own dialer, so it reaches the daemon
+	// wherever the client does — a Unix socket, a TCP address, an SSH
+	// tunnel — with the same transport settings.
+	dial := s.docker.Dialer()
+	httpClient := &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx) },
+	}}
 
 	if len(host) > 7 && host[:7] == "unix://" {
 		scheme = "http"

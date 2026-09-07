@@ -4,7 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestContainerCreateAndInspect(t *testing.T) {
@@ -22,7 +24,8 @@ func TestContainerCreateAndInspect(t *testing.T) {
 	}
 
 	// Inspect
-	info, err := dockerClient.ContainerInspect(ctx, id)
+	inspected, err := dockerClient.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	info := inspected.Container
 	if err != nil {
 		t.Fatalf("inspect failed: %v", err)
 	}
@@ -53,12 +56,13 @@ func TestContainerStartStop(t *testing.T) {
 	defer removeContainer(t, id)
 
 	// Start
-	if err := dockerClient.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
 	// Inspect — should be running
-	info, err := dockerClient.ContainerInspect(ctx, id)
+	inspected2, err := dockerClient.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	info := inspected2.Container
 	if err != nil {
 		t.Fatalf("inspect failed: %v", err)
 	}
@@ -68,12 +72,13 @@ func TestContainerStartStop(t *testing.T) {
 
 	// Stop
 	timeout := 0
-	if err := dockerClient.ContainerStop(ctx, id, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatalf("stop failed: %v", err)
 	}
 
 	// Inspect — should be exited
-	info, err = dockerClient.ContainerInspect(ctx, id)
+	inspected3, err := dockerClient.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	info = inspected3.Container
 	if err != nil {
 		t.Fatalf("inspect failed: %v", err)
 	}
@@ -96,7 +101,8 @@ func TestContainerList(t *testing.T) {
 	defer removeContainer(t, id)
 
 	// List all (including non-running)
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{All: true})
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{All: true})
+	containers := listed.Items
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
@@ -127,13 +133,14 @@ func TestContainerKill(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 
-	if err := dockerClient.ContainerKill(ctx, id, "SIGKILL"); err != nil {
+	if _, err := dockerClient.ContainerKill(ctx, id, client.ContainerKillOptions{Signal: "SIGKILL"}); err != nil {
 		t.Fatalf("kill failed: %v", err)
 	}
 
-	info, err := dockerClient.ContainerInspect(ctx, id)
+	inspected4, err := dockerClient.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	info := inspected4.Container
 	if err != nil {
 		t.Fatalf("inspect failed: %v", err)
 	}
@@ -150,12 +157,12 @@ func TestContainerRemove(t *testing.T) {
 		Cmd:   []string{"echo", "hello"},
 	}, nil)
 
-	if err := dockerClient.ContainerRemove(ctx, id, container.RemoveOptions{}); err != nil {
+	if _, err := dockerClient.ContainerRemove(ctx, id, client.ContainerRemoveOptions{}); err != nil {
 		t.Fatalf("remove failed: %v", err)
 	}
 
 	// Inspect should fail
-	_, err := dockerClient.ContainerInspect(ctx, id)
+	_, err := dockerClient.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err == nil {
 		t.Error("expected error inspecting removed container")
 	}
@@ -171,10 +178,10 @@ func TestContainerRemoveForce(t *testing.T) {
 		OpenStdin: true,
 	}, nil)
 
-	dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 
 	// Force remove running container
-	if err := dockerClient.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
+	if _, err := dockerClient.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true}); err != nil {
 		t.Fatalf("force remove failed: %v", err)
 	}
 }
@@ -189,9 +196,10 @@ func TestContainerWait(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, id, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -214,10 +222,10 @@ func TestContainerNameConflict(t *testing.T) {
 	defer removeContainer(t, id)
 
 	// Creating another container with the same name should fail
-	_, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	_, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: "alpine",
 		Cmd:   []string{"echo", "hello"},
-	}, nil, nil, nil, "test-conflict")
+	}, Name: "test-conflict"})
 	if err == nil {
 		t.Error("expected error for duplicate name")
 	}
@@ -234,10 +242,10 @@ func TestContainerStartAlreadyStarted(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 
 	// Starting again should return 304 (not modified)
-	err := dockerClient.ContainerStart(ctx, id, container.StartOptions{})
+	_, err := dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{})
 	// Docker SDK treats 304 as success (no error)
 	if err != nil {
 		t.Logf("second start returned: %v (may be expected)", err)
@@ -259,7 +267,8 @@ func TestContainerWithLabels(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	info, err := dockerClient.ContainerInspect(ctx, id)
+	inspected5, err := dockerClient.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	info := inspected5.Container
 	if err != nil {
 		t.Fatalf("inspect failed: %v", err)
 	}

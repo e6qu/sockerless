@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 )
 
 // FuzzMapDockerError drives the Docker-error string/JSON classifier. It parses
@@ -41,21 +41,25 @@ func FuzzMapDockerError(f *testing.F) {
 	})
 }
 
-// FuzzPortConverters drives the nat.PortSet / nat.PortMap converters with
-// arbitrary `port/proto`-shaped (or malformed) keys. These build api maps from
-// attacker-influenced Docker port keys and must never panic on a key missing a
-// slash, an empty key, or a non-UTF-8 key.
+// FuzzPortConverters drives the port-set and port-map converters with
+// arbitrary `port/proto`-shaped (or malformed) text. A key the API parses is
+// converted; one it refuses is reported as such; neither panics, whatever
+// the client sent — a key missing a slash, an empty key, or a non-UTF-8 key.
 func FuzzPortConverters(f *testing.F) {
 	seeds := []string{"80/tcp", "", "/", "80", "65536/udp", "/tcp", "\x00", "a/b/c"}
 	for _, s := range seeds {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, portKey string) {
-		ps := nat.PortSet{nat.Port(portKey): struct{}{}}
-		_ = PortSetToMap(ps)
 		_ = StringSetToMap(map[string]struct{}{portKey: {}})
+		port, err := network.ParsePort(portKey)
+		if err != nil {
+			return
+		}
+		ps := network.PortSet{port: struct{}{}}
+		_ = PortSetToMap(ps)
 
-		pm := nat.PortMap{nat.Port(portKey): []nat.PortBinding{{HostIP: portKey, HostPort: portKey}}}
+		pm := network.PortMap{port: []network.PortBinding{{HostPort: portKey}}}
 		_ = PortMapToBindings(pm)
 
 		// ConvertHostConfig consumes the port map + arbitrary string fields.

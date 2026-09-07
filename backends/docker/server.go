@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	dockerclient "github.com/docker/docker/client"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
 )
@@ -32,7 +32,7 @@ func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 		opts = append(opts, dockerclient.FromEnv)
 	}
 
-	cli, err := dockerclient.NewClientWithOpts(opts...)
+	cli, err := dockerclient.New(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -42,10 +42,11 @@ func NewServer(logger zerolog.Logger, dockerHost string) (*Server, error) {
 	// first /info request, not a placeholder.
 	infoCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	info, err := cli.Info(infoCtx)
+	infoResult, err := cli.Info(infoCtx, dockerclient.InfoOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("docker daemon Info() failed (host=%q): %w — sockerless docker backend requires a reachable daemon at startup", cli.DaemonHost(), err)
 	}
+	info := infoResult.Info
 
 	osType := info.OSType
 	if osType == "" {

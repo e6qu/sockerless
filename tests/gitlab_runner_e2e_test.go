@@ -8,11 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 )
 
 // TestGitLabRunnerDockerExecutorFlow simulates a complete GitLab Runner docker-executor job.
@@ -36,7 +35,7 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			// === Step 1: Pull images ===
 			t.Log("Step 1: Pulling images")
 			pullImg := func(ref string) {
-				rc, err := c.ImagePull(ctx, ref, image.PullOptions{})
+				rc, err := c.ImagePull(ctx, ref, client.ImagePullOptions{})
 				if err != nil {
 					t.Fatalf("failed to pull %s: %v", ref, err)
 				}
@@ -47,17 +46,19 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 
 			// === Step 2: Create network ===
 			t.Log("Step 2: Creating network")
-			netResp, err := c.NetworkCreate(ctx, "runner-net-"+testID, network.CreateOptions{
+			netResp, err := c.NetworkCreate(ctx, "runner-net-"+testID, client.NetworkCreateOptions{
 				Driver: "bridge",
 			})
 			if err != nil {
 				t.Fatalf("network create failed: %v", err)
 			}
-			defer c.NetworkRemove(ctx, netResp.ID)
+			defer c.NetworkRemove(ctx, netResp.ID, client.
 
-			// === Step 3: Create build container (with attach-before-start pattern) ===
+				// === Step 3: Create build container (with attach-before-start pattern) ===
+				NetworkRemoveOptions{})
+
 			t.Log("Step 3: Creating build container")
-			buildResp, err := c.ContainerCreate(ctx, &container.Config{
+			buildResp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 				Image:     "alpine:latest",
 				Cmd:       []string{"tail", "-f", "/dev/null"},
 				OpenStdin: true,
@@ -66,18 +67,18 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 					"com.gitlab.runner.job":  "test-job-1",
 					"com.gitlab.runner.type": "build",
 				},
-			}, nil, nil, nil, "runner-build-"+testID)
+			}, Name: "runner-build-" + testID})
 			if err != nil {
 				t.Fatalf("build container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, buildResp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, buildResp.ID, client.ContainerRemoveOptions{Force: true})
 
 			// === Step 4: Attach to build container BEFORE start (GitLab Runner pattern) ===
 			t.Log("Step 4: Attaching to build container (before start)")
 			attachDone := make(chan error, 1)
-			var attachConn types.HijackedResponse
+			var attachConn client.ContainerAttachResult
 			go func() {
-				conn, err := c.ContainerAttach(ctx, buildResp.ID, container.AttachOptions{
+				conn, err := c.ContainerAttach(ctx, buildResp.ID, client.ContainerAttachOptions{
 					Stream: true,
 					Stdin:  true,
 					Stdout: true,
@@ -102,12 +103,13 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 
 			// === Step 5: Start build container ===
 			t.Log("Step 5: Starting build container")
-			if err := c.ContainerStart(ctx, buildResp.ID, container.StartOptions{}); err != nil {
+			if _, err := c.ContainerStart(ctx, buildResp.ID, client.ContainerStartOptions{}); err != nil {
 				t.Fatalf("build container start failed: %v", err)
 			}
 
 			// Verify container is running
-			info, err := c.ContainerInspect(ctx, buildResp.ID)
+			inspected, err := c.ContainerInspect(ctx, buildResp.ID, client.ContainerInspectOptions{})
+			info := inspected.Container
 			if err != nil {
 				t.Fatalf("inspect failed: %v", err)
 			}
@@ -120,7 +122,7 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 
 			// Exec 1: Setup script
 			execAndWait := func(execName string, cmd []string) string {
-				execResp, err := c.ContainerExecCreate(ctx, buildResp.ID, container.ExecOptions{
+				execResp, err := c.ExecCreate(ctx, buildResp.ID, client.ExecCreateOptions{
 					Cmd:          cmd,
 					AttachStdout: true,
 					AttachStderr: true,
@@ -129,7 +131,7 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 					t.Fatalf("exec create (%s) failed: %v", execName, err)
 				}
 
-				hijacked, err := c.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
+				hijacked, err := c.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 				if err != nil {
 					t.Fatalf("exec attach (%s) failed: %v", execName, err)
 				}
@@ -158,7 +160,7 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			// === Step 7: Stop build container ===
 			t.Log("Step 7: Stopping build container")
 			timeout := 10
-			if err := c.ContainerStop(ctx, buildResp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+			if _, err := c.ContainerStop(ctx, buildResp.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 				t.Fatalf("container stop failed: %v", err)
 			}
 
@@ -167,7 +169,8 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			// exercise: a real StatusCode must come back, and a timeout means the
 			// backend never reported the container stopped — a failure, not a pass.
 			t.Log("Step 8: Waiting for container exit")
-			waitCh, errCh := c.ContainerWait(ctx, buildResp.ID, container.WaitConditionNotRunning)
+			waited := c.ContainerWait(ctx, buildResp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+			waitCh, errCh := waited.Result, waited.Error
 			select {
 			case result := <-waitCh:
 				t.Logf("Container exited with code: %d", result.StatusCode)
@@ -183,7 +186,8 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			// The build container must still be tracked by the cloud-backed
 			// docker ps — its absence is a stateless-listing failure, not a
 			// benign auto-removal (this container has no AutoRemove set).
-			containers, err := c.ContainerList(ctx, container.ListOptions{All: true})
+			listed, err := c.ContainerList(ctx, client.ContainerListOptions{All: true})
+			containers := listed.Items
 			if err != nil {
 				t.Fatalf("container list failed: %v", err)
 			}
@@ -199,12 +203,12 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			}
 
 			// Remove build container
-			if err := c.ContainerRemove(ctx, buildResp.ID, container.RemoveOptions{Force: true}); err != nil {
+			if _, err := c.ContainerRemove(ctx, buildResp.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
 				t.Errorf("container remove failed: %v", err)
 			}
 
 			// Remove network
-			if err := c.NetworkRemove(ctx, netResp.ID); err != nil {
+			if _, err := c.NetworkRemove(ctx, netResp.ID, client.NetworkRemoveOptions{}); err != nil {
 				t.Errorf("network remove failed: %v", err)
 			}
 

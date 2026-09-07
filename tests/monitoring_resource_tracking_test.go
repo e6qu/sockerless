@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 // TestResourceTaggingIntegration validates that the tag additions don't break
@@ -20,7 +21,7 @@ func TestResourceTaggingIntegration(t *testing.T) {
 	ctx := context.Background()
 
 	// Pull image
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -33,25 +34,26 @@ func TestResourceTaggingIntegration(t *testing.T) {
 	rc.Close()
 
 	// Create container with labels
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: "alpine:latest",
 		Cmd:   []string{"echo", "resource-tracking-test"},
 		Labels: map[string]string{
 			"test": "resource-tracking",
 		},
-	}, nil, nil, nil, "resource-tracking-test")
+	}, Name: "resource-tracking-test"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 	// Start
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
 	// Wait for container to finish
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -64,7 +66,8 @@ func TestResourceTaggingIntegration(t *testing.T) {
 	}
 
 	// Inspect should still work (tags don't break anything)
-	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info := inspected.Container
 	if err != nil {
 		t.Fatalf("inspect failed: %v", err)
 	}

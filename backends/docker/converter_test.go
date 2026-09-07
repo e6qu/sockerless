@@ -3,9 +3,8 @@ package docker
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/sockerless/api"
 )
 
@@ -15,16 +14,14 @@ import (
 // ConvertContainerJSON sets it explicitly; without that, every inspect
 // would report an empty State (Status:"", Running:false, Pid:0, ...).
 func TestConvertContainerJSON_PopulatesState(t *testing.T) {
-	info := types.ContainerJSON{
-		ContainerJSONBase: &container.ContainerJSONBase{
-			ID:   "abc123",
-			Name: "/running-ctr",
-			State: &container.State{
-				Status:   "running",
-				Running:  true,
-				Pid:      4242,
-				ExitCode: 0,
-			},
+	info := container.InspectResponse{
+		ID:   "abc123",
+		Name: "/running-ctr",
+		State: &container.State{
+			Status:   container.StateRunning,
+			Running:  true,
+			Pid:      4242,
+			ExitCode: 0,
 		},
 	}
 
@@ -44,14 +41,12 @@ func TestConvertContainerJSON_PopulatesState(t *testing.T) {
 // TestConvertContainerJSON_ExitedState verifies a non-zero exit code is
 // carried through (CI gates and `docker wait`/inspect read ExitCode).
 func TestConvertContainerJSON_ExitedState(t *testing.T) {
-	info := types.ContainerJSON{
-		ContainerJSONBase: &container.ContainerJSONBase{
-			ID: "dead1",
-			State: &container.State{
-				Status:   "exited",
-				Running:  false,
-				ExitCode: 137,
-			},
+	info := container.InspectResponse{
+		ID: "dead1",
+		State: &container.State{
+			Status:   container.StateExited,
+			Running:  false,
+			ExitCode: 137,
 		},
 	}
 
@@ -87,7 +82,10 @@ func TestEndpointSettings_DNSNamesAndLinks_RoundTrip(t *testing.T) {
 	}
 
 	// Write (network connect): api -> docker SDK.
-	back := APIEndpointToDocker(apiEP)
+	back, err := APIEndpointToDocker(apiEP)
+	if err != nil {
+		t.Fatalf("APIEndpointToDocker: %v", err)
+	}
 	if got := back.DNSNames; !equalStrs(got, dnsNames) {
 		t.Errorf("APIEndpointToDocker DNSNames = %v, want %v", got, dnsNames)
 	}
@@ -96,9 +94,12 @@ func TestEndpointSettings_DNSNamesAndLinks_RoundTrip(t *testing.T) {
 	}
 
 	// Write (docker run --network): api -> docker SDK.
-	nc := mapNetworkingConfigToDocker(&api.NetworkingConfig{
+	nc, err := mapNetworkingConfigToDocker(&api.NetworkingConfig{
 		EndpointsConfig: map[string]*api.EndpointSettings{"mynet": apiEP},
 	})
+	if err != nil {
+		t.Fatalf("mapNetworkingConfigToDocker: %v", err)
+	}
 	es := nc.EndpointsConfig["mynet"]
 	if got := es.DNSNames; !equalStrs(got, dnsNames) {
 		t.Errorf("mapNetworkingConfigToDocker DNSNames = %v, want %v", got, dnsNames)
@@ -111,7 +112,7 @@ func TestEndpointSettings_DNSNamesAndLinks_RoundTrip(t *testing.T) {
 // TestConvertContainerSummary_HostConfigNetworkMode verifies docker ps
 // reports HostConfig.NetworkMode (used by `--filter network=`).
 func TestConvertContainerSummary_HostConfigNetworkMode(t *testing.T) {
-	c := types.Container{ID: "x"}
+	c := container.Summary{ID: "x"}
 	c.HostConfig.NetworkMode = "host"
 
 	summary := ConvertContainerSummary(c)

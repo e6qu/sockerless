@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 )
 
 // TestExecShellScript simulates what act does: upload a script file via
@@ -23,7 +25,7 @@ func TestExecShellScript(t *testing.T) {
 	}, nil)
 	defer removeContainer(t, id)
 
-	if err := dockerClient.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
@@ -40,13 +42,13 @@ func TestExecShellScript(t *testing.T) {
 	tw.Close()
 
 	// Upload via PUT archive (like act does)
-	err := dockerClient.CopyToContainer(ctx, id, "/var/run/act/workflow", &tarBuf, container.CopyToContainerOptions{})
+	_, err := dockerClient.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: "/var/run/act/workflow", Content: &tarBuf})
 	if err != nil {
 		t.Fatalf("copy to container failed: %v", err)
 	}
 
 	// Exec sh -e /var/run/act/workflow/0.sh (exactly like act does)
-	execResp, err := dockerClient.ContainerExecCreate(ctx, id, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, id, client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          []string{"sh", "-e", "/var/run/act/workflow/0.sh"},
@@ -55,7 +57,7 @@ func TestExecShellScript(t *testing.T) {
 		t.Fatalf("exec create failed: %v", err)
 	}
 
-	resp, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	resp, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec attach failed: %v", err)
 	}
@@ -70,7 +72,7 @@ func TestExecShellScript(t *testing.T) {
 	t.Logf("stdout: %q, stderr: %q", stdout.String(), stderr.String())
 
 	// Check exit code
-	execInfo, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	execInfo, err := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
 		t.Fatalf("exec inspect failed: %v", err)
 	}

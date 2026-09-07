@@ -4,128 +4,126 @@
 package docker
 
 import (
-	types "github.com/docker/docker/api/types"
-	container "github.com/docker/docker/api/types/container"
-	events "github.com/docker/docker/api/types/events"
-	image "github.com/docker/docker/api/types/image"
-	network "github.com/docker/docker/api/types/network"
-	registry "github.com/docker/docker/api/types/registry"
-	strslice "github.com/docker/docker/api/types/strslice"
-	volume "github.com/docker/docker/api/types/volume"
 	v1 "github.com/moby/docker-image-spec/specs-go/v1"
+	container "github.com/moby/moby/api/types/container"
+	events "github.com/moby/moby/api/types/events"
+	image "github.com/moby/moby/api/types/image"
+	network "github.com/moby/moby/api/types/network"
+	registry "github.com/moby/moby/api/types/registry"
+	storage "github.com/moby/moby/api/types/storage"
+	volume "github.com/moby/moby/api/types/volume"
 	api "github.com/sockerless/api"
 )
 
 type ConverterImpl struct{}
 
-func (c *ConverterImpl) ConvertAuthResponse(source registry.AuthenticateOKBody) api.AuthResponse {
+func (c *ConverterImpl) ConvertAuthResponse(source registry.AuthResponse) api.AuthResponse {
 	var apiAuthResponse api.AuthResponse
-	apiAuthResponse.Status = source.Status
 	apiAuthResponse.IdentityToken = source.IdentityToken
+	apiAuthResponse.Status = source.Status
 	return apiAuthResponse
 }
-func (c *ConverterImpl) ConvertContainerBase(source types.ContainerJSONBase) api.Container {
+func (c *ConverterImpl) ConvertContainerBase(source container.InspectResponse) api.Container {
 	var apiContainer api.Container
-	apiContainer.ID = source.ID
-	apiContainer.Name = source.Name
-	apiContainer.Created = source.Created
-	apiContainer.Path = source.Path
 	apiContainer.Args = StrSliceToStrings(source.Args)
-	apiContainer.Image = source.Image
-	apiContainer.Platform = source.Platform
+	apiContainer.Created = source.Created
 	apiContainer.Driver = source.Driver
-	apiContainer.RestartCount = source.RestartCount
-	apiContainer.LogPath = source.LogPath
-	apiContainer.ResolvConfPath = source.ResolvConfPath
+	apiContainer.ExecIDs = StrSliceToStrings(source.ExecIDs)
 	apiContainer.HostnamePath = source.HostnamePath
 	apiContainer.HostsPath = source.HostsPath
-	apiContainer.ExecIDs = StrSliceToStrings(source.ExecIDs)
-	if source.SizeRw != nil {
-		xint64 := *source.SizeRw
-		apiContainer.SizeRw = &xint64
-	}
+	apiContainer.ID = source.ID
+	apiContainer.Image = source.Image
+	apiContainer.LogPath = source.LogPath
+	apiContainer.Name = source.Name
+	apiContainer.Path = source.Path
+	apiContainer.Platform = source.Platform
+	apiContainer.ResolvConfPath = source.ResolvConfPath
+	apiContainer.RestartCount = source.RestartCount
 	if source.SizeRootFs != nil {
-		xint642 := *source.SizeRootFs
-		apiContainer.SizeRootFs = &xint642
+		xint64 := *source.SizeRootFs
+		apiContainer.SizeRootFs = &xint64
+	}
+	if source.SizeRw != nil {
+		xint642 := *source.SizeRw
+		apiContainer.SizeRw = &xint642
 	}
 	return apiContainer
 }
 func (c *ConverterImpl) ConvertContainerChange(source container.FilesystemChange) api.ContainerChangeItem {
 	var apiContainerChangeItem api.ContainerChangeItem
-	apiContainerChangeItem.Path = source.Path
 	apiContainerChangeItem.Kind = ChangeTypeToInt(source.Kind)
+	apiContainerChangeItem.Path = source.Path
 	return apiContainerChangeItem
 }
 func (c *ConverterImpl) ConvertContainerConfig(source container.Config) api.ContainerConfig {
 	var apiContainerConfig api.ContainerConfig
-	apiContainerConfig.Hostname = source.Hostname
-	apiContainerConfig.Domainname = source.Domainname
-	apiContainerConfig.User = source.User
+	apiContainerConfig.ArgsEscaped = source.ArgsEscaped
+	apiContainerConfig.AttachStderr = source.AttachStderr
 	apiContainerConfig.AttachStdin = source.AttachStdin
 	apiContainerConfig.AttachStdout = source.AttachStdout
-	apiContainerConfig.AttachStderr = source.AttachStderr
-	apiContainerConfig.Tty = source.Tty
-	apiContainerConfig.OpenStdin = source.OpenStdin
-	apiContainerConfig.StdinOnce = source.StdinOnce
+	apiContainerConfig.Cmd = StrSliceToStrings(source.Cmd)
+	apiContainerConfig.Domainname = source.Domainname
+	apiContainerConfig.Entrypoint = StrSliceToStrings(source.Entrypoint)
 	apiContainerConfig.Env = StrSliceToStrings(source.Env)
-	apiContainerConfig.Cmd = c.strsliceStrSliceToStringList(source.Cmd)
+	apiContainerConfig.Hostname = source.Hostname
 	apiContainerConfig.Image = source.Image
-	if source.Volumes != nil {
-		apiContainerConfig.Volumes = make(map[string]struct{}, len(source.Volumes))
-		for key, value := range source.Volumes {
-			apiContainerConfig.Volumes[key] = value
-		}
-	}
-	apiContainerConfig.WorkingDir = source.WorkingDir
-	apiContainerConfig.Entrypoint = c.strsliceStrSliceToStringList(source.Entrypoint)
 	if source.Labels != nil {
 		apiContainerConfig.Labels = make(map[string]string, len(source.Labels))
-		for key2, value2 := range source.Labels {
-			apiContainerConfig.Labels[key2] = value2
+		for key, value := range source.Labels {
+			apiContainerConfig.Labels[key] = value
 		}
 	}
+	apiContainerConfig.NetworkDisabled = source.NetworkDisabled
+	apiContainerConfig.OnBuild = StrSliceToStrings(source.OnBuild)
+	apiContainerConfig.OpenStdin = source.OpenStdin
+	apiContainerConfig.Shell = StrSliceToStrings(source.Shell)
+	apiContainerConfig.StdinOnce = source.StdinOnce
 	apiContainerConfig.StopSignal = source.StopSignal
 	if source.StopTimeout != nil {
 		xint := *source.StopTimeout
 		apiContainerConfig.StopTimeout = &xint
 	}
-	apiContainerConfig.Shell = c.strsliceStrSliceToStringList(source.Shell)
-	apiContainerConfig.ArgsEscaped = source.ArgsEscaped
-	apiContainerConfig.NetworkDisabled = source.NetworkDisabled
-	apiContainerConfig.MacAddress = source.MacAddress
-	apiContainerConfig.OnBuild = StrSliceToStrings(source.OnBuild)
+	apiContainerConfig.Tty = source.Tty
+	apiContainerConfig.User = source.User
+	if source.Volumes != nil {
+		apiContainerConfig.Volumes = make(map[string]struct{}, len(source.Volumes))
+		for key2, value2 := range source.Volumes {
+			apiContainerConfig.Volumes[key2] = value2
+		}
+	}
+	apiContainerConfig.WorkingDir = source.WorkingDir
 	return apiContainerConfig
 }
-func (c *ConverterImpl) ConvertContainerState(source types.ContainerState) api.ContainerState {
+func (c *ConverterImpl) ConvertContainerState(source container.State) api.ContainerState {
 	var apiContainerState api.ContainerState
-	apiContainerState.Status = source.Status
-	apiContainerState.Running = source.Running
-	apiContainerState.Paused = source.Paused
-	apiContainerState.Restarting = source.Restarting
-	apiContainerState.OOMKilled = source.OOMKilled
 	apiContainerState.Dead = source.Dead
-	apiContainerState.Pid = source.Pid
-	apiContainerState.ExitCode = source.ExitCode
 	apiContainerState.Error = source.Error
-	apiContainerState.StartedAt = source.StartedAt
+	apiContainerState.ExitCode = source.ExitCode
 	apiContainerState.FinishedAt = source.FinishedAt
 	apiContainerState.Health = HealthToState(source.Health)
+	apiContainerState.OOMKilled = source.OOMKilled
+	apiContainerState.Paused = source.Paused
+	apiContainerState.Pid = source.Pid
+	apiContainerState.Restarting = source.Restarting
+	apiContainerState.Running = source.Running
+	apiContainerState.StartedAt = source.StartedAt
+	apiContainerState.Status = ContainerStateToString(source.Status)
 	return apiContainerState
 }
 func (c *ConverterImpl) ConvertEndpointResource(source network.EndpointResource) api.EndpointResource {
 	var apiEndpointResource api.EndpointResource
-	apiEndpointResource.Name = source.Name
 	apiEndpointResource.EndpointID = source.EndpointID
-	apiEndpointResource.MacAddress = source.MacAddress
-	apiEndpointResource.IPv4Address = source.IPv4Address
-	apiEndpointResource.IPv6Address = source.IPv6Address
+	apiEndpointResource.IPv4Address = PrefixToString(source.IPv4Address)
+	apiEndpointResource.IPv6Address = PrefixToString(source.IPv6Address)
+	apiEndpointResource.MacAddress = HardwareAddrToString(source.MacAddress)
+	apiEndpointResource.Name = source.Name
 	return apiEndpointResource
 }
 func (c *ConverterImpl) ConvertEventMessage(source events.Message) api.Event {
 	var apiEvent api.Event
-	apiEvent.Type = EventTypeToString(source.Type)
 	apiEvent.Action = EventActionToString(source.Action)
 	apiEvent.Actor = EventActorToAPI(source.Actor)
+	apiEvent.Type = EventTypeToString(source.Type)
 	apiEvent.Scope = source.Scope
 	apiEvent.Time = source.Time
 	apiEvent.TimeNano = source.TimeNano
@@ -133,76 +131,73 @@ func (c *ConverterImpl) ConvertEventMessage(source events.Message) api.Event {
 }
 func (c *ConverterImpl) ConvertHealthcheckConfig(source v1.HealthcheckConfig) api.HealthcheckConfig {
 	var apiHealthcheckConfig api.HealthcheckConfig
-	apiHealthcheckConfig.Test = StrSliceToStrings(source.Test)
 	apiHealthcheckConfig.Interval = DurationToInt64(source.Interval)
-	apiHealthcheckConfig.Timeout = DurationToInt64(source.Timeout)
-	apiHealthcheckConfig.StartPeriod = DurationToInt64(source.StartPeriod)
-	apiHealthcheckConfig.StartInterval = DurationToInt64(source.StartInterval)
 	apiHealthcheckConfig.Retries = source.Retries
+	apiHealthcheckConfig.StartInterval = DurationToInt64(source.StartInterval)
+	apiHealthcheckConfig.StartPeriod = DurationToInt64(source.StartPeriod)
+	apiHealthcheckConfig.Test = StrSliceToStrings(source.Test)
+	apiHealthcheckConfig.Timeout = DurationToInt64(source.Timeout)
 	return apiHealthcheckConfig
 }
 func (c *ConverterImpl) ConvertIPAMConfig(source network.IPAMConfig) api.IPAMConfig {
 	var apiIPAMConfig api.IPAMConfig
-	apiIPAMConfig.Subnet = source.Subnet
-	apiIPAMConfig.IPRange = source.IPRange
-	apiIPAMConfig.Gateway = source.Gateway
+	apiIPAMConfig.AuxiliaryAddresses = AddrMapToStrings(source.AuxAddress)
+	apiIPAMConfig.Gateway = AddrToString(source.Gateway)
+	apiIPAMConfig.IPRange = PrefixToString(source.IPRange)
+	apiIPAMConfig.Subnet = PrefixToString(source.Subnet)
 	return apiIPAMConfig
 }
-func (c *ConverterImpl) ConvertImageBase(source types.ImageInspect) api.Image {
+func (c *ConverterImpl) ConvertImageBase(source image.InspectResponse) api.Image {
 	var apiImage api.Image
-	apiImage.ID = source.ID
-	apiImage.RepoTags = StrSliceToStrings(source.RepoTags)
-	apiImage.RepoDigests = StrSliceToStrings(source.RepoDigests)
-	apiImage.Created = source.Created
-	apiImage.Size = source.Size
-	apiImage.VirtualSize = source.VirtualSize
 	apiImage.Architecture = source.Architecture
-	apiImage.Os = source.Os
 	apiImage.Author = source.Author
-	apiImage.Parent = source.Parent
 	apiImage.Comment = source.Comment
-	apiImage.DockerVersion = source.DockerVersion
-	apiImage.GraphDriver = c.typesGraphDriverDataToApiGraphDriverData(source.GraphDriver)
+	apiImage.Created = source.Created
+	apiImage.GraphDriver = c.pStorageDriverDataToApiGraphDriverData(source.GraphDriver)
+	apiImage.ID = source.ID
+	apiImage.Os = source.Os
+	apiImage.RepoDigests = StrSliceToStrings(source.RepoDigests)
+	apiImage.RepoTags = StrSliceToStrings(source.RepoTags)
+	apiImage.Size = source.Size
 	return apiImage
 }
 func (c *ConverterImpl) ConvertImageDeleteResponseItem(source image.DeleteResponse) api.ImageDeleteResponse {
 	var apiImageDeleteResponse api.ImageDeleteResponse
-	apiImageDeleteResponse.Untagged = source.Untagged
 	apiImageDeleteResponse.Deleted = source.Deleted
+	apiImageDeleteResponse.Untagged = source.Untagged
 	return apiImageDeleteResponse
 }
 func (c *ConverterImpl) ConvertImageHistoryResponseItem(source image.HistoryResponseItem) api.ImageHistoryEntry {
 	var apiImageHistoryEntry api.ImageHistoryEntry
-	apiImageHistoryEntry.ID = source.ID
+	apiImageHistoryEntry.Comment = source.Comment
 	apiImageHistoryEntry.Created = source.Created
 	apiImageHistoryEntry.CreatedBy = source.CreatedBy
-	apiImageHistoryEntry.Tags = StrSliceToStrings(source.Tags)
+	apiImageHistoryEntry.ID = source.ID
 	apiImageHistoryEntry.Size = source.Size
-	apiImageHistoryEntry.Comment = source.Comment
+	apiImageHistoryEntry.Tags = StrSliceToStrings(source.Tags)
 	return apiImageHistoryEntry
 }
 func (c *ConverterImpl) ConvertImageSummary(source image.Summary) api.ImageSummary {
 	var apiImageSummary api.ImageSummary
-	apiImageSummary.ID = source.ID
-	apiImageSummary.ParentID = source.ParentID
-	apiImageSummary.RepoTags = StrSliceToStrings(source.RepoTags)
-	apiImageSummary.RepoDigests = StrSliceToStrings(source.RepoDigests)
+	apiImageSummary.Containers = source.Containers
 	apiImageSummary.Created = source.Created
-	apiImageSummary.Size = source.Size
-	apiImageSummary.SharedSize = source.SharedSize
-	apiImageSummary.VirtualSize = source.VirtualSize
+	apiImageSummary.ID = source.ID
 	if source.Labels != nil {
 		apiImageSummary.Labels = make(map[string]string, len(source.Labels))
 		for key, value := range source.Labels {
 			apiImageSummary.Labels[key] = value
 		}
 	}
-	apiImageSummary.Containers = source.Containers
+	apiImageSummary.ParentID = source.ParentID
+	apiImageSummary.RepoDigests = StrSliceToStrings(source.RepoDigests)
+	apiImageSummary.RepoTags = StrSliceToStrings(source.RepoTags)
+	apiImageSummary.SharedSize = source.SharedSize
+	apiImageSummary.Size = source.Size
 	return apiImageSummary
 }
-func (c *ConverterImpl) ConvertPort(source types.Port) api.Port {
+func (c *ConverterImpl) ConvertPort(source container.PortSummary) api.Port {
 	var apiPort api.Port
-	apiPort.IP = source.IP
+	apiPort.IP = AddrToString(source.IP)
 	apiPort.PrivatePort = source.PrivatePort
 	apiPort.PublicPort = source.PublicPort
 	apiPort.Type = source.Type
@@ -210,66 +205,58 @@ func (c *ConverterImpl) ConvertPort(source types.Port) api.Port {
 }
 func (c *ConverterImpl) ConvertRestartPolicy(source container.RestartPolicy) api.RestartPolicy {
 	var apiRestartPolicy api.RestartPolicy
-	apiRestartPolicy.Name = RestartPolicyModeToString(source.Name)
 	apiRestartPolicy.MaximumRetryCount = source.MaximumRetryCount
+	apiRestartPolicy.Name = RestartPolicyModeToString(source.Name)
 	return apiRestartPolicy
 }
 func (c *ConverterImpl) ConvertVolume(source volume.Volume) api.Volume {
 	var apiVolume api.Volume
-	apiVolume.Name = source.Name
-	apiVolume.Driver = source.Driver
-	apiVolume.Mountpoint = source.Mountpoint
 	apiVolume.CreatedAt = source.CreatedAt
-	if source.Status != nil {
-		apiVolume.Status = make(map[string]interface{}, len(source.Status))
-		for key, value := range source.Status {
-			apiVolume.Status[key] = InterfaceToAny(value)
-		}
-	}
+	apiVolume.Driver = source.Driver
 	if source.Labels != nil {
 		apiVolume.Labels = make(map[string]string, len(source.Labels))
-		for key2, value2 := range source.Labels {
-			apiVolume.Labels[key2] = value2
+		for key, value := range source.Labels {
+			apiVolume.Labels[key] = value
+		}
+	}
+	apiVolume.Mountpoint = source.Mountpoint
+	apiVolume.Name = source.Name
+	if source.Options != nil {
+		apiVolume.Options = make(map[string]string, len(source.Options))
+		for key2, value2 := range source.Options {
+			apiVolume.Options[key2] = value2
 		}
 	}
 	apiVolume.Scope = source.Scope
-	if source.Options != nil {
-		apiVolume.Options = make(map[string]string, len(source.Options))
-		for key3, value3 := range source.Options {
-			apiVolume.Options[key3] = value3
+	if source.Status != nil {
+		apiVolume.Status = make(map[string]interface{}, len(source.Status))
+		for key3, value3 := range source.Status {
+			apiVolume.Status[key3] = InterfaceToAny(value3)
 		}
 	}
 	apiVolume.UsageData = c.pVolumeUsageDataToPApiVolumeUsageData(source.UsageData)
 	return apiVolume
 }
+func (c *ConverterImpl) pStorageDriverDataToApiGraphDriverData(source *storage.DriverData) api.GraphDriverData {
+	var apiGraphDriverData api.GraphDriverData
+	if source != nil {
+		if (*source).Data != nil {
+			apiGraphDriverData.Data = make(map[string]string, len((*source).Data))
+			for key, value := range (*source).Data {
+				apiGraphDriverData.Data[key] = value
+			}
+		}
+		apiGraphDriverData.Name = (*source).Name
+	}
+	return apiGraphDriverData
+}
 func (c *ConverterImpl) pVolumeUsageDataToPApiVolumeUsageData(source *volume.UsageData) *api.VolumeUsageData {
 	var pApiVolumeUsageData *api.VolumeUsageData
 	if source != nil {
 		var apiVolumeUsageData api.VolumeUsageData
-		apiVolumeUsageData.Size = (*source).Size
 		apiVolumeUsageData.RefCount = (*source).RefCount
+		apiVolumeUsageData.Size = (*source).Size
 		pApiVolumeUsageData = &apiVolumeUsageData
 	}
 	return pApiVolumeUsageData
-}
-func (c *ConverterImpl) strsliceStrSliceToStringList(source strslice.StrSlice) []string {
-	var stringList []string
-	if source != nil {
-		stringList = make([]string, len(source))
-		for i := 0; i < len(source); i++ {
-			stringList[i] = source[i]
-		}
-	}
-	return stringList
-}
-func (c *ConverterImpl) typesGraphDriverDataToApiGraphDriverData(source types.GraphDriverData) api.GraphDriverData {
-	var apiGraphDriverData api.GraphDriverData
-	apiGraphDriverData.Name = source.Name
-	if source.Data != nil {
-		apiGraphDriverData.Data = make(map[string]string, len(source.Data))
-		for key, value := range source.Data {
-			apiGraphDriverData.Data[key] = value
-		}
-	}
-	return apiGraphDriverData
 }

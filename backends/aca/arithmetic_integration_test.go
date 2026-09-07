@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 )
 
 // readContainerLogs reads Docker multiplexed logs for a container, retrying up to 10s
@@ -20,7 +22,7 @@ func readContainerLogs(t *testing.T, id string) string {
 	ctx := context.Background()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		rc, err := dockerClient.ContainerLogs(ctx, id, container.LogsOptions{
+		rc, err := dockerClient.ContainerLogs(ctx, id, client.ContainerLogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 		})
@@ -57,20 +59,21 @@ func checkLogs(t *testing.T, id, expected string) {
 func TestACAArithmeticSuccess(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"3 + 4 * 2"},
-	}, nil, nil, nil, "aca-arith-success")
+	}, Name: "aca-arith-success"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -88,20 +91,21 @@ func TestACAArithmeticSuccess(t *testing.T) {
 func TestACAArithmeticParentheses(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"(3 + 4) * 2"},
-	}, nil, nil, nil, "aca-arith-parens")
+	}, Name: "aca-arith-parens"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited2 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited2.Result, waited2.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -119,20 +123,21 @@ func TestACAArithmeticParentheses(t *testing.T) {
 func TestACAArithmeticInvalid(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"3 +"},
-	}, nil, nil, nil, "aca-arith-invalid")
+	}, Name: "aca-arith-invalid"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited3 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited3.Result, waited3.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 1 {
@@ -150,20 +155,21 @@ func TestACAArithmeticInvalid(t *testing.T) {
 func TestACAArithmeticDivision(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"10 / 3"},
-	}, nil, nil, nil, "aca-arith-div")
+	}, Name: "aca-arith-div"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited4 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited4.Result, waited4.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -181,21 +187,22 @@ func TestACAArithmeticDivision(t *testing.T) {
 func TestACAArithmeticWithLabels(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:  evalImageName,
 		Cmd:    []string{"100 - 42"},
 		Labels: map[string]string{"arith-test": "aca"},
-	}, nil, nil, nil, "aca-arith-labels")
+	}, Name: "aca-arith-labels"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited5 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited5.Result, waited5.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -213,21 +220,22 @@ func TestACAArithmeticWithLabels(t *testing.T) {
 func TestACAArithmeticEnvVar(t *testing.T) {
 	ctx := context.Background()
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: evalImageName,
 		Cmd:   []string{"(3 + 4) * 2"},
 		Env:   []string{"EXPR=(3 + 4) * 2"},
-	}, nil, nil, nil, "aca-arith-env")
+	}, Name: "aca-arith-env"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited6 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited6.Result, waited6.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {

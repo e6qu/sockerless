@@ -3,7 +3,9 @@ package tests
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestContainerMemoryLimit(t *testing.T) {
@@ -12,20 +14,21 @@ func TestContainerMemoryLimit(t *testing.T) {
 	for name, c := range availableRunnerClients(t) {
 		t.Run(name, func(t *testing.T) {
 			containerName := "mem-test-" + generateTestID(name)
-			resp, err := c.ContainerCreate(ctx, &container.Config{
+			resp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 				Image: "alpine",
 				Cmd:   []string{"tail", "-f", "/dev/null"},
-			}, &container.HostConfig{
+			}, HostConfig: &container.HostConfig{
 				Resources: container.Resources{
 					Memory: 512 * 1024 * 1024, // 512MB
 				},
-			}, nil, nil, containerName)
+			}, Name: containerName})
 			if err != nil {
 				t.Fatalf("container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-			inspect, err := c.ContainerInspect(ctx, resp.ID)
+			inspected, err := c.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+			inspect := inspected.Container
 			if err != nil {
 				t.Fatalf("inspect failed: %v", err)
 			}
@@ -44,20 +47,21 @@ func TestContainerCPUShares(t *testing.T) {
 	for name, c := range availableRunnerClients(t) {
 		t.Run(name, func(t *testing.T) {
 			containerName := "cpu-test-" + generateTestID(name)
-			resp, err := c.ContainerCreate(ctx, &container.Config{
+			resp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 				Image: "alpine",
 				Cmd:   []string{"tail", "-f", "/dev/null"},
-			}, &container.HostConfig{
+			}, HostConfig: &container.HostConfig{
 				Resources: container.Resources{
 					CPUShares: 512,
 				},
-			}, nil, nil, containerName)
+			}, Name: containerName})
 			if err != nil {
 				t.Fatalf("container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-			inspect, err := c.ContainerInspect(ctx, resp.ID)
+			inspected2, err := c.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+			inspect := inspected2.Container
 			if err != nil {
 				t.Fatalf("inspect failed: %v", err)
 			}
@@ -75,21 +79,22 @@ func TestContainerMemoryAndCPU_Combined(t *testing.T) {
 	for name, c := range availableRunnerClients(t) {
 		t.Run(name, func(t *testing.T) {
 			containerName := "resources-test-" + generateTestID(name)
-			resp, err := c.ContainerCreate(ctx, &container.Config{
+			resp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 				Image: "alpine",
 				Cmd:   []string{"tail", "-f", "/dev/null"},
-			}, &container.HostConfig{
+			}, HostConfig: &container.HostConfig{
 				Resources: container.Resources{
 					Memory:    256 * 1024 * 1024, // 256MB
 					CPUShares: 1024,
 				},
-			}, nil, nil, containerName)
+			}, Name: containerName})
 			if err != nil {
 				t.Fatalf("container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-			inspect, err := c.ContainerInspect(ctx, resp.ID)
+			inspected3, err := c.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+			inspect := inspected3.Container
 			if err != nil {
 				t.Fatalf("inspect failed: %v", err)
 			}

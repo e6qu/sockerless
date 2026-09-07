@@ -6,7 +6,7 @@ Runs Docker containers as Google Cloud Run Functions (2nd gen), with Cloud Loggi
 
 | Direction | Adaptor | Min version | What it proves |
 |---|---|---|---|
-| **Frontend (Docker API)** | [Docker Go SDK](https://pkg.go.dev/github.com/docker/docker/client) | v25+ | `docker run` → Cloud Function invoke via `tcp://localhost:3375`. |
+| **Frontend (Docker API)** | [Moby Go SDK](https://pkg.go.dev/github.com/moby/moby/client) | v0.6+| v25+ | `docker run` → Cloud Function invoke via `tcp://localhost:3375`. |
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | **Backend (GCP API)** | [`gcloud` CLI](https://cloud.google.com/sdk/gcloud/reference/functions) | 480+ | `gcloud functions describe`, `gcloud functions logs read`. |
 | | [GCP Go SDK](https://pkg.go.dev/cloud.google.com/go/functions) | v1.16+ | [Cloud Functions v2 REST API](https://cloud.google.com/functions/docs/reference/rest) calls (`functions.create`, `functions.invoke` via `serviceConfig.uri`). |

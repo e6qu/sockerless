@@ -415,7 +415,7 @@ docker compose down
 Any library that uses the Docker HTTP REST API works without modification:
 
 - **[TestContainers](https://testcontainers.com/)** (Java, Go, Python, .NET, Node, Rust) — integration tests that spin up databases, message queues, and other dependencies as containers
-- **Docker SDK** (Go `docker/docker`, Python `docker-py`, Java `docker-java`, etc.) — custom orchestration code
+- **Docker SDK** (Go `moby/moby/client`, Python `docker-py`, Java `docker-java`, etc.) — custom orchestration code
 - **Drone CI, Woodpecker CI, Buildkite** — any CI system that talks to Docker
 
 All of these just need `DOCKER_HOST` pointed at the Sockerless backend. Containers run on whichever cloud backend is configured.

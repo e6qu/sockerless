@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 // The ECS backend backs Docker volumes with real EFS access points
@@ -14,11 +14,12 @@ import (
 func TestVolume_LifecycleEFSAccessPoint(t *testing.T) {
 	name := "e2e-vol-" + generateTestID("lifecycle")
 
-	created, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: name})
+	volCreated, err := dockerClient.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name})
+	created := volCreated.Volume
 	if err != nil {
 		t.Fatalf("VolumeCreate: %v", err)
 	}
-	t.Cleanup(func() { _ = dockerClient.VolumeRemove(ctx, name, true) })
+	t.Cleanup(func() { _, _ = dockerClient.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: true}) })
 
 	if created.Name != name {
 		t.Errorf("created.Name = %q, want %q", created.Name, name)
@@ -30,7 +31,8 @@ func TestVolume_LifecycleEFSAccessPoint(t *testing.T) {
 		t.Errorf("created.Options missing accessPointId: %+v", created.Options)
 	}
 
-	inspected, err := dockerClient.VolumeInspect(ctx, name)
+	volInspected, err := dockerClient.VolumeInspect(ctx, name, client.VolumeInspectOptions{})
+	inspected := volInspected.Volume
 	if err != nil {
 		t.Fatalf("VolumeInspect: %v", err)
 	}
@@ -38,25 +40,25 @@ func TestVolume_LifecycleEFSAccessPoint(t *testing.T) {
 		t.Errorf("inspect Name = %q, want %q", inspected.Name, name)
 	}
 
-	listed, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	listed, err := dockerClient.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		t.Fatalf("VolumeList: %v", err)
 	}
 	found := false
-	for _, v := range listed.Volumes {
+	for _, v := range listed.Items {
 		if v.Name == name {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("VolumeList did not return %q; got %d volumes", name, len(listed.Volumes))
+		t.Errorf("VolumeList did not return %q; got %d volumes", name, len(listed.Items))
 	}
 
-	if err := dockerClient.VolumeRemove(ctx, name, false); err != nil {
+	if _, err := dockerClient.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: false}); err != nil {
 		t.Fatalf("VolumeRemove: %v", err)
 	}
-	if _, err := dockerClient.VolumeInspect(ctx, name); err == nil {
+	if _, err := dockerClient.VolumeInspect(ctx, name, client.VolumeInspectOptions{}); err == nil {
 		t.Errorf("VolumeInspect after remove: expected error, got success")
 	}
 }

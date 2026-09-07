@@ -15,11 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -227,7 +224,7 @@ ENTRYPOINT ["/usr/local/bin/sockerless-lambda-bootstrap"]
 	fmt.Printf("[backend] ready on %s\n", backendAddr)
 
 	var err error
-	dockerClient, err = client.NewClientWithOpts(
+	dockerClient, err = client.New(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -243,7 +240,7 @@ ENTRYPOINT ["/usr/local/bin/sockerless-lambda-bootstrap"]
 func TestLambdaContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -251,22 +248,21 @@ func TestLambdaContainerLogs(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"echo", "hello-lambda-logs"},
-		},
-		nil, nil, nil, "lambda_logs_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"echo", "hello-lambda-logs"},
+	}, Name: "lambda_logs_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 
 	// Wait for exit
-	waitCh, _ := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, _ := waited.Result, waited.Error
 	select {
 	case <-waitCh:
 	case <-time.After(5 * time.Minute):
@@ -274,7 +270,7 @@ func TestLambdaContainerLogs(t *testing.T) {
 	}
 
 	// Get logs
-	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})
@@ -294,18 +290,17 @@ func TestLambdaContainerList(t *testing.T) {
 	ctx := context.Background()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-		},
-		nil, nil, nil, "lambda_list_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+	}, Name: "lambda_list_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{All: true})
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{All: true})
+	containers := listed.Items
 	if err != nil {
 		t.Fatalf("container list failed: %v", err)
 	}
@@ -325,7 +320,7 @@ func TestLambdaContainerList(t *testing.T) {
 func TestLambdaContainerExec(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -333,26 +328,24 @@ func TestLambdaContainerExec(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image:     "alpine:latest",
-			Cmd:       []string{"tail", "-f", "/dev/null"},
-			Tty:       true,
-			OpenStdin: true,
-		},
-		nil, nil, nil, "lambda_exec_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image:     "alpine:latest",
+		Cmd:       []string{"tail", "-f", "/dev/null"},
+		Tty:       true,
+		OpenStdin: true,
+	}, Name: "lambda_exec_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
 	// Exec create should succeed (synthetic exec from core)
-	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 		Cmd:          []string{"echo", "hello"},
 		AttachStdout: true,
 	})
@@ -371,13 +364,14 @@ func TestLambdaNetworkOperations(t *testing.T) {
 	testID := generateTestID()
 
 	// Network create should succeed
-	netResp, err := dockerClient.NetworkCreate(ctx, "lambda-net-"+testID, network.CreateOptions{})
+	netResp, err := dockerClient.NetworkCreate(ctx, "lambda-net-"+testID, client.NetworkCreateOptions{})
 	if err != nil {
 		t.Fatalf("network create failed: %v", err)
 	}
 
 	// Network inspect
-	net, err := dockerClient.NetworkInspect(ctx, netResp.ID, network.InspectOptions{})
+	netInspected, err := dockerClient.NetworkInspect(ctx, netResp.ID, client.NetworkInspectOptions{})
+	net := netInspected.Network
 	if err != nil {
 		t.Fatalf("network inspect failed: %v", err)
 	}
@@ -386,7 +380,7 @@ func TestLambdaNetworkOperations(t *testing.T) {
 	}
 
 	// Network remove
-	if err := dockerClient.NetworkRemove(ctx, netResp.ID); err != nil {
+	if _, err := dockerClient.NetworkRemove(ctx, netResp.ID, client.NetworkRemoveOptions{}); err != nil {
 		t.Fatalf("network remove failed: %v", err)
 	}
 }
@@ -400,7 +394,8 @@ func TestLambdaVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
 	volName := "lambda_vol_" + generateTestID()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	volCreated, err := dockerClient.VolumeCreate(ctx, client.VolumeCreateOptions{Name: volName})
+	vol := volCreated.Volume
 	if err != nil {
 		t.Fatalf("VolumeCreate: %v", err)
 	}
@@ -414,7 +409,8 @@ func TestLambdaVolumeOperations(t *testing.T) {
 		t.Errorf("Volume.Options missing accessPointId: %+v", vol.Options)
 	}
 
-	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	volInspected, err := dockerClient.VolumeInspect(ctx, volName, client.VolumeInspectOptions{})
+	inspected := volInspected.Volume
 	if err != nil {
 		t.Fatalf("VolumeInspect: %v", err)
 	}
@@ -422,13 +418,13 @@ func TestLambdaVolumeOperations(t *testing.T) {
 		t.Errorf("inspected.Name = %q, want %q", inspected.Name, volName)
 	}
 
-	list, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	list, err := dockerClient.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		t.Fatalf("VolumeList: %v", err)
 	}
 	found := false
-	for _, v := range list.Volumes {
-		if v != nil && v.Name == volName {
+	for _, v := range list.Items {
+		if v.Name == volName {
 			found = true
 			break
 		}
@@ -437,7 +433,7 @@ func TestLambdaVolumeOperations(t *testing.T) {
 		t.Errorf("VolumeList did not surface %q", volName)
 	}
 
-	if err := dockerClient.VolumeRemove(ctx, volName, false); err != nil {
+	if _, err := dockerClient.VolumeRemove(ctx, volName, client.VolumeRemoveOptions{Force: false}); err != nil {
 		t.Fatalf("VolumeRemove: %v", err)
 	}
 }
@@ -494,7 +490,7 @@ func generateTestID(parts ...string) string {
 func TestLambdaContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -502,23 +498,22 @@ func TestLambdaContainerLifecycle(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"echo", "hello from lambda"},
-		},
-		nil, nil, nil, "lambda_lc_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"echo", "hello from lambda"},
+	}, Name: "lambda_lc_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited2 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited2.Result, waited2.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -530,7 +525,8 @@ func TestLambdaContainerLifecycle(t *testing.T) {
 		t.Fatal("timeout waiting for container")
 	}
 
-	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info := inspected.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -538,7 +534,7 @@ func TestLambdaContainerLifecycle(t *testing.T) {
 		t.Errorf("expected status 'exited', got %q", info.State.Status)
 	}
 
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
+	if _, err := dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{}); err != nil {
 		t.Fatalf("container remove failed: %v", err)
 	}
 }
@@ -551,7 +547,7 @@ func TestLambdaContainerLifecycle(t *testing.T) {
 func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -559,23 +555,21 @@ func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sh", "-c", "for i in 1 2 3; do echo follow-line-$i; sleep 0.2; done"},
-		},
-		nil, nil, nil, "lambda_follow_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"sh", "-c", "for i in 1 2 3; do echo follow-line-$i; sleep 0.2; done"},
+	}, Name: "lambda_follow_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+	logReader, err := dockerClient.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
@@ -624,7 +618,7 @@ func TestLambdaContainerLogsFollowLazyStream(t *testing.T) {
 func TestLambdaContainerStopUnblocksWait(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -632,26 +626,25 @@ func TestLambdaContainerStopUnblocksWait(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
-	resp, err := dockerClient.ContainerCreate(ctx,
-		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"sleep", "30"},
-		},
-		nil, nil, nil, "lambda_stop_"+testID,
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image: "alpine:latest",
+		Cmd:   []string{"sleep", "30"},
+	}, Name: "lambda_stop_" + testID},
 	)
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 
 	stopTimeout := 5
-	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &stopTimeout}); err != nil {
 		t.Fatalf("container stop failed: %v", err)
 	}
 
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited3 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited3.Result, waited3.Error
 	select {
 	case <-waitCh:
 		// expected — wait channel closed by stop

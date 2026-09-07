@@ -16,12 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -251,7 +248,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	fmt.Printf("[backend] ready on %s\n", backendAddr)
 
 	var err error
-	dockerClient, err = client.NewClientWithOpts(
+	dockerClient, err = client.New(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),
 	)
@@ -280,8 +277,8 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 			_ = save.Wait()
 			failClean("ERROR: load %s through Amazon ECS backend: %v\n", evalImageName, err)
 		}
-		loadOutput, readErr := io.ReadAll(loaded.Body)
-		_ = loaded.Body.Close()
+		loadOutput, readErr := io.ReadAll(loaded)
+		_ = loaded.Close()
 		saveErr := save.Wait()
 		if readErr != nil {
 			failClean("ERROR: read Amazon ECS backend image-load response for %s: %v\n", evalImageName, readErr)
@@ -301,7 +298,7 @@ func TestECSContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Pull image
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -314,23 +311,24 @@ func TestECSContainerLifecycle(t *testing.T) {
 	}
 
 	// Create container
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: "alpine:latest",
 		Cmd:   []string{"echo", "hello from ecs"},
 		Tty:   false,
-	}, nil, nil, nil, "ecs-lifecycle-"+generateTestID())
+	}, Name: "ecs-lifecycle-" + generateTestID()})
 	if err != nil {
 		t.Fatalf("container create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 	// Start
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
 
 	// Wait
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, errCh := waited.Result, waited.Error
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
@@ -343,7 +341,8 @@ func TestECSContainerLifecycle(t *testing.T) {
 	}
 
 	// Inspect
-	info, err := dockerClient.ContainerInspect(ctx, resp.ID)
+	inspected, err := dockerClient.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+	info := inspected.Container
 	if err != nil {
 		t.Fatalf("container inspect failed: %v", err)
 	}
@@ -355,7 +354,7 @@ func TestECSContainerLifecycle(t *testing.T) {
 func TestECSContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
-	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if pullRC != nil {
 		buf := make([]byte, 4096)
 		for {
@@ -366,19 +365,20 @@ func TestECSContainerLogs(t *testing.T) {
 		pullRC.Close()
 	}
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image: "alpine:latest",
 		Cmd:   []string{"echo", "log-test-output"},
-	}, nil, nil, nil, "ecs-logs-"+generateTestID())
+	}, Name: "ecs-logs-" + generateTestID()})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 
 	// Wait for exit
-	waitCh, _ := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waited2 := dockerClient.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	waitCh, _ := waited2.Result, waited2.Error
 	select {
 	case <-waitCh:
 	case <-time.After(5 * time.Minute):
@@ -386,7 +386,7 @@ func TestECSContainerLogs(t *testing.T) {
 	}
 
 	// Get logs
-	logRC, err := dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{
+	logRC, err := dockerClient.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})
@@ -407,22 +407,22 @@ func TestECSContainerLogs(t *testing.T) {
 
 func TestECSAttachedContainerRunsTwoCompleteCycles(t *testing.T) {
 	ctx := context.Background()
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:        "alpine:latest",
 		Cmd:          []string{"sh"},
 		OpenStdin:    true,
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
-	}, nil, nil, nil, "ecs-attached-restart-"+generateTestID())
+	}, Name: "ecs-attached-restart-" + generateTestID()})
 	if err != nil {
 		t.Fatalf("create attached container: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 	runCycle := func(marker string) {
 		t.Helper()
-		attached, err := dockerClient.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+		attached, err := dockerClient.ContainerAttach(ctx, resp.ID, client.ContainerAttachOptions{
 			Stream: true,
 			Stdin:  true,
 			Stdout: true,
@@ -440,7 +440,7 @@ func TestECSAttachedContainerRunsTwoCompleteCycles(t *testing.T) {
 			readDone <- err
 		}()
 
-		if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 			t.Fatalf("start cycle %q: %v", marker, err)
 		}
 		if _, err := io.WriteString(attached.Conn, "echo "+marker+"\n"); err != nil {
@@ -470,7 +470,7 @@ func TestECSAttachedContainerRunsTwoCompleteCycles(t *testing.T) {
 func TestECSContainerExec(t *testing.T) {
 	ctx := context.Background()
 
-	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if pullRC != nil {
 		buf := make([]byte, 4096)
 		for {
@@ -481,21 +481,21 @@ func TestECSContainerExec(t *testing.T) {
 		pullRC.Close()
 	}
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:     "alpine:latest",
 		Cmd:       []string{"tail", "-f", "/dev/null"},
 		OpenStdin: true,
 		Tty:       true,
-	}, nil, nil, nil, "ecs-exec-"+generateTestID())
+	}, Name: "ecs-exec-" + generateTestID()})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 
 	// Create exec
-	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+	execResp, err := dockerClient.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 		Cmd:          []string{"echo", "exec-output"},
 		AttachStdout: true,
 		AttachStderr: true,
@@ -505,7 +505,7 @@ func TestECSContainerExec(t *testing.T) {
 	}
 
 	// Start exec
-	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
+	hijacked, err := dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec start failed: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestECSContainerExec(t *testing.T) {
 	if strings.Contains(string(output), "__SOCKEXIT") {
 		t.Errorf("exit marker reached the client: %q", string(output))
 	}
-	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	inspect, err := dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
 		t.Fatalf("exec inspect failed: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestECSContainerExec(t *testing.T) {
 
 	// A failing command's status must reach ExecInspect, as it does on
 	// Docker: CI runners decide a step's outcome from it.
-	failing, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+	failing, err := dockerClient.ExecCreate(ctx, resp.ID, client.ExecCreateOptions{
 		Cmd:          []string{"sh", "-c", "echo before-failure; exit 7"},
 		AttachStdout: true,
 		AttachStderr: true,
@@ -536,7 +536,7 @@ func TestECSContainerExec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exec create failed: %v", err)
 	}
-	hijacked, err = dockerClient.ContainerExecAttach(ctx, failing.ID, container.ExecStartOptions{})
+	hijacked, err = dockerClient.ExecAttach(ctx, failing.ID, client.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec start failed: %v", err)
 	}
@@ -545,7 +545,7 @@ func TestECSContainerExec(t *testing.T) {
 	if !strings.Contains(string(output), "before-failure") || strings.Contains(string(output), "__SOCKEXIT") {
 		t.Errorf("failing exec output %q", string(output))
 	}
-	inspect, err = dockerClient.ContainerExecInspect(ctx, failing.ID)
+	inspect, err = dockerClient.ExecInspect(ctx, failing.ID, client.ExecInspectOptions{})
 	if err != nil {
 		t.Fatalf("exec inspect failed: %v", err)
 	}
@@ -555,13 +555,13 @@ func TestECSContainerExec(t *testing.T) {
 
 	// Stop container
 	timeout := 5
-	dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &timeout})
+	_, _ = dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &timeout})
 }
 
 func TestECSContainerList(t *testing.T) {
 	ctx := context.Background()
 
-	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	pullRC, _ := dockerClient.ImagePull(ctx, "alpine:latest", client.ImagePullOptions{})
 	if pullRC != nil {
 		buf := make([]byte, 4096)
 		for {
@@ -572,20 +572,21 @@ func TestECSContainerList(t *testing.T) {
 		pullRC.Close()
 	}
 
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 		Image:  "alpine:latest",
 		Cmd:    []string{"sleep", "30"},
 		Labels: map[string]string{"test": "ecs-list"},
-	}, nil, nil, nil, "ecs-list-"+generateTestID())
+	}, Name: "ecs-list-" + generateTestID()})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, _ = dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 
 	// List running containers
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{})
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{})
+	containers := listed.Items
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
@@ -605,7 +606,7 @@ func TestECSContainerList(t *testing.T) {
 	}
 
 	timeout := 5
-	dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &timeout})
+	_, _ = dockerClient.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{Timeout: &timeout})
 }
 
 func TestECSNetworkOperations(t *testing.T) {
@@ -613,16 +614,19 @@ func TestECSNetworkOperations(t *testing.T) {
 
 	// Create network
 	netName := "ecs-test-net-" + generateTestID()
-	netResp, err := dockerClient.NetworkCreate(ctx, netName, network.CreateOptions{
+	netResp, err := dockerClient.NetworkCreate(ctx, netName, client.NetworkCreateOptions{
 		Driver: "bridge",
 	})
 	if err != nil {
 		t.Fatalf("network create failed: %v", err)
 	}
-	defer dockerClient.NetworkRemove(ctx, netResp.ID)
+	defer dockerClient.NetworkRemove(ctx, netResp.ID, client.
 
-	// Inspect
-	netInfo, err := dockerClient.NetworkInspect(ctx, netResp.ID, network.InspectOptions{})
+		// Inspect
+		NetworkRemoveOptions{})
+
+	netInspected, err := dockerClient.NetworkInspect(ctx, netResp.ID, client.NetworkInspectOptions{})
+	netInfo := netInspected.Network
 	if err != nil {
 		t.Fatalf("network inspect failed: %v", err)
 	}
@@ -631,7 +635,8 @@ func TestECSNetworkOperations(t *testing.T) {
 	}
 
 	// List
-	networks, err := dockerClient.NetworkList(ctx, network.ListOptions{})
+	netListed, err := dockerClient.NetworkList(ctx, client.NetworkListOptions{})
+	networks := netListed.Items
 	if err != nil {
 		t.Fatalf("network list failed: %v", err)
 	}
@@ -656,7 +661,8 @@ func TestECSVolumeOperations(t *testing.T) {
 	ctx := context.Background()
 
 	volName := "ecs-test-vol-" + generateTestID()
-	vol, err := dockerClient.VolumeCreate(ctx, volume.CreateOptions{Name: volName})
+	volCreated, err := dockerClient.VolumeCreate(ctx, client.VolumeCreateOptions{Name: volName})
+	vol := volCreated.Volume
 	if err != nil {
 		t.Fatalf("VolumeCreate failed: %v", err)
 	}
@@ -670,7 +676,8 @@ func TestECSVolumeOperations(t *testing.T) {
 		t.Errorf("Volume.Options missing accessPointId: %+v", vol.Options)
 	}
 
-	inspected, err := dockerClient.VolumeInspect(ctx, volName)
+	volInspected, err := dockerClient.VolumeInspect(ctx, volName, client.VolumeInspectOptions{})
+	inspected := volInspected.Volume
 	if err != nil {
 		t.Fatalf("VolumeInspect failed: %v", err)
 	}
@@ -678,26 +685,26 @@ func TestECSVolumeOperations(t *testing.T) {
 		t.Errorf("inspect Name: got %q, want %q", inspected.Name, volName)
 	}
 
-	listed, err := dockerClient.VolumeList(ctx, volume.ListOptions{})
+	listed, err := dockerClient.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		t.Fatalf("VolumeList failed: %v", err)
 	}
 	found := false
-	for _, v := range listed.Volumes {
+	for _, v := range listed.Items {
 		if v.Name == volName {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("VolumeList did not include %q; got %d volumes", volName, len(listed.Volumes))
+		t.Errorf("VolumeList did not include %q; got %d volumes", volName, len(listed.Items))
 	}
 
-	if err := dockerClient.VolumeRemove(ctx, volName, false); err != nil {
+	if _, err := dockerClient.VolumeRemove(ctx, volName, client.VolumeRemoveOptions{Force: false}); err != nil {
 		t.Fatalf("VolumeRemove failed: %v", err)
 	}
 
-	if _, err := dockerClient.VolumeInspect(ctx, volName); err == nil {
+	if _, err := dockerClient.VolumeInspect(ctx, volName, client.VolumeInspectOptions{}); err == nil {
 		t.Errorf("expected VolumeInspect to 404 after remove, got success")
 	}
 }

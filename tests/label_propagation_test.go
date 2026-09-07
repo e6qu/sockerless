@@ -3,7 +3,9 @@ package tests
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestContainerLabels_RoundTrip(t *testing.T) {
@@ -17,17 +19,18 @@ func TestContainerLabels_RoundTrip(t *testing.T) {
 				"com.example.maintainer": "platform-team",
 			}
 			containerName := "label-test-" + generateTestID(name)
-			resp, err := c.ContainerCreate(ctx, &container.Config{
+			resp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 				Image:  "alpine",
 				Labels: labels,
 				Cmd:    []string{"tail", "-f", "/dev/null"},
-			}, nil, nil, nil, containerName)
+			}, Name: containerName})
 			if err != nil {
 				t.Fatalf("container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-			inspect, err := c.ContainerInspect(ctx, resp.ID)
+			inspected, err := c.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+			inspect := inspected.Container
 			if err != nil {
 				t.Fatalf("inspect failed: %v", err)
 			}
@@ -55,17 +58,18 @@ func TestContainerLabels_EmptyValue(t *testing.T) {
 				"marker": "",
 			}
 			containerName := "label-empty-" + generateTestID(name)
-			resp, err := c.ContainerCreate(ctx, &container.Config{
+			resp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 				Image:  "alpine",
 				Labels: labels,
 				Cmd:    []string{"tail", "-f", "/dev/null"},
-			}, nil, nil, nil, containerName)
+			}, Name: containerName})
 			if err != nil {
 				t.Fatalf("container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
-			inspect, err := c.ContainerInspect(ctx, resp.ID)
+			inspected2, err := c.ContainerInspect(ctx, resp.ID, client.ContainerInspectOptions{})
+			inspect := inspected2.Container
 			if err != nil {
 				t.Fatalf("inspect failed: %v", err)
 			}
@@ -89,18 +93,19 @@ func TestContainerLabels_InList(t *testing.T) {
 				"list-filter-test": "unique-value",
 			}
 			containerName := "label-list-" + generateTestID(name)
-			resp, err := c.ContainerCreate(ctx, &container.Config{
+			resp, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
 				Image:  "alpine",
 				Labels: labels,
 				Cmd:    []string{"tail", "-f", "/dev/null"},
-			}, nil, nil, nil, containerName)
+			}, Name: containerName})
 			if err != nil {
 				t.Fatalf("container create failed: %v", err)
 			}
-			defer c.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			defer c.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 
 			// List containers and verify labels are present
-			containers, err := c.ContainerList(ctx, container.ListOptions{All: true})
+			listed, err := c.ContainerList(ctx, client.ContainerListOptions{All: true})
+			containers := listed.Items
 			if err != nil {
 				t.Fatalf("list failed: %v", err)
 			}

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/moby/moby/client"
 )
 
 func TestPing(t *testing.T) {
@@ -47,7 +49,7 @@ func TestPingHead(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	ver, err := dockerClient.ServerVersion(ctx)
+	ver, err := dockerClient.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
 		t.Fatalf("version failed: %v", err)
 	}
@@ -62,7 +64,8 @@ func TestVersion(t *testing.T) {
 }
 
 func TestInfo(t *testing.T) {
-	info, err := dockerClient.Info(ctx)
+	infoResult, err := dockerClient.Info(ctx, client.InfoOptions{})
+	info := infoResult.Info
 	if err != nil {
 		t.Fatalf("info failed: %v", err)
 	}

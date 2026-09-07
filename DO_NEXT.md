@@ -41,8 +41,6 @@ time):
 
 Remaining local items:
 
-- BUG-2922 (Docker Engine advisories → moby/moby client migration) is the
-  largest open local item, scoped to the Docker passthrough backend.
 - BUG-2925 (the UI CI stall) stays open until its cause is proven.
 - BUG-1075: live-cloud validation beyond AWS Lambda. The Google modules now
   create the `sockerless-overlay` repository the overlay path pushes to,

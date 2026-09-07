@@ -1,13 +1,17 @@
 package docker
 
 import (
+	"fmt"
+	"github.com/moby/moby/api/types/build"
+	"github.com/moby/moby/api/types/image"
+	"net"
+	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
 	dockerocispec "github.com/moby/docker-image-spec/specs-go/v1"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/sockerless/api"
 )
 
@@ -41,18 +45,15 @@ var conv Converter
 // ConvertContainerJSON converts a full Docker ContainerJSON (inspect response)
 // to our api.Container, composing generated sub-converters with manual handling
 // for HostConfig (embedded Resources struct) and NetworkSettings (embedded bases).
-func ConvertContainerJSON(info types.ContainerJSON) api.Container {
-	if info.ContainerJSONBase == nil {
-		return api.Container{}
-	}
-	c := conv.ConvertContainerBase(*info.ContainerJSONBase)
+func ConvertContainerJSON(info container.InspectResponse) api.Container {
+	c := conv.ConvertContainerBase(info)
 
 	// The generated ConvertContainerBase does not populate State (the
 	// goverter `map . State` directive is not honored by the generated
 	// code), so map it explicitly here. Without this, `docker inspect`
 	// reports an empty State block (Status:"", Running:false, Pid:0,
 	// ExitCode:0, Health:nil) for every container.
-	c.State = MapContainerState(*info.ContainerJSONBase)
+	c.State = MapContainerState(info)
 
 	if info.Config != nil {
 		c.Config = conv.ConvertContainerConfig(*info.Config)
@@ -84,8 +85,8 @@ func ConvertHostConfig(hc container.HostConfig) api.HostConfig {
 		PortBindings:      PortMapToBindings(hc.PortBindings),
 		RestartPolicy:     conv.ConvertRestartPolicy(hc.RestartPolicy),
 		Privileged:        hc.Privileged,
-		CapAdd:            []string(hc.CapAdd),
-		CapDrop:           []string(hc.CapDrop),
+		CapAdd:            hc.CapAdd,
+		CapDrop:           hc.CapDrop,
 		Init:              hc.Init,
 		UsernsMode:        string(hc.UsernsMode),
 		ShmSize:           hc.ShmSize,
@@ -95,7 +96,7 @@ func ConvertHostConfig(hc container.HostConfig) api.HostConfig {
 		ExtraHosts:        hc.ExtraHosts,
 		Mounts:            DockerMountsToAPI(hc.Mounts),
 		Isolation:         string(hc.Isolation),
-		DNS:               hc.DNS,
+		DNS:               AddrsToStrings(hc.DNS),
 		DNSSearch:         hc.DNSSearch,
 		DNSOptions:        hc.DNSOptions,
 		Memory:            hc.Memory,
@@ -130,31 +131,31 @@ func ConvertHostConfig(hc container.HostConfig) api.HostConfig {
 }
 
 // ConvertNetworkSettings converts Docker's NetworkSettings (with embedded bases) to api.NetworkSettings.
-func ConvertNetworkSettings(ns *types.NetworkSettings) api.NetworkSettings {
+func ConvertNetworkSettings(ns *container.NetworkSettings) api.NetworkSettings {
 	result := api.NetworkSettings{
 		Networks: make(map[string]*api.EndpointSettings),
 	}
 	if ns == nil {
 		return result
 	}
-	// From NetworkSettingsBase (embedded)
-	result.Bridge = ns.Bridge
 	result.SandboxID = ns.SandboxID
 	result.SandboxKey = ns.SandboxKey
-	result.HairpinMode = ns.HairpinMode
 	result.Ports = PortMapToBindings(ns.Ports)
 
-	// From DefaultNetworkSettings (embedded)
-	result.Gateway = ns.Gateway
-	result.IPAddress = ns.IPAddress
-	result.IPPrefixLen = ns.IPPrefixLen
-	result.MacAddress = ns.MacAddress
-	result.EndpointID = ns.EndpointID
-	result.IPv6Gateway = ns.IPv6Gateway
-	result.GlobalIPv6Address = ns.GlobalIPv6Address
-	result.GlobalIPv6PrefixLen = ns.GlobalIPv6PrefixLen
-	result.LinkLocalIPv6Address = ns.LinkLocalIPv6Address
-	result.LinkLocalIPv6PrefixLen = ns.LinkLocalIPv6PrefixLen
+	// The Docker API's container-wide address fields describe the default
+	// bridge endpoint, the same values its Networks entry carries; the
+	// daemon stopped serving the separate copies, so they are derived from
+	// that endpoint here.
+	if bridge := ns.Networks["bridge"]; bridge != nil {
+		result.Gateway = AddrToString(bridge.Gateway)
+		result.IPAddress = AddrToString(bridge.IPAddress)
+		result.IPPrefixLen = bridge.IPPrefixLen
+		result.MacAddress = HardwareAddrToString(bridge.MacAddress)
+		result.EndpointID = bridge.EndpointID
+		result.IPv6Gateway = AddrToString(bridge.IPv6Gateway)
+		result.GlobalIPv6Address = AddrToString(bridge.GlobalIPv6Address)
+		result.GlobalIPv6PrefixLen = bridge.GlobalIPv6PrefixLen
+	}
 
 	// Networks map
 	result.Networks = EndpointSettingsMapToAPI(ns.Networks)
@@ -166,7 +167,7 @@ func ConvertNetworkSettings(ns *types.NetworkSettings) api.NetworkSettings {
 }
 
 // ConvertContainerSummary converts a Docker container list entry to api.ContainerSummary.
-func ConvertContainerSummary(c types.Container) *api.ContainerSummary {
+func ConvertContainerSummary(c container.Summary) *api.ContainerSummary {
 	summary := &api.ContainerSummary{
 		ID:         c.ID,
 		Names:      c.Names,
@@ -174,7 +175,7 @@ func ConvertContainerSummary(c types.Container) *api.ContainerSummary {
 		ImageID:    c.ImageID,
 		Command:    c.Command,
 		Created:    c.Created,
-		State:      c.State,
+		State:      string(c.State),
 		Status:     c.Status,
 		Labels:     c.Labels,
 		SizeRw:     c.SizeRw,
@@ -194,8 +195,11 @@ func ConvertContainerSummary(c types.Container) *api.ContainerSummary {
 }
 
 // ConvertImageInspect converts a Docker ImageInspect to api.Image.
-func ConvertImageInspect(info types.ImageInspect) api.Image {
+func ConvertImageInspect(info image.InspectResponse) api.Image {
 	img := conv.ConvertImageBase(info)
+	// The API dropped VirtualSize; clients that still read it expect the
+	// image's size.
+	img.VirtualSize = info.Size
 
 	if info.Config != nil {
 		img.Config = conv.ConvertContainerConfig(dockerOCIToContainerConfig(*info.Config))
@@ -239,8 +243,8 @@ func ConvertNetworkResource(n network.Inspect) api.Network {
 	return net
 }
 
-// ConvertNetworkSummary converts a Docker network list entry to api.Network.
-// docker/docker v28 renamed types.NetworkResource → network.Summary.
+// ConvertNetworkSummary converts a Docker network list entry (network.Summary)
+// to api.Network.
 func ConvertNetworkSummary(n network.Summary) api.Network {
 	net := api.Network{
 		Name:       n.Name,
@@ -255,7 +259,8 @@ func ConvertNetworkSummary(n network.Summary) api.Network {
 		Labels:     n.Labels,
 		Options:    n.Options,
 	}
-	ConvertNetworkIPAMAndContainers(&net, n.IPAM, n.Containers)
+	// A network listing carries no endpoint map; inspect does.
+	ConvertNetworkIPAMAndContainers(&net, n.IPAM, nil)
 	return net
 }
 
@@ -286,40 +291,76 @@ func ConvertVolumeSDK(v volume.Volume) api.Volume {
 }
 
 // APIEndpointToDocker converts an api.EndpointSettings to Docker's network.EndpointSettings.
-func APIEndpointToDocker(ep *api.EndpointSettings) *network.EndpointSettings {
+func APIEndpointToDocker(ep *api.EndpointSettings) (*network.EndpointSettings, error) {
 	if ep == nil {
-		return nil
+		return nil, nil
+	}
+	gateway, err := parseAddr("gateway", ep.Gateway)
+	if err != nil {
+		return nil, err
+	}
+	ipAddress, err := parseAddr("IP address", ep.IPAddress)
+	if err != nil {
+		return nil, err
+	}
+	ipv6Gateway, err := parseAddr("IPv6 gateway", ep.IPv6Gateway)
+	if err != nil {
+		return nil, err
+	}
+	globalIPv6, err := parseAddr("global IPv6 address", ep.GlobalIPv6Address)
+	if err != nil {
+		return nil, err
+	}
+	var mac network.HardwareAddr
+	if ep.MacAddress != "" {
+		parsed, err := net.ParseMAC(ep.MacAddress)
+		if err != nil {
+			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid MAC address %q: %v", ep.MacAddress, err)}
+		}
+		mac = network.HardwareAddr(parsed)
 	}
 	es := &network.EndpointSettings{
 		NetworkID:           ep.NetworkID,
 		EndpointID:          ep.EndpointID,
-		Gateway:             ep.Gateway,
-		IPAddress:           ep.IPAddress,
+		Gateway:             gateway,
+		IPAddress:           ipAddress,
 		IPPrefixLen:         ep.IPPrefixLen,
-		IPv6Gateway:         ep.IPv6Gateway,
-		GlobalIPv6Address:   ep.GlobalIPv6Address,
+		IPv6Gateway:         ipv6Gateway,
+		GlobalIPv6Address:   globalIPv6,
 		GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
-		MacAddress:          ep.MacAddress,
+		MacAddress:          mac,
 		Aliases:             ep.Aliases,
 		DNSNames:            ep.DNSNames,
 		Links:               ep.Links,
 		DriverOpts:          ep.DriverOpts,
 	}
 	if ep.IPAMConfig != nil {
+		ipv4, err := parseAddr("IPAM IPv4 address", ep.IPAMConfig.IPv4Address)
+		if err != nil {
+			return nil, err
+		}
+		ipv6, err := parseAddr("IPAM IPv6 address", ep.IPAMConfig.IPv6Address)
+		if err != nil {
+			return nil, err
+		}
+		linkLocal, err := parseAddrs("link-local address", ep.IPAMConfig.LinkLocalIPs)
+		if err != nil {
+			return nil, err
+		}
 		es.IPAMConfig = &network.EndpointIPAMConfig{
-			IPv4Address:  ep.IPAMConfig.IPv4Address,
-			IPv6Address:  ep.IPAMConfig.IPv6Address,
-			LinkLocalIPs: ep.IPAMConfig.LinkLocalIPs,
+			IPv4Address:  ipv4,
+			IPv6Address:  ipv6,
+			LinkLocalIPs: linkLocal,
 		}
 	}
-	return es
+	return es, nil
 }
 
 // ConvertBuildCache converts Docker build cache entries to api.BuildCache.
-func ConvertBuildCache(bc types.BuildCache) api.BuildCache {
+func ConvertBuildCache(bc build.CacheRecord) api.BuildCache {
 	return api.BuildCache{
 		ID:          bc.ID,
-		Parent:      bc.Parent,
+		Parent:      strings.Join(bc.Parents, ","),
 		Type:        bc.Type,
 		Description: bc.Description,
 		InUse:       bc.InUse,

@@ -29,7 +29,5 @@ Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker C
 
 ## Next
 
-- In sockerless-cloud, once its open pull request lands: the Cloud Run and Cloud Functions hosts pull with the service agent's credential (BUG-2951), the Azure Container Apps file-share mount (BUG-2952), the cross-run VPC-network reclaim (BUG-2950), the Azure `/v2/_catalog` (BUG-2945); then bump the pin here.
-- BUG-2945 once the Azure simulator serves the repository catalog: read `docker images` through `core.OCIListImages` in the Azure Container Registry round trip.
-- BUG-2922: migrate the Docker passthrough backend from `github.com/docker/docker` to the `github.com/moby/moby` client and API modules.
+- BUG-2957: once the sockerless-cloud release whose Lambda and Amazon ECS hosts pull an ECR pull-through-cache reference from the simulator's own registry is cut, bump every pin to it and return the Lambda cell to the `terraform-integration` matrix.
 - BUG-1075: live-cloud validation beyond AWS Lambda.
