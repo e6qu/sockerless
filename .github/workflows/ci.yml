@@ -473,10 +473,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The Lambda cell shares the ECS environment (applied first, destroyed
-        # last by run-test.sh); its function image is an ECR pull-through-cache
-        # reference the simulator resolves through the registered rule.
-        backend: [ecs, lambda, cloudrun, gcf, aca, azf]
+        # The Lambda cell returns when the backend builds its bootstrap overlay
+        # through AWS CodeBuild against the simulator and pushes it to the
+        # simulator's own ECR, as it does against the real cloud, instead of
+        # running the bare image under a custom endpoint.
+        backend: [ecs, cloudrun, gcf, aca, azf]
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Terraform integration (${{ matrix.backend }})

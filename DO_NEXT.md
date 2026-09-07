@@ -4,14 +4,29 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Next
 
-Every locally actionable bug is closed. The `terraform-integration` job
-applies all six environments — Amazon ECS, AWS Lambda, Google Cloud Run,
-Cloud Run Functions, Azure Container Apps and Azure Functions — against
-their simulators at sockerless-cloud v0.30.10 and runs an act smoke through
-each backend; a red cell there is a module, harness or simulator defect,
-not a flake. The Docker API clients speak `github.com/moby/moby/client`.
+The `terraform-integration` job applies five environments — Amazon ECS,
+Google Cloud Run, Cloud Run Functions, Azure Container Apps and Azure
+Functions — against their simulators at sockerless-cloud v0.30.10 and runs
+an act smoke through each backend; a red cell there is a module, harness
+or simulator defect, not a flake. The Docker API clients speak
+`github.com/moby/moby/client`.
 
-What remains is gated outside this repository:
+Next, in order:
+
+1. sockerless-cloud BUG-2991: the AWS simulator's CodeBuild build
+   environment runs docker steps (the engine socket, as ECS tasks get)
+   with a Docker configuration whose credential helper answers the
+   simulator's ECR login server and routes it to the simulator's own
+   `/v2/`, the way its Cloud Build and ACR Tasks already do; covered by an
+   SDK test that builds and pushes an image and pulls it back.
+2. BUG-2978, on the release that carries it: delete the Lambda backend's
+   `EndpointURL != ""` branch and the local-docker fallback, build the
+   overlay for the function's architecture through CodeBuild, export
+   `SOCKERLESS_LAMBDA_CODEBUILD_PROJECT`, `SOCKERLESS_LAMBDA_BUILD_BUCKET`
+   and `SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO` from the harness's Lambda
+   module outputs, and return the Lambda cell to the matrix.
+
+What remains after that is gated outside this repository:
 
 - BUG-2925 (the UI CI stall) stays open until its cause is proven; the
   original stall has not recurred.

@@ -9,9 +9,12 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 sockerless-cloud v0.30.10 resolves an ECR pull-through-cache reference
 through the registered rule, reads an Azure Functions site's HTTP bootstrap
 from its app settings, and refuses a Cloud KMS key ring in a location the
-service does not have. Every pin moved to that release and the AWS Lambda
-cell rejoined the `terraform-integration` matrix beside the five others
-(BUG-2957).
+service does not have. Every pin moved to that release, which closed the
+simulator side of the Lambda cell (BUG-2957). The cell then showed the
+next defect: the Lambda backend runs the bare image under a custom
+endpoint instead of its bootstrap overlay, so the function exits at once
+and nothing dials back (BUG-2978); its faithful path waits on the AWS
+simulator's CodeBuild running docker steps against its own ECR.
 
 ## Remaining bugs closed in one pass (2026-09-07)
 
