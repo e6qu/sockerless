@@ -1,6 +1,7 @@
 package envelope
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -161,5 +162,20 @@ func TestEncodeStdinEmptyOmitted(t *testing.T) {
 	body, _ := json.Marshal(NewRequest(Exec{Argv: []string{"x"}}))
 	if strings.Contains(string(body), "stdin") {
 		t.Fatalf("request with no stdin must omit the field: %s", body)
+	}
+}
+
+func TestExecWorkloadRoundTrips(t *testing.T) {
+	raw, err := json.Marshal(NewRequest(Exec{Argv: []string{"tail", "-f", "/dev/null"}, Workdir: "/src", Workload: true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, ok := Parse(raw)
+	if !ok || !parsed.Workload || parsed.Workdir != "/src" {
+		t.Fatalf("Parse = %+v, %v", parsed, ok)
+	}
+	plain, _ := json.Marshal(NewRequest(Exec{Argv: []string{"id"}}))
+	if bytes.Contains(plain, []byte("workload")) {
+		t.Errorf("an exec envelope does not carry the workload mark: %s", plain)
 	}
 }

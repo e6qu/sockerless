@@ -26,7 +26,10 @@ generate "provider_override" {
 provider "google" {
   project     = "sockerless-simulator"
   region      = "us-central1"
-  access_token          = "test-token"
+  # The OAuth 2.0 access token the simulator's token endpoint issued for the
+  # JWT-bearer grant; the harness mints it and hands it over as the provider's
+  # own GOOGLE_OAUTH_ACCESS_TOKEN coordinate.
+  access_token          = "${get_env("GOOGLE_OAUTH_ACCESS_TOKEN")}"
   user_project_override = false
 
   batching {
@@ -36,15 +39,18 @@ provider "google" {
 
   # Route all provider API calls to the local GCP simulator.
   # All custom endpoints must match .*/[^/]+/$
-  cloud_functions_custom_endpoint            = "http://localhost:4567/v2/"
-  cloud_run_v2_custom_endpoint               = "http://localhost:4567/v2/"
-  artifact_registry_custom_endpoint          = "http://localhost:4567/v1/"
-  service_usage_custom_endpoint              = "http://localhost:4567/"
-  iam_custom_endpoint                        = "http://localhost:4567/"
+  cloud_functions_custom_endpoint = "http://localhost:4567/v2/"
+  cloud_run_v2_custom_endpoint = "http://localhost:4567/v2/"
+  artifact_registry_custom_endpoint = "http://localhost:4567/v1/"
+  service_usage_custom_endpoint = "http://localhost:4567/"
+  iam_custom_endpoint = "http://localhost:4567/v1/"
   cloud_resource_manager_custom_endpoint     = "http://localhost:4567/"
-  resource_manager_custom_endpoint           = "http://localhost:4567/"
-  resource_manager_v3_custom_endpoint        = "http://localhost:4567/"
-  logging_custom_endpoint                    = "http://localhost:4567/"
+  resource_manager_custom_endpoint = "http://localhost:4567/v1/"
+  resource_manager_v3_custom_endpoint = "http://localhost:4567/v3/"
+  logging_custom_endpoint = "http://localhost:4567/v2/"
+  iam_beta_custom_endpoint = "http://localhost:4567/v1/"
+  storage_custom_endpoint = "http://localhost:4567/storage/v1/"
+  cloudfunctions2_custom_endpoint = "http://localhost:4567/v2/"
 }
 EOF
 }

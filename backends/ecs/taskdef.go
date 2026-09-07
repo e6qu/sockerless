@@ -93,6 +93,12 @@ func (s *Server) buildContainerDef(ctx context.Context, ci containerInput) (ecst
 		containerDef.WorkingDirectory = aws.String(config.WorkingDir)
 	}
 
+	// Docker gives a stopping container ten seconds between SIGTERM and
+	// SIGKILL unless the container names its own grace; Amazon ECS gives
+	// thirty by default. The definition carries Docker's value so a stop
+	// takes the time it takes on Docker.
+	containerDef.StopTimeout = aws.Int32(ecsStopTimeout(config.StopTimeout))
+
 	if config.User != "" {
 		containerDef.User = aws.String(config.User)
 	}
@@ -314,4 +320,21 @@ func sanitizeContainerName(name string) string {
 		return "sidecar"
 	}
 	return result
+}
+
+// ecsStopTimeout is the container definition's stopTimeout for a Docker
+// container's StopTimeout: Docker's ten-second default when the container
+// names none, within the 2 to 120 seconds Amazon ECS accepts.
+func ecsStopTimeout(stopTimeout *int) int32 {
+	seconds := 10
+	if stopTimeout != nil {
+		seconds = *stopTimeout
+	}
+	if seconds < 2 {
+		seconds = 2
+	}
+	if seconds > 120 {
+		seconds = 120
+	}
+	return int32(seconds)
 }

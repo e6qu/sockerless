@@ -118,6 +118,14 @@ resource "azurerm_storage_account" "main" {
   depends_on = [azurerm_resource_group.main]
 }
 
+# The backend uploads an overlay image's build context here and Azure
+# Container Registry Tasks builds from it.
+resource "azurerm_storage_container" "build_context" {
+  name                  = "build-context"
+  storage_account_id    = azurerm_storage_account.main.id
+  container_access_type = "private"
+}
+
 # =============================================================================
 # App Service Plan
 # =============================================================================

@@ -292,6 +292,13 @@ func (s *Server) createFunctionSite(ctx context.Context, id, funcAppName string,
 		LinuxFxVersion: ptr("DOCKER|" + container.Config.Image),
 		AppSettings:    appSettings,
 	}
+	// The platform pulls the image from Azure Container Registry as the
+	// site's user-assigned identity when the backend has one.
+	if s.config.ManagedIdentityID != "" {
+		useIdentity := true
+		siteConfig.AcrUseManagedIdentityCreds = &useIdentity
+		siteConfig.AcrUserManagedIdentityID = ptr(s.config.ManagedIdentityClientID)
+	}
 	tags := core.TagSet{
 		ContainerID: id,
 		Backend:     "azf",
@@ -315,6 +322,15 @@ func (s *Server) createFunctionSite(ctx context.Context, id, funcAppName string,
 		Properties: &armappservice.SiteProperties{
 			SiteConfig: siteConfig,
 		},
+	}
+	if s.config.ManagedIdentityID != "" {
+		identityType := armappservice.ManagedServiceIdentityTypeUserAssigned
+		site.Identity = &armappservice.ManagedServiceIdentity{
+			Type: &identityType,
+			UserAssignedIdentities: map[string]*armappservice.UserAssignedIdentity{
+				s.config.ManagedIdentityID: {},
+			},
+		}
 	}
 	if s.config.AppServicePlan != "" {
 		site.Properties.ServerFarmID = ptr(s.config.AppServicePlan)
@@ -656,18 +672,53 @@ func (s *Server) invokeFunctionAsync(id string, c api.Container, azfState AZFSta
 		}
 		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
 		defer cancel()
-		if werr := s.reverseAgents.WaitForAgent(waitCtx, id); werr != nil {
-			return &api.ServerError{Message: fmt.Sprintf(
-				"reverse-agent did not register for container %s within %s "+
-					"(SOCKERLESS_AZF_BOOTSTRAP_TIMEOUT_SEC). The Function App was deployed and "+
-					"invoked but the in-function bootstrap never dialled back to "+
-					"SOCKERLESS_CALLBACK_URL=%s. Check egress / VNet / NSG.",
-				id[:12], timeout, s.config.CallbackURL,
-			)}
+		agent := make(chan error, 1)
+		go func() { agent <- s.reverseAgents.WaitForAgent(waitCtx, id) }()
+		// The invocation can end before the bootstrap dials back: a
+		// one-shot command that finished, or an invoke the platform failed
+		// — an image it could not pull, a function that did not start —
+		// which is the start's failure, reported at once rather than after
+		// the bootstrap timeout.
+		select {
+		case <-exitCh:
+			return s.invocationStartError(id)
+		case werr := <-agent:
+			if werr != nil {
+				select {
+				case <-exitCh:
+					return s.invocationStartError(id)
+				default:
+				}
+				return &api.ServerError{Message: fmt.Sprintf(
+					"reverse-agent did not register for container %s within %s "+
+						"(SOCKERLESS_AZF_BOOTSTRAP_TIMEOUT_SEC). The Function App was deployed and "+
+						"invoked but the in-function bootstrap never dialled back to "+
+						"SOCKERLESS_CALLBACK_URL=%s. Check egress / VNet / NSG.",
+					id[:12], timeout, s.config.CallbackURL,
+				)}
+			}
 		}
 	}
 
 	return nil
+}
+
+// invocationStartError is the start's outcome once the Function App's
+// invocation has ended: nil when it ran to completion, the platform's
+// answer when it failed.
+func (s *Server) invocationStartError(id string) error {
+	inv, ok := s.Store.GetInvocationResult(id)
+	if !ok || inv.ExitCode == 0 {
+		return nil
+	}
+	body := ""
+	if buf, ok := s.Store.LogBuffers.Load(id); ok {
+		if b, isBytes := buf.([]byte); isBytes {
+			body = strings.TrimSpace(string(b))
+		}
+	}
+	return &api.ServerError{Message: fmt.Sprintf(
+		"the Function App's invocation failed before its bootstrap dialled back (%s): %s", inv.Error, body)}
 }
 
 // azfBootstrapTimeout returns the configured bootstrap-ready timeout, falling

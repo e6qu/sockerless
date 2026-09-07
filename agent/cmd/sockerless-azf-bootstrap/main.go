@@ -47,6 +47,14 @@ const (
 )
 
 func main() {
+	// Docker creates a container's configured working directory when the
+	// container is created, before any exec runs in it; the bootstrap does
+	// the same at startup, so an exec that names that directory runs
+	// whether or not the workload has started (a pod Service is only
+	// warmed for docker exec until stdin arrives).
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		agent.EnsureWorkdir(wd)
+	}
 	fmt.Fprintf(os.Stdout, "sockerless-azf-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q WEBSITES_PORT=%q\n",
 		os.Getpid(), os.Args, os.Getenv(envPort), os.Getenv(envWebsitesPort))
 	fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q WEBSITES_PORT=%q\n",
@@ -200,7 +208,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	cmd.Env = os.Environ()
 
@@ -245,8 +253,11 @@ func runExecEnvelope(w http.ResponseWriter, parent context.Context, env envelope
 	cmd := exec.CommandContext(ctx, env.Argv[0], env.Argv[1:]...)
 	if env.Workdir != "" {
 		cmd.Dir = env.Workdir
+		if env.Workload {
+			agent.EnsureWorkdir(env.Workdir)
+		}
 	} else if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	if len(env.Env) > 0 {
 		cmd.Env = append(append([]string{}, os.Environ()...), env.Env...)
@@ -307,7 +318,7 @@ func runSidecarService() {
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if wd := os.Getenv(envUserWorkdir); wd != "" {
-		cmd.Dir = wd
+		cmd.Dir = agent.EnsureWorkdir(wd)
 	}
 	cmd.Env = os.Environ()
 	cmd.Stdout = os.Stdout

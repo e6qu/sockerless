@@ -40,6 +40,9 @@ export default defineConfig({
     },
     port: PORT,
     reuseExistingServer: false,
-    timeout: 180_000,
+    // The start script compiles the pinned simulator and the backend; the
+    // first run after a pin bump compiles them from a cold module cache,
+    // which takes several minutes on a hosted runner.
+    timeout: 600_000,
   },
 });

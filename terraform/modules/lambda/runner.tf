@@ -23,16 +23,25 @@
 # explicit inputs from the ECS module.
 
 data "terraform_remote_state" "ecs" {
+  count   = var.read_ecs_state && var.ecs_state_local_path == "" ? 1 : 0
   backend = "s3"
   config = {
-    bucket = "sockerless-tf-state"
-    key    = "environments/ecs/live/terraform.tfstate"
-    region = "eu-west-1"
+    bucket = var.ecs_state_bucket
+    key    = var.ecs_state_key
+    region = var.ecs_state_region
+  }
+}
+
+data "terraform_remote_state" "ecs_local" {
+  count   = var.read_ecs_state && var.ecs_state_local_path != "" ? 1 : 0
+  backend = "local"
+  config = {
+    path = var.ecs_state_local_path
   }
 }
 
 locals {
-  ecs_state = data.terraform_remote_state.ecs.outputs
+  ecs_state = try(data.terraform_remote_state.ecs_local[0].outputs, data.terraform_remote_state.ecs[0].outputs, {})
   # try() wrappers keep `terragrunt destroy` self-sufficient when the
   # ECS env's state has already been destroyed (cross-env teardown
   # ordering). Without them, destroy plans fail at locals evaluation

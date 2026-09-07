@@ -3,6 +3,7 @@ package aca
 import (
 	"context"
 	"fmt"
+	azurecommon "github.com/sockerless/azure-common"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
@@ -99,11 +100,13 @@ func (s *Server) buildAppSpec(ctx context.Context, containers []containerInput) 
 	return armappcontainers.ContainerApp{
 		Location: ptr(s.config.Location),
 		Tags:     azureTags,
+		Identity: s.workloadIdentity(),
 		Properties: &armappcontainers.ContainerAppProperties{
 			EnvironmentID: ptr(environmentID),
 			Configuration: &armappcontainers.Configuration{
 				ActiveRevisionsMode: &activeRevMode,
 				Ingress:             ingress,
+				Registries:          s.registryCredentials(),
 			},
 			Template: &armappcontainers.Template{
 				Containers: specs,
@@ -115,4 +118,32 @@ func (s *Server) buildAppSpec(ctx context.Context, containers []containerInput) 
 			},
 		},
 	}, nil
+}
+
+// workloadIdentity is the user-assigned identity a Container App or Job
+// runs with, the one that pulls its image from the registry; nil when the
+// backend has none.
+func (s *Server) workloadIdentity() *armappcontainers.ManagedServiceIdentity {
+	if s.config.ManagedIdentityID == "" {
+		return nil
+	}
+	return &armappcontainers.ManagedServiceIdentity{
+		Type: ptr(armappcontainers.ManagedServiceIdentityTypeUserAssigned),
+		UserAssignedIdentities: map[string]*armappcontainers.UserAssignedIdentity{
+			s.config.ManagedIdentityID: {},
+		},
+	}
+}
+
+// registryCredentials declares how the platform pulls from the registry the
+// overlay images live in: with the workload's identity. A registry that is
+// not declared is pulled anonymously, as the platform does.
+func (s *Server) registryCredentials() []*armappcontainers.RegistryCredentials {
+	if s.config.ManagedIdentityID == "" || s.config.ACRName == "" {
+		return nil
+	}
+	return []*armappcontainers.RegistryCredentials{{
+		Server:   ptr(azurecommon.AzureRegistryHost(s.config.ACRName)),
+		Identity: ptr(s.config.ManagedIdentityID),
+	}}
 }
