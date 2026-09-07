@@ -30,21 +30,28 @@ resource "null_resource" "sockerless_runtime_sweep" {
       set -eu
       rg='${self.triggers.rg}'
       echo "sockerless-aca-sweep: rg=$rg"
+      # The sweep needs the Azure CLI logged in to the subscription; a
+      # missing or failing CLI is a failed destroy, not an empty sweep.
+      command -v az >/dev/null || { echo "sockerless-aca-sweep: az (Azure CLI) is required" >&2; exit 1; }
 
       # Azure tags allow hyphens; sockerless emits sockerless-managed=true.
-      for app in $(az containerapp list --resource-group "$rg" --query "[?tags.\"sockerless-managed\"=='true'].name" -o tsv 2>/dev/null); do
-        [ -z "$app" ] && continue
-        az containerapp delete --resource-group "$rg" --name "$app" --yes >/dev/null 2>&1 || true
+      # Each list is assigned before it is iterated: errexit fails the sweep
+      # on a list that fails, which it would not inside a for-list.
+      apps=$(az containerapp list --resource-group "$rg" --query "[?tags.\"sockerless-managed\"=='true'].name" -o tsv)
+      for app in $apps; do
+        echo "sockerless-aca-sweep: deleting container app $app"
+        az containerapp delete --resource-group "$rg" --name "$app" --yes >/dev/null
       done
 
-      for job in $(az containerapp job list --resource-group "$rg" --query "[?tags.\"sockerless-managed\"=='true'].name" -o tsv 2>/dev/null); do
-        [ -z "$job" ] && continue
+      jobs=$(az containerapp job list --resource-group "$rg" --query "[?tags.\"sockerless-managed\"=='true'].name" -o tsv)
+      for job in $jobs; do
         # Stop any running execution first so delete doesn't race.
-        for exec in $(az containerapp job execution list --resource-group "$rg" --name "$job" --query "[?properties.status=='Running'].name" -o tsv 2>/dev/null); do
-          [ -z "$exec" ] && continue
-          az containerapp job stop --resource-group "$rg" --name "$job" --execution-name "$exec" >/dev/null 2>&1 || true
+        running=$(az containerapp job execution list --resource-group "$rg" --name "$job" --query "[?properties.status=='Running'].name" -o tsv)
+        for exec in $running; do
+          az containerapp job stop --resource-group "$rg" --name "$job" --execution-name "$exec" >/dev/null
         done
-        az containerapp job delete --resource-group "$rg" --name "$job" --yes >/dev/null 2>&1 || true
+        echo "sockerless-aca-sweep: deleting container app job $job"
+        az containerapp job delete --resource-group "$rg" --name "$job" --yes >/dev/null
       done
     EOT
   }

@@ -299,11 +299,17 @@ func (s *Server) createFunctionSite(ctx context.Context, id, funcAppName string,
 		siteConfig.AcrUseManagedIdentityCreds = &useIdentity
 		siteConfig.AcrUserManagedIdentityID = ptr(s.config.ManagedIdentityClientID)
 	}
+	// The site's tags are the only carrier of the container's Docker
+	// identity across a backend restart: its name, which `docker ps
+	// --filter name=` and `docker rm <name>` resolve by, and its labels.
 	tags := core.TagSet{
 		ContainerID: id,
 		Backend:     "azf",
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
+		Name:        container.Name,
+		Labels:      container.Config.Labels,
+		Tty:         container.Config.Tty,
 	}
 	azTags := tags.AsAzurePtrMap()
 	// Persist OpenStdin in the site tags: CloudState reconstruction drops the

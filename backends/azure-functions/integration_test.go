@@ -412,6 +412,53 @@ func TestAZFContainerList(t *testing.T) {
 	}
 }
 
+// TestAZFContainerListByNameAfterStart proves the Function App's tags carry
+// the container's Docker identity: once the container has started and left
+// the pending-create map, the cloud is the only source, and `docker ps
+// --filter name=` and the container's labels must still resolve from it.
+func TestAZFContainerListByNameAfterStart(t *testing.T) {
+	ctx := context.Background()
+
+	testID := generateTestID()
+	name := "azf_named_" + testID
+	resp, err := dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{
+		Image:  alpineImageName,
+		Cmd:    []string{"tail", "-f", "/dev/null"},
+		Labels: map[string]string{"sockerless.test": testID},
+	}, Name: name})
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+
+	if _, err := dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	listed, err := dockerClient.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("name", "azf_named_"),
+	})
+	if err != nil {
+		t.Fatalf("container list failed: %v", err)
+	}
+	var found *container.Summary
+	for i := range listed.Items {
+		if listed.Items[i].ID == resp.ID {
+			found = &listed.Items[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("started container %s not listed by name filter; got %d containers", name, len(listed.Items))
+	}
+	if len(found.Names) != 1 || found.Names[0] != "/"+name {
+		t.Errorf("expected name [/%s], got %v", name, found.Names)
+	}
+	if found.Labels["sockerless.test"] != testID {
+		t.Errorf("expected label sockerless.test=%s, got %v", testID, found.Labels)
+	}
+}
+
 func TestAZFContainerStopNoOp(t *testing.T) {
 	ctx := context.Background()
 

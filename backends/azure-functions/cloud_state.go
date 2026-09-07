@@ -456,6 +456,7 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 			Env:        env,
 			Labels:     dockerLabels,
 			OpenStdin:  derefTag(tags["sockerless-open-stdin"]) == "true",
+			Tty:        derefTag(tags["sockerless-tty"]) == "true",
 		},
 		HostConfig: api.HostConfig{NetworkMode: networkName},
 		NetworkSettings: api.NetworkSettings{

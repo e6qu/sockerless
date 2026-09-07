@@ -21,7 +21,12 @@ follow and why (BUG-2923). The Google modules' storage key ring lives in the
 bucket location under Cloud KMS's lowercase spelling, and the Cloud Run and
 Cloud Run Functions harness cells route Cloud KMS to the simulator like
 every other service (BUG-2974). The harness image's module downloads retry
-a stream the module proxy or checksum database dropped (BUG-2975). The Docker passthrough backend, the
+a stream the module proxy or checksum database dropped (BUG-2975). An
+Azure Functions site's tags carry the container's name, labels and tty, so
+`docker ps --filter name=` resolves a started container from the cloud
+(BUG-2976); and the Azure modules' destroy-time sweep runs an Azure CLI
+the harness image installs and logs in against the simulator, failing the
+destroy rather than sweeping nothing when the CLI is missing (BUG-2977). The Docker passthrough backend, the
 cross-backend e2e suite and the six cloud backends' integration tests moved
 from `github.com/docker/docker` — whose two Engine advisories had no fix in
 any published version — to `github.com/moby/moby/client` v0.6.0 and

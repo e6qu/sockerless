@@ -102,9 +102,14 @@ SIM_SCHEME="http"
 
 generate_tls_certs() {
     mkdir -p "$CERT_DIR"
+    # The authority carries the CA basic constraint and the certificate-
+    # signing key usage a verifier requires of a root: the Azure CLI's
+    # OpenSSL rejects a CA certificate without a key usage extension.
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
         -keyout "$CERT_DIR/ca-key.pem" -out "$CERT_DIR/ca.pem" \
-        -days 1 -nodes -subj "/CN=Test CA" 2>/dev/null
+        -days 1 -nodes -subj "/CN=Test CA" \
+        -addext "basicConstraints=critical,CA:TRUE" \
+        -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
 
     openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
         -keyout "$CERT_DIR/server-key.pem" -out "$CERT_DIR/server.csr" \
@@ -237,6 +242,23 @@ case "$CLOUD" in
         export ARM_CLIENT_ID="test-client-id"
         export ARM_CLIENT_SECRET="test-client-secret"
         export SSL_CERT_FILE="$CERT_DIR/ca.pem"
+        # The Azure CLI the modules' destroy-time sweep runs reaches the
+        # simulator the way an operator's reaches a sovereign cloud: the
+        # simulator registered as a cloud at its coordinates, the service
+        # principal logged in, and the simulator's authority trusted.
+        export AZURE_CONFIG_DIR="$BUILD_DIR/azure-cli-config"
+        export AZURE_CORE_NO_COLOR=1 AZURE_CORE_COLLECT_TELEMETRY=0
+        export REQUESTS_CA_BUNDLE="$CERT_DIR/ca.pem"
+        rm -rf "$AZURE_CONFIG_DIR"
+        az cloud register -n sockerless-sim \
+            --endpoint-resource-manager "$SIM_SCHEME://localhost:$SIM_PORT" \
+            --endpoint-active-directory "$SIM_SCHEME://localhost:$SIM_PORT/adfs" \
+            --endpoint-active-directory-resource-id "https://management.azure.com/" \
+            --endpoint-active-directory-graph-resource-id "$SIM_SCHEME://localhost:$SIM_PORT"
+        az cloud set -n sockerless-sim
+        az login --service-principal -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" \
+            --tenant "$ARM_TENANT_ID" --allow-no-subscriptions >/dev/null
+        az account set --subscription "$ARM_SUBSCRIPTION_ID"
         ;;
 esac
 

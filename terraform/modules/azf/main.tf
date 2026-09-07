@@ -63,10 +63,16 @@ resource "null_resource" "sockerless_runtime_sweep" {
       set -eu
       rg='${self.triggers.rg}'
       echo "sockerless-azf-sweep: rg=$rg"
+      # The sweep needs the Azure CLI logged in to the subscription; a
+      # missing or failing CLI is a failed destroy, not an empty sweep.
+      command -v az >/dev/null || { echo "sockerless-azf-sweep: az (Azure CLI) is required" >&2; exit 1; }
 
-      for app in $(az functionapp list --resource-group "$rg" --query "[?tags.\"sockerless-managed\"=='true'].name" -o tsv 2>/dev/null); do
-        [ -z "$app" ] && continue
-        az functionapp delete --resource-group "$rg" --name "$app" >/dev/null 2>&1 || true
+      # The list is assigned before it is iterated: errexit fails the sweep
+      # on a list that fails, which it would not inside a for-list.
+      apps=$(az functionapp list --resource-group "$rg" --query "[?tags.\"sockerless-managed\"=='true'].name" -o tsv)
+      for app in $apps; do
+        echo "sockerless-azf-sweep: deleting function app $app"
+        az functionapp delete --resource-group "$rg" --name "$app" >/dev/null
       done
     EOT
   }

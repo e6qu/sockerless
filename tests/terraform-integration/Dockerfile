@@ -21,6 +21,23 @@ RUN ARCH=${TARGETARCH:-$(dpkg --print-architecture)} && \
 
 # act runs the smoke workflow through the backend the way a GitHub Actions
 # job would; the same pinned release the upstream act suite builds.
+# The Azure CLI runs the Azure Container Apps and Azure Functions modules'
+# destroy-time sweep of the resources the backends create, as it does for an
+# operator's destroy against the real cloud; the harness registers the
+# simulator as a cloud and logs in with the service principal.
+ARG AZURE_CLI_VERSION=2.90.0
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+        | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ bookworm main" \
+        > /etc/apt/sources.list.d/azure-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends "azure-cli=${AZURE_CLI_VERSION}-1~bookworm" \
+    && rm -rf /var/lib/apt/lists/*
+# The Container Apps commands live in a CLI extension; it is installed outside
+# the CLI's configuration directory so the harness's per-run configuration
+# (cloud registration and login) still finds it.
+ENV AZURE_EXTENSION_DIR=/opt/azure-cli-extensions
+RUN az extension add --name containerapp --yes
+
 ARG ACT_REF=v0.2.84
 RUN git clone --depth 1 --branch ${ACT_REF} https://github.com/nektos/act.git /act \
     && cd /act && go build -o /usr/local/bin/act . \
