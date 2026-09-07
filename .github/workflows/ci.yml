@@ -473,10 +473,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The Lambda cell returns when the simulator's Lambda host pulls
-        # its image from the simulator's own ECR, where the pull-through cache
-        # serves it, instead of resolving the cached reference to a local
-        # name the engine does not hold.
+        # The Lambda cell returns when the backend builds its bootstrap overlay
+        # through AWS CodeBuild against the simulator and pushes it to the
+        # simulator's own ECR, as it does against the real cloud, instead of
+        # running the bare image under a custom endpoint.
         backend: [ecs, cloudrun, gcf, aca, azf]
     steps:
       - uses: actions/checkout@v7.0.1

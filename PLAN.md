@@ -29,5 +29,5 @@ Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker C
 
 ## Next
 
-- BUG-2957: once the sockerless-cloud release whose Lambda and Amazon ECS hosts pull an ECR pull-through-cache reference from the simulator's own registry is cut, bump every pin to it and return the Lambda cell to the `terraform-integration` matrix.
+- BUG-2978: the Lambda backend builds its bootstrap overlay through AWS CodeBuild against the simulator too (after sockerless-cloud BUG-2991 gives CodeBuild docker steps and its own ECR); then the Lambda cell rejoins the `terraform-integration` matrix.
 - BUG-1075: live-cloud validation beyond AWS Lambda.
