@@ -19,6 +19,42 @@ resource "aws_s3_bucket" "build_context" {
   })
 }
 
+resource "aws_s3_bucket_versioning" "build_context" {
+  bucket = aws_s3_bucket.build_context.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# The build-context bucket writes its access logs here.
+resource "aws_s3_bucket" "access_logs" {
+  bucket = "${local.name_prefix}-access-logs"
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-access-logs"
+  })
+}
+
+resource "aws_s3_bucket_versioning" "access_logs" {
+  bucket = aws_s3_bucket.access_logs.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "access_logs" {
+  bucket                  = aws_s3_bucket.access_logs.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_logging" "build_context" {
+  bucket        = aws_s3_bucket.build_context.id
+  target_bucket = aws_s3_bucket.access_logs.id
+  target_prefix = "build-context/"
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "build_context_expire" {
   bucket = aws_s3_bucket.build_context.id
 

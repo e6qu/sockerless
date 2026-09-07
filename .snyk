@@ -51,3 +51,40 @@ ignore:
         reason: Simulator/harness Terraform fixture, applied only against a local simulator and destroyed in-test.
     - '.test-deps/shauth/terraform/tests/fixtures/resource_derived_vpc_link/main.tf > *':
         reason: Simulator/harness Terraform fixture, applied only against a local simulator and destroyed in-test.
+
+# The entries below are decisions about the deployable modules under
+# terraform/modules, not fixtures: each names a hardening rule the modules
+# do not follow and the reason the deployment is shaped that way. A reason
+# that stops holding is the signal to remove the entry and apply the rule.
+  SNYK-CC-AZURE-516:
+    - 'terraform/modules/aca/main.tf > resource > azurerm_virtual_network[this] > ddos_protection_plan':
+        reason: An Azure DDoS Protection plan is a per-subscription product priced in the thousands of dollars a month; the Container Apps environment's network is internal and a plan is an operator's decision, not the module's.
+  SNYK-CC-AZURE-595:
+    - 'terraform/modules/aca/main.tf > resource > azurerm_container_registry[this] > georeplications':
+        reason: Geo-replication needs the Premium registry SKU and replicates every overlay image to a second region; the registry serves one region's workloads and the SKU is the acr_sku variable an operator sets.
+    - 'terraform/modules/azf/main.tf > resource > azurerm_container_registry[main] > georeplications':
+        reason: Geo-replication needs the Premium registry SKU and replicates every overlay image to a second region; the registry serves one region's workloads and the SKU is the acr_sku variable an operator sets.
+  SNYK-CC-GCP-274:
+    - 'terraform/modules/cloudrun/main.tf > resource > google_storage_bucket[logs] > logging':
+        reason: This is the bucket every other bucket in the module writes its access logs to; a log bucket that logged to itself would loop, and one logging to a further bucket only moves the same finding there.
+    - 'terraform/modules/gcf/main.tf > resource > google_storage_bucket[logs] > logging':
+        reason: This is the bucket every other bucket in the module writes its access logs to; a log bucket that logged to itself would loop, and one logging to a further bucket only moves the same finding there.
+  SNYK-CC-TF-45:
+    - 'terraform/modules/lambda/codebuild.tf > input > resource > aws_s3_bucket[access_logs] > logging':
+        reason: This is the bucket the build-context bucket writes its access logs to; a log bucket that logged to itself would loop, and one logging to a further bucket only moves the same finding there.
+  SNYK-CC-AWS-427:
+    - 'terraform/modules/ecs/main.tf > resource > aws_subnet[public] > map_public_ip_on_launch':
+        reason: Fargate tasks in this subnet pull their images and dial the backend's callback through their own public address; private addressing needs a NAT gateway, a topology and cost decision the module leaves to the operator.
+  SNYK-CC-TF-72:
+    - 'terraform/modules/ecs/main.tf > resource > aws_security_group_rule[task_all_egress]':
+        reason: A task's workload is the user's container, which reaches registries, package indexes and the backend's callback address; restricting its egress is a deployment policy the module cannot decide for every workload.
+  SNYK-CC-TF-126:
+    - 'terraform/modules/ecs/main.tf > resource > aws_ecr_repository[main] > image_tag_mutability':
+        reason: The repository holds the runner image under the runner-amd64 tag, rebuilt in place on every runner build; overlay images are content-addressed tags that never change. An immutable repository would refuse the runner rebuild.
+    - 'terraform/modules/lambda/main.tf > resource > aws_ecr_repository[main] > image_tag_mutability':
+        reason: The repository holds the runner image under the runner-amd64 tag, rebuilt in place on every runner build; overlay images are content-addressed tags that never change. An immutable repository would refuse the runner rebuild.
+  SNYK-CC-TF-127:
+    - 'terraform/modules/lambda/codebuild.tf > resource > aws_s3_bucket_versioning[build_context] > *':
+        reason: MFA delete can only be enabled by the account's root user with a hardware MFA device through the S3 API; Terraform run as a deployment role cannot set it, and the bucket holds one-day build contexts.
+    - 'terraform/modules/lambda/codebuild.tf > resource > aws_s3_bucket_versioning[access_logs] > *':
+        reason: MFA delete can only be enabled by the account's root user with a hardware MFA device through the S3 API; Terraform run as a deployment role cannot set it.

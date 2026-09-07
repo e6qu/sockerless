@@ -4,6 +4,21 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact history.
 
+## Remaining bugs closed in one pass (2026-09-07)
+
+With every harness green at sockerless-cloud v0.30.9, the open bugs went in
+one branch. Two had been fixed upstream and only needed the pin to say so:
+the simulator's subnet reclaim (BUG-2950) and the Azure Files mount the
+shared-volume writer works against (BUG-2952). The Azure Container Registry
+round trip now lists the registry through `core.OCIListImages`, the catalog
+path the backends serve `docker images` by, which the simulator has served
+since v0.30.5 (BUG-2945). The six deployable Terraform modules follow the
+Snyk infrastructure rules that are mechanical — buckets versioned, logged
+and encrypted with customer-managed keys, flow logs, KMS on log groups and
+registries, Lambda tracing, TLS 1.2, geo-redundant storage — and `.snyk`
+records, per resource, each rule the deployment deliberately does not
+follow and why (BUG-2923).
+
 ## The registry checks credentials now, and so does every path that reaches it
 
 sockerless-cloud v0.30.3 made Google Artifact Registry's data plane refuse

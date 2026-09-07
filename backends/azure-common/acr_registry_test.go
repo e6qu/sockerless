@@ -6,7 +6,6 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -340,51 +339,31 @@ func TestACRRegistryRoundTrip(t *testing.T) {
 	}
 }
 
-// listRepositoryTags reads a repository's tags over GET /v2/<repo>/tags/list
-// with a metadata_read-scoped token, which is the per-repository half of what
-// the ACA and Azure Functions backends do to serve `docker images`. The
-// registry-wide half — GET /v2/_catalog, which enumerates the repositories to
-// read tags for — is not served by the Microsoft Azure simulator, so this
-// exercises the repository listing directly rather than through
-// core.OCIListImages.
+// listRepositoryTags reads the registry the way the Azure Container Apps and
+// Azure Functions backends serve `docker images`: core.OCIListImages
+// enumerates the repositories through GET /v2/_catalog with a registry-wide
+// token and reads each repository's tags with a `pull`-scoped one. The
+// result holds every `<registry>/<repository>:<tag>` the registry lists for
+// repository.
 func listRepositoryTags(t *testing.T, provider *ACRAuthProvider, registry, repository string) map[string]bool {
 	t.Helper()
-	// `/v2/<repo>/tags/list` is a read of the repository: the registry
-	// challenges for `pull`, the action every Docker Registry HTTP API v2
-	// client asks for before listing tags.
-	token, err := provider.GetToken(registry, repository, core.ActionPull)
+	images, err := core.OCIListImages(context.Background(), core.OCIListOptions{
+		Registry: registry,
+		Endpoint: provider.RegistryEndpoint(registry),
+		TokenFor: func(repo string) (string, error) {
+			return provider.GetToken(registry, repo, core.ActionPull)
+		},
+	})
 	if err != nil {
-		t.Fatalf("GetToken for tag listing: %v", err)
+		t.Fatalf("list images through the catalog: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodGet,
-		provider.RegistryEndpoint(registry)+"/v2/"+repository+"/tags/list", nil)
-	if err != nil {
-		t.Fatalf("build tags request: %v", err)
-	}
-	core.SetOCIHost(req, registry)
-	core.SetOCIAuth(req, token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("list tags: %v", err)
-	}
-	defer resp.Body.Close()
 	out := map[string]bool{}
-	if resp.StatusCode == http.StatusNotFound {
-		// The repository holds nothing, which is how a registry reports a
-		// repository whose last manifest was removed.
-		return out
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("list tags returned %d", resp.StatusCode)
-	}
-	var page struct {
-		Tags []string `json:"tags"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
-		t.Fatalf("decode tags: %v", err)
-	}
-	for _, tag := range page.Tags {
-		out[registry+"/"+repository+":"+tag] = true
+	for _, image := range images {
+		for _, tag := range image.RepoTags {
+			if strings.HasPrefix(tag, registry+"/"+repository+":") {
+				out[tag] = true
+			}
+		}
 	}
 	return out
 }
