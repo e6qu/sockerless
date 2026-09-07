@@ -46,13 +46,24 @@ WORKDIR /src
 COPY . .
 
 # Pre-download Go module dependencies for faster test runs (the simulators
-# come from the pinned sockerless-cloud modules in tests/go.mod).
-RUN cd tests && go mod download
+# come from the pinned sockerless-cloud modules in tests/go.mod). The module
+# proxy and the checksum database occasionally drop a stream mid-transfer;
+# a download resumes from the module cache, so a refused attempt is retried
+# with a growing wait before the build fails.
+RUN cd tests && for attempt in 1 2 3; do \
+        go mod download && break; \
+        [ "$attempt" = 3 ] && exit 1; \
+        sleep $((attempt * 15)); \
+    done
 
 # The reverse-agent bootstraps the FaaS and Container Apps backends layer onto
 # a workload image (the Cloud Run one also serves Azure Container Apps), built
 # for the workload platform.
-RUN cd agent && GOWORK=off go mod download && \
+RUN cd agent && for attempt in 1 2 3; do \
+        GOWORK=off go mod download && break; \
+        [ "$attempt" = 3 ] && exit 1; \
+        sleep $((attempt * 15)); \
+    done && \
     for b in cloudrun gcf azf lambda; do \
         CGO_ENABLED=0 GOOS=linux GOWORK=off go build -o /opt/sockerless/sockerless-$b-bootstrap ./cmd/sockerless-$b-bootstrap; \
     done
