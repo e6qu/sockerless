@@ -4,6 +4,15 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact history.
 
+## The Lambda cell is back (2026-09-07)
+
+sockerless-cloud v0.30.10 resolves an ECR pull-through-cache reference
+through the registered rule, reads an Azure Functions site's HTTP bootstrap
+from its app settings, and refuses a Cloud KMS key ring in a location the
+service does not have. Every pin moved to that release and the AWS Lambda
+cell rejoined the `terraform-integration` matrix beside the five others
+(BUG-2957).
+
 ## Remaining bugs closed in one pass (2026-09-07)
 
 With every harness green at sockerless-cloud v0.30.9, the open bugs went in

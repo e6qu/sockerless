@@ -4,52 +4,42 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Next
 
-The branch `tf-int-harness-credentials` made the Terraform integration
-harness run every environment against its simulator in CI, and its cells
-found four defects the other harnesses had never reached — the reverse-agent
-`docker cp` destination (BUG-2959), the Amazon ECS `docker exec` exit status
-(BUG-2960), the working directory of a Cloud Run pod Service before its
-workload runs (BUG-2961) and an ECS exec whose working directory is missing
-(BUG-2962) — plus the simulator's dropped ECS `workingDirectory`
-(sockerless-cloud BUG-2981) — and, at v0.30.7, three more: Cloud Build's
-and Azure Container Registry Tasks' docker steps pulling and pushing
-anonymously and a bucket without its default IAM bindings (sockerless-cloud
-BUG-2983, 2985, 2984). The pin moved from v0.9.2 to v0.30.9, which carries
-all of those plus the Cloud Run and Cloud Functions hosts pulling as the
-project's service agent (BUG-2951), the owner-aware subnet reclaim
-(BUG-2950) and Azure Container Registry's `GET /v2/_catalog` (BUG-2945).
-When the branch merges:
+Every locally actionable bug is closed. The `terraform-integration` job
+applies all six environments — Amazon ECS, AWS Lambda, Google Cloud Run,
+Cloud Run Functions, Azure Container Apps and Azure Functions — against
+their simulators at sockerless-cloud v0.30.10 and runs an act smoke through
+each backend; a red cell there is a module, harness or simulator defect,
+not a flake. The Docker API clients speak `github.com/moby/moby/client`.
 
-- Watch its CI run; every harness runs against v0.30.9, and the
-  `terraform-integration` job applies each Terraform environment against its
-  simulator — a red cell there is a module or harness defect, not a flake.
-- Keep the coordinate rule: a backend reads a registry coordinate once into
-  its `Config` and every registry operation takes it from there; no helper
-  reads `SOCKERLESS_*_ENDPOINT` from the environment on its own. Every
-  simulator stack (smoke, GitLab, e2e, `make stack-*`) exports
-  `SOCKERLESS_GCP_AR_ENDPOINT` pointing at the simulator, scheme included.
+What remains is gated outside this repository:
 
-Simulator-side work, in sockerless-cloud (one open pull request there at a
-time):
+- BUG-2925 (the UI CI stall) stays open until its cause is proven; the
+  original stall has not recurred.
+- BUG-1075: live-cloud validation beyond AWS Lambda needs real-cloud
+  credentials for Google Cloud Run, Azure Container Apps, Azure Functions,
+  Lambda service mesh and Azure identity. The modules provision what a live
+  run needs (the `sockerless-overlay` repository, the Cloud KMS-encrypted
+  buckets, the Azure CLI-driven destroy sweep).
 
-- BUG-2952: retest the Azure Container Apps file-share mount at v0.30.9.
-- BUG-2945: read `docker images` through `core.OCIListImages` in the Azure
-  round trip now that the catalog is served.
-- BUG-2957: the Lambda host pulls its image from the simulator's own ECR
-  instead of resolving a pull-through-cache reference to a local name; then
-  the Lambda cell rejoins the `terraform-integration` matrix.
+Durable rules for the next change:
 
-Remaining local items:
-
-- BUG-2925 (the UI CI stall) stays open until its cause is proven.
-- BUG-1075: live-cloud validation beyond AWS Lambda. The Google modules now
-  create the `sockerless-overlay` repository the overlay path pushes to,
-  which a live Cloud Run or Cloud Run Functions run needs.
+- The coordinate rule: a backend reads a registry coordinate once into its
+  `Config` and every registry operation takes it from there; no helper reads
+  `SOCKERLESS_*_ENDPOINT` from the environment on its own. Every simulator
+  stack exports `SOCKERLESS_GCP_AR_ENDPOINT` pointing at the simulator,
+  scheme included.
+- A stateless backend's cloud resource tags are the only carrier of a
+  container's Docker identity (name, labels, tty) after a start; write them
+  through `core.TagSet` on every create path.
+- A destroy-time sweep requires its cloud CLI and fails the destroy on a
+  failing list or delete; it never hides the CLI behind `2>/dev/null`.
 
 Simulator pins: sockerless-cloud releases with exactly one `vX.Y.Z` tag
 (release-please); Go pins reference release commits (pseudo-versions) and
-checkout/git-context pins reference the tag. v0.30.9 (commit
-`177f0f1fb88df85a9f450d660806b667c623faa1`) is the current pin everywhere.
-Verify a release with sockerless-cloud's
-`scripts/verify-release-complete.sh <tag>` before pinning it, and bump every
-pin in one PR.
+checkout/git-context pins reference the tag. v0.30.10 (commit
+`791211658b76c59780c0c4cd499daa97c81867c3`) is the current pin everywhere:
+`tests/go.mod` (three simulators, `ui-auth`, `realexec`, `sim`), every
+harness `ARG SOCKERLESS_CLOUD_VERSION`, `deploy/compose.build.yaml` and
+`.github/workflows/live-tests-lambda.yml`. Verify a release with
+sockerless-cloud's `scripts/verify-release-complete.sh <tag>` before pinning
+it, and bump every pin in one PR.
