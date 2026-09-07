@@ -53,6 +53,7 @@ provider "google" {
   resource_manager_custom_endpoint = "http://localhost:4567/v1/"
   resource_manager_v3_custom_endpoint = "http://localhost:4567/v3/"
   logging_custom_endpoint = "http://localhost:4567/v2/"
+  kms_custom_endpoint = "http://localhost:4567/v1/"
   iam_beta_custom_endpoint = "http://localhost:4567/v1/"
 }
 EOF

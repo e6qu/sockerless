@@ -531,10 +531,13 @@ data "google_storage_project_service_account" "gcs" {
   depends_on = [google_project_service.storage]
 }
 
+# Cloud KMS names a multi-region in lowercase ("us") where Cloud Storage
+# spells it "US"; the key ring lives in the bucket's location under the KMS
+# spelling so the key can encrypt the buckets.
 resource "google_kms_key_ring" "storage" {
   project    = var.project_id
   name       = "${local.name_prefix}-storage"
-  location   = var.gcs_location
+  location   = lower(var.gcs_location)
   depends_on = [google_project_service.cloudkms]
 }
 

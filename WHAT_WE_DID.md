@@ -17,7 +17,10 @@ Snyk infrastructure rules that are mechanical — buckets versioned, logged
 and encrypted with customer-managed keys, flow logs, KMS on log groups and
 registries, Lambda tracing, TLS 1.2, geo-redundant storage — and `.snyk`
 records, per resource, each rule the deployment deliberately does not
-follow and why (BUG-2923). The Docker passthrough backend, the
+follow and why (BUG-2923). The Google modules' storage key ring lives in the
+bucket location under Cloud KMS's lowercase spelling, and the Cloud Run and
+Cloud Run Functions harness cells route Cloud KMS to the simulator like
+every other service (BUG-2974). The Docker passthrough backend, the
 cross-backend e2e suite and the six cloud backends' integration tests moved
 from `github.com/docker/docker` — whose two Engine advisories had no fix in
 any published version — to `github.com/moby/moby/client` v0.6.0 and
