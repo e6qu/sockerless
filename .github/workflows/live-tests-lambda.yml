@@ -44,7 +44,7 @@ jobs:
       AWS_REGION: ${{ inputs.region }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
           aws-region: ${{ inputs.region }}
@@ -59,7 +59,7 @@ jobs:
           TG_DIR=terraform/environments/lambda/live \
           INFRA_OUTPUT=/tmp/aws-infra-out.json \
           bash smoke-tests/aws-live/0-infra-up.sh
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: lambda-outputs
           path: /tmp/aws-infra-out.json
@@ -77,11 +77,11 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
           aws-region: ${{ inputs.region }}
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@v8.0.2
         with: { name: lambda-outputs, path: /tmp }
       # The differential suites live in the sockerless-cloud repository (the
       # sim SDK tests double as live-cloud conformance tests — same code,
@@ -115,11 +115,11 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
           aws-region: ${{ inputs.region }}
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@v8.0.2
         with: { name: lambda-outputs, path: /tmp }
       - run: (cd backends/lambda && go build -o ../../sockerless-backend-lambda ./cmd/sockerless-backend-lambda)
       - run: bash smoke-tests/aws-live/2-lambda-baseline.sh
@@ -135,7 +135,7 @@ jobs:
       EXTRA_TG_DIR: terraform/environments/lambda/live
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
           aws-region: ${{ inputs.region }}
