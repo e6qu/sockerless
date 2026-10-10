@@ -176,7 +176,7 @@ ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 
 	evalImageName = "sockerless-overlay/azf-eval-arithmetic:test"
 	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
-	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
+	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.26-alpine AS build
 WORKDIR /src/tests/testdata/eval-arithmetic
 COPY tests/testdata/eval-arithmetic .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
