@@ -3,6 +3,8 @@ package core
 import (
 	"fmt"
 	"strings"
+
+	"github.com/sockerless/api"
 )
 
 // ImageRef is the canonical parsed form of a docker / OCI image
@@ -156,4 +158,35 @@ func ParseImageRefWithTag(name, tag string) (ImageRef, error) {
 		ref.Tag = "latest"
 	}
 	return ref, nil
+}
+
+// SplitImageReference splits a reference string into its repository
+// (`<domain>/<path>`), tag, and digest, by the same rule ParseImageRef
+// applies: the digest follows `@`, and the tag follows a colon to the right
+// of every `/`, so the port in `localhost:5000/foo` stays in the repository.
+// It never fails; a reference with no tag or digest returns them empty.
+func SplitImageReference(ref string) (repository, tag, digest string) {
+	repository = ref
+	if i := strings.Index(repository, "@"); i >= 0 {
+		digest = repository[i+1:]
+		repository = repository[:i]
+	}
+	if i := strings.LastIndex(repository, ":"); i > strings.LastIndex(repository, "/") {
+		tag = repository[i+1:]
+		repository = repository[:i]
+	}
+	return repository, tag, digest
+}
+
+// ImageReference names a stored image the way a client can pull it again:
+// its first repository tag, or for an image pulled by digest alone, which
+// Docker records without a tag, its first repository digest.
+func ImageReference(img api.Image) (string, bool) {
+	if len(img.RepoTags) > 0 {
+		return img.RepoTags[0], true
+	}
+	if len(img.RepoDigests) > 0 {
+		return img.RepoDigests[0], true
+	}
+	return "", false
 }

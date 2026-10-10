@@ -34,7 +34,7 @@ func ResolveAzureImageURI(ref, acrName string) string {
 	}
 
 	// Parse the Docker reference
-	registry, repo, tag := core.SplitDockerRef(ref)
+	registry, repo, version := core.SplitDockerRef(ref)
 
 	// Only handle Docker Hub images
 	switch registry {
@@ -52,7 +52,7 @@ func ResolveAzureImageURI(ref, acrName string) string {
 	// SOCKERLESS_AZURE_ACR_ENDPOINT coordinate (the same one the overlay
 	// build→push path uses) instead of a hardcoded `.azurecr.io`.
 	if acrName != "" {
-		return AzureRegistryHost(acrName) + "/" + repo + ":" + tag
+		return AzureRegistryHost(acrName) + "/" + repo + version
 	}
 
 	// No ACR — pass ref through unchanged; ACA pulls Docker Hub directly.
@@ -93,7 +93,7 @@ func ResolveAzureImageURIWithCache(
 		return ref, nil
 	}
 
-	registry, repo, tag := core.SplitDockerRef(ref)
+	registry, repo, version := core.SplitDockerRef(ref)
 	var upstream string
 	switch registry {
 	case "", "docker.io", "registry-1.docker.io":
@@ -134,7 +134,7 @@ func ResolveAzureImageURIWithCache(
 			default:
 				continue
 			}
-			return AzureRegistryHost(registryName) + "/" + tailRepo + ":" + tag, nil
+			return AzureRegistryHost(registryName) + "/" + tailRepo + version, nil
 		}
 	}
 

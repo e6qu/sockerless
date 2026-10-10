@@ -40,9 +40,13 @@ func TestPullThroughCacheNaming(t *testing.T) {
 	if got := PullThroughCachePrefix("registry.k8s.io"); got != "registry-k8s-io" {
 		t.Errorf("PullThroughCachePrefix = %q", got)
 	}
-	got := PullThroughCacheURI("123456789012", "eu-west-1", "ghcr-io", "owner/repo", "v2")
+	got := PullThroughCacheURI("123456789012", "eu-west-1", "ghcr-io", "owner/repo", ":v2")
 	if want := "123456789012.dkr.ecr.eu-west-1.amazonaws.com/ghcr-io/owner/repo:v2"; got != want {
 		t.Errorf("PullThroughCacheURI = %q, want %q", got, want)
+	}
+	pinned := PullThroughCacheURI("123456789012", "eu-west-1", "ghcr-io", "owner/repo", "@sha256:abc")
+	if want := "123456789012.dkr.ecr.eu-west-1.amazonaws.com/ghcr-io/owner/repo@sha256:abc"; pinned != want {
+		t.Errorf("PullThroughCacheURI = %q, want %q", pinned, want)
 	}
 	if !IsECRImageURI(got) || IsECRImageURI("public.ecr.aws/docker/library/alpine") || IsECRImageURI("alpine") {
 		t.Error("IsECRImageURI")

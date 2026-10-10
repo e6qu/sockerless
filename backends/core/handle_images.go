@@ -24,32 +24,62 @@ import (
 // Registry for Cloud Run/GCF, ACR for ACA/AZF). No disk persistence.
 func StoreImageWithAliases(store *Store, ref string, img api.Image) {
 	store.Images.Put(img.ID, img)
-	store.Images.Put(ref, img)
 
-	parts := strings.SplitN(ref, ":", 2)
-	if len(parts) == 2 {
-		store.Images.Put(parts[0], img)
+	repository, tag, digest := SplitImageReference(ref)
+	if digest != "" {
+		// Docker records an image pulled by digest under its repository
+		// digest alone, with no tag; ResolveImage finds it from any
+		// `name[:tag]@digest` through RepoDigests.
+		store.Images.Put(repository+"@"+digest, img)
+		return
+	}
+	store.Images.Put(ref, img)
+	if tag != "" {
+		store.Images.Put(repository, img)
 	}
 
 	// The Docker SDK normalizes image names (e.g., "alpine" → "docker.io/library/alpine")
 	// but clients inspect by the original short name. Store under short aliases too.
-	nameWithoutTag := parts[0]
-	if strings.HasPrefix(nameWithoutTag, "docker.io/library/") {
-		short := strings.TrimPrefix(nameWithoutTag, "docker.io/library/")
-		tag := "latest"
-		if len(parts) == 2 {
-			tag = parts[1]
+	if tag == "" {
+		tag = "latest"
+	}
+	for _, prefix := range []string{"docker.io/library/", "docker.io/"} {
+		if short, ok := strings.CutPrefix(repository, prefix); ok {
+			store.Images.Put(short+":"+tag, img)
+			store.Images.Put(short, img)
+			break
 		}
-		store.Images.Put(short+":"+tag, img)
-		store.Images.Put(short, img)
-	} else if strings.HasPrefix(nameWithoutTag, "docker.io/") {
-		short := strings.TrimPrefix(nameWithoutTag, "docker.io/")
-		tag := "latest"
-		if len(parts) == 2 {
-			tag = parts[1]
+	}
+}
+
+// forgetImage removes every lookup key StoreImageWithAliases recorded for
+// img: its ID, each repository tag and the repository it names, the
+// docker.io short aliases, and each repository digest.
+func forgetImage(store *Store, img api.Image) {
+	store.Images.Delete(img.ID)
+	for _, tag := range img.RepoTags {
+		forgetImageReference(store, tag)
+	}
+	for _, digest := range img.RepoDigests {
+		store.Images.Delete(digest)
+	}
+}
+
+// forgetImageReference removes the lookup keys StoreImageWithAliases
+// recorded for one tagged reference.
+func forgetImageReference(store *Store, ref string) {
+	store.Images.Delete(ref)
+	repository, tag, _ := SplitImageReference(ref)
+	store.Images.Delete(repository)
+	if tag == "" {
+		tag = "latest"
+	}
+	for _, prefix := range []string{"docker.io/library/", "docker.io/"} {
+		if short, ok := strings.CutPrefix(repository, prefix); ok {
+			store.Images.Delete(short)
+			store.Images.Delete(short + ":" + tag)
+			break
 		}
-		store.Images.Put(short+":"+tag, img)
-		store.Images.Put(short, img)
 	}
 }
 
@@ -301,7 +331,7 @@ func (s *BaseServer) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 		for _, c := range s.Store.Containers.List() {
 			if c.Image == img.ID || c.Config.Image == name {
 				for _, tag := range img.RepoTags {
-					if c.Config.Image == tag || c.Config.Image == strings.SplitN(tag, ":", 2)[0] {
+					if repository, _, _ := SplitImageReference(tag); c.Config.Image == tag || c.Config.Image == repository {
 						WriteError(w, &api.ConflictError{
 							Message: fmt.Sprintf("conflict: unable to remove repository reference \"%s\" (container %s is using its referenced image %s)", name, c.ID[:12], img.ID[:19]),
 						})
@@ -325,29 +355,7 @@ func (s *BaseServer) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.Store.Images.Delete(img.ID)
-	for _, tag := range img.RepoTags {
-		s.Store.Images.Delete(tag)
-		parts := strings.SplitN(tag, ":", 2)
-		if len(parts) >= 1 {
-			s.Store.Images.Delete(parts[0])
-			// Delete docker.io short aliases
-			nameWithoutTag := parts[0]
-			if strings.HasPrefix(nameWithoutTag, "docker.io/library/") {
-				short := strings.TrimPrefix(nameWithoutTag, "docker.io/library/")
-				s.Store.Images.Delete(short)
-				if len(parts) == 2 {
-					s.Store.Images.Delete(short + ":" + parts[1])
-				}
-			} else if strings.HasPrefix(nameWithoutTag, "docker.io/") {
-				short := strings.TrimPrefix(nameWithoutTag, "docker.io/")
-				s.Store.Images.Delete(short)
-				if len(parts) == 2 {
-					s.Store.Images.Delete(short + ":" + parts[1])
-				}
-			}
-		}
-	}
+	forgetImage(s.Store, img)
 
 	var resp []*api.ImageDeleteResponse
 	for _, tag := range img.RepoTags {

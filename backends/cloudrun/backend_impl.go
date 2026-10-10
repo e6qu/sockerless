@@ -58,8 +58,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		if config.WorkingDir == "" {
 			config.WorkingDir = img.Config.WorkingDir
 		}
-		if strings.HasPrefix(config.Image, "sha256:") && len(img.RepoTags) > 0 {
-			config.Image = img.RepoTags[0]
+		if strings.HasPrefix(config.Image, "sha256:") {
+			if canonical, named := core.ImageReference(img); named {
+				config.Image = canonical
+			}
 		}
 	}
 	if config.Labels == nil {

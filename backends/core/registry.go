@@ -19,7 +19,8 @@ import (
 type registryConfig struct {
 	Registry   string // e.g. "registry-1.docker.io"
 	Repository string // e.g. "library/alpine"
-	Tag        string // e.g. "latest"
+	Tag        string // e.g. "latest"; empty when the reference names only a digest
+	Digest     string // e.g. "sha256:…" when the reference names one
 	Endpoint   string // optional endpoint override for this registry
 	// Arch is the linux/<arch> manifest to select from a multi-arch
 	// manifest list. Empty ⇒ amd64 (the default sockerless backend
@@ -145,23 +146,22 @@ func FetchImageConfig(ref string, basicAuth ...string) (*api.ContainerConfig, er
 	return nil, err
 }
 
-// parseImageRef parses a Docker image reference into registry, repository, tag.
-func parseImageRef(ref string) registryConfig {
-	// Remove digest if present (we use tag for manifest lookup)
-	if at := strings.Index(ref, "@"); at >= 0 {
-		ref = ref[:at]
+// manifestReference is the tag or digest the image's manifest is fetched
+// by: the digest when the reference names one, since Docker resolves
+// `name:tag@digest` by the digest alone.
+func (rc registryConfig) manifestReference() string {
+	if rc.Digest != "" {
+		return rc.Digest
 	}
+	return rc.Tag
+}
 
-	// Split tag
-	tag := "latest"
-	// Handle the case where the ref has a port (e.g. localhost:5000/image:tag)
-	// by only splitting on the last colon after the last slash
-	lastSlash := strings.LastIndex(ref, "/")
-	colonAfterSlash := strings.LastIndex(ref[lastSlash+1:], ":")
-	if colonAfterSlash >= 0 {
-		colonPos := lastSlash + 1 + colonAfterSlash
-		tag = ref[colonPos+1:]
-		ref = ref[:colonPos]
+// parseImageRef parses a Docker image reference into registry, repository,
+// tag and digest. A reference with neither a tag nor a digest names latest.
+func parseImageRef(ref string) registryConfig {
+	ref, tag, digest := SplitImageReference(ref)
+	if tag == "" && digest == "" {
+		tag = "latest"
 	}
 
 	// Determine registry and repository
@@ -188,6 +188,7 @@ func parseImageRef(ref string) registryConfig {
 		Registry:   registry,
 		Repository: repo,
 		Tag:        tag,
+		Digest:     digest,
 		Arch:       workloadArch(),
 	}
 }
@@ -303,7 +304,7 @@ func getRegistryToken(rc registryConfig, basicAuth string) (string, error) {
 	}
 
 	// Try to access the manifests endpoint first to discover auth
-	manifestURL := registryURL(rc, "manifests", rc.Tag)
+	manifestURL := registryURL(rc, "manifests", rc.manifestReference())
 	discover, err := http.NewRequest(http.MethodGet, manifestURL, nil)
 	if err != nil {
 		return "", err
@@ -576,7 +577,7 @@ func selectPlatformManifest(manifests []manifestListItem, wantArch string) (dige
 // getManifestInfo resolves the image manifest to get config digest, layer info,
 // and manifest digest.
 func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
-	manifestURL := registryURL(rc, "manifests", rc.Tag)
+	manifestURL := registryURL(rc, "manifests", rc.manifestReference())
 
 	// Try manifest list first (for multi-arch images)
 	body, mediaType, err := registryGet(manifestURL, rc.Registry, token, []string{

@@ -60,8 +60,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		// Replace bare digest ref with first RepoTag — Cloud Run
 		// rewrites bare sha256: refs to mirror.gcr.io/library/...
 		// which 404s. Image was pulled by tag so RepoTag exists.
-		if strings.HasPrefix(config.Image, "sha256:") && len(img.RepoTags) > 0 {
-			config.Image = img.RepoTags[0]
+		if strings.HasPrefix(config.Image, "sha256:") {
+			if canonical, named := core.ImageReference(img); named {
+				config.Image = canonical
+			}
 		}
 	}
 	if config.Labels == nil {

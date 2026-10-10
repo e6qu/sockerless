@@ -10,10 +10,17 @@ The Docker Engine API carries `docker pull name@sha256:…` as
 `fromImage=name&tag=sha256:…`. The image-create handler joined the two
 with `:`, so the registry was asked for a tag named `sha256:…` and
 answered 404, and it added no `latest` to a name whose only colon was a
-registry port. `core.ParseImageRefWithTag` now reads the `tag` parameter
-as a tag or a digest, joins a digest with `@`, refuses a parameter that
-contradicts the name, and defaults `latest` only when the reference names
-neither; image create and image push both go through it (BUG-2979).
+registry port. Behind it the same mistake repeated wherever a reference
+was split at a colon: the registry client dropped the digest and fetched
+the manifest by tag, the stored image took the digest reference as a tag
+and cut its repository digest at the first colon, and the cloud image
+resolvers read a digest's hex as a tag. `core.SplitImageReference` is now
+the one split, by Docker's rule. `core.ParseImageRefWithTag` reads the
+`tag` parameter as a tag or a digest for image create and push; the
+registry client fetches the manifest by the digest; an image pulled by
+digest is recorded under its repository digest with no tag and resolves
+from any `name[:tag]@digest`; and `core.SplitDockerRef` hands the
+resolvers an `@digest` or `:tag` version to rebuild with (BUG-2979).
 
 The same branch moved every drifted dependency to its latest release: the
 AWS SDK for Go v2, the Azure SDK for Go, the Google Cloud client libraries,

@@ -49,8 +49,11 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	// than misrouting through `public.ecr.aws/docker/library/sha256:...`
 	// (which 404s and triggers a 7×-retry pull failure on Fargate).
 	if strings.HasPrefix(ref, "sha256:") && !strings.ContainsAny(ref, "/@") {
-		if img, ok := s.Store.ResolveImage(ref); ok && len(img.RepoTags) > 0 {
-			canonical := img.RepoTags[0]
+		if img, ok := s.Store.ResolveImage(ref); ok {
+			canonical, named := core.ImageReference(img)
+			if !named {
+				return ref, fmt.Errorf("image %s pulled for digest-only reference %q has neither a tag nor a repository digest", img.ID, ref)
+			}
 			s.Logger.Debug().Str("digest", ref).Str("canonical", canonical).
 				Msg("resolved digest-only ref via image Store")
 			return s.resolveImageURI(ctx, canonical)
@@ -75,7 +78,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		return ref, nil
 	}
 
-	registry, repo, tag := core.SplitDockerRef(ref)
+	registry, repo, version := core.SplitDockerRef(ref)
 
 	switch registry {
 	case "", "docker.io", "registry-1.docker.io":
@@ -85,7 +88,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		if strings.Contains(repo, "/") {
 			return ref, fmt.Errorf("docker hub user/org image %q is not on AWS Public Gallery; push it to your ECR repository first (sockerless avoids Docker Hub PAT credentials by design — use `docker push <ecr-uri>` to host the image yourself, or reference its public.ecr.aws equivalent if one exists)", ref)
 		}
-		mirrored := fmt.Sprintf("public.ecr.aws/docker/library/%s:%s", repo, tag)
+		mirrored := "public.ecr.aws/docker/library/" + repo + version
 		s.Logger.Debug().Str("original", ref).Str("public", mirrored).Msg("resolved Docker Hub library ref via AWS Public Gallery")
 		return mirrored, nil
 	}
@@ -104,7 +107,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		return ref, fmt.Errorf("ECR pull-through cache setup for %q: %w", cachePrefix, err)
 	}
 
-	ecrURI := awscommon.PullThroughCacheURI(accountID, s.config.Region, cachePrefix, repo, tag)
+	ecrURI := awscommon.PullThroughCacheURI(accountID, s.config.Region, cachePrefix, repo, version)
 	s.Logger.Debug().Str("original", ref).Str("ecr", ecrURI).Msg("resolved image to ECR pull-through cache URI")
 	return ecrURI, nil
 }

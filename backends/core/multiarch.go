@@ -144,7 +144,7 @@ func AssembleMultiArchManifest(ctx context.Context, opts MultiArchManifestOption
 // returns the manifest's digest, size, and media type — the three
 // fields the index entry needs.
 func fetchManifestDigest(ctx context.Context, rc registryConfig, token string) (digest string, size int64, mediaType string, err error) {
-	url := registryURL(rc, "manifests", rc.Tag)
+	url := registryURL(rc, "manifests", rc.manifestReference())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", 0, "", err

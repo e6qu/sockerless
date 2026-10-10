@@ -1263,7 +1263,8 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 		return nil, &api.InvalidParameterError{Message: "image reference is required"}
 	}
 
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
+	repository, tag, digest := SplitImageReference(ref)
+	if tag == "" && digest == "" {
 		ref = ref + ":latest"
 	}
 
@@ -1277,7 +1278,7 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
-		_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Pulling from %s", strings.Split(ref, ":")[0])})
+		_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Pulling from %s", repository)})
 		_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Status: Image is up to date for %s", ref)})
 		return io.NopCloser(&buf), nil
 	}
@@ -1301,7 +1302,12 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 
 	imageID = meta.ConfigDigest
 	imgSize = meta.TotalSize
-	repoDigests = []string{strings.Split(ref, ":")[0] + "@" + meta.ManifestDigest}
+	repoDigests = []string{repository + "@" + meta.ManifestDigest}
+	// Docker records an image pulled by digest without a tag.
+	repoTags := []string{}
+	if digest == "" {
+		repoTags = []string{ref}
+	}
 	layers = meta.LayerDigests
 	arch = meta.Architecture
 	osName = meta.OS
@@ -1323,7 +1329,7 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 
 	img := api.Image{
 		ID:           imageID,
-		RepoTags:     []string{ref},
+		RepoTags:     repoTags,
 		RepoDigests:  repoDigests,
 		Created:      created,
 		Size:         imgSize,
@@ -1390,7 +1396,7 @@ func (s *BaseServer) ImagePullWithMetadata(ref string, auth string, meta *ImageM
 	// Use real layer digests for progress when available
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
-	_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Pulling from %s", strings.Split(ref, ":")[0])})
+	_ = enc.Encode(map[string]any{"status": fmt.Sprintf("Pulling from %s", repository)})
 	for _, layer := range layers {
 		layerShort := layer
 		if len(layer) > 18 {
@@ -1638,13 +1644,10 @@ func (s *BaseServer) ImageRemove(name string, force bool, prune bool) ([]*api.Im
 	if fullDelete {
 		for _, tag := range img.RepoTags {
 			result = append(result, &api.ImageDeleteResponse{Untagged: tag})
-			s.Store.Images.Delete(tag)
-			parts := strings.SplitN(tag, ":", 2)
-			s.Store.Images.Delete(parts[0])
 			s.emitEvent("image", "untag", img.ID, map[string]string{"name": tag})
 		}
 		result = append(result, &api.ImageDeleteResponse{Deleted: img.ID})
-		s.Store.Images.Delete(img.ID)
+		forgetImage(s.Store, img)
 		if short := img.ID; len(short) > 19 {
 			s.Store.Images.Delete(short[:19])
 		}
