@@ -326,21 +326,9 @@ func (s *BaseServer) handleDockerImageCreate(w http.ResponseWriter, r *http.Requ
 	if fromImage == "" {
 		fromImage = r.URL.Query().Get("reference")
 	}
-	tag := r.URL.Query().Get("tag")
-	if tag == "" {
-		tag = "latest"
-	}
-
-	ref := fromImage
-	if tag != "" && tag != "latest" {
-		ref = fromImage + ":" + tag
-	} else if ref != "" && !strings.Contains(ref, ":") && tag == "latest" {
-		ref = fromImage + ":latest"
-	}
-
 	auth := r.Header.Get("X-Registry-Auth")
 
-	parsed, err := ParseImageRef(ref)
+	parsed, err := ParseImageRefWithTag(fromImage, r.URL.Query().Get("tag"))
 	if err != nil {
 		WriteError(w, &api.InvalidParameterError{Message: "invalid image reference: " + err.Error()})
 		return
@@ -422,11 +410,7 @@ func (s *BaseServer) handleDockerImageHistory(w http.ResponseWriter, _ *http.Req
 func (s *BaseServer) handleDockerImagePush(w http.ResponseWriter, r *http.Request, name string) {
 	tag := r.URL.Query().Get("tag")
 	auth := r.Header.Get("X-Registry-Auth")
-	rawRef := name
-	if tag != "" {
-		rawRef = name + ":" + tag
-	}
-	parsed, err := ParseImageRef(rawRef)
+	parsed, err := ParseImageRefWithTag(name, tag)
 	if err != nil {
 		WriteError(w, &api.InvalidParameterError{Message: "invalid image reference: " + err.Error()})
 		return

@@ -126,3 +126,34 @@ func (r ImageRef) FullName() string {
 	}
 	return r.Domain + "/" + r.Path
 }
+
+// ParseImageRefWithTag parses the reference a Docker Engine API image
+// request names as a repository plus a separate `tag` query parameter,
+// the way `POST /images/create` (fromImage + tag) and
+// `POST /images/{name}/push` (name + tag) carry it. The engine's tag
+// parameter is "tag or digest": `docker pull name@sha256:…` arrives as
+// tag=sha256:…, which joins with `@`, never `:`. A reference that ends up
+// with neither a tag nor a digest gets `latest`, as the engine does.
+func ParseImageRefWithTag(name, tag string) (ImageRef, error) {
+	ref, err := ParseImageRef(name)
+	if err != nil {
+		return ImageRef{}, err
+	}
+	switch {
+	case tag == "":
+	case strings.Contains(tag, ":"):
+		if ref.Digest != "" && ref.Digest != tag {
+			return ImageRef{}, fmt.Errorf("%q already names digest %s, not %s", name, ref.Digest, tag)
+		}
+		ref.Digest = tag
+	default:
+		if ref.Tag != "" && ref.Tag != tag {
+			return ImageRef{}, fmt.Errorf("%q already names tag %s, not %s", name, ref.Tag, tag)
+		}
+		ref.Tag = tag
+	}
+	if ref.Tag == "" && ref.Digest == "" {
+		ref.Tag = "latest"
+	}
+	return ref, nil
+}

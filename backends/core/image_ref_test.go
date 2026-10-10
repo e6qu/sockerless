@@ -70,3 +70,33 @@ func TestImageRef_NameTag_FullName(t *testing.T) {
 		t.Errorf("FullName (no domain): got %q", bare.FullName())
 	}
 }
+
+// The Docker Engine API sends a pull's tag or digest separately from the
+// repository; a digest joins with `@`, and a bare repository gets latest.
+func TestParseImageRefWithTag(t *testing.T) {
+	cases := []struct{ name, tag, want string }{
+		{"alpine", "", "alpine:latest"},
+		{"alpine", "3.20", "alpine:3.20"},
+		{"alpine:3.20", "", "alpine:3.20"},
+		{"alpine:3.20", "3.20", "alpine:3.20"},
+		{"public.ecr.aws/docker/library/alpine", "sha256:abc", "public.ecr.aws/docker/library/alpine@sha256:abc"},
+		{"public.ecr.aws/docker/library/alpine:3.20", "sha256:abc", "public.ecr.aws/docker/library/alpine:3.20@sha256:abc"},
+		{"alpine@sha256:abc", "", "alpine@sha256:abc"},
+		{"localhost:5000/myimage", "", "localhost:5000/myimage:latest"},
+		{"localhost:5000/myimage", "dev", "localhost:5000/myimage:dev"},
+	}
+	for _, c := range cases {
+		got, err := ParseImageRefWithTag(c.name, c.tag)
+		if err != nil {
+			t.Fatalf("ParseImageRefWithTag(%q, %q): %v", c.name, c.tag, err)
+		}
+		if got.String() != c.want {
+			t.Errorf("ParseImageRefWithTag(%q, %q) = %q, want %q", c.name, c.tag, got.String(), c.want)
+		}
+	}
+	for _, c := range [][2]string{{"alpine:3.20", "3.21"}, {"alpine@sha256:abc", "sha256:def"}, {"", "3.20"}} {
+		if _, err := ParseImageRefWithTag(c[0], c[1]); err == nil {
+			t.Errorf("ParseImageRefWithTag(%q, %q) accepted a conflicting or empty reference", c[0], c[1])
+		}
+	}
+}
