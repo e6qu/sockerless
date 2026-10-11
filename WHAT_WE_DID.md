@@ -4,6 +4,30 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact history.
 
+## Images come from mirrors, pinned and kept current (2026-10-11)
+
+Docker Hub limits anonymous pulls per address, and the shared CI runners
+exhaust that limit for everyone on them. The smoke images, the
+Terraform-integration image, the published `sockerless-admin` image, the
+live-test workflow containers, the deployment's PostgreSQL and Caddy and the
+manual live-test images all pulled from it, unpinned, and the publication
+workflow booted BuildKit and the Dockerfile frontend from it too. Every one is
+now a Docker Hub copy pinned by tag and digest: `public.ecr.aws/docker/library`
+for official images and `mirror.gcr.io` for the rest. Out-of-support tags moved
+on the way: `alpine:3.20` to `3.24.2`, `postgres:17.5-alpine` to `17.11-alpine`,
+`caddy:2.9.1-alpine` to `2.11.7-alpine`, Bun to 1.4.3 (and CI's Bun to 1.4),
+and the live tests' `golang:1.22-alpine` to `1.26.9-alpine`.
+
+`tools/check-image-pins` keeps it that way. Without network access it refuses
+an image pulled from Docker Hub and a copy without a tag and digest (CI
+`build-gates` and pre-commit). With `--freshness` it compares every pin with
+Docker Hub's tag API and the mirror's manifest, on pull requests, on `main`
+and daily: a pin fails once Docker Hub has served a different digest for its
+tag, or a newer release with the same variant and major version, for 24
+hours, or when the mirror serves another digest; inside the 24 hours it is
+reported as held. Go stays on the 1.26 line on purpose, because CI's
+golangci-lint cannot load Go 1.27 packages.
+
 ## Pulling by digest (2026-10-10)
 
 The Docker Engine API carries `docker pull name@sha256:…` as

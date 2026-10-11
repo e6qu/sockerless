@@ -31,7 +31,7 @@ name: sockerless-deploy
 
 services:
   postgres:
-    image: postgres:17.5-alpine
+    image: public.ecr.aws/docker/library/postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     environment:
       POSTGRES_DB: shauth
       POSTGRES_USER: shauth
@@ -313,7 +313,7 @@ services:
   # the backend service over the private compose network. See
   # deploy/Caddyfile and deploy/README.md "Security".
   caddy:
-    image: caddy:2.9.1-alpine
+    image: public.ecr.aws/docker/library/caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     environment:
       SHAUTH_HOSTNAME: ${SHAUTH_HOSTNAME:-shauth.localtest.me}
       ADMIN_HOSTNAME: ${ADMIN_HOSTNAME:-admin.localtest.me}

@@ -6,7 +6,7 @@
 # `sockerless-gcf-bootstrap` binary on disk so it can be COPY'd into
 # every per-step Cloud Run Function overlay image.
 
-FROM ubuntu:22.04
+FROM public.ecr.aws/docker/library/ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401
 
 ARG RUNNER_VERSION=2.334.0
 ARG RUNNER_ARCH=x64

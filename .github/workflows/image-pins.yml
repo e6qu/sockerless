@@ -1,0 +1,32 @@
+name: Image pins
+
+# Every image a build, CI job, deployment or harness pulls is a Docker Hub copy
+# on public.ecr.aws or mirror.gcr.io, pinned by tag and digest. This compares
+# each pin with what Docker Hub serves, so a stale pin shows up on pull
+# requests and, through the daily run, on main.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    name: Image pins are current
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Compare image pins with Docker Hub and its mirrors
+        run: cd tools/check-image-pins && GOWORK=off go run . --freshness
+        timeout-minutes: 5

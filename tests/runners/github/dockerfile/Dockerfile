@@ -16,7 +16,7 @@
 #   (1) this runner container (long-lived during the test cell)
 #   (2) per-job containers spawned by the runner (short-lived)
 #       — these are the ones sockerless dispatches to the cloud
-FROM ubuntu:24.04
+FROM public.ecr.aws/docker/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 
 ARG RUNNER_VERSION=2.334.0
 # Architecture of the runner binary itself — should match the laptop's

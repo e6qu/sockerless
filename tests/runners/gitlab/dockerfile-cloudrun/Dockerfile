@@ -10,7 +10,7 @@
 # that points at sockerless-cloudrun. The runner runs as a
 # sockerless-managed Cloud Run Service (long-lived, minScale=1).
 
-FROM ubuntu:22.04
+FROM public.ecr.aws/docker/library/ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401
 
 ARG GITLAB_RUNNER_VERSION=v17.5.0
 ARG DOCKER_VERSION=27.3.1

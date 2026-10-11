@@ -13,7 +13,7 @@
 #   ADC via runner SA. Container binds $PORT for /healthz; polling
 #   loop runs in goroutine.
 
-FROM golang:1.26-alpine AS build
+FROM public.ecr.aws/docker/library/golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS build
 WORKDIR /src
 RUN apk add --no-cache git
 # Copy both modules — gcp module replaces aws via local path.

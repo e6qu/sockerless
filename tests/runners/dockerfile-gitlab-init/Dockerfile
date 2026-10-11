@@ -11,7 +11,7 @@
 #     -f Dockerfile .
 #   podman push us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/gitlab-runner-init:latest
 
-FROM alpine:3.20
+FROM public.ecr.aws/docker/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 RUN apk add --no-cache curl jq
 

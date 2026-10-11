@@ -192,6 +192,16 @@ include make/stack.mk
 check-backend-coverage:         ; @cd tools/check-backend-coverage && GOWORK=off go run .
 check-backend-coverage-enforce: ; @cd tools/check-backend-coverage && GOWORK=off go run . --enforce
 
+# ── Image pins ──────────────────────────────────────────────────────
+#
+# Every pulled image is a digest-pinned Docker Hub copy on public.ecr.aws or
+# mirror.gcr.io. The first target refuses Docker Hub and unpinned copies; the
+# second compares every pin with Docker Hub (network).
+
+.PHONY: check-image-pins check-image-pins-freshness
+check-image-pins:           ; @cd tools/check-image-pins && GOWORK=off go run .
+check-image-pins-freshness: ; @cd tools/check-image-pins && GOWORK=off go run . --freshness
+
 # ── Smoke tests (Docker-based) ──────────────────────────────────────
 #
 # Each target builds a self-contained Docker image that boots the

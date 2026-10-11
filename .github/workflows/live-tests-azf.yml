@@ -30,10 +30,10 @@ jobs:
     runs-on: [self-hosted, sockerless-azf]
     timeout-minutes: 15
     container:
-      image: golang:1.22-alpine
+      image: public.ecr.aws/docker/library/golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
     services:
       postgres:
-        image: postgres:16-alpine
+        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: ci
           POSTGRES_USER: ci

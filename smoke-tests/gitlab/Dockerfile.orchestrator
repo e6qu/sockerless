@@ -1,4 +1,4 @@
-FROM gitlab/gitlab-runner:latest
+FROM mirror.gcr.io/gitlab/gitlab-runner:latest@sha256:77d03a5c881ff8f97381de4f96a66c080733eeab9c9cf502bd19916a18969113
 RUN apt-get update && apt-get install -y --no-install-recommends curl jq git && rm -rf /var/lib/apt/lists/*
 COPY smoke-tests/gitlab/orchestrate.sh /orchestrate.sh
 COPY smoke-tests/gitlab/test-project/ /test-project/

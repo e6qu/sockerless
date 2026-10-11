@@ -151,7 +151,7 @@ jobs:
     runs-on: [self-hosted, sockerless-ecs]
     timeout-minutes: 15
     container:
-      image: alpine:latest
+      image: public.ecr.aws/docker/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
     steps:
       - run: echo "hello from sockerless ecs"
       - run: env | sort

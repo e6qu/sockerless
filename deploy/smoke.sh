@@ -241,12 +241,12 @@ printf 'smoke\n' >"$work_dir/cli-home/active"
 # hostname exactly as every other service does (deploy/README.md
 # "Persistent origins").
 login_log="$work_dir/login.log"
-docker run --rm --network sockerless-deploy_default \
+docker run --rm --name sockerless-deploy-login-smoke --network sockerless-deploy_default \
   -v "$work_dir/sockerless-linux:/sockerless:ro" \
   -v "$caddy_ca_file:/ca.crt:ro" \
   -v "$work_dir/cli-home:/cli-home" \
   -e SOCKERLESS_HOME=/cli-home -e SSL_CERT_FILE=/ca.crt \
-  alpine:3.20 /sockerless login --no-browser --timeout 5s \
+  public.ecr.aws/docker/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 /sockerless login --no-browser --timeout 5s \
   >"$login_log" 2>&1 &
 login_pid=$!
 
@@ -258,7 +258,7 @@ for _ in $(seq 1 20); do
 done
 kill "$login_pid" 2>/dev/null || true
 wait "$login_pid" 2>/dev/null || true
-docker kill "$(docker ps -q --filter ancestor=alpine:3.20 --filter network=sockerless-deploy_default)" >/dev/null 2>&1 || true
+docker kill sockerless-deploy-login-smoke >/dev/null 2>&1 || true
 
 if [[ -z $authorize_url ]]; then
   fail "sockerless login --no-browser printed no authorize URL ($(cat "$login_log"))"

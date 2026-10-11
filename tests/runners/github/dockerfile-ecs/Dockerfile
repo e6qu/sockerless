@@ -20,7 +20,7 @@
 # Image is linux/amd64 because Fargate's default RuntimePlatform.CpuArchitecture
 # is X86_64 — change ARG TARGETARCH if you switch to ARM64 Fargate.
 
-FROM ubuntu:24.04
+FROM public.ecr.aws/docker/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 
 ARG RUNNER_VERSION=2.334.0
 # Asset architecture for the actions/runner binary. Match this to

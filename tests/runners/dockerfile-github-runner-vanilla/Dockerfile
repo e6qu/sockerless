@@ -29,7 +29,7 @@ ARG RUNNER_VERSION=2.334.0
 ARG RUNNER_ARCH=x64
 
 # Stage 1: download + extract the actions/runner tarball.
-FROM alpine:3.20 AS fetch
+FROM public.ecr.aws/docker/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS fetch
 ARG RUNNER_VERSION
 ARG RUNNER_ARCH
 RUN apk add --no-cache curl tar gzip

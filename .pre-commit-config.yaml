@@ -81,6 +81,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: image-pins
+        name: Images stay off Docker Hub, pinned by digest
+        entry: bash -c 'cd tools/check-image-pins && GOWORK=off go run .'
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: embedded-ui-build-order
         name: Embedded web interfaces build before Go binaries
         entry: bash scripts/check-embedded-ui-build-order.sh

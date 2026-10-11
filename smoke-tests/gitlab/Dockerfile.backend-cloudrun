@@ -1,4 +1,4 @@
-FROM golang:1.26 AS builder
+FROM public.ecr.aws/docker/library/golang:1.26.9@sha256:d7722066f0b60ceccb6c0643cbed1f5f9e15506ac237146c95333504d7805d89 AS builder
 
 # The v0.2.0 release commit; go install of a subdirectory module needs a
 # commit-ish, not the repository-root release tag.
@@ -16,7 +16,7 @@ COPY backends/gcp-common/ backends/gcp-common/
 COPY backends/cloudrun/ backends/cloudrun/
 RUN cd backends/cloudrun && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
 
-FROM debian:bookworm-slim
+FROM public.ecr.aws/docker/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /simulator-gcp /usr/local/bin/simulator-gcp
 COPY --from=builder /sockerless-backend-cloudrun /usr/local/bin/sockerless-backend-cloudrun

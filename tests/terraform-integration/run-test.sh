@@ -480,8 +480,8 @@ if [ "${SKIP_SMOKE_TEST:-}" != "1" ]; then
     # Public Gallery, which rate-limits anonymous pulls from one address;
     # five cells pull it at once, so a throttled pull is retried with a
     # growing wait.
-    pull_host_image public.ecr.aws/docker/library/alpine:latest
-    env -u DOCKER_HOST docker tag public.ecr.aws/docker/library/alpine:latest alpine:latest
+    pull_host_image public.ecr.aws/docker/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+    env -u DOCKER_HOST docker tag public.ecr.aws/docker/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 alpine:latest
     export DOCKER_HOST="tcp://$BACKEND_ADDR"
 
     # --reuse keeps the job container after the run, so a failure can show
