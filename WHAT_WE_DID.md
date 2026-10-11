@@ -41,7 +41,10 @@ satisfies.
 The user-interface stall (BUG-2925) was the Vite build running in Bun's
 runtime, which has open reports of builds that finish and never exit. Vite
 now runs on Node under `bun run`; the CI jobs install Node 24 and take Bun's
-version from `packageManager`, and the admin image builds on Node 24.
+version from `packageManager`, and the admin image builds on Node 24. The 20-second vitest
+`testTimeout` raised for a slow page of the simulator console, which left
+with the simulators, is gone: the slowest remaining test took 925 ms on the
+CI runner, inside the 5-second default.
 
 BUG-1075 records exactly what a live run needs: the accounts and secrets for
 each cloud, which this repository does not have, and the runner images and

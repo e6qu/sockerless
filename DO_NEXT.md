@@ -47,6 +47,8 @@ Durable rules for the next change:
   CodeBuild for the function's architecture, or prebuilt by the operator.
   There is no bare-image or local-docker path, against the simulator or the
   cloud.
+- A slow or timed-out CI job is profiled and its cause fixed; no
+  `timeout-minutes`, test deadline or start-up bound is raised to pass it.
 - Bun installs the UI workspace and runs its scripts; the tools the scripts
   call (Vite, Vitest, tsc) run on Node. No script uses `bun --bun`.
 - A harness reads Terraform outputs with `jq -e`, so a missing output fails
