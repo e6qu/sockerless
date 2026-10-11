@@ -6,7 +6,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 The `terraform-integration` job applies five environments — Amazon ECS,
 Google Cloud Run, Cloud Run Functions, Azure Container Apps and Azure
-Functions — against their simulators at sockerless-cloud v2.0.9 and runs
+Functions — against their simulators at sockerless-cloud v0.30.10 and runs
 an act smoke through each backend; a red cell there is a module, harness
 or simulator defect, not a flake.
 
@@ -18,14 +18,13 @@ Next, in order:
    real CodeBuild does; today it takes the instance metadata endpoint's
    fixed `ASIASIMACCESSKEY`, which the simulator's IAM refuses.
 2. BUG-2978, here, on the release that carries it once it has aged 24
-   hours: bump every pin and add `lambda` to the `terraform-integration`
-   matrix. The backend, the Lambda module and the harness are ready.
-3. The next simulator bump past v2.0.9 gives each App Service and Container
-   Apps workload its own `IDENTITY_HEADER`; the Azure harnesses (the ACA and
-   Azure Functions integration suites, `smoke-tests/run.sh`, the Terraform
-   integration harness, `tests/sim_harness_test.go`) need a credential the
-   simulator authenticates for a client outside it.
-4. BUG-2980: the simulator-backed end-to-end harnesses configure the AWS
+   hours: bump every pin, bring the harnesses up to the newer simulators
+   (ECS log groups, Google projects, the Azure Container Registry Tasks push,
+   the Cloud Run Functions bootstrap, per-workload Azure `IDENTITY_HEADER`
+   credentials — the row lists what CI showed at v2.0.9), and add `lambda`
+   to the `terraform-integration` matrix. The backend, the Lambda module
+   and the Lambda harness wiring are ready.
+3. BUG-2980: the simulator-backed end-to-end harnesses configure the AWS
    backends as `tests/terraform-integration/run-test.sh` does.
 
 What remains is gated outside this repository:
@@ -61,8 +60,8 @@ Durable rules for the next change:
 
 Simulator pins: sockerless-cloud releases with exactly one `vX.Y.Z` tag
 (release-please); Go pins reference release commits (pseudo-versions) and
-checkout/git-context pins reference the tag. v2.0.9 (commit
-`2f60a2aaa0a9c006aa4541d20ff2a2c65977b33a`) is the current pin everywhere:
+checkout/git-context pins reference the tag. v0.30.10 (commit
+`791211658b76c59780c0c4cd499daa97c81867c3`) is the current pin everywhere:
 `tests/go.mod` (three simulators, `ui-auth`, `realexec`, `sim`), every
 harness `ARG SOCKERLESS_CLOUD_VERSION`, `deploy/compose.build.yaml` and
 `.github/workflows/live-tests-lambda.yml`. Verify a release with

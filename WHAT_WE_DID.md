@@ -33,10 +33,10 @@ ECR address; its outputs fail the run when missing, and a failed destroy
 fails a run that had passed. The Lambda cell stays out of the matrix until
 the AWS simulator runs a build with its project's service role (BUG-2978).
 
-The simulators moved to sockerless-cloud v2.0.9, the newest release before
-App Service and Container Apps workloads got per-app `IDENTITY_HEADER`
-secrets, which the Azure harnesses' shared managed-identity header no longer
-satisfies.
+The simulator pin stays at sockerless-cloud v0.30.10. The newer releases
+that run CodeBuild docker steps still give a build no role, and moving to
+them breaks harnesses in ways BUG-2978 lists, so the bump waits for the
+release that gives a build its project's service role.
 
 The user-interface stall (BUG-2925) was the Vite build running in Bun's
 runtime, which has open reports of builds that finish and never exit. Vite
