@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -31,21 +30,15 @@ type ACRAuthProvider struct {
 	tokens *acrTokenService
 }
 
-// NewACRAuthProvider creates a new ACRAuthProvider. The registry endpoint
-// coordinate (SOCKERLESS_AZURE_ACR_ENDPOINT) is honored: by default the real
-// `<acr>.azurecr.io` host, but a harness pointed at the simulator (or a
-// sovereign cloud) sets it to a different registry coordinate — e.g. the
-// simulator's `/v2/` address — and OnTag/OnRemove target it. The backend code is
-// identical against cloud and sim; only the coordinate value differs. An
-// explicit endpointURL may be passed; if omitted the env coordinate is read.
-func NewACRAuthProvider(logger zerolog.Logger, endpointURL ...string) *ACRAuthProvider {
-	p := &ACRAuthProvider{Logger: logger, tokens: newACRTokenService(nil)}
-	if len(endpointURL) > 0 && endpointURL[0] != "" {
-		p.endpointURL = endpointURL[0]
-	} else {
-		p.endpointURL = strings.TrimSpace(os.Getenv("SOCKERLESS_AZURE_ACR_ENDPOINT"))
-	}
-	return p
+// NewACRAuthProvider creates a new ACRAuthProvider for the registry endpoint
+// coordinate the backend read into its Config (SOCKERLESS_AZURE_ACR_ENDPOINT):
+// empty for the real `<acr>.azurecr.io` host, while a harness pointed at the
+// simulator (or a sovereign cloud) names a different registry coordinate —
+// e.g. the simulator's `/v2/` address — and OnTag/OnRemove target it. The
+// backend code is identical against cloud and sim; only the coordinate value
+// differs.
+func NewACRAuthProvider(logger zerolog.Logger, endpointURL string) *ACRAuthProvider {
+	return &ACRAuthProvider{Logger: logger, tokens: newACRTokenService(nil), endpointURL: strings.TrimSpace(endpointURL)}
 }
 
 // NewACRAuthProviderWithCredential creates an ACRAuthProvider that
@@ -109,13 +102,7 @@ func (a *ACRAuthProvider) isCoordinateRegistry(registry string) bool {
 // coordinateHost returns the bare host of endpointURL (scheme + trailing slash
 // stripped), or "" when no coordinate is set.
 func (a *ACRAuthProvider) coordinateHost() string {
-	ep := strings.TrimSpace(a.endpointURL)
-	if ep == "" {
-		return ""
-	}
-	ep = strings.TrimPrefix(ep, "https://")
-	ep = strings.TrimPrefix(ep, "http://")
-	return strings.TrimRight(ep, "/")
+	return core.RegistryCoordinateHost(a.endpointURL)
 }
 
 // RegistryEndpoint returns the ACR endpoint override (the backend-reachable

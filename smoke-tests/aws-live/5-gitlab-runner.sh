@@ -9,33 +9,15 @@ set -euo pipefail
 : "${ECS_OUT:=/tmp/ecs-out.json}"
 : "${BACKEND_BIN:=./sockerless-backend-ecs}"
 
-if [ ! -f "$ECS_OUT" ]; then
-  echo "missing $ECS_OUT — run 0-infra-up.sh first" >&2
-  exit 1
-fi
+export AWS_REGION
 
-jq_val() { jq -r ".$1.value" "$ECS_OUT"; }
-SOCKERLESS_ECS_CLUSTER="$(jq_val ecs_cluster_name)"
-SOCKERLESS_ECS_SUBNETS="$(jq_val ecs_private_subnets | tr -d '[]" ')"
-SOCKERLESS_ECS_EXECUTION_ROLE_ARN="$(jq_val ecs_execution_role_arn)"
-SOCKERLESS_ECS_TASK_ROLE_ARN="$(jq_val ecs_task_role_arn)"
-SOCKERLESS_ECR_REPO="$(jq_val ecr_repo_url)"
-SOCKERLESS_CLOUDMAP_NAMESPACE="$(jq_val cloudmap_namespace_id)"
-export AWS_REGION SOCKERLESS_CLOUDMAP_NAMESPACE SOCKERLESS_ECR_REPO
-export SOCKERLESS_ECS_CLUSTER SOCKERLESS_ECS_EXECUTION_ROLE_ARN
-export SOCKERLESS_ECS_SUBNETS SOCKERLESS_ECS_TASK_ROLE_ARN
+# shellcheck source=smoke-tests/aws-live/lib.sh
+source "$(dirname "$0")/lib.sh"
+require_file "$ECS_OUT"
+ecs_backend_env "$ECS_OUT"
 
-"$BACKEND_BIN" --addr 127.0.0.1:3376 --log-level debug 2>/tmp/gitlab-runner-backend.log &
-BACKEND_PID=$!
-trap 'kill "$BACKEND_PID" 2>/dev/null || :' EXIT
-
-for _ in $(seq 1 30); do
-  if curl --fail --silent http://127.0.0.1:3376/_ping >/dev/null; then
-    break
-  fi
-  sleep 1
-done
-curl --fail --silent http://127.0.0.1:3376/_ping >/dev/null
+trap 'kill "${BACKEND_PID:-0}" 2>/dev/null || :' EXIT
+start_backend "$BACKEND_BIN" 127.0.0.1:3376 /tmp/gitlab-runner-backend.log
 export DOCKER_HOST=tcp://127.0.0.1:3376
 
 runner_name="sockerless-ecs-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}"

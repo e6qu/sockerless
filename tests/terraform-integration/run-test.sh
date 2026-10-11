@@ -31,6 +31,19 @@ case "$BACKEND" in
 esac
 
 SIM_PORT="${SIM_PORT:-$SIM_DEFAULT_PORT}"
+
+# The Lambda environment's inputs, which every terragrunt command on it reads
+# (the destroy in the cleanup included): the functions run on the host's
+# architecture, which is what the simulator runs them on, and the
+# image-builder project runs its builds in an image this harness builds.
+if [ "$BACKEND" = "lambda" ]; then
+    case "$(uname -m)" in
+        aarch64|arm64) export SOCKERLESS_LAMBDA_ARCHITECTURE="arm64" ;;
+        *) export SOCKERLESS_LAMBDA_ARCHITECTURE="x86_64" ;;
+    esac
+    export SOCKERLESS_TF_CODEBUILD_IMAGE="sockerless-codebuild-environment:tf-int"
+fi
+
 BACKEND_ADDR="127.0.0.1:3375"
 # The backend listens on every interface: the workload containers' reverse-agent
 # bootstraps dial it back at this host's address, not at loopback.
@@ -61,12 +74,19 @@ cleanup() {
     echo "=== Cleaning up ==="
     [ -n "${BACKEND_PID:-}" ] && kill "$BACKEND_PID" 2>/dev/null || true
 
-    # Destroy terraform state (unless KEEP_STATE is set)
+    # Destroy terraform state (unless KEEP_STATE is set). Both destroys run
+    # whatever the first did; a failed destroy fails a run that had passed.
     if [ "${KEEP_STATE:-}" != "1" ] && [ -d "$TG_DIR" ]; then
         echo "--- Destroying terraform resources ---"
-        (cd "$TG_DIR" && terragrunt destroy -auto-approve 2>&1) || true
+        if ! (cd "$TG_DIR" && terragrunt destroy -auto-approve 2>&1); then
+            echo "ERROR: terragrunt destroy failed in $TG_DIR"
+            [ "$exit_code" -eq 0 ] && exit_code=1
+        fi
         if [ "$BACKEND" = "lambda" ]; then
-            (cd "$ECS_TG_DIR" && terragrunt destroy -auto-approve 2>&1) || true
+            if ! (cd "$ECS_TG_DIR" && terragrunt destroy -auto-approve 2>&1); then
+                echo "ERROR: terragrunt destroy failed in $ECS_TG_DIR"
+                [ "$exit_code" -eq 0 ] && exit_code=1
+            fi
         fi
     fi
 
@@ -264,6 +284,14 @@ esac
 
 # --- Step 4: Terragrunt apply ---
 if [ "$BACKEND" = "lambda" ]; then
+    # The build environment the Lambda environment's AWS CodeBuild project
+    # runs the backend's overlay builds in, held by the engine the simulator
+    # runs builds on.
+    echo "=== Building the AWS CodeBuild environment image ==="
+    env -u DOCKER_HOST docker build -q -t "$SOCKERLESS_TF_CODEBUILD_IMAGE" \
+        "$ROOT_DIR/tests/terraform-integration/codebuild-environment"
+fi
+if [ "$BACKEND" = "lambda" ]; then
     echo "=== Running terragrunt apply (ecs, shared with lambda) ==="
     (cd "$ECS_TG_DIR" && terragrunt init 2>&1)
     (cd "$ECS_TG_DIR" && terragrunt apply -auto-approve 2>&1)
@@ -278,9 +306,11 @@ echo "Terragrunt apply complete"
 echo "=== Extracting terraform outputs ==="
 TF_OUTPUTS=$(cd "$TG_DIR" && terragrunt output -json 2>/dev/null)
 
-# Helper: extract a single output value (strips quotes)
+# Helper: extract a single output value (strips quotes). An output the module
+# does not have, or one that is null, fails the run rather than handing the
+# backend an empty coordinate.
 tf_output() {
-    echo "$TF_OUTPUTS" | jq -r ".$1.value // empty"
+    echo "$TF_OUTPUTS" | jq -er ".$1.value" || { echo "ERROR: Terraform output $1 is missing" >&2; return 1; }
 }
 
 # gcp_backend_coordinates exports the Google Cloud coordinates the backends
@@ -290,7 +320,8 @@ tf_output() {
 # Google Cloud, so the backend takes it explicitly.
 gcp_backend_coordinates() {
     export SOCKERLESS_GCP_AR_ENDPOINT="http://127.0.0.1:$SIM_PORT"
-    export SOCKERLESS_GCP_LOGADMIN_ENDPOINT="127.0.0.1:$((SIM_PORT + 2))"
+    SOCKERLESS_GCP_LOGADMIN_ENDPOINT="127.0.0.1:$((SIM_PORT + 2))"
+    export SOCKERLESS_GCP_LOGADMIN_ENDPOINT
 }
 
 # callback_host is the address a workload container reaches this host at, for
@@ -334,55 +365,84 @@ case "$BACKEND" in
             aarch64|arm64) export SOCKERLESS_ECS_CPU_ARCHITECTURE="ARM64" ;;
             *) export SOCKERLESS_ECS_CPU_ARCHITECTURE="X86_64" ;;
         esac
-        export SOCKERLESS_ECS_CLUSTER="$(tf_output ecs_cluster_name)"
-        SUBNETS_JSON="$(tf_output private_subnet_ids)"
-        export SOCKERLESS_ECS_SUBNETS="$(echo "$SUBNETS_JSON" | jq -r 'if type == "array" then join(",") else . end' 2>/dev/null || echo "$SUBNETS_JSON")"
-        export SOCKERLESS_ECS_SECURITY_GROUPS="$(tf_output task_security_group_id)"
-        export SOCKERLESS_ECS_TASK_ROLE_ARN="$(tf_output task_role_arn)"
-        export SOCKERLESS_ECS_EXECUTION_ROLE_ARN="$(tf_output execution_role_arn)"
-        export SOCKERLESS_ECS_LOG_GROUP="$(tf_output log_group_name)"
-        export SOCKERLESS_AGENT_EFS_ID="$(tf_output efs_filesystem_id)"
+        SOCKERLESS_ECS_CLUSTER="$(tf_output ecs_cluster_name)"
+        export SOCKERLESS_ECS_CLUSTER
+        SOCKERLESS_ECS_SUBNETS="$(echo "$TF_OUTPUTS" | jq -er '.private_subnet_ids.value | join(",")')"
+        export SOCKERLESS_ECS_SUBNETS
+        SOCKERLESS_ECS_SECURITY_GROUPS="$(tf_output task_security_group_id)"
+        export SOCKERLESS_ECS_SECURITY_GROUPS
+        SOCKERLESS_ECS_TASK_ROLE_ARN="$(tf_output task_role_arn)"
+        export SOCKERLESS_ECS_TASK_ROLE_ARN
+        SOCKERLESS_ECS_EXECUTION_ROLE_ARN="$(tf_output execution_role_arn)"
+        export SOCKERLESS_ECS_EXECUTION_ROLE_ARN
+        SOCKERLESS_ECS_LOG_GROUP="$(tf_output log_group_name)"
+        export SOCKERLESS_ECS_LOG_GROUP
+        SOCKERLESS_AGENT_EFS_ID="$(tf_output efs_filesystem_id)"
+        export SOCKERLESS_AGENT_EFS_ID
         BACKEND_BIN_NAME="sockerless-backend-ecs"
         BACKEND_PKG="./backends/ecs/cmd/sockerless-backend-ecs"
         ;;
     lambda)
-        # The architecture the functions run on is the host's, which is what
-        # the simulator runs them on.
-        case "$(uname -m)" in
-            aarch64|arm64) export SOCKERLESS_LAMBDA_ARCHITECTURE="arm64" ;;
-            *) export SOCKERLESS_LAMBDA_ARCHITECTURE="x86_64" ;;
-        esac
-        export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/lambda/reverse"
+        # Every function runs a bootstrap overlay the backend builds through
+        # the environment's AWS CodeBuild project, from a context staged in
+        # its build bucket, and pushes to its Amazon ECR repository.
+        SOCKERLESS_LAMBDA_CODEBUILD_PROJECT="$(tf_output codebuild_project_name)"
+        export SOCKERLESS_LAMBDA_CODEBUILD_PROJECT
+        SOCKERLESS_LAMBDA_BUILD_BUCKET="$(tf_output build_context_bucket)"
+        export SOCKERLESS_LAMBDA_BUILD_BUCKET
+        SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO="$(tf_output ecr_repository_url)"
+        export SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO
+        # The registry endpoint coordinate: the simulator serves Amazon ECR's
+        # /v2/ at its own address, scheme included. Overlay and base image
+        # references carry that host, and the build's push and the
+        # function's pull reach it there.
+        export SOCKERLESS_AWS_ECR_ENDPOINT="http://127.0.0.1:$SIM_PORT"
+        export SOCKERLESS_AGENT_BINARY="/opt/sockerless/sockerless-agent"
+        export SOCKERLESS_LAMBDA_BOOTSTRAP="/opt/sockerless/sockerless-lambda-bootstrap"
+        SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/lambda/reverse"
+        export SOCKERLESS_CALLBACK_URL
         ECS_OUTPUTS=$(cd "$ECS_TG_DIR" && terragrunt output -json 2>/dev/null)
-        SOCKERLESS_LAMBDA_SUBNETS=$(echo "$ECS_OUTPUTS" | jq -r '.private_subnet_ids.value | join(",")')
+        SOCKERLESS_LAMBDA_SUBNETS=$(echo "$ECS_OUTPUTS" | jq -er '.private_subnet_ids.value | join(",")')
         export SOCKERLESS_LAMBDA_SUBNETS
-        SOCKERLESS_LAMBDA_SECURITY_GROUPS=$(echo "$ECS_OUTPUTS" | jq -r '.task_security_group_id.value')
+        SOCKERLESS_LAMBDA_SECURITY_GROUPS=$(echo "$ECS_OUTPUTS" | jq -er '.task_security_group_id.value')
         export SOCKERLESS_LAMBDA_SECURITY_GROUPS
-        SOCKERLESS_LAMBDA_AGENT_EFS_ID=$(echo "$ECS_OUTPUTS" | jq -r '.efs_filesystem_id.value')
+        SOCKERLESS_LAMBDA_AGENT_EFS_ID=$(echo "$ECS_OUTPUTS" | jq -er '.efs_filesystem_id.value')
         export SOCKERLESS_LAMBDA_AGENT_EFS_ID
-        export SOCKERLESS_LAMBDA_ROLE_ARN="$(tf_output execution_role_arn)"
-        export SOCKERLESS_LAMBDA_LOG_GROUP="$(tf_output log_group_name)"
+        SOCKERLESS_LAMBDA_ROLE_ARN="$(tf_output execution_role_arn)"
+        export SOCKERLESS_LAMBDA_ROLE_ARN
+        SOCKERLESS_LAMBDA_LOG_GROUP="$(tf_output log_group_name)"
+        export SOCKERLESS_LAMBDA_LOG_GROUP
         BACKEND_BIN_NAME="sockerless-backend-lambda"
         BACKEND_PKG="./backends/lambda/cmd/sockerless-backend-lambda"
         ;;
     cloudrun)
-        export SOCKERLESS_GCR_PROJECT="$(tf_output project_id)"
-        export SOCKERLESS_GCR_REGION="$(tf_output region)"
-        export SOCKERLESS_GCR_VPC_CONNECTOR="$(tf_output vpc_connector_name)"
-        export SOCKERLESS_GCP_BUILD_BUCKET="$(tf_output build_context_bucket)"
+        SOCKERLESS_GCR_PROJECT="$(tf_output project_id)"
+        export SOCKERLESS_GCR_PROJECT
+        SOCKERLESS_GCR_REGION="$(tf_output region)"
+        export SOCKERLESS_GCR_REGION
+        SOCKERLESS_GCR_VPC_CONNECTOR="$(tf_output vpc_connector_name)"
+        export SOCKERLESS_GCR_VPC_CONNECTOR
+        SOCKERLESS_GCP_BUILD_BUCKET="$(tf_output build_context_bucket)"
+        export SOCKERLESS_GCP_BUILD_BUCKET
         gcp_backend_coordinates
-        export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/cloudrun/reverse"
+        SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/cloudrun/reverse"
+        export SOCKERLESS_CALLBACK_URL
         export SOCKERLESS_CLOUDRUN_BOOTSTRAP="/opt/sockerless/sockerless-cloudrun-bootstrap"
         BACKEND_BIN_NAME="sockerless-backend-cloudrun"
         BACKEND_PKG="./backends/cloudrun/cmd/sockerless-backend-cloudrun"
         ;;
     gcf)
-        export SOCKERLESS_GCF_PROJECT="$(tf_output project_id)"
-        export SOCKERLESS_GCF_REGION="$(tf_output region)"
-        export SOCKERLESS_GCF_SERVICE_ACCOUNT="$(tf_output service_account_email)"
-        export SOCKERLESS_GCP_BUILD_BUCKET="$(tf_output build_context_bucket)"
+        SOCKERLESS_GCF_PROJECT="$(tf_output project_id)"
+        export SOCKERLESS_GCF_PROJECT
+        SOCKERLESS_GCF_REGION="$(tf_output region)"
+        export SOCKERLESS_GCF_REGION
+        SOCKERLESS_GCF_SERVICE_ACCOUNT="$(tf_output service_account_email)"
+        export SOCKERLESS_GCF_SERVICE_ACCOUNT
+        SOCKERLESS_GCP_BUILD_BUCKET="$(tf_output build_context_bucket)"
+        export SOCKERLESS_GCP_BUILD_BUCKET
         gcp_backend_coordinates
-        export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/gcf/reverse"
+        SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/gcf/reverse"
+        export SOCKERLESS_CALLBACK_URL
         export SOCKERLESS_GCF_BOOTSTRAP="/opt/sockerless/sockerless-gcf-bootstrap"
         BACKEND_BIN_NAME="sockerless-backend-gcf"
         BACKEND_PKG="./backends/cloudrun-functions/cmd/sockerless-backend-gcf"
@@ -395,27 +455,38 @@ case "$BACKEND" in
         export IDENTITY_ENDPOINT="$SOCKERLESS_ENDPOINT_URL/msi/token"
         export IDENTITY_HEADER="sim-identity-header"
         export SOCKERLESS_ACA_SUBSCRIPTION_ID="${ARM_SUBSCRIPTION_ID:-00000000-0000-0000-0000-000000000000}"
-        export SOCKERLESS_ACA_RESOURCE_GROUP="$(tf_output resource_group_name)"
-        export SOCKERLESS_ACA_ENVIRONMENT="$(tf_output managed_environment_name)"
-        export SOCKERLESS_ACA_LOCATION="$(tf_output location)"
-        export SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="$(tf_output log_analytics_workspace_name)"
-        export SOCKERLESS_ACA_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
+        SOCKERLESS_ACA_RESOURCE_GROUP="$(tf_output resource_group_name)"
+        export SOCKERLESS_ACA_RESOURCE_GROUP
+        SOCKERLESS_ACA_ENVIRONMENT="$(tf_output managed_environment_name)"
+        export SOCKERLESS_ACA_ENVIRONMENT
+        SOCKERLESS_ACA_LOCATION="$(tf_output location)"
+        export SOCKERLESS_ACA_LOCATION
+        SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="$(tf_output log_analytics_workspace_name)"
+        export SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE
+        SOCKERLESS_ACA_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
+        export SOCKERLESS_ACA_STORAGE_ACCOUNT
         # The registry the overlay build lands in and the blob container its
         # build context is uploaded to, which Azure Container Registry Tasks
         # builds from.
-        export SOCKERLESS_AZURE_ACR_NAME="$(tf_output acr_name)"
-        export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
-        export SOCKERLESS_AZURE_BUILD_CONTAINER="$(tf_output build_container_name)"
+        SOCKERLESS_AZURE_ACR_NAME="$(tf_output acr_name)"
+        export SOCKERLESS_AZURE_ACR_NAME
+        SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
+        export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT
+        SOCKERLESS_AZURE_BUILD_CONTAINER="$(tf_output build_container_name)"
+        export SOCKERLESS_AZURE_BUILD_CONTAINER
         # The registry endpoint coordinate: the login server the registry
         # advertises, which the simulator serves its /v2/ at and routes to
         # this registry by host, scheme included. Overlay image references
         # carry that host, and the build's push and the workload's pull
         # reach it there.
-        export SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://$(tf_output acr_login_server)"
+        SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://$(tf_output acr_login_server)"
+        export SOCKERLESS_AZURE_ACR_ENDPOINT
         # The user-assigned identity the environment grants AcrPull, which
         # a Container App runs with and pulls its image as.
-        export SOCKERLESS_ACA_MANAGED_IDENTITY_ID="$(tf_output managed_identity_id)"
-        export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/aca/reverse"
+        SOCKERLESS_ACA_MANAGED_IDENTITY_ID="$(tf_output managed_identity_id)"
+        export SOCKERLESS_ACA_MANAGED_IDENTITY_ID
+        SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/aca/reverse"
+        export SOCKERLESS_CALLBACK_URL
         export SOCKERLESS_ACA_BOOTSTRAP="/opt/sockerless/sockerless-cloudrun-bootstrap"
         # act keeps its job container alive and execs every step into it,
         # which needs the bootstrap in the container; the backend runs
@@ -433,23 +504,35 @@ case "$BACKEND" in
         export IDENTITY_ENDPOINT="$SOCKERLESS_ENDPOINT_URL/msi/token"
         export IDENTITY_HEADER="sim-identity-header"
         export SOCKERLESS_AZF_SUBSCRIPTION_ID="${ARM_SUBSCRIPTION_ID:-00000000-0000-0000-0000-000000000000}"
-        export SOCKERLESS_AZF_RESOURCE_GROUP="$(tf_output resource_group_name)"
-        export SOCKERLESS_AZF_LOCATION="$(tf_output location)"
-        export SOCKERLESS_AZF_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
-        export SOCKERLESS_AZF_REGISTRY="$(tf_output acr_login_server)"
+        SOCKERLESS_AZF_RESOURCE_GROUP="$(tf_output resource_group_name)"
+        export SOCKERLESS_AZF_RESOURCE_GROUP
+        SOCKERLESS_AZF_LOCATION="$(tf_output location)"
+        export SOCKERLESS_AZF_LOCATION
+        SOCKERLESS_AZF_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
+        export SOCKERLESS_AZF_STORAGE_ACCOUNT
+        SOCKERLESS_AZF_REGISTRY="$(tf_output acr_login_server)"
+        export SOCKERLESS_AZF_REGISTRY
         # The blob container the overlay build context is uploaded to, which
         # Azure Container Registry Tasks builds from.
-        export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
-        export SOCKERLESS_AZURE_BUILD_CONTAINER="$(tf_output build_container_name)"
+        SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$(tf_output storage_account_name)"
+        export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT
+        SOCKERLESS_AZURE_BUILD_CONTAINER="$(tf_output build_container_name)"
+        export SOCKERLESS_AZURE_BUILD_CONTAINER
         # The registry endpoint coordinate, as for Container Apps above.
-        export SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://$(tf_output acr_login_server)"
+        SOCKERLESS_AZURE_ACR_ENDPOINT="$SIM_SCHEME://$(tf_output acr_login_server)"
+        export SOCKERLESS_AZURE_ACR_ENDPOINT
         # The user-assigned identity the environment grants AcrPull, which
         # a Function App runs with and pulls its image as.
-        export SOCKERLESS_AZF_MANAGED_IDENTITY_ID="$(tf_output managed_identity_id)"
-        export SOCKERLESS_AZF_MANAGED_IDENTITY_CLIENT_ID="$(tf_output managed_identity_client_id)"
-        export SOCKERLESS_AZF_APP_SERVICE_PLAN="$(tf_output app_service_plan_id)"
-        export SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE="$(tf_output log_analytics_workspace_id)"
-        export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/azf/reverse"
+        SOCKERLESS_AZF_MANAGED_IDENTITY_ID="$(tf_output managed_identity_id)"
+        export SOCKERLESS_AZF_MANAGED_IDENTITY_ID
+        SOCKERLESS_AZF_MANAGED_IDENTITY_CLIENT_ID="$(tf_output managed_identity_client_id)"
+        export SOCKERLESS_AZF_MANAGED_IDENTITY_CLIENT_ID
+        SOCKERLESS_AZF_APP_SERVICE_PLAN="$(tf_output app_service_plan_id)"
+        export SOCKERLESS_AZF_APP_SERVICE_PLAN
+        SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE="$(tf_output log_analytics_workspace_id)"
+        export SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE
+        SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/azf/reverse"
+        export SOCKERLESS_CALLBACK_URL
         export SOCKERLESS_AZF_BOOTSTRAP="/opt/sockerless/sockerless-azf-bootstrap"
         BACKEND_BIN_NAME="sockerless-backend-azf"
         BACKEND_PKG="./backends/azure-functions/cmd/sockerless-backend-azf"

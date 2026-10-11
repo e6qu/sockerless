@@ -150,6 +150,16 @@ func TestPodOverlayContentTagLambda(t *testing.T) {
 	if PodOverlayContentTag(c) == tagA {
 		t.Error("expected MainName change to produce different tag")
 	}
+	d := a
+	d.Platform = "linux/arm64"
+	if PodOverlayContentTag(d) == tagA {
+		t.Error("expected Platform change to produce different tag")
+	}
+	e := a
+	e.BootstrapBinaryHash = "0123456789abcdef"
+	if PodOverlayContentTag(e) == tagA {
+		t.Error("expected BootstrapBinaryHash change to produce different tag")
+	}
 }
 
 func TestEncodeDecodePodManifestLambda(t *testing.T) {

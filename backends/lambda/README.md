@@ -67,6 +67,14 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_LAMBDA_TIMEOUT` | `900` | no | Function timeout in seconds (max 900) |
 | `SOCKERLESS_LAMBDA_SUBNETS` | | no | Comma-separated subnet IDs for VPC mode |
 | `SOCKERLESS_LAMBDA_SECURITY_GROUPS` | | no | Comma-separated security group IDs |
+| `SOCKERLESS_LAMBDA_ARCHITECTURE` | | **yes** | `x86_64` or `arm64`: the functions' architecture, which `docker info` reports and every overlay is built for |
+| `SOCKERLESS_LAMBDA_CODEBUILD_PROJECT` | | **yes**, unless a prebuilt overlay is set | AWS CodeBuild project every function's bootstrap overlay is built in (the Lambda Terraform module's `codebuild_project_name` output; also read as `SOCKERLESS_CODEBUILD_PROJECT`) |
+| `SOCKERLESS_LAMBDA_BUILD_BUCKET` | | **yes**, unless a prebuilt overlay is set | Amazon S3 bucket the overlay build context is staged in (`build_context_bucket` output; also read as `SOCKERLESS_BUILD_BUCKET`) |
+| `SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO` | `<account>.dkr.ecr.<region>.amazonaws.com/sockerless-live-lambda` | no | Amazon ECR repository the overlays are pushed to (`ecr_repository_url` output) |
+| `SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE` | | no | An overlay built ahead of time; every function runs it and no build runs |
+| `SOCKERLESS_AWS_ECR_ENDPOINT` | | no | Amazon ECR registry endpoint coordinate: the address image references into the account's registry carry and registry HTTP is dialed at, in place of `<account>.dkr.ecr.<region>.amazonaws.com`. A harness names the simulator's `/v2/` address, scheme included |
+| `SOCKERLESS_AGENT_BINARY` | `/opt/sockerless/sockerless-agent` | no | The agent binary every overlay carries |
+| `SOCKERLESS_LAMBDA_BOOTSTRAP` | `/opt/sockerless/sockerless-lambda-bootstrap` | no | The bootstrap binary every overlay runs as its entrypoint |
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL injected into every function as `SOCKERLESS_CALLBACK_URL`. The bootstrap dials back here so `docker exec` can route through the WebSocket. Empty → backend fails loud at startup (Phase 168 — no Path B fallback). |
 | `SOCKERLESS_LAMBDA_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud (Phase 168 — no race-with-first-exec). |
 | `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS API endpoint, commonly the local [`simulator-aws`](https://github.com/e6qu/sockerless-cloud/tree/main/simulator-aws) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |

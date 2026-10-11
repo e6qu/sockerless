@@ -75,7 +75,8 @@ RUN cd tests && for attempt in 1 2 3; do \
 
 # The reverse-agent bootstraps the FaaS and Container Apps backends layer onto
 # a workload image (the Cloud Run one also serves Azure Container Apps), built
-# for the workload platform.
+# for the workload platform, and the agent the AWS Lambda overlay carries
+# beside its bootstrap.
 RUN cd agent && for attempt in 1 2 3; do \
         GOWORK=off go mod download && break; \
         [ "$attempt" = 3 ] && exit 1; \
@@ -83,6 +84,7 @@ RUN cd agent && for attempt in 1 2 3; do \
     done && \
     for b in cloudrun gcf azf lambda; do \
         CGO_ENABLED=0 GOOS=linux GOWORK=off go build -o /opt/sockerless/sockerless-$b-bootstrap ./cmd/sockerless-$b-bootstrap; \
-    done
+    done && \
+    CGO_ENABLED=0 GOOS=linux GOWORK=off go build -o /opt/sockerless/sockerless-agent ./cmd/sockerless-agent
 
 ENTRYPOINT ["/src/tests/terraform-integration/run-test.sh"]

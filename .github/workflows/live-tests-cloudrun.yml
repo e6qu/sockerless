@@ -25,7 +25,7 @@
 #   Cloud Run Service or local laptop) — start it manually before
 #   dispatching this workflow, e.g.
 #   `gh workflow run live-tests-cloudrun.yml`. Tear it down
-#   end-of-session per `docs/GCP_LIVE_TEARDOWN.md`.
+#   end-of-session per `manual-tests/05-live-validation-preflight.md` § Teardown.
 name: live-tests-cloudrun
 
 on:

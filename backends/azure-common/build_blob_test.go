@@ -72,7 +72,7 @@ func TestACRBuildBlobClientAuthenticatesWithTheAccountSharedKey(t *testing.T) {
 	}
 
 	service, err := NewACRBuildService(acrEntraCredential, acrSimSubscription, acrSimResourceGroup,
-		acrSimRegistryName, accountName, "", acrSimURL, zerolog.Nop())
+		acrSimRegistryName, accountName, "", acrSimURL, acrSimURL, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("build service: %v", err)
 	}

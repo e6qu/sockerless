@@ -11,17 +11,24 @@ EXTRA_TG_DIR="${EXTRA_TG_DIR:-}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
+# Every destroy runs and the residue check runs after them, whatever an
+# earlier one did; a destroy that failed still fails the teardown.
+fail=0
 if [ -n "$EXTRA_TG_DIR" ]; then
   echo "=== terragrunt destroy in $EXTRA_TG_DIR ==="
-  ( cd "$REPO_ROOT/$EXTRA_TG_DIR" && terragrunt destroy -auto-approve || true )
+  if ! ( cd "$REPO_ROOT/$EXTRA_TG_DIR" && terragrunt destroy -auto-approve ); then
+    echo "FAIL: terragrunt destroy in $EXTRA_TG_DIR" >&2
+    fail=1
+  fi
 fi
 
 echo "=== terragrunt destroy in $TG_DIR ==="
-cd "$REPO_ROOT/$TG_DIR"
-terragrunt destroy -auto-approve || true
+if ! ( cd "$REPO_ROOT/$TG_DIR" && terragrunt destroy -auto-approve ); then
+  echo "FAIL: terragrunt destroy in $TG_DIR" >&2
+  fail=1
+fi
 
 echo "--- residue check ---"
-fail=0
 
 clusters=$(aws ecs list-clusters --region "$AWS_REGION" --query 'clusterArns' --output text | tr '\t' '\n' | grep -i sockerless || true)
 if [ -n "$clusters" ]; then

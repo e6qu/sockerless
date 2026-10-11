@@ -21,14 +21,23 @@ type ECRAuthProvider struct {
 	ecr    *ecr.Client
 	logger zerolog.Logger
 	ctx    func() context.Context
+	// registryEndpoint is the Amazon ECR registry endpoint coordinate
+	// (SOCKERLESS_AWS_ECR_ENDPOINT, read once into the backend's Config):
+	// "" when the registry is reached at the host its references name.
+	registryEndpoint string
 }
 
-// NewECRAuthProvider creates a new ECRAuthProvider.
-func NewECRAuthProvider(ecrClient *ecr.Client, logger zerolog.Logger, ctxFn func() context.Context) *ECRAuthProvider {
+// NewECRAuthProvider creates an ECRAuthProvider for the registry reached at
+// `registryEndpoint` — the coordinate image references are built against, so
+// a reference that carries the coordinate's host is recognised as an Amazon
+// ECR reference and dialed at the coordinate. Empty means the real
+// `<account>.dkr.ecr.<region>.amazonaws.com`.
+func NewECRAuthProvider(ecrClient *ecr.Client, registryEndpoint string, logger zerolog.Logger, ctxFn func() context.Context) *ECRAuthProvider {
 	return &ECRAuthProvider{
-		ecr:    ecrClient,
-		logger: logger,
-		ctx:    ctxFn,
+		ecr:              ecrClient,
+		logger:           logger,
+		ctx:              ctxFn,
+		registryEndpoint: registryEndpoint,
 	}
 }
 
@@ -52,10 +61,20 @@ func (p *ECRAuthProvider) GetToken(registry, repository string, actions ...strin
 	return "Basic " + token, nil
 }
 
-// IsCloudRegistry returns true if the registry matches the ECR pattern
-// (*.dkr.ecr.*.amazonaws.com).
+// IsCloudRegistry returns true if the registry is an Amazon ECR private
+// registry (*.dkr.ecr.*.amazonaws.com) or the relocated coordinate's host.
 func (p *ECRAuthProvider) IsCloudRegistry(registry string) bool {
-	return strings.HasSuffix(registry, ".amazonaws.com") && strings.Contains(registry, ".dkr.ecr.")
+	return IsECRRegistry(registry, p.registryEndpoint)
+}
+
+// RegistryEndpoint returns the URL registry HTTP is dialed at for an Amazon
+// ECR reference: the relocated coordinate when one is set, "" when the
+// reference's own host is the destination.
+func (p *ECRAuthProvider) RegistryEndpoint(registry string) string {
+	if !p.IsCloudRegistry(registry) {
+		return ""
+	}
+	return core.RegistryCoordinateURL(p.registryEndpoint)
 }
 
 // OnPush creates an ECR repository (if needed) and pushes the image via OCI registry v2 API.

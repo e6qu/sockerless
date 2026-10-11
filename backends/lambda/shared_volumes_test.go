@@ -16,11 +16,48 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
+// TestValidateRequiresAnOverlaySource: a function always runs an overlay
+// carrying the bootstrap, so the backend refuses to start without the AWS
+// CodeBuild project and bucket that build one or an overlay built ahead of
+// time — a custom endpoint is no exception.
+func TestValidateRequiresAnOverlaySource(t *testing.T) {
+	base := Config{
+		RoleARN:          "arn:aws:iam::000000000000:role/x",
+		Architecture:     "x86_64",
+		NetworkDiscovery: api.NetworkDiscoveryNATGatewayOnly,
+		EndpointURL:      "http://127.0.0.1:4566",
+	}
+	for name, mutate := range map[string]func(*Config){
+		"neither":            func(*Config) {},
+		"project, no bucket": func(c *Config) { c.CodeBuildProject = "p" },
+		"bucket, no project": func(c *Config) { c.BuildBucket = "b" },
+	} {
+		cfg := base
+		mutate(&cfg)
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "SOCKERLESS_LAMBDA_CODEBUILD_PROJECT") {
+			t.Errorf("%s: Validate() = %v, want the CodeBuild-required error", name, err)
+		}
+	}
+	for name, mutate := range map[string]func(*Config){
+		"CodeBuild":        func(c *Config) { c.CodeBuildProject, c.BuildBucket = "p", "b" },
+		"prebuilt overlay": func(c *Config) { c.PrebuiltOverlayImage = "123456789012.dkr.ecr.us-east-1.amazonaws.com/overlay:v1" },
+	} {
+		cfg := base
+		mutate(&cfg)
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("%s: Validate() = %v, want nil", name, err)
+		}
+	}
+}
+
 func TestValidateSurfacesSharedVolumesParseError(t *testing.T) {
 	cfg := Config{
 		RoleARN:          "arn:aws:iam::000000000000:role/x",
 		Architecture:     "arm64",
 		NetworkDiscovery: api.NetworkDiscoveryNATGatewayOnly,
+		CodeBuildProject: "sockerless-image-builder",
+		BuildBucket:      "sockerless-build-context",
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("baseline config should validate, got: %v", err)

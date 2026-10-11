@@ -7,7 +7,7 @@ import (
 )
 
 func TestACRAuthProvider_IsCloudRegistry_AzureCRSuffix(t *testing.T) {
-	a := NewACRAuthProvider(zerolog.Nop())
+	a := NewACRAuthProvider(zerolog.Nop(), "")
 	if !a.IsCloudRegistry("myacr.azurecr.io") {
 		t.Fatalf("expected *.azurecr.io to be recognized as a cloud registry")
 	}
@@ -49,8 +49,7 @@ func TestACRAuthProvider_RegistryEndpoint_Coordinate(t *testing.T) {
 
 func TestACRAuthProvider_OCIBaseURL(t *testing.T) {
 	// No coordinate: dial https://<registry>.
-	plain := NewACRAuthProvider(zerolog.Nop())
-	plain.endpointURL = ""
+	plain := NewACRAuthProvider(zerolog.Nop(), "")
 	if got := plain.ociBaseURL("myacr.azurecr.io"); got != "https://myacr.azurecr.io" {
 		t.Fatalf("ociBaseURL without coordinate = %q, want https://myacr.azurecr.io", got)
 	}

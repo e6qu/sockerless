@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -23,9 +24,10 @@ var _ core.CloudBuildService = (*CodeBuildService)(nil)
 type CodeBuildService struct {
 	codebuild *codebuild.Client
 	s3        *s3.Client
-	project   string // CodeBuild project name
-	bucket    string // S3 bucket for context upload
-	ecrRepo   string // ECR repo prefix for output images
+	logs      *cloudwatchlogs.Client // reads a failed build's log for its error
+	project   string                 // CodeBuild project name
+	bucket    string                 // S3 bucket for context upload
+	ecrRepo   string                 // ECR repo prefix for output images
 	region    string
 	ecrAuth   *ECRAuthProvider // for AssembleMultiArchManifest token mint
 	logger    zerolog.Logger
@@ -33,13 +35,14 @@ type CodeBuildService struct {
 
 // NewCodeBuildService creates a CodeBuild-backed build service.
 // Returns nil if project or bucket are empty (not configured).
-func NewCodeBuildService(cb *codebuild.Client, s3c *s3.Client, project, bucket, ecrRepo, region string, ecrAuth *ECRAuthProvider, logger zerolog.Logger) *CodeBuildService {
+func NewCodeBuildService(cb *codebuild.Client, s3c *s3.Client, logs *cloudwatchlogs.Client, project, bucket, ecrRepo, region string, ecrAuth *ECRAuthProvider, logger zerolog.Logger) *CodeBuildService {
 	if project == "" || bucket == "" {
 		return nil
 	}
 	return &CodeBuildService{
 		codebuild: cb,
 		s3:        s3c,
+		logs:      logs,
 		project:   project,
 		bucket:    bucket,
 		ecrRepo:   ecrRepo,
@@ -171,16 +174,19 @@ func (s *CodeBuildService) Build(ctx context.Context, opts core.CloudBuildOption
 	// destination) rather than `s.ecrRepo` so callers passing a fully-
 	// qualified Tags[0] log in to the right registry.
 	//
-	// CodeBuild's S3 source type does NOT auto-extract `.tar.gz`
-	// uploads (only ZIPs auto-extract). We download + extract the
-	// tarball explicitly in pre_build so the Dockerfile + binaries
-	// land where `docker build` expects them.
+	// The build runs the project as provisioned — a NO_SOURCE project
+	// whose buildspec this override replaces — and fetches its own
+	// context: the tarball is copied out of the build bucket and
+	// extracted in pre_build, so the Dockerfile + binaries land where
+	// `docker build` expects them. A source override is not used: an
+	// Amazon S3 source is a ZIP archive CodeBuild unpacks itself, and the
+	// context is a gzipped tarball.
 	loginRegistry := strings.Split(imageRef, "/")[0]
 	buildspec := fmt.Sprintf(`version: 0.2
 phases:
   pre_build:
     commands:
-      - aws s3 cp "s3://%s/%s" /tmp/context.tar.gz
+      - aws s3 cp --only-show-errors "s3://%s/%s" /tmp/context.tar.gz
       - mkdir -p /tmp/build-context
       - tar -xzf /tmp/context.tar.gz -C /tmp/build-context
       - aws ecr get-login-password --region %s | docker login --username AWS --password-stdin %s
@@ -195,8 +201,6 @@ phases:
 	// Start build
 	buildResult, err := s.codebuild.StartBuild(ctx, &codebuild.StartBuildInput{
 		ProjectName:                  aws.String(s.project),
-		SourceTypeOverride:           cbtypes.SourceTypeS3,
-		SourceLocationOverride:       aws.String(fmt.Sprintf("%s/%s", s.bucket, objectKey)),
 		BuildspecOverride:            aws.String(buildspec),
 		EnvironmentVariablesOverride: envVars,
 	})
@@ -229,11 +233,15 @@ phases:
 		switch build.BuildStatus {
 		case cbtypes.StatusTypeSucceeded:
 			s.logger.Info().Str("buildID", buildID).Dur("duration", time.Since(start)).Msg("CodeBuild succeeded")
+			var logStream string
+			if build.Logs != nil {
+				logStream = aws.ToString(build.Logs.DeepLink)
+			}
 			return &core.CloudBuildResult{
 				ImageRef:  imageRef,
 				ImageID:   "", // Fetched by caller via FetchImageMetadata
 				Duration:  time.Since(start),
-				LogStream: aws.ToString(build.Logs.DeepLink),
+				LogStream: logStream,
 			}, nil
 		case cbtypes.StatusTypeFailed, cbtypes.StatusTypeFault, cbtypes.StatusTypeStopped, cbtypes.StatusTypeTimedOut:
 			reason := string(build.BuildStatus)
@@ -245,8 +253,39 @@ phases:
 					}
 				}
 			}
-			return nil, fmt.Errorf("CodeBuild %s: %s", build.BuildStatus, reason)
+			return nil, fmt.Errorf("CodeBuild %s: %s%s", build.BuildStatus, reason, s.buildLogTail(ctx, build))
 		}
 		// Still in progress
 	}
+}
+
+// buildLogLines is how much of a failed build's log its error carries: the
+// end of the log, where the failing command and its output are.
+const buildLogLines = 40
+
+// buildLogTail returns the last lines of a build's Amazon CloudWatch Logs
+// stream, formatted to follow the build's error, so a failed build reports
+// what failed and not only that a command exited non-zero. A build with no
+// log location, or a log that cannot be read, says so in place of the lines.
+func (s *CodeBuildService) buildLogTail(ctx context.Context, build cbtypes.Build) string {
+	if build.Logs == nil || aws.ToString(build.Logs.GroupName) == "" || aws.ToString(build.Logs.StreamName) == "" {
+		return "\n(the build reports no log location)"
+	}
+	group, stream := aws.ToString(build.Logs.GroupName), aws.ToString(build.Logs.StreamName)
+	out, err := s.logs.GetLogEvents(ctx, &cloudwatchlogs.GetLogEventsInput{
+		LogGroupName:  aws.String(group),
+		LogStreamName: aws.String(stream),
+		StartFromHead: aws.Bool(false),
+		Limit:         aws.Int32(buildLogLines),
+	})
+	if err != nil {
+		return fmt.Sprintf("\n(read build log %s/%s: %v)", group, stream, err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nbuild log %s/%s (last %d lines):", group, stream, buildLogLines)
+	for _, e := range out.Events {
+		b.WriteString("\n  ")
+		b.WriteString(strings.TrimRight(aws.ToString(e.Message), "\n"))
+	}
+	return b.String()
 }

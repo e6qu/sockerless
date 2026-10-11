@@ -57,6 +57,13 @@ type Config struct {
 	// Set by `SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO`.
 	OverlayECRRepo string
 
+	// ECRRegistryEndpoint is the Amazon ECR registry endpoint coordinate
+	// (`SOCKERLESS_AWS_ECR_ENDPOINT`): empty when the registry is reached
+	// at `<account>.dkr.ecr.<region>.amazonaws.com`, else the address
+	// every image reference into it carries and registry HTTP is dialed
+	// at — a harness names the simulator's own `/v2/` address here.
+	ECRRegistryEndpoint string
+
 	// EnableCommit opts into the agent-driven `docker commit` path
 	// (backends/core.CommitContainerViaAgent). Off by default because
 	// the result isn't a traditional diff-against-base-image commit —
@@ -136,6 +143,7 @@ func ConfigFromEnv() Config {
 		BootstrapBinaryPath:  core.EnvOrDefault("SOCKERLESS_LAMBDA_BOOTSTRAP", "/opt/sockerless/sockerless-lambda-bootstrap"),
 		PrebuiltOverlayImage: os.Getenv("SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE"),
 		OverlayECRRepo:       os.Getenv("SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO"),
+		ECRRegistryEndpoint:  os.Getenv(awscommon.ECREndpointEnv),
 		EnableCommit:         os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		Architecture:         os.Getenv("SOCKERLESS_LAMBDA_ARCHITECTURE"),
 		SharedVolumes:        sharedVolumes,
@@ -176,6 +184,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		}
 	}
 	c.EndpointURL = env.Common.EndpointURL
+	c.ECRRegistryEndpoint = os.Getenv(awscommon.ECREndpointEnv)
 	if env.Common.PollInterval != "" {
 		c.PollInterval = core.DurationOrDefault(env.Common.PollInterval, c.PollInterval)
 	}
@@ -200,6 +209,11 @@ func (c Config) Validate() error {
 	}
 	if c.RoleARN == "" {
 		return fmt.Errorf("SOCKERLESS_LAMBDA_ROLE_ARN is required")
+	}
+	// Every function runs an overlay image carrying the bootstrap: one
+	// the operator prebuilt, or one AWS CodeBuild builds per image.
+	if c.PrebuiltOverlayImage == "" && (c.CodeBuildProject == "" || c.BuildBucket == "") {
+		return fmt.Errorf("the Lambda backend builds each function's bootstrap overlay through AWS CodeBuild: set SOCKERLESS_LAMBDA_CODEBUILD_PROJECT and SOCKERLESS_LAMBDA_BUILD_BUCKET (the Lambda Terraform module's codebuild_project_name and build_context_bucket outputs), or SOCKERLESS_LAMBDA_PREBUILT_OVERLAY_IMAGE for an overlay built ahead of time")
 	}
 	switch strings.ToLower(c.Architecture) {
 	case "x86_64", "arm64":

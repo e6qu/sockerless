@@ -67,7 +67,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		Base: s.BaseServer,
 		// The registry's token service authenticates the same Microsoft Entra
 		// identity every other Azure client here holds.
-		Auth:   azurecommon.NewACRAuthProviderWithCredential(logger, azureClients.Cred, ""),
+		Auth:   azurecommon.NewACRAuthProviderWithCredential(logger, azureClients.Cred, config.ACRRegistryEndpoint),
 		Logger: logger,
 	}
 	s.storageBackings = core.NewStorageBackingRegistry()
@@ -84,7 +84,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.storageBackings.SetDefault(core.BackingMemory)
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
-		config.ACRName, config.BuildStorageAccount, config.BuildContainer, config.EndpointURL, logger,
+		config.ACRName, config.BuildStorageAccount, config.BuildContainer, config.EndpointURL, config.ACRRegistryEndpoint, logger,
 	); err == nil && svc != nil {
 		s.images.BuildService = svc
 	}

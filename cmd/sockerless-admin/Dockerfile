@@ -1,7 +1,12 @@
 # syntax=docker/dockerfile:1
 # Build the real Admin React application before compiling the Go server so the
 # resulting binary embeds the same UI served in development and CI.
-FROM oven/bun:1.3.10-alpine AS web
+FROM oven/bun:1.3.10-alpine AS bun
+
+# Bun installs the workspace and runs the build script; Vite runs on Node, the
+# runtime it is built for, which `bun run` uses when Node is on the PATH.
+FROM public.ecr.aws/docker/library/node:24-alpine AS web
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /src/ui
 COPY ui/package.json ui/bun.lock ./
 COPY ui/tsconfig.base.json ./

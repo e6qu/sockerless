@@ -264,12 +264,19 @@ jobs:
       DO_NOT_TRACK: '1'
     steps:
       - uses: actions/checkout@v7.0.1
+      # Bun installs the workspace and runs the scripts; the scripts' tools
+      # (Vite, Vitest, tsc) run on Node, the runtime they are built for.
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: '1.3'
+          bun-version-file: ui/package.json
       - run: cd ui && bun install --frozen-lockfile
         timeout-minutes: 3
-      - run: cd ui && bunx turbo run build --no-daemon
+      # Streamed rather than grouped, so a task that never finishes still shows
+      # everything it printed.
+      - run: cd ui && bunx turbo run build --no-daemon --log-order=stream
         timeout-minutes: 4
       - run: cd ui && bunx turbo run typecheck --no-daemon
         timeout-minutes: 4
@@ -299,9 +306,12 @@ jobs:
           go-version: '1.26'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: '1.3'
+          bun-version-file: ui/package.json
       - run: cd ui && bun install --frozen-lockfile
       # The browser binaries are cached because the only thing between this job
       # and the network is a 177 MiB download that the lockfile pins exactly.
@@ -341,7 +351,7 @@ jobs:
           node-version: '24'
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: '1.3'
+          bun-version-file: ui/package.json
       - run: sudo apt-get update && sudo apt-get install -y jq
       - run: cd ui && bun install --frozen-lockfile
       - uses: actions/cache@v6.1.0
@@ -473,10 +483,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The Lambda cell returns when the backend builds its bootstrap overlay
-        # through AWS CodeBuild against the simulator and pushes it to the
-        # simulator's own ECR, as it does against the real cloud, instead of
-        # running the bare image under a custom endpoint.
+        # The Lambda cell joins when the AWS simulator runs a CodeBuild build
+        # with its project's service role credentials: the backend builds
+        # every function's overlay there, and the build reads its context
+        # from Amazon S3 and logs in to Amazon ECR as that role.
         backend: [ecs, cloudrun, gcf, aca, azf]
     steps:
       - uses: actions/checkout@v7.0.1

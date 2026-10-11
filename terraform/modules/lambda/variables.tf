@@ -105,3 +105,20 @@ variable "ecs_state_local_path" {
   type        = string
   default     = ""
 }
+
+variable "architecture" {
+  description = "Instruction set architecture of the functions the backend creates (SOCKERLESS_LAMBDA_ARCHITECTURE): x86_64 or arm64. The image-builder CodeBuild project builds bootstrap overlays natively on the matching environment type."
+  type        = string
+  default     = "x86_64"
+
+  validation {
+    condition     = contains(["x86_64", "arm64"], var.architecture)
+    error_message = "architecture must be x86_64 or arm64."
+  }
+}
+
+variable "codebuild_image" {
+  description = "Build environment image for the image-builder CodeBuild project. Empty selects the curated Amazon Linux standard image for the architecture; any image that carries the AWS CLI, tar, gzip and the Docker CLI serves the overlay buildspec."
+  type        = string
+  default     = ""
+}

@@ -143,7 +143,7 @@ func (s *Server) registryCredentials() []*armappcontainers.RegistryCredentials {
 		return nil
 	}
 	return []*armappcontainers.RegistryCredentials{{
-		Server:   ptr(azurecommon.AzureRegistryHost(s.config.ACRName)),
+		Server:   ptr(azurecommon.AzureRegistryHost(s.config.ACRName, s.config.ACRRegistryEndpoint)),
 		Identity: ptr(s.config.ManagedIdentityID),
 	}}
 }

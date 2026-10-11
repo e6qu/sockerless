@@ -13,6 +13,10 @@
 
 resource "aws_s3_bucket" "build_context" {
   bucket = "${local.name_prefix}-build-context"
+  # The backend stages a build context here for every overlay it builds;
+  # destroy removes them with the bucket, as the registry's force_delete
+  # removes the overlays.
+  force_destroy = true
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-build-context"
@@ -28,7 +32,8 @@ resource "aws_s3_bucket_versioning" "build_context" {
 
 # The build-context bucket writes its access logs here.
 resource "aws_s3_bucket" "access_logs" {
-  bucket = "${local.name_prefix}-access-logs"
+  bucket        = "${local.name_prefix}-access-logs"
+  force_destroy = true
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-access-logs"
   })
@@ -157,6 +162,14 @@ resource "aws_iam_role_policy" "codebuild" {
 #
 # `privileged_mode = true` is required for the docker daemon to
 # come up inside the build container.
+locals {
+  # The build runs natively on the functions' architecture: an ARM
+  # environment for arm64 functions, x86_64 otherwise.
+  codebuild_environment_type = var.architecture == "arm64" ? "ARM_CONTAINER" : "LINUX_CONTAINER"
+  codebuild_curated_image    = var.architecture == "arm64" ? "aws/codebuild/amazonlinux2-aarch64-standard:3.0" : "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+  codebuild_image            = var.codebuild_image != "" ? var.codebuild_image : local.codebuild_curated_image
+}
+
 resource "aws_codebuild_project" "image_builder" {
   name          = "${local.name_prefix}-image-builder"
   description   = "Builds container images from S3-staged build contexts; pushes to ECR. Used by runner-Lambda manual rebuilds + sockerless-backend-lambda runtime image-inject."
@@ -168,14 +181,14 @@ resource "aws_codebuild_project" "image_builder" {
   }
 
   environment {
-    type            = "LINUX_CONTAINER"
-    image           = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+    type            = local.codebuild_environment_type
+    image           = local.codebuild_image
     compute_type    = "BUILD_GENERAL1_MEDIUM"
     privileged_mode = true
 
     environment_variable {
       name  = "AWS_DEFAULT_REGION"
-      value = "eu-west-1"
+      value = var.region
     }
 
     environment_variable {

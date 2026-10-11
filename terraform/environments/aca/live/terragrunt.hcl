@@ -6,6 +6,20 @@ terraform {
   source = "../../../modules/aca"
 }
 
+# The azurerm provider requires a `features` block; the subscription and the
+# credential come from the operator's environment (ARM_SUBSCRIPTION_ID, and
+# the Azure CLI login or ARM_CLIENT_ID / ARM_TENANT_ID with a secret or a
+# federated token), as they do for every azurerm configuration.
+generate "provider" {
+  path      = "provider.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
+provider "azurerm" {
+  features {}
+}
+EOF
+}
+
 remote_state {
   backend = "azurerm"
   config = {

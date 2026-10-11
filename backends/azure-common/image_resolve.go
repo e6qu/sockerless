@@ -27,7 +27,7 @@ import (
 //	"alpine:latest"                → "myacr.azurecr.io/library/alpine:latest"
 //	"myorg/app:v1"                 → "myacr.azurecr.io/myorg/app:v1"
 //	"myacr.azurecr.io/img:tag"    → "myacr.azurecr.io/img:tag" (unchanged)
-func ResolveAzureImageURI(ref, acrName string) string {
+func ResolveAzureImageURI(ref, acrName, registryEndpoint string) string {
 	// Already an ACR URI — use as-is
 	if strings.Contains(ref, ".azurecr.io/") {
 		return ref
@@ -49,10 +49,10 @@ func ResolveAzureImageURI(ref, acrName string) string {
 	}
 
 	// If ACR name is provided, rewrite to the registry URI — honoring the
-	// SOCKERLESS_AZURE_ACR_ENDPOINT coordinate (the same one the overlay
-	// build→push path uses) instead of a hardcoded `.azurecr.io`.
+	// registry endpoint coordinate (the same one the overlay build→push
+	// path uses) instead of a hardcoded `.azurecr.io`.
 	if acrName != "" {
-		return AzureRegistryHost(acrName) + "/" + repo + version
+		return AzureRegistryHost(acrName, registryEndpoint) + "/" + repo + version
 	}
 
 	// No ACR — pass ref through unchanged; ACA pulls Docker Hub directly.
@@ -82,7 +82,7 @@ func ResolveAzureImageURI(ref, acrName string) string {
 func ResolveAzureImageURIWithCache(
 	ctx context.Context,
 	rulesClient *armcontainerregistry.CacheRulesClient,
-	resourceGroup, registryName, ref string,
+	resourceGroup, registryName, ref, registryEndpoint string,
 ) (string, error) {
 	// Already an ACR URI — use as-is.
 	if strings.Contains(ref, ".azurecr.io/") {
@@ -134,7 +134,7 @@ func ResolveAzureImageURIWithCache(
 			default:
 				continue
 			}
-			return AzureRegistryHost(registryName) + "/" + tailRepo + version, nil
+			return AzureRegistryHost(registryName, registryEndpoint) + "/" + tailRepo + version, nil
 		}
 	}
 

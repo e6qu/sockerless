@@ -22,7 +22,7 @@ put_json() {
   curl --fail --silent --show-error \
     --request PUT \
     --header "Content-Type: application/json" \
-    "${auth_header[@]}" \
+    ${auth_header[@]+"${auth_header[@]}"} \
     --data "$body" \
     "$url" >/dev/null
 }
@@ -53,20 +53,22 @@ hmac_hex() {
   printf '%s' "$2" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:${hexkey}" | sed 's/^.*= //'
 }
 
-# aws_sigv4_post signs an AWS control-plane request (awsJson) with SigV4 the way
-# a real AWS SDK / CLI client does and POSTs it. It differs from the real cloud
-# ONLY in coordinates: the endpoint base URL (the simulator) and the seeded
-# bootstrap administrator credential the simulator provisions (access key
-# "test", secret "test", region us-east-1) — the same static credential the AWS
-# backends configure. The simulator recomputes and verifies this signature at
-# its control-plane chokepoint; an unsigned request is rejected with 403.
+# aws_sigv4_request signs an AWS request with SigV4 the way a real AWS SDK / CLI
+# client does and sends it. It differs from the real cloud ONLY in coordinates:
+# the endpoint base URL (the simulator) and the seeded bootstrap administrator
+# credential the simulator provisions (access key "test", secret "test", region
+# us-east-1) — the same static credential the AWS backends configure. The
+# simulator recomputes and verifies this signature at its control-plane
+# chokepoint; an unsigned request is rejected with 403.
 #
-#   $1 base URL (e.g. http://127.0.0.1:19320)
-#   $2 X-Amz-Target header value
-#   $3 request body
-#   $4 signing service (e.g. ecs)
-aws_sigv4_post() {
-  local base="$1" target="$2" body="$3" service="$4"
+#   $1 method (POST for an awsJson operation, PUT for an S3 REST call)
+#   $2 base URL (e.g. http://127.0.0.1:19320)
+#   $3 path (/ for an awsJson operation)
+#   $4 signing service (e.g. ecs, codebuild, s3)
+#   $5 request body (may be empty)
+#   $6 X-Amz-Target header value (awsJson operations only)
+aws_sigv4_request() {
+  local method="$1" base="$2" path="$3" service="$4" body="$5" target="${6:-}"
   local access_key="test" secret="test" region="us-east-1"
   local content_type="application/x-amz-json-1.1"
 
@@ -77,19 +79,24 @@ aws_sigv4_post() {
   local amzdate datestamp
   amzdate="$(date -u +%Y%m%dT%H%M%SZ)"
   datestamp="$(date -u +%Y%m%d)"
-
   local payload_hash
   payload_hash="$(printf '%s' "$body" | hex_sha256)"
 
-  local signed_headers="content-type;host;x-amz-content-sha256;x-amz-date;x-amz-target"
+  local signed_headers="content-type;host;x-amz-content-sha256;x-amz-date"
   local canonical_headers="content-type:${content_type}
 host:${host}
 x-amz-content-sha256:${payload_hash}
 x-amz-date:${amzdate}
-x-amz-target:${target}
 "
-  local canonical_request="POST
-/
+  local target_header=()
+  if [[ -n "$target" ]]; then
+    signed_headers="${signed_headers};x-amz-target"
+    canonical_headers="${canonical_headers}x-amz-target:${target}
+"
+    target_header=(--header "X-Amz-Target: ${target}")
+  fi
+  local canonical_request="${method}
+${path}
 
 ${canonical_headers}
 ${signed_headers}
@@ -112,23 +119,30 @@ $(printf '%s' "$canonical_request" | hex_sha256)"
   signature="$(hmac_hex "$ksigning" "$string_to_sign")"
 
   curl --fail --silent --show-error \
-    --request POST \
+    --request "$method" \
     --header "Content-Type: ${content_type}" \
-    --header "X-Amz-Target: ${target}" \
+    ${target_header[@]+"${target_header[@]}"} \
     --header "X-Amz-Date: ${amzdate}" \
     --header "X-Amz-Content-Sha256: ${payload_hash}" \
     --header "Authorization: AWS4-HMAC-SHA256 Credential=${access_key}/${scope}, SignedHeaders=${signed_headers}, Signature=${signature}" \
     --data "$body" \
-    "${base}/" >/dev/null
+    "${base}${path}" >/dev/null
 }
 
 case "$SIMULATOR_SETUP" in
   aws-ecs)
-    aws_sigv4_post \
-      "$SIMULATOR_URL" \
-      "AmazonEC2ContainerServiceV20141113.CreateCluster" \
+    aws_sigv4_request POST "$SIMULATOR_URL" / ecs \
       '{"clusterName":"sockerless-e2e"}' \
-      "ecs"
+      "AmazonEC2ContainerServiceV20141113.CreateCluster"
+    ;;
+  aws-lambda)
+    # The build bucket and the AWS CodeBuild project every function's
+    # bootstrap overlay is built with, as the Lambda Terraform module
+    # provisions them.
+    aws_sigv4_request PUT "$SIMULATOR_URL" /sockerless-e2e-build-context s3 ""
+    aws_sigv4_request POST "$SIMULATOR_URL" / codebuild \
+      '{"name":"sockerless-e2e-image-builder","source":{"type":"NO_SOURCE","buildspec":"version: 0.2\nphases:\n  build:\n    commands:\n      - docker build ."},"artifacts":{"type":"NO_ARTIFACTS"},"environment":{"type":"ARM_CONTAINER","image":"aws/codebuild/amazonlinux2-aarch64-standard:3.0","computeType":"BUILD_GENERAL1_MEDIUM","privilegedMode":true},"serviceRole":"arn:aws:iam::000000000000:role/sockerless-e2e-codebuild"}' \
+      "CodeBuild_20161006.CreateProject"
     ;;
   gcp)
     # The simulator now verifies bearer tokens on its Cloud Storage data plane,

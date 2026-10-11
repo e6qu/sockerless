@@ -63,4 +63,13 @@ inputs = {
   # docker-hub pull-through cache rule.
   manage_docker_hub_pull_through_cache = false
   lambda_timeout        = 900
+  # The functions run on the host's architecture, which is what the simulator
+  # runs them on, and the image-builder project builds their overlays natively
+  # on the matching environment type.
+  architecture = get_env("SOCKERLESS_LAMBDA_ARCHITECTURE")
+  # The image-builder project's build environment: an image the harness builds
+  # from tests/terraform-integration/codebuild-environment with the AWS CLI,
+  # tar, gzip and the Docker CLI the overlay buildspec runs. The curated
+  # Amazon Linux standard images carry the same tools at five to six gigabytes.
+  codebuild_image = get_env("SOCKERLESS_TF_CODEBUILD_IMAGE")
 }

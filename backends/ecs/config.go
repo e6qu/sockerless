@@ -25,6 +25,11 @@ type Config struct {
 	CodeBuildProject string // AWS CodeBuild project for docker build
 	BuildBucket      string // S3 bucket for build context upload
 	EndpointURL      string // Custom endpoint URL
+	// ECRRegistryEndpoint is the Amazon ECR registry endpoint coordinate
+	// (`SOCKERLESS_AWS_ECR_ENDPOINT`): empty when the registry is reached
+	// at `<account>.dkr.ecr.<region>.amazonaws.com`, else the address
+	// every image reference into it carries and registry HTTP is dialed at.
+	ECRRegistryEndpoint string
 	// CpuArchitecture maps to ECS RuntimePlatform.CpuArchitecture.
 	// Valid: "X86_64" (Fargate default) or "ARM64" (Graviton). The
 	// sockerless backend reports this value (Docker-style) via
@@ -69,23 +74,24 @@ type Config struct {
 func ConfigFromEnv() Config {
 	sharedVolumes, sharedVolumesErr := core.ParseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES"), awscommon.ECSSharedVolumeFormat)
 	return Config{
-		Region:           core.EnvOrDefault("AWS_REGION", "us-east-1"),
-		Cluster:          core.EnvOrDefault("SOCKERLESS_ECS_CLUSTER", "sockerless"),
-		Subnets:          core.SplitCSV(os.Getenv("SOCKERLESS_ECS_SUBNETS")),
-		SecurityGroups:   core.SplitCSV(os.Getenv("SOCKERLESS_ECS_SECURITY_GROUPS")),
-		TaskRoleARN:      os.Getenv("SOCKERLESS_ECS_TASK_ROLE_ARN"),
-		ExecutionRoleARN: os.Getenv("SOCKERLESS_ECS_EXECUTION_ROLE_ARN"),
-		LogGroup:         core.EnvOrDefault("SOCKERLESS_ECS_LOG_GROUP", "/sockerless"),
-		AgentEFSID:       os.Getenv("SOCKERLESS_AGENT_EFS_ID"),
-		AssignPublicIP:   os.Getenv("SOCKERLESS_ECS_PUBLIC_IP") == "true",
-		CodeBuildProject: os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
-		BuildBucket:      os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
-		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
-		CpuArchitecture:  os.Getenv("SOCKERLESS_ECS_CPU_ARCHITECTURE"),
-		PollInterval:     core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		SharedVolumes:    sharedVolumes,
-		sharedVolumesErr: sharedVolumesErr,
-		NetworkDiscovery: core.NetworkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh),
+		Region:              core.EnvOrDefault("AWS_REGION", "us-east-1"),
+		Cluster:             core.EnvOrDefault("SOCKERLESS_ECS_CLUSTER", "sockerless"),
+		Subnets:             core.SplitCSV(os.Getenv("SOCKERLESS_ECS_SUBNETS")),
+		SecurityGroups:      core.SplitCSV(os.Getenv("SOCKERLESS_ECS_SECURITY_GROUPS")),
+		TaskRoleARN:         os.Getenv("SOCKERLESS_ECS_TASK_ROLE_ARN"),
+		ExecutionRoleARN:    os.Getenv("SOCKERLESS_ECS_EXECUTION_ROLE_ARN"),
+		LogGroup:            core.EnvOrDefault("SOCKERLESS_ECS_LOG_GROUP", "/sockerless"),
+		AgentEFSID:          os.Getenv("SOCKERLESS_AGENT_EFS_ID"),
+		AssignPublicIP:      os.Getenv("SOCKERLESS_ECS_PUBLIC_IP") == "true",
+		CodeBuildProject:    os.Getenv("SOCKERLESS_AWS_CODEBUILD_PROJECT"),
+		BuildBucket:         os.Getenv("SOCKERLESS_AWS_BUILD_BUCKET"),
+		EndpointURL:         os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		ECRRegistryEndpoint: os.Getenv(awscommon.ECREndpointEnv),
+		CpuArchitecture:     os.Getenv("SOCKERLESS_ECS_CPU_ARCHITECTURE"),
+		PollInterval:        core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		SharedVolumes:       sharedVolumes,
+		sharedVolumesErr:    sharedVolumesErr,
+		NetworkDiscovery:    core.NetworkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh),
 	}
 }
 
@@ -120,6 +126,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		}
 	}
 	c.EndpointURL = env.Common.EndpointURL
+	c.ECRRegistryEndpoint = os.Getenv(awscommon.ECREndpointEnv)
 	if env.Common.PollInterval != "" {
 		c.PollInterval = core.DurationOrDefault(env.Common.PollInterval, c.PollInterval)
 	}
