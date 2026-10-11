@@ -45,8 +45,11 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	// and the resulting Dockerfile FROM
 	// `…/public-ecr-aws/docker/library/sha256:hex` 404s in CodeBuild.
 	if strings.HasPrefix(ref, "sha256:") && !strings.ContainsAny(ref, "/@") {
-		if img, ok := s.Store.ResolveImage(ref); ok && len(img.RepoTags) > 0 {
-			canonical := img.RepoTags[0]
+		if img, ok := s.Store.ResolveImage(ref); ok {
+			canonical, named := core.ImageReference(img)
+			if !named {
+				return ref, fmt.Errorf("image %s pulled for digest-only reference %q has neither a tag nor a repository digest", img.ID, ref)
+			}
 			s.Logger.Debug().Str("digest", ref).Str("canonical", canonical).
 				Msg("resolved digest-only ref via image Store")
 			return s.resolveImageURI(ctx, canonical)
@@ -60,7 +63,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	// Decompose the reference. For public.ecr.aws/<path> we treat it
 	// the same as any registry-prefixed ref so it goes through a
 	// pull-through cache (Lambda needs single-arch ECR-hosted images).
-	registry, repo, tag := core.SplitDockerRef(ref)
+	registry, repo, version := core.SplitDockerRef(ref)
 
 	var cachePrefix, upstreamURL string
 	var upstreamKind ecrtypes.UpstreamRegistry
@@ -97,7 +100,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		return "", fmt.Errorf("cannot determine AWS account ID from role ARN %q", s.config.RoleARN)
 	}
 
-	ecrURI := awscommon.PullThroughCacheURI(accountID, s.config.Region, cachePrefix, repo, tag)
+	ecrURI := awscommon.PullThroughCacheURI(accountID, s.config.Region, cachePrefix, repo, version)
 	s.Logger.Info().Str("original", ref).Str("ecr", ecrURI).Msg("resolved image to ECR pull-through cache URI")
 	return ecrURI, nil
 }

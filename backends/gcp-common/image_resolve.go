@@ -53,7 +53,7 @@ func ResolveGCPImageURI(ref, project, region, registryEndpoint string) string {
 	}
 
 	// Parse the Docker reference
-	registry, repo, tag := core.SplitDockerRef(ref)
+	registry, repo, version := core.SplitDockerRef(ref)
 
 	// Cloud Run only accepts images from gcr.io / docker.pkg.dev /
 	// docker.io. Other registries must be mirrored via AR remote
@@ -80,5 +80,5 @@ func ResolveGCPImageURI(ref, project, region, registryEndpoint string) string {
 
 	// Rewrite to the Artifact Registry remote repository at the registry the
 	// coordinate names.
-	return OverlayRegistryHost(region, registryEndpoint) + "/" + project + "/" + arRepo + "/" + repo + ":" + tag
+	return OverlayRegistryHost(region, registryEndpoint) + "/" + project + "/" + arRepo + "/" + repo + version
 }

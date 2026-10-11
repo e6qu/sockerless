@@ -4,6 +4,33 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact history.
 
+## Pulling by digest (2026-10-10)
+
+The Docker Engine API carries `docker pull name@sha256:…` as
+`fromImage=name&tag=sha256:…`. The image-create handler joined the two
+with `:`, so the registry was asked for a tag named `sha256:…` and
+answered 404, and it added no `latest` to a name whose only colon was a
+registry port. Behind it the same mistake repeated wherever a reference
+was split at a colon: the registry client dropped the digest and fetched
+the manifest by tag, the stored image took the digest reference as a tag
+and cut its repository digest at the first colon, and the cloud image
+resolvers read a digest's hex as a tag. `core.SplitImageReference` is now
+the one split, by Docker's rule. `core.ParseImageRefWithTag` reads the
+`tag` parameter as a tag or a digest for image create and push; the
+registry client fetches the manifest by the digest; an image pulled by
+digest is recorded under its repository digest with no tag and resolves
+from any `name[:tag]@digest`; and `core.SplitDockerRef` hands the
+resolvers an `@digest` or `:tag` version to rebuild with (BUG-2979).
+
+The same branch moved every drifted dependency to its latest release: the
+AWS SDK for Go v2, the Azure SDK for Go, the Google Cloud client libraries,
+`google.golang.org/api`, gRPC, OpenTelemetry, `golang.org/x/oauth2`, the
+Docker SDK (`github.com/moby/moby/client` v0.6.2, `github.com/moby/moby/api`
+v1.56.1), and the `actions/setup-node`, `actions/upload-artifact`,
+`actions/download-artifact`, `aws-actions/configure-aws-credentials`,
+`docker/build-push-action` and `docker/setup-buildx-action` pins. Every
+module whose dependencies require Go 1.26 declares `go 1.26.0`.
+
 ## The Lambda cell is back (2026-09-07)
 
 sockerless-cloud v0.30.10 resolves an ECR pull-through-cache reference

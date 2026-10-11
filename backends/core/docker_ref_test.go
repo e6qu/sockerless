@@ -4,25 +4,28 @@ import "testing"
 
 func TestSplitDockerRef(t *testing.T) {
 	cases := []struct {
-		in                         string
-		wantReg, wantRepo, wantTag string
+		in                             string
+		wantReg, wantRepo, wantVersion string
 	}{
-		{"alpine", "", "alpine", "latest"},
-		{"alpine:latest", "", "alpine", "latest"},
-		{"node:20", "", "node", "20"},
-		{"myorg/app:v1", "", "myorg/app", "v1"},
-		{"docker.io/library/alpine:3.18", "docker.io", "library/alpine", "3.18"},
-		{"ghcr.io/owner/repo:v2", "ghcr.io", "owner/repo", "v2"},
-		{"ghcr.io/owner/repo", "ghcr.io", "owner/repo", "latest"},
-		{"registry.example.com:5000/team/app:sha-abc", "registry.example.com:5000", "team/app", "sha-abc"},
-		{"localhost/x", "", "localhost/x", "latest"},
+		{"alpine", "", "alpine", ":latest"},
+		{"alpine:latest", "", "alpine", ":latest"},
+		{"node:20", "", "node", ":20"},
+		{"myorg/app:v1", "", "myorg/app", ":v1"},
+		{"docker.io/library/alpine:3.18", "docker.io", "library/alpine", ":3.18"},
+		{"ghcr.io/owner/repo:v2", "ghcr.io", "owner/repo", ":v2"},
+		{"ghcr.io/owner/repo", "ghcr.io", "owner/repo", ":latest"},
+		{"registry.example.com:5000/team/app:sha-abc", "registry.example.com:5000", "team/app", ":sha-abc"},
+		{"registry.example.com:5000/team/app", "registry.example.com:5000", "team/app", ":latest"},
+		{"localhost/x", "", "localhost/x", ":latest"},
+		{"alpine@sha256:abc", "", "alpine", "@sha256:abc"},
+		{"public.ecr.aws/docker/library/alpine:3.20@sha256:abc", "public.ecr.aws", "docker/library/alpine", "@sha256:abc"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			reg, repo, tag := SplitDockerRef(tc.in)
-			if reg != tc.wantReg || repo != tc.wantRepo || tag != tc.wantTag {
+			reg, repo, version := SplitDockerRef(tc.in)
+			if reg != tc.wantReg || repo != tc.wantRepo || version != tc.wantVersion {
 				t.Fatalf("SplitDockerRef(%q) = (%q, %q, %q), want (%q, %q, %q)",
-					tc.in, reg, repo, tag, tc.wantReg, tc.wantRepo, tc.wantTag)
+					tc.in, reg, repo, version, tc.wantReg, tc.wantRepo, tc.wantVersion)
 			}
 		})
 	}

@@ -72,9 +72,10 @@ func PullThroughCachePrefix(registry string) string {
 }
 
 // PullThroughCacheURI is the ECR image URI a workload pulls a cached
-// image from.
-func PullThroughCacheURI(accountID, region, prefix, repo, tag string) string {
-	return fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s/%s:%s", accountID, region, prefix, repo, tag)
+// image from. version is the `:<tag>` or `@<digest>` suffix
+// core.SplitDockerRef returns.
+func PullThroughCacheURI(accountID, region, prefix, repo, version string) string {
+	return fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s/%s%s", accountID, region, prefix, repo, version)
 }
 
 // ExtractAccountID returns the account ID from an IAM ARN

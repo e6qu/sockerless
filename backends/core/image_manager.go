@@ -198,7 +198,8 @@ func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 	// Sync to cloud registry (non-fatal)
 	if m.Auth != nil {
 		registry, repo, tag := splitImageRefRegistry(ref)
-		if m.Auth.IsCloudRegistry(registry) {
+		// An image pulled by digest alone carries no tag to sync.
+		if tag != "" && m.Auth.IsCloudRegistry(registry) {
 			if img, ok := m.Base.Store.ResolveImage(ref); ok {
 				if err := m.Auth.OnPush(img.ID, registry, repo, tag); err != nil {
 					m.Logger.Warn().Err(err).Str("ref", ref).Msg("cloud sync after pull failed")

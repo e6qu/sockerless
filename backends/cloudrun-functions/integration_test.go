@@ -151,7 +151,7 @@ func TestMain(m *testing.M) {
 	if !dockerImageExists(evalImageName) || !dockerImageExists(arTag) {
 		step("docker build " + evalImageName + " (" + overlayPlatform + ")")
 		fmt.Printf("[sim] Building %s (%s)...\n", evalImageName, overlayPlatform)
-		evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
+		evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.26-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .

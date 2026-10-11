@@ -26,6 +26,9 @@ func TestSplitImageRefRegistry(t *testing.T) {
 		{"docker.io/library/alpine:3.19", "registry-1.docker.io", "library/alpine", "3.19"},
 		{"docker.io/myuser/myimage:latest", "registry-1.docker.io", "myuser/myimage", "latest"},
 		{"localhost:5000/myimage:test", "localhost:5000", "myimage", "test"},
+		{"localhost:5000/myimage", "localhost:5000", "myimage", "latest"},
+		{"alpine@sha256:abc", "registry-1.docker.io", "library/alpine", ""},
+		{"public.ecr.aws/docker/library/alpine:3.20@sha256:abc", "public.ecr.aws", "docker/library/alpine", "3.20"},
 	}
 
 	for _, tt := range tests {
@@ -39,6 +42,16 @@ func TestSplitImageRefRegistry(t *testing.T) {
 			}
 			if rc.Tag != tt.tag {
 				t.Errorf("tag: got %q, want %q", rc.Tag, tt.tag)
+			}
+			// The manifest is fetched by the digest when the reference
+			// names one, never by a tag the digest overrides.
+			_, _, digest := SplitImageReference(tt.input)
+			want := tt.tag
+			if digest != "" {
+				want = digest
+			}
+			if got := rc.manifestReference(); got != want {
+				t.Errorf("manifest reference: got %q, want %q", got, want)
 			}
 		})
 	}

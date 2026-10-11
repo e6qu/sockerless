@@ -110,10 +110,24 @@ func (st *Store) ResolveImage(ref string) (api.Image, bool) {
 	if img, ok := st.Images.Get(ref); ok {
 		return img, true
 	}
-	// Try with :latest
-	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
+	repository, tag, digest := SplitImageReference(ref)
+	// A reference with neither tag nor digest names `latest`.
+	if tag == "" && digest == "" {
 		if img, ok := st.Images.Get(ref + ":latest"); ok {
 			return img, true
+		}
+	}
+	// A reference that carries a digest names the image pulled at that
+	// digest from its repository, whatever tag it also names: Docker
+	// resolves `name:tag@digest` by the digest alone.
+	if digest != "" && repository != "" {
+		want := repository + "@" + digest
+		for _, img := range st.Images.List() {
+			for _, rd := range img.RepoDigests {
+				if rd == want {
+					return img, true
+				}
+			}
 		}
 	}
 	// Try prefix match on ID. gitlab-runner uses bare digest refs like

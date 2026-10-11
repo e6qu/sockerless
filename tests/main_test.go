@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 	evalDir := findModuleDir("tests/testdata/eval-arithmetic")
 	fmt.Println("Building eval-arithmetic Docker image (linux/arm64)...")
 	evalImageName = "sockerless-eval-arithmetic:test"
-	dockerfile := `FROM golang:1.25-alpine AS build
+	dockerfile := `FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .

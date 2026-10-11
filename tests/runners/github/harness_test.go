@@ -138,7 +138,7 @@ jobs:
   arithmetic:
     runs-on: [self-hosted, sockerless-sim]
     container:
-      image: golang:1.25-alpine
+      image: golang:1.26-alpine
     steps:
       - uses: actions/checkout@v4
       - run: go version

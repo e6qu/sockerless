@@ -119,7 +119,7 @@ func TestMain(m *testing.M) {
 	// limit), not docker.io. Docker Hub throttles unauthenticated
 	// pulls aggressively (toomanyrequests/429); ECR Public Gallery
 	// mirrors the Docker Library images without that constraint.
-	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
+	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.26-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .

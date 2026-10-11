@@ -3,6 +3,8 @@ package core
 import (
 	"fmt"
 	"strings"
+
+	"github.com/sockerless/api"
 )
 
 // ImageRef is the canonical parsed form of a docker / OCI image
@@ -125,4 +127,66 @@ func (r ImageRef) FullName() string {
 		return r.Path
 	}
 	return r.Domain + "/" + r.Path
+}
+
+// ParseImageRefWithTag parses the reference a Docker Engine API image
+// request names as a repository plus a separate `tag` query parameter,
+// the way `POST /images/create` (fromImage + tag) and
+// `POST /images/{name}/push` (name + tag) carry it. The engine's tag
+// parameter is "tag or digest": `docker pull name@sha256:…` arrives as
+// tag=sha256:…, which joins with `@`, never `:`. A reference that ends up
+// with neither a tag nor a digest gets `latest`, as the engine does.
+func ParseImageRefWithTag(name, tag string) (ImageRef, error) {
+	ref, err := ParseImageRef(name)
+	if err != nil {
+		return ImageRef{}, err
+	}
+	switch {
+	case tag == "":
+	case strings.Contains(tag, ":"):
+		if ref.Digest != "" && ref.Digest != tag {
+			return ImageRef{}, fmt.Errorf("%q already names digest %s, not %s", name, ref.Digest, tag)
+		}
+		ref.Digest = tag
+	default:
+		if ref.Tag != "" && ref.Tag != tag {
+			return ImageRef{}, fmt.Errorf("%q already names tag %s, not %s", name, ref.Tag, tag)
+		}
+		ref.Tag = tag
+	}
+	if ref.Tag == "" && ref.Digest == "" {
+		ref.Tag = "latest"
+	}
+	return ref, nil
+}
+
+// SplitImageReference splits a reference string into its repository
+// (`<domain>/<path>`), tag, and digest, by the same rule ParseImageRef
+// applies: the digest follows `@`, and the tag follows a colon to the right
+// of every `/`, so the port in `localhost:5000/foo` stays in the repository.
+// It never fails; a reference with no tag or digest returns them empty.
+func SplitImageReference(ref string) (repository, tag, digest string) {
+	repository = ref
+	if i := strings.Index(repository, "@"); i >= 0 {
+		digest = repository[i+1:]
+		repository = repository[:i]
+	}
+	if i := strings.LastIndex(repository, ":"); i > strings.LastIndex(repository, "/") {
+		tag = repository[i+1:]
+		repository = repository[:i]
+	}
+	return repository, tag, digest
+}
+
+// ImageReference names a stored image the way a client can pull it again:
+// its first repository tag, or for an image pulled by digest alone, which
+// Docker records without a tag, its first repository digest.
+func ImageReference(img api.Image) (string, bool) {
+	if len(img.RepoTags) > 0 {
+		return img.RepoTags[0], true
+	}
+	if len(img.RepoDigests) > 0 {
+		return img.RepoDigests[0], true
+	}
+	return "", false
 }

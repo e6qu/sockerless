@@ -78,7 +78,7 @@ func TestGitLab_Simulator_Arithmetic(t *testing.T) {
 		Tag:          envOr("SOCKERLESS_GL_SIM_TAG", "sockerless-sim"),
 		BranchPrefix: "sockerless-sim-arithmetic",
 		PipelineYAML: fmt.Sprintf(`arithmetic:
-  image: golang:1.25-alpine
+  image: golang:1.26-alpine
   tags:
     - %s
   script:
