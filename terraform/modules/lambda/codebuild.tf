@@ -13,6 +13,10 @@
 
 resource "aws_s3_bucket" "build_context" {
   bucket = "${local.name_prefix}-build-context"
+  # The backend stages a build context here for every overlay it builds;
+  # destroy removes them with the bucket, as the registry's force_delete
+  # removes the overlays.
+  force_destroy = true
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-build-context"
@@ -28,7 +32,8 @@ resource "aws_s3_bucket_versioning" "build_context" {
 
 # The build-context bucket writes its access logs here.
 resource "aws_s3_bucket" "access_logs" {
-  bucket = "${local.name_prefix}-access-logs"
+  bucket        = "${local.name_prefix}-access-logs"
+  force_destroy = true
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-access-logs"
   })

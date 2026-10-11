@@ -483,7 +483,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        backend: [ecs, lambda, cloudrun, gcf, aca, azf]
+        # The Lambda cell joins when the AWS simulator runs a CodeBuild build
+        # with its project's service role credentials: the backend builds
+        # every function's overlay there, and the build reads its context
+        # from Amazon S3 and logs in to Amazon ECR as that role.
+        backend: [ecs, cloudrun, gcf, aca, azf]
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Terraform integration (${{ matrix.backend }})

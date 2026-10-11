@@ -4,6 +4,52 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact history.
 
+## Lambda overlays through CodeBuild, Vite on Node (2026-10-11)
+
+The AWS Lambda backend ran the user's bare image whenever it had a custom
+endpoint, so under the simulator a function carried no bootstrap and every
+`docker start` waited out the reverse-agent timeout. That branch and the
+local `docker build` fallback are gone: every function runs a bootstrap
+overlay that AWS CodeBuild builds natively for the function's architecture
+(`OverlayImageSpec.Platform`, an `ARM_CONTAINER` project for arm64), or an
+overlay the operator built ahead of time, and the backend refuses to start
+without one of the two. The overlay tag covers the platform and the agent
+and bootstrap binaries' content, so a new build of either is a new image.
+A pod overlay builds the same way, from member images resolved through the
+pull-through cache. `SOCKERLESS_AWS_ECR_ENDPOINT` is the Amazon ECR registry
+endpoint coordinate, read once into the ECS and Lambda configs as the Google
+and Azure coordinates are; `core.RegistryCoordinateHost` and
+`core.RegistryCoordinateURL` are now the one reading of all three, and the
+Azure coordinate travels in the ACA and Azure Functions configs instead of
+being read from the environment by helpers. CodeBuild runs the project as
+provisioned (no S3 source override for a tarball CodeBuild cannot unpack),
+and a failed build's error carries the end of its CloudWatch log. The Lambda
+module provisions its image-builder project for its `architecture`, takes an
+optional `codebuild_image`, sets the build region from `region`, hands the
+runner Lambda its overlay repository, and force-destroys its build buckets.
+The Terraform integration harness builds a small CodeBuild environment image
+and exports the module's project, bucket and repository with the simulator's
+ECR address; its outputs fail the run when missing, and a failed destroy
+fails a run that had passed. The Lambda cell stays out of the matrix until
+the AWS simulator runs a build with its project's service role (BUG-2978).
+
+The simulators moved to sockerless-cloud v2.0.9, the newest release before
+App Service and Container Apps workloads got per-app `IDENTITY_HEADER`
+secrets, which the Azure harnesses' shared managed-identity header no longer
+satisfies.
+
+The user-interface stall (BUG-2925) was the Vite build running in Bun's
+runtime, which has open reports of builds that finish and never exit. Vite
+now runs on Node under `bun run`; the CI jobs install Node 24 and take Bun's
+version from `packageManager`, and the admin image builds on Node 24.
+
+BUG-1075 records exactly what a live run needs: the accounts and secrets for
+each cloud, which this repository does not have, and the runner images and
+Terraform alignment that are missing. The AWS live scripts and workflows read
+the module outputs that exist, install Terragrunt, select jobs by exact step,
+wait for backend readiness, and no longer mask a failed destroy. The
+simulator-backed end-to-end harnesses' AWS configuration gap is BUG-2980.
+
 ## Pulling by digest (2026-10-10)
 
 The Docker Engine API carries `docker pull name@sha256:…` as

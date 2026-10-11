@@ -186,7 +186,7 @@ func (s *CodeBuildService) Build(ctx context.Context, opts core.CloudBuildOption
 phases:
   pre_build:
     commands:
-      - aws s3 cp "s3://%s/%s" /tmp/context.tar.gz
+      - aws s3 cp --only-show-errors "s3://%s/%s" /tmp/context.tar.gz
       - mkdir -p /tmp/build-context
       - tar -xzf /tmp/context.tar.gz -C /tmp/build-context
       - aws ecr get-login-password --region %s | docker login --username AWS --password-stdin %s

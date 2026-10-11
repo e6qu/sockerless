@@ -6,65 +6,51 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 The `terraform-integration` job applies five environments — Amazon ECS,
 Google Cloud Run, Cloud Run Functions, Azure Container Apps and Azure
-Functions — against their simulators at sockerless-cloud v0.30.10 and runs
+Functions — against their simulators at sockerless-cloud v2.0.9 and runs
 an act smoke through each backend; a red cell there is a module, harness
-or simulator defect, not a flake. The Docker API clients speak
-`github.com/moby/moby/client`.
+or simulator defect, not a flake.
 
-Next, in order — the AWS registry coordinate, mirroring what the Google
-(`SOCKERLESS_GCP_AR_ENDPOINT`) and Azure (`SOCKERLESS_AZURE_ACR_ENDPOINT`)
-paths already do, where a relocated registry's host is the host every
-image reference carries, for the push and for the workload's pull alike:
+Next, in order:
 
-1. sockerless-cloud BUG-2991, the simulator side:
-   - The CodeBuild build environment runs docker steps: `privileged_mode`
-     gives the environment the engine (the host engine's socket bound in,
-     as real CodeBuild's docker daemon is), and a curated image name
-     (`aws/codebuild/<name>:<tag>`) resolves to its public distribution,
-     `public.ecr.aws/codebuild/<name>:<tag>`; an `ARM_CONTAINER` runs the
-     aarch64 image natively.
-   - The environment's Docker configuration carries a credential helper
-     that answers the simulator's ECR login server and the simulator's
-     own port (`*:<port>`) with the `AWS` / authorization-token credential,
-     the way `cloudBuildDockerConfig` and `acrRunDockerConfig` do.
-   - The Lambda and Amazon ECS hosts pull a reference that carries the
-     simulator's own port from the simulator's registry with that
-     credential (`sim.PullImageWithCredential`), as the Cloud Run host
-     does, instead of resolving it to a local engine name.
-   - Covered by an SDK test: a CodeBuild build whose buildspec logs in,
-     builds and pushes to the simulator's ECR, then a Lambda function
-     created from that reference runs it.
-2. BUG-2978, here, on the release that carries it:
-   - `SOCKERLESS_AWS_ECR_ENDPOINT` (default: the account's ECR login
-     server) read once into `aws-common`; the Lambda overlay reference
-     carries its host, the buildspec logs in to the reference's own
-     registry (`${IMAGE_URI%%/*}`) rather than a hardcoded login server,
-     and the overlay is built for the function's architecture on an
-     `ARM_CONTAINER` when it is arm64.
-   - Delete the `EndpointURL != ""` branch and the local-docker fallback in
-     `backends/lambda`; a prebuilt overlay stays the only other mode.
-   - The harness exports `SOCKERLESS_LAMBDA_CODEBUILD_PROJECT`,
-     `SOCKERLESS_LAMBDA_BUILD_BUCKET`, `SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO`
-     and `SOCKERLESS_AWS_ECR_ENDPOINT` from the Lambda module's outputs and
-     the simulator's address; the Lambda cell rejoins the matrix.
+1. sockerless-cloud: a CodeBuild build environment gets its project's
+   service role credentials through the container credentials endpoint
+   (`AWS_CONTAINER_CREDENTIALS_FULL_URI` at the simulator's address), as
+   real CodeBuild does; today it takes the instance metadata endpoint's
+   fixed `ASIASIMACCESSKEY`, which the simulator's IAM refuses.
+2. BUG-2978, here, on the release that carries it once it has aged 24
+   hours: bump every pin and add `lambda` to the `terraform-integration`
+   matrix. The backend, the Lambda module and the harness are ready.
+3. The next simulator bump past v2.0.9 gives each App Service and Container
+   Apps workload its own `IDENTITY_HEADER`; the Azure harnesses (the ACA and
+   Azure Functions integration suites, `smoke-tests/run.sh`, the Terraform
+   integration harness, `tests/sim_harness_test.go`) need a credential the
+   simulator authenticates for a client outside it.
+4. BUG-2980: the simulator-backed end-to-end harnesses configure the AWS
+   backends as `tests/terraform-integration/run-test.sh` does.
 
-What remains after that is gated outside this repository:
+What remains is gated outside this repository:
 
-- BUG-2925 (the UI CI stall) stays open until its cause is proven; the
-  original stall has not recurred.
-- BUG-1075: live-cloud validation beyond AWS Lambda needs real-cloud
-  credentials for Google Cloud Run, Azure Container Apps, Azure Functions,
-  Lambda service mesh and Azure identity. The modules provision what a live
-  run needs (the `sockerless-overlay` repository, the Cloud KMS-encrypted
-  buckets, the Azure CLI-driven destroy sweep).
+- BUG-1075: live-cloud validation needs the accounts and secrets its row
+  lists, plus ACA and Azure Functions runner images and GCP runner images
+  aligned with the live Terraform outputs.
 
 Durable rules for the next change:
 
-- The coordinate rule: a backend reads a registry coordinate once into its
-  `Config` and every registry operation takes it from there; no helper reads
-  `SOCKERLESS_*_ENDPOINT` from the environment on its own. Every simulator
-  stack exports `SOCKERLESS_GCP_AR_ENDPOINT` pointing at the simulator,
-  scheme included.
+- The coordinate rule: a backend reads a registry coordinate
+  (`SOCKERLESS_AWS_ECR_ENDPOINT`, `SOCKERLESS_GCP_AR_ENDPOINT`,
+  `SOCKERLESS_AZURE_ACR_ENDPOINT`) once into its `Config` and every registry
+  operation takes it from there; no helper reads it from the environment on
+  its own, and `core.RegistryCoordinateHost` / `core.RegistryCoordinateURL`
+  are the one reading of its value. Every simulator stack exports the
+  coordinate pointing at the simulator, scheme included.
+- Every AWS Lambda function runs a bootstrap overlay: built through AWS
+  CodeBuild for the function's architecture, or prebuilt by the operator.
+  There is no bare-image or local-docker path, against the simulator or the
+  cloud.
+- Bun installs the UI workspace and runs its scripts; the tools the scripts
+  call (Vite, Vitest, tsc) run on Node. No script uses `bun --bun`.
+- A harness reads Terraform outputs with `jq -e`, so a missing output fails
+  the run, and a failed `terragrunt destroy` fails it too.
 - A stateless backend's cloud resource tags are the only carrier of a
   container's Docker identity (name, labels, tty) after a start; write them
   through `core.TagSet` on every create path.
@@ -73,7 +59,7 @@ Durable rules for the next change:
 
 Simulator pins: sockerless-cloud releases with exactly one `vX.Y.Z` tag
 (release-please); Go pins reference release commits (pseudo-versions) and
-checkout/git-context pins reference the tag. v0.30.10 (commit
+checkout/git-context pins reference the tag. v2.0.9 (commit
 `2f60a2aaa0a9c006aa4541d20ff2a2c65977b33a`) is the current pin everywhere:
 `tests/go.mod` (three simulators, `ui-auth`, `realexec`, `sim`), every
 harness `ARG SOCKERLESS_CLOUD_VERSION`, `deploy/compose.build.yaml` and
