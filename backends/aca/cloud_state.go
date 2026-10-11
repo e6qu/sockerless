@@ -263,7 +263,7 @@ func (p *acaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, er
 		return nil, nil
 	}
 	auth := p.server.images.Auth
-	registry := azurecommon.AzureRegistryHost(p.server.config.ACRName)
+	registry := azurecommon.AzureRegistryHost(p.server.config.ACRName, p.server.config.ACRRegistryEndpoint)
 	return core.OCIListImages(ctx, core.OCIListOptions{
 		Registry: registry,
 		Endpoint: core.RegistryEndpointFor(auth, registry),

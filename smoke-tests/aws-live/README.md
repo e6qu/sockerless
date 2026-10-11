@@ -16,12 +16,15 @@ exported.
   Cloud Map privileges in a scratch account.
 - `terragrunt` + `terraform` on PATH.
 - `docker` + `gh` on PATH (for the runner scripts).
+- Amazon ECS scripts: `SOCKERLESS_ECS_CPU_ARCHITECTURE` (`X86_64` or `ARM64`).
+- AWS Lambda scripts: `SOCKERLESS_LAMBDA_ARCHITECTURE` (as the Lambda module was applied with), `SOCKERLESS_AGENT_BINARY` and `SOCKERLESS_LAMBDA_BOOTSTRAP` built for it, and `SOCKERLESS_CALLBACK_URL` — a `wss://…/v1/lambda/reverse` address the functions reach and that forwards to the backend's port 2376. Every function's bootstrap overlay is built in the Lambda module's AWS CodeBuild project.
 
 ## Entrypoints
 
 | Script | Owns |
 |---|---|
-| `0-infra-up.sh` | terragrunt apply; caches outputs to `/tmp/ecs-out.json`. |
+| `lib.sh` | Sourced by the others: the backends' environment from the cached Terraform outputs (the same mapping `tests/terraform-integration/run-test.sh` applies against the simulator), and a backend started and waited on. |
+| `0-infra-up.sh` | terragrunt apply in `TG_DIR`; caches outputs to `INFRA_OUTPUT` (the ECS scripts read `/tmp/ecs-out.json`, the Lambda scripts `/tmp/ecs-infra-out.json` and `/tmp/aws-infra-out.json`). |
 | `1-ecs-smoke.sh` | ECS basic smoke — docker run, ps, logs, exec, kill, cross-container DNS. |
 | `2-lambda-baseline.sh` | Lambda basic — create, invoke, logs, update, delete. |
 | `3-lambda-runtime-api.sh` | Lambda Runtime API + agent-as-handler — overlay build, exec. |

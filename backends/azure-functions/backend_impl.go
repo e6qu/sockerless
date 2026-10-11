@@ -92,7 +92,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	overlayBaseRef := config.Image
 
 	// Resolve Docker Hub images to ACR or normalize for Azure Functions
-	config.Image = azurecommon.ResolveAzureImageURI(config.Image, s.config.Registry)
+	config.Image = azurecommon.ResolveAzureImageURI(config.Image, s.config.Registry, s.config.ACRRegistryEndpoint)
 
 	originalImage := config.Image
 	// Stash the pre-overlay image + entrypoint/cmd. If this container ends up

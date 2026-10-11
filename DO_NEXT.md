@@ -74,7 +74,7 @@ Durable rules for the next change:
 Simulator pins: sockerless-cloud releases with exactly one `vX.Y.Z` tag
 (release-please); Go pins reference release commits (pseudo-versions) and
 checkout/git-context pins reference the tag. v0.30.10 (commit
-`791211658b76c59780c0c4cd499daa97c81867c3`) is the current pin everywhere:
+`2f60a2aaa0a9c006aa4541d20ff2a2c65977b33a`) is the current pin everywhere:
 `tests/go.mod` (three simulators, `ui-auth`, `realexec`, `sim`), every
 harness `ARG SOCKERLESS_CLOUD_VERSION`, `deploy/compose.build.yaml` and
 `.github/workflows/live-tests-lambda.yml`. Verify a release with

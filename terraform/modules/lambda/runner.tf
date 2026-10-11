@@ -310,7 +310,7 @@ resource "aws_lambda_function" "sockerless_runner" {
       SOCKERLESS_LAMBDA_SUBNETS         = join(",", local.ecs_private_subnet_ids)
       SOCKERLESS_LAMBDA_SECURITY_GROUPS = local.ecs_task_security_group_id
       SOCKERLESS_LAMBDA_AGENT_EFS_ID    = local.ecs_efs_filesystem_id
-      SOCKERLESS_LAMBDA_ARCHITECTURE    = "x86_64"
+      SOCKERLESS_LAMBDA_ARCHITECTURE    = var.architecture
       # Bind-mount → EFS translation for sub-task Lambdas. Lambda
       # enforces at most one `FileSystemConfig` per function with mount
       # path `/mnt/...`, so sockerless collapses both runner-side
@@ -331,6 +331,8 @@ resource "aws_lambda_function" "sockerless_runner" {
       # See backends/aws-common/build.go::CodeBuildService.
       SOCKERLESS_CODEBUILD_PROJECT = aws_codebuild_project.image_builder.name
       SOCKERLESS_BUILD_BUCKET      = aws_s3_bucket.build_context.bucket
+      # The repository the overlays those builds produce are pushed to.
+      SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO = aws_ecr_repository.main.repository_url
     }
   }
 

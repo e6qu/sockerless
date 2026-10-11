@@ -1,6 +1,6 @@
 package gcpcommon
 
-import "strings"
+import core "github.com/sockerless/backend-core"
 
 // The Artifact Registry endpoint coordinate.
 //
@@ -35,14 +35,7 @@ func OverlayRegistryHost(region, registryEndpoint string) string {
 // when the registry is relocated, or "" when Artifact Registry is reached at the
 // host its references name (https://<host>).
 func RegistryEndpointURL(registryEndpoint string) string {
-	ep := strings.TrimRight(strings.TrimSpace(registryEndpoint), "/")
-	if ep == "" {
-		return ""
-	}
-	if !strings.HasPrefix(ep, "http://") && !strings.HasPrefix(ep, "https://") {
-		return "https://" + ep
-	}
-	return ep
+	return core.RegistryCoordinateURL(registryEndpoint)
 }
 
 // IsRelocatedRegistry reports whether `registry` — the host of an image
@@ -55,14 +48,8 @@ func IsRelocatedRegistry(registry, registryEndpoint string) bool {
 	return host != "" && registry == host
 }
 
-// registryCoordinateHost returns the bare host of the coordinate (scheme and
-// trailing slash stripped), or "" when the registry is not relocated.
+// registryCoordinateHost returns the bare host of the coordinate, or "" when
+// the registry is not relocated.
 func registryCoordinateHost(registryEndpoint string) string {
-	ep := strings.TrimSpace(registryEndpoint)
-	if ep == "" {
-		return ""
-	}
-	ep = strings.TrimPrefix(ep, "https://")
-	ep = strings.TrimPrefix(ep, "http://")
-	return strings.TrimRight(ep, "/")
+	return core.RegistryCoordinateHost(registryEndpoint)
 }

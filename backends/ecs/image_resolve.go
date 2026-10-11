@@ -32,8 +32,8 @@ import (
 //     by design. Operators who need such an image should `docker push`
 //     it to their ECR repo first.
 func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error) {
-	if awscommon.IsECRImageURI(ref) {
-		return ref, nil
+	if awscommon.IsECRImageURI(ref, s.config.ECRRegistryEndpoint) {
+		return awscommon.RelocateECRReference(ref, s.config.ECRRegistryEndpoint), nil
 	}
 	if strings.HasPrefix(ref, "public.ecr.aws/") {
 		return ref, nil
@@ -107,7 +107,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		return ref, fmt.Errorf("ECR pull-through cache setup for %q: %w", cachePrefix, err)
 	}
 
-	ecrURI := awscommon.PullThroughCacheURI(accountID, s.config.Region, cachePrefix, repo, version)
+	ecrURI := awscommon.PullThroughCacheURI(awscommon.ECRRegistryHost(accountID, s.config.Region, s.config.ECRRegistryEndpoint), cachePrefix, repo, version)
 	s.Logger.Debug().Str("original", ref).Str("ecr", ecrURI).Msg("resolved image to ECR pull-through cache URI")
 	return ecrURI, nil
 }

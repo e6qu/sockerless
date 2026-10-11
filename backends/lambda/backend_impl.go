@@ -220,9 +220,10 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// `specs/CLOUD_RESOURCE_MAPPING.md` § Lambda mapping: route every
 	// CreateFunction through the overlay-inject path which (a) bakes
 	// `sockerless-lambda-bootstrap` as ENTRYPOINT (resolves the
-	// Runtime-API gap) and (b) runs `docker build` + `docker push` /
-	// CodeBuild — both produce Docker schema 2 (resolves the manifest
-	// gap). The user's original ENTRYPOINT + CMD ride along as
+	// Runtime-API gap) and (b) builds it through AWS CodeBuild, whose
+	// `docker build` + `docker push` produce Docker schema 2 (resolves
+	// the manifest gap). An operator's prebuilt overlay is the one other
+	// mode. The user's original ENTRYPOINT + CMD ride along as
 	// `SOCKERLESS_USER_*` env vars; the bootstrap exec's them as a
 	// subprocess on each invocation.
 	var imageURI string
@@ -265,26 +266,22 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		// Pool keying for prebuilt-image mode is on the image URI itself
 		// (operator-controlled cache; we trust their content-addressing).
 		contentTag = "prebuilt-" + sanitizeContentTag(s.config.PrebuiltOverlayImage)
-	case s.config.EndpointURL != "":
-		// Custom-endpoint mode (sim Lambda / integration tests). The
-		// sim doesn't enforce real Lambda's Docker-schema-2 +
-		// Runtime-API constraints, so overlay-inject is unnecessary.
-		// Resolve and use the base image directly.
-		var resolveErr error
-		imageURI, resolveErr = s.resolveImageURI(s.ctx(), config.Image)
-		if resolveErr != nil {
-			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, resolveErr)}
-		}
-		contentTag = "sim-" + sanitizeContentTag(imageURI)
 	default:
 		base, err := s.resolveImageURI(s.ctx(), config.Image)
 		if err != nil {
 			return nil, &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", config.Image, err)}
 		}
+		identity, idErr := s.overlayBinaryIdentity()
+		if idErr != nil {
+			return nil, &api.ServerError{Message: idErr.Error()}
+		}
 		spec := OverlayImageSpec{
 			BaseImageRef:        base,
 			AgentBinaryPath:     s.config.AgentBinaryPath,
 			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			AgentBinaryHash:     identity.agentHash,
+			BootstrapBinaryHash: identity.bootstrapHash,
+			Platform:            identity.platform,
 			UserEntrypoint:      config.Entrypoint,
 			UserCmd:             config.Cmd,
 			BindLinks:           bindLinks,
@@ -366,10 +363,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Attach the resolved FileSystemConfig (already computed above so
 	// the bind-link symlinks could be baked into the overlay image).
-	// `SOCKERLESS_LAMBDA_BIND_LINKS` env is still emitted as a fallback
-	// for runtime-flexible deployments (sim mode, where the overlay
-	// path doesn't fire); the in-Lambda bootstrap is idempotent —
-	// finding pre-existing symlinks is a no-op. See
+	// `SOCKERLESS_LAMBDA_BIND_LINKS` env is also emitted for a prebuilt
+	// overlay, which carries no container's symlinks; the in-Lambda
+	// bootstrap is idempotent — finding pre-existing symlinks is a no-op. See
 	// `specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda bind-mount translation".
 	if len(fsConfigs) > 0 {
 		createInput.FileSystemConfigs = fsConfigs

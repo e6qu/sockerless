@@ -4,19 +4,15 @@
 set -euo pipefail
 
 : "${AWS_REGION:=eu-west-1}"
+: "${ECS_OUT:=/tmp/ecs-out.json}"
 : "${AWS_INFRA_OUTPUT:=/tmp/aws-infra-out.json}"
-
-if [ ! -f "$AWS_INFRA_OUTPUT" ]; then
-  echo "missing $AWS_INFRA_OUTPUT — run 0-infra-up.sh first" >&2
-  exit 1
-fi
-
-jq_val() { jq -r ".$1.value" "$AWS_INFRA_OUTPUT"; }
-SOCKERLESS_LAMBDA_ROLE_ARN="$(jq_val execution_role_arn)"
-export SOCKERLESS_LAMBDA_ROLE_ARN
-SOCKERLESS_LAMBDA_LOG_GROUP="$(jq_val log_group_name)"
-export SOCKERLESS_LAMBDA_LOG_GROUP
 export AWS_REGION
+
+# shellcheck source=smoke-tests/aws-live/lib.sh
+source "$(dirname "$0")/lib.sh"
+require_file "$ECS_OUT"
+require_file "$AWS_INFRA_OUTPUT"
+lambda_backend_env "$ECS_OUT" "$AWS_INFRA_OUTPUT"
 
 BACKEND_BIN="${BACKEND_BIN:-./sockerless-backend-lambda}"
 cleanup() {
@@ -27,9 +23,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=== starting Lambda backend on :2376 ==="
-"$BACKEND_BIN" --addr 127.0.0.1:2376 --log-level debug 2>/tmp/lambda-backend.log &
-BACKEND_PID=$!
-sleep 2
+start_backend "$BACKEND_BIN" 127.0.0.1:2376 /tmp/lambda-backend.log
 
 export DOCKER_HOST="tcp://127.0.0.1:2376"
 
@@ -38,7 +32,7 @@ docker run --rm alpine:latest echo "hello-from-lambda"
 
 echo "--- 2.2 docker run -d + logs ---"
 CID=$(docker run -d --name skls-r2 alpine:latest echo "lambda-baseline")
-sleep 5
+docker wait "$CID"
 docker logs "$CID" | grep lambda-baseline
 docker rm -f "$CID"
 

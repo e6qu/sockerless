@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "bun --bun vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "bash ../core/e2e/run-tests.sh",

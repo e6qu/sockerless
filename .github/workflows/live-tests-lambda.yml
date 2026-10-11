@@ -10,7 +10,11 @@
 # Actions). These MUST be configured before dispatch — the workflow
 # will fail at the first credentials step otherwise:
 #
-#   AWS_LIVE_ROLE_ARN          — IAM role ARN that GitHub OIDC assumes.
+#   AWS_LIVE_ROLE_ARN             — IAM role ARN that GitHub OIDC assumes.
+#   AWS_LIVE_LAMBDA_CALLBACK_URL  — wss:// address, reachable from the
+#                                   functions, that forwards to the backend
+#                                   on the runner (port 2376) and ends in
+#                                   /v1/lambda/reverse.
 # Why repo secrets and not workflow inputs: see live-tests-ecs.yml.
 
 name: live-tests-lambda
@@ -19,7 +23,11 @@ on:
   workflow_dispatch:
     inputs:
       region:
-        description: AWS region (e.g. eu-west-1)
+        # The live environments pin their region in Terraform (provider,
+        # availability zones, and state bucket), so it is the only choice.
+        description: AWS region of the live environments
+        type: choice
+        options: [eu-west-1]
         required: true
         default: eu-west-1
       scripts:
@@ -39,7 +47,7 @@ jobs:
   infra-up:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '0')
+    if: inputs.scripts == 'all' || contains(format(',{0},', inputs.scripts), ',0,')
     env:
       AWS_REGION: ${{ inputs.region }}
     steps:
@@ -49,6 +57,15 @@ jobs:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
           aws-region: ${{ inputs.region }}
       - uses: hashicorp/setup-terraform@v4.0.1
+      - name: Install Terragrunt
+        # The release binary, checked against the release's own SHA256SUMS.
+        run: |
+          version=v0.77.22
+          url="https://github.com/gruntwork-io/terragrunt/releases/download/$version"
+          curl -fsSL "$url/terragrunt_linux_amd64" -o "$RUNNER_TEMP/terragrunt"
+          curl -fsSL "$url/SHA256SUMS" | grep ' terragrunt_linux_amd64$' | sed "s| terragrunt_linux_amd64$| $RUNNER_TEMP/terragrunt|" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/terragrunt"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Provision shared Amazon ECS infrastructure
         run: |
           TG_DIR=terraform/environments/ecs/live \
@@ -62,13 +79,15 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: lambda-outputs
-          path: /tmp/aws-infra-out.json
+          path: |
+            /tmp/ecs-infra-out.json
+            /tmp/aws-infra-out.json
 
   api-conformance:
     needs: infra-up
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, 'api')
+    if: inputs.scripts == 'all' || contains(format(',{0},', inputs.scripts), ',api,')
     env:
       AWS_REGION: ${{ inputs.region }}
     steps:
@@ -90,7 +109,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: e6qu/sockerless-cloud
-          ref: v0.30.10
+          ref: v2.0.9
           path: .test-deps/sockerless-cloud
       - name: Differential against real AWS Lambda and AWS Step Functions
         run: |
@@ -105,10 +124,19 @@ jobs:
     needs: infra-up
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '2')
+    if: inputs.scripts == 'all' || contains(format(',{0},', inputs.scripts), ',2,')
     env:
       AWS_REGION: ${{ inputs.region }}
       AWS_INFRA_OUTPUT: /tmp/aws-infra-out.json
+      ECS_OUT: /tmp/ecs-infra-out.json
+      # The functions' architecture, the Lambda module's default.
+      SOCKERLESS_LAMBDA_ARCHITECTURE: x86_64
+      # The functions dial back to the backend on this runner, so it needs an
+      # address they can reach: a wss:// URL the operator publishes for it
+      # (a tunnel to port 2376) ending in /v1/lambda/reverse.
+      SOCKERLESS_CALLBACK_URL: ${{ secrets.AWS_LIVE_LAMBDA_CALLBACK_URL }}
+      SOCKERLESS_AGENT_BINARY: ${{ github.workspace }}/.build/sockerless-agent
+      SOCKERLESS_LAMBDA_BOOTSTRAP: ${{ github.workspace }}/.build/sockerless-lambda-bootstrap
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7.0.0
@@ -121,7 +149,13 @@ jobs:
           aws-region: ${{ inputs.region }}
       - uses: actions/download-artifact@v8.0.2
         with: { name: lambda-outputs, path: /tmp }
-      - run: (cd backends/lambda && go build -o ../../sockerless-backend-lambda ./cmd/sockerless-backend-lambda)
+      - run: (cd backends/lambda && go build -tags noui -o ../../sockerless-backend-lambda ./cmd/sockerless-backend-lambda)
+      # The agent and bootstrap every function's overlay carries, built for
+      # the functions' Linux x86_64.
+      - run: |
+          cd agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOWORK=off go build -o "$SOCKERLESS_AGENT_BINARY" ./cmd/sockerless-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOWORK=off go build -o "$SOCKERLESS_LAMBDA_BOOTSTRAP" ./cmd/sockerless-lambda-bootstrap
       - run: bash smoke-tests/aws-live/2-lambda-baseline.sh
 
   teardown:
@@ -140,4 +174,13 @@ jobs:
           role-to-assume: ${{ secrets.AWS_LIVE_ROLE_ARN }}
           aws-region: ${{ inputs.region }}
       - uses: hashicorp/setup-terraform@v4.0.1
+      - name: Install Terragrunt
+        # The release binary, checked against the release's own SHA256SUMS.
+        run: |
+          version=v0.77.22
+          url="https://github.com/gruntwork-io/terragrunt/releases/download/$version"
+          curl -fsSL "$url/terragrunt_linux_amd64" -o "$RUNNER_TEMP/terragrunt"
+          curl -fsSL "$url/SHA256SUMS" | grep ' terragrunt_linux_amd64$' | sed "s| terragrunt_linux_amd64$| $RUNNER_TEMP/terragrunt|" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/terragrunt"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - run: bash smoke-tests/aws-live/6-teardown.sh

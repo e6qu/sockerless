@@ -5,9 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,10 +44,25 @@ func (s *Server) materializePodFunction(mainContainerID string, containers []api
 	}
 
 	podSpec := containersToPodOverlaySpec(s.config.AgentBinaryPath, s.config.BootstrapBinaryPath, podName, mainContainerID, containers)
+	identity, idErr := s.overlayBinaryIdentity()
+	if idErr != nil {
+		return &api.ServerError{Message: idErr.Error()}
+	}
+	podSpec.AgentBinaryHash = identity.agentHash
+	podSpec.BootstrapBinaryHash = identity.bootstrapHash
+	podSpec.Platform = identity.platform
+	// Each member's image is pulled by the build from the registry the
+	// function's own image comes from, as a single container's is.
+	for i := range podSpec.Members {
+		resolved, err := s.resolveImageURI(ctx, podSpec.Members[i].BaseImageRef)
+		if err != nil {
+			return &api.ServerError{Message: fmt.Sprintf("failed to resolve image %q to ECR URI: %v", podSpec.Members[i].BaseImageRef, err)}
+		}
+		podSpec.Members[i].BaseImageRef = resolved
+	}
 	contentTag := PodOverlayContentTag(podSpec)
 
-	// 1. Build + push the pod overlay image. Routes through CodeBuild
-	//    when available (in-Lambda sockerless), local docker otherwise.
+	// 1. Build + push the pod overlay image through AWS CodeBuild.
 	repo, repoErr := s.overlayECRRepo()
 	if repoErr != nil {
 		return &api.ServerError{Message: repoErr.Error()}
@@ -270,36 +282,33 @@ func (s *Server) invokePodFunction(ctx context.Context, funcName, functionARN st
 	s.persistInvocationResultToTags(ctx, functionARN, inv)
 }
 
-// buildAndPushPodOverlay routes the pod overlay build through
-// `core.CloudBuildService` (CodeBuild path — preferred when sockerless
-// runs in-Lambda and has no docker daemon) or local docker. Mirrors
-// `BuildAndPushOverlayImage` but for the pod variant.
+// buildAndPushPodOverlay builds the pod overlay through the cloud build
+// service (AWS CodeBuild) and pushes it to destRef, as
+// BuildAndPushOverlayImage does for a single container.
 func buildAndPushPodOverlay(ctx context.Context, spec PodOverlaySpec, destRef string, builder core.CloudBuildService) (*OverlayBuildResult, error) {
 	if destRef == "" {
 		return nil, fmt.Errorf("buildAndPushPodOverlay: destRef is required")
 	}
-	if builder != nil && builder.Available() {
-		contextTar, err := TarPodOverlayContext(spec)
-		if err != nil {
-			return nil, fmt.Errorf("tar pod overlay context: %w", err)
-		}
-		result, err := builder.Build(ctx, core.CloudBuildOptions{
-			Dockerfile: "Dockerfile",
-			ContextTar: newReadSeeker(contextTar),
-			Tags:       []string{destRef},
-			Platform:   "linux/amd64",
-		})
-		if err != nil {
-			return nil, fmt.Errorf("cloud build pod overlay %s: %w", destRef, err)
-		}
-		return &OverlayBuildResult{ImageURI: result.ImageRef}, nil
+	if spec.Platform == "" {
+		return nil, fmt.Errorf("buildAndPushPodOverlay: Platform is required")
 	}
-	// Local-docker fallback: render the Dockerfile + stage agent +
-	// bootstrap binaries in a temp build context and shell out.
-	// Implementation deliberately reuses the single-container helper
-	// shape in BuildAndPushOverlayImage so behaviour is consistent;
-	// the pod variant just renders a different Dockerfile.
-	return buildPodOverlayViaLocalDocker(ctx, spec, destRef)
+	if builder == nil || !builder.Available() {
+		return nil, fmt.Errorf("buildAndPushPodOverlay: no AWS CodeBuild project and build bucket are configured (SOCKERLESS_LAMBDA_CODEBUILD_PROJECT, SOCKERLESS_LAMBDA_BUILD_BUCKET)")
+	}
+	contextTar, err := TarPodOverlayContext(spec)
+	if err != nil {
+		return nil, fmt.Errorf("tar pod overlay context: %w", err)
+	}
+	result, err := builder.Build(ctx, core.CloudBuildOptions{
+		Dockerfile: "Dockerfile",
+		ContextTar: bytes.NewReader(contextTar),
+		Tags:       []string{destRef},
+		Platform:   spec.Platform,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cloud build pod overlay %s: %w", destRef, err)
+	}
+	return &OverlayBuildResult{ImageURI: result.ImageRef}, nil
 }
 
 // containersToPodOverlaySpec converts the live container set into the
@@ -334,50 +343,4 @@ func containersToPodOverlaySpec(agentPath, bootstrapPath, podName, mainID string
 		BootstrapBinaryPath: bootstrapPath,
 		Members:             members,
 	}
-}
-
-// newReadSeeker wraps a byte slice as a *bytes.Reader for the
-// CloudBuildOptions.ContextTar field, which expects an io.ReadSeeker.
-func newReadSeeker(b []byte) *bytes.Reader {
-	return bytes.NewReader(b)
-}
-
-// buildPodOverlayViaLocalDocker is the local-docker fallback for the
-// pod overlay build. Mirrors `buildOverlayViaLocalDocker` (single-
-// container variant) but renders the pod Dockerfile and stages both
-// agent + bootstrap binaries into the build context.
-func buildPodOverlayViaLocalDocker(ctx context.Context, spec PodOverlaySpec, destRef string) (*OverlayBuildResult, error) {
-	dockerfile, err := RenderPodOverlayDockerfile(spec)
-	if err != nil {
-		return nil, fmt.Errorf("render pod Dockerfile: %w", err)
-	}
-	buildDir, err := os.MkdirTemp("", "sockerless-pod-overlay-")
-	if err != nil {
-		return nil, fmt.Errorf("mktemp: %w", err)
-	}
-	defer os.RemoveAll(buildDir)
-
-	if err := os.WriteFile(filepath.Join(buildDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
-		return nil, fmt.Errorf("write Dockerfile: %w", err)
-	}
-	if err := copyFile(spec.AgentBinaryPath, filepath.Join(buildDir, spec.AgentBinaryPath)); err != nil {
-		return nil, fmt.Errorf("stage agent binary: %w", err)
-	}
-	if err := copyFile(spec.BootstrapBinaryPath, filepath.Join(buildDir, spec.BootstrapBinaryPath)); err != nil {
-		return nil, fmt.Errorf("stage bootstrap binary: %w", err)
-	}
-
-	buildCmd := exec.CommandContext(ctx, "docker", "build", "-t", destRef, buildDir)
-	buildCmd.Stdout = os.Stderr
-	buildCmd.Stderr = os.Stderr
-	if err := buildCmd.Run(); err != nil {
-		return nil, fmt.Errorf("docker build %s: %w", destRef, err)
-	}
-	pushCmd := exec.CommandContext(ctx, "docker", "push", destRef)
-	pushCmd.Stdout = os.Stderr
-	pushCmd.Stderr = os.Stderr
-	if err := pushCmd.Run(); err != nil {
-		return nil, fmt.Errorf("docker push %s: %w", destRef, err)
-	}
-	return &OverlayBuildResult{ImageURI: destRef}, nil
 }

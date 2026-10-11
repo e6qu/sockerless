@@ -1,6 +1,6 @@
 module github.com/sockerless/tests
 
-go 1.26.0
+go 1.26.3
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.3
@@ -19,24 +19,39 @@ tool (
 )
 
 require (
-	cloud.google.com/go/bigtable v1.56.0 // indirect
-	cloud.google.com/go/firestore v1.25.0 // indirect
+	cel.dev/cel-go v0.32.0 // indirect
+	cel.dev/expr v0.25.3 // indirect
+	cloud.google.com/go/apigateway v1.16.0 // indirect
+	cloud.google.com/go/artifactregistry v1.27.0 // indirect
+	cloud.google.com/go/bigtable v1.58.0 // indirect
+	cloud.google.com/go/cloudbuild v1.34.0 // indirect
+	cloud.google.com/go/eventarc v1.26.0 // indirect
+	cloud.google.com/go/firestore v1.26.0 // indirect
+	cloud.google.com/go/functions v1.26.0 // indirect
 	cloud.google.com/go/iam v1.14.0 // indirect
-	cloud.google.com/go/kms v1.33.0 // indirect
+	cloud.google.com/go/kms v1.35.0 // indirect
 	cloud.google.com/go/logging v1.20.0 // indirect
 	cloud.google.com/go/longrunning v1.3.0 // indirect
 	cloud.google.com/go/pubsub v1.51.1 // indirect
 	cloud.google.com/go/pubsub/v2 v2.7.0 // indirect
+	cloud.google.com/go/redis v1.26.0 // indirect
+	cloud.google.com/go/resourcemanager v1.17.0 // indirect
+	cloud.google.com/go/run v1.23.0 // indirect
 	cloud.google.com/go/secretmanager v1.22.0 // indirect
+	cloud.google.com/go/serviceusage v1.16.0 // indirect
 	cloud.google.com/go/spanner v1.95.1 // indirect
+	cloud.google.com/go/vpcaccess v1.15.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-amqp v1.7.0 // indirect
 	github.com/HugoSmits86/nativewebp v1.3.0 // indirect
 	github.com/Microsoft/go-winio v0.6.3 // indirect
 	github.com/PaesslerAG/gval v1.2.4 // indirect
 	github.com/PaesslerAG/jsonpath v0.1.1 // indirect
-	github.com/ProtonMail/go-crypto v1.4.1 // indirect
+	github.com/ProtonMail/go-crypto v1.5.2 // indirect
+	github.com/andybalholm/brotli v1.2.6 // indirect
+	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/aws/smithy-go v1.28.5 // indirect
+	github.com/beevik/etree v1.8.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudflare/circl v1.6.5 // indirect
@@ -47,44 +62,57 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/e6qu/sockerless-cloud/realexec v0.0.0-20260907134649-791211658b76 // indirect
-	github.com/e6qu/sockerless-cloud/sim v0.0.0-20260907134649-791211658b76 // indirect
-	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20260907134649-791211658b76 // indirect
-	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20260907134649-791211658b76 // indirect
-	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20260907134649-791211658b76 // indirect
-	github.com/e6qu/sockerless-cloud/ui-auth v0.0.0-20260907134649-791211658b76 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
+	github.com/e6qu/sockerless-cloud/realexec v0.0.0-20261006171413-2f60a2aaa0a9 // indirect
+	github.com/e6qu/sockerless-cloud/sim v0.0.0-20261006171413-2f60a2aaa0a9 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-aws v0.0.0-20261006171413-2f60a2aaa0a9 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-azure v0.0.0-20261006171413-2f60a2aaa0a9 // indirect
+	github.com/e6qu/sockerless-cloud/simulator-gcp v0.0.0-20261006171413-2f60a2aaa0a9 // indirect
+	github.com/e6qu/sockerless-cloud/ui-auth v0.0.0-20261006171413-2f60a2aaa0a9 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.9.1 // indirect
 	github.com/go-git/go-git/v5 v5.19.2 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0 // indirect
+	github.com/hamba/avro/v2 v2.31.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
+	github.com/jonboulle/clockwork v0.5.0 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jsonata-go/jsonata v0.0.0-20250709164031-599f35f32e5f // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
-	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
+	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/miekg/dns v1.1.73 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
-	github.com/pjbgf/sha1cd v0.6.0 // indirect
+	github.com/parquet-go/bitpack v1.1.0 // indirect
+	github.com/parquet-go/jsonlite v1.5.5 // indirect
+	github.com/parquet-go/parquet-go v0.32.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.32 // indirect
+	github.com/pjbgf/sha1cd v0.7.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rs/zerolog v1.35.1 // indirect
+	github.com/russellhaering/goxmldsig v1.6.1 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.3 // indirect
+	github.com/twpayne/go-geom v1.7.0 // indirect
+	github.com/ulikunitz/xz v0.5.17 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -102,12 +130,12 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.1 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20261009195045-ca0d7ba23607 // indirect
-	golang.org/x/image v0.45.0 // indirect
+	golang.org/x/image v0.46.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto v0.0.0-20261005182115-fad411399dd8 // indirect
@@ -117,10 +145,10 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.75.7 // indirect
+	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.58.0 // indirect
+	modernc.org/sqlite v1.60.1 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
 

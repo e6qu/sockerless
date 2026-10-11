@@ -68,14 +68,14 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.storageBackings = core.NewStorageBackingRegistry()
 	s.storageBackings.Register(awscommon.NewEFSEphemeralDriver(s.efs))
 	s.storageBackings.Register(core.NewMemoryDriver(64))
-	ecrAuth := awscommon.NewECRAuthProvider(awsClients.ECR, logger, s.ctx)
+	ecrAuth := awscommon.NewECRAuthProvider(awsClients.ECR, config.ECRRegistryEndpoint, logger, s.ctx)
 	s.images = &core.ImageManager{
 		Base:   s.BaseServer,
 		Auth:   ecrAuth,
 		Logger: logger,
 	}
 	if svc := awscommon.NewCodeBuildService(
-		awsClients.CodeBuild, awsClients.S3,
+		awsClients.CodeBuild, awsClients.S3, awsClients.CloudWatch,
 		config.CodeBuildProject, config.BuildBucket, "", config.Region, ecrAuth, logger,
 	); svc != nil {
 		s.images.BuildService = svc

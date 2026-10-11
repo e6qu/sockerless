@@ -34,8 +34,8 @@ import (
 //     who need such an image should `docker push` it to their ECR
 //     repo first.
 func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error) {
-	if awscommon.IsECRImageURI(ref) {
-		return ref, nil
+	if awscommon.IsECRImageURI(ref, s.config.ECRRegistryEndpoint) {
+		return awscommon.RelocateECRReference(ref, s.config.ECRRegistryEndpoint), nil
 	}
 
 	// Digest-only refs (`sha256:...` with no preceding name) — resolve
@@ -100,25 +100,52 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 		return "", fmt.Errorf("cannot determine AWS account ID from role ARN %q", s.config.RoleARN)
 	}
 
-	ecrURI := awscommon.PullThroughCacheURI(accountID, s.config.Region, cachePrefix, repo, version)
+	ecrURI := awscommon.PullThroughCacheURI(awscommon.ECRRegistryHost(accountID, s.config.Region, s.config.ECRRegistryEndpoint), cachePrefix, repo, version)
 	s.Logger.Info().Str("original", ref).Str("ecr", ecrURI).Msg("resolved image to ECR pull-through cache URI")
 	return ecrURI, nil
 }
 
 // overlayECRRepo returns the fully-qualified ECR repo (no tag) where
-// sockerless pushes overlay-converted user images. Honours the operator
-// override `SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO` and otherwise falls back
-// to `<account>.dkr.ecr.<region>.amazonaws.com/sockerless-live-lambda`,
-// the same repo terraform/modules/lambda already provisions for the
-// runner-Lambda image. Tags are content-addressed via
-// `OverlayContentTag(spec)`.
+// sockerless pushes overlay-converted user images: the operator's
+// `SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO` (the repository the Lambda
+// Terraform module provisions, its `ecr_repository_url` output), else
+// `sockerless-live-lambda` in the account's registry. Either one is
+// reached at the registry endpoint coordinate when one is set. Tags are
+// content-addressed via `OverlayContentTag(spec)`.
 func (s *Server) overlayECRRepo() (string, error) {
 	if s.config.OverlayECRRepo != "" {
-		return s.config.OverlayECRRepo, nil
+		return awscommon.RelocateECRReference(s.config.OverlayECRRepo, s.config.ECRRegistryEndpoint), nil
 	}
 	accountID := awscommon.ExtractAccountID(s.config.RoleARN)
 	if accountID == "" {
 		return "", fmt.Errorf("cannot determine AWS account ID from role ARN %q for overlay ECR repo (set SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO to override)", s.config.RoleARN)
 	}
-	return fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/sockerless-live-lambda", accountID, s.config.Region), nil
+	return awscommon.ECRRegistryHost(accountID, s.config.Region, s.config.ECRRegistryEndpoint) + "/sockerless-live-lambda", nil
+}
+
+// overlayIdentity is what an overlay image's content depends on besides
+// the user's image and command: the two binaries it carries and the
+// platform it is built for.
+type overlayIdentity struct {
+	agentHash     string
+	bootstrapHash string
+	platform      string
+}
+
+// overlayBinaryIdentity hashes the agent and bootstrap binaries the
+// overlay copies in and names the platform of the functions it runs on.
+func (s *Server) overlayBinaryIdentity() (overlayIdentity, error) {
+	agentHash, err := core.HashBootstrapBinary(s.config.AgentBinaryPath)
+	if err != nil {
+		return overlayIdentity{}, fmt.Errorf("read agent binary %s (SOCKERLESS_AGENT_BINARY): %w", s.config.AgentBinaryPath, err)
+	}
+	bootstrapHash, err := core.HashBootstrapBinary(s.config.BootstrapBinaryPath)
+	if err != nil {
+		return overlayIdentity{}, fmt.Errorf("read bootstrap binary %s (SOCKERLESS_LAMBDA_BOOTSTRAP): %w", s.config.BootstrapBinaryPath, err)
+	}
+	return overlayIdentity{
+		agentHash:     agentHash,
+		bootstrapHash: bootstrapHash,
+		platform:      "linux/" + dockerArchFromLambda(s.config.Architecture),
+	}, nil
 }

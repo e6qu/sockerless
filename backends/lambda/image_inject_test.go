@@ -197,6 +197,23 @@ func TestOverlayContentTag(t *testing.T) {
 	if got := OverlayContentTag(spec3); got == first {
 		t.Errorf("tag did not change after BaseImageRef mutation: %q", got)
 	}
+	// An overlay built for another architecture, or carrying another
+	// build of either binary, is a different image.
+	spec4 := spec
+	spec4.Platform = "linux/arm64"
+	if got := OverlayContentTag(spec4); got == first {
+		t.Errorf("tag did not change after Platform mutation: %q", got)
+	}
+	spec5 := spec
+	spec5.BootstrapBinaryHash = "0123456789abcdef"
+	if got := OverlayContentTag(spec5); got == first {
+		t.Errorf("tag did not change after BootstrapBinaryHash mutation: %q", got)
+	}
+	spec6 := spec
+	spec6.AgentBinaryHash = "0123456789abcdef"
+	if got := OverlayContentTag(spec6); got == first {
+		t.Errorf("tag did not change after AgentBinaryHash mutation: %q", got)
+	}
 }
 
 // stubBuilder is a CloudBuildService test double that records the
@@ -238,6 +255,7 @@ func TestBuildAndPushOverlayImage_RoutesViaCloudBuild(t *testing.T) {
 		BaseImageRef:        "alpine:latest",
 		AgentBinaryPath:     agentPath,
 		BootstrapBinaryPath: bootPath,
+		Platform:            "linux/arm64",
 		UserEntrypoint:      []string{"tail"},
 	}
 	dest := "729079515331.dkr.ecr.eu-west-1.amazonaws.com/sockerless-live-lambda:overlay-deadbeef"
@@ -258,8 +276,8 @@ func TestBuildAndPushOverlayImage_RoutesViaCloudBuild(t *testing.T) {
 	if len(stub.gotOpts.Tags) != 1 || stub.gotOpts.Tags[0] != dest {
 		t.Errorf("Tags = %v, want [%q]", stub.gotOpts.Tags, dest)
 	}
-	if stub.gotOpts.Platform != "linux/amd64" {
-		t.Errorf("Platform = %q, want linux/amd64", stub.gotOpts.Platform)
+	if stub.gotOpts.Platform != "linux/arm64" {
+		t.Errorf("Platform = %q, want the spec's linux/arm64", stub.gotOpts.Platform)
 	}
 	if stub.gotOpts.Dockerfile != "Dockerfile" {
 		t.Errorf("Dockerfile = %q, want Dockerfile", stub.gotOpts.Dockerfile)
@@ -274,24 +292,42 @@ func TestBuildAndPushOverlayImage_RoutesViaCloudBuild(t *testing.T) {
 	}
 }
 
-func TestBuildAndPushOverlayImage_FallsBackToLocalDockerWhenBuilderUnavailable(t *testing.T) {
-	stub := &stubBuilder{available: false}
-	// The local-docker fallback will fail (no `docker` binary in test
-	// env on most CI), so we don't assert on success — just that
-	// stub.Build wasn't called when Available() returned false.
-	dir := t.TempDir()
-	agentPath := filepath.Join(dir, "agent")
-	bootPath := filepath.Join(dir, "bootstrap")
-	_ = os.WriteFile(agentPath, []byte("a"), 0o755)
-	_ = os.WriteFile(bootPath, []byte("b"), 0o755)
+// TestBuildAndPushOverlayImage_RequiresCodeBuild: with no build service,
+// or one that is not configured, the build is refused rather than run
+// anywhere else.
+func TestBuildAndPushOverlayImage_RequiresCodeBuild(t *testing.T) {
 	spec := OverlayImageSpec{
 		BaseImageRef:        "alpine:latest",
-		AgentBinaryPath:     agentPath,
-		BootstrapBinaryPath: bootPath,
+		AgentBinaryPath:     "agent",
+		BootstrapBinaryPath: "bootstrap",
+		Platform:            "linux/amd64",
 	}
+	for name, builder := range map[string]core.CloudBuildService{
+		"no build service":       nil,
+		"unconfigured CodeBuild": &stubBuilder{available: false},
+	} {
+		_, err := BuildAndPushOverlayImage(context.TODO(), spec, "x:y", builder)
+		if err == nil || !strings.Contains(err.Error(), "SOCKERLESS_LAMBDA_CODEBUILD_PROJECT") {
+			t.Errorf("%s: want a CodeBuild-required error, got %v", name, err)
+		}
+	}
+	stub := &stubBuilder{available: false}
 	_, _ = BuildAndPushOverlayImage(context.TODO(), spec, "x:y", stub)
 	if stub.called {
 		t.Fatal("CloudBuildService.Build called even though Available()=false")
+	}
+}
+
+// TestBuildAndPushOverlayImage_RequiresPlatform: the overlay is built for
+// the function's architecture, which the caller always names.
+func TestBuildAndPushOverlayImage_RequiresPlatform(t *testing.T) {
+	stub := &stubBuilder{available: true, result: &core.CloudBuildResult{ImageRef: "x:y"}}
+	_, err := BuildAndPushOverlayImage(context.TODO(), OverlayImageSpec{BaseImageRef: "alpine"}, "x:y", stub)
+	if err == nil || !strings.Contains(err.Error(), "Platform is required") {
+		t.Errorf("want Platform-required error, got %v", err)
+	}
+	if stub.called {
+		t.Fatal("CloudBuildService.Build called without a platform")
 	}
 }
 

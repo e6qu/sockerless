@@ -37,9 +37,14 @@ type Config struct {
 	// with no identity.
 	ManagedIdentityID       string
 	ManagedIdentityClientID string
-	BuildPlatform           string        // Docker build platform for overlay images
-	EndpointURL             string        // Custom endpoint URL
-	PollInterval            time.Duration // Cloud API poll interval (default 2s)
+	BuildPlatform           string // Docker build platform for overlay images
+	EndpointURL             string // Custom endpoint URL
+	// ACRRegistryEndpoint is the Azure Container Registry endpoint coordinate
+	// (SOCKERLESS_AZURE_ACR_ENDPOINT): empty when the registry is reached at
+	// `<acr>.azurecr.io`, else the address every image reference into it
+	// carries and registry HTTP is dialed at.
+	ACRRegistryEndpoint string
+	PollInterval        time.Duration // Cloud API poll interval (default 2s)
 
 	// CallbackURL is the reverse-agent WebSocket URL injected into the
 	// function app container env so a bootstrap inside can dial back
@@ -123,6 +128,7 @@ func ConfigFromEnv() Config {
 		ManagedIdentityClientID: os.Getenv("SOCKERLESS_AZF_MANAGED_IDENTITY_CLIENT_ID"),
 		BuildPlatform:           core.EnvOrDefault("SOCKERLESS_AZURE_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:             os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		ACRRegistryEndpoint:     os.Getenv(azurecommon.ACREndpointEnv),
 		PollInterval:            core.DurationOrDefault(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		CallbackURL:             os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		BootstrapBinaryPath:     os.Getenv("SOCKERLESS_AZF_BOOTSTRAP"),
@@ -165,6 +171,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		}
 	}
 	c.EndpointURL = env.Common.EndpointURL
+	c.ACRRegistryEndpoint = os.Getenv(azurecommon.ACREndpointEnv)
 	if env.Common.PollInterval != "" {
 		c.PollInterval = core.DurationOrDefault(env.Common.PollInterval, c.PollInterval)
 	}
